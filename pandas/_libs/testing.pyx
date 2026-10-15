@@ -1,3 +1,10 @@
+# [MODULE DOC]
+# Cython implementation of the recursive approximate-equality assertion behind
+# pandas._testing.assert_almost_equal, plus dict-equality. Handles sets, dicts, strings,
+# numpy arrays, generic iterables (element-wise recursion), missing values
+# (NaN/None/NaT/NA must match in kind), real numbers (math.isclose) and complex numbers
+# (cmath.isclose). Raises AssertionError (often via pandas._testing helpers for detailed
+# messages) on mismatch, returns True otherwise.
 import cmath
 import math
 
@@ -22,18 +29,35 @@ from pandas.core.dtypes.missing import array_equivalent
 
 
 cdef bint isiterable(obj):
+    # [FUNCTION DOC]
+    # HELPER: True if obj has an __iter__ attribute.
+    # Inputs: obj - any. Outputs: bint. Side effects: none.
     return hasattr(obj, "__iter__")
 
 
 cdef bint has_length(obj):
+    # [FUNCTION DOC]
+    # HELPER: True if obj has a __len__ attribute.
+    # Inputs: obj - any. Outputs: bint. Side effects: none.
     return hasattr(obj, "__len__")
 
 
 cdef bint is_dictlike(obj):
+    # [FUNCTION DOC]
+    # HELPER: True if obj has both keys and __getitem__ attributes.
+    # Inputs: obj - any. Outputs: bint. Side effects: none.
     return hasattr(obj, "keys") and hasattr(obj, "__getitem__")
 
 
 cpdef assert_dict_equal(a, b, bint compare_keys=True):
+    # [FUNCTION DOC]
+    # Assert two dict-like objects are approximately equal. If compare_keys, the
+    # frozensets of keys must be equal; then for each key of a, a[k] and b[k] are
+    # compared with assert_almost_equal (default tolerances).
+    # Inputs: a, b - dict-likes; compare_keys - whether to require identical key sets.
+    # Outputs: True. Exceptions: AssertionError if either is not dict-like, keys differ,
+    # or values differ; KeyError if compare_keys is False and a has keys missing in b.
+    # Side effects: none.
     assert is_dictlike(a) and is_dictlike(b), (
         "Cannot compare dict objects, one or both is not dict-like"
     )
@@ -54,6 +78,24 @@ cpdef assert_almost_equal(a, b,
                           rtol=1.e-5, atol=1.e-8,
                           bint check_dtype=True,
                           obj=None, lobj=None, robj=None, index_values=None):
+    # [FUNCTION DOC]
+    # Recursively assert a and b are almost equal. Order of checks: sets and strs
+    # compared with ==; dicts via assert_dict_equal; if a is iterable: b must be
+    # iterable (else class-mismatch error) and both must have __len__; for two ndarrays
+    # shapes must match, dtypes must match if check_dtype, and array_equivalent with
+    # strict_nan short-circuits to True; lengths must match (symmetric difference shown
+    # if < 10 apart); then each element pair is compared recursively, counting failures
+    # and reporting the percentage different plus the first differing position. If only
+    # b is iterable, class mismatch error. For scalars: nulls must match in kind
+    # (is_matching_na, NaN does not match None), a null vs non-null fails; a == b
+    # passes; two real numbers pass if math.isclose(rel_tol=rtol, abs_tol=atol); complex
+    # likewise with cmath.isclose; else fail.
+    # Inputs: a, b - objects; rtol, atol - float tolerances; check_dtype - for ndarrays;
+    # obj, lobj, robj - names/objects used in messages; index_values - for messages.
+    # Outputs: True. Exceptions: AssertionError on any mismatch.
+    # Side effects: lazily imports pandas._testing helpers.
+    # KNOWN ISSUE: the recursive element-wise call does not forward check_dtype (nested
+    # arrays always check dtype).
     """
     Check that left and right objects are almost equal.
 

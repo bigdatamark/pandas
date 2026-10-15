@@ -1,3 +1,13 @@
+# [MODULE DOC]
+# Tempita template generating sparse_op_helper.pxi, which is included into sparse.pyx.
+# Defines scalar division / modulo helpers with pandas zero-division semantics for the
+# fused type sparse_t (float64 or int64), and for every (op, dtype) pair from
+# get_dispatch generates three functions: block_op_<op>_<dtype> and int_op_<op>_<dtype>
+# (merge two sparse vectors stored with BlockIndex / IntIndex) and the public dispatcher
+# sparse_<op>_<dtype>. Arithmetic (add, sub, mul, div, mod, truediv, floordiv, pow) and
+# comparison (eq, ne, lt, gt, le, ge) ops are generated for float64 and int64; logical
+# ops (and, or, xor) for int64 and uint8. Result dtype: float64 for div/truediv, uint8
+# for comparison and logical ops, else the input dtype.
 """
 Template for each `dtype` helper function for sparse ops
 
@@ -14,6 +24,11 @@ ctypedef fused sparse_t:
 
 
 cdef float64_t __div__(sparse_t a, sparse_t b):
+    # [FUNCTION DOC]
+    # HELPER: Division with zero handling, specialized for float64 and int64 inputs. If
+    # b is 0: +inf when a > 0, -inf when a < 0, NaN when a is 0 (or NaN). Otherwise a
+    # converted to float divided by b.
+    # Inputs: a, b - sparse_t scalars. Outputs: float64. Side effects: none.
     if b == 0:
         if a > 0:
             return INF
@@ -26,10 +41,16 @@ cdef float64_t __div__(sparse_t a, sparse_t b):
 
 
 cdef float64_t __truediv__(sparse_t a, sparse_t b):
+    # [FUNCTION DOC]
+    # HELPER: true division; identical to __div__. Outputs: float64.
     return __div__(a, b)
 
 
 cdef sparse_t __mod__(sparse_t a, sparse_t b):
+    # [FUNCTION DOC]
+    # HELPER: Modulo with zero handling: if b is 0 returns NaN for float64 and 0 for
+    # int64; otherwise a % b (Python sign semantics).
+    # Inputs: a, b - sparse_t. Outputs: sparse_t. Side effects: none.
     if b == 0:
         if sparse_t is float64_t:
             return NaN
@@ -40,6 +61,11 @@ cdef sparse_t __mod__(sparse_t a, sparse_t b):
 
 
 cdef sparse_t __floordiv__(sparse_t a, sparse_t b):
+    # [FUNCTION DOC]
+    # HELPER: Floor division with zero handling: if b is 0, float64 returns +inf / -inf
+    # / NaN by the sign of a (matching non-sparse mask_zero_div_zero), int64 returns 0;
+    # otherwise a // b (floor semantics).
+    # Inputs: a, b - sparse_t. Outputs: sparse_t. Side effects: none.
     if b == 0:
         if sparse_t is float64_t:
             # Match non-sparse Series behavior implemented in mask_zero_div_zero
@@ -68,6 +94,12 @@ dtypes = [('float64', True, False),
 # it should be done in fused types
 
 def get_op(tup):
+    # [FUNCTION DOC]
+    # HELPER (template-time): Given (opname, lval, rval, dtype), return the source
+    # expression applying the op to the two operand expressions, using the
+    # __div__/__mod__/__truediv__/__floordiv__ helpers for division-like ops and infix
+    # operators otherwise. Exceptions: AssertionError for a malformed tuple, KeyError
+    # for an unknown op.
     assert isinstance(tup, tuple)
     assert len(tup) == 4
 
@@ -97,6 +129,11 @@ def get_op(tup):
 
 def get_dispatch(dtypes):
 
+    # [FUNCTION DOC]
+    # HELPER (template-time): Yield (opname, dtype, result dtype) for every generated
+    # kernel: arithmetic and comparison ops for dtypes flagged arith_comp_group, logical
+    # ops for dtypes flagged logical_group; result dtype is float64 for div / truediv,
+    # uint8 for comparison and logical ops, else dtype.
     ops_list = ['add', 'sub', 'mul', 'div', 'mod', 'truediv',
                 'floordiv', 'pow',
                 'eq', 'ne', 'lt', 'gt', 'le', 'ge',
@@ -139,6 +176,20 @@ cdef tuple block_op_{{opname}}_{{dtype}}({{dtype}}_t[:] x_,
                                                 {{dtype}}_t[:] y_,
                                                 BlockIndex yindex,
                                                 {{dtype}}_t yfill):
+    # [FUNCTION DOC]
+    # Template (one function per op/dtype; opname, dtype and the result dtype
+    # rdtype are substituted). Apply op elementwise to two sparse vectors indexed by
+    # BlockIndex. The output index is the union of both indices; walk it in order while
+    # tracking a cursor (block number and position within block) and a value position
+    # for each side: where both sides store the position, op(x value, y value); where
+    # only x stores it, op(x value, yfill); where only y, op(xfill, y value).
+    # Inputs: x_, y_ - stored values; xindex, yindex - BlockIndex of the same length;
+    # xfill, yfill - fill values.
+    # Outputs: tuple (out values ndarray of result dtype, union BlockIndex, new fill
+    # value op(xfill, yfill)).
+    # Exceptions: errors from the union (length mismatch). No bounds checks: values
+    # arrays shorter than npoints give undefined behavior. For pow, C pow semantics are
+    # used (cpow) rather than Python's. Side effects: none.
     """
     Binary operator on BlockIndex objects with fill values
     """
@@ -242,6 +293,13 @@ cdef tuple int_op_{{opname}}_{{dtype}}({{dtype}}_t[:] x_,
                                               {{dtype}}_t[:] y_,
                                               IntIndex yindex,
                                               {{dtype}}_t yfill):
+    # [FUNCTION DOC]
+    # Template (substituted per op/dtype like block_op). Same as block_op but for
+    # IntIndex: walk the union of the sorted index arrays with one cursor per side,
+    # applying op to stored values or the other side's fill value.
+    # Inputs: x_, y_ - stored values; xindex, yindex - IntIndex; xfill, yfill - fills.
+    # Outputs: tuple (out values, union IntIndex, op(xfill, yfill)).
+    # Exceptions: errors from the union (length mismatch). Side effects: none.
     cdef:
         IntIndex out_index
         Py_ssize_t xi = 0, yi = 0, out_i = 0  # fp buf indices
@@ -301,6 +359,14 @@ cpdef sparse_{{opname}}_{{dtype}}({{dtype}}_t[:] x,
                                   {{dtype}}_t[:] y,
                                   SparseIndex yindex, {{dtype}}_t yfill):
 
+    # [FUNCTION DOC]
+    # Template (one public function per op/dtype). Dispatch on the type of xindex:
+    # BlockIndex -> block_op with both indices converted to BlockIndex; IntIndex ->
+    # int_op with both converted to IntIndex.
+    # Inputs: x, y - stored values memoryviews of dtype; xindex, yindex -
+    # SparseIndex; xfill, yfill - fill scalars.
+    # Outputs: tuple (values, index, fill) as described for block_op / int_op.
+    # Exceptions: NotImplementedError for any other index type. Side effects: none.
     if isinstance(xindex, BlockIndex):
         return block_op_{{opname}}_{{dtype}}(x, xindex.to_block_index(), xfill,
                                              y, yindex.to_block_index(), yfill)

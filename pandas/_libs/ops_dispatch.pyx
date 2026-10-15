@@ -1,3 +1,10 @@
+# [MODULE DOC]
+# Helpers for implementing __array_ufunc__ on pandas array-likes: maps NumPy ufuncs (by
+# name, with aliases such as subtract->sub) onto the corresponding Python dunder methods
+# (__add__, __radd__, __lt__, ...) so ufunc calls reuse pandas operator semantics.
+# Module-level tables: DISPATCHED_UFUNCS (op names eligible for dispatch), UNARY_UFUNCS,
+# UFUNC_ALIASES (numpy name -> pandas op name) and REVERSED_NAMES (comparison ops whose
+# reflected form is the mirrored comparison rather than __r<op>__).
 DISPATCHED_UFUNCS = {
     "add",
     "sub",
@@ -63,6 +70,19 @@ REVERSED_NAMES = {
 def maybe_dispatch_ufunc_to_dunder_op(
     object self, object ufunc, str method, *inputs, **kwargs
 ):
+    # [FUNCTION DOC]
+    # Try to satisfy ufunc(*inputs) by calling a dunder method on self. Normalizes
+    # ufunc.__name__ via UFUNC_ALIASES. Returns NotImplemented if any kwargs are given,
+    # the ufunc takes more than 2 inputs, method is not "__call__", or the op is not in
+    # DISPATCHED_UFUNCS. If inputs[0] is self: calls self.__op__() for unary ops or
+    # self.__op__(inputs[1]). Else if inputs[1] is self: calls the reflected method
+    # (REVERSED_NAMES entry or __r<op>__) with inputs[0]. Missing methods yield
+    # NotImplemented via a local fallback.
+    # Inputs: self - array-like; ufunc - numpy ufunc; method - ufunc method name string;
+    # inputs - ufunc operands; kwargs - ufunc keywords.
+    # Outputs: the dunder method's result, or NotImplemented.
+    # Exceptions: AssertionError if a unary op is called with more than one input;
+    # propagates exceptions from the dunder method. Side effects: none.
     """
     Dispatch a ufunc to the equivalent dunder method.
 
@@ -89,6 +109,9 @@ def maybe_dispatch_ufunc_to_dunder_op(
     op_name = UFUNC_ALIASES.get(op_name, op_name)
 
     def not_implemented(*args, **kwargs):
+        # [FUNCTION DOC]
+        # HELPER: fallback used with getattr when self lacks the dunder; accepts any
+        # arguments and returns NotImplemented. Side effects: none.
         return NotImplemented
 
     if kwargs or ufunc.nin > 2:
