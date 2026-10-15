@@ -1,3 +1,21 @@
+# [MODULE DOC]
+# Low-level kernels for groupby aggregations and transformations, called from
+# pandas/core/groupby/ops.py (WrappedCythonOp) and masked/extension array _groupby_op.
+# Common conventions: values is a 2-D array of shape (N rows, K columns); labels is a
+# 1-D intp array of length N giving each row's group number in [0, ngroups), with
+# negative labels (-1) meaning the row belongs to no group and is skipped. Aggregations
+# write into out of shape (ngroups, K) and usually increment counts[group] (length
+# ngroups, zeroed by the caller) once per row; transformations (cum*, shift, fillna,
+# rank) write out of shape (N, K) aligned with the input rows. Missing values are
+# detected either via an optional uint8 mask (nullable arrays; then result_mask is
+# written instead of NA sentinels) or from the values themselves: NaN for floats and
+# complex, NaT (int64 min) for int64 when is_datetimelike, None/NaN/NA for objects;
+# plain integers cannot be missing. skipna=False makes a group's result NA as soon as
+# an NA is seen. Most kernels are fused-type templates (int64float_t, sum_t, mean_t,
+# numeric_t, numeric_object_t, ...) compiled per dtype, and release the GIL for the
+# main loop except for object dtype. Results are written in place; functions return
+# None. Module globals: NPY_NAT (NaT as int64), NaN, InterpolationEnumType for
+# group_quantile.
 cimport cython
 from cython cimport (
     Py_ssize_t,
@@ -69,6 +87,20 @@ cdef float64_t median_linear_mask(
     uint8_t* mask,
     bint skipna=True
 ) noexcept nogil:
+    # [FUNCTION DOC]
+    # HELPER: Median of n doubles, ignoring entries flagged in a parallel mask.
+    # Inputs: a - pointer to n float64 values; n - count; mask - pointer to n flags
+    # (nonzero means NA); skipna - if false, any NA makes the result NaN.
+    # Outputs: the median (average of the two middle values for even counts), or NaN
+    #   when
+    # n is 0, all values are NA, or an NA is present and skipna is false.
+    # Side effects: if NAs are present, allocates a temporary buffer of non-NA values
+    #   and
+    # frees it; otherwise partially reorders a in place (selection algorithm). No GIL.
+    # KNOWN ISSUE: raises MemoryError on allocation failure inside a noexcept function,
+    #   so
+    # the exception cannot propagate (it is printed as unraisable and the function
+    # returns 0 instead of a median).
     cdef:
         int i, j, na_count = 0
         float64_t* tmp
@@ -113,6 +145,17 @@ cdef float64_t median_linear(
     bint is_datetimelike=False,
     bint skipna=True,
 ) noexcept nogil:
+    # [FUNCTION DOC]
+    # HELPER: Median of n doubles, ignoring NA values detected from the data itself.
+    # Inputs: a - pointer to n float64 values; n - count; is_datetimelike - if true, NA
+    #   is
+    # the NaT integer value (compared as a double), otherwise NaN; skipna - if false,
+    #   any
+    # NA makes the result NaN.
+    # Outputs: median or NaN (same rules as median_linear_mask).
+    # Side effects: temporary buffer when NAs exist; otherwise partially reorders a in
+    # place. No GIL.
+    # KNOWN ISSUE: same unpropagatable MemoryError as median_linear_mask.
     cdef:
         int i, j, na_count = 0
         float64_t* tmp
@@ -163,6 +206,11 @@ cdef float64_t median_linear(
 
 
 cdef float64_t calc_median_linear(float64_t* a, int n) noexcept nogil:
+    # [FUNCTION DOC]
+    # HELPER: Median of n (> 0) non-NA doubles using quickselect (kth_smallest_c): the
+    # middle element for odd n, the mean of the two middle elements for even n.
+    # Inputs: a - pointer to values; n - count. Outputs: median as float64.
+    # Side effects: reorders a in place. No GIL.
     cdef:
         float64_t result
 
@@ -195,6 +243,27 @@ def group_median_float64(
     bint is_datetimelike=False,
     bint skipna=True,
 ) -> None:
+    # [FUNCTION DOC]
+    # Per-group median of each column (aggregation).
+    # Inputs: out - float64 (ngroups, K) output; counts - int64 (ngroups,) output of
+    #   group
+    # sizes; values - float64 (N, K); labels - intp (N,); min_count - must be -1; mask -
+    # optional uint8 (N, K) NA flags; result_mask - uint8 (ngroups, K), required when
+    #   mask
+    # is given; is_datetimelike - values are NaT-encoded datetimes cast to float;
+    # skipna - ignore NAs if true.
+    # Behavior: sorts rows by label with groupsort_indexer (counts are taken from it,
+    #   the
+    # first bucket being the -1 group), copies values transposed into contiguous (K, N)
+    # group order (mask too, filled with 1 for missing), then for each column skips the
+    #   -1
+    # bucket and computes the median of each group's contiguous slice. With a mask, a
+    #   NaN
+    # median sets result_mask.
+    # Outputs: none. Exceptions: AssertionError if min_count != -1.
+    # Side effects: overwrites counts and out (and result_mask); releases the GIL for
+    #   the
+    # median loops; allocates temporaries of size N*K.
     """
     Only aggregates on axis=0
     """
@@ -268,6 +337,19 @@ def group_cumprod(
     const uint8_t[:, :] mask=None,
     uint8_t[:, ::1] result_mask=None,
 ) -> None:
+    # [FUNCTION DOC]
+    # Grouped cumulative product (transformation).
+    # Inputs: out - (N, K) output of the same fused dtype (int64, uint64, float32,
+    # float64); values - (N, K); labels - intp (N,); ngroups; is_datetimelike - used
+    #   only
+    # to pick the NA value; skipna; mask / result_mask - optional uint8 (N, K).
+    # Behavior: keeps a running product per (group, column) starting at 1. Non-NA values
+    # multiply the running product and output it, unless the group already saw an NA
+    #   with
+    # skipna false, in which case output is NA. NA values output NA (0 plus result_mask
+    # when masked, else NaN/NaT/0 sentinel), and with skipna false poison the group.
+    # Rows with negative labels are left untouched.
+    # Outputs: none. Side effects: writes out and result_mask; no GIL in the loop.
     """
     Cumulative product of columns of `values`, in row groups `labels`.
 
@@ -357,6 +439,17 @@ def group_cumsum(
     const uint8_t[:, :] mask=None,
     uint8_t[:, ::1] result_mask=None,
 ) -> None:
+    # [FUNCTION DOC]
+    # Grouped cumulative sum (transformation).
+    # Inputs: out, values - (N, K) arrays of int64/uint64/float32/float64; labels;
+    # ngroups; is_datetimelike - int64 NaT values are NA; skipna; mask / result_mask.
+    # Behavior: running sum per (group, column), using Kahan compensated summation for
+    # floats. NA entries output NA (0 + result_mask, or NaN/NaT sentinel); with skipna
+    # false the group's accumulator becomes NA and all later rows of that group output
+    #   NA.
+    # With a mask, rows with negative labels are marked NA in result_mask with out 0;
+    # without a mask they are left untouched.
+    # Outputs: none. Side effects: writes out/result_mask; no GIL in the loop.
     """
     Cumulative sum of columns of `values`, in row groups `labels`.
 
@@ -474,6 +567,17 @@ def group_shift_indexer(
     int ngroups,
     int periods,
 ) -> None:
+    # [FUNCTION DOC]
+    # Compute, for each row, the position of the row that is `periods` rows earlier in
+    # the same group (positive periods) or later (negative), for groupby.shift.
+    # Inputs: out - int64 (N,) output; labels - intp (N,); ngroups; periods - shift.
+    # Behavior: periods 0 gives the identity. Otherwise iterates forward (or backward
+    #   for
+    # negative periods), keeping per group a ring buffer of the last |periods| row
+    # positions; out is the stored position once more than |periods| rows of the group
+    #   have
+    # been seen, else -1. Rows with label -1 get -1.
+    # Outputs: none. Side effects: writes out; no GIL in the loops.
     cdef:
         Py_ssize_t N, i, ii, lab
         int offset = 0, sign
@@ -532,6 +636,20 @@ def group_fillna_indexer(
     bint compute_ffill,
     int ngroups,
 ) -> None:
+    # [FUNCTION DOC]
+    # Compute fill source positions for groupby ffill/bfill.
+    # Inputs: out - intp (N,) output; labels - intp (N,); mask - uint8 (N,) with 1
+    #   meaning
+    # missing; limit - max consecutive fills per run, or -1 for unlimited; compute_ffill
+    #   -
+    # forward if true, backward otherwise; ngroups.
+    # Behavior: walks rows in fill direction; non-missing rows map to themselves and
+    # become the group's last valid position (resetting the fill count); missing rows
+    #   map
+    # to the group's last valid position (-1 if none) until limit is reached, then -1.
+    # Rows with label -1 map to -1.
+    # Outputs: none. Exceptions: AssertionError if lengths differ.
+    # Side effects: writes out; no GIL.
     """
     Indexes how to fill values forwards or backwards within a group.
 
@@ -601,6 +719,18 @@ def group_any_all(
     bint skipna,
     uint8_t[:, ::1] result_mask,
 ) -> None:
+    # [FUNCTION DOC]
+    # Grouped any() / all() with optional Kleene (three-valued) logic.
+    # Inputs: out - int8 (ngroups, K) output; values - int8 (N, K) truth values; labels;
+    # mask - uint8 (N, K) NA flags; val_test - "any" or "all"; skipna; result_mask -
+    # uint8 (ngroups, K) or None (None means non-nullable input).
+    # Behavior: out starts at the identity (0 for any, 1 for all); a value equal to the
+    # deciding value (1 for any, 0 for all) sets out to it and clears result_mask. With
+    # skipna, masked values are ignored. Without skipna and with result_mask, a masked
+    # value marks the result NA unless the deciding value was already seen. Without
+    # skipna and without result_mask, masked values are treated as their raw value.
+    # Outputs: none. Exceptions: ValueError for an invalid val_test.
+    # Side effects: writes out and result_mask; no GIL in the loop.
     """
     Aggregated boolean values to show truthfulness of group elements. If the
     input is a nullable type (result_mask is not None), the result will be computed
@@ -711,6 +841,27 @@ def group_sum(
     object initial=0,
     bint skipna=True,
 ) -> None:
+    # [FUNCTION DOC]
+    # Grouped sum (aggregation).
+    # Inputs: out - (ngroups, K) output of fused sum_t (float32/64, complex64/128,
+    #   int64,
+    # uint64, object); counts - int64 (ngroups,) incremented per row; values - (N, K);
+    # labels; mask - uint8 (N, K) or None; result_mask - uint8 (ngroups, K) when masked;
+    # min_count - minimum non-NA count for a valid result; is_datetimelike; initial -
+    # starting value (0, or e.g. "" for object strings); skipna.
+    # Behavior: floats/complex use Kahan summation with the compensation reset to 0 when
+    # it becomes non-finite (so infinities sum correctly); int and object types add
+    # directly (the first value replaces the initial accumulator for object/int so that
+    # strings can be summed). NA entries are skipped, or with skipna false make the
+    #   group
+    # NA (result_mask, or NaN/NaT sentinel) and stop accumulating. Finally
+    # _check_below_mincount copies sums to out, writing NA where the non-NA count is
+    #   below
+    # min_count.
+    # Outputs: none. Exceptions: ValueError if len(values) != len(labels);
+    # AssertionError if initial != 0 for non-object dtype; Python errors from object
+    # addition. Side effects: writes out, counts, result_mask; GIL released except
+    #   object.
     """
     Only aggregates on axis=0 using Kahan summation
     """
@@ -841,6 +992,15 @@ def group_prod(
     Py_ssize_t min_count=0,
     bint skipna=True,
 ) -> None:
+    # [FUNCTION DOC]
+    # Grouped product (aggregation).
+    # Inputs: out - (ngroups, K) int64/uint64/float32/float64; counts; values (N, K);
+    # labels; mask / result_mask; min_count; skipna.
+    # Behavior: running product starting at 1 per (group, column); NA handling as in
+    # group_sum (NaN sentinel for floats, 0 for ints when not masked); then
+    # _check_below_mincount.
+    # Outputs: none. Exceptions: ValueError on length mismatch.
+    # Side effects: writes out, counts, result_mask; no GIL in the loop.
     """
     Only aggregates on axis=0
     """
@@ -916,6 +1076,21 @@ def group_var(
     str name="var",
     bint skipna=True,
 ) -> None:
+    # [FUNCTION DOC]
+    # Grouped variance, standard deviation or standard error of the mean.
+    # Inputs: out - float32/float64 (ngroups, K); counts; values (N, K) same dtype;
+    # labels; min_count - must be -1; ddof - delta degrees of freedom; mask /
+    #   result_mask;
+    # is_datetimelike - NA is the NaT value (values cast to float); name - "var", "std"
+    # or "sem"; skipna.
+    # Behavior: Welford's online algorithm per (group, column): running mean and sum of
+    # squared deviations (stored in out). NA entries are skipped, or with skipna false
+    # set nobs to 0 and make the result NA. Final pass: if nobs <= ddof the result is NA
+    # (result_mask or NaN); otherwise var = M2 / (n - ddof), std = sqrt(var),
+    # sem = sqrt(var / n).
+    # Outputs: none. Exceptions: AssertionError if min_count != -1; ValueError on length
+    # mismatch. Side effects: zeroes then writes out; writes counts, result_mask; no
+    #   GIL.
     cdef:
         Py_ssize_t i, j, N, K, lab, ncounts = len(counts)
         floating val, ct, oldmean
@@ -1019,6 +1194,17 @@ def group_skew(
     uint8_t[:, ::1] result_mask=None,
     bint skipna=True,
 ) -> None:
+    # [FUNCTION DOC]
+    # Grouped sample skewness (bias-corrected, Fisher-Pearson).
+    # Inputs: out - float64 (ngroups, K); counts; values - float64 (N, K); labels; mask
+    #   /
+    # result_mask (optional); skipna.
+    # Behavior: accumulates running central moments M1..M3 per (group, column) with the
+    # online update of RunningStats::Push; with skipna false an NA sets the moments to
+    # NaN. Final: fewer than 3 observations -> NaN (and result_mask set if given);
+    # M2 == 0 -> 0; else n * sqrt(n - 1) / (n - 2) * M3 / M2**1.5.
+    # Outputs: none. Exceptions: ValueError on length mismatch.
+    # Side effects: writes out, counts, result_mask; no GIL.
     cdef:
         Py_ssize_t i, j, N, K, lab, ngroups = len(counts)
         int64_t[:, ::1] nobs
@@ -1107,6 +1293,15 @@ def group_kurt(
     uint8_t[:, ::1] result_mask=None,
     bint skipna=True,
 ) -> None:
+    # [FUNCTION DOC]
+    # Grouped sample excess kurtosis (bias-corrected).
+    # Inputs: same as group_skew.
+    # Behavior: online accumulation of central moments M1..M4; NA handling as
+    #   group_skew.
+    # Final: fewer than 4 observations -> NaN (+ result_mask); M2 == 0 -> 0; otherwise
+    # n(n+1)(n-1) M4 / ((n-2)(n-3) M2**2) - 3(n-1)**2 / ((n-2)(n-3)).
+    # Outputs: none. Exceptions: ValueError on length mismatch.
+    # Side effects: writes out, counts, result_mask; no GIL.
     cdef:
         Py_ssize_t i, j, N, K, lab, ngroups = len(counts)
         int64_t[:, ::1] nobs
@@ -1201,6 +1396,20 @@ def group_mean(
     uint8_t[:, ::1] result_mask=None,
     bint skipna=True,
 ) -> None:
+    # [FUNCTION DOC]
+    # Grouped mean (aggregation).
+    # Inputs: out - (ngroups, K) float32/float64/complex64/complex128; counts - int64
+    # (ngroups,); values (N, K) same dtype; labels; min_count - must be -1;
+    # is_datetimelike - NA is the NaT value cast to float; mask / result_mask; skipna.
+    # Behavior: Kahan-compensated sum and non-NA count per (group, column) (compensation
+    # reset to 0 if it becomes NaN, for infinities); NA entries skipped, or with skipna
+    # false the sum becomes NA and the count 0. Result is sum / count, or NA
+    # (result_mask, NaN or NaT sentinel) when the count is 0.
+    # Outputs: none. Exceptions: AssertionError if min_count != -1; ValueError on length
+    # mismatch. Side effects: writes out, counts, result_mask; no GIL.
+    # KNOWN ISSUE: the docstring says counts has "the same shape as labels"; it actually
+    # has length ngroups. It also says NaN values are ignored, which only holds for
+    # skipna=True.
     """
     Compute the mean per label given a label assignment for each value.
     NaN values are ignored.
@@ -1344,6 +1553,21 @@ def group_ohlc(
     const uint8_t[:, :] mask=None,
     uint8_t[:, ::1] result_mask=None,
 ) -> None:
+    # [FUNCTION DOC]
+    # Grouped open/high/low/close of a single column.
+    # Inputs: out - (ngroups, 4) int64/uint64/float32/float64; counts; values - (N, 1);
+    # labels; min_count - must be -1; mask / result_mask (optional, (ngroups,) style
+    #   rows).
+    # Behavior: out is initialized to NaN (floats) or 0 (ints); result_mask set True for
+    # all groups if masked. For each non-NA value: first value of a group fills all four
+    # fields (and clears result_mask for that group); later values update high (max),
+    #   low
+    # (min) and close (last). Rows with label -1 skipped. Empty labels returns
+    #   immediately.
+    # Outputs: none. Exceptions: AssertionError for min_count; ValueError if out does
+    #   not
+    # have 4 columns; NotImplementedError if values has more than one column.
+    # Side effects: writes out, counts, result_mask; no GIL in the loop.
     """
     Only aggregates on axis=0
     """
@@ -1417,6 +1641,26 @@ def group_quantile(
     uint8_t[:, ::1] result_mask,
     bint is_datetimelike,
 ) -> None:
+    # [FUNCTION DOC]
+    # Grouped quantiles of a 1-D column, for several quantile levels at once.
+    # Inputs: out - float64 (ngroups, nqs); values - 1-D numeric (N,), already ordered
+    #   so
+    # that each group occupies the contiguous slice [starts[i], ends[i]); labels - intp
+    # (N,) (only its length is used); mask - uint8 (N,) NA flags; qs - float64 quantiles
+    # in [0, 1]; starts, ends - int64 (ngroups,); interpolation - "linear", "lower",
+    # "higher", "nearest" or "midpoint"; result_mask - uint8 (ngroups, nqs) or None;
+    # is_datetimelike - argsort values as datetime64 so NaT sorts last.
+    # Behavior: for each group, counts non-NA entries m and argsorts the slice (NAs
+    #   assumed
+    # to sort last). For each q, position q*(m-1): integer part idx selects the sorted
+    # value; if fractional, combines with the next value according to interpolation
+    # (nearest rounds half to even index like numpy). Groups with no non-NA values give
+    # NA (result_mask, or NaN).
+    # Outputs: none. Exceptions: AssertionError for shape/start/end mismatches;
+    # ValueError if a q is outside [0, 1]; KeyError for an unknown interpolation.
+    # Side effects: writes out/result_mask; holds the GIL throughout (argsort).
+    # KNOWN ISSUE: the docstring lists interpolation option 'highest' but the code
+    # accepts 'higher' ('highest' raises KeyError).
     """
     Calculate the quantile per group.
 
@@ -1553,6 +1797,14 @@ ctypedef fused numeric_object_complex_t:
 
 cdef bint _treat_as_na(numeric_object_complex_t val,
                        bint is_datetimelike) noexcept nogil:
+    # [FUNCTION DOC]
+    # HELPER: Decide whether a single value is missing.
+    # Inputs: val - value of fused numeric/object/complex type; is_datetimelike.
+    # Outputs: true if missing: objects via checknull (acquires the GIL); int64 only
+    #   when
+    # is_datetimelike and equal to NaT; floats/complex when NaN (val != val); other
+    #   integer
+    # types never. Exceptions: none. Side effects: may acquire the GIL for objects.
     if numeric_object_complex_t is object:
         with gil:
             return checknull(val)
@@ -1576,6 +1828,13 @@ cdef numeric_object_t _get_min_or_max(
     bint compute_max,
     bint is_datetimelike,
 ):
+    # [FUNCTION DOC]
+    # HELPER: Return the extreme value of the fused type to initialize a running
+    #   min/max:
+    # the type's maximum when computing a min, its minimum when computing a max (via
+    # get_rank_nan_fill_val; for datetimelike int64 the NaT value is avoided).
+    # Inputs: val - placeholder selecting the type; compute_max; is_datetimelike.
+    # Outputs: the extreme value. Exceptions: none.
     """
     Find either the min or the max supported by numeric_object_t; 'val' is a
     placeholder to effectively make numeric_object_t an argument.
@@ -1588,6 +1847,11 @@ cdef numeric_object_t _get_min_or_max(
 
 
 cdef numeric_t _get_na_val(numeric_t val, bint is_datetimelike):
+    # [FUNCTION DOC]
+    # HELPER: Return the NA sentinel for a numeric type: NaN for float32/float64, NaT
+    #   for
+    # int64 when is_datetimelike, otherwise 0 (placeholder used with masks).
+    # Inputs: val - placeholder selecting the type; is_datetimelike. Outputs: sentinel.
     cdef:
         numeric_t na_val
 
@@ -1619,6 +1883,16 @@ cdef inline void _check_below_mincount(
     int64_t min_count,
     mincount_t[:, ::1] resx,
 ) noexcept:
+    # [FUNCTION DOC]
+    # HELPER: Finalize an aggregation honoring min_count.
+    # Inputs: out - (ngroups, K) output; uses_mask; result_mask; ncounts - number of
+    # groups; K - number of columns; nobs - int64 (ngroups, K) non-NA counts; min_count;
+    # resx - (ngroups, K) accumulated results.
+    # Behavior: copies resx to out where nobs >= min_count; otherwise writes NA: with a
+    # mask sets result_mask and out 0; floats/complex NaN; int64 NaT (placeholder for
+    # non-datetimelike, which the caller casts to float and masks); object None; other
+    # ints 0 (placeholder).
+    # Outputs: none. Side effects: writes out/result_mask; no GIL except object dtype.
     """
     Check if the number of observations for a group is below min_count,
     and if so set the result for that group to the appropriate NA-like value.
@@ -1675,6 +1949,16 @@ def group_last(
     bint is_datetimelike=False,
     bint skipna=True,
 ) -> None:
+    # [FUNCTION DOC]
+    # Grouped last value (aggregation).
+    # Inputs: out - (ngroups, K) numeric or object; counts; values (N, K); labels;
+    # mask / result_mask; min_count (raised to at least 1); is_datetimelike; skipna.
+    # Behavior: for each row in order, records the value as the group's latest, skipping
+    # NA values when skipna is true; with skipna false NAs are recorded too and, with a
+    # mask, result_mask follows the mask of the recorded value. nobs counts recorded
+    # values; then _check_below_mincount (groups without values become NA).
+    # Outputs: none. Exceptions: AssertionError if len(values) != len(labels).
+    # Side effects: writes out, counts, result_mask; GIL released except object dtype.
     """
     Only aggregates on axis=0
     """
@@ -1741,6 +2025,20 @@ def group_nth(
     bint is_datetimelike=False,
     bint skipna=True,
 ) -> None:
+    # [FUNCTION DOC]
+    # Grouped n-th value (aggregation), 1-based rank among counted values.
+    # Inputs: as group_last plus rank - which occurrence to take (1 = first).
+    # Behavior: counts values per (group, column) (skipping NAs if skipna) and records
+    #   the
+    # value when the count equals rank (with a mask and skipna false, result_mask copies
+    # that value's mask flag); then _check_below_mincount with min_count >= 1, so only
+    #   groups
+    # with no counted values at all become NA.
+    # Outputs: none. Exceptions: AssertionError on length mismatch.
+    # Side effects: writes out, counts, result_mask; GIL released except object dtype.
+    # KNOWN ISSUE: for rank > 1, a group with at least one but fewer than rank values
+    # passes the min_count check (nobs >= 1) and gets uninitialized data from resx
+    # (np.empty). Latent only: pandas currently calls it with rank=1 (first()).
     """
     Only aggregates on axis=0
     """
@@ -1807,6 +2105,17 @@ def group_rank(
     str na_option="keep",
     const uint8_t[:, :] mask=None,
 ) -> None:
+    # [FUNCTION DOC]
+    # Grouped rank of each value within its group (transformation).
+    # Inputs: out - float64 (N, K); values - (N, K) numeric or object; labels; ngroups -
+    # unused; is_datetimelike; ties_method - "average", "min", "max", "first", "dense";
+    # ascending; pct - return rank / group size; na_option - "keep", "top", "bottom";
+    # mask - optional uint8 (N, K).
+    # Behavior: for each column calls algos.rank_1d with the labels (which ranks within
+    # groups) and copies results into out for rows with non-negative labels.
+    # Outputs: none. Side effects: writes out; holds the GIL.
+    # KNOWN ISSUE: the docstring has a stray duplicated "na_option" line under
+    #   ascending.
     """
     Provides the rank of values within each group.
 
@@ -1891,6 +2200,17 @@ cdef group_min_max(
     uint8_t[:, ::1] result_mask=None,
     bint skipna=True,
 ):
+    # [FUNCTION DOC]
+    # HELPER: Shared implementation of group_min / group_max (aggregation).
+    # Inputs: out - (ngroups, K) numeric; counts; values (N, K); labels; min_count
+    #   (raised
+    # to at least 1); is_datetimelike; compute_max; mask / result_mask; skipna.
+    # Behavior: running extreme per (group, column) initialized from _get_min_or_max;
+    # non-NA values update it and nobs; NA values are skipped, or with skipna false make
+    # the group NA (result_mask or sentinel) and stop updates. Then
+    #   _check_below_mincount.
+    # Outputs: none. Exceptions: AssertionError on length mismatch.
+    # Side effects: writes out, counts, result_mask; no GIL in the loop.
     """
     Compute minimum/maximum  of columns of `values`, in row groups `labels`.
 
@@ -2005,6 +2325,22 @@ def group_idxmin_idxmax(
     bint skipna=True,
     uint8_t[:, ::1] result_mask=None,
 ):
+    # [FUNCTION DOC]
+    # Grouped idxmin/idxmax: row position of each group's min/max per column.
+    # Inputs: out - intp (ngroups, K); counts - unused; values (N, K) numeric or object;
+    # labels; min_count - unused; is_datetimelike; mask; name - "idxmin" or "idxmax";
+    # skipna; result_mask - unused.
+    # Behavior: out initialized to -1. The first non-NA value of a group sets the
+    #   position;
+    # later strictly smaller (larger) values replace it, so ties keep the first
+    #   position.
+    # An NA value sets out to -1 if skipna is false (and then the group stays -1) or if
+    #   no
+    # valid value was seen yet. The caller converts -1 to NA / raises.
+    # Outputs: none. Exceptions: AssertionError for bad name or length mismatch.
+    # Side effects: writes out; GIL released except object dtype.
+    # KNOWN ISSUE: the docstring says counts is populated with group sizes, but counts,
+    # min_count and result_mask are never used.
     """
     Compute index of minimum/maximum of columns of `values`, in row groups `labels`.
 
@@ -2117,6 +2453,9 @@ def group_max(
     uint8_t[:, ::1] result_mask=None,
     bint skipna=True,
 ) -> None:
+    # [FUNCTION DOC]
+    # Grouped maximum; thin wrapper calling group_min_max with compute_max=True.
+    # Inputs/outputs/side effects: as group_min_max.
     """See group_min_max.__doc__"""
     group_min_max(
         out,
@@ -2145,6 +2484,9 @@ def group_min(
     uint8_t[:, ::1] result_mask=None,
     bint skipna=True,
 ) -> None:
+    # [FUNCTION DOC]
+    # Grouped minimum; thin wrapper calling group_min_max with compute_max=False.
+    # Inputs/outputs/side effects: as group_min_max.
     """See group_min_max.__doc__"""
     group_min_max(
         out,
@@ -2173,6 +2515,18 @@ cdef group_cummin_max(
     bint skipna,
     bint compute_max,
 ):
+    # [FUNCTION DOC]
+    # HELPER: Shared implementation of group_cummin / group_cummax (transformation).
+    # Inputs: out - (N, K) numeric; values (N, K); mask - uint8 (N, K) or None;
+    # result_mask - uint8 (N, K) (caller pre-fills it with a copy of mask); labels;
+    # ngroups; is_datetimelike; skipna; compute_max.
+    # Behavior: running extreme per (group, column) initialized from _get_min_or_max.
+    # For non-NA values updates and outputs the running extreme. For NA values outputs
+    #   the
+    # value itself (NaN/NaT, or the raw masked value) and records that the group saw an
+    # NA; with skipna false, all later rows of that group output NA (result_mask + 0, or
+    # the NA sentinel). Rows with negative labels are left untouched.
+    # Outputs: none. Side effects: writes out/result_mask; no GIL in the loop.
     """
     Cumulative minimum/maximum of columns of `values`, in row groups `labels`.
 
@@ -2285,6 +2639,10 @@ def group_cummin(
     uint8_t[:, ::1] result_mask=None,
     bint skipna=True,
 ) -> None:
+    # [FUNCTION DOC]
+    # Grouped cumulative minimum; wrapper calling group_cummin_max with
+    #   compute_max=False.
+    # Inputs/outputs/side effects: as group_cummin_max.
     """See group_cummin_max.__doc__"""
     group_cummin_max(
         out=out,
@@ -2311,6 +2669,10 @@ def group_cummax(
     uint8_t[:, ::1] result_mask=None,
     bint skipna=True,
 ) -> None:
+    # [FUNCTION DOC]
+    # Grouped cumulative maximum; wrapper calling group_cummin_max with
+    #   compute_max=True.
+    # Inputs/outputs/side effects: as group_cummin_max.
     """See group_cummin_max.__doc__"""
     group_cummin_max(
         out=out,
