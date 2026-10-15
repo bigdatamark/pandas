@@ -1,3 +1,16 @@
+# [MODULE DOC]
+# pandas._libs.algos: general-purpose compiled array algorithms used throughout pandas -
+#   lexsort checks, group sort indexers, quickselect, pairwise Pearson/Spearman
+#   correlation and covariance with NaN handling, forward/backward fill indexers and
+#   in-place fills, monotonicity checks, ranking (rank_1d / rank_2d with tie-breaking
+#   and NA placement), 2-D diff, plus the generated ensure_<dtype> converters
+#   (algos_common_helper.pxi) and take kernels (algos_take_helper.pxi) included at the
+#   end.
+# Conventions: missing values are NaN for floats, NaT (INT64_MIN) for datetimelike
+#   int64, None/NaN/NA for objects (via checknull/isnaobj); indexer arrays use intp with
+#   -1 meaning 'no position / fill'. Module globals: NaN, NPY_NAT, and 'tiebreakers'
+#   mapping ties_method strings to TiebreakEnumType. Many kernels are fused-type generic
+#   (numeric_t, numeric_object_t) and release the GIL for non-object types.
 cimport cython
 from cython cimport Py_ssize_t
 from libc.math cimport (
@@ -71,56 +84,122 @@ tiebreakers = {
 
 
 class Infinity:
+    # [CLASS DOC]
+    # Sentinel object that compares greater than every non-missing value and equal only
+    #   to other Infinity instances. Used by get_rank_nan_fill_val as the fill value for
+    #   missing entries of object arrays when NaNs should rank highest. Comparisons with
+    #   missing values (checknull) are False for >, >=.
     """
     Provide a positive Infinity comparison method for ranking.
     """
     def __lt__(self, other):
+        # [FUNCTION DOC]
+        # Infinity is never less than anything; always False.
+        # Inputs: other - any object. Outputs: bool. Exceptions: none. Side effects:
+        #   none.
         return False
 
     def __le__(self, other):
+        # [FUNCTION DOC]
+        # True only if other is also an Infinity instance.
+        # Inputs: other - any object. Outputs: bool. Exceptions: none. Side effects:
+        #   none.
         return isinstance(other, Infinity)
 
     def __eq__(self, other):
+        # [FUNCTION DOC]
+        # True only if other is an Infinity instance.
+        # Inputs: other - any object. Outputs: bool. Exceptions: none. Side effects:
+        #   none.
         return isinstance(other, Infinity)
 
     def __ne__(self, other):
+        # [FUNCTION DOC]
+        # Negation of __eq__: True unless other is an Infinity instance.
+        # Inputs: other - any object. Outputs: bool. Exceptions: none. Side effects:
+        #   none.
         return not isinstance(other, Infinity)
 
     def __gt__(self, other):
+        # [FUNCTION DOC]
+        # True if other is neither an Infinity instance nor a missing value (checknull).
+        # Inputs: other - any object. Outputs: bool. Exceptions: none. Side effects:
+        #   none.
         return (not isinstance(other, Infinity) and
                 not checknull(other))
 
     def __ge__(self, other):
+        # [FUNCTION DOC]
+        # True if other is not a missing value (checknull); includes other Infinity
+        #   instances.
+        # Inputs: other - any object. Outputs: bool. Exceptions: none. Side effects:
+        #   none.
         return not checknull(other)
 
 
 class NegInfinity:
+    # [CLASS DOC]
+    # Sentinel object that compares less than every non-missing value and equal only to
+    #   other NegInfinity instances; object-dtype fill value for missing entries when
+    #   NaNs should rank lowest. Mirror image of Infinity.
     """
     Provide a negative Infinity comparison method for ranking.
     """
     def __lt__(self, other):
+        # [FUNCTION DOC]
+        # True if other is neither a NegInfinity instance nor a missing value
+        #   (checknull).
+        # Inputs: other - any object. Outputs: bool. Exceptions: none. Side effects:
+        #   none.
         return  (not isinstance(other, NegInfinity) and
                  not checknull(other))
 
     def __le__(self, other):
+        # [FUNCTION DOC]
+        # True if other is not a missing value (checknull).
+        # Inputs: other - any object. Outputs: bool. Exceptions: none. Side effects:
+        #   none.
         return not checknull(other)
 
     def __eq__(self, other):
+        # [FUNCTION DOC]
+        # True only if other is a NegInfinity instance.
+        # Inputs: other - any object. Outputs: bool. Exceptions: none. Side effects:
+        #   none.
         return isinstance(other, NegInfinity)
 
     def __ne__(self, other):
+        # [FUNCTION DOC]
+        # True unless other is a NegInfinity instance.
+        # Inputs: other - any object. Outputs: bool. Exceptions: none. Side effects:
+        #   none.
         return not isinstance(other, NegInfinity)
 
     def __gt__(self, other):
+        # [FUNCTION DOC]
+        # NegInfinity is never greater than anything; always False.
+        # Inputs: other - any object. Outputs: bool. Exceptions: none. Side effects:
+        #   none.
         return False
 
     def __ge__(self, other):
+        # [FUNCTION DOC]
+        # True only if other is also a NegInfinity instance.
+        # Inputs: other - any object. Outputs: bool. Exceptions: none. Side effects:
+        #   none.
         return isinstance(other, NegInfinity)
 
 
 @cython.wraparound(False)
 @cython.boundscheck(False)
 cpdef ndarray[int64_t, ndim=1] unique_deltas(const int64_t[:] arr):
+    # [FUNCTION DOC]
+    # Return the sorted unique first differences arr[i+1] - arr[i] of an int64 array.
+    # Inputs: arr - 1-D int64 array (read-only memoryview).
+    # Outputs: new sorted 1-D int64 ndarray of distinct deltas; empty if len(arr) < 2.
+    # Exceptions: none explicit (signed overflow of the difference wraps).
+    # Side effects: allocates and frees an int64 khash set used for uniqueness; holds
+    #   the GIL (appends to a Python list).
     """
     Efficiently find the unique first-differences of the given array.
 
@@ -160,6 +239,19 @@ cpdef ndarray[int64_t, ndim=1] unique_deltas(const int64_t[:] arr):
 @cython.wraparound(False)
 @cython.boundscheck(False)
 def is_lexsorted(list_of_arrays: list) -> bool:
+    # [FUNCTION DOC]
+    # Check whether rows formed by several equal-length int64 arrays (levels) are in
+    #   non-decreasing lexicographic order, comparing level 0 first, then level 1 on
+    #   ties, etc.
+    # Inputs: list_of_arrays - non-empty list of 1-D int64 ndarrays of equal length.
+    # Outputs: True if lexicographically sorted (duplicates allowed), else False.
+    # Exceptions: MemoryError if the pointer array cannot be allocated; AssertionError
+    #   if an array is not int64; IndexError for an empty list.
+    # Side effects: mallocs/frees a temporary array of data pointers; releases the GIL
+    #   for the comparison loop.
+    # KNOWN ISSUE: element access uses the raw data pointer with unit stride, so
+    #   non-C-contiguous arrays are read incorrectly; the pointer array also leaks if
+    #   the dtype assertion fails.
     cdef:
         Py_ssize_t i
         Py_ssize_t n, nlevels
@@ -200,6 +292,18 @@ def is_lexsorted(list_of_arrays: list) -> bool:
 @cython.boundscheck(False)
 @cython.wraparound(False)
 def groupsort_indexer(const intp_t[:] index, Py_ssize_t ngroups):
+    # [FUNCTION DOC]
+    # Counting sort of positions by group label: build an indexer that lists all
+    #   positions of group -1 (NA) first, then group 0, 1, ..., preserving original
+    #   order within each group (stable).
+    # Inputs: index - 1-D intp array of group labels in [-1, ngroups); ngroups - number
+    #   of groups.
+    # Outputs: tuple (indexer, counts): indexer - intp ndarray of length len(index);
+    #   counts - intp ndarray of length ngroups + 1 where counts[0] is the number of -1
+    #   labels and counts[g + 1] the size of group g.
+    # Exceptions: none; labels outside [-1, ngroups) cause out-of-bounds writes (no
+    #   bounds checking).
+    # Side effects: allocates the outputs; releases the GIL.
     """
     Compute a 1-d indexer.
 
@@ -253,6 +357,10 @@ def groupsort_indexer(const intp_t[:] index, Py_ssize_t ngroups):
 
 
 cdef Py_ssize_t swap(numeric_t *a, numeric_t *b) noexcept nogil:
+    # [FUNCTION DOC]
+    # HELPER: exchange the values pointed to by a and b (numeric fused type).
+    # Inputs: a, b - pointers to elements. Outputs: always 0.
+    # Exceptions: none. Side effects: mutates *a and *b; nogil.
     cdef:
         numeric_t t
 
@@ -265,6 +373,16 @@ cdef Py_ssize_t swap(numeric_t *a, numeric_t *b) noexcept nogil:
 
 cdef numeric_t kth_smallest_c(numeric_t* arr,
                               Py_ssize_t k, Py_ssize_t n) noexcept nogil:
+    # [FUNCTION DOC]
+    # HELPER: quickselect (Hoare-style partition around arr[k]) that partially reorders
+    #   arr so that arr[k] holds the k-th smallest (0-based) of the first n elements,
+    #   then returns it. Also cimported by groupby.pyx.
+    # Inputs: arr - pointer to n numeric elements; k - 0-based rank, must satisfy 0 <= k
+    #   < n; n - number of elements considered.
+    # Outputs: the k-th smallest value.
+    # Exceptions: none (noexcept). NaNs break the ordering assumptions and give
+    #   unspecified results.
+    # Side effects: reorders arr in place; runs without the GIL.
     """
     See kth_smallest.__doc__. The additional parameter n specifies the maximum
     number of elements considered in arr, needed for compatibility with usage
@@ -305,6 +423,14 @@ cdef numeric_t kth_smallest_c(numeric_t* arr,
 @cython.boundscheck(False)
 @cython.wraparound(False)
 def kth_smallest(numeric_t[::1] arr, Py_ssize_t k) -> numeric_t:
+    # [FUNCTION DOC]
+    # Python entry point for kth_smallest_c over a whole contiguous array.
+    # Inputs: arr - C-contiguous 1-D numeric array; k - 0-based rank.
+    # Outputs: the k-th smallest element.
+    # Exceptions: none explicit.
+    # Side effects: reorders arr in place; releases the GIL.
+    # KNOWN ISSUE: k is not validated and an empty arr is indexed at 0 with bounds
+    #   checking off, so invalid input is undefined behaviour rather than an error.
     """
     Compute the kth smallest value in arr. Note that the input
     array will be modified.
@@ -338,6 +464,21 @@ def kth_smallest(numeric_t[::1] arr, Py_ssize_t k) -> numeric_t:
 @cython.wraparound(False)
 @cython.cdivision(True)
 def nancorr(const float64_t[:, :] mat, bint cov=False, minp=None):
+    # [FUNCTION DOC]
+    # Pairwise Pearson correlation (or covariance when cov=True) between the columns of
+    #   a 2-D float64 matrix, using for each column pair only rows where both values are
+    #   finite.
+    # Inputs: mat - 2-D float64 array (N rows, K columns); cov - compute covariance
+    #   (ddof=1) instead of correlation; minp - minimum number of complete pairs
+    #   required (None means 1).
+    # Algorithm: for each pair (xi, yi) with yi <= xi, Welford's online update
+    #   accumulates means, sums of squared deviations and co-deviation. Result is covxy
+    #   / (nobs - 1) for cov, else covxy / sqrt(ssqdmx * ssqdmy) clipped to [-1, 1]; NaN
+    #   if nobs < minp or the divisor is 0. Matrix is filled symmetrically.
+    # Outputs: new K x K float64 ndarray.
+    # Exceptions: TypeError/OverflowError if minp is not integer-convertible.
+    # Side effects: allocates result and a finite-mask array; releases the GIL for the
+    #   main loop.
     cdef:
         Py_ssize_t i, xi, yi, N, K
         int64_t minpv
@@ -400,6 +541,22 @@ def nancorr(const float64_t[:, :] mat, bint cov=False, minp=None):
 @cython.boundscheck(False)
 @cython.wraparound(False)
 def nancorr_spearman(ndarray[float64_t, ndim=2] mat, Py_ssize_t minp=1) -> ndarray:
+    # [FUNCTION DOC]
+    # Pairwise Spearman rank correlation between columns of a 2-D float64 matrix,
+    #   excluding rows where either value of the pair is non-finite.
+    # Inputs: mat - 2-D float64 ndarray (N, K); minp - minimum number of complete pairs
+    #   required (default 1).
+    # Algorithm: if N < minp everything is NaN. Each column is ranked once with rank_1d
+    #   (average ties). If the whole matrix is finite, Pearson correlation of the ranks
+    #   is computed directly with mean (N + 1) / 2. Otherwise for each pair the complete
+    #   rows are gathered; if the two columns' missing patterns differ the gathered
+    #   values are re-ranked (re-acquiring the GIL to call rank_1d), then Pearson
+    #   correlation of the ranks around mean (nobs + 1) / 2 is computed. NaN if nobs <
+    #   minp or the denominator is zero.
+    # Outputs: new K x K symmetric float64 ndarray.
+    # Exceptions: none explicit.
+    # Side effects: allocates rank and scratch buffers; releases the GIL except when
+    #   re-ranking.
     cdef:
         Py_ssize_t i, xi, yi, N, K
         ndarray[float64_t, ndim=2] result
@@ -499,6 +656,13 @@ def nancorr_spearman(ndarray[float64_t, ndim=2] mat, Py_ssize_t minp=1) -> ndarr
 # ----------------------------------------------------------------------
 
 def validate_limit(nobs: int | None, limit=None) -> int:
+    # [FUNCTION DOC]
+    # HELPER: validate the fill 'limit' argument.
+    # Inputs: nobs - default limit (number of observations); limit - None or a positive
+    #   integer.
+    # Outputs: nobs if limit is None, else limit.
+    # Exceptions: ValueError if limit is not an integer or is < 1.
+    # Side effects: none.
     """
     Check that the `limit` argument is a positive integer.
 
@@ -528,6 +692,16 @@ def validate_limit(nobs: int | None, limit=None) -> int:
 @cython.boundscheck(False)
 @cython.wraparound(False)
 def get_fill_indexer(const uint8_t[:] mask, limit=None):
+    # [FUNCTION DOC]
+    # Build a forward-fill indexer: for each position, the index of the most recent
+    #   non-missing position, for use with take.
+    # Inputs: mask - 1-D uint8/bool array, true where missing; limit - maximum number of
+    #   consecutive missing values to fill (None = unlimited).
+    # Outputs: intp ndarray of len(mask): i where not missing; last valid index for
+    #   missing entries within the limit; -1 for leading missing values and entries
+    #   beyond the limit.
+    # Exceptions: ValueError from validate_limit.
+    # Side effects: allocates the output.
     """
     Find an indexer to use for ffill to `take` on the array being filled.
     """
@@ -567,6 +741,20 @@ def pad(
     const numeric_object_t[:] new,
     limit=None
 ) -> ndarray:
+    # [FUNCTION DOC]
+    # Forward-fill reindexing indexer: for each value in sorted 'new', find the position
+    #   of the last value in sorted 'old' that is <= it.
+    # Inputs: old, new - 1-D monotonically increasing arrays of the same fused
+    #   numeric/object type; limit - maximum number of consecutive new labels that may
+    #   be filled from a single old label without an exact match.
+    # Algorithm: two-pointer merge. new values before old[0] get -1. For each old label
+    #   i, new values in [old[i], old[i+1]) map to i - exact matches always, non-matches
+    #   only while the per-label fill count is below the limit. After the last old label
+    #   all remaining new values are handled the same way.
+    # Outputs: intp ndarray of len(new), -1 where no fill applies.
+    # Exceptions: ValueError from validate_limit; comparison errors for incomparable
+    #   objects.
+    # Side effects: allocates the output.
     # -> ndarray[intp_t, ndim=1]
     cdef:
         Py_ssize_t i, j, nleft, nright
@@ -625,6 +813,17 @@ def pad(
 @cython.boundscheck(False)
 @cython.wraparound(False)
 def pad_inplace(numeric_object_t[:] values, uint8_t[:] mask, limit=None):
+    # [FUNCTION DOC]
+    # Forward-fill a 1-D array in place using a missing-value mask.
+    # Inputs: values - 1-D array (fused numeric/object); mask - uint8 array of the same
+    #   length, true where missing; limit - max consecutive fills.
+    # Behavior: walks left to right remembering the last non-missing value and its mask;
+    #   each missing entry, up to 'limit' in a row, is overwritten with that value and
+    #   its mask entry set to the remembered mask (so leading missing values stay
+    #   missing). Empty input returns immediately.
+    # Outputs: None.
+    # Exceptions: ValueError from validate_limit.
+    # Side effects: mutates values and mask.
     cdef:
         Py_ssize_t i, N
         numeric_object_t val
@@ -657,6 +856,21 @@ def pad_inplace(numeric_object_t[:] values, uint8_t[:] mask, limit=None):
 @cython.boundscheck(False)
 @cython.wraparound(False)
 def pad_2d_inplace(numeric_object_t[:, :] values, uint8_t[:, :] mask, limit=None):
+    # [FUNCTION DOC]
+    # Forward-fill each row of a 2-D array along axis 1 in place.
+    # Inputs: values - 2-D array of shape (K, N); mask - uint8 array of the same shape,
+    #   true where missing; limit - max consecutive fills per run.
+    # Behavior: for each row, missing entries after the first column are replaced with
+    #   the last seen non-missing value (up to limit consecutive) and their mask set to
+    #   False; missing entries in column 0 are left untouched. N == 0 returns
+    #   immediately.
+    # Outputs: None.
+    # Exceptions: ValueError from validate_limit.
+    # Side effects: mutates values and mask.
+    # KNOWN ISSUE: if column 0 is missing, the remembered value is the missing
+    #   values[j, 0] itself, so subsequent missing
+    #   entries in that leading run are 'filled' with it and their mask cleared to
+    #   False, unlike pad_inplace which keeps them masked.
     cdef:
         Py_ssize_t i, j, N, K
         numeric_object_t val
@@ -692,6 +906,17 @@ def backfill(
     const numeric_object_t[:] new,
     limit=None
 ) -> ndarray:  # -> ndarray[intp_t, ndim=1]
+    # [FUNCTION DOC]
+    # Backward-fill reindexing indexer: for each value in sorted 'new', the position of
+    #   the first value in sorted 'old' that is >= it.
+    # Inputs: old, new - 1-D monotonically increasing arrays of the same fused type;
+    #   limit - maximum consecutive non-exact fills per old label.
+    # Algorithm: mirror of pad, walking both arrays from the end; new values after
+    #   old[-1] get -1; new values in (old[i-1], old[i]] map to i, exact matches always
+    #   and others while under the limit.
+    # Outputs: intp ndarray of len(new) with -1 where not filled.
+    # Exceptions: ValueError from validate_limit.
+    # Side effects: allocates the output.
     """
     Backfilling logic for generating fill vector
 
@@ -772,18 +997,42 @@ def backfill(
 
 
 def backfill_inplace(numeric_object_t[:] values, uint8_t[:] mask, limit=None):
+    # [FUNCTION DOC]
+    # Backward-fill a 1-D array in place by running pad_inplace on reversed views of
+    #   values and mask.
+    # Inputs/Exceptions: as pad_inplace. Outputs: None.
+    # Side effects: mutates values and mask.
     pad_inplace(values[::-1], mask[::-1], limit=limit)
 
 
 def backfill_2d_inplace(numeric_object_t[:, :] values,
                         uint8_t[:, :] mask,
                         limit=None):
+    # [FUNCTION DOC]
+    # Backward-fill each row of a 2-D (K, N) array along axis 1 in place by running
+    #   pad_2d_inplace on column-reversed views.
+    # Inputs/Exceptions: as pad_2d_inplace. Outputs: None.
+    # Side effects: mutates values and mask.
     pad_2d_inplace(values[:, ::-1], mask[:, ::-1], limit)
 
 
 @cython.boundscheck(False)
 @cython.wraparound(False)
 def is_monotonic(const numeric_object_t[:] arr, bint timelike):
+    # [FUNCTION DOC]
+    # Determine whether a 1-D array is monotonically increasing, decreasing, and
+    #   strictly monotonic, in a single pass.
+    # Inputs: arr - 1-D array (fused numeric or object); timelike - if true, int64
+    #   values equal to NaT are treated as missing.
+    # Behavior: length 0 gives (True, True, True); length 1 gives (False, False, True)
+    #   if the single value is NaN/NaT else (True, True, True). A leading NaT gives
+    #   (False, False, False). Otherwise adjacent pairs are compared; a missing value
+    #   (NaN comparisons all false, or NaT) makes both flags False; loop exits early
+    #   once both flags are False. Equal neighbours mark the array non-unique.
+    # Outputs: tuple (is_monotonic_inc, is_monotonic_dec, is_strict_monotonic) where
+    #   strict means unique and monotonic in either direction.
+    # Exceptions: comparison errors for incomparable objects.
+    # Side effects: releases the GIL for non-object types.
     """
     Returns
     -------
@@ -853,6 +1102,19 @@ cdef numeric_object_t get_rank_nan_fill_val(
     numeric_object_t val,
     bint is_datetimelike=False,
 ):
+    # [FUNCTION DOC]
+    # HELPER: return the sentinel used to replace missing values before sorting for
+    #   ranking, so missing values sort to the top or bottom.
+    # Inputs: rank_nans_highest - true to sort missing last; val - unused, only selects
+    #   the fused type; is_datetimelike - int64 values are datetimes.
+    # Outputs: datetimelike int64 with NaNs lowest -> NaT + 1; otherwise when highest:
+    #   Infinity() for object, the type max for ints/uints, +inf for floats; when
+    #   lowest: NegInfinity() for object, NaT (INT64_MIN) for int64, type min for other
+    #   signed ints, 0 for unsigned, -inf for floats.
+    # Exceptions: none. Side effects: none.
+    # KNOWN ISSUE: the docstring calls val 'the second parameter'; callers (rank_1d,
+    #   rank_2d) never pass is_datetimelike, so the NaT + 1 branch is unreachable from
+    #   this module.
     """
     Return the value we'll use to represent missing values when sorting depending
     on if we'd like missing values to end up at the top/bottom. (The second parameter
@@ -920,6 +1182,25 @@ def rank_1d(
     na_option="keep",
     const uint8_t[:] mask=None,
 ):
+    # [FUNCTION DOC]
+    # Rank a 1-D array (optionally within groups), NaN-aware, like scipy.stats.rankdata.
+    # Inputs: values - 1-D ndarray (fused numeric/object); labels - optional intp group
+    #   labels of the same length (ranks are computed per group); is_datetimelike -
+    #   int64 NaT is missing; ties_method - 'average', 'min', 'max', 'first', 'dense';
+    #   ascending - rank direction; pct - divide ranks by the group size; na_option -
+    #   'keep' (NaN rank), 'top' or 'bottom'; mask - optional uint8 array marking
+    #   missing values (otherwise derived from NaN, NaT or isnaobj).
+    # Algorithm: copy values (to object if needed), replace missing entries with a
+    #   sentinel from get_rank_nan_fill_val chosen by ascending XOR (na_option ==
+    #   'top'), np.lexsort by (labels, mask or inverted mask, values), reverse for
+    #   descending ('first' becomes TIEBREAK_FIRST_DESCENDING), then call rank_sorted_1d
+    #   to assign ranks.
+    # Outputs: float64 ndarray of ranks, length len(values).
+    # Exceptions: KeyError for an unknown ties_method; AssertionError if labels has the
+    #   wrong length.
+    # Side effects: allocates copies; ranking loop runs without the GIL for non-object
+    #   types.
+    # KNOWN ISSUE: the docstring has a stray 'na_option' line under 'ascending'.
     """
     Fast NaN-friendly version of ``scipy.stats.rankdata``.
 
@@ -1071,6 +1352,26 @@ cdef void rank_sorted_1d(
     # currently be omitted for cdef functions, which is why we keep this at the end
     const intp_t[:] labels=None,
 ) noexcept nogil:
+    # [FUNCTION DOC]
+    # HELPER: assign ranks given values already sorted via sort_indexer.
+    # Inputs: out - float64 output (length >= N); grp_sizes - int64 buffer for
+    #   per-element group size (used for pct); sort_indexer - intp order of masked_vals;
+    #   masked_vals - values with missing replaced by a fill value; mask - uint8 missing
+    #   flags; check_mask - if false mask is assumed all false; N - number of elements
+    #   to rank; tiebreak - TiebreakEnumType; keep_na - assign NaN to missing values;
+    #   pct - divide by group size; labels - optional group labels.
+    # Algorithm: iterate sorted positions accumulating dups and sum_ranks; at each
+    #   change of value, group, or missingness, write ranks for the run of dups: NaN if
+    #   missing and keep_na, else average (sum_ranks / dups), min, max, first (position
+    #   order), first-descending, or dense (count of distinct values seen in group).
+    #   Ranks are relative to the group start. When the group changes, group size
+    #   (non-null count, or distinct non-null values for dense) is stored for each
+    #   member and counters reset. Finally, if pct, out[i] /= grp_sizes[i] where
+    #   non-zero.
+    # Outputs: None.
+    # Exceptions: none (noexcept).
+    # Side effects: mutates out and grp_sizes; runs nogil, re-acquiring the GIL for
+    #   object comparisons.
     """
     See rank_1d.__doc__. Handles only actual ranking, so sorting and masking should
     be handled in the caller. Note that `out` and `grp_sizes` are modified inplace.
@@ -1231,6 +1532,18 @@ def rank_2d(
     na_option="keep",
     bint pct=False,
 ):
+    # [FUNCTION DOC]
+    # Rank each column (axis=0) or row (axis=1) of a 2-D array independently.
+    # Inputs: in_arr - 2-D ndarray (fused numeric/object); axis - 0 or 1;
+    #   is_datetimelike, ties_method, ascending, na_option, pct - as in rank_1d.
+    # Algorithm: copy (transposed for axis=1); for float/object/datetimelike, compute
+    #   mask and replace missing with the fill sentinel, then lexsort along axis 0 by
+    #   (values, mask); otherwise argsort (stable when ties_method == 'first'). Reverse
+    #   for descending, then call rank_sorted_1d per column.
+    # Outputs: float64 ndarray of the same shape as in_arr.
+    # Exceptions: KeyError for an unknown ties_method.
+    # Side effects: allocates copies; ranking loop releases the GIL for non-object
+    #   types.
     """
     Fast NaN-friendly version of ``scipy.stats.rankdata``.
     """
@@ -1350,6 +1663,20 @@ def diff_2d(
     int axis,
     bint datetimelike=False,
 ):
+    # [FUNCTION DOC]
+    # Compute out = arr - arr shifted by 'periods' along 'axis' for a 2-D array.
+    # Inputs: arr - 2-D array (float64, float32, int8, int16, int32 or int64); out -
+    #   preallocated 2-D output (float32, float64 or int64) of the same shape; periods -
+    #   shift (negative looks forward); axis - 0 or 1; datetimelike - for int64 output,
+    #   NaT in either operand yields NaT.
+    # Behavior: only positions with a valid partner are written (rows/cols [periods, n)
+    #   or [0, n + periods)); others are left untouched for the caller to fill. Loop
+    #   order is chosen by whether arr is Fortran-contiguous.
+    # Outputs: None.
+    # Exceptions: NotImplementedError for unsupported (input, output) dtype combinations
+    #   (float32 out requires float32/int8/int16 in; float64 out rejects those; int64
+    #   out requires int64 in).
+    # Side effects: mutates out; releases the GIL.
     cdef:
         Py_ssize_t i, j, sx, sy, start, stop
         bint f_contig = arr.is_f_contig()

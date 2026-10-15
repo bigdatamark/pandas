@@ -1,3 +1,30 @@
+# [MODULE DOC]
+# Rolling-window aggregation kernels behind pandas Rolling/Expanding/Window/EWM
+#   (pandas.core.window). Most kernels take: values - 1-D float64 array; start, end -
+#   int64 arrays of equal length N giving, for output row i, the half-open slice
+#   [start[i], end[i]) of values in the window (produced by the indexers in
+#   pandas.core.indexers / indexers.pyx); minp - minimum number of non-NaN observations
+#   required, else the output is NaN. They return a float64 ndarray of length N.
+# Common pattern: if the start and end arrays are both monotonically non-decreasing,
+#   statistics are maintained incrementally - values leaving the window
+#   (start[i-1]..start[i]) are removed and entering ones (end[i-1]..end[i]) added;
+#   otherwise, or when windows do not overlap, each window is recomputed from scratch.
+#   NaN inputs are skipped and do not count toward nobs. Sums use Kahan compensated
+#   summation; var/skew/kurt use Welford-style online moment updates and fall back to a
+#   full recompute when a catastrophic-cancellation heuristic (InvCondTol = 1000 *
+#   float64 eps) fires. A 'num_consecutive_same_value' counter forces exact results for
+#   windows of identical values (GH#42064).
+# Order statistics (median, quantile, rank) use an indexable skiplist from
+#   pandas/skiplist.h (C); min/max use a monotonic deque; nunique uses a C++
+#   unordered_map; weighted windows (win_type) and EWM have dedicated kernels. Kernels
+#   release the GIL in their main loops. Module globals: NaN, EpsF64, InvCondTol,
+#   interpolation_types, rolling_rank_tiebreakers.
+# The cdef extern block declares the skiplist C API: skiplist_init(expected size)
+#   allocates (NULL on failure); skiplist_destroy frees; skiplist_get(sl, i, &ret)
+#   returns the i-th smallest value (ret=0 on failure); skiplist_insert returns the
+#   1-based rank of the inserted value (highest rank among equal values) or -1 on
+#   allocation failure; skiplist_remove deletes one copy; skiplist_rank /
+#   skiplist_min_rank return the max / min 1-based rank of a value.
 # cython: boundscheck=False, wraparound=False, cdivision=True
 
 from libc.math cimport (
@@ -29,6 +56,11 @@ from pandas._libs.algos import is_monotonic
 
 cdef extern from "pandas/skiplist.h":
     ctypedef struct node_t:
+        # [CLASS DOC]
+        # C skiplist node (from pandas/skiplist.h): next - per-level forward pointers;
+        #   width - per-level number of elements skipped by each link; value - stored
+        #   double; is_nil - sentinel flag; levels - height; ref_count - reference count
+        #   for shared freeing.
         node_t **next
         int *width
         double value
@@ -37,6 +69,11 @@ cdef extern from "pandas/skiplist.h":
         int ref_count
 
     ctypedef struct skiplist_t:
+        # [CLASS DOC]
+        # C indexable skiplist (pandas/skiplist.h) holding a sorted multiset of doubles:
+        #   head - sentinel node; tmp_chain/tmp_steps - scratch arrays used during
+        #   insert/remove; size - number of elements; maxlevels - max height, derived
+        #   from the expected size passed to skiplist_init.
         node_t *head
         node_t **tmp_chain
         int *tmp_steps
@@ -63,6 +100,11 @@ cdef:
 cdef bint is_monotonic_increasing_start_end_bounds(
     ndarray[int64_t, ndim=1] start, ndarray[int64_t, ndim=1] end
 ):
+    # [FUNCTION DOC]
+    # HELPER: true if both start and end are monotonically non-decreasing (uses
+    #   algos.is_monotonic), enabling incremental add/remove updates.
+    # Inputs: start, end - 1-D int64 ndarrays. Outputs: bint.
+    # Exceptions: none expected. Side effects: none; requires the GIL.
     return is_monotonic(start, False)[0] and is_monotonic(end, False)[0]
 
 # ----------------------------------------------------------------------
@@ -72,6 +114,14 @@ cdef bint is_monotonic_increasing_start_end_bounds(
 cdef float64_t calc_sum(int64_t minp, int64_t nobs, float64_t sum_x,
                         int64_t num_consecutive_same_value, float64_t prev_value
                         ) noexcept nogil:
+    # [FUNCTION DOC]
+    # HELPER: final rolling-sum value for a window.
+    # Inputs: minp; nobs - non-NaN count; sum_x - running sum;
+    #   num_consecutive_same_value - length of trailing run of identical values;
+    #   prev_value - last added value.
+    # Outputs: 0 if nobs == minp == 0; NaN if nobs < minp; prev_value * nobs if all
+    #   observations are the same value (avoids float artifacts); else sum_x.
+    # Exceptions: none. Side effects: none; nogil.
     cdef:
         float64_t result
 
@@ -91,6 +141,15 @@ cdef float64_t calc_sum(int64_t minp, int64_t nobs, float64_t sum_x,
 cdef void add_sum(float64_t val, int64_t *nobs, float64_t *sum_x,
                   float64_t *compensation, int64_t *num_consecutive_same_value,
                   float64_t *prev_value) noexcept nogil:
+    # [FUNCTION DOC]
+    # HELPER: add val to a running Kahan-compensated sum, skipping NaN.
+    # Inputs: val; nobs, sum_x, compensation, num_consecutive_same_value, prev_value -
+    #   pointers to accumulators.
+    # Behavior: if val is not NaN, increments nobs, applies Kahan update, and updates
+    #   the identical-value run (incremented if val equals prev_value, else reset to 1)
+    #   and prev_value.
+    # Outputs: none. Exceptions: none.
+    # Side effects: mutates the pointed-to accumulators; nogil, noexcept.
     """ add a value from the sum calc using Kahan summation """
 
     cdef:
@@ -115,6 +174,12 @@ cdef void add_sum(float64_t val, int64_t *nobs, float64_t *sum_x,
 
 cdef void remove_sum(float64_t val, int64_t *nobs, float64_t *sum_x,
                      float64_t *compensation) noexcept nogil:
+    # [FUNCTION DOC]
+    # HELPER: subtract val from a running Kahan-compensated sum, skipping NaN;
+    #   decrements nobs. Uses its own compensation term.
+    # Inputs: val; nobs, sum_x, compensation - pointers. Outputs: none.
+    # Exceptions: none.
+    # Side effects: mutates the pointed-to accumulators; nogil, noexcept.
     """ remove a value from the sum calc using Kahan summation """
 
     cdef:
@@ -131,6 +196,15 @@ cdef void remove_sum(float64_t val, int64_t *nobs, float64_t *sum_x,
 
 def roll_sum(const float64_t[:] values, ndarray[int64_t] start,
              ndarray[int64_t] end, int64_t minp) -> np.ndarray:
+    # [FUNCTION DOC]
+    # Rolling sum of values over [start[i], end[i]) windows.
+    # Inputs: values - float64 array; start, end - int64 bound arrays; minp - min
+    #   non-NaN count (0 allows an empty window sum of 0).
+    # Algorithm: incremental add/remove with separate Kahan compensations for adds and
+    #   removes when bounds are monotonic and windows overlap; otherwise recompute;
+    #   result via calc_sum.
+    # Outputs: float64 ndarray of length len(start).
+    # Exceptions: none explicit. Side effects: allocates output; releases the GIL.
     cdef:
         Py_ssize_t i, j
         float64_t sum_x, compensation_add, compensation_remove, prev_value
@@ -191,6 +265,14 @@ def roll_sum(const float64_t[:] values, ndarray[int64_t] start,
 cdef float64_t calc_mean(int64_t minp, Py_ssize_t nobs, Py_ssize_t neg_ct,
                          float64_t sum_x, int64_t num_consecutive_same_value,
                          float64_t prev_value) noexcept nogil:
+    # [FUNCTION DOC]
+    # HELPER: final rolling-mean value.
+    # Inputs: minp; nobs; neg_ct - number of negative (signbit) observations; sum_x;
+    #   num_consecutive_same_value; prev_value.
+    # Outputs: NaN if nobs < minp or nobs == 0; prev_value if all values identical;
+    #   sum_x / nobs otherwise, clamped to 0 when the sign contradicts the inputs (all
+    #   non-negative but mean < 0, or all negative but mean > 0).
+    # Exceptions: none. Side effects: none; nogil.
     cdef:
         float64_t result
 
@@ -220,6 +302,13 @@ cdef void add_mean(
     int64_t *num_consecutive_same_value,
     float64_t *prev_value
 ) noexcept nogil:
+    # [FUNCTION DOC]
+    # HELPER: like add_sum but also increments neg_ct when val has its sign bit set
+    #   (includes -0.0).
+    # Inputs: val; pointers nobs, sum_x, neg_ct, compensation,
+    #   num_consecutive_same_value, prev_value. Outputs: none.
+    # Exceptions: none.
+    # Side effects: mutates the pointed-to accumulators; nogil, noexcept.
     """ add a value from the mean calc using Kahan summation """
     cdef:
         float64_t y, t
@@ -245,6 +334,11 @@ cdef void add_mean(
 
 cdef void remove_mean(float64_t val, Py_ssize_t *nobs, float64_t *sum_x,
                       Py_ssize_t *neg_ct, float64_t *compensation) noexcept nogil:
+    # [FUNCTION DOC]
+    # HELPER: like remove_sum but also decrements neg_ct for sign-bit values.
+    # Inputs: val; pointers nobs, sum_x, neg_ct, compensation. Outputs: none.
+    # Exceptions: none.
+    # Side effects: mutates the pointed-to accumulators; nogil, noexcept.
     """ remove a value from the mean calc using Kahan summation """
     cdef:
         float64_t y, t
@@ -261,6 +355,11 @@ cdef void remove_mean(float64_t val, Py_ssize_t *nobs, float64_t *sum_x,
 
 def roll_mean(const float64_t[:] values, ndarray[int64_t] start,
               ndarray[int64_t] end, int64_t minp) -> np.ndarray:
+    # [FUNCTION DOC]
+    # Rolling mean; same structure as roll_sum using add_mean/remove_mean and calc_mean.
+    # Inputs: values, start, end, minp as in the module doc.
+    # Outputs: float64 ndarray of length len(start).
+    # Exceptions: none explicit. Side effects: allocates output; releases the GIL.
     cdef:
         float64_t val, compensation_add, compensation_remove, sum_x, prev_value
         int64_t s, e, num_consecutive_same_value
@@ -325,6 +424,12 @@ cdef float64_t calc_var(
     float64_t nobs,
     float64_t ssqdm_x,
 ) noexcept nogil:
+    # [FUNCTION DOC]
+    # HELPER: final rolling variance ssqdm_x / (nobs - ddof) if nobs >= minp and nobs >
+    #   ddof, else NaN.
+    # Inputs: minp; ddof - delta degrees of freedom; nobs (as float); ssqdm_x - sum of
+    #   squared deviations from the mean. Outputs: float64.
+    # Exceptions: none. Side effects: none; nogil.
     cdef:
         float64_t result
 
@@ -345,6 +450,14 @@ cdef void add_var(
     float64_t *compensation,
     bint *numerically_unstable,
 ) noexcept nogil:
+    # [FUNCTION DOC]
+    # HELPER: Welford online update adding val (NaN skipped) to nobs, mean_x and
+    #   ssqdm_x, with Kahan-style compensation on the mean.
+    # Inputs: val; pointers nobs, mean_x, ssqdm_x, compensation, numerically_unstable.
+    # Behavior: sets numerically_unstable when the new ssqdm_x drops below previous
+    #   ssqdm_x * InvCondTol (possible cancellation). Outputs: none.
+    # Exceptions: none.
+    # Side effects: mutates the pointed-to accumulators; nogil, noexcept.
     """ add a value from the var calc """
     cdef:
         float64_t delta, prev_mean, y, t
@@ -383,6 +496,14 @@ cdef void remove_var(
     float64_t *compensation,
     bint *numerically_unstable,
 ) noexcept nogil:
+    # [FUNCTION DOC]
+    # HELPER: reverse Welford update removing val (NaN skipped). When nobs reaches 0 the
+    #   mean and ssqdm_x are reset to 0 and the instability flag cleared; otherwise the
+    #   flag is set on suspected cancellation.
+    # Inputs: val; pointers nobs, mean_x, ssqdm_x, compensation, numerically_unstable.
+    #   Outputs: none.
+    # Exceptions: none.
+    # Side effects: mutates the pointed-to accumulators; nogil, noexcept.
     """ remove a value from the var calc """
     cdef:
         float64_t delta, prev_mean, y, t
@@ -412,6 +533,14 @@ cdef void remove_var(
 
 def roll_var(const float64_t[:] values, ndarray[int64_t] start,
              ndarray[int64_t] end, int64_t minp, int ddof=1) -> np.ndarray:
+    # [FUNCTION DOC]
+    # Rolling variance with ddof (default 1) using Welford's method.
+    # Inputs: values, start, end, minp (raised to at least 1); ddof.
+    # Algorithm: incremental remove/add when bounds are monotonic and windows overlap;
+    #   full recompute of the window when required or when the instability flag was set;
+    #   result via calc_var.
+    # Outputs: float64 ndarray of length len(start).
+    # Exceptions: none explicit. Side effects: allocates output; releases the GIL.
     """
     Numerically stable implementation using Welford's method.
     """
@@ -485,6 +614,14 @@ cdef float64_t calc_skew(int64_t minp, int64_t nobs,
                          float64_t mean, float64_t m2, float64_t m3,
                          int64_t num_consecutive_same_value
                          ) noexcept nogil:
+    # [FUNCTION DOC]
+    # HELPER: final rolling skewness (adjusted Fisher-Pearson, matching nanskew).
+    # Inputs: minp; nobs; mean; m2, m3 - sums of squared/cubed deviations;
+    #   num_consecutive_same_value.
+    # Outputs: NaN if nobs < minp or nobs < 3; 0 if all values identical; NaN if m2 <=
+    #   nobs * 1e-14 (degenerate variance); else m3 / m2^1.5 * n * sqrt(n - 1) / (n -
+    #   2).
+    # Exceptions: none. Side effects: none; nogil.
     cdef:
         float64_t result, dnobs
         float64_t moments_ratio, correction
@@ -526,6 +663,14 @@ cdef void add_skew(float64_t val, int64_t *nobs,
                    int64_t *num_consecutive_same_value,
                    float64_t *prev_value,
                    ) noexcept nogil:
+    # [FUNCTION DOC]
+    # HELPER: online higher-moment update adding val (NaN skipped) to nobs, mean, m2,
+    #   m3; sets numerically_unstable if the m3 update suffers cancellation; updates the
+    #   identical-value run counter and prev_value.
+    # Inputs: val; pointers nobs, mean, m2, m3, numerically_unstable,
+    #   num_consecutive_same_value, prev_value. Outputs: none.
+    # Exceptions: none.
+    # Side effects: mutates the pointed-to accumulators; nogil, noexcept.
     """ add a value from the skew calc """
     cdef:
         float64_t n, delta, delta_n, term1, m3_update, new_m3
@@ -564,6 +709,12 @@ cdef void remove_skew(float64_t val, int64_t *nobs,
                       float64_t *mean, float64_t *m2,
                       float64_t *m3,
                       bint *numerically_unstable) noexcept nogil:
+    # [FUNCTION DOC]
+    # HELPER: inverse online update removing val (NaN skipped) from nobs, mean, m2, m3,
+    #   flagging cancellation in m3. Does not touch the identical-value counter.
+    # Inputs: val; pointers nobs, mean, m2, m3, numerically_unstable. Outputs: none.
+    # Exceptions: none; division by zero (n == 0) yields inf/NaN under cdivision.
+    # Side effects: mutates the pointed-to accumulators; nogil, noexcept.
     """ remove a value from the skew calc """
     cdef:
         float64_t n, delta, delta_n, term1, m3_update, new_m3
@@ -600,6 +751,13 @@ cdef void remove_skew(float64_t val, int64_t *nobs,
 
 def roll_skew(const float64_t[:] values, ndarray[int64_t] start,
               ndarray[int64_t] end, int64_t minp) -> np.ndarray:
+    # [FUNCTION DOC]
+    # Rolling skewness.
+    # Inputs: values, start, end, minp (raised to at least 3).
+    # Algorithm: incremental remove/add, full recompute when bounds require it or after
+    #   instability (flag then cleared); result via calc_skew.
+    # Outputs: float64 ndarray of length len(start).
+    # Exceptions: none explicit. Side effects: allocates output; releases the GIL.
     cdef:
         Py_ssize_t i, j
         float64_t val
@@ -678,6 +836,13 @@ cdef float64_t calc_kurt(int64_t minp, int64_t nobs,
                          float64_t m2, float64_t m4,
                          int64_t num_consecutive_same_value,
                          ) noexcept nogil:
+    # [FUNCTION DOC]
+    # HELPER: final rolling excess kurtosis (unbiased, matching nankurt).
+    # Inputs: minp; nobs; m2, m4 - sums of squared/fourth-power deviations;
+    #   num_consecutive_same_value.
+    # Outputs: NaN if nobs < minp or nobs < 4; -3 if all values identical; NaN if m2 <=
+    #   nobs * 1e-14; else (n-1)/((n-2)(n-3)) * (n(n+1) m4/m2^2 - 3(n-1)).
+    # Exceptions: none. Side effects: none; nogil.
     cdef:
         float64_t result, dnobs, term1, term2, inner, correction
         float64_t moments_ratio
@@ -724,6 +889,13 @@ cdef void add_kurt(float64_t val, int64_t *nobs,
                    int64_t *num_consecutive_same_value,
                    float64_t *prev_value
                    ) noexcept nogil:
+    # [FUNCTION DOC]
+    # HELPER: online update adding val (NaN skipped) to nobs, mean, m2, m3, m4; flags
+    #   cancellation in m4; maintains identical-value run and prev_value.
+    # Inputs: val; pointers nobs, mean, m2, m3, m4, numerically_unstable,
+    #   num_consecutive_same_value, prev_value. Outputs: none.
+    # Exceptions: none.
+    # Side effects: mutates the pointed-to accumulators; nogil, noexcept.
     """ add a value from the kurotic calc """
     cdef:
         float64_t n, delta, delta_n, term1, m4_update, new_m4
@@ -770,6 +942,12 @@ cdef void remove_kurt(float64_t val, int64_t *nobs,
                       float64_t *m3, float64_t *m4,
                       bint *numerically_unstable,
                       ) noexcept nogil:
+    # [FUNCTION DOC]
+    # HELPER: inverse online update removing val (NaN skipped) from nobs, mean, m2, m3,
+    #   m4; flags cancellation in m4.
+    # Inputs: val; pointers nobs, mean, m2, m3, m4, numerically_unstable. Outputs: none.
+    # Exceptions: none.
+    # Side effects: mutates the pointed-to accumulators; nogil, noexcept.
     """ remove a value from the kurotic calc """
     cdef:
         float64_t n, delta, delta_n, term1, m4_update, new_m4
@@ -803,6 +981,15 @@ cdef void remove_kurt(float64_t val, int64_t *nobs,
 
 def roll_kurt(const float64_t[:] values, ndarray[int64_t] start,
               ndarray[int64_t] end, int64_t minp) -> np.ndarray:
+    # [FUNCTION DOC]
+    # Rolling excess kurtosis.
+    # Inputs: values, start, end, minp (raised to at least 4).
+    # Algorithm: as roll_skew with add_kurt/remove_kurt/calc_kurt.
+    # Outputs: float64 ndarray of length len(start).
+    # Exceptions: none explicit. Side effects: allocates output; releases the GIL.
+    # KNOWN ISSUE: unlike roll_skew, numerically_unstable is never reset to False after
+    #   a recompute, so once set every subsequent window is fully recomputed (correct
+    #   results, but O(N * window) cost).
     cdef:
         Py_ssize_t i, j
         float64_t mean, m2, m3, m4
@@ -879,6 +1066,19 @@ def roll_kurt(const float64_t[:] values, ndarray[int64_t] start,
 
 def roll_median_c(const float64_t[:] values, ndarray[int64_t] start,
                   ndarray[int64_t] end, int64_t minp) -> np.ndarray:
+    # [FUNCTION DOC]
+    # Rolling median using a skiplist sized to the largest window.
+    # Inputs: values, start, end, minp. Requires len(start) > 0.
+    # Algorithm: all-zero-width windows give all NaN. Otherwise non-NaN values are
+    #   inserted/removed incrementally (or the skiplist is rebuilt when recomputing);
+    #   median is the middle element, or the mean of the two middle elements for even
+    #   nobs; NaN if nobs < minp or lookup fails.
+    # Outputs: float64 ndarray of length len(start).
+    # Exceptions: MemoryError if skiplist_init or skiplist_insert fails.
+    # Side effects: allocates/frees the skiplist; releases the GIL.
+    # KNOWN ISSUE: after an insert failure the inner loop breaks but the outer loop
+    #   keeps computing with a partial skiplist; the error is only raised after all
+    #   rows. A NULL from re-initialising the skiplist inside the loop is not checked.
     cdef:
         Py_ssize_t i, j
         bint err = False, is_monotonic_increasing_bounds
@@ -975,6 +1175,12 @@ cdef int64_t bisect_left(
     int64_t lo=0,
     int64_t hi=-1
 ) nogil:
+    # [FUNCTION DOC]
+    # HELPER: binary search on a sorted std::deque of int64 indices; return the first
+    #   position in [lo, hi) whose element is >= x (hi = -1 means size()).
+    # Inputs: a - deque (by reference); x - target; lo, hi - search range.
+    # Outputs: insertion index. Exceptions: none (at() may throw a C++ out_of_range only
+    #   for invalid ranges). Side effects: none; nogil.
     """Same as https://docs.python.org/3/library/bisect.html."""
 
     cdef int64_t mid
@@ -996,6 +1202,13 @@ from libc.math cimport isnan
 
 def roll_max(ndarray[float64_t] values, ndarray[int64_t] start,
              ndarray[int64_t] end, int64_t minp) -> np.ndarray:
+    # [FUNCTION DOC]
+    # Rolling maximum ignoring NaN; thin wrapper around _roll_min_max(is_max=1).
+    # Inputs: values - float64 ndarray; start, end, minp.
+    # Outputs: float64 ndarray. Exceptions: ValueError from _roll_min_max. Side effects:
+    #   none beyond allocation.
+    # KNOWN ISSUE: docstring documents window/index/closed parameters that this function
+    #   does not take (it takes start/end).
     """
     Moving max of 1d array of any numeric type along axis=0 ignoring NaNs.
 
@@ -1020,6 +1233,11 @@ def roll_max(ndarray[float64_t] values, ndarray[int64_t] start,
 
 def roll_min(ndarray[float64_t] values, ndarray[int64_t] start,
              ndarray[int64_t] end, int64_t minp) -> np.ndarray:
+    # [FUNCTION DOC]
+    # Rolling minimum ignoring NaN; wrapper around _roll_min_max(is_max=0).
+    # Inputs/Outputs/Exceptions: as roll_max.
+    # KNOWN ISSUE: docstring documents window/index parameters that this function does
+    #   not take (it takes start/end).
     """
     Moving min of 1d array of any numeric type along axis=0 ignoring NaNs.
 
@@ -1046,6 +1264,26 @@ def _roll_min_max(
     int64_t minp,
     bint is_max
 ):
+    # [FUNCTION DOC]
+    # HELPER: rolling min/max via a monotonic deque of candidate indices (port of
+    #   pandas/core/_numba/kernels/min_max_.py sliding_min_max).
+    # Inputs: values - float64 ndarray; start, end - bounds where end is non-decreasing
+    #   and start is non-decreasing for equal ends (start may otherwise move backwards);
+    #   minp - raised to at least 1; is_max - max if true else min.
+    # Algorithm: a first backward pass pushes onto a 'dominators' stack indices whose
+    #   start is smaller than earlier windows' starts, so candidates still needed by a
+    #   later window with an earlier start are not discarded. For each row: drop
+    #   candidates before min(start, dominator start); for each new value (non-NaN) pop
+    #   worse candidates from the back and push its index, while a valid_start counter
+    #   tracks the position of the minp-th most recent non-NaN value. Output NaN if no
+    #   candidates or fewer than minp non-NaN values in the window; else the front
+    #   candidate if inside the window, otherwise the first candidate >= start found by
+    #   bisect_left.
+    # Outputs: float64 ndarray of length len(start).
+    # Exceptions: ValueError if end decreases, or start decreases for an equal end
+    #   ('Start/End ordering requirement is violated').
+    # Side effects: allocates C++ deque/stack; runs without the GIL (re-acquired to
+    #   raise).
     cdef:
         Py_ssize_t i, i_next, k, valid_start, last_end, last_start, N = len(start)
         # Indices of bounded extrema in `values`. `candidates[i]` is always increasing.
@@ -1152,16 +1390,35 @@ def _roll_min_max(
 
 def roll_first(const float64_t[:] values, ndarray[int64_t] start,
                ndarray[int64_t] end, int64_t minp) -> np.ndarray:
+    # [FUNCTION DOC]
+    # Rolling first non-NaN value in each window; wrapper of _roll_first_last.
+    # Inputs: values, start, end, minp. Outputs: float64 ndarray.
+    # Exceptions: none explicit. Side effects: allocation only.
     return _roll_first_last(values, start, end, minp, is_first=1)
 
 
 def roll_last(const float64_t[:] values, ndarray[int64_t] start,
               ndarray[int64_t] end, int64_t minp) -> np.ndarray:
+    # [FUNCTION DOC]
+    # Rolling last non-NaN value in each window; wrapper of _roll_first_last.
+    # Inputs: values, start, end, minp. Outputs: float64 ndarray.
+    # Exceptions: none explicit. Side effects: allocation only.
     return _roll_first_last(values, start, end, minp, is_first=0)
 
 
 cdef _roll_first_last(const float64_t[:] values, ndarray[int64_t] start,
                       ndarray[int64_t] end, int64_t minp, bint is_first):
+    # [FUNCTION DOC]
+    # HELPER: rolling first (is_first) or last non-NaN value.
+    # Inputs: values, start, end, minp; is_first - flag. Requires len(start) > 0.
+    # Algorithm: tracks nobs and fl_idx (index of the first/last non-NaN value). On
+    #   recompute, scans the window. Incrementally: removes leaving values from nobs;
+    #   for first, if fl_idx fell out of the window, rescans the overlap [s, end[i-1]);
+    #   then scans added values (last always takes the newest non-NaN; first only if
+    #   none found yet). Output values[fl_idx] if nobs >= minp and fl_idx is inside the
+    #   window, else NaN; all NaN if every window is empty.
+    # Outputs: float64 ndarray of length len(start).
+    # Exceptions: none explicit. Side effects: allocation; releases the GIL.
     cdef:
         Py_ssize_t i, j, fl_idx
         bint is_monotonic_increasing_bounds
@@ -1231,6 +1488,9 @@ cdef _roll_first_last(const float64_t[:] values, ndarray[int64_t] start,
 
 
 cdef enum InterpolationType:
+    # [CLASS DOC]
+    # C enum of quantile interpolation modes used by roll_quantile: LINEAR, LOWER,
+    #   HIGHER, NEAREST, MIDPOINT (mapped from strings via interpolation_types).
     LINEAR,
     LOWER,
     HIGHER,
@@ -1250,6 +1510,21 @@ interpolation_types = {
 def roll_quantile(const float64_t[:] values, ndarray[int64_t] start,
                   ndarray[int64_t] end, int64_t minp,
                   float64_t quantile, str interpolation) -> np.ndarray:
+    # [FUNCTION DOC]
+    # Rolling quantile via skiplist (O(N log window)).
+    # Inputs: values, start, end, minp; quantile - strictly between 0 and 1
+    #   (Rolling.quantile routes 0 and 1 to roll_min/roll_max); interpolation -
+    #   'linear', 'lower', 'higher', 'nearest' (round half to even on the index) or
+    #   'midpoint'.
+    # Algorithm: maintain a skiplist of non-NaN values as in roll_median_c. With idx =
+    #   quantile * (nobs - 1): if integral, return element idx; else combine elements
+    #   idx and idx + 1 per interpolation. NaN if nobs < minp or a lookup fails.
+    # Outputs: float64 ndarray of length len(start); all NaN if every window is empty.
+    # Exceptions: ValueError for quantile outside (0, 1) or unknown interpolation;
+    #   MemoryError if skiplist_init fails.
+    # Side effects: allocates/frees the skiplist; releases the GIL.
+    # KNOWN ISSUE: the error message says 'not in [0, 1]' but the endpoints 0 and 1 are
+    #   rejected too; skiplist_insert failures (-1) are ignored.
     """
     O(N log(window)) implementation using skip list
     """
@@ -1377,6 +1652,24 @@ rolling_rank_tiebreakers = {
 def roll_rank(const float64_t[:] values, ndarray[int64_t] start,
               ndarray[int64_t] end, int64_t minp, bint percentile,
               str method, bint ascending) -> np.ndarray:
+    # [FUNCTION DOC]
+    # Rolling rank of the most recently added value of each window among the window's
+    #   non-NaN values, using a skiplist.
+    # Inputs: values, start, end, minp; percentile - divide rank by nobs; method -
+    #   'average', 'min' or 'max'; ascending - if false values are negated before
+    #   insertion.
+    # Algorithm: as roll_quantile for maintenance. The rank is taken from each
+    #   insertion: skiplist_insert returns the max rank (method 'max'); 'min' uses
+    #   skiplist_min_rank; 'average' is the mean of the integer ranks from min to max. A
+    #   NaN value being added sets the rank to NaN. Output rank (or rank / nobs) if nobs
+    #   >= minp, else NaN.
+    # Outputs: float64 ndarray of length len(start).
+    # Exceptions: ValueError for unknown method; MemoryError if skiplist_init or
+    #   skiplist_insert fails.
+    # Side effects: allocates/frees the skiplist; releases the GIL.
+    # KNOWN ISSUE: when a window adds no new values (end[i] == end[i-1]) the previous
+    #   rank is reused even though removals may have changed it; raising MemoryError
+    #   mid-loop leaks the skiplist.
     """
     O(N log(window)) implementation using skip list
 
@@ -1485,6 +1778,14 @@ def roll_rank(const float64_t[:] values, ndarray[int64_t] start,
 
 def roll_nunique(const float64_t[:] values, ndarray[int64_t] start,
                  ndarray[int64_t] end, int64_t minp) -> np.ndarray:
+    # [FUNCTION DOC]
+    # Rolling count of distinct non-NaN values per window.
+    # Inputs: values, start, end, minp.
+    # Algorithm: maintain a hash map value -> count (C++ unordered_map) with incremental
+    #   add/remove, erasing keys whose count hits zero; clear and rebuild on recompute.
+    #   Output map size if nobs >= minp else NaN. 0.0 and -0.0 count as the same value.
+    # Outputs: float64 ndarray of length len(start).
+    # Exceptions: none explicit. Side effects: allocation; releases the GIL.
     """
     Rolling number of unique elements in the window
     """
@@ -1548,6 +1849,18 @@ def roll_apply(object obj,
                int64_t minp,
                object function, bint raw,
                tuple args, dict kwargs) -> np.ndarray:
+    # [FUNCTION DOC]
+    # Apply an arbitrary Python function to each window.
+    # Inputs: obj - Series/ndarray-like of values; start, end, minp; function -
+    #   callable; raw - if true pass ndarray slices (made C-contiguous), else obj.iloc
+    #   slices; args, kwargs - extra arguments.
+    # Behavior: window non-NaN counts come from roll_sum over isfinite(arr), so +/-inf
+    #   also count as missing for minp. Where count >= minp the function result (coerced
+    #   to float) is stored, otherwise NaN. Empty obj returns an empty array.
+    # Outputs: float64 ndarray of length len(start).
+    # Exceptions: anything raised by function; TypeError/ValueError if its result is not
+    #   convertible to float.
+    # Side effects: calls user code with the GIL held.
     cdef:
         ndarray[float64_t] output, counts
         ndarray[float64_t, cast=True] arr
@@ -1589,18 +1902,40 @@ def roll_apply(object obj,
 def roll_weighted_sum(
     const float64_t[:] values, const float64_t[:] weights, int minp
 ) -> np.ndarray:
+    # [FUNCTION DOC]
+    # Weighted rolling sum for fixed-size win_type windows; wrapper of
+    #   _roll_weighted_sum_mean(avg=0).
+    # Inputs: values - float64; weights - window weights (length = window); minp.
+    # Outputs: float64 memoryview (np.asarray-compatible) of len(values).
+    # Exceptions: none. Side effects: allocation.
     return _roll_weighted_sum_mean(values, weights, minp, avg=0)
 
 
 def roll_weighted_mean(
     const float64_t[:] values, const float64_t[:] weights, int minp
 ) -> np.ndarray:
+    # [FUNCTION DOC]
+    # Weighted rolling mean (sum of w*x / sum of w over non-NaN x); wrapper of
+    #   _roll_weighted_sum_mean(avg=1).
+    # Inputs/Outputs: as roll_weighted_sum.
+    # Exceptions: none. Side effects: allocation.
     return _roll_weighted_sum_mean(values, weights, minp, avg=1)
 
 
 cdef float64_t[:] _roll_weighted_sum_mean(const float64_t[:] values,
                                           const float64_t[:] weights,
                                           int minp, bint avg):
+    # [FUNCTION DOC]
+    # HELPER: weighted rolling sum or mean over trailing windows of len(weights).
+    # Inputs: values - float64 (length in_n); weights - float64 (length win_n, assumed
+    #   << in_n); minp; avg - mean if true.
+    # Algorithm: for each weight index w (NaN weights skipped) and each input position,
+    #   add values[k] * weights[w] to output[k + win_n - w - 1] (so the last weight
+    #   applies to the newest value), counting non-NaN contributions and (for mean)
+    #   summing weights. Then NaN where count < max(minp, 1); for mean, divide by total
+    #   weight, NaN if it is 0. Outputs before a full window are partial sums.
+    # Outputs: float64 memoryview of length in_n.
+    # Exceptions: none. Side effects: allocation; releases the GIL.
     """
     Assume len(weights) << len(values)
     """
@@ -1678,6 +2013,13 @@ cdef float64_t calc_weighted_var(float64_t t,
                                  unsigned int ddof,
                                  float64_t nobs,
                                  int64_t minp) noexcept nogil:
+    # [FUNCTION DOC]
+    # HELPER: weighted variance from West's algorithm state.
+    # Inputs: t - weighted sum of squared deviations; sum_w - sum of weights; win_n -
+    #   window size; ddof; nobs; minp.
+    # Outputs: NaN unless nobs >= minp and nobs > ddof; 0 if nobs == 1; else t * win_n /
+    #   ((win_n - ddof) * sum_w), clamped at 0.
+    # Exceptions: none. Side effects: none; nogil.
     """
     Calculate weighted variance for a window using West's method.
 
@@ -1729,6 +2071,12 @@ cdef void add_weighted_var(float64_t val,
                            float64_t *sum_w,
                            float64_t *mean,
                            float64_t *nobs) noexcept nogil:
+    # [FUNCTION DOC]
+    # HELPER: West's online update adding (val, weight w) to nobs, mean, sum_w and t;
+    #   NaN val is skipped.
+    # Inputs: val, w; pointers t, sum_w, mean, nobs. Outputs: none.
+    # Exceptions: none.
+    # Side effects: mutates the pointed-to accumulators; nogil, noexcept.
     """
     Update weighted mean, sum of weights and sum of weighted squared
     differences to include value and weight pair in weighted variance
@@ -1775,6 +2123,12 @@ cdef void remove_weighted_var(float64_t val,
                               float64_t *sum_w,
                               float64_t *mean,
                               float64_t *nobs) noexcept nogil:
+    # [FUNCTION DOC]
+    # HELPER: inverse West update removing (val, w); NaN skipped; resets t, sum_w and
+    #   mean to 0 when nobs reaches 0.
+    # Inputs: val, w; pointers t, sum_w, mean, nobs. Outputs: none.
+    # Exceptions: none.
+    # Side effects: mutates the pointed-to accumulators; nogil, noexcept.
     """
     Update weighted mean, sum of weights and sum of weighted squared
     differences to remove value and weight pair from weighted variance
@@ -1821,6 +2175,20 @@ cdef void remove_weighted_var(float64_t val,
 
 def roll_weighted_var(const float64_t[:] values, const float64_t[:] weights,
                       int64_t minp, unsigned int ddof):
+    # [FUNCTION DOC]
+    # Weighted rolling variance over trailing windows of len(weights) using West's
+    #   online add/remove algorithm.
+    # Inputs: values - float64 (length n); weights - float64 (window size win_n); minp;
+    #   ddof.
+    # Algorithm: the first min(win_n, n) values are added with weights[i]; after that,
+    #   each step removes values[i - win_n] and adds values[i], each with weight
+    #   weights[position % win_n]; output via calc_weighted_var.
+    # Outputs: float64 memoryview of length n.
+    # Exceptions: none. Side effects: allocation; releases the GIL.
+    # KNOWN ISSUE: a value keeps weight weights[i % win_n] for its whole life in the
+    #   window instead of being reweighted by its position in each window, so after the
+    #   first window the weights are rotated relative to the window (results are only
+    #   exact when all weights are equal).
     """
     Calculates weighted rolling variance using West's online algorithm.
 
@@ -1894,6 +2262,28 @@ def roll_weighted_var(const float64_t[:] values, const float64_t[:] weights,
 def ewm(const float64_t[:] vals, const int64_t[:] start, const int64_t[:] end,
         int minp, float64_t com, bint adjust, bint ignore_na,
         const float64_t[:] deltas=None, bint normalize=True) -> np.ndarray:
+    # [FUNCTION DOC]
+    # Exponentially weighted moving mean (normalize=True) or sum (normalize=False)
+    #   computed independently for each [start[j], end[j]) segment (groupby groups; a
+    #   single segment for plain ewm).
+    # Inputs: vals - float64; start, end - segment bounds (contiguous blocks covering
+    #   vals); minp; com - center of mass, alpha = 1 / (1 + com); adjust - use adjusted
+    #   weights (new weight 1) vs recursive (new weight alpha); ignore_na - if false,
+    #   missing values still decay old weights; deltas - optional float64 time gaps
+    #   (len(vals) - 1), deltas[i] pairs with vals[i+1], the decay is (1 - alpha) **
+    #   delta; normalize - mean vs sum.
+    # Algorithm (mean): weighted = first value; for each next value, decay old_wt if
+    #   observed or not ignore_na; when observed and different from weighted, weighted =
+    #   (old_wt * weighted + new_wt * cur) / (old_wt + new_wt); for adjust old_wt +=
+    #   new_wt, else old_wt = 1. With adjust=False and com == 1 (the times-based mode
+    #   set by pandas) new_wt = 1 - old_wt so irregular gaps are honoured. Sum mode:
+    #   weighted = (1 - alpha) * weighted (+ cur). A leading NaN is replaced by the
+    #   first observation. Output NaN while observed count < minp.
+    # Outputs: float64 ndarray of len(vals) (empty if vals is empty).
+    # Exceptions: none explicit; an empty segment would index out of range.
+    # Side effects: allocation; releases the GIL in the per-segment loop.
+    # KNOWN ISSUE: deltas are ignored when normalize=False (sum uses a fixed decay per
+    #   step).
     """
     Compute exponentially-weighted moving average or sum using center-of-mass.
 
@@ -1993,6 +2383,22 @@ def ewm(const float64_t[:] vals, const int64_t[:] start, const int64_t[:] end,
 def ewmcov(const float64_t[:] input_x, const int64_t[:] start, const int64_t[:] end,
            int minp, const float64_t[:] input_y, float64_t com, bint adjust,
            bint ignore_na, bint bias) -> np.ndarray:
+    # [FUNCTION DOC]
+    # Exponentially weighted moving covariance of two series per segment.
+    # Inputs: input_x, input_y - float64 of equal length; start, end - segment bounds;
+    #   minp; com; adjust; ignore_na - as in ewm; bias - if false apply the unbiasing
+    #   factor sum_wt^2 / (sum_wt^2 - sum_wt2).
+    # Algorithm: a pair is observed only if both values are non-NaN. Weighted means of x
+    #   and y and the covariance are updated online with old_wt decayed by (1 - alpha)
+    #   per step (when observed or not ignore_na); sum_wt and sum_wt2 track sum of
+    #   weights and of squared weights (renormalised each step when adjust is false).
+    #   Output: cov (bias) or cov times the factor (NaN if the denominator <= 0); first
+    #   element is 0 (bias) or NaN; NaN while nobs < minp.
+    # Outputs: float64 ndarray of len(input_x).
+    # Exceptions: ValueError if the input lengths differ.
+    # Side effects: allocation; releases the GIL in the per-segment loop.
+    # KNOWN ISSUE: the docstring says 'moving variance' but it computes covariance
+    #   (variance only when input_x is input_y).
     """
     Compute exponentially-weighted moving variance using center-of-mass.
 

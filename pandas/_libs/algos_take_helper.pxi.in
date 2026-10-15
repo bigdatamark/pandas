@@ -1,3 +1,14 @@
+# [MODULE DOC]
+# Tempita template (rendered to algos_take_helper.pxi and included into algos.pyx)
+#   generating typed 'take' kernels: gather elements of a 1-D or 2-D array by an integer
+#   indexer into a preallocated output array, writing a fill value wherever the indexer
+#   is -1. Used by pandas.core.array_algos.take.
+# One variant of each kernel is generated per (input type, output type) pair listed in
+#   'dtypes', e.g. int8->int8/int32/int64/float64, bool (uint8)->bool or object,
+#   float32->float32/float64, object->object. Generated names are take_1d_<name>_<dest>,
+#   take_2d_axis0_..., take_2d_axis1_... and take_2d_multi_..., where name/dest drop the
+#   '_t' suffix and uint8 is called 'bool'. For uint8 input with object output, values
+#   are converted to Python True/False (value > 0). Do not edit the generated .pxi.
 """
 Template for each `dtype` helper function for take
 
@@ -73,6 +84,19 @@ def take_1d_{{name}}_{{dest}}(ndarray[{{c_type_in}}, ndim=1] values,
                               const intp_t[:] indexer,
                               {{c_type_out}}[:] out,
                               fill_value=np.nan):
+    # [FUNCTION DOC]
+    # Template: out[i] = values[indexer[i]] for each i, or fill_value where indexer[i]
+    #   == -1. Generated for every (c_type_in, c_type_out) pair.
+    # Inputs: values - 1-D array of c_type_in (read-only memoryview, or ndarray for
+    #   object); indexer - 1-D intp array of positions into values or -1; out -
+    #   preallocated 1-D c_type_out array of len(indexer); fill_value - scalar converted
+    #   to c_type_out (default NaN).
+    # Outputs: None; results written to out.
+    # Exceptions: TypeError/OverflowError if fill_value cannot be converted to
+    #   c_type_out (e.g. NaN into an integer output). No bounds checking: other negative
+    #   or too large indexer values are undefined behaviour.
+    # Side effects: mutates out; releases the GIL during the loop unless the output type
+    #   is object.
 
     cdef:
         Py_ssize_t i, n, idx
@@ -109,6 +133,21 @@ def take_2d_axis0_{{name}}_{{dest}}(ndarray[{{c_type_in}}, ndim=2] values,
                                     ndarray[intp_t, ndim=1] indexer,
                                     {{c_type_out}}[:, :] out,
                                     fill_value=np.nan):
+    # [FUNCTION DOC]
+    # Template: take rows - out[i, :] = values[indexer[i], :], or a row of fill_value
+    #   where indexer[i] == -1.
+    # Inputs: values - 2-D c_type_in array (n_rows_in, k); indexer - 1-D intp ndarray of
+    #   length n; out - preallocated 2-D c_type_out array (n, k); fill_value - scalar
+    #   converted to c_type_out (default NaN).
+    # Outputs: None; results written to out.
+    # Exceptions: conversion errors for fill_value; indices are not bounds checked.
+    # Side effects: mutates out. When input and output types match and are not object,
+    #   runs without the GIL, and if both arrays are contiguous along axis 1 with
+    #   matching strides and a row of n elements spans >= 256 bytes, copies whole rows
+    #   with memmove (GH#3130); otherwise copies element by element.
+    # KNOWN ISSUE: the memmove fast-path size test uses sizeof(type) * n (number of
+    #   output rows) rather than the row length k, so the heuristic does not measure the
+    #   per-row copy size; results are still correct.
     cdef:
         Py_ssize_t i, j, k, n, idx
         {{c_type_out}} fv
@@ -174,6 +213,17 @@ def take_2d_axis1_{{name}}_{{dest}}(ndarray[{{c_type_in}}, ndim=2] values,
                                     ndarray[intp_t, ndim=1] indexer,
                                     {{c_type_out}}[:, :] out,
                                     fill_value=np.nan):
+    # [FUNCTION DOC]
+    # Template: take columns - out[i, j] = values[i, indexer[j]], or fill_value where
+    #   indexer[j] == -1.
+    # Inputs: values - 2-D c_type_in array (n, k_in); indexer - 1-D intp ndarray of
+    #   length k; out - preallocated 2-D c_type_out array (n, k); fill_value - scalar
+    #   converted to c_type_out (default NaN).
+    # Outputs: None; returns immediately when n == 0 or k == 0 (before fill_value is
+    #   converted).
+    # Exceptions: conversion errors for fill_value; no bounds checking.
+    # Side effects: mutates out; releases the GIL when input and output types are equal
+    #   and not object.
 
     cdef:
         Py_ssize_t i, j, k, n, idx
@@ -218,6 +268,16 @@ def take_2d_multi_{{name}}_{{dest}}(ndarray[{{c_type_in}}, ndim=2] values,
                                     indexer,
                                     ndarray[{{c_type_out}}, ndim=2] out,
                                     fill_value=np.nan):
+    # [FUNCTION DOC]
+    # Template: take along both axes - out[i, j] = values[idx0[i], idx1[j]], where
+    #   (idx0, idx1) = indexer; fill_value is written if either index is -1.
+    # Inputs: values - 2-D c_type_in ndarray; indexer - pair (tuple/list) of 1-D intp
+    #   ndarrays (row indexer, column indexer); out - preallocated 2-D c_type_out
+    #   ndarray of shape (len(idx0), len(idx1)); fill_value - scalar (default NaN).
+    # Outputs: None; results written to out.
+    # Exceptions: conversion errors for fill_value or indexer elements; no bounds
+    #   checking.
+    # Side effects: mutates out; holds the GIL throughout.
     cdef:
         Py_ssize_t i, j, k, n, idx
         ndarray[intp_t, ndim=1] idx0 = indexer[0]
