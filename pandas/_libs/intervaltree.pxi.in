@@ -1,3 +1,16 @@
+# [MODULE DOC]
+# Tempita template for a centered interval tree, included at the end of
+# interval.pyx. IntervalTree (the public object, mimicking the IndexEngine API for
+# IntervalIndex) holds left/right bound arrays and a root node. Nodes are generated
+# for every combination of dtype (float64, int64, uint64) and closed side
+# (left/right/both/neither), giving classes <Dtype>Closed<Side>IntervalNode with the
+# endpoint comparisons (< or <=) baked in; NODE_CLASSES maps (dtype string, closed)
+# to the class. Each non-leaf node picks a pivot (median of interval midpoints),
+# sends intervals entirely left/right of it to child nodes and keeps the
+# intervals containing the pivot in two sorted "center" lists (by left bound and by
+# right bound) so point queries can stop early. Leaves (size <= leaf_size) are
+# scanned linearly. Fused types int_scalar_t/uint_scalar_t/scalar_t allow query
+# points of int64/uint64/float64.
 """
 Template for intervaltree
 
@@ -23,6 +36,12 @@ ctypedef fused scalar_t:
 # ----------------------------------------------------------------------
 
 cdef class IntervalTree(IntervalMixin):
+    # [CLASS DOC]
+    # Centered interval tree over a set of intervals with a common closed side.
+    # Read-only attributes: left/right - bound arrays (NaN-left intervals removed);
+    # root - top IntervalNode; dtype - common numpy dtype of bounds; closed - side;
+    # _is_overlapping/_left_sorter/_right_sorter - lazily computed caches (None until
+    # computed); _na_count - number of intervals dropped because their left was NaN.
     """A centered interval tree
 
     Based off the algorithm described on Wikipedia:
@@ -39,6 +58,22 @@ cdef class IntervalTree(IntervalMixin):
         Py_ssize_t _na_count
 
     def __init__(self, left, right, closed='right', leaf_size=100):
+        # [FUNCTION DOC]
+        # Build the tree.
+        # Inputs: left, right - 1-D array-likes of bounds (same length); closed - side
+        # string (default "right"); leaf_size - maximum node size for linear scanning.
+        # Outputs: none.
+        # Exceptions: ValueError for an invalid closed; KeyError if the resulting dtype/
+        # closed pair has no node class (e.g. a non-numeric dtype); TypeError from isnan
+        # for unsupported dtypes.
+        # Side effects: converts bounds to their common result dtype, drops entries
+        #   whose
+        # left bound is NaN (recording the count), builds int64 original-position
+        #   indices
+        # for the kept entries and constructs the root node recursively (allocations).
+        # Note: only NaN in left is checked; an interval with NaN right but non-
+        #   NaN
+        # left would be kept in the tree.
         """
         Parameters
         ----------
@@ -78,6 +113,11 @@ cdef class IntervalTree(IntervalMixin):
 
     @property
     def left_sorter(self) -> np.ndarray:
+        # [FUNCTION DOC]
+        # Property: permutation sorting intervals by left bound, ties broken by right
+        #   bound
+        # (lexicographic sort with left as primary key). Cached after first computation.
+        # Outputs: integer ndarray of positions.
         """How to sort the left labels; this is used for binary search
         """
         if self._left_sorter is None:
@@ -87,6 +127,9 @@ cdef class IntervalTree(IntervalMixin):
 
     @property
     def right_sorter(self) -> np.ndarray:
+        # [FUNCTION DOC]
+        # Property: argsort of the right bounds (cached after first computation).
+        # Outputs: integer ndarray of positions.
         """How to sort the right labels
         """
         if self._right_sorter is None:
@@ -95,6 +138,13 @@ cdef class IntervalTree(IntervalMixin):
 
     @property
     def is_overlapping(self) -> bool:
+        # [FUNCTION DOC]
+        # Property: whether any two intervals overlap. Cached.
+        # Outputs: bool. Using left_sorter order, compares each interval's left with the
+        # previous interval's right: overlap if current left < previous right (<= when
+        # closed is "both").
+        # Note: checking adjacent pairs suffices, since any overlapping pair implies
+        #   an overlapping adjacent pair in left-sorted order.
         """
         Determine if the IntervalTree contains overlapping intervals.
         Cached as self._is_overlapping.
@@ -115,6 +165,12 @@ cdef class IntervalTree(IntervalMixin):
 
     @property
     def is_monotonic_increasing(self) -> bool:
+        # [FUNCTION DOC]
+        # Property: whether the intervals are monotonic increasing.
+        # Outputs: False if any NaN intervals were dropped; otherwise True if
+        #   left_sorter
+        # is itself monotonic increasing, i.e. the intervals are already in sorted
+        # (left, then right) order.
         """
         Return True if the IntervalTree is monotonic increasing (only equal or
         increasing values), else False
@@ -126,6 +182,13 @@ cdef class IntervalTree(IntervalMixin):
         return is_monotonic(sort_order, False)[0]
 
     def get_indexer(self, ndarray[scalar_t, ndim=1] target) -> np.ndarray:
+        # [FUNCTION DOC]
+        # Map each target point to the unique interval containing it.
+        # Inputs: target - 1-D array of int64/uint64/float64 points (fused type).
+        # Outputs: intp array, one entry per target: position of the containing interval
+        # in the original input, or -1 if none (also for NaN or overflowing points).
+        # Exceptions: KeyError if a point lies in more than one interval.
+        # Side effects: allocates a growable int64 vector.
         """Return the positions corresponding to unique intervals that overlap
         with the given array of scalar targets.
         """
@@ -154,6 +217,13 @@ cdef class IntervalTree(IntervalMixin):
         return result.to_array().astype('intp')
 
     def get_indexer_non_unique(self, ndarray[scalar_t, ndim=1] target):
+        # [FUNCTION DOC]
+        # Map each target point to all intervals containing it.
+        # Inputs: target - 1-D array of int64/uint64/float64 points.
+        # Outputs: tuple (indexer, missing) of intp arrays: indexer concatenates, per
+        # target in order, the original positions of all matching intervals (or -1 if no
+        # match); missing holds target positions that had no match.
+        # Side effects: allocates growable vectors.
         """Return the positions corresponding to intervals that overlap with
         the given array of scalar targets. Non-unique positions are repeated.
         """
@@ -180,6 +250,9 @@ cdef class IntervalTree(IntervalMixin):
                 missing.to_array().astype('intp'))
 
     def __repr__(self) -> str:
+        # [FUNCTION DOC]
+        # Representation "<IntervalTree[dtype,closed]: N elements>" with N the number of
+        # non-NaN intervals in the root.
         return ('<IntervalTree[{dtype},{closed}]: '
                 '{n_elements} elements>'.format(
                     dtype=self.dtype, closed=self.closed,
@@ -187,16 +260,28 @@ cdef class IntervalTree(IntervalMixin):
 
     # compat with IndexEngine interface
     def clear_mapping(self) -> None:
+        # [FUNCTION DOC]
+        # No-op kept for compatibility with the IndexEngine interface.
         pass
 
 
 cdef take(ndarray source, ndarray indices):
+    # [FUNCTION DOC]
+    # HELPER: Take elements of a 1-D array at the given positions (axis 0).
+    # Inputs: source - ndarray; indices - integer ndarray.
+    # Outputs: new ndarray. Exceptions: IndexError for out-of-range positions.
     """Take the given positions from a 1D ndarray
     """
     return PyArray_Take(source, indices, 0)
 
 
 cdef sort_values_and_indices(all_values, all_indices, subset):
+    # [FUNCTION DOC]
+    # HELPER: Restrict values/indices to a subset and sort them by value.
+    # Inputs: all_values - bound array; all_indices - int64 original positions;
+    # subset - positions to select.
+    # Outputs: tuple (sorted_values, sorted_indices) ordered by value (quicksort, not
+    # stable).
     indices = take(all_indices, subset)
     values = take(all_values, subset)
     sorter = PyArray_ArgSort(values, 0, NPY_QUICKSORT)
@@ -211,11 +296,19 @@ cdef sort_values_and_indices(all_values, all_indices, subset):
 
 @cython.internal
 cdef class IntervalNode:
+    # [CLASS DOC]
+    # Abstract base for tree nodes (internal, not importable). Read-only fields:
+    # n_elements - number of intervals under the node; n_center - number stored at
+    # this node's center (0 for leaves); leaf_size - threshold; is_leaf_node.
     cdef readonly:
         int64_t n_elements, n_center, leaf_size
         bint is_leaf_node
 
     def __repr__(self) -> str:
+        # [FUNCTION DOC]
+        # Representation. Leaf: "<Class: N elements (terminal)>". Non-leaf: includes
+        #   pivot,
+        # element count and the counts in left child, right child and center.
         if self.is_leaf_node:
             return (
                 f"<{type(self).__name__}: {self.n_elements} elements (terminal)>"
@@ -231,6 +324,10 @@ cdef class IntervalNode:
             )
 
     def counts(self):
+        # [FUNCTION DOC]
+        # Debug helper returning node counts.
+        # Outputs: for leaves, n_elements; otherwise a nested tuple (center count,
+        # (left child counts, right child counts)).
         """
         Inspect counts on this node
         useful for debugging purposes
@@ -282,6 +379,15 @@ NODE_CLASSES = {}
 
 @cython.internal
 cdef class {{dtype_title}}Closed{{closed_title}}IntervalNode(IntervalNode):
+    # [CLASS DOC]
+    # Generated node class for one dtype and closed side. Template substitutes dtype
+    # (float64/int64/uint64), closed side, and comparison operators: cmp_left is <= if
+    # closed on the left else <; cmp_right is <= if closed on the right else <; the
+    # converses are the opposite strictness. Fields: left_node/right_node children;
+    # center_left_values/indices (center intervals sorted by left bound),
+    # center_right_values/indices (sorted by right bound); left/right/indices (leaf
+    # storage only); min_left/max_right (bounds over the whole subtree, 0 if empty);
+    # pivot.
     """Non-terminal node for an IntervalTree
 
     Categorizes intervals by those that fall to the left, those that fall to
@@ -299,6 +405,19 @@ cdef class {{dtype_title}}Closed{{closed_title}}IntervalNode(IntervalNode):
                  ndarray[{{dtype}}_t, ndim=1] right,
                  ndarray[int64_t, ndim=1] indices,
                  int64_t leaf_size):
+        # [FUNCTION DOC]
+        # Build a node (recursively builds children).
+        # Template: dtype substituted for bound arrays.
+        # Inputs: left, right - bound arrays of the node's dtype; indices - int64
+        #   original
+        # positions; leaf_size - threshold.
+        # Outputs: none.
+        # Side effects: if n_elements <= leaf_size, stores arrays and becomes a leaf.
+        # Otherwise computes pivot = median of (left/2 + right/2); if that is infinite,
+        # uses 0 clamped into [min(left), max(right)]; classifies intervals, builds left
+        # and right children from the subsets, and stores center intervals sorted by
+        #   left
+        # and by right bound. Records min_left/max_right for pruning.
 
         self.n_elements = len(left)
         self.leaf_size = leaf_size
@@ -348,6 +467,15 @@ cdef class {{dtype_title}}Closed{{closed_title}}IntervalNode(IntervalNode):
     @cython.wraparound(False)
     @cython.boundscheck(False)
     cdef classify_intervals(self, {{dtype}}_t[:] left, {{dtype}}_t[:] right):
+        # [FUNCTION DOC]
+        # HELPER: Partition intervals relative to the pivot.
+        # Template: comparisons use the converse operators for the closed side.
+        # Inputs: left, right - bound memoryviews of length n_elements.
+        # Outputs: tuple of three int64 arrays of positions: intervals entirely left of
+        #   the
+        # pivot (right bound does not reach pivot under the closed rule), entirely right
+        # (left bound beyond pivot), and those containing the pivot.
+        # Side effects: bounds/wraparound checks disabled.
         """Classify the given intervals based upon whether they fall to the
         left, right, or overlap with this node's pivot.
         """
@@ -376,6 +504,10 @@ cdef class {{dtype_title}}Closed{{closed_title}}IntervalNode(IntervalNode):
                         ndarray[{{dtype}}_t, ndim=1] right,
                         ndarray[int64_t, ndim=1] indices,
                         ndarray[int64_t, ndim=1] subset):
+        # [FUNCTION DOC]
+        # HELPER: Build a child node of the same class from a subset of intervals.
+        # Inputs: left, right, indices - node arrays; subset - int64 positions to keep.
+        # Outputs: new node built with the same leaf_size.
         """Create a new child node.
         """
         left = take(left, subset)
@@ -388,6 +520,23 @@ cdef class {{dtype_title}}Closed{{closed_title}}IntervalNode(IntervalNode):
     @cython.boundscheck(False)
     @cython.initializedcheck(False)
     cpdef query(self, Int64Vector result, {{fused_prefix}}scalar_t point):
+        # [FUNCTION DOC]
+        # Append the original positions of all intervals containing point to result.
+        # Template: comparisons use cmp_left/cmp_right for the closed side; point type
+        #   is
+        # the fused scalar for the dtype (int or uint variants plus float64).
+        # Inputs: result - Int64Vector accumulator; point - scalar.
+        # Outputs: none.
+        # Side effects: mutates result. NaN points return immediately without matches.
+        # Leaf: linear scan testing left cmp_left point cmp_right right. Non-leaf: if
+        #   point
+        # < pivot, scan center intervals by increasing left bound until left no longer
+        # precedes point, then recurse left if point precedes left child's max_right; if
+        # point > pivot, scan center intervals by decreasing right bound until point no
+        # longer precedes right, then recurse right if right child's min_left precedes
+        # point; if point equals pivot, all center intervals match.
+        # Exceptions: OverflowError when point cannot be converted to the node dtype
+        # (handled by callers).
         """Recursively query this node and its sub-nodes for intervals that
         overlap with the query point.
         """

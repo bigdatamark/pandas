@@ -1,3 +1,10 @@
+# [MODULE DOC]
+# Tempita template generating typed IndexEngine subclasses. For each numeric dtype
+# (Float64/32, Int64/32/16/8, UInt64/32/16/8, Complex64/128) and for each base
+# engine (IndexEngine, and MaskedIndexEngine with prefix "Masked") a class named
+# <prefix><Name>Engine is created. Each class only supplies the dtype-specific
+# hash table factory and the scalar key validation used by the base engine in
+# index.pyx (which includes the generated .pxi).
 """
 Template for functions of IndexEngine subclasses.
 
@@ -34,8 +41,19 @@ engines = [('', 'IndexEngine'), ('Masked', 'MaskedIndexEngine')]
 {{for prefix, engine in engines}}
 
 cdef class {{prefix}}{{name}}Engine({{engine}}):
+    # [CLASS DOC]
+    # Generated engine class for one dtype/base combination ({{prefix}}{{name}}Engine).
+    # Inherits all lookup logic from IndexEngine or MaskedIndexEngine.
 
     cdef _make_hash_table(self, Py_ssize_t n):
+        # [FUNCTION DOC]
+        # Create the dtype-specific hash table used for label lookups.
+        # Template: Name is substituted by the dtype name (e.g. Int64 ->
+        #   Int64HashTable).
+        # Inputs: n - size hint (number of elements).
+        # Outputs: a new hash table from the hashtable module; for Masked engines it is
+        # created with mask support enabled (uses_mask=True).
+        # Side effects: allocates the hash table.
     {{if engine == 'MaskedIndexEngine'}}
         return _hash.{{name}}HashTable(n, uses_mask=True)
     {{else}}
@@ -43,6 +61,19 @@ cdef class {{prefix}}{{name}}Engine({{engine}}):
     {{endif}}
 
     cdef _check_type(self, object val):
+        # [FUNCTION DOC]
+        # Validate (and possibly coerce) a scalar lookup key for this dtype.
+        # Template: behavior depends on substituted dtype and base engine.
+        # Inputs: val - arbitrary Python scalar.
+        # Outputs: the key to use for lookup. Masked engines return the NA singleton
+        # unchanged. Integer dtypes: integers pass through; floats with an integral
+        #   value
+        # are converted to int; anything else raises. Unsigned dtypes also reject
+        #   negative
+        # values. Float dtypes: accept integer or float objects only (bool rejected).
+        # Complex dtypes: accept integer, float or complex objects only.
+        # Exceptions: KeyError(val) when the key is incompatible with the dtype.
+        # Side effects: none.
     {{if engine == 'MaskedIndexEngine'}}
         if val is C_NA:
             return val

@@ -1,3 +1,17 @@
+# [MODULE DOC]
+# Index engines: the lookup machinery behind pandas Index objects. An engine wraps
+# the index's backing array and answers get_loc (label -> integer position, slice
+# or boolean mask when labels repeat), get_indexer (array of labels -> positions,
+# -1 when missing) and get_indexer_non_unique, plus cached properties is_unique,
+# is_monotonic_increasing/decreasing. IndexEngine (numpy-backed) lazily builds a
+# dtype-specific hash table mapping value -> position; for very large monotonic
+# indexes (>= _SIZE_CUTOFF = 1,000,000 elements) it uses binary search instead of
+# populating the hash table. Typed subclasses for numeric dtypes come from the
+# included template index_class_helper.pxi; this module also defines object,
+# string, datetime/timedelta/period, bool, masked (nullable) and extension-array
+# engines, and the MultiIndex codes engine base which packs each row's level
+# codes into one integer (codes shifted by multiindex_nulls_shift = 2 so that
+# missing codes -1 become 1 and 0 can mean "not found").
 cimport cython
 from cpython.sequence cimport PySequence_GetItem
 
@@ -49,6 +63,10 @@ multiindex_nulls_shift = 2
 
 
 cdef bint is_definitely_invalid_key(object val):
+    # [FUNCTION DOC]
+    # HELPER: Decide whether a key can never be a valid label.
+    # Inputs: val - any object.
+    # Outputs: true if hashing val raises TypeError (unhashable), else false.
     try:
         hash(val)
     except TypeError:
@@ -57,6 +75,16 @@ cdef bint is_definitely_invalid_key(object val):
 
 
 cdef ndarray _get_bool_indexer(ndarray values, object val, ndarray mask = None):
+    # [FUNCTION DOC]
+    # HELPER: Boolean mask of positions whose value matches val.
+    # Inputs: values - 1-D ndarray; val - scalar already validated by _check_type;
+    # mask - optional boolean NA mask (only for non-object values).
+    # Outputs: boolean ndarray. Object dtype: elementwise NA-compatible equality if val
+    # is not null, else positions holding a "matching" NA (same kind of missing value).
+    # Otherwise: with mask, the mask itself when val is the NA singleton, else
+    # equality with val excluding masked entries; without mask, isnan(values) for a
+    # NaN val, else elementwise equality.
+    # Exceptions: AssertionError if a mask is given for object values.
     """
     Return an ndarray[bool] of locations where val matches self.values.
 
@@ -98,6 +126,14 @@ cdef ndarray _get_bool_indexer(ndarray values, object val, ndarray mask = None):
 
 
 cdef _maybe_resize_array(ndarray values, Py_ssize_t loc, Py_ssize_t max_length):
+    # [FUNCTION DOC]
+    # HELPER: Grow an array so that index loc is valid.
+    # Inputs: values - ndarray; loc - required index; max_length - upper bound.
+    # Outputs: values unchanged if loc < len, else a resized copy whose length is the
+    # current length doubled until it exceeds loc, capped at max_length.
+    # KNOWN ISSUE: if values is empty (length 0) and loc >= 0 the doubling loop never
+    # terminates (0 * 2 stays 0); this is reachable from MaskedIndexEngine
+    # .get_indexer_non_unique on an empty index with non-empty targets.
     """
     Resize array if loc is out of bounds.
     """
@@ -116,6 +152,12 @@ _SIZE_CUTOFF = 1_000_000
 
 
 cdef _unpack_bool_indexer(ndarray[uint8_t, ndim=1, cast=True] indexer, object val):
+    # [FUNCTION DOC]
+    # HELPER: Reduce a boolean match mask to the most compact location.
+    # Inputs: indexer - boolean (uint8) 1-D array; val - key, used in the error.
+    # Outputs: the mask itself if more than one match, the integer position if
+    # exactly one.
+    # Exceptions: KeyError(val) if there are no matches.
     """
     Possibly unpack a boolean mask to a single indexer.
     """
@@ -137,6 +179,13 @@ cdef _unpack_bool_indexer(ndarray[uint8_t, ndim=1, cast=True] indexer, object va
 
 @cython.freelist(32)
 cdef class IndexEngine:
+    # [CLASS DOC]
+    # Base engine for numpy-backed indexes. Read-only fields: values - backing array;
+    # mask - NA mask or None; mapping - hash table (None until populated);
+    # over_size_threshold - len(values) >= _SIZE_CUTOFF. Private state: unique,
+    # monotonic_inc, monotonic_dec flags and need_unique_check/need_monotonic_check
+    # flags marking whether those are stale; _np_type - numpy scalar type of values.
+    # Subclasses provide _make_hash_table and _check_type. Uses a freelist of 32.
 
     cdef readonly:
         ndarray values
@@ -150,6 +199,13 @@ cdef class IndexEngine:
         object _np_type
 
     def __init__(self, ndarray values):
+        # [FUNCTION DOC]
+        # Initialize the engine.
+        # Inputs: values - 1-D ndarray of labels.
+        # Outputs: none.
+        # Side effects: stores values (no copy), mask = None, computes the size
+        #   threshold
+        # flag, resets all caches via clear_mapping, records the scalar type.
         self.values = values
         self.mask = None
 
@@ -158,6 +214,11 @@ cdef class IndexEngine:
         self._np_type = values.dtype.type
 
     def __contains__(self, val: object) -> bool:
+        # [FUNCTION DOC]
+        # Membership test.
+        # Inputs: val - label.
+        # Outputs: True if get_loc succeeds, False on KeyError.
+        # Exceptions: TypeError if val is unhashable (from hash) or invalid for get_loc.
         hash(val)
         try:
             self.get_loc(val)
@@ -166,6 +227,22 @@ cdef class IndexEngine:
         return True
 
     cpdef get_loc(self, object val):
+        # [FUNCTION DOC]
+        # Locate a label.
+        # Inputs: val - label.
+        # Outputs: integer position if unique; for duplicates, an integer (single
+        #   match),
+        # a slice (monotonic increasing index) or a boolean mask.
+        # Algorithm: reject unhashable keys; validate/coerce with _check_type. If large
+        #   and
+        # monotonic increasing: duplicates go to _get_loc_duplicates; otherwise binary
+        # search and verify equality. Else populate the hash table; duplicates go to
+        # _get_loc_duplicates; NA for masked engines uses the table's NA slot; otherwise
+        # hash table lookup.
+        # Exceptions: TypeError for unhashable keys; KeyError if not found, if the key
+        #   is
+        # incompatible with the dtype, or on integer overflow during lookup.
+        # Side effects: may compute and cache monotonic/unique flags and the hash table.
         # -> Py_ssize_t | slice | ndarray[bool]
         cdef:
             Py_ssize_t loc
@@ -202,6 +279,11 @@ cdef class IndexEngine:
             raise KeyError(val) from err
 
     cdef Py_ssize_t _searchsorted_left(self, val) except? -1:
+        # [FUNCTION DOC]
+        # HELPER: Leftmost insertion position of val in sorted values.
+        # Inputs: val - key already validated by _check_type (converted to the values'
+        # scalar type).
+        # Outputs: position (0..len).
         """
         See ObjectEngine._searchsorted_left.__doc__.
         """
@@ -210,6 +292,14 @@ cdef class IndexEngine:
         return loc
 
     cdef _get_loc_duplicates(self, object val):
+        # [FUNCTION DOC]
+        # HELPER: Locate a label in an index known to contain duplicates.
+        # Inputs: val - validated key.
+        # Outputs: if monotonic increasing: the integer position for one match or a
+        #   slice
+        # for a run of matches (found by left/right binary search); otherwise the result
+        # of _maybe_get_bool_indexer (int or boolean mask).
+        # Exceptions: KeyError if not found or if values cannot be compared with val.
         # -> Py_ssize_t | slice | ndarray[bool]
         cdef:
             Py_ssize_t diff, left, right
@@ -235,6 +325,11 @@ cdef class IndexEngine:
         return self._maybe_get_bool_indexer(val)
 
     cdef _maybe_get_bool_indexer(self, object val):
+        # [FUNCTION DOC]
+        # HELPER: Compute the boolean match mask and reduce it (int if exactly one
+        #   match).
+        # Inputs: val - validated key.
+        # Outputs: int or boolean ndarray. Exceptions: KeyError if no match.
         # Returns ndarray[bool] or int
         cdef:
             ndarray[uint8_t, ndim=1, cast=True] indexer
@@ -243,15 +338,34 @@ cdef class IndexEngine:
         return _unpack_bool_indexer(indexer, val)
 
     def sizeof(self, deep: bool = False) -> int:
+        # [FUNCTION DOC]
+        # Memory used by the hash table.
+        # Inputs: deep - passed to the table's sizeof.
+        # Outputs: bytes as int; 0 if the table has not been built.
         """ return the sizeof our mapping """
         if not self.is_mapping_populated:
             return 0
         return self.mapping.sizeof(deep=deep)
 
     def __sizeof__(self) -> int:
+        # [FUNCTION DOC]
+        # sys.getsizeof hook returning sizeof() (shallow table size).
         return self.sizeof()
 
     cpdef _update_from_sliced(self, IndexEngine other, reverse: bool):
+        # [FUNCTION DOC]
+        # Copy cached uniqueness/monotonicity from the engine of a parent index after
+        #   the
+        # index was sliced (a subset of a unique index is unique; a slice of a monotonic
+        # index is monotonic).
+        # Inputs: other - parent IndexEngine; reverse - True if the slice reversed
+        #   order.
+        # Outputs: none.
+        # Side effects: if other is unique, marks self unique. If other's monotonic
+        #   state
+        # is known and monotonic in either direction, marks self's as known: when the
+        # first and last values differ, copies the directions (swapped if reversed);
+        # otherwise (empty or all-equal endpoints) marks both directions true.
         if other.unique:
             self.unique = other.unique
             self.need_unique_check = other.need_unique_check
@@ -274,6 +388,11 @@ cdef class IndexEngine:
     @property
     @cython.critical_section
     def is_unique(self) -> bool:
+        # [FUNCTION DOC]
+        # Property: whether all labels are distinct.
+        # Outputs: bool. Triggers the monotonic check first if stale (it may determine
+        # uniqueness cheaply), then populates the hash table if still unknown.
+        # Side effects: caches flags and possibly the hash table (critical section).
         # for why we check is_monotonic_increasing here, see
         # https://github.com/pandas-dev/pandas/pull/55342#discussion_r1361405781
         if self.need_monotonic_check:
@@ -284,11 +403,18 @@ cdef class IndexEngine:
         return self.unique == 1
 
     cdef _do_unique_check(self):
+        # [FUNCTION DOC]
+        # HELPER: Determine uniqueness by building the hash table (which records whether
+        # its size equals the number of values).
+        # Side effects: populates mapping and the unique flag.
         self._ensure_mapping_populated()
 
     @property
     @cython.critical_section
     def is_monotonic_increasing(self) -> bool:
+        # [FUNCTION DOC]
+        # Property: whether values are monotonic non-decreasing.
+        # Outputs: bool. Side effects: runs and caches the monotonic check if stale.
         if self.need_monotonic_check:
             self._do_monotonic_check()
 
@@ -297,12 +423,24 @@ cdef class IndexEngine:
     @property
     @cython.critical_section
     def is_monotonic_decreasing(self) -> bool:
+        # [FUNCTION DOC]
+        # Property: whether values are monotonic non-increasing.
+        # Outputs: bool. Side effects: runs and caches the monotonic check if stale.
         if self.need_monotonic_check:
             self._do_monotonic_check()
 
         return self.monotonic_dec == 1
 
     cdef _do_monotonic_check(self):
+        # [FUNCTION DOC]
+        # HELPER: Compute monotonicity flags.
+        # Inputs: none.
+        # Outputs: none.
+        # Side effects: if any value is masked as NA, sets both flags false (and, note,
+        # leaves need_monotonic_check set so it is recomputed on each access). Otherwise
+        # calls _call_monotonic (comparison errors -> not monotonic), clears the stale
+        # flag, and if strictly monotonic marks unique; if non-strictly monotonic marks
+        # non-unique; both make the uniqueness check unnecessary.
         cdef:
             bint is_strict_monotonic
         if self.mask is not None and np.any(self.mask):
@@ -329,22 +467,47 @@ cdef class IndexEngine:
                 self.need_unique_check = 0
 
     cdef _call_monotonic(self, values):
+        # [FUNCTION DOC]
+        # HELPER: Compute (is_increasing, is_decreasing, is_strict) via
+        #   algos.is_monotonic
+        # with timelike=False (NaT not special).
+        # Inputs: values - ndarray.
         return algos.is_monotonic(values, timelike=False)
 
     cdef _make_hash_table(self, Py_ssize_t n):
+        # [FUNCTION DOC]
+        # HELPER: Abstract factory for the hash table; subclasses return a dtype-
+        #   specific
+        # table sized for n elements.
+        # Exceptions: NotImplementedError in the base class.
         raise NotImplementedError  # pragma: no cover
 
     cdef _check_type(self, object val):
+        # [FUNCTION DOC]
+        # HELPER: Validate a lookup key; the base version only checks hashability.
+        # Inputs: val - key. Outputs: val unchanged.
+        # Exceptions: TypeError if unhashable.
         hash(val)
         return val
 
     @property
     @cython.critical_section
     def is_mapping_populated(self) -> bool:
+        # [FUNCTION DOC]
+        # Property: whether the hash table has been built.
+        # Outputs: bool.
         return self.mapping is not None
 
     @cython.critical_section
     cdef _ensure_mapping_populated(self):
+        # [FUNCTION DOC]
+        # HELPER: Build the hash table if missing.
+        # Inputs: none.
+        # Outputs: none.
+        # Side effects: creates a table sized for len(values), maps each value to its
+        # position (honouring mask), sets mapping, unique (table size equals length) and
+        # clears need_unique_check. Runs under a critical section, re-checking after the
+        # build because the section may be released.
         # this populates the mapping
         # if its not already populated
         # also satisfies the need_unique_check
@@ -361,6 +524,10 @@ cdef class IndexEngine:
             self.need_unique_check = 0
 
     def clear_mapping(self):
+        # [FUNCTION DOC]
+        # Reset all caches: drop the hash table, mark uniqueness and monotonicity stale
+        #   and
+        # set the flags to false.
         self.mapping = None
         self.need_monotonic_check = 1
         self.need_unique_check = 1
@@ -370,10 +537,32 @@ cdef class IndexEngine:
         self.monotonic_dec = 0
 
     def get_indexer(self, ndarray values) -> np.ndarray:
+        # [FUNCTION DOC]
+        # Positions of target labels (assumes the index is unique).
+        # Inputs: values - ndarray of targets with compatible dtype.
+        # Outputs: intp array, -1 where not found.
+        # Side effects: builds the hash table if needed.
         self._ensure_mapping_populated()
         return self.mapping.lookup(values)
 
     def get_indexer_non_unique(self, ndarray targets):
+        # [FUNCTION DOC]
+        # Positions of target labels allowing duplicates in the index.
+        # Inputs: targets - 1-D ndarray (generally object or same dtype as values).
+        # Outputs: tuple (indexer, missing). indexer lists, for each target in order,
+        #   all
+        # matching index positions in increasing order, or -1 if none; missing lists the
+        # target positions with no match. Both intp arrays.
+        # Algorithm: builds a dict from distinct target value to list of positions. If
+        # there are few distinct targets (fewer than n / (2 * bit_length(n))), none are
+        # null and the index is monotonic increasing, uses binary search per target
+        # (targets that raise TypeError fall back to scanning). Otherwise scans all
+        # values once; null values are matched to null targets with is_matching_na, with
+        # one representative per kind of NA. Output array grows by doubling, capped at
+        # len(values) * len(targets).
+        # Side effects: may compute monotonic flags; allocates arrays.
+        # KNOWN ISSUE: with an empty index (n = 0) and non-empty targets, the fast-path
+        # condition divides 0 by 2 * bit_length(0) = 0 and raises ZeroDivisionError.
         """
         Return an indexer suitable for taking from a non unique index
         return the labels in the same order as the target
@@ -508,6 +697,15 @@ cdef class IndexEngine:
 
 
 cdef Py_ssize_t _bin_search(ndarray values, object val) except -1:
+    # [FUNCTION DOC]
+    # HELPER: Leftmost insertion position (like bisect_left) for an object array,
+    # treating a tuple key as a single value.
+    # Inputs: values - sorted 1-D object ndarray; val - key.
+    # Outputs: position in 0..len(values).
+    # Exceptions: TypeError if comparisons fail; IndexError if values is empty.
+    # KNOWN ISSUE: for a 1-element array (hi == 0) it always returns 1, even when val
+    # is <= the only element (bisect_left would give 0). Only reached for indexes
+    # above the size cutoff, so it is not hit in practice.
     # GH#1757 ndarray.searchsorted is not safe to use with array of tuples
     #  (treats a tuple `val` as a sequence of keys instead of a single key),
     #  so we implement something similar.
@@ -539,13 +737,21 @@ cdef Py_ssize_t _bin_search(ndarray values, object val) except -1:
 
 
 cdef class ObjectEngine(IndexEngine):
+    # [CLASS DOC]
+    # Engine for object-dtype indexes, using a PyObject hash table and a tuple-safe
+    # binary search.
     """
     Index Engine for use with object-dtype Index, namely the base class Index.
     """
     cdef _make_hash_table(self, Py_ssize_t n):
+        # [FUNCTION DOC]
+        # HELPER: Create a PyObject hash table sized for n.
         return _hash.PyObjectHashTable(n)
 
     cdef Py_ssize_t _searchsorted_left(self, val) except? -1:
+        # [FUNCTION DOC]
+        # HELPER: Leftmost insertion position of val using the tuple-safe _bin_search.
+        # Exceptions: KeyError if values cannot be compared with val.
         # using values.searchsorted here would treat a tuple `val` as a sequence
         #  instead of a single key, so we use a different implementation
         try:
@@ -556,25 +762,42 @@ cdef class ObjectEngine(IndexEngine):
 
 
 cdef class StringEngine(IndexEngine):
+    # [CLASS DOC]
+    # Engine for string-dtype indexes backed by an array of Python strings, using a
+    # string hash table.
 
     cdef _make_hash_table(self, Py_ssize_t n):
+        # [FUNCTION DOC]
+        # HELPER: Create a string hash table sized for n.
         return _hash.StringHashTable(n)
 
     cdef _check_type(self, object val):
+        # [FUNCTION DOC]
+        # HELPER: Validate a key: must be a str.
+        # Outputs: str(val). Exceptions: KeyError for non-strings.
         if not isinstance(val, str):
             raise KeyError(val)
         return str(val)
 
 cdef class StringObjectEngine(ObjectEngine):
+    # [CLASS DOC]
+    # Object engine for string arrays whose missing value is a specific NA marker
+    # (na_value); null keys are normalized to that marker.
 
     cdef:
         object na_value
 
     def __init__(self, ndarray values, na_value):
+        # [FUNCTION DOC]
+        # Initialize with the object values and the NA marker used in them.
+        # Inputs: values - object ndarray; na_value - missing value marker.
         super().__init__(values)
         self.na_value = na_value
 
     cdef _check_type(self, object val):
+        # [FUNCTION DOC]
+        # HELPER: Validate a key: strings pass through; any null becomes na_value.
+        # Exceptions: KeyError for other types.
         if isinstance(val, str):
             return val
         elif checknull(val):
@@ -584,15 +807,29 @@ cdef class StringObjectEngine(ObjectEngine):
 
 
 cdef class DatetimeEngine(Int64Engine):
+    # [CLASS DOC]
+    # Engine for datetime64 indexes: works on the int64 view of the values; keys are
+    # Timestamps/NaT converted to int64 at the index's resolution (_creso).
 
     cdef:
         NPY_DATETIMEUNIT _creso
 
     def __init__(self, ndarray values):
+        # [FUNCTION DOC]
+        # Initialize from a datetime64 (or timedelta64) array.
+        # Inputs: values - ndarray with datetime-like dtype.
+        # Side effects: stores the int64 view; records its time unit.
         super().__init__(values.view("i8"))
         self._creso = get_unit_from_dtype(values.dtype)
 
     cdef int64_t _unbox_scalar(self, scalar) except? -1:
+        # [FUNCTION DOC]
+        # HELPER: Convert a key to its int64 representation.
+        # Inputs: scalar - NaT or Timestamp (tz compatibility checked by the caller).
+        # Outputs: NaT's sentinel value, or the Timestamp value converted to the index's
+        # resolution (no rounding allowed).
+        # Exceptions: TypeError for other types; ValueError if conversion would lose
+        # precision or overflow.
         # NB: caller is responsible for ensuring tzawareness compat
         #  before we get here
         if scalar is NaT:
@@ -609,6 +846,11 @@ cdef class DatetimeEngine(Int64Engine):
         raise TypeError(scalar)
 
     def __contains__(self, val: object) -> bool:
+        # [FUNCTION DOC]
+        # Membership test; key must be hashable.
+        # Outputs: False if resolution conversion raises ValueError or get_loc raises
+        # KeyError, else True.
+        # Exceptions: TypeError from _unbox_scalar for unsupported key types propagates.
         # We assume before we get here:
         #  - val is hashable
         try:
@@ -623,9 +865,18 @@ cdef class DatetimeEngine(Int64Engine):
             return False
 
     cdef _call_monotonic(self, values):
+        # [FUNCTION DOC]
+        # HELPER: algos.is_monotonic with timelike=True (NaT treated as missing).
         return algos.is_monotonic(values, timelike=True)
 
     cpdef get_loc(self, object val):
+        # [FUNCTION DOC]
+        # Locate a datetime key.
+        # Inputs: val - Timestamp or NaT.
+        # Outputs: int, slice or boolean mask, same scheme as IndexEngine.get_loc but
+        # using the int64 converted key.
+        # Exceptions: TypeError if unhashable; KeyError if not found or not convertible.
+        # Side effects: may cache flags/hash table.
         # NB: the caller is responsible for ensuring that we are called
         #  with either a Timestamp or NaT (Timedelta or NaT for TimedeltaEngine)
 
@@ -663,8 +914,14 @@ cdef class DatetimeEngine(Int64Engine):
 
 
 cdef class TimedeltaEngine(DatetimeEngine):
+    # [CLASS DOC]
+    # Engine for timedelta64 indexes; identical to DatetimeEngine but keys are
+    # Timedeltas/NaT.
 
     cdef int64_t _unbox_scalar(self, scalar) except? -1:
+        # [FUNCTION DOC]
+        # HELPER: Convert a NaT or Timedelta key to int64 at the index's resolution.
+        # Exceptions: TypeError for other types; ValueError if lossy.
         if scalar is NaT:
             return NaT._value
         elif isinstance(scalar, _Timedelta):
@@ -680,8 +937,13 @@ cdef class TimedeltaEngine(DatetimeEngine):
 
 
 cdef class PeriodEngine(Int64Engine):
+    # [CLASS DOC]
+    # Engine for Period indexes, operating on int64 ordinals.
 
     cdef int64_t _unbox_scalar(self, scalar) except? -1:
+        # [FUNCTION DOC]
+        # HELPER: Convert a NaT or Period key to its int64 ordinal (frequency assumed to
+        # match). Exceptions: TypeError for other types.
         if scalar is NaT:
             return scalar._value
         if is_period_object(scalar):
@@ -690,6 +952,11 @@ cdef class PeriodEngine(Int64Engine):
         raise TypeError(scalar)
 
     cpdef get_loc(self, object val):
+        # [FUNCTION DOC]
+        # Locate a Period key.
+        # Inputs: val - Period or NaT.
+        # Outputs: result of Int64Engine.get_loc on the ordinal.
+        # Exceptions: KeyError if not a Period/NaT or not found.
         # NB: the caller is responsible for ensuring that we are called
         #  with either a Period or NaT
         cdef:
@@ -703,10 +970,18 @@ cdef class PeriodEngine(Int64Engine):
         return Int64Engine.get_loc(self, conv)
 
     cdef _call_monotonic(self, values):
+        # [FUNCTION DOC]
+        # HELPER: algos.is_monotonic with timelike=True.
         return algos.is_monotonic(values, timelike=True)
 
 
 cdef class BaseMultiIndexCodesEngine:
+    # [CLASS DOC]
+    # Base for MultiIndex engines. Each row's level codes (+2 shift) are bit-shifted by
+    # per-level offsets and OR-ed into one integer (unsigned 64-bit or Python int, set
+    # by the subclass's _codes_dtype); lookups then delegate to an integer engine
+    # given by the subclass attribute _base. Attributes: levels, offsets,
+    # level_has_nans (per level, whether any code is -1).
     """
     Base class for MultiIndexUIntEngine and MultiIndexPyIntEngine, which
     represent each label in a MultiIndex as an integer, by juxtaposing the bits
@@ -734,6 +1009,13 @@ cdef class BaseMultiIndexCodesEngine:
     level, then locating (the integer representation of) codes.
     """
     def __init__(self, object levels, object labels, ndarray offsets):
+        # [FUNCTION DOC]
+        # Initialize from MultiIndex levels and codes.
+        # Inputs: levels - list of Index; labels - list of integer code arrays (one per
+        # level, -1 for missing); offsets - integer array of bit offsets per level.
+        # Outputs: none.
+        # Side effects: stores levels/offsets, computes level_has_nans, packs codes into
+        # integers and initializes the underlying integer engine with them.
         """
         Parameters
         ----------
@@ -766,6 +1048,13 @@ cdef class BaseMultiIndexCodesEngine:
         self._base.__init__(self, lab_ints)
 
     def _codes_to_ints(self, ndarray codes) -> np.ndarray:
+        # [FUNCTION DOC]
+        # HELPER: Pack code combinations into integers.
+        # Inputs: codes - 1-D (one key) or 2-D (rows = keys, columns = levels) array of
+        # non-negative codes.
+        # Outputs: scalar or 1-D array of _codes_dtype: bitwise OR across levels of each
+        # code shifted left by its level's offset (order-preserving).
+        # Side effects: may modify codes in place if already of _codes_dtype.
         """
         Transform combination(s) of uint in one uint or Python integer (each), in a
         strictly monotonic way (i.e. respecting the lexicographic order of integer
@@ -798,6 +1087,14 @@ cdef class BaseMultiIndexCodesEngine:
         return np.bitwise_or.reduce(codes, axis=1)
 
     def _extract_level_codes(self, target) -> np.ndarray:
+        # [FUNCTION DOC]
+        # Convert a target MultiIndex into packed integers comparable with this index.
+        # Inputs: target - MultiIndex.
+        # Outputs: 1-D array of packed integers.
+        # Algorithm: recode target to this index's levels (unknown labels -> -1). For
+        # levels containing NaN, target's missing codes map to the NaN position. Then
+        # codes are shifted so unknown -> 0 (never matches) and known -> code + 2; where
+        # this level has missing codes, target missing codes become 1 so they match.
         """
         Map the requested list of (tuple) keys to their integer representations
         for searching in the underlying integer index.
@@ -823,6 +1120,10 @@ cdef class BaseMultiIndexCodesEngine:
         return self._codes_to_ints(np.array(level_codes, dtype=self._codes_dtype).T)
 
     def get_indexer(self, target: np.ndarray) -> np.ndarray:
+        # [FUNCTION DOC]
+        # Positions of packed target integers in the index.
+        # Inputs: target - array of packed integers.
+        # Outputs: intp array, -1 when missing (delegates to the base engine).
         """
         Returns an array giving the positions of each value of `target` in
         `self.values`, where -1 represents a value in `target` which does not
@@ -840,6 +1141,15 @@ cdef class BaseMultiIndexCodesEngine:
         return self._base.get_indexer(self, target)
 
     def get_loc(self, object key):
+        # [FUNCTION DOC]
+        # Locate a tuple key.
+        # Inputs: key - tuple with one label per level.
+        # Outputs: int, slice or boolean mask from the base engine lookup of the packed
+        # key (nulls map to code 1, others to level position + 2).
+        # Exceptions: TypeError if unhashable; KeyError if not a tuple, a label is not
+        #   in
+        # its level or the combination is absent; ValueError if the tuple length differs
+        # from the number of levels (strict zip).
         if is_definitely_invalid_key(key):
             raise TypeError(f"'{key}' is an invalid key")
         if not isinstance(key, tuple):
@@ -856,11 +1166,18 @@ cdef class BaseMultiIndexCodesEngine:
         return self._base.get_loc(self, lab_int)
 
     def get_indexer_non_unique(self, target: np.ndarray) -> np.ndarray:
+        # [FUNCTION DOC]
+        # Non-unique lookup of packed target integers; returns (indexer, missing) from
+        #   the
+        # base engine.
         indexer = self._base.get_indexer_non_unique(self, target)
 
         return indexer
 
     def __contains__(self, val: object) -> bool:
+        # [FUNCTION DOC]
+        # Membership test for tuple keys.
+        # Outputs: True if get_loc succeeds; False on KeyError, TypeError or ValueError.
         # We assume before we get here:
         #  - val is hashable
         # Default __contains__ looks in the underlying mapping, which in this
@@ -877,14 +1194,24 @@ include "index_class_helper.pxi"
 
 
 cdef class BoolEngine(UInt8Engine):
+    # [CLASS DOC]
+    # Engine for boolean indexes, stored as uint8.
     cdef _check_type(self, object val):
+        # [FUNCTION DOC]
+        # HELPER: Validate a key: must be a bool (Python or numpy).
+        # Outputs: the key as 0/1 integer. Exceptions: KeyError otherwise.
         if not util.is_bool_object(val):
             raise KeyError(val)
         return <uint8_t>val
 
 
 cdef class MaskedBoolEngine(MaskedUInt8Engine):
+    # [CLASS DOC]
+    # Engine for nullable boolean indexes (mask-based), stored as uint8.
     cdef _check_type(self, object val):
+        # [FUNCTION DOC]
+        # HELPER: Validate a key: NA passes through; otherwise must be a bool.
+        # Outputs: NA or 0/1 integer. Exceptions: KeyError otherwise.
         if val is C_NA:
             return val
         if not util.is_bool_object(val):
@@ -895,6 +1222,10 @@ cdef class MaskedBoolEngine(MaskedUInt8Engine):
 @cython.internal
 @cython.freelist(32)
 cdef class SharedEngine:
+    # [CLASS DOC]
+    # Internal base for engines over ExtensionArrays (no hash table). Fields: values,
+    # over_size_threshold, and the same unique/monotonic flags as IndexEngine.
+    # Lookups are done with comparisons / searchsorted on the array itself.
     cdef readonly:
         object values  # ExtensionArray
         bint over_size_threshold
@@ -904,6 +1235,8 @@ cdef class SharedEngine:
         bint need_monotonic_check, need_unique_check
 
     def __contains__(self, val: object) -> bool:
+        # [FUNCTION DOC]
+        # Membership test (key assumed hashable): True if get_loc succeeds.
         # We assume before we get here:
         #  - val is hashable
         try:
@@ -913,10 +1246,16 @@ cdef class SharedEngine:
             return False
 
     def clear_mapping(self):
+        # [FUNCTION DOC]
+        # No-op for compatibility with IndexEngine.
         # for compat with IndexEngine
         pass
 
     cpdef _update_from_sliced(self, ExtensionEngine other, reverse: bool):
+        # [FUNCTION DOC]
+        # Copy cached uniqueness/monotonicity from a parent engine after slicing; same
+        # logic as IndexEngine._update_from_sliced.
+        # Inputs: other - parent ExtensionEngine; reverse - whether order was reversed.
         if other.unique:
             self.unique = other.unique
             self.need_unique_check = other.need_unique_check
@@ -938,6 +1277,10 @@ cdef class SharedEngine:
 
     @property
     def is_unique(self) -> bool:
+        # [FUNCTION DOC]
+        # Property: whether all values are distinct.
+        # Outputs: bool. Runs the monotonic check first if stale, then if still unknown
+        # compares len(values.unique()) with len(values) and caches the result.
         # for why we check is_monotonic_increasing here, see
         # https://github.com/pandas-dev/pandas/pull/55342#discussion_r1361405781
         if self.need_monotonic_check:
@@ -950,10 +1293,14 @@ cdef class SharedEngine:
         return self.unique
 
     cdef _do_monotonic_check(self):
+        # [FUNCTION DOC]
+        # HELPER: Abstract monotonic check. Exceptions: NotImplementedError.
         raise NotImplementedError
 
     @property
     def is_monotonic_increasing(self) -> bool:
+        # [FUNCTION DOC]
+        # Property: monotonic non-decreasing (computed lazily and cached).
         if self.need_monotonic_check:
             self._do_monotonic_check()
 
@@ -961,25 +1308,42 @@ cdef class SharedEngine:
 
     @property
     def is_monotonic_decreasing(self) -> bool:
+        # [FUNCTION DOC]
+        # Property: monotonic non-increasing (computed lazily and cached).
         if self.need_monotonic_check:
             self._do_monotonic_check()
 
         return self.monotonic_dec == 1
 
     cdef _call_monotonic(self, values):
+        # [FUNCTION DOC]
+        # HELPER: algos.is_monotonic with timelike=False.
         return algos.is_monotonic(values, timelike=False)
 
     def sizeof(self, deep: bool = False) -> int:
+        # [FUNCTION DOC]
+        # Memory used by the (non-existent) mapping: always 0.
         """ return the sizeof our mapping """
         return 0
 
     def __sizeof__(self) -> int:
+        # [FUNCTION DOC]
+        # sys.getsizeof hook returning sizeof().
         return self.sizeof()
 
     cdef _check_type(self, object obj):
+        # [FUNCTION DOC]
+        # HELPER: Abstract key validation. Exceptions: NotImplementedError.
         raise NotImplementedError
 
     cpdef get_loc(self, object val):
+        # [FUNCTION DOC]
+        # Locate a key in the extension array.
+        # Inputs: val - label.
+        # Outputs: int, slice or boolean mask. Large monotonic unique arrays use
+        # searchsorted plus an equality check; everything else goes through
+        # _get_loc_duplicates (both branches of the final check are identical).
+        # Exceptions: TypeError for unhashable keys; KeyError if not found.
         # -> Py_ssize_t | slice | ndarray[bool]
         cdef:
             Py_ssize_t loc
@@ -1008,6 +1372,11 @@ cdef class SharedEngine:
         return self._get_loc_duplicates(val)
 
     cdef _get_loc_duplicates(self, object val):
+        # [FUNCTION DOC]
+        # HELPER: Locate a key allowing duplicates.
+        # Outputs: if monotonic increasing, int (one match) or slice (several) from
+        # left/right searchsorted; otherwise int or boolean mask from comparisons.
+        # Exceptions: KeyError if not found or not comparable.
         # -> Py_ssize_t | slice | ndarray[bool]
         cdef:
             Py_ssize_t diff
@@ -1032,6 +1401,9 @@ cdef class SharedEngine:
         return self._maybe_get_bool_indexer(val)
 
     cdef Py_ssize_t _searchsorted_left(self, val) except? -1:
+        # [FUNCTION DOC]
+        # HELPER: Leftmost insertion position via the array's searchsorted.
+        # Exceptions: KeyError if the comparison raises TypeError.
         """
         See ObjectEngine._searchsorted_left.__doc__.
         """
@@ -1043,9 +1415,14 @@ cdef class SharedEngine:
         return loc
 
     cdef ndarray _get_bool_indexer(self, val):
+        # [FUNCTION DOC]
+        # HELPER: Abstract boolean match computation. Exceptions: NotImplementedError.
         raise NotImplementedError
 
     cdef _maybe_get_bool_indexer(self, object val):
+        # [FUNCTION DOC]
+        # HELPER: Compute the boolean match mask and reduce it (int if exactly one).
+        # Exceptions: KeyError if no matches.
         # Returns ndarray[bool] or int
         cdef:
             ndarray[uint8_t, ndim=1, cast=True] indexer
@@ -1054,6 +1431,12 @@ cdef class SharedEngine:
         return _unpack_bool_indexer(indexer, val)
 
     def get_indexer(self, values) -> np.ndarray:
+        # [FUNCTION DOC]
+        # Positions of target values (index assumed unique).
+        # Inputs: values - array-like of targets.
+        # Outputs: intp array, -1 for missing, computed by calling get_loc per element.
+        # Exceptions: AssertionError if a lookup returns a non-integer (non-unique
+        #   index).
         # values : type(self.values)
         # Note: we only get here with self.is_unique
         cdef:
@@ -1075,6 +1458,12 @@ cdef class SharedEngine:
         return res
 
     def get_indexer_non_unique(self, targets):
+        # [FUNCTION DOC]
+        # Positions of targets allowing duplicates.
+        # Inputs: targets - array-like.
+        # Outputs: (indexer, missing): indexer concatenates, per target, all matching
+        # positions (from int, slice or mask results) or -1; missing lists target
+        # positions with no match. Both intp arrays.
         """
         Return an indexer suitable for taking from a non unique index
         return the labels in the same order as the target
@@ -1126,7 +1515,14 @@ cdef class SharedEngine:
 
 
 cdef class ExtensionEngine(SharedEngine):
+    # [CLASS DOC]
+    # Concrete engine for generic ExtensionArrays; uses ranks for monotonicity and
+    # array equality for matching.
     def __init__(self, values: "ExtensionArray"):
+        # [FUNCTION DOC]
+        # Initialize with an ExtensionArray.
+        # Side effects: stores values (no copy), size threshold flag, marks unique and
+        # monotonic state as unknown.
         self.values = values
 
         self.over_size_threshold = len(values) >= _SIZE_CUTOFF
@@ -1135,6 +1531,13 @@ cdef class ExtensionEngine(SharedEngine):
         self.need_unique_check = True
 
     cdef _do_monotonic_check(self):
+        # [FUNCTION DOC]
+        # HELPER: Compute monotonic flags.
+        # Side effects: if the array has NA values, both flags are false and uniqueness
+        # is computed directly from unique() (need_monotonic_check stays set, so this
+        # repeats on each access). Otherwise ranks the values (TypeError -> not
+        # monotonic) and checks monotonicity of the ranks; strict monotonicity marks the
+        # array unique.
         cdef:
             bint is_unique
 
@@ -1167,6 +1570,11 @@ cdef class ExtensionEngine(SharedEngine):
             self.need_unique_check = 0
 
     cdef ndarray _get_bool_indexer(self, val):
+        # [FUNCTION DOC]
+        # HELPER: Boolean match mask for val.
+        # Outputs: isna() for null keys; otherwise values == val, converting a masked
+        # boolean result to a numpy bool array with NA as False.
+        # Exceptions: KeyError if equality cannot produce an array.
         if checknull(val):
             return self.values.isna()
 
@@ -1184,15 +1592,27 @@ cdef class ExtensionEngine(SharedEngine):
                 raise KeyError from err
 
     cdef _check_type(self, object val):
+        # [FUNCTION DOC]
+        # HELPER: Validate a key by hashing it only. Outputs: None.
+        # Exceptions: TypeError if unhashable.
         hash(val)
 
 
 cdef class MaskedIndexEngine(IndexEngine):
+    # [CLASS DOC]
+    # Base for engines on masked (nullable) arrays: values hold the raw data, mask holds
+    # the NA flags; hash tables are created with mask support (see the template).
     def __init__(self, object values):
+        # [FUNCTION DOC]
+        # Initialize from a masked or Arrow-backed extension array.
+        # Side effects: stores raw data and NA mask (both possibly shared, no copy).
         super().__init__(self._get_data(values))
         self.mask = self._get_mask(values)
 
     def _get_data(self, object values) -> np.ndarray:
+        # [FUNCTION DOC]
+        # HELPER: Raw numpy data of a masked array; for Arrow arrays, converts to numpy
+        # with NA replaced by 1.
         if hasattr(values, "_mask"):
             return values._data
         # We are an ArrowExtensionArray
@@ -1201,16 +1621,39 @@ cdef class MaskedIndexEngine(IndexEngine):
         return values.to_numpy(na_value=1, dtype=values.dtype.numpy_dtype)
 
     def _get_mask(self, object values) -> np.ndarray:
+        # [FUNCTION DOC]
+        # HELPER: Boolean NA mask: the array's mask or isna() for Arrow arrays.
         if hasattr(values, "_mask"):
             return values._mask
         # We are an ArrowExtensionArray
         return values.isna()
 
     def get_indexer(self, object values) -> np.ndarray:
+        # [FUNCTION DOC]
+        # Positions of masked target values (index assumed unique).
+        # Inputs: values - masked/Arrow array.
+        # Outputs: intp array, -1 for missing; NA targets match the index's NA.
+        # Side effects: builds the hash table if needed.
         self._ensure_mapping_populated()
         return self.mapping.lookup(self._get_data(values), self._get_mask(values))
 
     def get_indexer_non_unique(self, object targets):
+        # [FUNCTION DOC]
+        # Positions of masked targets allowing duplicates.
+        # Inputs: targets - masked/Arrow array.
+        # Outputs: (indexer, missing) as in IndexEngine.get_indexer_non_unique; NA
+        #   targets
+        # match every NA position of the index.
+        # Algorithm: if fewer than 5 distinct targets, no NA targets and the index is
+        # monotonic increasing, binary search per target; otherwise one scan building a
+        # value -> positions dict and a list of NA positions.
+        # Exceptions: AssertionError if values are object dtype.
+        # KNOWN ISSUE: when all targets are NA, the set of non-NA targets is empty so
+        #   the
+        # scan is skipped and the NA position list is never built; NA targets are then
+        # reported as missing even if the index contains NA.
+        # KNOWN ISSUE: empty index with non-empty targets loops forever in
+        # _maybe_resize_array (zero-length result buffer).
         """
         Return an indexer suitable for taking from a non unique index
         return the labels in the same order as the target
