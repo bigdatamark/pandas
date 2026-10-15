@@ -1,3 +1,19 @@
+# [MODULE DOC]
+# Timezone conversion of int64 epoch values ("i8": counts of a resolution unit, creso,
+#   since 1970-01-01, with the minimum int64 as the NaT marker). Two directions: UTC ->
+#   local wall time (tz_convert_from_utc_single, and the Localizer class used by
+#   vectorized.pyx) and local wall time -> UTC (tz_localize_to_utc and its scalar form),
+#   the latter handling DST ambiguity (wall time occurs twice) and nonexistence (wall
+#   time skipped).
+# Timezones are classified as UTC/None, tzlocal (dateutil local, always via the Python
+#   tzinfo API), fixed offset (one delta), or DST zones (pytz, dateutil, zoneinfo)
+#   described by get_dst_info as a sorted array of UTC transition instants (first entry
+#   is NaT+1) and a parallel array of offsets. Local value = UTC value + offset in force
+#   (found by binary search). zoneinfo zones with a recurring rule use the tzinfo API
+#   for values past the last cached transition.
+# Supported resolutions: s, ms, us, ns (transition data is stored in ns and
+#   floor-divided). Side effects at import: initializes CPython datetime, numpy and
+#   pandas datetime C-APIs.
 """
 timezone conversion
 """
@@ -55,6 +71,11 @@ cdef const int64_t[::1] _deltas_placeholder = np.array([], dtype=np.int64)
 @cython.freelist(16)
 @cython.final
 cdef class Localizer:
+    # [CLASS DOC]
+    # Caches the per-timezone data needed to convert many UTC values to local time
+    #   quickly. Construct with (tz, creso); then call utc_val_to_local_val per value.
+    #   Final class with a freelist of 16. Field meanings are listed in
+    #   tzconversion.pxd.
     # cdef:
     #    tzinfo tz
     #    NPY_DATETIMEUNIT _creso
@@ -70,6 +91,19 @@ cdef class Localizer:
     @cython.initializedcheck(False)
     @cython.boundscheck(False)
     def __cinit__(self, tzinfo tz, NPY_DATETIMEUNIT creso):
+        # [FUNCTION DOC]
+        # Classify tz and precompute conversion data. Inputs: tz - tzinfo or None; creso
+        #   - NPY_DATETIMEUNIT of the values to be converted.
+        # Behavior: UTC or None sets use_utc; tzlocal sets use_tzlocal; otherwise
+        #   fetches (trans, deltas, typ, has_tz_rule) from get_dst_info, floor-divides
+        #   trans and deltas from ns into creso units if creso is us/ms/s, stores them,
+        #   and if has_tz_rule sets last_trans to the final transition minus 12 hours.
+        #   typ other than pytz/dateutil/zoneinfo means fixed offset: use_fixed with
+        #   delta = deltas[0]. Otherwise use_dst (plus use_pytz or use_zoneinfo) and
+        #   tdata points at trans's buffer.
+        # Exceptions: NotImplementedError(creso) for a non-UTC, non-tzlocal tz with a
+        #   creso other than s/ms/us/ns. Side effects: allocates new arrays when creso
+        #   != ns.
         self.tz = tz
         self._creso = creso
         self.use_utc = self.use_tzlocal = self.use_fixed = False
@@ -134,6 +168,21 @@ cdef class Localizer:
     cdef int64_t utc_val_to_local_val(
         self, int64_t utc_val, Py_ssize_t* pos, bint* fold=NULL
     ) except? -1:
+        # [FUNCTION DOC]
+        # Convert one UTC value to local wall-time value in the same resolution. Inputs:
+        #   utc_val - int64 (caller must ensure not NaT); pos - out pointer receiving
+        #   the index of the transition in force (only written on the DST binary-search
+        #   path); fold - optional out pointer receiving PEP 495 fold (0/1); written on
+        #   tzlocal, DST-search, and zoneinfo-past-last-transition paths, not for
+        #   UTC/fixed.
+        # Behavior: UTC -> unchanged; tzlocal -> add offset from the tzinfo API; fixed
+        #   -> add delta; zoneinfo with a rule and utc_val beyond last_trans -> add
+        #   offset from the tzinfo API; otherwise binary-search trans for the last
+        #   transition <= utc_val and add its delta, inferring fold from the transition
+        #   data.
+        # Outputs: int64 local value. Exceptions: errors from the tzinfo API (e.g.
+        #   NotImplementedError for out-of-range datetimes); -1 is an ambiguous error
+        #   return.
         if self.use_utc:
             return utc_val
         elif self.use_tzlocal:
@@ -168,6 +217,18 @@ cdef int64_t tz_localize_to_utc_single(
     object nonexistent=None,
     NPY_DATETIMEUNIT creso=NPY_DATETIMEUNIT.NPY_FR_ns,
 ) except? -1:
+    # [FUNCTION DOC]
+    # Convert one wall-time value in tz to UTC. Inputs: val - int64 in creso; tz -
+    #   tzinfo or None; ambiguous, nonexistent - policies as in tz_localize_to_utc;
+    #   creso - resolution, default ns.
+    # Behavior: NaT, UTC or None -> val unchanged; tzlocal -> val minus the tzinfo-API
+    #   offset (policies ignored); fixed offset -> val minus deltas[0] scaled from ns to
+    #   creso by floor division; otherwise wraps val in a length-1 array and delegates
+    #   to tz_localize_to_utc, returning element 0.
+    # Outputs: int64 UTC value (or NaT). Exceptions: as tz_localize_to_utc (ValueError
+    #   for ambiguous/nonexistent times under default policy).
+    # KNOWN ISSUE: the fixed-offset branch silently leaves delta in ns for creso values
+    #   other than us/ms/s/ns, whereas Localizer raises NotImplementedError for them.
     """See tz_localize_to_utc.__doc__"""
     cdef:
         int64_t delta
@@ -215,6 +276,36 @@ def tz_localize_to_utc(
     object nonexistent=None,
     NPY_DATETIMEUNIT creso=NPY_DATETIMEUNIT.NPY_FR_ns,
 ):
+    # [FUNCTION DOC]
+    # Vectorized wall-time -> UTC localization. Inputs: vals - 1-D int64 array in creso
+    #   (NaT allowed); tz - tzinfo or None; ambiguous - "infer", "NaT", a bool (applies
+    #   to all), or an iterable of bools the same length as vals (True = take the
+    #   DST/earlier candidate), other values (e.g. "raise", None) mean raise;
+    #   nonexistent - None/"raise", "NaT", "shift_forward", "shift_backward", or a
+    #   timedelta; creso - resolution.
+    # Fast paths: None/UTC tz or empty vals -> copy of vals; tzlocal -> per element
+    #   subtract the tzinfo-API offset; fixed offset -> subtract delta. NaT stays NaT.
+    # General path: compute for each value the candidate UTC instant on the left
+    #   (pre-transition offset) and right (post-transition offset) of nearby transitions
+    #   (NaT if that candidate does not round-trip). If both exist and are equal -> that
+    #   value; both exist and differ (ambiguous) -> inferred DST value when "infer"
+    #   yields one, else bool array choice (True -> left), else NaT if "NaT", else
+    #   ValueError. Only one exists -> it. Neither (nonexistent): shift_forward moves
+    #   wall time to the start of the next hour (val + pph - val mod pph, pph = units
+    #   per hour); shift_backward to one unit before the hour start; a timedelta adds
+    #   that amount (ValueError if the shifted time stays within the same hour). The
+    #   shifted wall time is converted with the offset in force (tzinfo API for zoneinfo
+    #   past last_trans, otherwise by binary search with an index adjustment depending
+    #   on the shift direction and offset signs). "NaT" -> NaT; otherwise ValueError.
+    # Outputs: new int64 ndarray of UTC values. Exceptions: ValueError for bad ambiguous
+    #   length, invalid nonexistent value, unresolvable ambiguous/nonexistent times, or
+    #   infer failures; NotImplementedError for unsupported creso or out-of-range
+    #   datetimes on tzinfo-API paths.
+    # KNOWN ISSUE: the invalid-nonexistent error message lists "shift_backwards" (and
+    #   without quotes), but the accepted option is "shift_backward".
+    # KNOWN ISSUE: shifting assumes DST gaps start on whole hours (it shifts relative to
+    #   val mod one hour), so gaps at non-hour boundaries are shifted to the wrong
+    #   instant.
     """
     Localize tzinfo-naive i8 to given time zone. If
     there are ambiguities in the values, raise ValueError.
@@ -452,6 +543,12 @@ cdef Py_ssize_t bisect_right_i8(
     int64_t val,
     Py_ssize_t n
 ) noexcept:
+    # [FUNCTION DOC]
+    # HELPER: Binary search (bisect-right) on a sorted int64 buffer: returns the number
+    #   of elements <= val, i.e. the insertion index after any equal entries. Inputs:
+    #   data - pointer to n sorted int64 values; val - query; n - length (caller must
+    #   ensure n > 0 and val >= data[0]; the latter holds because transition arrays
+    #   start at NaT+1). Outputs: index in [0, n]. Exceptions: none; no bounds checks.
     # Caller is responsible for checking n > 0
     # This looks very similar to local_search_right in the ndarray.searchsorted
     #  implementation.
@@ -481,6 +578,9 @@ cdef Py_ssize_t bisect_right_i8(
 
 
 cdef str _render_tstamp(int64_t val, NPY_DATETIMEUNIT creso):
+    # [FUNCTION DOC]
+    # HELPER: Format an int64 value at resolution creso as a Timestamp string (no tz)
+    #   for error messages. Side effects: imports Timestamp lazily.
     """ Helper function to render exception messages"""
     from pandas._libs.tslibs.timestamps import Timestamp
     ts = Timestamp._from_value_and_reso(val, creso, None)
@@ -488,6 +588,18 @@ cdef str _render_tstamp(int64_t val, NPY_DATETIMEUNIT creso):
 
 
 cdef _get_utc_bounds(ndarray[int64_t] vals, Localizer info):
+    # [FUNCTION DOC]
+    # HELPER: For each wall-time value compute the two candidate UTC instants around a
+    #   possible DST transition. Inputs: vals - int64 array; info - Localizer for a DST
+    #   tz. Outputs: tuple (result_a, result_b) of new int64 arrays, NaT where no valid
+    #   candidate.
+    # For each non-NaT value: if zoneinfo with a rule and val > last_trans, get offsets
+    #   with fold 0 and fold 1 from the tzinfo API and keep each candidate (val -
+    #   offset) only if converting it back to local gives val. Otherwise: left candidate
+    #   uses the offset in force one day earlier (search trans for val - 1 day), right
+    #   candidate uses the offset one day later (val + 1 day); each is kept only if the
+    #   offset in force at that candidate UTC instant maps it back to val. Equal
+    #   candidates mean unambiguous; both NaT means nonexistent.
     # Determine whether each date lies left of the DST transition (store in
     # result_a) or right of the DST transition (store in result_b)
 
@@ -573,6 +685,18 @@ cdef ndarray[int64_t] _get_dst_hours(
     ndarray[int64_t] result_b,
     NPY_DATETIMEUNIT creso,
 ):
+    # [FUNCTION DOC]
+    # HELPER: Resolve ambiguous wall times for ambiguous="infer". Inputs: vals - int64
+    #   wall times (for error messages); result_a, result_b - left/right UTC candidates
+    #   from _get_utc_bounds; creso - for messages. Outputs: int64 array, NaT except at
+    #   ambiguous positions.
+    # Ambiguous positions are where both candidates exist and differ. They are split
+    #   into runs of consecutive indices (one run per DST fall-back). In each run the
+    #   left candidates must decrease exactly once (the repeated hour); positions before
+    #   the switch take the left (DST) candidate, positions from the switch on take the
+    #   right one.
+    # Exceptions: ValueError if exactly one ambiguous position overall, a run has size 1
+    #   or strictly increasing left candidates, or a run has more than one switch.
     cdef:
         Py_ssize_t i, n = vals.shape[0]
         ndarray[uint8_t, cast=True] mismatch
@@ -653,6 +777,11 @@ cdef ndarray[int64_t] _get_dst_hours(
 cpdef int64_t tz_convert_from_utc_single(
     int64_t utc_val, tzinfo tz, NPY_DATETIMEUNIT creso=NPY_DATETIMEUNIT.NPY_FR_ns
 ) except? -1:
+    # [FUNCTION DOC]
+    # Convert one UTC int64 value to local wall time in tz. Inputs: utc_val - int64 at
+    #   creso (caller must ensure not NaT); tz - tzinfo or None; creso - default ns.
+    #   Builds a Localizer and calls utc_val_to_local_val. Outputs: int64 local value.
+    #   Exceptions: as Localizer construction/conversion.
     """
     Convert the val (in i8) from UTC to tz
 
@@ -686,6 +815,20 @@ cdef int64_t _tz_localize_using_tzinfo_api(
     bint* fold=NULL,
     int fold_in=-1,
 ) except? -1:
+    # [FUNCTION DOC]
+    # HELPER: Get the UTC offset (in creso units) for a value via the Python tzinfo API.
+    #   Inputs: val - int64 at creso; tz - tzinfo; to_utc - True if val is wall time
+    #   (offset for converting to UTC), False if val is UTC; creso; fold - out pointer
+    #   for the resulting fold (only set when to_utc is False); fold_in - fold to use
+    #   for wall time when to_utc (-1 = unspecified/0).
+    # Behavior: decompose val into date/time fields; if to_utc, build a naive datetime
+    #   (with fold_in) and query tz.utcoffset; else build the local datetime via
+    #   tz.fromutc and query utcoffset on it. Offset is total seconds times
+    #   units-per-second, truncated to int.
+    # Outputs: int64 offset to add to UTC (or subtract from wall time). Exceptions:
+    #   NotImplementedError if fields are outside Python datetime's range; OSError
+    #   possible from tzlocal on Windows near the epoch; errors from tz methods.
+    #   Sub-microsecond parts of val are ignored.
     """
     Convert the i8 representation of a datetime from a general-case timezone to
     UTC, or vice-versa using the datetime/tzinfo API.
@@ -753,6 +896,11 @@ cdef int64_t _tz_localize_using_tzinfo_api(
 
 
 cdef datetime _astimezone(npy_datetimestruct dts, tzinfo tz):
+    # [FUNCTION DOC]
+    # HELPER: Convert UTC date/time fields to an aware local datetime in tz: builds a
+    #   datetime with those fields tagged with tz, then calls tz.fromutc on it. Inputs:
+    #   dts - datetime struct (UTC fields); tz - non-None tzinfo. Outputs: datetime.
+    #   Exceptions: NotImplementedError if fields are out of Python datetime range.
     """
     Optimized equivalent to:
 
@@ -789,6 +937,13 @@ cdef bint _infer_dateutil_fold(
     const int64_t[::1] deltas,
     Py_ssize_t pos,
 ):
+    # [FUNCTION DOC]
+    # HELPER: Infer PEP 495 fold for a UTC value. Inputs: value - UTC int64; trans,
+    #   deltas - transition instants and offsets (creso units, not necessarily ns as the
+    #   docstring says); pos - index of the transition in force. Outputs: 1 if pos > 0
+    #   and value minus (previous offset - current offset) is before trans[pos], i.e.
+    #   the value lies in the repeated wall-time window just after a fall-back
+    #   transition; else 0. No bounds checks.
     """
     Infer _TSObject fold property from value by assuming 0 and then setting
     to 1 if necessary.

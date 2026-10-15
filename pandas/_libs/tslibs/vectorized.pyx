@@ -1,3 +1,13 @@
+# [MODULE DOC]
+# Vectorized operations on arrays of int64 epoch values (UTC, unit given by reso,
+#   minimum int64 = NaT) that need the local wall time in a timezone. Every function
+#   builds a Localizer (tzconversion.pyx) once, then iterates over all elements of an
+#   array of any dimension in C order, converting each UTC value to local time before
+#   computing its result. Results have the same shape as the input.
+# Provides: UTC -> local conversion, boxing to Python datetime/date/time/Timestamp
+#   objects, finest-resolution detection, normalization to local midnight, normalization
+#   check, and conversion to period ordinals.
+# Side effects at import: initializes numpy and pandas datetime C-APIs.
 cimport cython
 cimport numpy as cnp
 from cpython.datetime cimport (
@@ -42,6 +52,12 @@ from .tzconversion cimport Localizer
 @cython.boundscheck(False)
 @cython.wraparound(False)
 def tz_convert_from_utc(ndarray stamps, tzinfo tz, NPY_DATETIMEUNIT reso=NPY_FR_ns):
+    # [FUNCTION DOC]
+    # Convert UTC int64 values to local wall-time int64 values. Inputs: stamps - int64
+    #   ndarray, any shape; tz - tzinfo or None; reso - unit (default ns). Outputs: new
+    #   int64 array, same shape; NaT stays NaT. If tz is None/UTC or stamps is empty,
+    #   returns a copy. Exceptions: as Localizer (NotImplementedError for unsupported
+    #   reso).
     # stamps is int64_t, arbitrary ndim
     """
     Convert the values (in i8) from UTC to tz
@@ -99,6 +115,18 @@ def ints_to_pydatetime(
     str box="datetime",
     NPY_DATETIMEUNIT reso=NPY_FR_ns,
 ) -> ndarray:
+    # [FUNCTION DOC]
+    # Box int64 UTC values into Python objects. Inputs: stamps - int64 ndarray, any
+    #   shape; tz - tzinfo or None; box - "datetime", "date", "time" or "timestamp";
+    #   reso - unit.
+    # For each value: NaT -> the NaT singleton. Otherwise convert to local time (getting
+    #   fold), and for pytz zones pick the pytz tzinfo variant for the transition in
+    #   force; decompose into fields; build a Timestamp (from UTC value, fields, tz,
+    #   fold, reso), a datetime (with tz and fold), a date (no tz), or a time (with tz
+    #   and fold). Sub-microsecond parts are dropped except for Timestamp.
+    # Outputs: object ndarray with input shape. Exceptions: AssertionError if box="date"
+    #   with non-None tz; ValueError for an unknown box; errors from datetime
+    #   constructors for out-of-range years.
     # stamps is int64, arbitrary ndim
     """
     Convert an i8 repr to an ndarray of datetimes, date, time or Timestamp.
@@ -201,6 +229,12 @@ def ints_to_pydatetime(
 
 
 cdef c_Resolution _reso_stamp(npy_datetimestruct *dts):
+    # [FUNCTION DOC]
+    # HELPER: Finest resolution present in one datetime struct: nanosecond if any
+    #   picoseconds (i.e. sub-us part), else millisecond if microseconds are a non-zero
+    #   multiple of 1000, microsecond if non-zero, then second, minute, hour by first
+    #   non-zero field, else day. Inputs: dts - pointer to fields. Outputs:
+    #   c_Resolution.
     if dts.ps != 0:
         return c_Resolution.RESO_NS
     elif dts.us != 0:
@@ -221,6 +255,12 @@ cdef c_Resolution _reso_stamp(npy_datetimestruct *dts):
 def get_resolution(
     ndarray stamps, tzinfo tz=None, NPY_DATETIMEUNIT reso=NPY_FR_ns
 ) -> Resolution:
+    # [FUNCTION DOC]
+    # Finest resolution needed to represent all values in local time. Inputs: stamps -
+    #   int64 ndarray (any shape); tz; reso. Skips NaT; for each other value converts to
+    #   local, decomposes into fields, and takes the minimum resolution from the
+    #   per-value helper. Outputs: Resolution enum member; RESO_DAY for empty or all-NaT
+    #   input.
     # stamps is int64_t, any ndim
     cdef:
         Localizer info = Localizer(tz, creso=reso)
@@ -259,6 +299,13 @@ def get_resolution(
 @cython.wraparound(False)
 @cython.boundscheck(False)
 cpdef ndarray normalize_i8_timestamps(ndarray stamps, tzinfo tz, NPY_DATETIMEUNIT reso):
+    # [FUNCTION DOC]
+    # Floor each value to local midnight. Inputs: stamps - int64 ndarray (any shape);
+    #   tz; reso. For non-NaT values: local = UTC converted to tz, result = local minus
+    #   (local floor-modulo units-per-day). Note the result is a local wall-time value
+    #   (not converted back to UTC). NaT stays NaT.
+    # Outputs: new int64 array. Exceptions: ValueError("Cannot normalize Timestamp
+    #   without integer overflow") on overflow; Localizer errors.
     # stamps is int64_t, arbitrary ndim
     """
     Normalize each of the (nanosecond) timezone aware timestamps in the given
@@ -310,6 +357,13 @@ cpdef ndarray normalize_i8_timestamps(ndarray stamps, tzinfo tz, NPY_DATETIMEUNI
 @cython.wraparound(False)
 @cython.boundscheck(False)
 def is_date_array_normalized(ndarray stamps, tzinfo tz, NPY_DATETIMEUNIT reso) -> bool:
+    # [FUNCTION DOC]
+    # True if every value, converted to local time, is an exact multiple of
+    #   units-per-day (local midnight). Inputs: stamps; tz; reso. Returns False at the
+    #   first non-midnight value; True for empty input.
+    # KNOWN ISSUE: NaT values are not skipped; NaT (minimum int64) is not a multiple of
+    #   a day, so any NaT makes the result False (and for DST zones NaT goes through the
+    #   transition search).
     # stamps is int64_t, arbitrary ndim
     """
     Check if all of the given (nanosecond) timestamps are normalized to
@@ -356,6 +410,11 @@ def is_date_array_normalized(ndarray stamps, tzinfo tz, NPY_DATETIMEUNIT reso) -
 def dt64arr_to_periodarr(
     ndarray stamps, int freq, tzinfo tz, NPY_DATETIMEUNIT reso=NPY_FR_ns
 ):
+    # [FUNCTION DOC]
+    # Convert UTC int64 values to period ordinals. Inputs: stamps - int64 ndarray (any
+    #   shape); freq - period dtype code int (e.g. 3000 monthly); tz; reso. For non-NaT
+    #   values converts to local, decomposes into fields and computes the period ordinal
+    #   for freq. Outputs: new int64 array; NaT stays NaT. Exceptions: Localizer errors.
     # stamps is int64_t, arbitrary ndim
     cdef:
         Localizer info = Localizer(tz, creso=reso)

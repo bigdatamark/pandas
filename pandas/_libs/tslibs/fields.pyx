@@ -1,3 +1,13 @@
+# [MODULE DOC]
+# Vectorized field extraction for datetime-like int64 arrays: values are counts of a
+#   unit (reso, default ns) since 1970-01-01 UTC (already converted to local wall time
+#   by callers), with the minimum int64 as the NaT marker. Each value is decomposed into
+#   calendar fields (year, month, day, hour, minute, second, microsecond, picosecond)
+#   via the pandas datetime C-API, and then a field, name, boolean flag or ISO calendar
+#   triple is produced. Also timedelta component extraction, leap-year test,
+#   month-position inference for frequency detection, localized day/month names, and
+#   integer rounding of values to a multiple of a unit under several rounding modes.
+# Side effects at import: initializes numpy and pandas datetime C-APIs.
 """
 Functions for accessing attributes of Timestamp/datetime64/datetime-like
 objects and arrays
@@ -56,6 +66,11 @@ import_pandas_datetime()
 @cython.wraparound(False)
 @cython.boundscheck(False)
 def build_field_sarray(const int64_t[:] dtindex, NPY_DATETIMEUNIT reso):
+    # [FUNCTION DOC]
+    # Decompose each int64 value into a structured array with int32 fields Y, M, D, h,
+    #   m, s, u (microsecond). Inputs: dtindex - 1-D int64 values; reso - unit. Outputs:
+    #   new structured ndarray of the same length. NaT is not special-cased (decomposed
+    #   like any other integer). No bounds checks.
     """
     Datetime as int64 representation to a structured array of fields
     """
@@ -98,6 +113,16 @@ def build_field_sarray(const int64_t[:] dtindex, NPY_DATETIMEUNIT reso):
 
 
 def month_position_check(fields, weekdays) -> str | None:
+    # [FUNCTION DOC]
+    # Infer whether all dates sit at a consistent month position, for frequency
+    #   inference. Inputs: fields - structured array with Y, M, D int32 fields (as from
+    #   build_field_sarray); weekdays - iterable of day-of-week ints (Monday=0), same
+    #   length.
+    # Tracks four flags over all rows: calendar start (day == 1), business start (day 1,
+    #   or day <= 3 and Monday), calendar end (last day of month), business end (last
+    #   day, or within the last 3 days and Friday). Stops early once all four are False.
+    # Outputs: "ce", "be", "cs", "bs" (first true flag in that priority order) or None.
+    #   Empty input returns "ce". Exceptions: ValueError if lengths differ (strict zip).
     cdef:
         int32_t daysinmonth, y, m, d
         bint calendar_end = True
@@ -145,6 +170,14 @@ def get_date_name_field(
     object locale=None,
     NPY_DATETIMEUNIT reso=NPY_FR_ns,
 ):
+    # [FUNCTION DOC]
+    # Day or month names for each value. Inputs: dtindex - 1-D int64; field - "day_name"
+    #   or "month_name"; locale - None for English, else a locale string whose LC_TIME
+    #   names are used; reso - unit. Outputs: object ndarray of capitalized names; NaT
+    #   -> NaN float.
+    # Exceptions: ValueError("Field ... not supported") for other fields; locale errors
+    #   from set_locale. Side effects: temporarily switches the process LC_TIME locale
+    #   when locale is given.
     """
     Given an int64-based datetime index, return array of strings of date
     name based on requested field (e.g. day_name)
@@ -194,6 +227,10 @@ def get_date_name_field(
 
 
 cdef bint _is_on_month(int month, int compare_month, int modby) noexcept nogil:
+    # [FUNCTION DOC]
+    # HELPER: Whether month matches an anchor month under a period. Inputs: month,
+    #   compare_month - 1..12; modby - 1 (any month), 3 (same position within a
+    #   quarter), otherwise exact match (yearly). Outputs: bint. Runs without the GIL.
     """
     Analogous to DateOffset.is_on_offset checking for the month part of a date.
     """
@@ -214,6 +251,22 @@ def get_start_end_field(
     int month_kw=12,
     NPY_DATETIMEUNIT reso=NPY_FR_ns,
 ):
+    # [FUNCTION DOC]
+    # Boolean start/end flags for month, quarter or year. Inputs: dtindex - 1-D int64;
+    #   field - one of is_month_start/end, is_quarter_start/end, is_year_start/end;
+    #   freq_name - offset name of the index frequency or None; month_kw - anchor month
+    #   of the offset (default 12); reso.
+    # Anchors: with no freq_name, year ends in December and starts in January. With
+    #   freq_name: "C" raises ValueError; a leading "B" means business-day semantics;
+    #   names starting (after stripping leading B's) with QS or YS treat month_kw as the
+    #   starting month (end = previous month); others treat month_kw as the ending month
+    #   (start = next month). The compared month is the start anchor for "start" fields
+    #   and the end anchor otherwise; period is 1 for month, 3 for quarter, 12 for year
+    #   fields.
+    # A value is flagged if the month matches and the day equals 1 (or the first
+    #   business day) for start fields, or the last day of month (or last business day)
+    #   for end fields. NaT -> False.
+    # Outputs: bool ndarray. Exceptions: ValueError for unsupported field or "C" freq.
     """
     Given an int64-based datetime index return array of indicators
     of whether timestamps are at the start/end of the month/quarter/year
@@ -334,6 +387,15 @@ def get_date_field(
     str field,
     NPY_DATETIMEUNIT reso=NPY_FR_ns,
 ):
+    # [FUNCTION DOC]
+    # Extract one numeric calendar field per value as int32. Inputs: dtindex - 1-D
+    #   int64; field - "Y", "M", "D", "h", "m", "s", "us" (microsecond), "ns"
+    #   (nanosecond within the microsecond), "doy" (day of year, 1-based), "dow"
+    #   (Monday=0), "woy" (ISO week), "q" (quarter 1-4), "dim" (days in month), or
+    #   "is_leap_year"; reso.
+    # Outputs: int32 ndarray with -1 for NaT; for "is_leap_year" a bool array (NaT ->
+    #   False) computed from the years. Exceptions: ValueError for unknown fields. Side
+    #   effects: releases the GIL in the main loops.
     """
     Given an int64-based datetime index, extract the year, month, etc.,
     field and return an array of these values.
@@ -501,6 +563,12 @@ def get_timedelta_field(
     str field,
     NPY_DATETIMEUNIT reso=NPY_FR_ns,
 ):
+    # [FUNCTION DOC]
+    # Extract a timedelta component per value as int32. Inputs: tdindex - 1-D int64
+    #   durations; field - "seconds" (0-86399 within the day), "microseconds" (0-999999
+    #   within the second), or "nanoseconds" (0-999 within the microsecond); reso.
+    #   Outputs: int32 ndarray, -1 for NaT. Exceptions: ValueError for unknown field.
+    #   Side effects: releases the GIL.
     """
     Given an int64-based timedelta index, extract the days, hrs, sec.,
     field and return an array of these values.
@@ -554,6 +622,12 @@ def get_timedelta_days(
     const int64_t[:] tdindex,
     NPY_DATETIMEUNIT reso=NPY_FR_ns,
 ):
+    # [FUNCTION DOC]
+    # Whole days component (floored, can be negative) of each timedelta as int64.
+    #   Inputs: tdindex - 1-D int64; reso. Outputs: int64 ndarray; NaT -> -1. Side
+    #   effects: releases the GIL.
+    # KNOWN ISSUE: NaT maps to -1, which is indistinguishable from a genuine duration of
+    #   -1 day (callers must mask NaT themselves).
     """
     Given an int64-based timedelta index, extract the days,
     field and return an array of these values.
@@ -577,6 +651,10 @@ def get_timedelta_days(
 
 
 cpdef isleapyear_arr(ndarray years):
+    # [FUNCTION DOC]
+    # Vectorized Gregorian leap-year test. Inputs: years - integer ndarray. Outputs:
+    #   bool ndarray, True where divisible by 400, or divisible by 4 and not by 100. A
+    #   -1 NaT marker yields False.
     """vectorized version of isleapyear; NaT evaluates as False"""
     cdef:
         ndarray[int8_t] out
@@ -591,6 +669,10 @@ cpdef isleapyear_arr(ndarray years):
 @cython.wraparound(False)
 @cython.boundscheck(False)
 def build_isocalendar_sarray(const int64_t[:] dtindex, NPY_DATETIMEUNIT reso):
+    # [FUNCTION DOC]
+    # ISO 8601 calendar for each value as a structured array with uint32 fields year,
+    #   week, day (Monday=1). Inputs: dtindex - 1-D int64; reso. Outputs: structured
+    #   ndarray; NaT rows are (0, 0, 0). Side effects: releases the GIL.
     """
     Given an int64-based datetime array, return the ISO 8601 year, week, and day
     as a structured array.
@@ -628,6 +710,11 @@ def build_isocalendar_sarray(const int64_t[:] dtindex, NPY_DATETIMEUNIT reso):
 
 
 def _get_locale_names(name_type: str, locale: object = None):
+    # [FUNCTION DOC]
+    # HELPER: Localized day or month names. Inputs: name_type - LocaleTime attribute
+    #   (e.g. "f_weekday", "f_month"); locale - locale string or None. Outputs: list of
+    #   names (for months, index 0 is an empty string). Side effects: temporarily sets
+    #   the process LC_TIME locale; raises if the locale is unavailable.
     """
     Returns an array of localized day or month names.
 
@@ -650,6 +737,13 @@ def _get_locale_names(name_type: str, locale: object = None):
 
 
 class RoundTo:
+    # [CLASS DOC]
+    # Namespace of rounding mode codes: MINUS_INFTY (floor), PLUS_INFTY (ceil),
+    #   NEAREST_HALF_EVEN, NEAREST_HALF_PLUS_INFTY, NEAREST_HALF_MINUS_INFTY.
+    # KNOWN ISSUE: the codes are instance properties but are always accessed on the
+    #   class, so RoundTo.X evaluates to the property object, not the integer the
+    #   annotations promise; round_nsint64 works only because callers pass those same
+    #   property objects and comparisons are by identity.
     """
     enumeration defining the available rounding modes
 
@@ -684,26 +778,40 @@ class RoundTo:
     """
     @property
     def MINUS_INFTY(self) -> int:
+        # [FUNCTION DOC]
+        # Mode code 0 (round toward minus infinity).
         return 0
 
     @property
     def PLUS_INFTY(self) -> int:
+        # [FUNCTION DOC]
+        # Mode code 1 (round toward plus infinity).
         return 1
 
     @property
     def NEAREST_HALF_EVEN(self) -> int:
+        # [FUNCTION DOC]
+        # Mode code 2 (round to nearest, ties to even multiple).
         return 2
 
     @property
     def NEAREST_HALF_PLUS_INFTY(self) -> int:
+        # [FUNCTION DOC]
+        # Mode code 3 (round to nearest, ties toward plus infinity).
         return 3
 
     @property
     def NEAREST_HALF_MINUS_INFTY(self) -> int:
+        # [FUNCTION DOC]
+        # Mode code 4 (round to nearest, ties toward minus infinity).
         return 4
 
 
 cdef ndarray[int64_t] _floor_int64(const int64_t[:] values, int64_t unit):
+    # [FUNCTION DOC]
+    # HELPER: Floor each value to a multiple of unit (value minus floor-modulo). Inputs:
+    #   values - 1-D int64; unit - positive int64. Outputs: new int64 ndarray; NaT
+    #   preserved. Exceptions: OverflowError on int64 overflow.
     cdef:
         Py_ssize_t i, n = len(values)
         ndarray[int64_t] result = np.empty(n, dtype="i8")
@@ -722,6 +830,10 @@ cdef ndarray[int64_t] _floor_int64(const int64_t[:] values, int64_t unit):
 
 
 cdef ndarray[int64_t] _ceil_int64(const int64_t[:] values, int64_t unit):
+    # [FUNCTION DOC]
+    # HELPER: Ceil each value to a multiple of unit (unchanged if already a multiple,
+    #   else add unit minus remainder). Inputs/outputs as the floor helper; NaT
+    #   preserved. Exceptions: OverflowError on overflow.
     cdef:
         Py_ssize_t i, n = len(values)
         ndarray[int64_t] result = np.empty(n, dtype="i8")
@@ -746,6 +858,12 @@ cdef ndarray[int64_t] _ceil_int64(const int64_t[:] values, int64_t unit):
 
 
 cdef ndarray[int64_t] _rounddown_int64(values, int64_t unit):
+    # [FUNCTION DOC]
+    # HELPER: Round to nearest multiple of unit with ties toward minus infinity:
+    #   subtracts half a unit (floor of unit/2) then ceils. Inputs: values - int64
+    #   array-like; unit. Outputs: new int64 ndarray; NaT preserved. Exceptions:
+    #   OverflowError on overflow. With an odd unit there are no ties, so this is exact
+    #   nearest rounding.
     cdef:
         Py_ssize_t i, n = len(values)
         ndarray[int64_t] result = np.empty(n, dtype="i8")
@@ -774,10 +892,23 @@ cdef ndarray[int64_t] _rounddown_int64(values, int64_t unit):
 
 
 cdef ndarray[int64_t] _roundup_int64(values, int64_t unit):
+    # [FUNCTION DOC]
+    # HELPER: Round to nearest multiple of unit with ties toward plus infinity: adds
+    #   half a unit (floor of unit/2) to the whole array, then floors.
+    # KNOWN ISSUE: unlike the other helpers NaT is not preserved (half a unit is added
+    #   to the NaT marker before flooring, producing a non-NaT value) and the array
+    #   addition can wrap around on overflow without error; callers must mask NaT
+    #   afterwards.
     return _floor_int64(values + unit // 2, unit)
 
 
 cdef ndarray[int64_t] _round_nearest_int64(const int64_t[:] values, int64_t unit):
+    # [FUNCTION DOC]
+    # HELPER: Round to nearest multiple of unit with ties to the even multiple: split
+    #   into quotient and floor-remainder; round up if remainder > half, or if remainder
+    #   == half and the quotient is odd; else round down. Inputs: values - 1-D int64;
+    #   unit (even, as called). Outputs: new int64 ndarray; NaT preserved. Exceptions:
+    #   OverflowError on overflow.
     cdef:
         Py_ssize_t i, n = len(values)
         ndarray[int64_t] result = np.empty(n, dtype="i8")
@@ -806,6 +937,14 @@ cdef ndarray[int64_t] _round_nearest_int64(const int64_t[:] values, int64_t unit
 
 
 def round_nsint64(values: np.ndarray, mode: RoundTo, nanos: int) -> np.ndarray:
+    # [FUNCTION DOC]
+    # Round int64 values to a multiple of nanos according to mode. Inputs: values -
+    #   int64 ndarray; mode - one of the RoundTo codes; nanos - the multiple, in the
+    #   same unit as values (not necessarily nanoseconds despite the name). Dispatches
+    #   to floor, ceil, half-down, half-up, or half-even (odd units use half-down since
+    #   ties cannot occur).
+    # Outputs: new int64 ndarray. Exceptions: ValueError for unknown mode; OverflowError
+    #   from the helpers.
     """
     Applies rounding mode at given frequency
 

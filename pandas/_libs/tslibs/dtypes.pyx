@@ -1,3 +1,17 @@
+# [MODULE DOC]
+# Frequency/resolution vocabulary for tslibs. Defines PeriodDtypeBase (an integer-coded
+#   period dtype: a PeriodDtypeCode plus a multiple n), the Python enums FreqGroup,
+#   Resolution and NpyDatetimeUnit mirroring the C enums in dtypes.pxd, and many module-
+#   level lookup dicts mapping frequency strings (e.g. "Y-DEC", "QE", "h") to period
+#   codes, offset aliases, deprecated aliases and resolution attribute names ("second",
+#   "day", ...).
+# Period codes are grouped in thousands: code // 1000 * 1000 is the frequency group
+#   (FR_ANN=1000 ... FR_NS=12000); the remainder encodes a variant such as fiscal year-
+#   end month or week-end day.
+# Also provides conversions between numpy datetime units (NPY_DATETIMEUNIT) and their
+#   string abbreviations, plus unit scale helpers (periods per day/second).
+# Side effects at import: calls import_pandas_datetime() to load the datetime C-API
+#   capsule.
 # period frequency constants corresponding to scikits timeseries
 # originals
 from enum import Enum
@@ -12,6 +26,11 @@ from pandas._libs.tslibs.np_datetime cimport (
 import_pandas_datetime()
 
 cdef class PeriodDtypeBase:
+    # [CLASS DOC]
+    # Lightweight immutable description of a period frequency. Fields (readonly):
+    #   _dtype_code (PeriodDtypeCode int, e.g. 3000 for monthly, 2011 for Q-NOV) and _n
+    #   (int64 multiple, e.g. 2 for "2M"). Equality and hashing are by (code, n).
+    #   Subclassed by PeriodDtype.
     """
     Similar to an actual dtype, this contains all of the information
     describing a PeriodDtype in an integer code.
@@ -21,10 +40,18 @@ cdef class PeriodDtypeBase:
     #    int64_t _n
 
     def __cinit__(self, PeriodDtypeCode code, int64_t n):
+        # [FUNCTION DOC]
+        # Construct: store code and n verbatim. Inputs: code - PeriodDtypeCode int; n -
+        #   int64 multiple. No validation is performed. Outputs: none. Side effects:
+        #   sets fields.
         self._dtype_code = code
         self._n = n
 
     def __eq__(self, other):
+        # [FUNCTION DOC]
+        # Equality: True only if other is a PeriodDtypeBase (or subclass) and both
+        #   _dtype_code and _n match; otherwise False (never NotImplemented). The second
+        #   isinstance check handles reversed-operand calls.
         if not isinstance(other, PeriodDtypeBase):
             return False
         if not isinstance(self, PeriodDtypeBase):
@@ -33,15 +60,29 @@ cdef class PeriodDtypeBase:
         return self._dtype_code == other._dtype_code and self._n == other._n
 
     def __hash__(self) -> int:
+        # [FUNCTION DOC]
+        # Hash of the tuple (_n, _dtype_code). Outputs: int.
         return hash((self._n, self._dtype_code))
 
     @property
     def _freq_group_code(self) -> int:
+        # [FUNCTION DOC]
+        # Property: the frequency group code, i.e. _dtype_code floored to a multiple of
+        #   1000 (e.g. 2011 -> 2000). Outputs: int.
         # See also: libperiod.get_freq_group
         return (self._dtype_code // 1000) * 1000
 
     @property
     def _resolution_obj(self) -> "Resolution":
+        # [FUNCTION DOC]
+        # Property: map this dtype to a Resolution. Looks up the group code in
+        #   FreqGroup, takes the abbreviation registered for that exact group code (e.g.
+        #   "Y-DEC" for 1000, "W-SUN" for 4000), strips any "-suffix", and maps "B" to
+        #   RESO_DAY; otherwise looks up the attribute name for the abbreviation and
+        #   returns Resolution.from_attrname.
+        # Exceptions: KeyError if the abbreviation has no resolution attribute name.
+        # KNOWN ISSUE: for the weekly group the abbreviation is "W", which is not in the
+        #   abbreviation-to-attrname map, so weekly dtypes raise KeyError here.
         fgc = self._freq_group_code
         freq_group = FreqGroup(fgc)
         abbrev = _period_code_to_abbrev[freq_group.value].split("-")[0]
@@ -52,6 +93,12 @@ cdef class PeriodDtypeBase:
 
     @property
     def _freqstr(self) -> str:
+        # [FUNCTION DOC]
+        # Property: frequency string. Looks up the abbreviation for the exact
+        #   _dtype_code (e.g. "Q-NOV"); returns it as-is when n == 1, otherwise prefixes
+        #   the decimal n (e.g. "2Q-NOV").
+        # Exceptions: TypeError if the code is not in the map (lookup yields None and
+        #   string concatenation fails when n != 1; returns None when n == 1).
         # Will be passed to to_offset in Period._maybe_convert_freq
         out = _period_code_to_abbrev.get(self._dtype_code)
         if self._n == 1:
@@ -59,6 +106,12 @@ cdef class PeriodDtypeBase:
         return str(self._n) + out
 
     cpdef int _get_to_timestamp_base(self):
+        # [FUNCTION DOC]
+        # Return the frequency group code used as the base unit when converting a period
+        #   to a timestamp: FR_DAY for any code below FR_BUS (annual, quarterly,
+        #   monthly, weekly), FR_SEC for codes from FR_HR through FR_SEC (hour, minute,
+        #   second), and otherwise the raw code itself (business, day, ms, us, ns).
+        #   Outputs: C int.
         """
         Return frequency code group used for base of to_timestamp against
         frequency code.
@@ -78,10 +131,20 @@ cdef class PeriodDtypeBase:
         return base
 
     cpdef bint _is_tick_like(self):
+        # [FUNCTION DOC]
+        # True if the frequency is daily or finer (_dtype_code >= D == 6000), i.e. a
+        #   fixed-length "tick" frequency; business-day (5000) and coarser return False.
+        #   Outputs: bint.
         return self._dtype_code >= PeriodDtypeCode.D
 
     @property
     def _creso(self) -> int:
+        # [FUNCTION DOC]
+        # Property: numpy datetime unit matching this tick-like period code (D->day,
+        #   H->hour, T->minute, S->second, L->ms, U->us, N->ns). Outputs: int
+        #   NPY_DATETIMEUNIT value.
+        # Exceptions: KeyError for non-tick codes (annual..business), and also for any
+        #   code not exactly equal to one of those seven.
         return {
             PeriodDtypeCode.D: NPY_DATETIMEUNIT.NPY_FR_D,
             PeriodDtypeCode.H: NPY_DATETIMEUNIT.NPY_FR_h,
@@ -94,6 +157,9 @@ cdef class PeriodDtypeBase:
 
     @property
     def _td64_unit(self) -> str:
+        # [FUNCTION DOC]
+        # Property: timedelta64 unit abbreviation for _creso (e.g. "ns"). Exceptions:
+        #   KeyError as in _creso.
         return npy_unit_to_abbrev(self._creso)
 
 
@@ -367,6 +433,9 @@ cdef str INVALID_FREQ_ERR_MSG = "Invalid frequency: {0}"
 
 
 class FreqGroup(Enum):
+    # [CLASS DOC]
+    # Python Enum of frequency groups (multiples of 1000), mirroring c_FreqGroup in
+    #   dtypes.pxd. FR_UND (-10000) means undefined.
     # Mirrors c_FreqGroup in the .pxd file
     FR_ANN = c_FreqGroup.FR_ANN
     FR_QTR = c_FreqGroup.FR_QTR
@@ -384,12 +453,20 @@ class FreqGroup(Enum):
 
     @staticmethod
     def from_period_dtype_code(code: int) -> "FreqGroup":
+        # [FUNCTION DOC]
+        # Static: floor an integer period code to its group (code // 1000 * 1000) and
+        #   return the FreqGroup member. Inputs: code - int period dtype code.
+        #   Exceptions: ValueError if the floored value is not a member.
         # See also: PeriodDtypeBase._freq_group_code
         code = (code // 1000) * 1000
         return FreqGroup(code)
 
 
 class Resolution(Enum):
+    # [CLASS DOC]
+    # Python Enum of datetime resolutions, ordered finest (RESO_NS=0) to coarsest
+    #   (RESO_YR=9), mirroring c_Resolution. Members compare by value; attrname gives
+    #   the datetime attribute ("second"), attr_abbrev the offset alias ("s").
     RESO_NS = c_Resolution.RESO_NS
     RESO_US = c_Resolution.RESO_US
     RESO_MS = c_Resolution.RESO_MS
@@ -402,18 +479,33 @@ class Resolution(Enum):
     RESO_YR = c_Resolution.RESO_YR
 
     def __lt__(self, other):
+        # [FUNCTION DOC]
+        # Less-than by integer value (finer resolution is "less"). Inputs: other -
+        #   Resolution. Exceptions: AttributeError if other has no value.
+        # KNOWN ISSUE: only lt and ge are defined; gt and le fall back to Enum defaults
+        #   (reflected lt/ge works via Python's operator reflection, so a > b works, but
+        #   comparison with non-Resolution raises AttributeError rather than returning
+        #   NotImplemented).
         return self.value < other.value
 
     def __ge__(self, other):
+        # [FUNCTION DOC]
+        # Greater-or-equal by integer value. Inputs: other - Resolution.
         return self.value >= other.value
 
     @property
     def attr_abbrev(self) -> str:
+        # [FUNCTION DOC]
+        # Property: the frequency alias for this resolution (e.g. "h" for RESO_HR, "Y"
+        #   for RESO_YR), via attrname then the attrname-to-abbreviation dict.
         # string that we can pass to to_offset
         return attrname_to_abbrevs[self.attrname]
 
     @property
     def attrname(self) -> str:
+        # [FUNCTION DOC]
+        # Property: datetime attribute name for this resolution, from the value-to-name
+        #   map (e.g. 3 -> "second").
         """
         Return datetime attribute name corresponding to this Resolution.
 
@@ -426,6 +518,12 @@ class Resolution(Enum):
 
     @classmethod
     def from_attrname(cls, attrname: str) -> "Resolution":
+        # [FUNCTION DOC]
+        # Classmethod: inverse of attrname. Inputs: attrname - str like "second".
+        #   Outputs: Resolution. Exceptions: KeyError if unknown.
+        # Note: existing docstring says "Return resolution str against resolution code"
+        #   which describes the opposite direction; the code returns a Resolution from a
+        #   name.
         """
         Return resolution str against resolution code.
 
@@ -441,6 +539,13 @@ class Resolution(Enum):
 
     @classmethod
     def get_reso_from_freqstr(cls, freq: str) -> "Resolution":
+        # [FUNCTION DOC]
+        # Classmethod: resolution for a frequency string. Tries the abbreviation-to-
+        #   attrname map directly ("h" -> hour). On miss, splits on "-"; if there are
+        #   exactly two parts and the second is a month name (e.g. "Q-DEC"), looks up
+        #   the first part; otherwise raises ValueError("Invalid frequency: <freq>").
+        # Exceptions: ValueError as above; KeyError if the prefix before "-" is not a
+        #   known abbreviation (e.g. "W-JAN" style with unknown prefix).
         """
         Return resolution code against frequency str.
 
@@ -472,6 +577,9 @@ class Resolution(Enum):
 
 
 class NpyDatetimeUnit(Enum):
+    # [CLASS DOC]
+    # Python Enum mirroring the C NPY_DATETIMEUNIT values (Y, M, W, D, h, m, s, ms, us,
+    #   ns, ps, fs, as, GENERIC).
     """
     Python-space analogue to NPY_DATETIMEUNIT.
     """
@@ -492,6 +600,10 @@ class NpyDatetimeUnit(Enum):
 
 
 cdef NPY_DATETIMEUNIT get_supported_reso(NPY_DATETIMEUNIT reso):
+    # [FUNCTION DOC]
+    # Clamp a numpy datetime unit to the range pandas supports (seconds..nanoseconds).
+    #   Inputs: reso - NPY_DATETIMEUNIT. Outputs: GENERIC -> ns; coarser than seconds ->
+    #   s; finer than ns -> ns; else reso unchanged. Exceptions: none.
     # If we have an unsupported reso, return the nearest supported reso.
     if reso == NPY_DATETIMEUNIT.NPY_FR_GENERIC:
         # TODO: or raise ValueError? trying this gives unraisable errors, but
@@ -505,6 +617,8 @@ cdef NPY_DATETIMEUNIT get_supported_reso(NPY_DATETIMEUNIT reso):
 
 
 cdef bint is_supported_unit(NPY_DATETIMEUNIT reso):
+    # [FUNCTION DOC]
+    # True iff reso is one of the four supported units: s, ms, us, ns.
     return (
         reso == NPY_DATETIMEUNIT.NPY_FR_ns
         or reso == NPY_DATETIMEUNIT.NPY_FR_us
@@ -514,6 +628,10 @@ cdef bint is_supported_unit(NPY_DATETIMEUNIT reso):
 
 
 cdef str npy_unit_to_abbrev(NPY_DATETIMEUNIT unit):
+    # [FUNCTION DOC]
+    # Map a numpy datetime unit to its short string ("ns", "us", "ms", "s", "m", "h",
+    #   "D", "W", "M", "Y", "ps", "fs", "as"); GENERIC maps to "ns". Exceptions:
+    #   NotImplementedError(unit) for any other value.
     if unit == NPY_DATETIMEUNIT.NPY_FR_ns or unit == NPY_DATETIMEUNIT.NPY_FR_GENERIC:
         # generic -> default to nanoseconds
         return "ns"
@@ -550,6 +668,10 @@ cdef str npy_unit_to_abbrev(NPY_DATETIMEUNIT unit):
 
 
 cpdef NPY_DATETIMEUNIT abbrev_to_npy_unit(str abbrev):
+    # [FUNCTION DOC]
+    # Inverse of npy_unit_to_abbrev: map a unit string to NPY_DATETIMEUNIT. Accepts
+    #   "Y","M","W","D"/"d","h","m","s","ms","us","ns","ps","fs","as"; None maps to
+    #   GENERIC. Exceptions: ValueError("Unrecognized unit ...") otherwise.
     if abbrev == "Y":
         return NPY_DATETIMEUNIT.NPY_FR_Y
     elif abbrev == "M":
@@ -583,6 +705,13 @@ cpdef NPY_DATETIMEUNIT abbrev_to_npy_unit(str abbrev):
 
 
 cdef NPY_DATETIMEUNIT freq_group_code_to_npy_unit(int freq) noexcept nogil:
+    # [FUNCTION DOC]
+    # Map a frequency group code (FR_MTH, FR_DAY, FR_HR ... FR_NS, FR_UND) to the numpy
+    #   unit used when building datetimes from struct fields; FR_UND maps to day.
+    #   Inputs: freq - group code int. Side effects: none; runs without the GIL.
+    # KNOWN ISSUE: FR_ANN, FR_QTR, FR_WK, FR_BUS and any other value have no branch, so
+    #   the function falls off the end and returns 0, which is NPY_FR_Y (silently
+    #   "year"), with no error.
     """
     Convert the freq to the corresponding NPY_DATETIMEUNIT to pass
     to npy_datetimestruct_to_datetime.
@@ -611,6 +740,10 @@ cdef NPY_DATETIMEUNIT freq_group_code_to_npy_unit(int freq) noexcept nogil:
 cpdef int64_t periods_per_day(
     NPY_DATETIMEUNIT reso=NPY_DATETIMEUNIT.NPY_FR_ns
 ) except? -1:
+    # [FUNCTION DOC]
+    # Number of reso units in one day (e.g. 86400 * 10**9 for ns). Inputs: reso -
+    #   NPY_DATETIMEUNIT, default ns. Outputs: int64. Exceptions: propagates errors from
+    #   get_conversion_factor (e.g. for units coarser than a day or GENERIC).
     """
     How many of the given time units fit into a single day?
     """
@@ -618,6 +751,9 @@ cpdef int64_t periods_per_day(
 
 
 cpdef int64_t periods_per_second(NPY_DATETIMEUNIT reso) except? -1:
+    # [FUNCTION DOC]
+    # Number of reso units in one second (e.g. 1000 for ms). Inputs: reso -
+    #   NPY_DATETIMEUNIT. Outputs: int64. Exceptions: as get_conversion_factor.
     return get_conversion_factor(NPY_DATETIMEUNIT.NPY_FR_s, reso)
 
 

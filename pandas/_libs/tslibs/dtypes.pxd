@@ -1,14 +1,36 @@
+# [MODULE DOC]
+# C-level declarations for dtypes.pyx: unit/abbreviation conversion functions, shared
+#   frequency lookup dicts, the c_FreqGroup, c_Resolution and PeriodDtypeCode enums, and
+#   the PeriodDtypeBase extension type layout. See dtypes.pyx for behavior.
 from numpy cimport int64_t
 
 from pandas._libs.tslibs.np_datetime cimport NPY_DATETIMEUNIT
 
 
+# [FUNCTION DOC]
+# Declaration: numpy datetime unit -> short string ("ns", "D", ...); GENERIC -> "ns";
+#   raises NotImplementedError for unknown units.
 cdef str npy_unit_to_abbrev(NPY_DATETIMEUNIT unit)
+# [FUNCTION DOC]
+# Declaration: unit string (or None -> GENERIC) -> NPY_DATETIMEUNIT; raises ValueError
+#   for unknown strings.
 cpdef NPY_DATETIMEUNIT abbrev_to_npy_unit(str abbrev)
+# [FUNCTION DOC]
+# Declaration: frequency group code -> numpy unit (month..ns, undefined -> day); nogil,
+#   cannot raise.
 cdef NPY_DATETIMEUNIT freq_group_code_to_npy_unit(int freq) noexcept nogil
+# [FUNCTION DOC]
+# Declaration: count of reso units per day (default ns); -1 with an exception set on
+#   error.
 cpdef int64_t periods_per_day(NPY_DATETIMEUNIT reso=*) except? -1
+# [FUNCTION DOC]
+# Declaration: count of reso units per second; -1 with an exception set on error.
 cpdef int64_t periods_per_second(NPY_DATETIMEUNIT reso) except? -1
+# [FUNCTION DOC]
+# Declaration: clamp a unit to the supported s..ns range (GENERIC -> ns).
 cdef NPY_DATETIMEUNIT get_supported_reso(NPY_DATETIMEUNIT reso)
+# [FUNCTION DOC]
+# Declaration: True iff unit is s, ms, us or ns.
 cdef bint is_supported_unit(NPY_DATETIMEUNIT reso)
 
 cdef dict c_OFFSET_TO_PERIOD_FREQSTR
@@ -21,6 +43,9 @@ cdef dict npy_unit_to_attrname
 cdef dict attrname_to_npy_unit
 cdef str INVALID_FREQ_ERR_MSG
 
+# [CLASS DOC]
+# Enum of frequency groups; each is a multiple of 1000 and is the floor of the period
+#   codes in that group. FR_UND = -10000 marks undefined.
 cdef enum c_FreqGroup:
     # Mirrors FreqGroup in the .pyx file
     FR_ANN = 1000
@@ -38,6 +63,8 @@ cdef enum c_FreqGroup:
     FR_UND = -10000  # undefined
 
 
+# [CLASS DOC]
+# Enum of resolutions from finest (RESO_NS=0) to coarsest (RESO_YR=9).
 cdef enum c_Resolution:
     # Mirrors Resolution in the .pyx file
     RESO_NS = 0
@@ -52,6 +79,11 @@ cdef enum c_Resolution:
     RESO_YR = 9
 
 
+# [CLASS DOC]
+# Enum of integer period frequency codes. code // 1000 * 1000 gives the c_FreqGroup; the
+#   remainder selects the fiscal year-end month (annual/quarterly, 0=DEC, 1=JAN, ...) or
+#   week-end day (weekly, 0=SUN, ...). Single-letter names (H, T, S, L, U, N) are the
+#   legacy aliases for hour, minute, second, milli, micro, nano.
 cdef enum PeriodDtypeCode:
     # Annual freqs with various fiscal year ends.
     # eg, 2005 for A_FEB runs Mar 1, 2004 to Feb 28, 2005
@@ -106,10 +138,18 @@ cdef enum PeriodDtypeCode:
     UNDEFINED = -10_000
 
 
+# [CLASS DOC]
+# Layout of PeriodDtypeBase: readonly period code and int64 multiple n, plus two cpdef
+#   methods (to-timestamp base group, tick-like check) implemented in dtypes.pyx.
 cdef class PeriodDtypeBase:
     cdef readonly:
         PeriodDtypeCode _dtype_code
         int64_t _n
 
+    # [FUNCTION DOC]
+    # Declaration: base frequency group for period-to-timestamp conversion (FR_DAY for
+    #   coarser than business-day, FR_SEC for hour..second, else the code).
     cpdef int _get_to_timestamp_base(self)
+    # [FUNCTION DOC]
+    # Declaration: True if the period code is daily or finer.
     cpdef bint _is_tick_like(self)
