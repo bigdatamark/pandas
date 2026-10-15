@@ -1,3 +1,19 @@
+# [MODULE DOC]
+# Low-level bridge between numpy datetime64/timedelta64 storage (64-bit integer counts
+#   of a unit since 1970-01-01, with the minimum int64 value meaning NaT) and broken-
+#   down calendar structs (npy_datetimestruct: year, month, day, hour, min, sec, us, ps,
+#   as).
+# Wraps C helpers from pandas/datetime/pd_datetime.h (struct<->int conversions, struct
+#   comparison, per-unit min/max bound structs, the ISO-8601 parser).
+# Provides: unit inspection of numpy scalars/dtypes, struct comparisons, bounds checks
+#   raising OutOfBoundsDatetime, conversion of Python date/datetime to structs and
+#   int64, string parsing to structs, overflow-safe unit casting (scalar and array),
+#   overflow-safe array addition, and the public
+#   OutOfBoundsDatetime/OutOfBoundsTimedelta exceptions.
+# Units are NPY_DATETIMEUNIT enum values ordered coarse to fine (Y, M, W, D, B, h, m,
+#   s, ms, us, ns, ps, fs, as, then GENERIC meaning unitless).
+# Module import side effects: initialises the CPython datetime C-API, the pandas
+#   datetime C-API capsule and the numpy C-API.
 cimport cython
 from cpython.datetime cimport (
     PyDateTime_CheckExact,
@@ -72,6 +88,13 @@ cdef extern from "pandas/datetime/pd_datetime.h":
 
 
 cdef NPY_DATETIMEUNIT get_datetime64_unit(object obj) noexcept nogil:
+    # [FUNCTION DOC]
+    # Return the time unit of a numpy datetime64 or timedelta64 scalar by reading the
+    #   unit field of the scalar object's metadata directly.
+    # Inputs: obj - must be a numpy datetime64/timedelta64 scalar (not checked; any
+    #   other object leads to reading invalid memory).
+    # Outputs: NPY_DATETIMEUNIT enum value.
+    # Exceptions: none. Side effects: none; callable without the GIL.
     """
     returns the unit part of the dtype for a numpy datetime64 object.
     """
@@ -79,6 +102,13 @@ cdef NPY_DATETIMEUNIT get_datetime64_unit(object obj) noexcept nogil:
 
 
 cdef NPY_DATETIMEUNIT get_unit_from_dtype(cnp.dtype dtype):
+    # [FUNCTION DOC]
+    # Return the time unit of a datetime64/timedelta64 numpy dtype via the C helper
+    #   that reads the dtype's datetime metadata.
+    # Inputs: dtype - numpy dtype; caller must ensure it is M8 or m8 (otherwise may
+    #   crash).
+    # Outputs: NPY_DATETIMEUNIT (NPY_FR_GENERIC for unitless dtypes).
+    # Exceptions: none. Side effects: none.
     # NB: caller is responsible for ensuring this is *some* datetime64 or
     #  timedelta64 dtype, otherwise we can segfault
     cdef:
@@ -89,11 +119,23 @@ cdef NPY_DATETIMEUNIT get_unit_from_dtype(cnp.dtype dtype):
 
 
 def py_get_unit_from_dtype(dtype):
+    # [FUNCTION DOC]
+    # Python-visible wrapper around get_unit_from_dtype, used for testing.
+    # Inputs: dtype - datetime64/timedelta64 numpy dtype. Outputs: the unit as an
+    #   integer.
+    # Exceptions: none (non-datetime dtypes are unsafe). Side effects: none.
     # for testing get_unit_from_dtype; adds 896 bytes to the .so file.
     return get_unit_from_dtype(dtype)
 
 
 def get_supported_dtype(dtype: cnp.dtype) -> cnp.dtype:
+    # [FUNCTION DOC]
+    # Map a datetime64/timedelta64 dtype to the nearest pandas-supported resolution
+    #   (s, ms, us or ns) of the same kind, e.g. M8[D] -> M8[s], m8[ps] -> m8[ns].
+    # Inputs: dtype - M8 or m8 numpy dtype.
+    # Outputs: new numpy dtype "M8[unit]" if the input type number is datetime,
+    #   otherwise "m8[unit]" where unit is the supported reso's abbreviation.
+    # Exceptions: none explicitly. Side effects: none.
     reso = get_unit_from_dtype(dtype)
     new_reso = get_supported_reso(reso)
     new_unit = npy_unit_to_abbrev(new_reso)
@@ -108,6 +150,14 @@ def get_supported_dtype(dtype: cnp.dtype) -> cnp.dtype:
 
 
 def is_supported_dtype(dtype: cnp.dtype) -> bool:
+    # [FUNCTION DOC]
+    # Report whether a datetime64/timedelta64 dtype has a resolution pandas supports
+    #   natively (s, ms, us, ns).
+    # Inputs: dtype - numpy dtype. Outputs: bool.
+    # Exceptions: ValueError if dtype is neither datetime64 nor timedelta64.
+    # Side effects: none.
+    # KNOWN ISSUE: the ValueError message says "is_unitless dtype must be ..." (copied
+    #   from is_unitless) rather than naming is_supported_dtype.
     if dtype.type_num not in [cnp.NPY_DATETIME, cnp.NPY_TIMEDELTA]:
         raise ValueError("is_unitless dtype must be datetime64 or timedelta64")
     cdef:
@@ -116,6 +166,11 @@ def is_supported_dtype(dtype: cnp.dtype) -> bool:
 
 
 def is_unitless(dtype: cnp.dtype) -> bool:
+    # [FUNCTION DOC]
+    # Report whether a datetime64/timedelta64 dtype has no unit (generic M8/m8).
+    # Inputs: dtype - numpy dtype. Outputs: True if the unit is NPY_FR_GENERIC.
+    # Exceptions: ValueError if dtype is neither datetime64 nor timedelta64.
+    # Side effects: none.
     """
     Check if a datetime64 or timedelta64 dtype has no attached unit.
     """
@@ -134,6 +189,13 @@ def is_unitless(dtype: cnp.dtype) -> bool:
 cdef bint cmp_dtstructs(
     npy_datetimestruct* left, npy_datetimestruct* right, int op
 ):
+    # [FUNCTION DOC]
+    # Compare two datetime structs with a rich-comparison opcode.
+    # Inputs: left, right - pointers to npy_datetimestruct; op - Python rich
+    #   comparison code (EQ, NE, GT, LT, GE, LE).
+    # Outputs: boolean result. The C comparator returns -1/0/1 (lexicographic over the
+    #   fields); any op other than EQ/NE/GT/LT/GE is treated as LE.
+    # Exceptions: none. Side effects: none.
     cdef:
         int cmp_res
 
@@ -154,6 +216,12 @@ cdef bint cmp_dtstructs(
 
 
 cdef bint cmp_scalar(int64_t lhs, int64_t rhs, int op) except -1:
+    # [FUNCTION DOC]
+    # Fast rich comparison of two int64 values using a Python comparison opcode.
+    # Inputs: lhs, rhs - int64; op - one of EQ, NE, LT, LE, GT, GE.
+    # Outputs: boolean result; an unrecognised opcode falls through and returns false
+    #   (0).
+    # Exceptions: none raised (signature allows propagation). Side effects: none.
     """
     cmp_scalar is a more performant version of PyObject_RichCompare
     typed for int64_t arguments.
@@ -173,6 +241,10 @@ cdef bint cmp_scalar(int64_t lhs, int64_t rhs, int op) except -1:
 
 
 class OutOfBoundsDatetime(ValueError):
+    # [CLASS DOC]
+    # Public exception (exposed as pandas.errors.OutOfBoundsDatetime), subclass of
+    #   ValueError, raised when a datetime value lies outside the range representable as
+    #   an int64 count of the target unit. No extra state or behavior.
     """
     Raised when the datetime is outside the range that can be represented.
 
@@ -197,6 +269,10 @@ class OutOfBoundsDatetime(ValueError):
 
 
 class OutOfBoundsTimedelta(ValueError):
+    # [CLASS DOC]
+    # Public exception (exposed as pandas.errors.OutOfBoundsTimedelta), subclass of
+    #   ValueError, raised when a timedelta cannot be represented as an int64 count of
+    #   the target unit. No extra state or behavior.
     """
     Raised when encountering a timedelta value that cannot be represented.
 
@@ -223,6 +299,14 @@ cdef get_implementation_bounds(
     npy_datetimestruct *lower,
     npy_datetimestruct *upper,
 ):
+    # [FUNCTION DOC]
+    # Fill lower/upper with the minimum and maximum datetime structs representable as
+    #   int64 in the given resolution, copied from C globals.
+    # Inputs: reso - one of ns, us, ms, s, m (minute); lower, upper - output struct
+    #   pointers.
+    # Outputs: none (returns None). Exceptions: NotImplementedError(reso) for any
+    #   other unit.
+    # Side effects: writes into *lower and *upper.
     if reso == NPY_FR_ns:
         upper[0] = _NS_MAX_DTS
         lower[0] = _NS_MIN_DTS
@@ -243,11 +327,28 @@ cdef get_implementation_bounds(
 
 
 cdef str dts_to_iso_string(npy_datetimestruct *dts):
+    # [FUNCTION DOC]
+    # Format a datetime struct as "Y-MM-DD HH:MM:SS" (year unpadded, sub-second fields
+    #   dropped), mainly for error messages.
+    # Inputs: dts - struct pointer. Outputs: str. Exceptions: none. Side effects:
+    #   none.
     return (f"{dts.year}-{dts.month:02d}-{dts.day:02d} "
             f"{dts.hour:02d}:{dts.min:02d}:{dts.sec:02d}")
 
 
 cdef check_dts_bounds(npy_datetimestruct *dts, NPY_DATETIMEUNIT unit=NPY_FR_ns):
+    # [FUNCTION DOC]
+    # Validate that a datetime struct lies within the int64-representable range of
+    #   unit, comparing it against the per-unit lower/upper bound structs.
+    # Inputs: dts - struct pointer; unit - resolution (default ns; must be
+    #   ns/us/ms/s/m).
+    # Outputs: None.
+    # Exceptions: OutOfBoundsDatetime("Out of bounds <attrname> timestamp: <iso>") if
+    #   below the lower or above the upper bound; NotImplementedError for unsupported
+    #   units.
+    # Side effects: none.
+    # KNOWN ISSUE: the docstring says the check is against nanosecond resolution, but
+    #   it uses the unit argument (ns only by default).
     """Raises OutOfBoundsDatetime if the given date is outside the range that
     can be represented by nanosecond-resolution 64-bit integers."""
     cdef:
@@ -273,6 +374,12 @@ cdef check_dts_bounds(npy_datetimestruct *dts, NPY_DATETIMEUNIT unit=NPY_FR_ns):
 
 # just exposed for testing at the moment
 def py_td64_to_tdstruct(int64_t td64, NPY_DATETIMEUNIT unit):
+    # [FUNCTION DOC]
+    # Testing helper: break an int64 timedelta of the given unit into a timedelta
+    #   struct (days, hrs, min, sec, ms, us, ns, seconds, microseconds, nanoseconds).
+    # Inputs: td64 - int64 count; unit - NPY_DATETIMEUNIT. Outputs: dict of struct
+    #   fields.
+    # Exceptions: none. Side effects: none.
     cdef:
         pandas_timedeltastruct tds
     pandas_timedelta_to_timedeltastruct(td64, unit, &tds)
@@ -280,6 +387,14 @@ def py_td64_to_tdstruct(int64_t td64, NPY_DATETIMEUNIT unit):
 
 
 cdef void pydatetime_to_dtstruct(datetime dt, npy_datetimestruct *dts) noexcept:
+    # [FUNCTION DOC]
+    # Fill a datetime struct from a Python datetime (wall-clock fields; tzinfo
+    #   ignored). For exact datetime instances the year is read from the C struct; for
+    #   subclasses (e.g. Timestamp, which overrides year) the year attribute is used.
+    #   month, day, hour, minute, second, microsecond come from the C accessors; ps and
+    #   as are zeroed.
+    # Inputs: dt - datetime; dts - output struct pointer. Outputs: none.
+    # Exceptions: none (noexcept). Side effects: writes *dts.
     if PyDateTime_CheckExact(dt):
         dts.year = PyDateTime_GET_YEAR(dt)
     else:
@@ -299,6 +414,14 @@ cdef void pydatetime_to_dtstruct(datetime dt, npy_datetimestruct *dts) noexcept:
 cdef int64_t pydatetime_to_dt64(datetime val,
                                 npy_datetimestruct *dts,
                                 NPY_DATETIMEUNIT reso=NPY_FR_ns) except? -1:
+    # [FUNCTION DOC]
+    # Convert a (naive, or treated as naive) Python datetime to an int64 count of reso
+    #   units since the epoch, via pydatetime_to_dtstruct and the struct-to-int C
+    #   routine.
+    # Inputs: val - datetime; dts - scratch/output struct pointer; reso - target unit
+    #   (default ns).
+    # Outputs: int64 value. Exceptions: OutOfBoundsDatetime (chained from
+    #   OverflowError) if the value does not fit. Side effects: fills *dts.
     """
     Note we are assuming that the datetime object is timezone-naive.
     """
@@ -316,6 +439,10 @@ cdef int64_t pydatetime_to_dt64(datetime val,
 
 
 cdef void pydate_to_dtstruct(date val, npy_datetimestruct *dts) noexcept:
+    # [FUNCTION DOC]
+    # Fill a datetime struct from a Python date: year, month, day from the date; all
+    #   time fields zeroed. Inputs: val - date; dts - output pointer. Outputs: none.
+    # Exceptions: none. Side effects: writes *dts.
     dts.year = PyDateTime_GET_YEAR(val)
     dts.month = PyDateTime_GET_MONTH(val)
     dts.day = PyDateTime_GET_DAY(val)
@@ -327,6 +454,14 @@ cdef void pydate_to_dtstruct(date val, npy_datetimestruct *dts) noexcept:
 cdef int64_t pydate_to_dt64(
     date val, npy_datetimestruct *dts, NPY_DATETIMEUNIT reso=NPY_FR_ns
 ) except? -1:
+    # [FUNCTION DOC]
+    # Convert a Python date (midnight) to an int64 count of reso units since the
+    #   epoch.
+    # Inputs: val - date; dts - scratch/output struct; reso - target unit (default
+    #   ns).
+    # Outputs: int64. Exceptions: OutOfBoundsDatetime (from OverflowError) on
+    #   overflow.
+    # Side effects: fills *dts.
     cdef int64_t result
     pydate_to_dtstruct(val, dts)
 
@@ -349,6 +484,20 @@ cdef int string_to_dts(
     str format=None,
     bint exact=True,
 ) except? -1:
+    # [FUNCTION DOC]
+    # Parse a string as an ISO-8601-style datetime into a struct using the C parser,
+    #   optionally guided by a strftime-style format.
+    # Inputs: val - string (UTF-8 encoded for the parser); dts - output struct;
+    #   out_bestunit - receives the finest unit present in the string; out_local - set
+    #   to 1 if a timezone offset was present; out_tzoffset - receives offset in
+    #   minutes; want_exc - if true, parser sets a Python exception on failure, else
+    #   just returns -1; format - optional format; if None the format is inferred
+    #   (INFER_FORMAT); exact - when format given, true means EXACT_MATCH, false
+    #   PARTIAL_MATCH.
+    # Outputs: 0 on success, -1 on failure.
+    # Exceptions: ValueError/OutOfBoundsDatetime from the parser when want_exc is
+    #   true.
+    # Side effects: writes the output pointers.
     cdef:
         Py_ssize_t length
         const char* buf
@@ -377,6 +526,26 @@ cpdef ndarray astype_overflowsafe(
     bint round_ok=True,
     bint is_coerce=False,
 ):
+    # [FUNCTION DOC]
+    # Cast an array of datetime64[X] to datetime64[Y] (or timedelta64[X] to [Y])
+    #   without silent overflow, preserving NaT.
+    # Inputs: values - M8 or m8 ndarray of any shape; dtype - target dtype of the same
+    #   kind; copy - whether to copy when units match; round_ok - allow lossy truncation
+    #   when going to a coarser unit; is_coerce - turn out-of-bounds values into NaT
+    #   instead of raising (only on the finer-unit path).
+    # Algorithm: if units equal return values (copied if copy). If target coarser,
+    #   delegate to _astype_overflowsafe_to_smaller_unit (floor division). Otherwise
+    #   byte-swap big-endian input, then for each element: NaT stays NaT, else convert
+    #   to struct in the source unit, check bounds for the target unit and convert back
+    #   to int64 in the target unit. Result is a new array viewed as dtype.
+    # Outputs: ndarray of dtype.
+    # Exceptions: TypeError if kinds differ or the source is unitless; ValueError if
+    #   the target is unitless or (coarser path, not round_ok) a value would be
+    #   truncated; OutOfBoundsDatetime for out of range datetimes; OutOfBoundsTimedelta
+    #   for timedeltas.
+    # Side effects: allocates the result array.
+    # KNOWN ISSUE: the big-endian byte swap (GH#29684) is applied only on the finer-
+    #   unit path; the coarser-unit path views big-endian data as native int64 directly.
     """
     Convert an ndarray with datetime64[X] to datetime64[Y]
     or timedelta64[X] to timedelta64[Y],
@@ -475,6 +644,15 @@ cpdef ndarray astype_overflowsafe(
 
 # TODO(numpy#16352): try to upstream this fix to numpy
 def compare_mismatched_resolutions(ndarray left, ndarray right, op):
+    # [FUNCTION DOC]
+    # Elementwise comparison of two datetime64 (or two timedelta64) arrays with
+    #   possibly different units, done by converting each element to a calendar struct
+    #   so no overflow occurs (numpy upcasts and can overflow).
+    # Inputs: left, right - ndarrays of the same kind and broadcast-compatible shape
+    #   (result shape is left's); op - an operator module comparison function.
+    # Outputs: bool ndarray; any pair involving NaT yields True only for "ne".
+    # Exceptions: ValueError if kinds differ or are not m/M. Side effects: allocates
+    #   result.
     """
     Overflow-safe comparison of timedelta64/datetime64 with mismatched resolutions.
 
@@ -532,6 +710,12 @@ def compare_mismatched_resolutions(ndarray left, ndarray right, op):
 
 
 cdef int op_to_op_code(op):
+    # [FUNCTION DOC]
+    # HELPER: Map operator.eq/ne/le/lt/ge/gt (identity check) to the Python rich
+    #   comparison opcode. Inputs: op - callable. Outputs: int opcode.
+    # Exceptions: none. Side effects: none.
+    # KNOWN ISSUE: an unrecognised op falls through and returns 0, which equals Py_LT,
+    #   so it is silently treated as a less-than comparison.
     if op is operator.eq:
         return Py_EQ
     if op is operator.ne:
@@ -552,6 +736,14 @@ cdef ndarray _astype_overflowsafe_to_smaller_unit(
     NPY_DATETIMEUNIT to_unit,
     bint round_ok,
 ):
+    # [FUNCTION DOC]
+    # HELPER: Convert int64 values from a finer unit to a coarser unit (e.g. ns -> us)
+    #   by floor-dividing by the conversion factor, preserving NaT.
+    # Inputs: i8values - int64 view of the data; from_unit - finer unit; to_unit -
+    #   coarser unit; round_ok - if false, a nonzero remainder is an error.
+    # Outputs: new int64 ndarray of the same shape.
+    # Exceptions: ValueError("Cannot losslessly cast ...") on remainder when not
+    #   round_ok; errors from get_conversion_factor. Side effects: allocates result.
     """
     Overflow-safe conversion for cases with from_unit > to_unit, e.g. ns->us.
     In addition for checking for overflows (which can occur near the lower
@@ -601,6 +793,15 @@ cdef int64_t get_conversion_factor(
     NPY_DATETIMEUNIT from_unit,
     NPY_DATETIMEUNIT to_unit
 ) except? -1:
+    # [FUNCTION DOC]
+    # Return the integer multiplier converting a count in from_unit to to_unit, where
+    #   from_unit is coarser or equal (W=7 D, D=24 h, h=60 m, m=60 s, then factors of
+    #   1000 down to as). Computed recursively by chaining one-step factors.
+    # Inputs: from_unit, to_unit - NPY_DATETIMEUNIT. Outputs: int64 factor (1 if
+    #   equal).
+    # Exceptions: ValueError for generic units, if from_unit > to_unit, or for Y/M/B
+    #   start units; OverflowError("result would overflow") if the factor exceeds int64.
+    # Side effects: none.
     """
     Find the factor by which we need to multiply to convert from from_unit to to_unit.
     """
@@ -662,6 +863,17 @@ cdef int64_t convert_reso(
     NPY_DATETIMEUNIT to_reso,
     bint round_ok,
 ) except? -1:
+    # [FUNCTION DOC]
+    # Convert a single int64 value between resolutions.
+    # Inputs: value - int64 count; from_reso, to_reso - units; round_ok - allow lossy
+    #   truncation when going coarser.
+    # Behavior: equal units return value. Coarser target: floor-divide by factor
+    #   (rounds down like numpy). If either unit is Y or M: go through a calendar
+    #   struct. Otherwise: multiply by factor after an overflow check.
+    # Outputs: converted int64.
+    # Exceptions: ValueError("Cannot losslessly convert units") if remainder and not
+    #   round_ok; OverflowError on multiplication overflow (callers re-raise as needed);
+    #   OutOfBoundsDatetime from the struct path. Side effects: none.
     cdef:
         int64_t res_value, mult, div, mod, overflow_limit
 
@@ -707,6 +919,12 @@ cdef int64_t _convert_reso_with_dtstruct(
     NPY_DATETIMEUNIT from_unit,
     NPY_DATETIMEUNIT to_unit,
 ) except? -1:
+    # [FUNCTION DOC]
+    # HELPER: Convert an int64 value between units by expanding it into a calendar
+    #   struct in from_unit and re-encoding in to_unit (needed for month/year units).
+    # Inputs: value - int64; from_unit, to_unit - units. Outputs: int64.
+    # Exceptions: OutOfBoundsDatetime (from OverflowError) if out of range.
+    # Side effects: none.
     cdef:
         npy_datetimestruct dts
         int64_t result
@@ -722,6 +940,15 @@ cdef int64_t _convert_reso_with_dtstruct(
 
 @cython.overflowcheck(True)
 cpdef cnp.ndarray add_overflowsafe(cnp.ndarray left, cnp.ndarray right):
+    # [FUNCTION DOC]
+    # Elementwise addition of two int64-backed datetime64/timedelta64 arrays with
+    #   overflow checking (compiled with integer overflow checks), propagating NaT.
+    # Inputs: left - ndarray; right - ndarray broadcastable to left (zero-dim or same
+    #   shape).
+    # Outputs: new int64 ndarray of left's shape (caller re-views as needed); NaT
+    #   where either operand is NaT, else the sum.
+    # Exceptions: OverflowError("Overflow in int64 addition") on overflow.
+    # Side effects: allocates result.
     """
     Overflow-safe addition for datetime64/timedelta64 dtypes.
 
