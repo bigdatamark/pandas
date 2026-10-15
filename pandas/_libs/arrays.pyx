@@ -253,12 +253,12 @@ cdef class NDArrayBacked:
         return self._from_backing_data(res_values)
 
     def ravel(self, order="C"):
-        # cnp.PyArray_OrderConverter(PyObject* obj, NPY_ORDER* order)
-        # res_values = cnp.PyArray_Ravel(self._ndarray, order)
         # [FUNCTION DOC]
         # Return a flattened array using ndarray.ravel(order).
         # Inputs: order - "C", "F", "A" or "K". Outputs: new instance of type(self) with
         # self's dtype (via _from_backing_data).
+        # cnp.PyArray_OrderConverter(PyObject* obj, NPY_ORDER* order)
+        # res_values = cnp.PyArray_Ravel(self._ndarray, order)
         res_values = self._ndarray.ravel(order)
         return self._from_backing_data(res_values)
 
