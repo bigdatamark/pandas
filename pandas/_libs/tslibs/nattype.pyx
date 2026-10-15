@@ -1,3 +1,16 @@
+# [MODULE DOC]
+# Defines the pandas missing-value marker for datetime-like data, NaT ("Not a Time").
+# Provides: the integer sentinel NPY_NAT (minimum int64, the value numpy uses for NaT in
+# datetime64/timedelta64 arrays), exposed to Python as iNaT; the set of strings that
+# parse as NaT (nat_strings / c_nat_strings); the C extension base class _NaT (subclass
+# of datetime) implementing comparisons, arithmetic and conversions; the Python class
+# NaTType (a singleton, NaT / c_NaT) which adds every Timestamp/Timedelta attribute and
+# method as a stub returning NaN, NaT, or raising ValueError; and C-level null checks
+# (checknull_with_nat, is_dt64nat, is_td64nat).
+# General semantics: NaT behaves as both a datetime and a timedelta. Comparisons with
+# datetime-likes/timedelta-likes are always False except "!=" which is True. Arithmetic
+# with datetime/timedelta/integer scalars returns NaT; arithmetic with
+# datetime64/timedelta64 arrays returns an all-NaT array of the appropriate kind.
 from cpython.datetime cimport (
     PyDate_Check,
     PyDateTime_Check,
@@ -34,7 +47,18 @@ iNaT = NPY_NAT  # python-visible constant
 
 
 def _make_nan_func(func_name: str, doc: str):
+    # [FUNCTION DOC]
+    # HELPER: Factory that builds a NaTType method which always returns float NaN. Used
+    # to fill in Timestamp numeric attributes/methods (e.g. weekday, total_seconds).
+    # Inputs: func_name - name to assign to the generated function; doc - docstring text
+    # to attach.
+    # Outputs: a new function accepting any positional/keyword arguments, named
+    # func_name with docstring doc.
+    # Exceptions: none. Side effects: none.
     def f(*args, **kwargs):
+        # [FUNCTION DOC]
+        # HELPER: Generated stub; ignores all arguments and returns float NaN.
+        # Inputs: any (ignored). Outputs: NaN. Exceptions: none. Side effects: none.
         return np.nan
     f.__name__ = func_name
     f.__doc__ = doc
@@ -42,7 +66,16 @@ def _make_nan_func(func_name: str, doc: str):
 
 
 def _make_nat_func(func_name: str, doc: str):
+    # [FUNCTION DOC]
+    # HELPER: Factory that builds a NaTType method which always returns the NaT
+    # singleton (used for methods like round, normalize, tz_localize, replace).
+    # Inputs: func_name - name for the generated function; doc - docstring to attach.
+    # Outputs: a new function accepting any arguments and returning c_NaT.
+    # Exceptions: none. Side effects: none.
     def f(*args, **kwargs):
+        # [FUNCTION DOC]
+        # HELPER: Generated stub; ignores all arguments and returns the NaT singleton.
+        # Inputs: any (ignored). Outputs: NaT. Exceptions: none. Side effects: none.
         return c_NaT
     f.__name__ = func_name
     f.__doc__ = doc
@@ -50,7 +83,19 @@ def _make_nat_func(func_name: str, doc: str):
 
 
 def _make_error_func(func_name: str, cls):
+    # [FUNCTION DOC]
+    # HELPER: Factory that builds a NaTType method which always raises, for methods that
+    # cannot meaningfully return NaT (e.g. strftime, date, timetuple).
+    # Inputs: func_name - name for the generated function; cls - either a literal
+    # docstring (str), a class whose attribute func_name supplies the docstring, or None
+    # (no docstring).
+    # Outputs: a new function accepting any arguments.
+    # Exceptions: AttributeError if cls is a class lacking func_name.
+    # Side effects: none.
     def f(*args, **kwargs):
+        # [FUNCTION DOC]
+        # HELPER: Generated stub; ignores arguments and always raises.
+        # Exceptions: ValueError "NaTType does not support <func_name>".
         raise ValueError(f"NaTType does not support {func_name}")
 
     f.__name__ = func_name
@@ -63,6 +108,13 @@ def _make_error_func(func_name: str, cls):
 
 
 cdef _nat_divide_op(self, other):
+    # [FUNCTION DOC]
+    # HELPER: Shared implementation of NaT / other and NaT // other.
+    # Inputs: self - NaT; other - any object.
+    # Outputs: float NaN if other is a timedelta, numpy timedelta64 or NaT (ratio of
+    # durations is unknown); NaT if other is an integer or float (scaled missing
+    # duration); NotImplemented otherwise so Python tries the reflected operation.
+    # Exceptions: none. Side effects: none.
     if PyDelta_Check(other) or cnp.is_timedelta64_object(other) or other is c_NaT:
         return np.nan
     if util.is_integer_object(other) or util.is_float_object(other):
@@ -71,12 +123,22 @@ cdef _nat_divide_op(self, other):
 
 
 cdef _nat_rdivide_op(self, other):
+    # [FUNCTION DOC]
+    # HELPER: Shared implementation of other / NaT and other // NaT.
+    # Inputs: self - NaT; other - any object.
+    # Outputs: float NaN if other is a datetime.timedelta (including Timedelta);
+    # NotImplemented otherwise.
+    # Exceptions: none. Side effects: none.
     if PyDelta_Check(other):
         return np.nan
     return NotImplemented
 
 
 def _nat_unpickle(*args):
+    # [FUNCTION DOC]
+    # HELPER: Unpickling hook referenced by NaTType.__reduce__; ignores its arguments
+    # and returns the module-level NaT singleton so unpickling preserves identity.
+    # Inputs: any (ignored). Outputs: c_NaT. Exceptions/side effects: none.
     # return constant defined in the module
     return c_NaT
 
@@ -84,6 +146,13 @@ def _nat_unpickle(*args):
 
 
 cdef class _NaT(datetime):
+    # [CLASS DOC]
+    # C extension base class for NaT, subclassing datetime so it passes datetime type
+    # checks. Stores a single read-only 64-bit integer _value (always NPY_NAT).
+    # __array_priority__ is 100 so numpy defers binary operations to NaT's methods.
+    # Implements rich comparison, add/sub/mul/div, conversions to numpy, string
+    # representations, hashing, and calendar boolean properties (all False). Instances
+    # are created only through NaTType.
     # cdef readonly:
     #    int64_t value
 
@@ -91,6 +160,19 @@ cdef class _NaT(datetime):
     __array_priority__ = 100
 
     def __richcmp__(_NaT self, object other, int op):
+        # [FUNCTION DOC]
+        # Rich comparison of NaT with other (op is a comparison opcode: EQ, NE, LT,
+        # ...).
+        # Inputs: other - any object; op - integer comparison code.
+        # Outputs: for datetime64/datetime/timedelta64/timedelta scalars, True only when
+        # op is "!=", else False. For numpy arrays: datetime64/timedelta64 dtype gives a
+        # boolean array of the same shape filled with (op is "!="); object dtype
+        # compares NaT element-wise against each element of the (iterated) array; other
+        # dtypes give all-False for "==", all-True for "!=", NotImplemented for ordering
+        # ops. For a plain date (not datetime): False for "==", True for "!=".
+        # NotImplemented for any other type.
+        # Exceptions: TypeError for ordering comparisons with a datetime.date.
+        # Side effects: allocates the result array for array inputs.
         if cnp.is_datetime64_object(other) or PyDateTime_Check(other):
             # We treat NaT as datetime-like for this comparison
             return op == Py_NE
@@ -124,6 +206,16 @@ cdef class _NaT(datetime):
         return NotImplemented
 
     def __add__(self, other):
+        # [FUNCTION DOC]
+        # NaT + other.
+        # Inputs: other - any object.
+        # Outputs: NaT if other is a datetime, timedelta, datetime64, timedelta64 or
+        # integer (integer supported for Period compatibility). For an ndarray of
+        # datetime64/timedelta64 kind, a new datetime64[ns] array of the same shape
+        # filled with NaT. NotImplemented for other types (e.g. Period, DateOffset
+        # handle it).
+        # Exceptions: TypeError for ndarrays of other dtypes.
+        # Side effects: allocates a new array for array inputs.
         if PyDateTime_Check(other):
             return c_NaT
         elif PyDelta_Check(other):
@@ -148,9 +240,21 @@ cdef class _NaT(datetime):
         return NotImplemented
 
     def __radd__(self, other):
+        # [FUNCTION DOC]
+        # other + NaT; addition is commutative so delegates to __add__ with same inputs,
+        # outputs and exceptions.
         return self.__add__(other)
 
     def __sub__(self, other):
+        # [FUNCTION DOC]
+        # NaT - other.
+        # Inputs: other - any object.
+        # Outputs: NaT for datetime, timedelta, datetime64, timedelta64 or integer
+        # scalars. For ndarrays: timedelta64 dtype -> datetime64[ns] array of NaT (NaT
+        # treated as a datetime); datetime64 dtype -> timedelta64[ns] array of NaT.
+        # NotImplemented for other types.
+        # Exceptions: TypeError for ndarrays of other dtypes.
+        # Side effects: allocates a new array for array inputs.
         # Duplicate some logic from _Timestamp.__sub__ to avoid needing
         # to subclass; allows us to @final(_Timestamp.__sub__)
 
@@ -188,6 +292,14 @@ cdef class _NaT(datetime):
         return NotImplemented
 
     def __rsub__(self, other):
+        # [FUNCTION DOC]
+        # other - NaT.
+        # Inputs: other - any object.
+        # Outputs: for ndarray of timedelta64 or datetime64 dtype, a timedelta64[ns]
+        # array of NaT with the same shape. Otherwise delegates to __sub__ (the scalar
+        # result is NaT regardless of operand order).
+        # Exceptions: as __sub__ (TypeError for unsupported array dtypes).
+        # Side effects: allocates a new array for array inputs.
         if util.is_array(other):
             if other.dtype.kind == "m":
                 # timedelta64 - NaT we have to treat NaT as timedelta64
@@ -207,27 +319,50 @@ cdef class _NaT(datetime):
         return self.__sub__(other)
 
     def __pos__(self):
+        # [FUNCTION DOC]
+        # Unary plus; returns the NaT singleton. No inputs, exceptions or side effects.
         return NaT
 
     def __neg__(self):
+        # [FUNCTION DOC]
+        # Unary minus; returns the NaT singleton. No inputs, exceptions or side effects.
         return NaT
 
     def __truediv__(self, other):
+        # [FUNCTION DOC]
+        # NaT / other; delegates to _nat_divide_op (NaN for timedelta-like or NaT, NaT
+        # for numbers, NotImplemented otherwise).
         return _nat_divide_op(self, other)
 
     def __floordiv__(self, other):
+        # [FUNCTION DOC]
+        # NaT // other; delegates to _nat_divide_op with identical semantics to true
+        # division.
         return _nat_divide_op(self, other)
 
     def __mul__(self, other):
+        # [FUNCTION DOC]
+        # NaT * other.
+        # Inputs: other - any object.
+        # Outputs: NaT if other is an integer or float scalar, else NotImplemented.
+        # Exceptions: none. Side effects: none.
         if util.is_integer_object(other) or util.is_float_object(other):
             return NaT
         return NotImplemented
 
     @property
     def asm8(self) -> np.datetime64:
+        # [FUNCTION DOC]
+        # Property: numpy datetime64 NaT with nanosecond unit (built from NPY_NAT).
+        # Inputs: none. Exceptions/side effects: none.
         return np.datetime64(NPY_NAT, "ns")
 
     def to_datetime64(self) -> np.datetime64:
+        # [FUNCTION DOC]
+        # Returns numpy datetime64("NaT") in nanosecond unit.
+        # Inputs: none. Outputs: numpy datetime64 NaT. Exceptions/side effects: none.
+        # KNOWN ISSUE: the docstring (shared with Timestamp) says "with same precision",
+        # but NaT has no resolution and this always returns nanosecond unit.
         """
         Return a NumPy datetime64 object with same precision.
 
@@ -253,6 +388,16 @@ cdef class _NaT(datetime):
         return np.datetime64("NaT", "ns")
 
     def to_numpy(self, dtype=None, copy=False) -> np.datetime64 | np.timedelta64:
+        # [FUNCTION DOC]
+        # Converts NaT to a numpy NaT scalar.
+        # Inputs: dtype - None or anything numpy can interpret as a dtype; copy -
+        # ignored.
+        # Outputs: if dtype is None, datetime64 NaT in ns (via to_datetime64). If dtype
+        # is a datetime64 dtype, datetime64 NaT in that dtype's unit; if a timedelta64
+        # dtype, timedelta64 NaT in that unit.
+        # Exceptions: ValueError if dtype is not None and not datetime64/timedelta64;
+        # TypeError if numpy cannot interpret dtype.
+        # Side effects: none.
         """
         Convert the Timestamp to a NumPy datetime64.
 
@@ -305,48 +450,81 @@ cdef class _NaT(datetime):
         return self.to_datetime64()
 
     def __repr__(self) -> str:
+        # [FUNCTION DOC]
+        # Returns the string "NaT". No inputs, exceptions or side effects.
         return "NaT"
 
     def __str__(self) -> str:
+        # [FUNCTION DOC]
+        # Returns the string "NaT". No inputs, exceptions or side effects.
         return "NaT"
 
     def isoformat(self, sep: str = "T", timespec: str = "auto") -> str:
+        # [FUNCTION DOC]
+        # Returns "NaT" so that Timestamp(NaT.isoformat()) round-trips.
+        # Inputs: sep, timespec - accepted for datetime API compatibility, ignored.
+        # Outputs: "NaT". Exceptions/side effects: none.
         # This allows Timestamp(ts.isoformat()) to always correctly roundtrip.
         return "NaT"
 
     def __hash__(self) -> int:
+        # [FUNCTION DOC]
+        # Returns the hash value, which is NPY_NAT (minimum int64), so NaT hashes like
+        # its integer sentinel. No inputs, exceptions or side effects.
         return NPY_NAT
 
     @property
     def is_leap_year(self) -> bool:
+        # [FUNCTION DOC]
+        # Property: always False (NaT is not in a leap year).
         return False
 
     @property
     def is_month_start(self) -> bool:
+        # [FUNCTION DOC]
+        # Property: always False.
         return False
 
     @property
     def is_quarter_start(self) -> bool:
+        # [FUNCTION DOC]
+        # Property: always False.
         return False
 
     @property
     def is_year_start(self) -> bool:
+        # [FUNCTION DOC]
+        # Property: always False.
         return False
 
     @property
     def is_month_end(self) -> bool:
+        # [FUNCTION DOC]
+        # Property: always False.
         return False
 
     @property
     def is_quarter_end(self) -> bool:
+        # [FUNCTION DOC]
+        # Property: always False.
         return False
 
     @property
     def is_year_end(self) -> bool:
+        # [FUNCTION DOC]
+        # Property: always False.
         return False
 
 
 class NaTType(_NaT):
+    # [CLASS DOC]
+    # Python-level class of the NaT singleton (subclass of _NaT). Exposed publicly as
+    # pandas.api.typing.NaTType. Adds construction, pickling, reflected division and
+    # multiplication, and class-level stubs for every Timestamp/Timedelta field and
+    # method: numeric fields (year, month, day, ...) are properties returning NaN;
+    # methods are created with _make_nan_func (return NaN), _make_nat_func (return NaT)
+    # or _make_error_func (raise ValueError). tz and tzinfo are None. Only one instance
+    # (c_NaT / NaT) is created at module import.
     """
     (N)ot-(A)-(T)ime, the time equivalent of NaN.
 
@@ -377,6 +555,12 @@ class NaTType(_NaT):
     __module__ = "pandas.api.typing"
 
     def __new__(cls):
+        # [FUNCTION DOC]
+        # Constructs a new NaTType instance by calling the datetime base constructor
+        # with the dummy date 0001-01-01 and setting _value to NPY_NAT.
+        # Inputs: cls - NaTType (or subclass). Outputs: the new instance.
+        # Exceptions: none. Side effects: allocates an object; note calling NaTType()
+        # again creates a distinct (non-singleton) instance.
         cdef _NaT base
 
         base = _NaT.__new__(cls, 1, 1, 1)
@@ -386,24 +570,44 @@ class NaTType(_NaT):
 
     @property
     def value(self) -> int:
+        # [FUNCTION DOC]
+        # Property: integer value of NaT, i.e. NPY_NAT (minimum int64).
         return self._value
 
     def __reduce_ex__(self, protocol):
+        # [FUNCTION DOC]
+        # Pickle protocol hook; ignores protocol and delegates to __reduce__ (needed
+        # because datetime defines __reduce_ex__, which would otherwise take priority).
+        # Inputs: protocol - pickle protocol number (ignored).
+        # Outputs: the tuple from __reduce__.
         # python 3.6 compat
         # https://bugs.python.org/issue28730
         # now __reduce_ex__ is defined and higher priority than __reduce__
         return self.__reduce__()
 
     def __reduce__(self):
+        # [FUNCTION DOC]
+        # Pickle protocol hook. Outputs: tuple (_nat_unpickle, (None,)) so unpickling
+        # yields the module NaT singleton. No exceptions or side effects.
         return (_nat_unpickle, (None, ))
 
     def __rtruediv__(self, other):
+        # [FUNCTION DOC]
+        # other / NaT; delegates to _nat_rdivide_op (NaN for timedelta, else
+        # NotImplemented).
         return _nat_rdivide_op(self, other)
 
     def __rfloordiv__(self, other):
+        # [FUNCTION DOC]
+        # other // NaT; delegates to _nat_rdivide_op (NaN for timedelta, else
+        # NotImplemented).
         return _nat_rdivide_op(self, other)
 
     def __rmul__(self, other):
+        # [FUNCTION DOC]
+        # other * NaT.
+        # Inputs: other - any object.
+        # Outputs: NaT for integer or float scalars, NotImplemented otherwise.
         if util.is_integer_object(other) or util.is_float_object(other):
             return c_NaT
         return NotImplemented
@@ -1834,13 +2038,23 @@ default 'raise'
 
     @property
     def tz(self) -> None:
+        # [FUNCTION DOC]
+        # Property: timezone of NaT; always None.
         return None
 
     @property
     def tzinfo(self) -> None:
+        # [FUNCTION DOC]
+        # Property: tzinfo of NaT; always None.
         return None
 
     def as_unit(self, str unit, bint round_ok=True) -> "NaTType":
+        # [FUNCTION DOC]
+        # Unit conversion stub for API compatibility with Timestamp/Timedelta.as_unit.
+        # Inputs: unit - str (not validated); round_ok - bool (ignored).
+        # Outputs: the NaT singleton. Exceptions/side effects: none.
+        # KNOWN ISSUE: the docstring's Returns section says Timestamp, but NaT is
+        # returned; the unit is not validated (invalid units do not raise).
         """
         Convert the underlying int64 representation to the given unit.
 
@@ -1886,6 +2100,12 @@ NaT.__module__ = "pandas"
 # ----------------------------------------------------------------------
 
 cdef bint checknull_with_nat(object val):
+    # [FUNCTION DOC]
+    # Checks whether val is a datetime-like null: None, a float NaN (Python float, numpy
+    # floating or complex NaN as judged by util.is_nan), or the NaT singleton.
+    # Inputs: val - any object. Outputs: boolean.
+    # Exceptions: none. Side effects: none.
+    # Note: datetime64("NaT")/timedelta64("NaT") are not detected here.
     """
     Utility to check if a value is a nat or not.
     """
@@ -1893,6 +2113,10 @@ cdef bint checknull_with_nat(object val):
 
 
 cdef bint is_dt64nat(object val):
+    # [FUNCTION DOC]
+    # Checks whether val is a numpy datetime64 scalar whose integer value equals
+    # NPY_NAT. Inputs: val - any object. Outputs: boolean (False for non-datetime64).
+    # Exceptions/side effects: none.
     """
     Is this an np.datetime64 object np.datetime64("NaT").
     """
@@ -1902,6 +2126,10 @@ cdef bint is_dt64nat(object val):
 
 
 cdef bint is_td64nat(object val):
+    # [FUNCTION DOC]
+    # Checks whether val is a numpy timedelta64 scalar whose integer value equals
+    # NPY_NAT. Inputs: val - any object. Outputs: boolean (False for non-timedelta64).
+    # Exceptions/side effects: none.
     """
     Is this an np.timedelta64 object np.timedelta64("NaT").
     """
