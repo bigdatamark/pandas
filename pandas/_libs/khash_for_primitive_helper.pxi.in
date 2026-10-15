@@ -1,3 +1,12 @@
+# [MODULE DOC]
+# Template generating extern declarations of the khash hash-table API for every
+# primitive dtype. Tempita substitutes, for each (name, c_type) pair, name in
+# {int64, uint64, float64, int32, uint32, float32, int16, uint16, int8, uint8,
+# complex64, complex128} and c_type the matching fixed-width C type (complex types
+# use khcomplex64_t / khcomplex128_t). The C implementation lives in
+# pandas/vendored/klib/khash_python.h; tables map a key to a size_t value and use
+# open addressing with power-of-two bucket counts. Float keys hash/compare so that
+# all NaNs are equal and +0.0 equals -0.0. Included from khash.pxd.
 """
 Template for wrapping khash-tables for each primitive `dtype`
 
@@ -26,19 +35,80 @@ primitive_types = [('int64', 'int64_t'),
 
 cdef extern from "pandas/vendored/klib/khash_python.h":
     ctypedef struct kh_{{name}}_t:
+        # [CLASS DOC]
+        # Per-dtype khash table struct (name substituted per dtype). Fields:
+        # n_buckets - capacity (power of two); size - number of live keys;
+        # n_occupied - occupied buckets; upper_bound - resize threshold;
+        # flags - bit array of empty markers (1 bit per bucket);
+        # keys - array of keys of the substituted C type; vals - parallel size_t values.
         khuint_t n_buckets, size, n_occupied, upper_bound
         uint32_t *flags
         {{c_type}} *keys
         size_t *vals
 
+    # [FUNCTION DOC]
+    # Allocate and return a new empty kh_<name>_t hash table (zero buckets).
+    # Inputs: none.
+    # Outputs: pointer to the newly heap-allocated table.
+    # Side effects: allocates memory via the khash allocator (traced in
+    # KHASH_TRACE_DOMAIN).
+    # Callable without the GIL (nogil).
     kh_{{name}}_t* kh_init_{{name}}() nogil
+    # [FUNCTION DOC]
+    # Free the kh_<name>_t table and its bucket/flag/key/value arrays.
+    # Inputs: table pointer (may be NULL, which is a no-op).
+    # Outputs: none.
+    # Side effects: frees memory; the pointer must not be used afterwards.
+    # Callable without the GIL (nogil).
     void kh_destroy_{{name}}(kh_{{name}}_t*) nogil
+    # [FUNCTION DOC]
+    # Mark every bucket of the kh_<name>_t table empty; keeps the allocation.
+    # Inputs: table pointer.
+    # Outputs: none.
+    # Side effects: size and n_occupied reset to 0.
+    # Callable without the GIL (nogil).
     void kh_clear_{{name}}(kh_{{name}}_t*) nogil
+    # [FUNCTION DOC]
+    # Look up a key (<c_type> value) in the kh_<name>_t table.
+    # Inputs: table pointer, key.
+    # Outputs: bucket index of the key, or n_buckets if absent.
+    # Side effects: none.
+    # Callable without the GIL (nogil).
     khuint_t kh_get_{{name}}(kh_{{name}}_t*, {{c_type}}) nogil
+    # [FUNCTION DOC]
+    # Rehash the kh_<name>_t table into the given number of buckets (rounded up
+    # to a power of two); a no-op if that would not hold the current size.
+    # Inputs: table pointer, requested bucket count.
+    # Outputs: none.
+    # Side effects: reallocates arrays and rehashes all entries.
+    # Callable without the GIL (nogil).
     void kh_resize_{{name}}(kh_{{name}}_t*, khuint_t) nogil
+    # [FUNCTION DOC]
+    # Insert a key (<c_type> value) into the kh_<name>_t table if absent
+    # (value slot left uninitialised).
+    # Inputs: table pointer, key, pointer to int status.
+    # Outputs: bucket index of the key; status set to 0 if the key already existed,
+    # 1 if newly inserted (2 is never produced: this khash has no deleted state).
+    # Side effects: may grow/rehash the table.
+    # Callable without the GIL (nogil).
     khuint_t kh_put_{{name}}(kh_{{name}}_t*, {{c_type}}, int*) nogil
+    # [FUNCTION DOC]
+    # Intended to delete the given bucket of the kh_<name>_t table.
+    # Inputs: table pointer, bucket index (ignored if n_buckets or empty).
+    # Outputs: none.
+    # Side effects: decrements size only.
+    # KNOWN ISSUE: this khash variant has no deleted-bucket marker, so the bucket
+    # stays occupied and still matches lookups while size is decremented; pandas
+    # never calls this.
+    # Callable without the GIL (nogil).
     void kh_del_{{name}}(kh_{{name}}_t*, khuint_t) nogil
 
+    # [FUNCTION DOC]
+    # Test whether a bucket of the kh_<name>_t table holds a live key.
+    # Inputs: table pointer, bucket index.
+    # Outputs: true if occupied (flag not empty).
+    # Side effects: none.
+    # Callable without the GIL (nogil).
     bint kh_exist_{{name}}(kh_{{name}}_t*, khiter_t) nogil
 
 {{endfor}}

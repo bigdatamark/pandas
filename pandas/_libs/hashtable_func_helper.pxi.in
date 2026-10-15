@@ -1,3 +1,13 @@
+# [MODULE DOC]
+# Tempita template generating per-dtype hash-based array algorithms for
+# pandas._libs.hashtable (included by hashtable.pyx; .pxi output is generated):
+# value_count_<dtype>, duplicated_<dtype>, ismember_<dtype> for dtypes complex128,
+# complex64, float64, float32, uint64/32/16/8, object (khash pymap with borrowed
+# object pointers, run with the GIL), int64/32/16/8; the fused-type dispatchers
+# value_count, duplicated, ismember and mode; and _unique_label_indices_int64 /
+# _int32. Each function creates a temporary khash table, fills it in one pass
+# and destroys it. NaN keys compare equal (NaN-aware khash equality); optional
+# uint8 masks (nonzero = missing) treat masked entries as NA regardless of value.
 """
 Template for each `dtype` helper function for hashtable
 
@@ -35,6 +45,27 @@ cdef value_count_{{dtype}}(ndarray[{{dtype}}] values, bint dropna, const uint8_t
 {{else}}
 cdef value_count_{{dtype}}(const {{dtype}}_t[:] values, bint dropna, const uint8_t[:] mask=None):
 {{endif}}
+    # [FUNCTION DOC]
+    # HELPER: Template (all dtypes listed in the module doc; the object variant takes
+    # an object ndarray and uses the pymap table). Count occurrences of each distinct
+    # value, preserving first-appearance order of keys.
+    # Algorithm: table maps key -> count; result_keys (a Vector of the dtype) records
+    # keys on first sight. Object: values that are null (checknull) are skipped if
+    # dropna; table presized to n // 10. Numeric: table presized to n; an entry is NA
+    # if mask[i] (when mask given) or, without mask and dropna, if it is NaN. NA
+    # entries are skipped when dropna; when not dropna and a mask is used they are
+    # counted in na_counter instead of the table; without mask and not dropna NaN is
+    # an ordinary key. Afterwards counts are read back in key order; if na_counter >
+    # 0, one extra trailing key is appended (the last value iterated, a placeholder)
+    # with count na_counter.
+    # Inputs: values - 1-D array/memoryview of the dtype; dropna - bool; mask -
+    # optional 1-D uint8 memoryview, same length as values.
+    # Outputs: tuple (keys ndarray of the dtype, counts int64 ndarray, na_counter
+    # int).
+    # Exceptions: NotImplementedError for object dtype with a mask.
+    # Side effects: temporary table allocation; holds the GIL.
+    # KNOWN ISSUE: in the object/mask case the khash table is allocated before the
+    # NotImplementedError is raised and is never destroyed (small memory leak).
     cdef:
         Py_ssize_t i = 0, na_counter = 0, na_add = 0
         Py_ssize_t n = len(values)
@@ -129,6 +160,22 @@ cdef duplicated_{{dtype}}(ndarray[{{dtype}}] values, object keep='first', const 
 {{else}}
 cdef duplicated_{{dtype}}(const {{dtype}}_t[:] values, object keep='first', const uint8_t[:] mask=None):
 {{endif}}
+    # [FUNCTION DOC]
+    # HELPER: Template (all dtypes; object variant uses borrowed object pointers and
+    # keeps the GIL, numeric variants release it). Mark duplicate entries.
+    # keep='first': scan forward, an entry is a duplicate if its key was already
+    # inserted (insert status 0). keep='last': same scanning backward. keep=False:
+    # scan forward storing each key's first index; when a key repeats both the
+    # current and the first occurrence are marked. With a mask, masked entries are
+    # all treated as one NA value with the same rules (first/last NA kept unmarked;
+    # for keep=False all NAs marked if more than one).
+    # Inputs: values - 1-D array of the dtype; keep - 'first', 'last' or False;
+    # mask - optional uint8 memoryview.
+    # Outputs: boolean ndarray of length n, True for duplicates.
+    # Exceptions: ValueError if keep is not one of the allowed values.
+    # Side effects: temporary table allocation.
+    # KNOWN ISSUE: the table is allocated before keep is validated, so the
+    # ValueError path leaks it.
     cdef:
         int ret = 0
         {{if dtype != 'object'}}
@@ -218,6 +265,14 @@ cdef ismember_{{dtype}}(ndarray[{{c_type}}] arr, ndarray[{{c_type}}] values):
 {{else}}
 cdef ismember_{{dtype}}(const {{dtype}}_t[:] arr, const {{dtype}}_t[:] values):
 {{endif}}
+    # [FUNCTION DOC]
+    # HELPER: Template (all dtypes; object variant keeps the GIL). Build a set
+    # (khash table) from values, then for each element of arr test membership.
+    # NaN matches NaN. For object dtype, unhashable elements do not raise (their
+    # hash errors are swallowed and they hash to 0, then compared with ==).
+    # Inputs: arr - 1-D array to test; values - 1-D array forming the set (same
+    # dtype). Outputs: boolean ndarray of len(arr) (uint8 buffer viewed as bool).
+    # Side effects: temporary table; numeric variants release the GIL.
     """
     Return boolean of values in arr on an
     element by-element basis
@@ -289,6 +344,13 @@ ctypedef fused htfunc_t:
 
 
 cpdef value_count(ndarray[htfunc_t] values, bint dropna, const uint8_t[:] mask=None):
+    # [FUNCTION DOC]
+    # Dispatch value counting to value_count_<dtype> based on the fused element type
+    # of values (object, int8..64, uint8..64, float32/64, complex64/128).
+    # Inputs: values - 1-D ndarray; dropna - bool; mask - optional uint8 memoryview.
+    # Outputs: tuple (keys, counts int64 ndarray, na_counter).
+    # Exceptions: TypeError for unsupported dtypes (unreachable for valid fused
+    # specialisations); NotImplementedError for object dtype with a mask.
     if htfunc_t is object:
         return value_count_object(values, dropna, mask=mask)
 
@@ -325,6 +387,11 @@ cpdef value_count(ndarray[htfunc_t] values, bint dropna, const uint8_t[:] mask=N
 
 
 cpdef duplicated(ndarray[htfunc_t] values, object keep="first", const uint8_t[:] mask=None):
+    # [FUNCTION DOC]
+    # Dispatch to duplicated_<dtype> by fused element type of values.
+    # Inputs: values - 1-D ndarray; keep - 'first', 'last' or False; mask - optional
+    # uint8 memoryview. Outputs: boolean ndarray marking duplicates.
+    # Exceptions: ValueError for invalid keep; TypeError for unsupported dtypes.
     if htfunc_t is object:
         return duplicated_object(values, keep, mask=mask)
 
@@ -361,6 +428,11 @@ cpdef duplicated(ndarray[htfunc_t] values, object keep="first", const uint8_t[:]
 
 
 cpdef ismember(ndarray[htfunc_t] arr, ndarray[htfunc_t] values):
+    # [FUNCTION DOC]
+    # Dispatch to ismember_<dtype>: for each element of arr, whether it occurs in
+    # values. Both arrays must have the same fused element type.
+    # Outputs: boolean ndarray of len(arr). Exceptions: TypeError for unsupported
+    # dtypes.
     if htfunc_t is object:
         return ismember_object(arr, values)
 
@@ -399,6 +471,19 @@ cpdef ismember(ndarray[htfunc_t] arr, ndarray[htfunc_t] values):
 @cython.wraparound(False)
 @cython.boundscheck(False)
 def mode(ndarray[htfunc_t] values, bint dropna, const uint8_t[:] mask=None):
+    # [FUNCTION DOC]
+    # Compute the most frequent value(s). Calls value_count (honouring dropna and
+    # mask), then scans keys in first-appearance order keeping all keys whose count
+    # equals the running maximum (a strictly larger count restarts the list).
+    # Inputs: values - 1-D ndarray of a supported dtype; dropna - bool; mask -
+    # optional uint8 memoryview.
+    # Outputs: tuple (modes ndarray of values.dtype in first-appearance order,
+    # res_mask). res_mask is None unless masked NAs were counted, in which case it is
+    # a boolean array of len(modes) whose last entry is True if the NA count equals
+    # the maximum (the NA placeholder key is last in the value_count output, so in
+    # that case the last mode is the NA placeholder).
+    # Exceptions: as value_count. Side effects: releases the GIL for non-object
+    # dtypes during the scan.
     # TODO(cython3): use const htfunct_t[:]
 
     cdef:
@@ -448,6 +533,16 @@ dtypes = [('Int64', 'int64', 'int64', 'int64_t'),
 @cython.wraparound(False)
 @cython.boundscheck(False)
 def _unique_label_indices_{{dtype}}(const {{c_type}}[:] labels) -> ndarray:
+    # [FUNCTION DOC]
+    # Template (int64 and int32; the variant matching the platform intp is exposed
+    # as unique_label_indices). Return the indices of the first occurrence of each
+    # distinct label, ordered by label value, excluding the label -1 (if the
+    # smallest label is -1 its index is dropped). Equivalent to the return_index
+    # output of numpy unique without -1.
+    # Inputs: labels - 1-D memoryview of int64/int32 codes.
+    # Outputs: ndarray (int64 or int32) of indices.
+    # Side effects: temporary table; releases the GIL for the scan. Only -1 is
+    # dropped; other negative labels are kept.
     """
     Indices of the first occurrences of the unique labels
     *excluding* -1. equivalent to:
