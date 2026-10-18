@@ -3,6 +3,11 @@ Series.item method, mainly testing that we get python scalars as opposed to
 numpy scalars.
 """
 
+# [MODULE DOC]
+# Test for Series.item (and Index.item), mainly confirming that Python scalars
+# (or pandas Timestamp/Timedelta) rather than NumPy scalars are returned. No
+# import-time side effects.
+
 import pytest
 
 from pandas import (
@@ -14,7 +19,16 @@ from pandas import (
 
 
 class TestItem:
+    # [CLASS DOC]
+    # Groups the tests of item. Stateless.
     def test_item(self):
+        # [FUNCTION DOC]
+        # A one-element integer Series gives a plain Python int, and a float Series with
+        # a non-default label gives a Python float. Series or index with two elements
+        # raise a value error that only size-1 arrays can be converted. Datetime and
+        # timedelta containers of length one give Timestamp or Timedelta objects (and
+        # raise for two elements). A one-element slice of a Series with labels other
+        # than zero works (positional, not label-based).
         # We are testing that we get python scalars as opposed to numpy scalars
         ser = Series([1])
         result = ser.item()

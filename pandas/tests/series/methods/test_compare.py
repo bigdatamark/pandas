@@ -1,3 +1,10 @@
+# [MODULE DOC]
+# Tests for Series.compare, which shows the differences between two Series
+# (self and other) either side by side or stacked. Covers the axis argument,
+# the keep_shape and keep_equal options, null handling, MultiIndex, mismatched
+# labels, and a datetime-versus-string regression. Uses the axis fixture
+# (0, 1, "index", "columns"). No import-time side effects.
+
 import numpy as np
 import pytest
 
@@ -6,6 +13,11 @@ import pandas._testing as tm
 
 
 def test_compare_axis(axis):
+    # [FUNCTION DOC]
+    # Regression test (GH#30429), parametrized over the axis fixture. Compares two
+    # string Series differing at positions 0 and 2. For axis 1 or "columns" the
+    # result is a frame with self and other columns for those two rows; otherwise a
+    # Series stacked with a MultiIndex of position and self/other.
     # GH#30429
     s1 = pd.Series(["a", "b", "c"])
     s2 = pd.Series(["x", "b", "z"])
@@ -35,6 +47,10 @@ def test_compare_axis(axis):
     ],
 )
 def test_compare_various_formats(keep_shape, keep_equal):
+    # [FUNCTION DOC]
+    # Parametrized over (keep_shape, keep_equal) in three combinations. With keep_shape
+    # the result has all rows (equal rows shown as NaN unless keep_equal keeps the values);
+    # without keep_shape only differing rows appear, as a frame with self and other columns.
     s1 = pd.Series(["a", "b", "c"])
     s2 = pd.Series(["x", "b", "z"])
 
@@ -63,6 +79,9 @@ def test_compare_various_formats(keep_shape, keep_equal):
 
 
 def test_compare_with_equal_nulls():
+    # [FUNCTION DOC]
+    # Two NaN values at the same position are considered equal and are dropped
+    # from the comparison result.
     # We want to make sure two NaNs are considered the same
     # and dropped where applicable
     s1 = pd.Series(["a", "b", np.nan])
@@ -74,6 +93,9 @@ def test_compare_with_equal_nulls():
 
 
 def test_compare_with_non_equal_nulls():
+    # [FUNCTION DOC]
+    # A NaN in one Series against a value in the other is a difference and is kept
+    # (align_axis of 0 gives the stacked result including the NaN).
     # We want to make sure the relevant NaNs do not get dropped
     s1 = pd.Series(["a", "b", "c"])
     s2 = pd.Series(["x", "b", np.nan])
@@ -86,6 +108,9 @@ def test_compare_with_non_equal_nulls():
 
 
 def test_compare_multi_index():
+    # [FUNCTION DOC]
+    # For Series with a two-level MultiIndex, the stacked comparison appends a
+    # self/other level to the index levels.
     index = pd.MultiIndex.from_arrays([[0, 0, 1], [0, 1, 2]])
     s1 = pd.Series(["a", "b", "c"], index=index)
     s2 = pd.Series(["x", "b", "z"], index=index)
@@ -100,6 +125,9 @@ def test_compare_multi_index():
 
 
 def test_compare_different_indices():
+    # [FUNCTION DOC]
+    # Comparing Series with different index labels raises a value error that the
+    # Series must be identically labeled.
     msg = "Can only compare identically-labeled Series objects"
     ser1 = pd.Series([1, 2, 3], index=["a", "b", "c"])
     ser2 = pd.Series([1, 2, 3], index=["a", "b", "d"])
@@ -108,6 +136,9 @@ def test_compare_different_indices():
 
 
 def test_compare_different_lengths():
+    # [FUNCTION DOC]
+    # Comparing Series of different lengths raises a value error that the Series
+    # must be identically labeled.
     msg = "Can only compare identically-labeled Series objects"
     ser1 = pd.Series([1, 2, 3])
     ser2 = pd.Series([1, 2, 3, 4])
@@ -116,6 +147,11 @@ def test_compare_different_lengths():
 
 
 def test_compare_datetime64_and_string():
+    # [FUNCTION DOC]
+    # Regression test (GitHub issue 45506): equality and inequality between a
+    # datetime64 column and a string column (nullable string dtype) do not overflow
+    # and give all False for equality (the method and operator forms) and all True
+    # for inequality.
     # Issue https://github.com/pandas-dev/pandas/issues/45506
     # Catch OverflowError when comparing datetime64 and string
     data = [

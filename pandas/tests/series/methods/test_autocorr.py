@@ -1,8 +1,20 @@
+# [MODULE DOC]
+# Test for Series.autocorr, comparing it against corr of the shifted Series.
+# Uses the datetime_series fixture. No import-time side effects.
+
 import numpy as np
 
 
 class TestAutoCorr:
+    # [CLASS DOC]
+    # Groups the tests of Series.autocorr. Stateless.
     def test_autocorr(self, datetime_series):
+        # [FUNCTION DOC]
+        # Verifies autocorr on the datetime_series fixture: the default call equals the
+        # call with an explicit lag of one, and a call with a random lag between 1 and
+        # length minus 2 equals the correlation of the Series with the same Series
+        # shifted by that lag. Series of length two or less must give NaN in both cases.
+        # The random lag comes from a fixed-seed generator.
         # Just run the function
         corr1 = datetime_series.autocorr()
 

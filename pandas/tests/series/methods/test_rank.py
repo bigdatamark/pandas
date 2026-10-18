@@ -1,3 +1,12 @@
+# [MODULE DOC]
+# Tests for Series.rank: tie-breaking methods (average, min, max, first, dense),
+# percentile ranks, ascending/descending, na_option, categorical, nullable,
+# Arrow and string dtypes, infinities, and large inputs. Defines fixtures for a
+# sample Series with NaN, expected results per method, and dtypes under test,
+# plus a helper that computes the expected result dtype. Uses rank_method,
+# ascending, using_infer_string and using_nan_is_na fixtures. No import-time side
+# effects.
+
 from itertools import chain
 import operator
 
@@ -23,6 +32,9 @@ from pandas.api.types import CategoricalDtype
 
 @pytest.fixture
 def ser():
+    # [FUNCTION DOC]
+    # HELPER: fixture returning the ten-element float Series with two NaN values
+    # (1, 3, 4, 2, NaN, 2, 1, 5, NaN, 3) used by the tie method tests.
     return Series([1, 3, 4, 2, np.nan, 2, 1, 5, np.nan, 3])
 
 
@@ -37,6 +49,9 @@ def ser():
     ids=lambda x: x[0],
 )
 def results(request):
+    # [FUNCTION DOC]
+    # HELPER: fixture parametrized over (method name, expected rank array) pairs for
+    # average, min, max, first and dense on the sample Series; NaN stays NaN.
     return request.param
 
 
@@ -55,10 +70,22 @@ def results(request):
     ]
 )
 def dtype(request):
+    # [FUNCTION DOC]
+    # HELPER: fixture parametrized over dtype names (object, float64, int64, masked
+    # Float64/Int64, Arrow float/int/string when pyarrow is available, string
+    # python, str); returns the name.
     return request.param
 
 
 def expected_dtype(dtype, method, pct=False):
+    # [FUNCTION DOC]
+    # HELPER: computes the expected result dtype name of rank for the given input
+    # dtype name, ranking method and percentile flag. Returns float64 by default;
+    # Float64 for Arrow strings; for Arrow float/int the double type when the
+    # method is average or the percentile flag is set, otherwise unsigned 64-bit
+    # Arrow; likewise for masked Float64/Int64 (Float64 or UInt64).
+    # KNOWN ISSUE: a stale commented-out branch (a line starting with "elif" in a
+    # comment) remains in the body.
     exp_dtype = "float64"
     # elif dtype in ["Int64", "Float64", "string[pyarrow]", "string[python]"]:
     if dtype in ["string[pyarrow]"]:
@@ -78,7 +105,15 @@ def expected_dtype(dtype, method, pct=False):
 
 
 class TestSeriesRank:
+    # [CLASS DOC]
+    # Groups the main Series.rank tests. Stateless.
     def test_rank(self, datetime_series):
+        # [FUNCTION DOC]
+        # Needs scipy. Rank of the datetime_series (with NaN and ties) equals the rank
+        # of its object-dtype copy and scipy's ranking with NaN preserved. Then checks
+        # ranks of integer ties, percentile ranks with and without NaN (including
+        # all-NaN, with date index), tiny floats, timedeltas with NaT (GH 5968) and a
+        # random permutation of ordered values.
         sp_stats = pytest.importorskip("scipy.stats")
 
         datetime_series[::2] = np.nan
@@ -170,6 +205,11 @@ class TestSeriesRank:
         tm.assert_series_equal(iranks, exp)
 
     def test_rank_categorical(self):
+        # [FUNCTION DOC]
+        # GH issue #15420: ordered categoricals rank by category order, ascending and
+        # descending; unordered categoricals rank as plain values; na_option top, bottom
+        # and keep (also descending and with percentile) give the expected ranks; an
+        # invalid na_option (bad string or boolean) raises a value error.
         # GH issue #15420 rank incorrectly orders ordered categories
 
         # Test ascending/descending ranking for ordered categoricals
@@ -258,6 +298,9 @@ class TestSeriesRank:
         tm.assert_series_equal(na_ser.rank(na_option="keep", pct=True), exp_keep)
 
     def test_rank_nullable_integer(self):
+        # [FUNCTION DOC]
+        # GH 56976: nullable Int64 with missing values and ties and na_option keep gives
+        # average ranks as Float64 with missing entries kept.
         # GH 56976
         exp = Series([None, 2, None, 3, 3, 2, 3, 1], dtype="Int64")
         result = exp.rank(na_option="keep")
@@ -267,6 +310,10 @@ class TestSeriesRank:
         tm.assert_series_equal(result, expected)
 
     def test_rank_signature(self):
+        # [FUNCTION DOC]
+        # The first positional parameter of rank is the axis, so passing the method
+        # name positionally raises a value error that no such axis exists; the keyword
+        # form works.
         s = Series([0, 1])
         s.rank(method="average")
         msg = "No axis named average for object type Series"
@@ -276,6 +323,15 @@ class TestSeriesRank:
     def test_rank_tie_methods(
         self, ser, results, dtype, using_infer_string, using_nan_is_na
     ):
+        # [FUNCTION DOC]
+        # Parametrized over tie method (results fixture) and dtype. Skips the dtypes
+        # that cannot hold NaN (int64, str without the inferred-string option, and some
+        # Arrow/masked integer cases without the NaN-is-NA option). Casts the sample
+        # Series to the dtype, ranks with the method and compares with the expected
+        # ranks in the expected result dtype (using NA instead of NaN for masked and
+        # Arrow dtypes when NaN is not NA).
+        # KNOWN ISSUE: TODO comments in the body note that some skipped cases could
+        # work and that replacing NaN by NA should use a replace call once that works.
         method, exp = results
         if (
             dtype == "int64"
@@ -333,6 +389,14 @@ class TestSeriesRank:
         neg_inf,
         using_nan_is_na,
     ):
+        # [FUNCTION DOC]
+        # Parametrized over rank method, ascending, na_option and dtype/value tuples
+        # (object with infinity helper objects, float64, Float64, Arrow float).
+        # Needs scipy. A Series of three negative infinities, three missing values and
+        # three positive infinities is ranked; expected ranks per method are computed by
+        # group (missing values placed at top or bottom per na_option, or kept as
+        # missing) and reversed when descending. GH#62043 applies to the Float64 result
+        # dtype.
         pytest.importorskip("scipy")
         if dtype == "float64[pyarrow]":
             if rank_method == "average":
@@ -376,6 +440,9 @@ class TestSeriesRank:
         tm.assert_series_equal(result, exp_ser)
 
     def test_rank_desc_mix_nans_infs(self):
+        # [FUNCTION DOC]
+        # GH 19538: descending rank with NaN and both infinities gives the ranks 3, NaN,
+        # 1, 4, 2.
         # GH 19538
         # check descending ranking when mix nans and infs
         iseries = Series([1, np.nan, np.inf, -np.inf, 25])
@@ -392,6 +459,10 @@ class TestSeriesRank:
         ],
     )
     def test_rank_methods_series(self, rank_method, op, value):
+        # [FUNCTION DOC]
+        # Needs scipy. Parametrized over the rank method and three transformations
+        # (shifting by 0, by 1e6, scaling by 1e-6). Random data with duplicates is ranked
+        # and compared to scipy's rankdata (ordinal for first), as float64.
         sp_stats = pytest.importorskip("scipy.stats")
 
         xs = np.random.default_rng(2).standard_normal(9)
@@ -422,6 +493,11 @@ class TestSeriesRank:
         ],
     )
     def test_rank_dense_method(self, dtype, ser, exp):
+        # [FUNCTION DOC]
+        # Parametrized over dtype and (data, expected ranks) cases. Dense ranking of
+        # the cast Series equals the expected ranks in the expected dtype. For string
+        # dtypes with negative numbers the order is reversed, because strings sort
+        # differently.
         if ser[0] < 0 and dtype.startswith("str"):
             exp = exp[::-1]
         s = Series(ser).astype(dtype)
@@ -432,6 +508,10 @@ class TestSeriesRank:
     def test_rank_descending(
         self, ser, results, dtype, using_infer_string, using_nan_is_na
     ):
+        # [FUNCTION DOC]
+        # Descending rank equals ranking the (max minus value) Series ascending, for
+        # the default method and for each method. Drops NaN for dtypes that cannot hold
+        # them; string dtypes are converted to float for the arithmetic.
         method, _ = results
         if (
             dtype == "int64"
@@ -463,6 +543,9 @@ class TestSeriesRank:
         tm.assert_series_equal(res2, expected.astype(expected_dtype(dtype, method)))
 
     def test_rank_int(self, ser, results):
+        # [FUNCTION DOC]
+        # Ranking int64 data (NaN dropped) with each method matches the expected
+        # ranks without the NaN entries.
         method, exp = results
         s = ser.dropna().astype("i8")
 
@@ -472,6 +555,9 @@ class TestSeriesRank:
         tm.assert_series_equal(result, expected)
 
     def test_rank_object_bug(self):
+        # [FUNCTION DOC]
+        # GH 13445: smoke test that ranking an all-NaN object Series, ascending or
+        # descending, does not raise.
         # GH 13445
 
         # smoke tests
@@ -479,6 +565,8 @@ class TestSeriesRank:
         Series([np.nan] * 32).astype(object).rank(ascending=False)
 
     def test_rank_modify_inplace(self):
+        # [FUNCTION DOC]
+        # GH 18521: ranking a datetime Series does not modify it.
         # GH 18521
         # Check rank does not mutate series
         s = Series([Timestamp("2017-01-05 10:20:27.569000"), NaT])
@@ -489,6 +577,9 @@ class TestSeriesRank:
         tm.assert_series_equal(result, expected)
 
     def test_rank_ea_small_values(self):
+        # [FUNCTION DOC]
+        # GH#52471: very small and very large nullable floats are ranked correctly with
+        # the min method, with NA kept, as an unsigned 64-bit nullable result.
         # GH#52471
         ser = Series(
             [5.4954145e29, -9.791984e-21, 9.3715776e-26, NA, 1.8790257e-28],
@@ -517,6 +608,10 @@ class TestSeriesRank:
     ],
 )
 def test_rank_dense_pct(dtype, ser, exp):
+    # [FUNCTION DOC]
+    # GH15630: parametrized over dtype and cases; percentile dense ranks are on a
+    # 100 percent basis of the number of distinct values. For string dtypes with
+    # negative numbers expected values are reversed.
     if ser[0] < 0 and dtype.startswith("str"):
         exp = exp[::-1]
     s = Series(ser).astype(dtype)
@@ -540,6 +635,9 @@ def test_rank_dense_pct(dtype, ser, exp):
     ],
 )
 def test_rank_min_pct(dtype, ser, exp):
+    # [FUNCTION DOC]
+    # Percentile rank with the min method: each tie gets the lowest rank divided by
+    # the number of values.
     if ser[0] < 0 and dtype.startswith("str"):
         exp = exp[::-1]
     s = Series(ser).astype(dtype)
@@ -563,6 +661,9 @@ def test_rank_min_pct(dtype, ser, exp):
     ],
 )
 def test_rank_max_pct(dtype, ser, exp):
+    # [FUNCTION DOC]
+    # Percentile rank with the max method: each tie gets the highest rank divided by
+    # the number of values.
     if ser[0] < 0 and dtype.startswith("str"):
         exp = exp[::-1]
     s = Series(ser).astype(dtype)
@@ -586,6 +687,9 @@ def test_rank_max_pct(dtype, ser, exp):
     ],
 )
 def test_rank_average_pct(dtype, ser, exp):
+    # [FUNCTION DOC]
+    # Percentile rank with the average method: ties get the mean rank divided by the
+    # number of values.
     if ser[0] < 0 and dtype.startswith("str"):
         exp = exp[::-1]
     s = Series(ser).astype(dtype)
@@ -609,6 +713,9 @@ def test_rank_average_pct(dtype, ser, exp):
     ],
 )
 def test_rank_first_pct(dtype, ser, exp):
+    # [FUNCTION DOC]
+    # Percentile rank with the first method: ties are ranked in order of
+    # appearance, divided by the number of values.
     if ser[0] < 0 and dtype.startswith("str"):
         exp = exp[::-1]
     s = Series(ser).astype(dtype)
@@ -619,6 +726,9 @@ def test_rank_first_pct(dtype, ser, exp):
 
 @pytest.mark.single_cpu
 def test_pct_max_many_rows():
+    # [FUNCTION DOC]
+    # GH 18271 (single CPU only because of memory): the percentile rank maximum of
+    # 2 to the 24th plus one elements is exactly 1.
     # GH 18271
     s = Series(np.arange(2**24 + 1))
     result = s.rank(pct=True).max()

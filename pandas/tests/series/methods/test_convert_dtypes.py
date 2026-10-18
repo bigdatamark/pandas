@@ -1,3 +1,12 @@
+# [MODULE DOC]
+# Tests for Series.convert_dtypes (and a few DataFrame.convert_dtypes checks on
+# frames built in this file), which converts to the best possible nullable
+# dtypes. Covers every combination of the five boolean options, string, integer,
+# boolean, floating, datetime, period, interval and categorical inputs, plus
+# pyarrow-backed dtype_backend cases (which import pyarrow lazily and skip when
+# it is missing). Uses the using_infer_string, using_nan_is_na and
+# nullable_string_dtype fixtures. No import-time side effects.
+
 from itertools import product
 
 import numpy as np
@@ -11,6 +20,8 @@ import pandas._testing as tm
 
 
 class TestSeriesConvertDtypes:
+    # [CLASS DOC]
+    # Groups the tests of convert_dtypes. Stateless.
     @pytest.mark.parametrize(
         "data, maindtype, expected_default, expected_other",
         [
@@ -184,6 +195,23 @@ class TestSeriesConvertDtypes:
         using_infer_string,
         using_nan_is_na,
     ):
+        # [FUNCTION DOC]
+        # Doubly parametrized: over a table of (data, original dtype, expected default
+        # dtype, expected-dtype exceptions keyed by option settings) and over all 32
+        # combinations of five booleans (infer_objects, convert_string, convert_integer,
+        # convert_boolean, convert_floating, in that order). The exceptions map has keys
+        # that are tuples of alternating option name and value; when all pairs in a key
+        # match the current combination, its dtype replaces the default expectation. The
+        # test builds a Series from data and the original dtype, calls convert_dtypes
+        # with the combination, and expects a Series with the computed dtype. Special
+        # cases: tz-aware original dtype with naive datetime data must raise a type error
+        # on construction and the test ends; under the inferred-string option, object
+        # string data with string conversion off but object inference on is expected to
+        # be the NaN-based string dtype; without the NaN-is-NA option, integer-expected
+        # float data with NaN becomes Float64 or float64 depending on the floating
+        # option. Finally verifies that the input Series is not mutated when the result
+        # is modified (assigning NA to the result, or a NaN that must raise for interval
+        # dtype).
         if (
             hasattr(data, "dtype")
             and lib.is_np_dtype(data.dtype, "M")
@@ -255,6 +283,9 @@ class TestSeriesConvertDtypes:
         tm.assert_series_equal(series, copy)
 
     def test_convert_string_dtype(self, nullable_string_dtype):
+        # [FUNCTION DOC]
+        # Converting a frame whose columns already have a nullable string dtype (the
+        # nullable_string_dtype fixture) changes nothing (GH 31731).
         # https://github.com/pandas-dev/pandas/issues/31731 -> converting columns
         # that are already string dtype
         df = pd.DataFrame(
@@ -264,11 +295,17 @@ class TestSeriesConvertDtypes:
         tm.assert_frame_equal(df, result)
 
     def test_convert_bool_dtype(self):
+        # [FUNCTION DOC]
+        # Regression test (GH32287): converting a frame with a boolean extension column
+        # leaves it unchanged.
         # GH32287
         df = pd.DataFrame({"A": pd.array([True])})
         tm.assert_frame_equal(df, df.convert_dtypes())
 
     def test_convert_byte_string_dtype(self):
+        # [FUNCTION DOC]
+        # Regression test (GH-43183): a frame column of bytes scalars stays unchanged
+        # after conversion.
         # GH-43183
         byte_str = b"binary-string"
 
@@ -281,6 +318,10 @@ class TestSeriesConvertDtypes:
         "infer_objects, dtype", [(True, "Int64"), (False, "object")]
     )
     def test_convert_dtype_object_with_na(self, infer_objects, dtype):
+        # [FUNCTION DOC]
+        # Regression test (GH#48791), parametrized over infer_objects: an object
+        # Series of an integer and NA becomes Int64 when inference is on and stays object
+        # when off.
         # GH#48791
         ser = pd.Series([1, pd.NA])
         result = ser.convert_dtypes(infer_objects=infer_objects)
@@ -291,6 +332,9 @@ class TestSeriesConvertDtypes:
         "infer_objects, dtype", [(True, "Float64"), (False, "object")]
     )
     def test_convert_dtype_object_with_na_float(self, infer_objects, dtype):
+        # [FUNCTION DOC]
+        # Regression test (GH#48791), parametrized over infer_objects: an object Series
+        # of a float and NA becomes Float64 when inference is on and stays object when off.
         # GH#48791
         ser = pd.Series([1.5, pd.NA])
         result = ser.convert_dtypes(infer_objects=infer_objects)
@@ -298,6 +342,9 @@ class TestSeriesConvertDtypes:
         tm.assert_series_equal(result, expected)
 
     def test_convert_dtypes_pyarrow_to_np_nullable(self):
+        # [FUNCTION DOC]
+        # Regression test (GH 53648): a pyarrow int32 Series converted with the NumPy
+        # nullable backend becomes the Int32 extension dtype with the same values.
         # GH 53648
         pytest.importorskip("pyarrow")
         ser = pd.Series(range(2), dtype="int32[pyarrow]")
@@ -306,6 +353,9 @@ class TestSeriesConvertDtypes:
         tm.assert_series_equal(result, expected)
 
     def test_convert_dtypes_pyarrow_null(self):
+        # [FUNCTION DOC]
+        # Regression test (GH#55346): an object Series of Nones converted with the
+        # pyarrow backend gets the pyarrow null dtype.
         # GH#55346
         pa = pytest.importorskip("pyarrow")
         ser = pd.Series([None, None])
@@ -316,6 +366,10 @@ class TestSeriesConvertDtypes:
     @td.skip_if_no("pyarrow")
     @pytest.mark.parametrize("categories", [None, ["S1", "S2"]])
     def test_convert_empty_categorical_to_pyarrow(self, categories):
+        # [FUNCTION DOC]
+        # Regression test (GH#59934), requires pyarrow, parametrized over no categories
+        # or two categories: an all-missing categorical Series converted with the pyarrow
+        # backend stays unchanged.
         # GH#59934
         ser = pd.Series(pd.Categorical([None] * 5, categories=categories))
         converted = ser.convert_dtypes(dtype_backend="pyarrow")
@@ -323,6 +377,9 @@ class TestSeriesConvertDtypes:
         tm.assert_series_equal(converted, expected)
 
     def test_convert_dtype_pyarrow_timezone_preserve(self):
+        # [FUNCTION DOC]
+        # Regression test (GH 60237): a pyarrow-backed UTC timestamp Series keeps its
+        # dtype and values when converted with the pyarrow backend.
         # GH 60237
         pytest.importorskip("pyarrow")
         ser = pd.Series(
@@ -334,6 +391,8 @@ class TestSeriesConvertDtypes:
         tm.assert_series_equal(result, expected)
 
     def test_convert_dtypes_complex(self):
+        # [FUNCTION DOC]
+        # Regression test (GH 60129): complex128 Series is unchanged by conversion.
         # GH 60129
         ser = pd.Series([1.5 + 3.0j, 1.5 - 3.0j])
         result = ser.convert_dtypes()

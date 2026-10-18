@@ -1,3 +1,8 @@
+# [MODULE DOC]
+# Test for the matrix multiplication operator and dot product with Series
+# operands (Series, DataFrame, array and list), GH#10259 and GH#21530. No
+# import-time side effects.
+
 import operator
 
 import numpy as np
@@ -11,7 +16,16 @@ import pandas._testing as tm
 
 
 class TestMatmul:
+    # [CLASS DOC]
+    # Groups the matmul tests. Stateless.
     def test_matmul(self):
+        # [FUNCTION DOC]
+        # Series @ DataFrame and DataFrame @ Series give label-aligned Series; Series @
+        # Series gives a scalar; arrays and nested lists on the left (reflected
+        # operation) give the dot product; mixed and different dtypes still work; a dot
+        # with a wrong-length array raises an Exception with a shape mismatch message
+        # (generic exception type), and with a non-aligned frame raises a value error
+        # that the matrices are not aligned.
         # matmul test is for GH#10259
         a = Series(
             np.random.default_rng(2).standard_normal(4), index=["p", "q", "r", "s"]

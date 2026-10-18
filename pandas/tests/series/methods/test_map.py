@@ -1,3 +1,11 @@
+# [MODULE DOC]
+# Tests for Series.map with callables, dicts, Series, defaultdicts, Counter,
+# dict subclasses and abstract mappings as the mapping argument. Covers
+# element boxing (Timestamp, Timedelta, Period), categorical/datetimetz/string
+# dtypes, NA handling (na_action), type inference, extra keyword arguments,
+# argument errors and execution engines. Imports the engine fixture from the
+# apply tests' conftest to reuse it here. No import-time side effects.
+
 from collections import (
     Counter,
     defaultdict,
@@ -30,16 +38,29 @@ from pandas.tests.apply.conftest import engine  # noqa: F401
 
 
 def test_series_map_box_timedelta():
+    # [FUNCTION DOC]
+    # Regression test (GH#11349): mapping a function that uses a timedelta method
+    # over a timedelta Series works, so elements are boxed as timedelta objects. No
+    # result is checked beyond the absence of an error.
     # GH#11349
     ser = Series(timedelta_range("1 day 1 s", periods=5, freq="h"))
 
     def f(x):
+        # [FUNCTION DOC]
+        # HELPER: callable passed to map in the boxing test; returns the total number of
+        # seconds of the Timedelta argument.
         return x.total_seconds()
 
     ser.map(f)
 
 
 def test_map_callable(datetime_series, engine):  # noqa: F811
+    # [FUNCTION DOC]
+    # With the engine fixture: mapping NumPy square root and the math exponential
+    # function element-wise equals the vectorized NumPy function; mapping the
+    # identity function over an empty named Series returns an equal but distinct
+    # Series sharing the same index object and keeping dtype and name (GH 9322); and
+    # an index-only float Series is unchanged.
     with np.errstate(all="ignore"):
         tm.assert_series_equal(
             datetime_series.map(np.sqrt, engine=engine), np.sqrt(datetime_series)
@@ -68,9 +89,18 @@ def test_map_callable(datetime_series, engine):  # noqa: F811
 
 
 def test_map_same_length_inference_bug():
+    # [FUNCTION DOC]
+    # A function returning a two-tuple per element yields a Series of tuples (not
+    # a frame), and splitting strings into tuples likewise; the inference does not
+    # expand the tuple.
+    # KNOWN ISSUE: the first Series assigned in the body is never used because it
+    # is immediately reassigned.
     s = Series([1, 2])
 
     def f(x):
+        # [FUNCTION DOC]
+        # HELPER: callable for the inference test; returns a pair of the argument and the
+        # argument plus one.
         return (x, x + 1)
 
     s = Series([1, 2, 3])
@@ -85,10 +115,16 @@ def test_map_same_length_inference_bug():
 
 
 def test_series_map_box_timestamps():
+    # [FUNCTION DOC]
+    # Regression test (GH#2689, GH#2627): mapping a function over a datetime Series
+    # passes Timestamp objects (hour, day and month attributes work).
     # GH#2689, GH#2627
     ser = Series(date_range("1/1/2000", periods=3))
 
     def func(x):
+        # [FUNCTION DOC]
+        # HELPER: callable returning a tuple of the hour, day and month of its Timestamp
+        # argument.
         return (x.hour, x.day, x.month)
 
     result = ser.map(func)
@@ -97,6 +133,11 @@ def test_series_map_box_timestamps():
 
 
 def test_map_series_stringdtype(any_string_dtype, using_infer_string):
+    # [FUNCTION DOC]
+    # Parametrized over string dtypes (GH#40823). Mapping a Series of ids through a
+    # Series keyed by ids returns the matching values; the unknown id gives a
+    # missing value (NA or NaN depending on dtype); with the inferred-string option the
+    # object dtype case yields the new string dtype.
     # map test on StringDType, GH#40823
     ser1 = Series(
         data=["cat", "dog", "rabbit"],
@@ -122,8 +163,15 @@ def test_map_series_stringdtype(any_string_dtype, using_infer_string):
     [(["1-1", "1-1", np.nan], "category"), (["1-1", "1-2", np.nan], "str")],
 )
 def test_map_categorical_with_nan_values(data, expected_dtype):
+    # [FUNCTION DOC]
+    # Parametrized over data and expected dtype. For a categorical with NaN, mapping
+    # with na_action ignore keeps the NaN and applies the function (split off the
+    # prefix) to others. If the mapped values are all the same the result stays
+    # categorical; otherwise it is a string dtype (GH 20714, GH 24275).
     # GH 20714 bug fixed in: GH 24275
     def func(val):
+        # [FUNCTION DOC]
+        # HELPER: callable returning the text before the first hyphen in its argument.
         return val.split("-")[0]
 
     s = Series(data, dtype="category")
@@ -134,6 +182,9 @@ def test_map_categorical_with_nan_values(data, expected_dtype):
 
 
 def test_map_empty_integer_series():
+    # [FUNCTION DOC]
+    # Regression test (GH52384): mapping the identity over an empty integer Series
+    # returns an equal Series.
     # GH52384
     s = Series([], dtype=int)
     result = s.map(lambda x: x)
@@ -141,6 +192,8 @@ def test_map_empty_integer_series():
 
 
 def test_map_empty_integer_series_with_datetime_index():
+    # [FUNCTION DOC]
+    # Regression test (GH 21245): same as above with an empty datetime index.
     # GH 21245
     s = Series([], index=date_range(start="2018-01-01", periods=0), dtype=int)
     result = s.map(lambda x: x)
@@ -151,6 +204,11 @@ def test_map_empty_integer_series_with_datetime_index():
 def test_map_simple_str_callables_same_as_astype(
     string_series, func, using_infer_string
 ):
+    # [FUNCTION DOC]
+    # Parametrized over the string conversion type and a lambda doing the same.
+    # Mapping a string conversion over a float Series equals casting to string
+    # (or the new string dtype under the inferred-string option), i.e. the function
+    # is evaluated element by element.
     # test that we are evaluating row-by-row first
     # before vectorized evaluation
     result = string_series.map(func)
@@ -159,11 +217,17 @@ def test_map_simple_str_callables_same_as_astype(
 
 
 def test_list_raises(string_series):
+    # [FUNCTION DOC]
+    # Passing a list as the mapper raises a type error saying a list is not callable.
     with pytest.raises(TypeError, match="'list' object is not callable"):
         string_series.map([lambda x: x])
 
 
 def test_map():
+    # [FUNCTION DOC]
+    # Mapping a Series of floats keyed by string labels through targets: each result
+    # equals the source value for the matching key, whether the mapper is a Series
+    # or a dict.
     data = {
         "A": [0.0, 1.0, 2.0, 3.0, 4.0],
         "B": [0.0, 1.0, 0.0, 1.0, 0.0],
@@ -187,12 +251,19 @@ def test_map():
 
 
 def test_map_datetime(datetime_series):
+    # [FUNCTION DOC]
+    # Mapping a doubling function over the datetime_series fixture equals doubling
+    # the Series.
     # function
     result = datetime_series.map(lambda x: x * 2)
     tm.assert_series_equal(result, datetime_series * 2)
 
 
 def test_map_category():
+    # [FUNCTION DOC]
+    # Regression test (GH 10324): mapping integers through a categorical Series
+    # gives a categorical result with NaN for unknown keys; through a plain string
+    # Series gives the same values as non-categorical.
     # GH 10324
     a = Series([1, 2, 3, 4])
     b = Series(["even", "odd", "even", "odd"], dtype="category")
@@ -205,6 +276,9 @@ def test_map_category():
 
 
 def test_map_category_numeric():
+    # [FUNCTION DOC]
+    # Mapping strings through Series keyed by a categorical index or a plain index
+    # gives the same numbers with NaN for unknown labels.
     a = Series(["a", "b", "c", "d"])
     b = Series([1, 2, 3, 4], index=pd.CategoricalIndex(["b", "c", "d", "e"]))
     c = Series([1, 2, 3, 4], index=Index(["b", "c", "d", "e"]))
@@ -216,6 +290,10 @@ def test_map_category_numeric():
 
 
 def test_map_category_string():
+    # [FUNCTION DOC]
+    # Mapping strings through a categorical Series (with categorical index) gives a
+    # categorical result with all four categories, and through a plain string Series
+    # gives plain strings; unknown labels become NaN.
     a = Series(["a", "b", "c", "d"])
     b = Series(
         ["B", "C", "D", "E"],
@@ -233,6 +311,10 @@ def test_map_category_string():
 
 
 def test_map_empty(request, index):
+    # [FUNCTION DOC]
+    # Uses the index fixture: mapping an empty dict over a Series built from the
+    # index gives all NaN with the same index. A MultiIndex is an expected failure
+    # because a Series cannot be built from it.
     if isinstance(index, MultiIndex):
         request.applymarker(
             pytest.mark.xfail(
@@ -248,6 +330,8 @@ def test_map_empty(request, index):
 
 
 def test_map_compat():
+    # [FUNCTION DOC]
+    # Related GH 8024: boolean values mapped through a dict of booleans to strings.
     # related GH 8024
     s = Series([True, True, False], index=[1, 2, 3])
     result = s.map({True: "foo", False: "bar"})
@@ -256,6 +340,9 @@ def test_map_compat():
 
 
 def test_map_int():
+    # [FUNCTION DOC]
+    # Float values mapped through an integer-valued Series keyed by integers give
+    # float results with NaN for values with no matching key.
     left = Series({"a": 1.0, "b": 2.0, "c": 3.0, "d": 4})
     right = Series({1: 11, 2: 22, 3: 33})
 
@@ -269,18 +356,27 @@ def test_map_int():
 
 
 def test_map_type_inference():
+    # [FUNCTION DOC]
+    # Mapping a function that returns an array (a NumPy conditional) over an integer
+    # Series still gives an integer dtype.
     s = Series(range(3))
     s2 = s.map(lambda x: np.where(x == 0, 0, 1))
     assert issubclass(s2.dtype.type, np.integer)
 
 
 def test_map_decimal(string_series):
+    # [FUNCTION DOC]
+    # Mapping a function that returns Decimal objects gives object dtype with
+    # Decimal elements.
     result = string_series.map(lambda x: Decimal(str(x)))
     assert result.dtype == np.object_
     assert isinstance(result.iloc[0], Decimal)
 
 
 def test_map_na_exclusion(engine):  # noqa: F811
+    # [FUNCTION DOC]
+    # With the engine fixture and na_action ignore, the doubling function is applied
+    # to non-missing values and NaN stays NaN.
     s = Series([1.5, np.nan, 3, np.nan, 5])
 
     result = s.map(lambda x: x * 2, na_action="ignore", engine=engine)
@@ -289,6 +385,10 @@ def test_map_na_exclusion(engine):  # noqa: F811
 
 
 def test_map_dict_with_tuple_keys():
+    # [FUNCTION DOC]
+    # GH 18496: a dict with tuple keys passed to map is used as a plain mapping, so
+    # tuple values in the Series are mapped to the labels (not interpreted as a
+    # MultiIndex).
     """
     Due to new MultiIndex-ing behaviour in v0.14.0,
     dicts with tuple keys passed to map were being
@@ -306,6 +406,9 @@ def test_map_dict_with_tuple_keys():
 
 
 def test_map_counter():
+    # [FUNCTION DOC]
+    # A Counter used as the mapper returns the stored count and zero for keys not
+    # present (Counter default behavior).
     s = Series(["a", "b", "c"], index=[1, 2, 3])
     counter = Counter()
     counter["b"] = 5
@@ -316,6 +419,9 @@ def test_map_counter():
 
 
 def test_map_defaultdict():
+    # [FUNCTION DOC]
+    # A defaultdict used as the mapper uses its default factory for unknown keys
+    # (key 1 maps to its stored value, others to "blank").
     s = Series([1, 2, 3], index=["a", "b", "c"])
     default_dict = defaultdict(lambda: "blank")
     default_dict[1] = "stuff"
@@ -325,6 +431,8 @@ def test_map_defaultdict():
 
 
 def test_map_dict_na_key():
+    # [FUNCTION DOC]
+    # Issue 17648: a dict containing NaN as a key maps NaN values in the Series.
     # https://github.com/pandas-dev/pandas/issues/17648
     # Checks that np.nan key is appropriately mapped
     s = Series([1, 2, np.nan])
@@ -334,6 +442,9 @@ def test_map_dict_na_key():
 
 
 def test_map_defaultdict_na_key(na_action):
+    # [FUNCTION DOC]
+    # GH 48813, parametrized over na_action (fixture): a defaultdict containing a NaN
+    # key maps NaN to its value when na_action is none, and leaves NaN when ignore.
     # GH 48813
     s = Series([1, 2, np.nan])
     default_map = defaultdict(lambda: "missing", {1: "a", 2: "b", np.nan: "c"})
@@ -343,6 +454,9 @@ def test_map_defaultdict_na_key(na_action):
 
 
 def test_map_defaultdict_missing_key(na_action):
+    # [FUNCTION DOC]
+    # GH 48813, parametrized over na_action: a defaultdict without a NaN key uses its
+    # default factory for NaN when na_action is none, and leaves NaN when ignore.
     # GH 48813
     s = Series([1, 2, np.nan])
     default_map = defaultdict(lambda: "missing", {1: "a", 2: "b", 3: "c"})
@@ -352,6 +466,9 @@ def test_map_defaultdict_missing_key(na_action):
 
 
 def test_map_defaultdict_unmutated(na_action):
+    # [FUNCTION DOC]
+    # GH 48813, parametrized over na_action: mapping with a defaultdict does not add
+    # any keys to the defaultdict (stays equal to its copy).
     # GH 48813
     s = Series([1, 2, np.nan])
     default_map = defaultdict(lambda: "missing", {1: "a", 2: "b", np.nan: "c"})
@@ -362,6 +479,10 @@ def test_map_defaultdict_unmutated(na_action):
 
 @pytest.mark.parametrize("arg_func", [dict, Series])
 def test_map_dict_ignore_na(arg_func):
+    # [FUNCTION DOC]
+    # GH#47527, parametrized over dict or Series as the mapper: with na_action ignore
+    # the NaN key in the mapper is not used; the NaN stays NaN and unmatched values
+    # become NaN.
     # GH#47527
     mapping = arg_func({1: 10, np.nan: 42})
     ser = Series([1, np.nan, 2])
@@ -371,6 +492,9 @@ def test_map_dict_ignore_na(arg_func):
 
 
 def test_map_defaultdict_ignore_na():
+    # [FUNCTION DOC]
+    # GH#47527: a defaultdict(int) with a NaN key and no na_action: NaN is mapped via
+    # its key, and missing values use the default zero.
     # GH#47527
     mapping = defaultdict(int, {1: 10, np.nan: 42})
     ser = Series([1, np.nan, 2])
@@ -384,6 +508,11 @@ def test_map_defaultdict_ignore_na():
     [(None, Series([10.0, 42.0, np.nan])), ("ignore", Series([10, np.nan, np.nan]))],
 )
 def test_map_categorical_na_ignore(na_action, expected):
+    # [FUNCTION DOC]
+    # GH#47527, parametrized over na_action and the expected result: mapping a
+    # categorical Series (with NaN) through a dict with a NaN key. With no
+    # na_action the NaN gets 42 and the result is float; with ignore the NaN stays
+    # NaN.
     # GH#47527
     values = pd.Categorical([1, np.nan, 2], categories=[10, 1, 2])
     ser = Series(values)
@@ -392,13 +521,21 @@ def test_map_categorical_na_ignore(na_action, expected):
 
 
 def test_map_dict_subclass_with_missing():
+    # [FUNCTION DOC]
+    # GH #15999: a dict subclass defining a missing-key hook gives its value for
+    # unknown keys when used as the mapper.
     """
     Test Series.map with a dictionary subclass that defines __missing__,
     i.e. sets a default value (GH #15999).
     """
 
     class DictWithMissing(dict):
+        # [CLASS DOC]
+        # HELPER: local dict subclass whose missing-key hook returns the string "missing".
         def __missing__(self, key):
+            # [FUNCTION DOC]
+            # HELPER: missing-key hook; takes the absent key and returns the fixed string
+            # "missing".
             return "missing"
 
     s = Series([1, 2, 3])
@@ -409,7 +546,12 @@ def test_map_dict_subclass_with_missing():
 
 
 def test_map_dict_subclass_without_missing():
+    # [FUNCTION DOC]
+    # A plain dict subclass (no missing-key hook) behaves like a dict: unknown keys
+    # map to NaN.
     class DictWithoutMissing(dict):
+        # [CLASS DOC]
+        # HELPER: local dict subclass that adds nothing.
         pass
 
     s = Series([1, 2, 3])
@@ -420,6 +562,9 @@ def test_map_dict_subclass_without_missing():
 
 
 def test_map_abc_mapping(non_dict_mapping_subclass):
+    # [FUNCTION DOC]
+    # GitHub issue 29733: a non-dict mapping (from the non_dict_mapping_subclass
+    # fixture) can be used as the mapper; unknown keys give NaN.
     # https://github.com/pandas-dev/pandas/issues/29733
     # Check collections.abc.Mapping support as mapper for Series.map
     s = Series([1, 2, 3])
@@ -430,10 +575,18 @@ def test_map_abc_mapping(non_dict_mapping_subclass):
 
 
 def test_map_abc_mapping_with_missing(non_dict_mapping_subclass):
+    # [FUNCTION DOC]
+    # GitHub issue 29733: a non-dict mapping subclass defining a missing-key hook
+    # does not use it: the hook is a dict concept, so unknown keys still give NaN.
     # https://github.com/pandas-dev/pandas/issues/29733
     # Check collections.abc.Mapping support as mapper for Series.map
     class NonDictMappingWithMissing(non_dict_mapping_subclass):
+        # [CLASS DOC]
+        # HELPER: local subclass of the fixture's mapping type that adds a missing-key
+        # hook returning "missing".
         def __missing__(self, key):
+            # [FUNCTION DOC]
+            # HELPER: missing-key hook returning the fixed string "missing" for any key.
             return "missing"
 
     s = Series([1, 2, 3])
@@ -446,6 +599,9 @@ def test_map_abc_mapping_with_missing(non_dict_mapping_subclass):
 
 
 def test_map_box_dt64(unit):
+    # [FUNCTION DOC]
+    # Parametrized over datetime unit. The function receives Timestamp objects and
+    # no timezone; the formatted text results confirm class name, day and tz.
     vals = [pd.Timestamp("2011-01-01"), pd.Timestamp("2011-01-02")]
     ser = Series(vals).dt.as_unit(unit)
     assert ser.dtype == f"datetime64[{unit}]"
@@ -456,6 +612,9 @@ def test_map_box_dt64(unit):
 
 
 def test_map_box_dt64tz(unit):
+    # [FUNCTION DOC]
+    # Parametrized over datetime unit. For a tz-aware Series the function receives
+    # Timestamp objects carrying the US/Eastern timezone.
     vals = [
         pd.Timestamp("2011-01-01", tz="US/Eastern"),
         pd.Timestamp("2011-01-02", tz="US/Eastern"),
@@ -468,6 +627,9 @@ def test_map_box_dt64tz(unit):
 
 
 def test_map_box_td64(unit):
+    # [FUNCTION DOC]
+    # Parametrized over timedelta unit. The function receives Timedelta objects (class
+    # name and day count are checked).
     # timedelta
     vals = [pd.Timedelta("1 days"), pd.Timedelta("2 days")]
     ser = Series(vals).dt.as_unit(unit)
@@ -478,6 +640,8 @@ def test_map_box_td64(unit):
 
 
 def test_map_box_period():
+    # [FUNCTION DOC]
+    # The function receives Period objects (class name and frequency string checked).
     # period
     vals = [pd.Period("2011-01-01", freq="M"), pd.Period("2011-01-02", freq="M")]
     ser = Series(vals)
@@ -488,6 +652,13 @@ def test_map_box_period():
 
 
 def test_map_categorical(na_action, using_infer_string):
+    # [FUNCTION DOC]
+    # Parametrized over na_action and inferred-string option. Mapping a function over
+    # an ordered categorical returns a categorical with mapped categories (order
+    # preserved); mapping to a constant string gives an object (or str) Series.
+    # KNOWN ISSUE: the final assertion has a conditional expression whose
+    # else branch is a non-empty string, so under the inferred-string option the
+    # assertion is always true and verifies nothing.
     values = pd.Categorical(list("ABBABCD"), categories=list("DCBA"), ordered=True)
     s = Series(values, name="XX", index=list("abcdefg"))
 
@@ -518,6 +689,11 @@ def test_map_categorical(na_action, using_infer_string):
     ),
 )
 def test_map_categorical_na_action(na_action, expected):
+    # [FUNCTION DOC]
+    # Parametrized over na_action (none or ignore). Mapping the string conversion
+    # over an ordered categorical with NaN: with no na_action the NaN becomes the
+    # text "nan"; with ignore, NaN stays and the result is categorical with the
+    # original categories.
     dtype = pd.CategoricalDtype(list("DCBA"), ordered=True)
     values = pd.Categorical([*list("AB"), np.nan], dtype=dtype)
     s = Series(values, name="XX")
@@ -526,6 +702,11 @@ def test_map_categorical_na_action(na_action, expected):
 
 
 def test_map_datetimetz():
+    # [FUNCTION DOC]
+    # A tz-aware (Asia/Tokyo) Series: mapping adding a day keeps the timezone;
+    # mapping to the hour attribute gives int64; a function that raises unless it is
+    # given a Timestamp shows that elements are boxed (not vectorized) and returns
+    # the zone name.
     values = date_range("2011-01-01", "2011-01-02", freq="h").tz_localize("Asia/Tokyo")
     s = Series(values, name="XX")
 
@@ -543,6 +724,9 @@ def test_map_datetimetz():
 
     # not vectorized
     def f(x):
+        # [FUNCTION DOC]
+        # HELPER: callable requiring a Timestamp argument (raises a value error
+        # otherwise) and returning the text of its timezone.
         if not isinstance(x, pd.Timestamp):
             raise ValueError
         return str(x.tz)
@@ -561,6 +745,10 @@ def test_map_datetimetz():
     ],
 )
 def test_map_missing_mixed(vals, mapping, exp):
+    # [FUNCTION DOC]
+    # GH20495, parametrized over (values, mapping, expected): mapping dicts with
+    # missing values in the Series; only matching keys (including a NaN key) are
+    # mapped, other values become NaN.
     # GH20495
     s = Series([*vals, np.nan])
     result = s.map(mapping)
@@ -569,6 +757,9 @@ def test_map_missing_mixed(vals, mapping, exp):
 
 
 def test_map_scalar_on_date_time_index_aware_series():
+    # [FUNCTION DOC]
+    # GH 25959: mapping a function on a tz-aware (UTC) DatetimeIndex wrapped in a
+    # Series does not raise and gives integer ones.
     # GH 25959
     # Calling map on a localized time series should not cause an error
     series = Series(
@@ -581,6 +772,9 @@ def test_map_scalar_on_date_time_index_aware_series():
 
 
 def test_map_float_to_string_precision():
+    # [FUNCTION DOC]
+    # GH 13228: mapping the string conversion over a float keeps the full repr
+    # precision (0.3333333333333333).
     # GH 13228
     ser = Series(1 / 3)
     result = ser.map(lambda val: str(val)).to_dict()
@@ -589,6 +783,9 @@ def test_map_float_to_string_precision():
 
 
 def test_map_to_timedelta():
+    # [FUNCTION DOC]
+    # Mapping the timedelta parser over strings (valid, then with NaN and NaT)
+    # matches parsing the whole list.
     list_of_valid_strings = ["00:00:01", "00:00:02"]
     a = pd.to_timedelta(list_of_valid_strings)
     b = Series(list_of_valid_strings).map(pd.to_timedelta)
@@ -603,6 +800,9 @@ def test_map_to_timedelta():
 
 
 def test_map_type():
+    # [FUNCTION DOC]
+    # GH 46719: mapping the built-in type function over mixed objects returns the
+    # classes.
     # GH 46719
     s = Series([3, "string", float], index=["a", "b", "c"])
     result = s.map(type)
@@ -611,6 +811,8 @@ def test_map_type():
 
 
 def test_map_kwargs():
+    # [FUNCTION DOC]
+    # GH 59814: extra keyword arguments are forwarded to the function.
     # GH 59814
     result = Series([2, 4, 5]).map(lambda x, y: x + y, y=2)
     expected = Series([4, 6, 7])
@@ -618,6 +820,9 @@ def test_map_kwargs():
 
 
 def test_map_arg_as_kwarg():
+    # [FUNCTION DOC]
+    # Using the old keyword name for the first argument emits a Pandas4Warning that
+    # the argument has been renamed to func.
     with tm.assert_produces_warning(
         Pandas4Warning, match="`arg` has been renamed to `func`"
     ):
@@ -625,6 +830,9 @@ def test_map_arg_as_kwarg():
 
 
 def test_map_func_and_arg():
+    # [FUNCTION DOC]
+    # When func is a callable, a keyword named arg is passed through to it as a normal
+    # keyword argument.
     # `arg`is considered a normal kwarg that should be passed to the function
     result = Series([1, 2]).map(lambda _, arg: arg, arg=3)
     expected = Series([3, 3])
@@ -632,17 +840,26 @@ def test_map_func_and_arg():
 
 
 def test_map_no_func_or_arg():
+    # [FUNCTION DOC]
+    # Calling map without any func raises a value error that the func parameter is
+    # required.
     with pytest.raises(ValueError, match="The `func` parameter is required"):
         Series([1, 2]).map()
 
 
 def test_map_func_is_none():
+    # [FUNCTION DOC]
+    # Passing None as func raises a value error that the func parameter is required.
     with pytest.raises(ValueError, match="The `func` parameter is required"):
         Series([1, 2]).map(func=None)
 
 
 @pytest.mark.parametrize("func", [{}, {1: 2}, Series([3, 4])])
 def test_map_engine_no_function(func):
+    # [FUNCTION DOC]
+    # Parametrized over dict, dict and Series mappers: specifying an engine with a
+    # non-callable mapper raises a value error that the engine argument can only be
+    # specified with a callable.
     s = Series([1, 2])
 
     with pytest.raises(ValueError, match="engine argument can only be specified"):
@@ -650,6 +867,8 @@ def test_map_engine_no_function(func):
 
 
 def test_map_engine_not_executor():
+    # [FUNCTION DOC]
+    # An unknown engine name raises a value error stating it is not a valid engine.
     s = Series([1, 2])
 
     with pytest.raises(ValueError, match="Not a valid engine: 'something'"):
@@ -659,6 +878,11 @@ def test_map_engine_not_executor():
 @td.skip_if_no("pyarrow")
 @pytest.mark.parametrize("as_td", [True, False])
 def test_map_pyarrow_timestamp(as_td):
+    # [FUNCTION DOC]
+    # GH#61231, needs pyarrow; parametrized over timestamps or durations. Maps
+    # pyarrow timestamp/duration Series values through a dict keyed by the elements.
+    # The Series result is int64; the Index result is converted to pyarrow int64
+    # (Index inference differs from Series).
     # GH#61231
     dti = date_range("2018-01-01 00:00:00", "2018-01-07 00:00:00")
     ser = Series(dti, dtype="timestamp[ns][pyarrow]", name="a")

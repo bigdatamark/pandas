@@ -1,3 +1,7 @@
+# [MODULE DOC]
+# Tests for Series.reindex_like (the method argument emits a Pandas4Warning).
+# Uses the datetime_series fixture. No import-time side effects.
+
 from datetime import datetime
 
 import numpy as np
@@ -9,6 +13,9 @@ import pandas._testing as tm
 
 
 def test_reindex_like(datetime_series):
+    # [FUNCTION DOC]
+    # reindex_like equals reindexing to the other's index. GH#7179: the pad method on
+    # Series with missing values forward fills and emits a Pandas4Warning.
     other = datetime_series[::2]
     tm.assert_series_equal(
         datetime_series.reindex(other.index), datetime_series.reindex_like(other)
@@ -29,6 +36,10 @@ def test_reindex_like(datetime_series):
 
 
 def test_reindex_like_nearest():
+    # [FUNCTION DOC]
+    # reindex_like with the nearest method (and with scalar or list tolerance) equals
+    # reindexing by the target labels with the same method; each reindex_like call
+    # with method emits a Pandas4Warning.
     ser = Series(np.arange(10, dtype="int64"))
 
     target = [0.1, 0.9, 1.5, 2.0]

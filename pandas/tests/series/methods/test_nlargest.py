@@ -3,6 +3,13 @@ Note: for naming purposes, most tests are title with as e.g. "test_nlargest_foo"
 but are implicitly also testing nsmallest_foo.
 """
 
+# [MODULE DOC]
+# Tests for Series.nlargest and Series.nsmallest, per the docstring most test
+# names say largest but also cover smallest. Covers unsupported dtypes, ties
+# with keep options, n edge cases, integer/float/datetime boundary values,
+# booleans, nullable dtypes and NaN. Uses the nselect_method fixture. No
+# import-time side effects.
+
 import numpy as np
 import pytest
 
@@ -12,6 +19,11 @@ import pandas._testing as tm
 
 
 def assert_check_nselect_boundary(vals, dtype, method):
+    # [FUNCTION DOC]
+    # HELPER: shared check for the boundary tests. Builds a Series of four values
+    # (smallest, second smallest, second largest, largest) of the dtype, calls the
+    # named selection method (nsmallest or nlargest) with n of 3 and expects the
+    # first three by position for nsmallest or positions 3, 2, 1 for nlargest.
     # helper function for 'test_boundary_{dtype}' tests
     ser = Series(vals, dtype=dtype)
     result = getattr(ser, method)(3)
@@ -21,6 +33,8 @@ def assert_check_nselect_boundary(vals, dtype, method):
 
 
 class TestSeriesNLargestNSmallest:
+    # [CLASS DOC]
+    # Groups the nlargest/nsmallest tests. Stateless.
     @pytest.mark.parametrize(
         "r",
         [
@@ -36,6 +50,10 @@ class TestSeriesNLargestNSmallest:
     @pytest.mark.parametrize("method", ["nlargest", "nsmallest"])
     @pytest.mark.parametrize("arg", [2, 5, 0, -1])
     def test_nlargest_error(self, r, method, arg):
+        # [FUNCTION DOC]
+        # Parametrized over unsupported data (object, complex, string and categorical
+        # Series), method and n values (2, 5, 0, -1): selection raises a type error saying
+        # the method cannot be used with the dtype.
         dt = r.dtype
         msg = f"Cannot use method 'n(largest|smallest)' with dtype {dt}"
         with pytest.raises(TypeError, match=msg):
@@ -60,6 +78,13 @@ class TestSeriesNLargestNSmallest:
         ],
     )
     def test_nsmallest_nlargest(self, data):
+        # [FUNCTION DOC]
+        # Parametrized over datetime, tz-aware, timedelta, all integer widths and float
+        # data. nsmallest and nlargest agree with sorting for n equal to, below and above
+        # the length, n of zero or negative yields an empty Series, and keep last chooses
+        # the later duplicate.
+        # KNOWN ISSUE: the leading comment lists object dtypes with numbers or
+        # strings, but none of the parameters is of object dtype.
         # float, int, datetime64 (use i8), timedelts64 (same),
         # object that are numbers, object that are strings
         ser = Series(data)
@@ -79,6 +104,10 @@ class TestSeriesNLargestNSmallest:
         tm.assert_series_equal(ser.nlargest(len(ser) + 1), ser.iloc[[4, 0, 1, 3, 2]])
 
     def test_nlargest_misc(self):
+        # [FUNCTION DOC]
+        # Default n of five on data with NaN puts NaN last for both methods; an invalid
+        # keep value raises a value error; (GH#15297) with all-equal values, keep first
+        # chooses the earliest labels and keep last the latest in reverse order.
         ser = Series([3.0, np.nan, 1, 2, 5])
         result = ser.nlargest()
         expected = ser.iloc[[4, 0, 3, 2, 1]]
@@ -112,6 +141,9 @@ class TestSeriesNLargestNSmallest:
 
     @pytest.mark.parametrize("n", range(1, 5))
     def test_nlargest_n(self, n):
+        # [FUNCTION DOC]
+        # GH 13412, parametrized over n from one to four: duplicates in the index do not
+        # change results, which equal sorting then taking the head.
         # GH 13412
         ser = Series([1, 4, 3, 2], index=[0, 0, 1, 1])
         result = ser.nlargest(n)
@@ -123,6 +155,9 @@ class TestSeriesNLargestNSmallest:
         tm.assert_series_equal(result, expected)
 
     def test_nlargest_boundary_integer(self, nselect_method, any_int_numpy_dtype):
+        # [FUNCTION DOC]
+        # GH#21426: uses the nselect_method and any_int_numpy_dtype fixtures with
+        # values at the dtype's min and max.
         # GH#21426
         dtype_info = np.iinfo(any_int_numpy_dtype)
         min_val, max_val = dtype_info.min, dtype_info.max
@@ -130,6 +165,9 @@ class TestSeriesNLargestNSmallest:
         assert_check_nselect_boundary(vals, any_int_numpy_dtype, nselect_method)
 
     def test_nlargest_boundary_float(self, nselect_method, float_numpy_dtype):
+        # [FUNCTION DOC]
+        # GH#21426: boundary values for float dtypes (the lowest, the max, and their
+        # neighbors toward zero).
         # GH#21426
         dtype_info = np.finfo(float_numpy_dtype)
         min_val, max_val = dtype_info.min, dtype_info.max
@@ -139,6 +177,10 @@ class TestSeriesNLargestNSmallest:
 
     @pytest.mark.parametrize("dtype", ["datetime64[ns]", "timedelta64[ns]"])
     def test_nlargest_boundary_datetimelike(self, nselect_method, dtype):
+        # [FUNCTION DOC]
+        # GH#21426, parametrized over datetime and timedelta: boundary int64 values
+        # shifted by one from the minimum (the true minimum is NaT), with that minimum
+        # (NaT) as the last element so that expected positions stay the same.
         # GH#21426
         # use int64 bounds and +1 to min_val since true minimum is NaT
         # (include min_val/NaT at end to maintain same expected_idxr)
@@ -148,6 +190,9 @@ class TestSeriesNLargestNSmallest:
         assert_check_nselect_boundary(vals, dtype, nselect_method)
 
     def test_nlargest_duplicate_keep_all_ties(self):
+        # [FUNCTION DOC]
+        # see GH#16818: keep set to all returns all rows tied with the nth value for
+        # nlargest and nsmallest.
         # see GH#16818
         ser = Series([10, 9, 8, 7, 7, 7, 7, 6])
         result = ser.nlargest(4, keep="all")
@@ -162,6 +207,9 @@ class TestSeriesNLargestNSmallest:
         "data,expected", [([True, False], [True]), ([True, False, True, True], [True])]
     )
     def test_nlargest_boolean(self, data, expected):
+        # [FUNCTION DOC]
+        # GH#26154, parametrized over two boolean datasets: True ranks above False, so the
+        # largest one is True.
         # GH#26154 : ensure True > False
         ser = Series(data)
         result = ser.nlargest(1)
@@ -169,6 +217,11 @@ class TestSeriesNLargestNSmallest:
         tm.assert_series_equal(result, expected)
 
     def test_nlargest_nullable(self, any_numeric_ea_dtype):
+        # [FUNCTION DOC]
+        # GH#42816, parametrized over nullable numeric dtypes: nlargest ignores NA and
+        # equals the result for the same data without the NA element, cast to the
+        # nullable dtype. Unsigned types use positive integers to avoid casting negative
+        # numbers.
         # GH#42816
         dtype = any_numeric_ea_dtype
         if dtype.startswith("UInt"):
@@ -190,6 +243,10 @@ class TestSeriesNLargestNSmallest:
         tm.assert_series_equal(result, expected)
 
     def test_nsmallest_nan_when_keep_is_all(self):
+        # [FUNCTION DOC]
+        # GH#46589: with keep all, nsmallest with NaN in the series excludes NaN when ties
+        # at the boundary are non-NaN, and returns all NaN entries when the boundary
+        # involves them.
         # GH#46589
         s = Series([1, 2, 3, 3, 3, None])
         result = s.nsmallest(3, keep="all")

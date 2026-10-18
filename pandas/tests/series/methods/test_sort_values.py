@@ -1,3 +1,9 @@
+# [MODULE DOC]
+# Tests for Series.sort_values: ordering with labels, NaN placement, ascending
+# validation, in place, categorical data (and the frame equivalent), ignore_index,
+# mergesort stability and the key argument. Uses the datetime_series and
+# ascending fixtures. No import-time side effects.
+
 import numpy as np
 import pytest
 
@@ -10,7 +16,15 @@ import pandas._testing as tm
 
 
 class TestSeriesSortValues:
+    # [CLASS DOC]
+    # Groups the tests of Series.sort_values without key. Stateless.
     def test_sort_values(self, datetime_series):
+        # [FUNCTION DOC]
+        # Sorting reorders labels with values; NaN go last by default or first by
+        # option; object data works; descending equals the reversed sorted values; a
+        # single-element list for ascending behaves like a bool, while other lengths or
+        # non-bool values raise value errors with matching messages; in-place returns
+        # None and matches; a sort on a column view works (GH#5856/5853).
         # check indexes are reordered corresponding with the values
         ser = Series([3, 2, 4, 1], ["A", "B", "C", "D"])
         expected = Series([1, 2, 3, 4], ["D", "B", "A", "C"])
@@ -83,6 +97,11 @@ class TestSeriesSortValues:
         tm.assert_series_equal(s, df.iloc[:, 0].sort_values())
 
     def test_sort_values_categorical(self):
+        # [FUNCTION DOC]
+        # Unordered categorical sorts by category order of appearance, ordered ones by
+        # their category order, ascending or descending; a frame with ordered
+        # categoricals sorts by those columns; GH#7848: multi-column sort with a categorical
+        # column follows its category order.
         cat = Series(Categorical(["a", "b", "b", "a"], ordered=False))
 
         # sort in the categories order
@@ -165,6 +184,10 @@ class TestSeriesSortValues:
     def test_sort_values_ignore_index(
         self, inplace, original_list, sorted_list, ignore_index, output_index
     ):
+        # [FUNCTION DOC]
+        # GH 30114, parametrized over in place and ignore_index: descending sorting gives
+        # a fresh range index with ignore_index, otherwise labels follow values; the
+        # original stays unchanged.
         # GH 30114
         ser = Series(original_list)
         expected = Series(sorted_list, index=output_index)
@@ -180,6 +203,8 @@ class TestSeriesSortValues:
         tm.assert_series_equal(ser, Series(original_list))
 
     def test_mergesort_descending_stability(self):
+        # [FUNCTION DOC]
+        # GH 28697: mergesort descending keeps the original order of equal elements.
         # GH 28697
         s = Series([1, 2, 1, 3], ["first", "b", "second", "c"])
         result = s.sort_values(ascending=False, kind="mergesort")
@@ -187,6 +212,9 @@ class TestSeriesSortValues:
         tm.assert_series_equal(result, expected)
 
     def test_sort_values_validate_ascending_for_value_error(self):
+        # [FUNCTION DOC]
+        # GH41634: a string for ascending raises a value error that the argument must be
+        # bool.
         # GH41634
         ser = Series([23, 7, 21])
 
@@ -195,6 +223,9 @@ class TestSeriesSortValues:
             ser.sort_values(ascending="False")
 
     def test_sort_values_validate_ascending_functional(self, ascending):
+        # [FUNCTION DOC]
+        # GH41634: the ascending fixture (booleans) gives sorted values ascending or
+        # reversed.
         # GH41634
         ser = Series([23, 7, 21])
         expected = np.sort(ser.values)
@@ -208,7 +239,12 @@ class TestSeriesSortValues:
 
 
 class TestSeriesSortingKey:
+    # [CLASS DOC]
+    # Groups the tests of Series.sort_values with the key argument. Stateless.
     def test_sort_values_key(self):
+        # [FUNCTION DOC]
+        # A lowercasing key sorts strings case-insensitively (reversing "Hello" and
+        # "goodbye").
         series = Series(np.array(["Hello", "goodbye"]))
 
         result = series.sort_values(axis=0)
@@ -220,6 +256,9 @@ class TestSeriesSortingKey:
         tm.assert_series_equal(result, expected)
 
     def test_sort_values_key_nan(self):
+        # [FUNCTION DOC]
+        # With NaN, sort places NaN last; with an additive or negating key combined
+        # with descending order the order of the finite values and NaN stays the same.
         series = Series(np.array([0, 5, np.nan, 3, 2, np.nan]))
 
         result = series.sort_values(axis=0)

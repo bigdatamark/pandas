@@ -1,3 +1,9 @@
+# [MODULE DOC]
+# Tests for Series.cov and Series.corr (Pearson, Kendall, Spearman and callable
+# methods) with full/partial/no overlap, minimum periods, ddof, and float
+# extension dtypes. Several tests import scipy lazily and skip without it. Uses
+# the datetime_series and any_float_dtype fixtures. No import-time side effects.
+
 import math
 
 import numpy as np
@@ -13,7 +19,15 @@ import pandas._testing as tm
 
 
 class TestSeriesCov:
+    # [CLASS DOC]
+    # Groups the tests of Series.cov. Stateless.
     def test_cov(self, datetime_series):
+        # [FUNCTION DOC]
+        # Covariance of the datetime_series fixture with itself equals its variance; with
+        # a partially overlapping slice equals the variance of the overlapping part; no
+        # overlap or all-missing data gives NaN; a minimum periods larger than the number
+        # of overlapping pairs gives a missing result, also when the slices are
+        # reindexed to a common index.
         # full overlap
         tm.assert_almost_equal(
             datetime_series.cov(datetime_series), datetime_series.std() ** 2
@@ -43,6 +57,13 @@ class TestSeriesCov:
     @pytest.mark.parametrize("test_ddof", [None, 0, 1, 2, 3])
     @pytest.mark.parametrize("dtype", ["float64", "Float64"])
     def test_cov_ddof(self, test_ddof, dtype):
+        # [FUNCTION DOC]
+        # Regression test (GH#34611), parametrized over ddof (none, 0 to 3) and over float64
+        # and Float64 dtypes: cov with that delta degrees of freedom equals the
+        # off-diagonal entry of NumPy's covariance matrix with the same ddof.
+        # KNOWN ISSUE: both arrays are created from generators seeded with the same
+        # value, so the two Series hold identical data and the test really checks a
+        # variance.
         # GH#34611
         np_array1 = np.random.default_rng(2).random(10)
         np_array2 = np.random.default_rng(2).random(10)
@@ -56,7 +77,14 @@ class TestSeriesCov:
 
 
 class TestSeriesCorr:
+    # [CLASS DOC]
+    # Groups the tests of Series.corr. Stateless.
     def test_corr(self, datetime_series, any_float_dtype):
+        # [FUNCTION DOC]
+        # Parametrized over float dtypes (needs scipy). Correlation of the fixture with
+        # itself and with an overlapping slice is 1; a minimum periods higher than the
+        # overlap, no overlap, or all-missing data gives a missing value; a linear ramp
+        # correlated with itself equals scipy's Pearson result.
         stats = pytest.importorskip("scipy.stats")
 
         datetime_series = datetime_series.astype(any_float_dtype)
@@ -91,6 +119,10 @@ class TestSeriesCorr:
         tm.assert_almost_equal(result, expected)
 
     def test_corr_rank(self):
+        # [FUNCTION DOC]
+        # Needs scipy. Kendall and Spearman correlations of two ramp-like Series equal
+        # scipy's values; for two fixed random-looking Series they equal the reference
+        # values computed with R (0.4319297 and 0.5853767).
         stats = pytest.importorskip("scipy.stats")
 
         # kendall and spearman
@@ -147,6 +179,9 @@ class TestSeriesCorr:
         tm.assert_almost_equal(A.corr(B, method="spearman"), sexp)
 
     def test_corr_invalid_method(self):
+        # [FUNCTION DOC]
+        # GH PR #22298: an unknown method name raises a value error listing the allowed
+        # methods (pearson, spearman, kendall or a callable).
         # GH PR #22298
         s1 = Series(np.random.default_rng(2).standard_normal(10))
         s2 = Series(np.random.default_rng(2).standard_normal(10))
@@ -155,6 +190,11 @@ class TestSeriesCorr:
             s1.corr(s2, method="____")
 
     def test_corr_callable_method(self, datetime_series):
+        # [FUNCTION DOC]
+        # Uses a callable correlation that returns 1.0 when the two inputs are exactly
+        # equal and 0.0 otherwise (defined as a lambda). Checks reversed integer Series
+        # (0), the fixture with itself and a shifted overlap (1.0), no overlap (NaN), and
+        # frame-level correlation of transposed rows giving the identity-like matrix.
         # simple correlation example
         # returns 1 if exact equality, 0 otherwise
         my_corr = lambda a, b: 1.0 if (a == b).all() else 0.0

@@ -1,3 +1,11 @@
+# [MODULE DOC]
+# Tests for Series.info (text summary written to a buffer): categorical data,
+# MultiIndex, memory usage reporting (shallow, deep, with the "+" qualifier for
+# estimated object memory), dtype listings, show_counts and argument errors.
+# Uses the lexsorted_two_level_string_multiindex and using_infer_string fixtures
+# and the PyPy and PyArrow compatibility flags. No import-time side effects
+# besides evaluating the parametrization (which reads the string dtype config).
+
 from io import StringIO
 from string import ascii_uppercase
 import textwrap
@@ -22,6 +30,9 @@ from pandas import (
 
 
 def test_info_categorical_column_just_works():
+    # [FUNCTION DOC]
+    # Smoke test: info works for a large categorical Series and for a filtered
+    # subset of it; no output is checked.
     n = 2500
     data = np.array(list("abcdefghij")).take(
         np.random.default_rng(2).integers(0, 10, size=n, dtype=int)
@@ -37,6 +48,8 @@ def test_info_categorical_column_just_works():
 
 
 def test_info_categorical():
+    # [FUNCTION DOC]
+    # Smoke test (GH14298): info works for a Series with a categorical index.
     # GH14298
     idx = CategoricalIndex(["a", "b"])
     s = Series(np.zeros(2), index=idx)
@@ -48,6 +61,12 @@ def test_info_categorical():
 def test_info_series(
     lexsorted_two_level_string_multiindex, verbose, using_infer_string
 ):
+    # [FUNCTION DOC]
+    # Parametrized over verbose. Writes info for a named Series on a two-level string
+    # MultiIndex to a buffer and compares the exact text: class line, MultiIndex range
+    # line, optional (verbose only) name/count/dtype table, the dtypes line and the
+    # memory usage line. The memory line has a "+" suffix unless the inferred
+    # string option with pyarrow is active.
     index = lexsorted_two_level_string_multiindex
     ser = Series(range(len(index)), index=index, name="sth")
     buf = StringIO()
@@ -80,6 +99,9 @@ def test_info_series(
 
 
 def test_info_memory():
+    # [FUNCTION DOC]
+    # For a small integer Series, info output exactly matches the expected text with
+    # a range index, a table with the non-null count and the memory size as a float.
     s = Series([1, 2], dtype="i8")
     buf = StringIO()
     s.info(buf=buf)
@@ -101,6 +123,12 @@ def test_info_memory():
 
 
 def test_info_wide():
+    # [FUNCTION DOC]
+    # Passing max_cols to Series.info raises a value error saying that argument only
+    # works for DataFrame.info.
+    # KNOWN ISSUE: the test name and the 101-element data suggest it checks wide
+    # output, but it only checks the max_cols error; the data length is
+    # irrelevant.
     s = Series(np.random.default_rng(2).standard_normal(101))
     msg = "Argument `max_cols` can only be passed in DataFrame.info, not Series.info"
     with pytest.raises(ValueError, match=msg):
@@ -108,6 +136,10 @@ def test_info_wide():
 
 
 def test_info_shows_dtypes():
+    # [FUNCTION DOC]
+    # For int64, float64, datetime64, timedelta64, complex128, object and bool data
+    # (random 0/1 cast to each type), the info text contains the line "10 non-null"
+    # with the dtype name.
     dtypes = [
         "int64",
         "float64",
@@ -129,6 +161,9 @@ def test_info_shows_dtypes():
 
 @pytest.mark.xfail(PYPY, reason="on PyPy deep=True doesn't change result")
 def test_info_memory_usage_deep_not_pypy():
+    # [FUNCTION DOC]
+    # Expected to fail on PyPy. With a string-labelled index or object values, deep
+    # memory usage is larger than shallow usage.
     s_with_object_index = Series({"a": [1]}, index=["foo"])
     assert s_with_object_index.memory_usage(
         index=True, deep=True
@@ -140,6 +175,9 @@ def test_info_memory_usage_deep_not_pypy():
 
 @pytest.mark.xfail(not PYPY, reason="on PyPy deep=True does not change result")
 def test_info_memory_usage_deep_pypy():
+    # [FUNCTION DOC]
+    # Expected to fail when not on PyPy. On PyPy deep memory usage equals shallow
+    # usage, for the same Series as in the CPython test.
     s_with_object_index = Series({"a": [1]}, index=["foo"])
     assert s_with_object_index.memory_usage(
         index=True, deep=True
@@ -163,6 +201,11 @@ def test_info_memory_usage_deep_pypy():
     ],
 )
 def test_info_memory_usage_qualified(index, plus):
+    # [FUNCTION DOC]
+    # Parametrized over (index, whether a "+" is expected): integer, string, object
+    # and MultiIndex indexes. The info text contains a "+" in memory usage exactly
+    # when the memory is an estimate (object-like index data), except that with the
+    # string dtype option on and pyarrow installed the string cases are exact.
     buf = StringIO()
     series = Series(1, index=index)
     series.info(buf=buf)
@@ -173,6 +216,10 @@ def test_info_memory_usage_qualified(index, plus):
 
 
 def test_info_memory_usage_bug_on_multiindex():
+    # [FUNCTION DOC]
+    # Regression test (GH 14308): memory usage of a MultiIndex Series does not
+    # materialize the values. The unstacked frame has equal data bytes; the Series'
+    # deep memory is larger than the frame's total, but by less than 2000 bytes.
     # GH 14308
     # memory usage introspection should not materialize .values
     N = 100
@@ -193,6 +240,9 @@ def test_info_memory_usage_bug_on_multiindex():
 
 
 def test_info_show_counts_false():
+    # [FUNCTION DOC]
+    # With show_counts disabled, info prints a table with only the dtype column; the
+    # output matches the expected text ignoring surrounding whitespace.
     s = Series([1])
     buf = StringIO()
     s.info(buf=buf, show_counts=False)
