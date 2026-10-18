@@ -34,6 +34,15 @@ Your class ``TestDtype`` will inherit all the tests defined on
 wherever the test requires it. You're free to implement additional tests.
 
 """
+# [PACKAGE DOC]
+# Entry point of the base extension-array test suite (see package documentation).
+# Imports and re-exports every test mixin class from the sibling modules (accumulate, casting,
+# constructors, dim2, dtype, getitem, groupby, index, interface, io, methods, missing, ops,
+# printing, reduce, reshaping, setitem) and defines ExtensionTests, a convenience class
+# combining all of them except the two-dimensional ndarray-backed test classes (the
+# dim-2 compatibility mixin is included, the NDArrayBacked2D tests are not).
+# Some imports carry a lint suppression because they are exported but not used here.
+# No import-time side effects other than module imports.
 
 from pandas.tests.extension.base.accumulate import BaseAccumulateTests
 from pandas.tests.extension.base.casting import BaseCastingTests
@@ -86,4 +95,10 @@ class ExtensionTests(
     BaseSetitemTests,
     Dim2CompatTests,
 ):
+    # [CLASS DOC]
+    # Convenience test class inheriting all base test mixins (accumulate, casting, constructors,
+    # dtype, getitem, groupby, index, interface, parsing, methods, missing, arithmetic ops,
+    # comparison ops, unary ops, printing, reduce, reshaping, setitem and dim2 compatibility).
+    # Subclassing it in a third-party test module runs the whole suite given the required fixtures.
+    # Has no state or methods of its own. Excludes the NDArray-backed 2D tests.
     pass

@@ -1,3 +1,8 @@
+# [MODULE DOC]
+# Base tests for reductions (sum, min, any, ...) on series and frames backed by extension
+# arrays. Public contents: BaseReduceTests mixin with overridable hooks: the support check,
+# the series comparison helper, and the expected-dtype hook for frame reductions. Uses data and
+# the all_boolean_reductions and all_numeric_reductions fixtures.
 from typing import final
 
 import pytest
@@ -7,16 +12,28 @@ import pandas._testing as tm
 
 
 class BaseReduceTests:
+    # [CLASS DOC]
+    # Mixin for reduction tests; meaningful mostly for numeric and boolean data. Subclasses
+    # override the support hook (and optionally the dtype hook) to opt in.
     """
     Reduction specific tests. Generally these only
     make sense for numeric/boolean operations.
     """
 
     def _supports_reduction(self, ser: pd.Series, op_name: str) -> bool:
+        # [FUNCTION DOC]
+        # HELPER: hook saying whether the named reduction is expected to succeed for the series.
+        # Inputs: ser, op_name. Returns a boolean; default always false.
         # Specify if we expect this reduction to succeed.
         return False
 
     def check_reduce(self, ser: pd.Series, op_name: str, skipna: bool):
+        # [FUNCTION DOC]
+        # HELPER: compares a series reduction with the same reduction on a float64 copy.
+        # Inputs: ser, op_name, skipna. The reference is the series cast to float64, falling back to
+        # object dtype when the cast raises a type or value error. For the count reduction the skipna
+        # argument is not passed. Asserts the two results are approximately equal. Subclasses may
+        # override when a cast other than float64 is needed.
         # We perform the same operation on the np.float64 data and check
         #  that the results match. Override if you need to cast to something
         #  other than float64.
@@ -40,6 +57,10 @@ class BaseReduceTests:
         tm.assert_almost_equal(result, expected)
 
     def _get_expected_reduction_dtype(self, arr, op_name: str, skipna: bool):
+        # [FUNCTION DOC]
+        # HELPER: hook giving the dtype expected when a reduction runs on a frame column with this
+        # array. Inputs: arr, op_name, skipna. Default retains the array's dtype (float-like
+        # behavior).
         # Find the expected dtype when the given reduction is done on a DataFrame
         # column with this array.  The default assumes float64-like behavior,
         # i.e. retains the dtype.
@@ -51,6 +72,15 @@ class BaseReduceTests:
     #  does not hold, please let us know at github.com/pandas-dev/pandas/issues.
     @final
     def check_reduce_frame(self, ser: pd.Series, op_name: str, skipna: bool):
+        # [FUNCTION DOC]
+        # HELPER (final, not meant to be overridden; customize via the dtype hook): checks that a frame
+        # reduction looks like a wrapped version of the series reduction.
+        # Inputs: ser, op_name, skipna. Builds a one-column frame from the series' array; for variance,
+        # standard deviation and standard error uses a delta degrees of freedom of one. First
+        # asserts the private array reduce with keepdims equals the frame reduction's backing array
+        # (described in the code as perfunctory). Then asserts that result equals a one-element array
+        # of the expected dtype holding either missing (when skipna is false and the series has missing
+        # values) or the series reduction over the non-missing values.
         # Check that the 2D reduction done in a DataFrame reduction "looks like"
         # a wrapped version of the 1D reduction done by Series.
         arr = ser.array
@@ -78,6 +108,13 @@ class BaseReduceTests:
 
     @pytest.mark.parametrize("skipna", [True, False])
     def test_reduce_series_boolean(self, data, all_boolean_reductions, skipna):
+        # [FUNCTION DOC]
+        # Parametrized over skipna and the boolean reductions. If the reduction is not supported it must
+        # raise a type error matching a message pattern; otherwise results are checked via the series
+        # comparison helper.
+        # KNOWN ISSUE: the message pattern ends with an alternation separator, producing an empty
+        # alternative that matches any message, so the message is not actually verified (a TODO in the
+        # code says the same).
         op_name = all_boolean_reductions
         ser = pd.Series(data)
 
@@ -97,6 +134,13 @@ class BaseReduceTests:
     @pytest.mark.filterwarnings("ignore::RuntimeWarning")
     @pytest.mark.parametrize("skipna", [True, False])
     def test_reduce_series_numeric(self, data, all_numeric_reductions, skipna):
+        # [FUNCTION DOC]
+        # Parametrized over skipna and the numeric reductions; runtime warnings are ignored since
+        # min/max on empty input produce numpy warnings. Same structure as the boolean version: expects
+        # a type error if unsupported, otherwise compares with the float64 reference.
+        # KNOWN ISSUE: the message pattern ends with an alternation separator, producing an empty
+        # alternative that matches any message, so the message is not actually verified (a TODO in the
+        # code says the same).
         op_name = all_numeric_reductions
         ser = pd.Series(data)
 
@@ -116,6 +160,9 @@ class BaseReduceTests:
 
     @pytest.mark.parametrize("skipna", [True, False])
     def test_reduce_frame(self, data, all_numeric_reductions, skipna):
+        # [FUNCTION DOC]
+        # Parametrized over skipna and numeric reductions. Skips the count reduction (not an array
+        # method) and any reduction the support hook rejects; otherwise runs the frame check helper.
         op_name = all_numeric_reductions
         ser = pd.Series(data)
 

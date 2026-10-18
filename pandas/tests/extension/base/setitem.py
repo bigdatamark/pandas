@@ -1,3 +1,9 @@
+# [MODULE DOC]
+# Base tests for item assignment on extension arrays and on series and frames holding them:
+# scalars, sequences, masks, integer arrays, slices, expansion of frames, deletion, read-only
+# behavior. Public contents: BaseSetitemTests mixin, with two helper fixtures. Uses data,
+# na_value, invalid_scalar, box_in_series, as_array and dtype fixtures from the conftest.
+# Many tests mutate the data fixture in place.
 import numpy as np
 import pytest
 
@@ -8,6 +14,9 @@ import pandas._testing as tm
 
 
 class BaseSetitemTests:
+    # [CLASS DOC]
+    # Mixin with set-item tests. Contains the full_indexer fixture and an autouse fixture that
+    # skips tests for immutable dtypes.
     @pytest.fixture(
         params=[
             lambda x: x.index,
@@ -29,6 +38,12 @@ class BaseSetitemTests:
         ],
     )
     def full_indexer(self, request):
+        # [FUNCTION DOC]
+        # HELPER: parametrized fixture returning a function that maps an object to an indexer covering
+        # its full length. Variants: the index itself, a list of the index, a null slice, a full-range
+        # slice, a range, a list of positions and an all-true boolean mask (ids index, list[index],
+        # null_slice, full_slice, range, list(range), mask). Some variants assume a default range
+        # index.
         """
         Fixture for an indexer to pass to obj.loc to get/set the full length of the
         object.
@@ -39,6 +54,11 @@ class BaseSetitemTests:
 
     @pytest.fixture(autouse=True)
     def skip_if_immutable(self, dtype, request):
+        # [FUNCTION DOC]
+        # HELPER: autouse fixture that skips tests when the dtype is immutable. Inputs: dtype and the
+        # request fixture. It never skips the immutability test itself. When this class is mixed into the
+        # combined extension test class, only tests whose function's qualified name starts with this
+        # class's name are skipped; tests defined elsewhere are left alone.
         if dtype._is_immutable:
             node = request.node
             if node.name.split("[")[0] == "test_is_immutable":
@@ -54,6 +74,9 @@ class BaseSetitemTests:
                 pytest.skip("__setitem__ test not applicable with immutable dtype")
 
     def test_is_immutable(self, data):
+        # [FUNCTION DOC]
+        # If the dtype is immutable, assigning an element must raise a type error; otherwise assigning
+        # element one to position zero works and position zero equals element one afterward.
         if data.dtype._is_immutable:
             with pytest.raises(TypeError):
                 data[0] = data[0]
@@ -62,12 +85,18 @@ class BaseSetitemTests:
             assert data[0] == data[1]
 
     def test_setitem_scalar_series(self, data, box_in_series):
+        # [FUNCTION DOC]
+        # Uses box_in_series. Sets position zero to element one, on the array or on a series of it,
+        # and checks the value was set.
         if box_in_series:
             data = pd.Series(data)
         data[0] = data[1]
         assert data[0] == data[1]
 
     def test_setitem_sequence(self, data, box_in_series):
+        # [FUNCTION DOC]
+        # Uses box_in_series. Assigning a two-element list of swapped elements into positions zero
+        # and one swaps them (checked against a copy made beforehand).
         if box_in_series:
             data = pd.Series(data)
         original = data.copy()
@@ -77,6 +106,11 @@ class BaseSetitemTests:
         assert data[1] == original[0]
 
     def test_setitem_sequence_mismatched_length_raises(self, data, as_array):
+        # [FUNCTION DOC]
+        # Uses as_array (value given as plain list or as an extension array). Assigning a one-element
+        # value to a two-position list indexer must raise a value error saying it cannot set using a
+        # list-like indexer with a different length; the same with a three-position slice says slice
+        # indexer. The series must be unchanged after each failure.
         ser = pd.Series(data)
         original = ser.copy()
         value = [data[0]]
@@ -94,6 +128,9 @@ class BaseSetitemTests:
         tm.assert_series_equal(ser, original)
 
     def test_setitem_empty_indexer(self, data, box_in_series):
+        # [FUNCTION DOC]
+        # Uses box_in_series. Assigning an empty list through an empty integer indexer leaves the data
+        # unchanged.
         if box_in_series:
             data = pd.Series(data)
         original = data.copy()
@@ -101,6 +138,9 @@ class BaseSetitemTests:
         tm.assert_equal(data, original)
 
     def test_setitem_sequence_broadcasts(self, data, box_in_series):
+        # [FUNCTION DOC]
+        # Uses box_in_series. Assigning a scalar element through a two-position list indexer sets
+        # both positions to it.
         if box_in_series:
             data = pd.Series(data)
         data[[0, 1]] = data[2]
@@ -109,37 +149,56 @@ class BaseSetitemTests:
 
     @pytest.mark.parametrize("setter", ["loc", "iloc"])
     def test_setitem_scalar(self, data, setter):
+        # [FUNCTION DOC]
+        # Parametrized over label-based and position-based setters. Sets position zero of a series to
+        # element one through the accessor and checks it.
         arr = pd.Series(data)
         setter = getattr(arr, setter)
         setter[0] = data[1]
         assert arr[0] == data[1]
 
     def test_setitem_loc_scalar_mixed(self, data):
+        # [FUNCTION DOC]
+        # Frame with an integer column and an extension column: label-based scalar assignment to
+        # the extension cell works.
         df = pd.DataFrame({"A": np.arange(len(data)), "B": data})
         df.loc[0, "B"] = data[1]
         assert df.loc[0, "B"] == data[1]
 
     def test_setitem_loc_scalar_single(self, data):
+        # [FUNCTION DOC]
+        # Single-extension-column frame: label-based assignment to a new row label (ten) expands the
+        # frame and the cell has the assigned value.
         df = pd.DataFrame({"B": data})
         df.loc[10, "B"] = data[1]
         assert df.loc[10, "B"] == data[1]
 
     def test_setitem_loc_scalar_multiple_homogoneous(self, data):
+        # [FUNCTION DOC]
+        # Two extension columns: label-based assignment of a new row label (ten) in one column works.
         df = pd.DataFrame({"A": data, "B": data})
         df.loc[10, "B"] = data[1]
         assert df.loc[10, "B"] == data[1]
 
     def test_setitem_iloc_scalar_mixed(self, data):
+        # [FUNCTION DOC]
+        # Frame with an integer column and an extension column: position-based scalar assignment to
+        # the extension cell works.
         df = pd.DataFrame({"A": np.arange(len(data)), "B": data})
         df.iloc[0, 1] = data[1]
         assert df.loc[0, "B"] == data[1]
 
     def test_setitem_iloc_scalar_single(self, data):
+        # [FUNCTION DOC]
+        # Single-extension-column frame: position-based assignment to row nine works (requires at
+        # least ten elements).
         df = pd.DataFrame({"B": data})
         df.iloc[9, 0] = data[1]
         assert df.loc[9, "B"] == data[1]
 
     def test_setitem_iloc_scalar_multiple_homogoneous(self, data):
+        # [FUNCTION DOC]
+        # Two extension columns: position-based assignment to row nine of the second column works.
         df = pd.DataFrame({"A": data, "B": data})
         df.iloc[9, 1] = data[1]
         assert df.loc[9, "B"] == data[1]
@@ -154,6 +213,10 @@ class BaseSetitemTests:
         ids=["numpy-array", "boolean-array", "boolean-array-na"],
     )
     def test_setitem_mask(self, data, mask, box_in_series):
+        # [FUNCTION DOC]
+        # Parametrized over a numpy boolean mask, a nullable boolean mask, and one with missing values
+        # (treated as false), and over box_in_series. Assigning element zero where the mask is true on a
+        # five-element copy gives the first three positions equal to element zero.
         arr = data[:5].copy()
         expected = arr.take([0, 0, 0, 3, 4])
         if box_in_series:
@@ -163,6 +226,9 @@ class BaseSetitemTests:
         tm.assert_equal(expected, arr)
 
     def test_setitem_mask_raises(self, data, box_in_series):
+        # [FUNCTION DOC]
+        # Uses box_in_series. A mask of the wrong length (two) as numpy and as nullable boolean array
+        # must raise an index error mentioning wrong length when used for assignment.
         # wrong length
         mask = np.array([True, False])
 
@@ -177,6 +243,9 @@ class BaseSetitemTests:
             data[mask] = data[0]
 
     def test_setitem_mask_boolean_array_with_na(self, data, box_in_series):
+        # [FUNCTION DOC]
+        # Uses box_in_series. Nullable boolean mask with true in the first three and missing in the
+        # next two; assigning element zero sets the first three positions to it.
         mask = pd.array(np.zeros(data.shape, dtype="bool"), dtype="boolean")
         mask[:3] = True
         mask[3:5] = pd.NA
@@ -194,6 +263,10 @@ class BaseSetitemTests:
         ids=["list", "integer-array", "numpy-array"],
     )
     def test_setitem_integer_array(self, data, idx, box_in_series):
+        # [FUNCTION DOC]
+        # Parametrized over a list, a nullable integer array and numpy array of positions 0-2 and
+        # box_in_series. Assigning element zero through the integer indexer into a five-element copy
+        # equals the take of positions 0,0,0,3,4.
         arr = data[:5].copy()
         expected = data.take([0, 0, 0, 3, 4])
 
@@ -210,6 +283,10 @@ class BaseSetitemTests:
         ids=["list", "integer-array", "numpy-array"],
     )
     def test_setitem_integer_array_with_repeats(self, data, idx, box_in_series):
+        # [FUNCTION DOC]
+        # Parametrized over indexer kinds with repeated positions (0,0,1) and box_in_series. Assigning
+        # three values to positions 0,0,1 yields the last-write-wins arrangement 2,3,2,3,4 (after the
+        # take).
         arr = data[:5].copy()
         expected = data.take([2, 3, 2, 3, 4])
 
@@ -230,6 +307,11 @@ class BaseSetitemTests:
     )
     @pytest.mark.parametrize("box_in_series", [True, False])
     def test_setitem_integer_with_missing_raises(self, data, idx, box_in_series):
+        # [FUNCTION DOC]
+        # Parametrized over a list and nullable integer array with a missing entry, and over
+        # box_in_series (the parameter overrides the fixture). For a bare array, assignment must raise a
+        # value error saying integer indexers cannot contain NA values. For a series with string index,
+        # assignment raises a key error whose message is the string zero (labels are not found).
         arr = data.copy()
 
         msg = "Cannot index with an integer indexer containing NA values"
@@ -248,6 +330,13 @@ class BaseSetitemTests:
     @pytest.mark.parametrize("as_callable", [True, False])
     @pytest.mark.parametrize("setter", ["loc", None])
     def test_setitem_mask_aligned(self, data, as_callable, setter):
+        # [FUNCTION DOC]
+        # Parametrized over mask given as a callable or not, and setter label-based or plain.
+        # Assigns two values (elements 5 and 6) to the two masked positions and asserts they were set.
+        # KNOWN ISSUE: after assigning through the chosen target, the test assigns again directly on
+        # the series with plain indexing and checks that result, so the label-based variant of the
+        # setter is not what is asserted on (both parametrizations end up exercising the plain
+        # assignment).
         ser = pd.Series(data)
         mask = np.zeros(len(data), dtype=bool)
         mask[:2] = True
@@ -272,6 +361,9 @@ class BaseSetitemTests:
 
     @pytest.mark.parametrize("setter", ["loc", None])
     def test_setitem_mask_broadcast(self, data, setter):
+        # [FUNCTION DOC]
+        # Parametrized over label-based or plain setter. Assigning a scalar element through a boolean
+        # mask for the first two positions sets both of them.
         ser = pd.Series(data)
         mask = np.zeros(len(data), dtype=bool)
         mask[:2] = True
@@ -286,6 +378,10 @@ class BaseSetitemTests:
         assert ser[1] == data[9]
 
     def test_setitem_expand_columns(self, data):
+        # [FUNCTION DOC]
+        # Adding a scalar column by plain assignment and via label-based full-column assignment gives
+        # the expected frame; then overwriting the new column with the extension data gives a frame with
+        # two extension columns.
         df = pd.DataFrame({"A": data})
         result = df.copy()
         result["B"] = 1
@@ -302,6 +398,9 @@ class BaseSetitemTests:
         tm.assert_frame_equal(result, expected)
 
     def test_setitem_expand_with_extension(self, data):
+        # [FUNCTION DOC]
+        # Adding an extension column to a frame with an integer column, by plain assignment and via
+        # label-based full-column assignment, gives the expected frame.
         df = pd.DataFrame({"A": [1] * len(data)})
         result = df.copy()
         result["B"] = data
@@ -313,6 +412,10 @@ class BaseSetitemTests:
         tm.assert_frame_equal(result, expected)
 
     def test_loc_setitem_with_expansion_preserves_ea_index_dtype(self, data):
+        # [FUNCTION DOC]
+        # Regression for an upstream issue. Skips for non-hashable elements. Uses the unique values as
+        # the index of a frame and series with one entry missing; label-based assignment of the missing
+        # label adds the row/entry and the resulting index keeps the extension dtype.
         # GH#41626 retain index.dtype in setitem-with-expansion
         if not is_hashable(data[0]):
             pytest.skip("Test does not apply to non-hashable data.")
@@ -329,6 +432,9 @@ class BaseSetitemTests:
         tm.assert_series_equal(ser, expected["A"])
 
     def test_setitem_frame_invalid_length(self, data):
+        # [FUNCTION DOC]
+        # Assigning a five-element array as a new column of a longer frame must raise a value error
+        # that states the lengths of values and index.
         df = pd.DataFrame({"A": [1] * len(data)})
         xpr = (
             rf"Length of values \({len(data[:5])}\) "
@@ -338,12 +444,17 @@ class BaseSetitemTests:
             df["B"] = data[:5]
 
     def test_setitem_tuple_index(self, data):
+        # [FUNCTION DOC]
+        # A series with tuple labels: assigning through a tuple key sets that element.
         ser = pd.Series(data[:2], index=[(0, 0), (0, 1)])
         expected = pd.Series(data.take([1, 1]), index=ser.index)
         ser[(0, 0)] = data[1]
         tm.assert_series_equal(ser, expected)
 
     def test_setitem_slice(self, data, box_in_series):
+        # [FUNCTION DOC]
+        # Uses box_in_series. Assigning element zero to the first three entries of a five-element copy
+        # equals the take of positions 0,0,0,3,4.
         arr = data[:5].copy()
         expected = data.take([0, 0, 0, 3, 4])
         if box_in_series:
@@ -354,6 +465,9 @@ class BaseSetitemTests:
         tm.assert_equal(arr, expected)
 
     def test_setitem_loc_iloc_slice(self, data):
+        # [FUNCTION DOC]
+        # Series with string index: position-slice assignment and label-slice assignment (inclusive end)
+        # of element zero over the first three entries both produce the expected series.
         arr = data[:5].copy()
         s = pd.Series(arr, index=["a", "b", "c", "d", "e"])
         expected = pd.Series(data.take([0, 0, 0, 3, 4]), index=s.index)
@@ -367,21 +481,33 @@ class BaseSetitemTests:
         tm.assert_equal(result, expected)
 
     def test_setitem_slice_mismatch_length_raises(self, data):
+        # [FUNCTION DOC]
+        # Assigning a two-element array to a one-element slice must raise a value error originating
+        # outside pandas.
         arr = data[:5]
         with tm.external_error_raised(ValueError):
             arr[:1] = arr[:2]
 
     def test_setitem_slice_array(self, data):
+        # [FUNCTION DOC]
+        # Assigning the last five elements into the first five via a slice produces an array equal
+        # to those elements.
         arr = data[:5].copy()
         arr[:5] = data[-5:]
         tm.assert_extension_array_equal(arr, data[-5:])
 
     def test_setitem_scalar_key_sequence_raise(self, data):
+        # [FUNCTION DOC]
+        # Assigning a two-element array to a single position must raise a value error originating
+        # outside pandas.
         arr = data[:5].copy()
         with tm.external_error_raised(ValueError):
             arr[0] = arr[[0, 1]]
 
     def test_setitem_preserves_views(self, data):
+        # [FUNCTION DOC]
+        # Regression for an upstream issue: assignment must not swap the underlying data. A view and a
+        # full slice taken before assignment both see the new value afterwards.
         # GH#28150 setitem shouldn't swap the underlying data
         view1 = data.view()
         view2 = data[:]
@@ -391,6 +517,10 @@ class BaseSetitemTests:
         assert view2[0] == data[1]
 
     def test_setitem_with_expansion_dataframe_column(self, data, full_indexer):
+        # [FUNCTION DOC]
+        # Regression for an upstream issue. Using the full_indexer fixture: starting from an empty frame
+        # with the data's index, assigning the full extension column through label-based indexing with
+        # the full-length indexer produces a frame equal to the original.
         # https://github.com/pandas-dev/pandas/issues/32395
         df = expected = pd.DataFrame(pd.Series(data))
         result = pd.DataFrame(index=df.index)
@@ -401,6 +531,10 @@ class BaseSetitemTests:
         tm.assert_frame_equal(result, expected)
 
     def test_setitem_with_expansion_row(self, data, na_value):
+        # [FUNCTION DOC]
+        # Assigning to a new row label in a one-row frame extends the extension column; assigning
+        # the missing value to another new row extends it again with the missing value (regression for
+        # an upstream issue). Dtype is preserved.
         df = pd.DataFrame({"data": data[:1]})
 
         df.loc[1, "data"] = data[1]
@@ -415,6 +549,10 @@ class BaseSetitemTests:
         tm.assert_frame_equal(df, expected)
 
     def test_setitem_series(self, data, full_indexer):
+        # [FUNCTION DOC]
+        # Using the full_indexer fixture: assigning a series of extension data through a full-length
+        # label-based indexer into an object-dtype series keeps the object dtype (setting happens in
+        # place) and the values equal the data cast to object.
         # https://github.com/pandas-dev/pandas/issues/32395
         ser = pd.Series(data, name="data")
         result = pd.Series(index=ser.index, dtype=object, name="data")
@@ -430,6 +568,10 @@ class BaseSetitemTests:
         tm.assert_series_equal(result, expected)
 
     def test_setitem_frame_2d_values(self, data):
+        # [FUNCTION DOC]
+        # Regression for an upstream issue. Assigning a frame, a partial frame, the 2D values array and a
+        # partial values array back into a single-column frame via position-based indexing leaves the frame
+        # unchanged.
         # GH#44514
         df = pd.DataFrame({"A": data})
         orig = df.copy()
@@ -447,6 +589,9 @@ class BaseSetitemTests:
         tm.assert_frame_equal(df, orig)
 
     def test_delitem_series(self, data):
+        # [FUNCTION DOC]
+        # Regression for an upstream issue. Deleting the entry with label one removes the second
+        # element and equals selecting the other positions.
         # GH#40763
         ser = pd.Series(data, name="data")
 
@@ -458,6 +603,9 @@ class BaseSetitemTests:
         tm.assert_series_equal(ser, expected)
 
     def test_setitem_invalid(self, data, invalid_scalar):
+        # [FUNCTION DOC]
+        # Using the invalid_scalar fixture: assigning it to one position or to everything must raise a
+        # value error or a type error (messages vary by subclass and are not checked).
         # messages vary by subclass, so we do not test it
         with pytest.raises((ValueError, TypeError), match=None):
             data[0] = invalid_scalar
@@ -466,6 +614,9 @@ class BaseSetitemTests:
             data[:] = invalid_scalar
 
     def test_setitem_2d_values(self, data):
+        # [FUNCTION DOC]
+        # Regression for an upstream issue. Assigning the transposed-rows values array of a two-column
+        # frame to rows zero and one in swapped order swaps those rows.
         # GH50085
         original = data.copy()
         df = pd.DataFrame({"a": data, "b": data})
@@ -474,6 +625,10 @@ class BaseSetitemTests:
         assert (df.loc[1, :] == original[0]).all()
 
     def test_readonly_property(self, data):
+        # [FUNCTION DOC]
+        # The private read-only flag starts false; after setting it true on the fixture, a copy is
+        # writable (false), and assigning to a position, a slice, or a boolean mask raises a value error
+        # saying the array is read-only, leaving the data unchanged. Mutates the fixture.
         assert data._readonly is False
 
         data._readonly = True
@@ -494,6 +649,10 @@ class BaseSetitemTests:
         tm.assert_extension_array_equal(data, data_orig)
 
     def test_readonly_propagates_to_numpy_array(self, data):
+        # [FUNCTION DOC]
+        # With the array flagged read-only: a numpy conversion that copies is writable. Two conversions
+        # without copy requested: if they share memory (zero-copy) the result is not writable; if not,
+        # it is writable.
         data._readonly = True
 
         # when we ask for a copy, the result should never be readonly
@@ -510,6 +669,12 @@ class BaseSetitemTests:
             assert arr1.flags.writeable
 
     def test_readonly_propagates_to_numpy_array_method(self, data):
+        # [FUNCTION DOC]
+        # With the array flagged read-only: the to-numpy method with copy requested yields a writable
+        # array; with copy disabled the result is not writable when two calls share memory, else writable.
+        # Then, if the data has missing values, converting with copy disabled and a non-missing fill
+        # value always copies and yields a writable array, except for float pyarrow-backed dtypes where
+        # the post-fill conversion is zero-copy and therefore not writable.
         data._readonly = True
 
         # when we ask for a copy, the result should never be readonly

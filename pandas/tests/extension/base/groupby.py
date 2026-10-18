@@ -1,3 +1,7 @@
+# [MODULE DOC]
+# Base tests for groupby behavior with extension arrays as grouping keys and values.
+# Public contents: BaseGroupbyTests mixin. Relies on the data_for_grouping fixture (eight
+# values with a defined grouping layout, documented in the conftest) and groupby_apply_op.
 import re
 
 import pytest
@@ -17,9 +21,16 @@ import pandas._testing as tm
     "ignore:The default of observed=False is deprecated:FutureWarning"
 )
 class BaseGroupbyTests:
+    # [CLASS DOC]
+    # Mixin with groupby tests. The class is decorated to ignore the future warning about the
+    # observed default for categorical groupers.
     """Groupby-specific tests."""
 
     def test_grouping_grouper(self, data_for_grouping):
+        # [FUNCTION DOC]
+        # Groups a frame by an object column and by the extension column and asserts the first
+        # grouping's key vector is the numpy values for the object column and the original extension
+        # array for the extension column.
         df = pd.DataFrame(
             {
                 "A": pd.Series(
@@ -36,6 +47,12 @@ class BaseGroupbyTests:
 
     @pytest.mark.parametrize("as_index", [True, False])
     def test_groupby_extension_agg(self, as_index, data_for_grouping):
+        # [FUNCTION DOC]
+        # Parametrized over as_index. Averages a numeric column grouped by the extension column.
+        # Expected groups are the sorted unique values with means 3, 1, 4. For boolean dtypes (only two
+        # unique values) the last row is dropped and the last expected value too. as_index true gives
+        # a named series indexed by the unique values; false gives a frame with the key column and the
+        # mean column.
         df = pd.DataFrame({"A": [1, 1, 2, 2, 3, 3, 1, 4], "B": data_for_grouping})
 
         is_bool = data_for_grouping.dtype._is_boolean
@@ -59,6 +76,11 @@ class BaseGroupbyTests:
             tm.assert_frame_equal(result, expected)
 
     def test_groupby_agg_extension(self, data_for_grouping):
+        # [FUNCTION DOC]
+        # Regression for an upstream issue (aggregation fails on non-numeric extension types).
+        # Grouping by an integer column and aggregating the extension column with first, by dict, by
+        # name and by method, must equal the rows at the first occurrence of each group, indexed by the
+        # key column.
         # GH#38980 groupby agg on extension type fails for non-numeric types
         df = pd.DataFrame({"A": [1, 1, 2, 2, 3, 3, 1, 4], "B": data_for_grouping})
 
@@ -75,6 +97,10 @@ class BaseGroupbyTests:
         tm.assert_frame_equal(result, expected)
 
     def test_groupby_extension_no_sort(self, data_for_grouping):
+        # [FUNCTION DOC]
+        # Like the aggregation test but with sort disabled: means come in order of first appearance
+        # (1, 3, 4; boolean drops the last row and value), with the index from unsorted factorization of
+        # the extension array.
         df = pd.DataFrame({"A": [1, 1, 2, 2, 3, 3, 1, 4], "B": data_for_grouping})
 
         is_bool = data_for_grouping.dtype._is_boolean
@@ -94,6 +120,11 @@ class BaseGroupbyTests:
         tm.assert_series_equal(result, expected)
 
     def test_groupby_extension_transform(self, data_for_grouping):
+        # [FUNCTION DOC]
+        # Drops missing entries of the data, groups by an integer column, and transforms the value
+        # column with a length function. Expected group sizes are 3, 3, 2, 2, 3, 1 (boolean drops the
+        # last element).
+        # KNOWN ISSUE: the boolean-dtype flag is assigned twice (the first assignment is redundant).
         is_bool = data_for_grouping.dtype._is_boolean
 
         valid = data_for_grouping[~data_for_grouping.isna()]
@@ -112,6 +143,10 @@ class BaseGroupbyTests:
         tm.assert_series_equal(result, expected)
 
     def test_groupby_extension_apply(self, data_for_grouping, groupby_apply_op):
+        # [FUNCTION DOC]
+        # Smoke test: applies the fixture-provided function on groupby objects keyed by the
+        # extension column and by the integer column, both for the frame and for selected columns. Only
+        # checks that no exception is raised; results are discarded.
         df = pd.DataFrame({"A": [1, 1, 2, 2, 3, 3, 1, 4], "B": data_for_grouping})
         df.groupby("B", group_keys=False, observed=False).apply(groupby_apply_op)
         df.groupby("B", group_keys=False, observed=False).A.apply(groupby_apply_op)
@@ -119,6 +154,10 @@ class BaseGroupbyTests:
         df.groupby("A", group_keys=False, observed=False).B.apply(groupby_apply_op)
 
     def test_groupby_apply_identity(self, data_for_grouping):
+        # [FUNCTION DOC]
+        # Grouping by an integer column and applying a function that returns each group's backing
+        # array gives a series of arrays equal to the groups' element arrays (rows 0,1,6; 2,3; 4,5; 7),
+        # indexed by the group key with the value column's name.
         df = pd.DataFrame({"A": [1, 1, 2, 2, 3, 3, 1, 4], "B": data_for_grouping})
         result = df.groupby("A").B.apply(lambda x: x.array)
         expected = pd.Series(
@@ -134,6 +173,12 @@ class BaseGroupbyTests:
         tm.assert_series_equal(result, expected)
 
     def test_in_numeric_groupby(self, data_for_grouping):
+        # [FUNCTION DOC]
+        # Checks which columns survive a summing groupby. If the dtype is numeric, boolean,
+        # decimal-named, string, object or timedelta-kind, the sum result has both extension and
+        # integer columns. Otherwise summing must raise a type error (message alternatives for period,
+        # datetime, and the generic aggregation failure that mentions the dtype), and restricting to
+        # numeric columns leaves only the integer column.
         df = pd.DataFrame(
             {
                 "A": [1, 1, 2, 2, 3, 3, 1, 4],

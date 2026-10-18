@@ -1,3 +1,7 @@
+# [MODULE DOC]
+# Regression test module for attribute preservation of FloatAttrArray through merge and
+# concat when the column ends up entirely missing after reindexing. Depends on the array
+# package in this directory and the public frame/testing APIs.
 import numpy as np
 
 import pandas as pd
@@ -6,6 +10,14 @@ from pandas.tests.extension.array_with_attr import FloatAttrArray
 
 
 def test_concat_with_all_na():
+    # [FUNCTION DOC]
+    # Verifies that the attribute stored on an extension array survives merge and concat when
+    # reindexing introduces missing values (regression for a linked upstream pull request).
+    # Setup: an array of two NaN values with attribute set to a string, placed in a frame with a key
+    # column. Three scenarios: inner-style merge with full key overlap, merge with partial overlap
+    # (only the first row matches), and column-wise concat of key-indexed frames producing a
+    # missing entry. Expected: results equal the expected frames and the resulting column's array
+    # still has the original attribute.
     # https://github.com/pandas-dev/pandas/pull/47762
     # ensure that attribute of the column array is preserved (when it gets
     # preserved in reindexing the array) during merge/concat

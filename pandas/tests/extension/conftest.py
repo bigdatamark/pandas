@@ -1,3 +1,11 @@
+# [MODULE DOC]
+# Shared pytest fixtures for the extension-array test suite. Third-party array authors are
+# expected to override the fixtures that raise a not-implemented error (dtype, data, data_missing,
+# data_for_sorting, data_missing_for_sorting, data_for_grouping, and when relevant
+# data_for_twos) in their own conftest or test module; the rest are defaults or parametrization
+# helpers (all_data, data_repeated, na_cmp, na_value, box_in_series, groupby_apply_op, as_frame,
+# as_series, use_numpy, fillna_method, as_array, invalid_scalar). Importing this module has no
+# side effects beyond defining fixtures.
 import operator
 
 import pytest
@@ -7,12 +15,18 @@ from pandas import Series
 
 @pytest.fixture
 def dtype():
+    # [FUNCTION DOC]
+    # HELPER: fixture that must be overridden; returns the extension dtype under test. The default
+    # raises a not-implemented error.
     """A fixture providing the ExtensionDtype to validate."""
     raise NotImplementedError
 
 
 @pytest.fixture
 def data():
+    # [FUNCTION DOC]
+    # HELPER: fixture that must be overridden; returns a length-ten array of the type under test whose
+    # first two elements are non-missing and unequal. The default raises a not-implemented error.
     """
     Length-10 array for this type.
 
@@ -24,6 +38,11 @@ def data():
 
 @pytest.fixture
 def data_for_twos(dtype):
+    # [FUNCTION DOC]
+    # HELPER: fixture returning a length-ten array whose elements are all the value two, used for
+    # divmod tests. The default skips the test unless the dtype is numeric or timedelta-kind, and
+    # otherwise raises a not-implemented error; implementers override it, or skip if divmod is not
+    # supported.
     """
     Length-10 array in which all the elements are two.
 
@@ -39,12 +58,20 @@ def data_for_twos(dtype):
 
 @pytest.fixture
 def data_missing():
+    # [FUNCTION DOC]
+    # HELPER: fixture that must be overridden; returns a length-two array of a missing value followed
+    # by a valid value. The default raises a not-implemented error.
     """Length-2 array with [NA, Valid]"""
     raise NotImplementedError
 
 
 @pytest.fixture(params=["data", "data_missing"])
 def all_data(request, data, data_missing):
+    # [FUNCTION DOC]
+    # HELPER: parametrized fixture (ids data and data_missing) that returns either the data fixture or
+    # the data_missing fixture depending on the parameter.
+    # KNOWN ISSUE: if the parameter were anything other than the two declared values the function
+    # would return nothing; it relies on only those two parameters existing.
     """Parametrized fixture giving 'data' and 'data_missing'"""
     if request.param == "data":
         return data
@@ -54,6 +81,10 @@ def all_data(request, data, data_missing):
 
 @pytest.fixture
 def data_repeated(data):
+    # [FUNCTION DOC]
+    # HELPER: fixture returning a generator factory. The returned callable takes a count and returns a
+    # generator that yields the data fixture that many times (the same array object each time, not
+    # copies).
     """
     Generate many datasets.
 
@@ -69,6 +100,9 @@ def data_repeated(data):
     """
 
     def gen(count):
+        # [FUNCTION DOC]
+        # HELPER: the generator factory returned by the data_repeated fixture. Input count; yields the
+        # captured data array count times.
         for _ in range(count):
             yield data
 
@@ -77,6 +111,10 @@ def data_repeated(data):
 
 @pytest.fixture
 def data_for_sorting():
+    # [FUNCTION DOC]
+    # HELPER: fixture that must be overridden; returns a length-three array of items ordered B, C, A
+    # with A less than B less than C (for boolean dtypes, with B and C both true). The default raises a
+    # not-implemented error.
     """
     Length-3 array with a known sort order.
 
@@ -91,6 +129,9 @@ def data_for_sorting():
 
 @pytest.fixture
 def data_missing_for_sorting():
+    # [FUNCTION DOC]
+    # HELPER: fixture that must be overridden; returns a length-three array of items B, missing, A with
+    # A less than B. The default raises a not-implemented error.
     """
     Length-3 array with a known sort order.
 
@@ -102,6 +143,9 @@ def data_missing_for_sorting():
 
 @pytest.fixture
 def na_cmp():
+    # [FUNCTION DOC]
+    # HELPER: fixture returning the binary comparison function used to check that two scalars are both
+    # the missing value; the default is the identity comparison operator.
     """
     Binary operator for comparing NA values.
 
@@ -115,6 +159,9 @@ def na_cmp():
 
 @pytest.fixture
 def na_value(dtype):
+    # [FUNCTION DOC]
+    # HELPER: fixture returning the scalar missing value of the dtype, taken from the dtype fixture's
+    # missing-value attribute.
     """
     The scalar missing value for this type. Default dtype.na_value.
 
@@ -125,6 +172,11 @@ def na_value(dtype):
 
 @pytest.fixture
 def data_for_grouping():
+    # [FUNCTION DOC]
+    # HELPER: fixture that must be overridden; returns eight values arranged B, B, missing, missing, A,
+    # A, B, C with A less than B less than C (for boolean-kind dtypes with only two unique non-missing
+    # values, C equals B). Used for factorize, groupby and unique tests. The default raises a
+    # not-implemented error.
     """
     Data for factorization, grouping, and unique tests.
 
@@ -140,6 +192,8 @@ def data_for_grouping():
 
 @pytest.fixture(params=[True, False])
 def box_in_series(request):
+    # [FUNCTION DOC]
+    # HELPER: boolean fixture (true and false): whether to wrap data in a series.
     """Whether to box the data in a Series"""
     return request.param
 
@@ -154,6 +208,10 @@ def box_in_series(request):
     ids=["scalar", "list", "series", "object"],
 )
 def groupby_apply_op(request):
+    # [FUNCTION DOC]
+    # HELPER: parametrized fixture (ids scalar, list, series, object) returning a function for the
+    # groupby apply tests that returns respectively the constant one, a list of ones of the input's
+    # length, a series of ones of that length, and the input itself.
     """
     Functions to test groupby.apply().
     """
@@ -162,6 +220,9 @@ def groupby_apply_op(request):
 
 @pytest.fixture(params=[True, False])
 def as_frame(request):
+    # [FUNCTION DOC]
+    # HELPER: boolean fixture (true and false) to compare series behavior with single-column frame
+    # behavior.
     """
     Boolean fixture to support Series and Series.to_frame() comparison testing.
     """
@@ -170,6 +231,9 @@ def as_frame(request):
 
 @pytest.fixture(params=[True, False])
 def as_series(request):
+    # [FUNCTION DOC]
+    # HELPER: boolean fixture (true and false) to compare array behavior with series-wrapped
+    # behavior.
     """
     Boolean fixture to support arr and Series(arr) comparison testing.
     """
@@ -178,6 +242,9 @@ def as_series(request):
 
 @pytest.fixture(params=[True, False])
 def use_numpy(request):
+    # [FUNCTION DOC]
+    # HELPER: boolean fixture (true and false) to compare calling the array method with calling the
+    # equivalent numpy function.
     """
     Boolean fixture to support comparison testing of ExtensionDtype array
     and numpy array.
@@ -187,6 +254,9 @@ def use_numpy(request):
 
 @pytest.fixture(params=["ffill", "bfill"])
 def fillna_method(request):
+    # [FUNCTION DOC]
+    # HELPER: fixture with two values, the strings ffill and bfill, naming the series fill method to
+    # test.
     """
     Parametrized fixture giving method parameters 'ffill' and 'bfill' for
     Series.<method> testing.
@@ -196,6 +266,9 @@ def fillna_method(request):
 
 @pytest.fixture(params=[True, False])
 def as_array(request):
+    # [FUNCTION DOC]
+    # HELPER: boolean fixture (true and false): whether a value should be passed as an extension array
+    # (built with the sequence constructor) or as a plain list.
     """
     Boolean fixture to support ExtensionDtype _from_sequence method testing.
     """
@@ -204,6 +277,10 @@ def as_array(request):
 
 @pytest.fixture
 def invalid_scalar(data):
+    # [FUNCTION DOC]
+    # HELPER: fixture returning a scalar that the array cannot hold: a fresh bare object instance.
+    # The default works for most arrays but is not guaranteed; arrays that can hold any object should
+    # skip tests using it.
     """
     A scalar that *cannot* be held by this ExtensionArray.
 
