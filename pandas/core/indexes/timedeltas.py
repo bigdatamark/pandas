@@ -1,5 +1,16 @@
 """implement the TimedeltaIndex"""
 
+# [MODULE DOC]
+# Implementation of TimedeltaIndex, the index of timedelta64 durations, and the
+# function that builds a fixed-frequency one.
+# Public contents: the TimedeltaIndex class (re-labelled to the top-level package
+# namespace) and the timedelta range function. Data lives in a TimedeltaArray;
+# the class extends the datetime/timedelta index mixin. Unary operators, rounding
+# helpers, total_seconds and the calendar-like field attributes (wrapped as
+# indexes) plus components, to_pytimedelta, sum, std and median (unwrapped) are
+# pinned from the array by decorators at import time. Other import-time effect:
+# none beyond class decoration.
+
 from __future__ import annotations
 
 from typing import (
@@ -73,6 +84,14 @@ if TYPE_CHECKING:
 )
 @set_module("pandas")
 class TimedeltaIndex(DatetimeTimedeltaMixin):
+    # [CLASS DOC]
+    # Immutable index of timedelta64 values (resolution s, ms, us or ns) whose
+    # scalars are boxed as Timedelta. Inherits from the datetime/timedelta mixin
+    # (which supplies frequency handling and slicing). State: _data is a
+    # TimedeltaArray. Key members: the constructor, a lookup method accepting
+    # timedelta-like keys, a string-parsing hook for partial string indexing (using
+    # the base index string-slice method instead of the mixin's), a comparability
+    # check, and the inferred type string.
     """
     Immutable Index of timedelta64 data.
 
@@ -150,6 +169,9 @@ class TimedeltaIndex(DatetimeTimedeltaMixin):
 
     @property
     def _engine_type(self) -> type[libindex.TimedeltaEngine]:
+        # [FUNCTION DOC]
+        # HELPER: returns the Cython hash-table engine class used for lookups, the
+        # timedelta engine.
         return libindex.TimedeltaEngine
 
     _data: TimedeltaArray
@@ -161,6 +183,9 @@ class TimedeltaIndex(DatetimeTimedeltaMixin):
     # "DatetimeIndexOpsMixin"
     @property
     def _resolution_obj(self) -> Resolution | None:  # type: ignore[override]
+        # [FUNCTION DOC]
+        # HELPER: property giving the resolution object of the underlying array; may be
+        # none. The signature intentionally differs from the supertype's.
         return self._data._resolution_obj
 
     # -------------------------------------------------------------------
@@ -174,6 +199,22 @@ class TimedeltaIndex(DatetimeTimedeltaMixin):
         copy: bool | None = None,
         name=None,
     ):
+        # [FUNCTION DOC]
+        # Construct a TimedeltaIndex. Parameters: data is array-like 1-d input (default
+        # none); freq is an offset or string, or the string infer to infer it, with the
+        # library's no-default sentinel meaning leave the frequency alone (default);
+        # dtype is a numpy timedelta dtype or string (default none); copy is a tri-state
+        # flag (none copies array input only); name is the index name (default none,
+        # taken from data when it has one). Returns a new index.
+        # Steps: resolve the name; resolve the copy flag with the shared array-input
+        # helper (GH#63388); a scalar for data raises a type error via the scalar-error
+        # helper; the dtype is normalized. Fast paths when no freq was given: a
+        # TimedeltaArray whose dtype matches (or no dtype requested) is wrapped directly
+        # (copied if asked); a TimedeltaIndex with a matching dtype and no new name is
+        # returned as a copy if asked, otherwise a view. Otherwise the data is converted
+        # by the array's non-strict sequence constructor with the freq and dtype and the
+        # copy flag, the reference tracker is propagated from series or index input when
+        # not copying, and the instance is built with the private simple constructor.
         name = maybe_extract_name(name, data, cls)
 
         # GH#63388
@@ -219,6 +260,10 @@ class TimedeltaIndex(DatetimeTimedeltaMixin):
     # -------------------------------------------------------------------
 
     def _is_comparable_dtype(self, dtype: DtypeObj) -> bool:
+        # [FUNCTION DOC]
+        # HELPER: comparability check used by the base index machinery. For Arrow-backed
+        # dtypes it returns true when the kind is the timedelta kind; for others it
+        # returns whether the dtype is a numpy timedelta type.
         """
         Can we compare values of the given dtype to our own?
         """
@@ -230,6 +275,13 @@ class TimedeltaIndex(DatetimeTimedeltaMixin):
     # Indexing Methods
 
     def get_loc(self, key):
+        # [FUNCTION DOC]
+        # Return the location of a label. Parameter key is a timedelta-like scalar (a
+        # Timedelta, timedelta, numpy timedelta, string parsed by the array, or NaT).
+        # Returns whatever the base index lookup gives (integer, slice or mask). Raises
+        # a type error from the indexing-error check for list-like keys, and a key error
+        # when the key cannot be validated as a timedelta scalar or is absent. The
+        # docstring omits the Parameters and Raises sections.
         """
         Get integer location for requested label
 
@@ -251,6 +303,11 @@ class TimedeltaIndex(DatetimeTimedeltaMixin):
     # "tuple[datetime, Resolution]" in supertype
     # "pandas.core.indexes.datetimelike.DatetimeIndexOpsMixin"
     def _parse_with_reso(self, label: str) -> tuple[Timedelta | NaTType, Resolution]:  # type: ignore[override]
+        # [FUNCTION DOC]
+        # HELPER: parses a string label for partial string indexing. Parameter label is
+        # a string converted into a Timedelta (which may be NaT). Returns a pair of the
+        # parsed value and a resolution; the resolution comes from the unit of the
+        # parsed value, or the seconds resolution if the result is NaT.
         parsed = Timedelta(label)
         if isinstance(parsed, Timedelta):
             reso = Resolution.get_reso_from_freqstr(parsed.unit)
@@ -260,6 +317,12 @@ class TimedeltaIndex(DatetimeTimedeltaMixin):
         return parsed, reso
 
     def _parsed_string_to_bounds(self, reso: Resolution, parsed: Timedelta):
+        # [FUNCTION DOC]
+        # HELPER: bounds for partial string slicing. Parameters: reso is unused (kept to
+        # match the datetime and period index signature); parsed is the Timedelta from
+        # string parsing. The lower bound is the value rounded to its own resolution
+        # string; the upper bound is the lower bound plus one unit of that resolution
+        # minus one in the index's unit. Returns the pair (lower, upper).
         # reso is unused, included to match signature of DTI/PI
         lbound = parsed.round(parsed.resolution_string)
         rbound = (
@@ -273,6 +336,8 @@ class TimedeltaIndex(DatetimeTimedeltaMixin):
 
     @property
     def inferred_type(self) -> str:
+        # [FUNCTION DOC]
+        # Property: constant string "timedelta64".
         return "timedelta64"
 
 
@@ -287,6 +352,21 @@ def timedelta_range(
     *,
     unit: TimeUnit | None = None,
 ) -> TimedeltaIndex:
+    # [FUNCTION DOC]
+    # Create a fixed-frequency TimedeltaIndex, day by default. Parameters: start and
+    # end are timedelta-like bounds (default none); periods is the number of values
+    # (default none); freq is a string, Timedelta, timedelta or offset (default none,
+    # becomes daily when any of start, end or periods is missing); name is the
+    # result's name; closed selects which endpoints are kept (left, right, or none
+    # for both); unit (keyword-only) is the resolution s, ms, us or ns, default none
+    # meaning infer.
+    # Raises a value error unless exactly three of start, end, periods and freq are
+    # specified after the daily default is applied. When unit is not given, it is
+    # the finer of the units of start and end (or the one of whichever is
+    # supplied), then raised further if the frequency's own resolution is finer.
+    # Delegates generation to the array's range generator and returns a
+    # TimedeltaIndex with the given name.
+    # KNOWN ISSUE: the docstring Notes section says the resulting index is a DatetimeIndex when freq is omitted; the function returns a TimedeltaIndex.
     """
     Return a fixed frequency TimedeltaIndex with day as the default.
 

@@ -1,3 +1,19 @@
+# [MODULE DOC]
+# Implementation of DatetimeIndex, the index of datetime64 timestamps, plus the
+# date range and business date range builders.
+# Public contents: the DatetimeIndex class and the functions date_range and
+# bdate_range (all re-labelled to the top-level package namespace), a private
+# unpickling reconstructor, and a private helper converting a time of day to
+# microseconds. Data lives in a DatetimeArray; the class extends the
+# datetime/timedelta index mixin, which supplies frequency handling, set
+# operations and partial string indexing. Many field accessors and operations
+# are pinned from the array by decorators at import time, wrapping results into
+# indexes; timezone conversion, localization, string formatting, period
+# conversion and julian dates are written out explicitly. Imports the period
+# index class lazily inside one method to avoid a circular import; also uses
+# the time-string parser from the tools package and the shared offset tables.
+# No import-time side effects beyond class decoration.
+
 from __future__ import annotations
 
 import datetime as dt
@@ -81,6 +97,20 @@ from pandas._libs.tslibs.dtypes import OFFSET_TO_PERIOD_FREQSTR
 
 
 def _new_DatetimeIndex(cls, d):
+    # [FUNCTION DOC]
+    # HELPER: reconstructor called when unpickling a DatetimeIndex (the default
+    # protocol cannot call the constructor with arguments). Parameters: cls is the
+    # class; d is the dictionary of saved state, which is consumed (keys are
+    # popped). Two paths. If the dictionary holds data that is not already a
+    # DatetimeIndex: the data is popped; if it is not a DatetimeArray (old pickle
+    # format) the tz and freq entries are popped (raising a key error when
+    # missing) and a DatetimeArray is rebuilt through the private simple
+    # constructor with the dtype derived from the zone; otherwise the array is used
+    # as is, and any tz or freq entries are checked equal to the array's own
+    # (assertion failure on mismatch) and discarded. The instance is then made with
+    # the private simple constructor and the leftover keys (such as name). In the
+    # other path, the regular constructor is called with the dictionary entries as
+    # keywords with all warnings suppressed. Returns the index.
     """
     This is called upon unpickling, rather than the default which doesn't
     have arguments and breaks __new__
@@ -140,6 +170,19 @@ def _new_DatetimeIndex(cls, d):
 )
 @set_module("pandas")
 class DatetimeIndex(DatetimeTimedeltaMixin):
+    # [CLASS DOC]
+    # Immutable index of datetime64 values (resolution s, ms, us or ns, possibly with
+    # a time zone) that are boxed to Timestamp on access. Inherits from the
+    # datetime/timedelta index mixin. State: _data is a DatetimeArray, the optional
+    # frequency and time zone live on the array and are exposed as freq and tz.
+    # Decorator-pinned members: calendar fields and boolean field checks (wrapped
+    # as indexes), most datetime-like methods except zone conversion and string
+    # formatting, a cached is_normalized, and unwrapped tz, tzinfo, dtype,
+    # to_pydatetime, date, time, timetz and std. Explicit members: strftime,
+    # tz_convert, tz_localize, to_period, to_julian_date, isocalendar, snap, the
+    # time-of-day indexers, string-based lookup and slicing hooks, and the
+    # constructor. Supports partial string indexing and reports its inferred type as
+    # datetime64.
     """
     Immutable ndarray-like of datetime64 data.
 
@@ -270,6 +313,9 @@ class DatetimeIndex(DatetimeTimedeltaMixin):
 
     @property
     def _engine_type(self) -> type[libindex.DatetimeEngine]:
+        # [FUNCTION DOC]
+        # HELPER: returns the Cython hash-table engine class used for lookups, the
+        # datetime engine.
         return libindex.DatetimeEngine
 
     _data: DatetimeArray
@@ -280,6 +326,12 @@ class DatetimeIndex(DatetimeTimedeltaMixin):
     # methods that dispatch to DatetimeArray and wrap result
 
     def strftime(self, date_format) -> Index:
+        # [FUNCTION DOC]
+        # Format each timestamp as a string. Parameter date_format is a string using the
+        # standard library format directives. Delegates to the array and returns a
+        # generic Index of the formatted strings (dtype taken from the formatted array),
+        # with this index's name and without copying.
+        # KNOWN ISSUE: the docstring Returns section says a numpy array of objects is returned; the method actually returns an Index.
         """
         Convert to Index using specified date_format.
 
@@ -326,6 +378,12 @@ class DatetimeIndex(DatetimeTimedeltaMixin):
         return Index(arr, name=self.name, dtype=arr.dtype, copy=False)
 
     def tz_convert(self, tz) -> Self:
+        # [FUNCTION DOC]
+        # Convert a time zone aware index to another zone (same instants, different wall
+        # time). Parameter tz is a zone name, tzinfo object or none (none converts to UTC
+        # and drops the zone). Raises a type error for a tz-naive index (from the array).
+        # Returns a new index of the same class with the same name that shares the
+        # original's reference tracker for copy-on-write.
         """
         Convert tz-aware Datetime Array/Index from one time zone to another.
 
@@ -401,6 +459,16 @@ class DatetimeIndex(DatetimeTimedeltaMixin):
         ambiguous: TimeAmbiguous = "raise",
         nonexistent: TimeNonexistent = "raise",
     ) -> Self:
+        # [FUNCTION DOC]
+        # Attach or remove a time zone while keeping the wall-clock values. Parameters:
+        # tz is a zone name, tzinfo or none (none removes the zone); ambiguous says how
+        # to resolve ambiguous times at a clock change (raise, infer, NaT, or a boolean
+        # array; default raise); nonexistent says how to treat times skipped at a clock
+        # change (raise, shift_forward, shift_backward, NaT, or a timedelta; default
+        # raise). Raises a type error if the index is already tz-aware and tz is not
+        # none, and a value error for unresolved ambiguous or nonexistent times in raise
+        # mode. Returns a new index of the same class with this name (the reference
+        # tracker is not carried over because values change).
         """
         Localize tz-naive Datetime Array/Index to tz-aware Datetime Array/Index.
 
@@ -544,6 +612,12 @@ class DatetimeIndex(DatetimeTimedeltaMixin):
         return type(self)._simple_new(arr, name=self.name)
 
     def to_period(self, freq=None) -> PeriodIndex:
+        # [FUNCTION DOC]
+        # Convert to a PeriodIndex. Parameter freq is a period alias string, offset or
+        # none (infer the frequency). The period index class is imported locally to
+        # avoid a circular import. Raises a value error when no frequency is given and
+        # none can be inferred. Returns a PeriodIndex with this index's name. Any time
+        # zone information is dropped by the array conversion.
         """
         Cast to PeriodArray/PeriodIndex at a particular frequency.
 
@@ -600,6 +674,10 @@ class DatetimeIndex(DatetimeTimedeltaMixin):
         return PeriodIndex._simple_new(arr, name=self.name)
 
     def to_julian_date(self) -> Index:
+        # [FUNCTION DOC]
+        # Convert each timestamp to a Julian date: float days since noon on January 1,
+        # 4713 BC. Delegates to the array and returns a float Index with this
+        # index's name.
         """
         Convert TimeStamp to a Julian Date.
 
@@ -626,6 +704,9 @@ class DatetimeIndex(DatetimeTimedeltaMixin):
         return Index._simple_new(arr, name=self.name)
 
     def isocalendar(self) -> DataFrame:
+        # [FUNCTION DOC]
+        # Return a data frame with the ISO 8601 year, week and day columns of each
+        # timestamp, using this index as the frame's index. Delegates to the array.
         """
         Calculate year, week, and day according to the ISO 8601 standard.
         Returns
@@ -660,6 +741,8 @@ class DatetimeIndex(DatetimeTimedeltaMixin):
 
     @cache_readonly
     def _resolution_obj(self) -> Resolution:
+        # [FUNCTION DOC]
+        # HELPER: cached resolution object of the underlying array.
         return self._data._resolution_obj
 
     # --------------------------------------------------------------------
@@ -677,6 +760,22 @@ class DatetimeIndex(DatetimeTimedeltaMixin):
         copy: bool | None = None,
         name: Hashable | None = None,
     ) -> Self:
+        # [FUNCTION DOC]
+        # Construct a DatetimeIndex. Parameters: data is 1-d datetime-like input (default
+        # none); freq is an offset or string, or the string infer, with the library's
+        # no-default sentinel meaning leave unchanged (default); tz is a zone or the
+        # no-default sentinel; ambiguous is how to treat ambiguous local times when
+        # localizing (default raise); dayfirst and yearfirst (default false) control the
+        # order of day and year when parsing strings; dtype is a numpy datetime or
+        # timezone dtype (default none); copy is a tri-state flag; name is the index name
+        # (default none, taken from data if it has one). Returns a new index.
+        # Raises a type error for scalar data (via the scalar-error helper). Steps: scalar
+        # check, name resolution, copy-flag resolution through the shared array-input
+        # helper (GH#63388). Fast path: if data is already a DatetimeArray and neither
+        # freq, tz nor dtype is given, it is wrapped directly (copied if requested) and
+        # keeps its unit. Otherwise the array's non-strict sequence constructor parses
+        # and validates everything with all given options, and the result is wrapped
+        # with a reference tracker from series or index input when not copying.
         if is_scalar(data):
             cls._raise_scalar_data_error(data)
 
@@ -720,6 +819,11 @@ class DatetimeIndex(DatetimeTimedeltaMixin):
 
     @cache_readonly
     def _is_dates_only(self) -> bool:
+        # [FUNCTION DOC]
+        # HELPER: cached flag that is true when the values are all at midnight (no time
+        # component) and there is no zone; used for formatting. Returns false early when
+        # the frequency is a tick whose size is not a whole number of days, otherwise
+        # returns the array's own check.
         """
         Return a boolean if we are only dates (and don't have a timezone)
 
@@ -736,10 +840,20 @@ class DatetimeIndex(DatetimeTimedeltaMixin):
         return self._values._is_dates_only
 
     def __reduce__(self):
+        # [FUNCTION DOC]
+        # Pickle support: returns the reconstruction function together with the class and
+        # a state dictionary holding the underlying array and the name, and no extra
+        # state.
         d = {"data": self._data, "name": self.name}
         return _new_DatetimeIndex, (type(self), d), None
 
     def _is_comparable_dtype(self, dtype: DtypeObj) -> bool:
+        # [FUNCTION DOC]
+        # HELPER: comparability check used by the base index machinery. For an
+        # Arrow-backed dtype (GH#62277): true only if its kind is datetime and the
+        # presence of a time zone matches this index's. For other dtypes: a tz-aware
+        # index is comparable only to a datetimetz dtype; a naive index only to numpy
+        # datetime dtypes.
         """
         Can we compare values of the given dtype to our own?
         """
@@ -764,6 +878,11 @@ class DatetimeIndex(DatetimeTimedeltaMixin):
 
     @cache_readonly
     def _formatter_func(self):
+        # [FUNCTION DOC]
+        # HELPER: cached formatter used when rendering values. Builds a datetime
+        # formatter from the (cached) dates-only flag and returns a function that
+        # formats one value and wraps it in single quotes. Equivalent to the mixin
+        # version but avoids recomputing the flag. Imports the formatting module lazily.
         # Note this is equivalent to the DatetimeIndexOpsMixin method but
         #  uses the maybe-cached self._is_dates_only instead of re-computing it.
         from pandas.io.formats.format import get_format_datetime64
@@ -775,6 +894,11 @@ class DatetimeIndex(DatetimeTimedeltaMixin):
     # Set Operation Methods
 
     def _can_range_setop(self, other) -> bool:
+        # [FUNCTION DOC]
+        # HELPER: hook for set operations deciding whether a range-based fast path may be
+        # used (GH 46702). Returns false when either index has a time zone that is not
+        # UTC and not a fixed offset (daylight saving changes make steps irregular);
+        # otherwise defers to the base implementation.
         # GH 46702: If self or other have non-UTC tzs, DST transitions prevent
         # range representation due to no singular step
         if (
@@ -794,6 +918,11 @@ class DatetimeIndex(DatetimeTimedeltaMixin):
     # --------------------------------------------------------------------
 
     def _get_time_micros(self) -> npt.NDArray[np.int64]:
+        # [FUNCTION DOC]
+        # HELPER: returns an int64 array with the number of microseconds since local
+        # midnight of each element, with missing values set to minus one. Converts from
+        # the index's unit (dividing for ns, multiplying for ms and s). Raises a not
+        # implemented error for an unknown unit.
         """
         Return the number of microseconds since midnight.
 
@@ -821,6 +950,13 @@ class DatetimeIndex(DatetimeTimedeltaMixin):
         return micros
 
     def snap(self, freq: Frequency = "S") -> DatetimeIndex:
+        # [FUNCTION DOC]
+        # Return a new index with each timestamp moved to the nearest point on a
+        # frequency. Parameter freq is a string, Timedelta, timedelta or offset
+        # (default the string S). For each value that is not on the offset, the closest
+        # of the roll-back and roll-forward values is used; ties go to the roll-forward
+        # value. Works on a copy of the array, assigning element by element (slow). Returns a
+        # DatetimeIndex with this index's name.
         """
         Snap time stamps to nearest occurring frequency.
 
@@ -880,6 +1016,15 @@ class DatetimeIndex(DatetimeTimedeltaMixin):
     def _parsed_string_to_bounds(
         self, reso: Resolution, parsed: dt.datetime
     ) -> tuple[Timestamp, Timestamp]:
+        # [FUNCTION DOC]
+        # HELPER: computes inclusive timestamp bounds for partial string indexing.
+        # Parameters: reso is the resolution parsed from the string; parsed is the
+        # datetime parsed from it. A Period at the matching frequency gives the start;
+        # the end is one nanosecond before the start of the next period (end_time is not
+        # used because it subtracts the wrong amount). Both are converted to the index's
+        # unit and localized to the parsed value's zone (GH 24076). Raises a value error
+        # if the parsed value has a zone but the index does not. Returns a pair
+        # (lower, upper) of Timestamps.
         """
         Calculate datetime bounds for parsed time string and its resolution.
 
@@ -922,6 +1067,11 @@ class DatetimeIndex(DatetimeTimedeltaMixin):
         return start, end
 
     def _parse_with_reso(self, label: str) -> tuple[Timestamp, Resolution]:
+        # [FUNCTION DOC]
+        # HELPER: parses a label string into a timestamp and resolution. Uses the base
+        # class parser, wraps the result in a Timestamp, and localizes it to the index's
+        # zone if the index is tz-aware and the parsed value is naive. Returns the
+        # (timestamp, resolution) pair.
         parsed, reso = super()._parse_with_reso(label)
 
         parsed = Timestamp(parsed)
@@ -935,6 +1085,10 @@ class DatetimeIndex(DatetimeTimedeltaMixin):
         return parsed, reso
 
     def _disallow_mismatched_indexing(self, key) -> None:
+        # [FUNCTION DOC]
+        # HELPER: ensures a key is compatible with the index regarding time zone
+        # awareness. Calls the array's check and converts the type error it raises into a
+        # key error carrying the key. Returns nothing.
         """
         Check for mismatched-tzawareness indexing and re-raise as KeyError.
         """
@@ -946,6 +1100,16 @@ class DatetimeIndex(DatetimeTimedeltaMixin):
             raise KeyError(key) from err
 
     def get_loc(self, key):
+        # [FUNCTION DOC]
+        # Return the location of a label. Parameter key may be a datetime-like scalar,
+        # a missing value, a string (parsed, with partial string indexing when its
+        # resolution is coarser than the index), or a time of day. Returns whatever the
+        # lookup yields: an integer, a slice or a mask, or for a time of day the array of
+        # positions (via the at-time indexer). Raises a type error for list-like keys
+        # (indexing-error check) and for time delta keys (GH#20464); raises a key error
+        # for unrecognized types, unparsable strings, mismatched tz-awareness, or absent
+        # keys (re-raised with the original key). Missing values are mapped to NaT.
+        # KNOWN ISSUE: the docstring says the result is an integer, but the method may return a slice, a mask or an array of positions.
         """
         Get integer location for requested label
 
@@ -998,6 +1162,13 @@ class DatetimeIndex(DatetimeTimedeltaMixin):
             raise KeyError(orig_key) from err
 
     def _maybe_cast_slice_bound(self, label, side: str):
+        # [FUNCTION DOC]
+        # HELPER: converts a slice bound label before searching. Parameters: label is the
+        # bound; side is left or right (validated by the caller). A pure date (not a
+        # datetime) is converted to a datetime at midnight and a deprecation warning is
+        # emitted (GH#35830). Then the base class converts strings and others, the
+        # result is checked for tz-awareness compatibility with the index (raising a
+        # type error on mismatch), and a Timestamp is returned.
         """
         This function should be overloaded in subclasses that allow non-trivial
         casting on label-slice bounds, e.g. datetime-like indices allowing
@@ -1034,6 +1205,17 @@ class DatetimeIndex(DatetimeTimedeltaMixin):
         return Timestamp(label)
 
     def slice_indexer(self, start=None, end=None, step=None):
+        # [FUNCTION DOC]
+        # Return an indexer for a label slice. Parameters: start and end are labels,
+        # strings, none, or datetime.time objects; step is the slice step. If start and
+        # end are both times: requires a step of one or none (value error otherwise) and
+        # returns the between-times indexer. If only one is a time: raises a key error.
+        # If any bound is neither a string nor none, or the index is monotonic
+        # increasing, defers to the base slice indexer. Otherwise (string or none
+        # bounds on a non-monotonic index, GH#33146) selects by value using a boolean
+        # mask: bounds are cast, and raises a key error if a given bound does not
+        # occur exactly in the index. Returns a slice covering everything if all
+        # positions match, otherwise an integer array of positions with the step applied.
         """
         Return indexer for specified label slice.
         Index.slice_indexer, customized to handle time slicing.
@@ -1059,6 +1241,11 @@ class DatetimeIndex(DatetimeTimedeltaMixin):
             raise KeyError("Cannot mix time and non-time slice keys")
 
         def check_str_or_none(point) -> bool:
+            # [FUNCTION DOC]
+            # HELPER: predicate for the slice indexer.
+            # KNOWN ISSUE: the name suggests a check that the point is a string or none, but the function returns true when the point is neither none nor a string.
+            # Returns true if the point is neither none nor a string (so value-based
+            # selection cannot be used).
             return point is not None and not isinstance(point, str)
 
         # GH#33146 if start and end are combinations of str and None and Index is not
@@ -1098,11 +1285,24 @@ class DatetimeIndex(DatetimeTimedeltaMixin):
 
     @property
     def inferred_type(self) -> str:
+        # [FUNCTION DOC]
+        # Property: constant string "datetime64". The comment records that this
+        # prevents ambiguous indexing.
         # b/c datetime is represented as microseconds since the epoch, make
         # sure we can't have ambiguous indexing
         return "datetime64"
 
     def indexer_at_time(self, time, asof: bool = False) -> npt.NDArray[np.intp]:
+        # [FUNCTION DOC]
+        # Return the positions of the values that fall exactly at a time of day.
+        # Parameters: time is a datetime.time or a string; asof must stay false. Raises
+        # a not-implemented error if asof is true; a value error if the time is
+        # timezone-aware but the index is naive. A string is parsed with both the generic
+        # date parser and the library time parser: if only the time parser works, a
+        # future-change warning is issued and the generic parser is used; if the parsers
+        # disagree the generic parser's result is used with a warning that it will
+        # change (GH#50839). A time with a zone converts the index to that zone first.
+        # Compares microseconds since midnight. Returns an integer position array.
         """
         Return index locations of values at particular time of day.
 
@@ -1184,6 +1384,13 @@ class DatetimeIndex(DatetimeTimedeltaMixin):
     def indexer_between_time(
         self, start_time, end_time, include_start: bool = True, include_end: bool = True
     ) -> npt.NDArray[np.intp]:
+        # [FUNCTION DOC]
+        # Return positions of the values whose time of day falls between two times.
+        # Parameters: start_time and end_time are time objects or strings (converted by
+        # the time-string parser); include_start and include_end (default true) say
+        # whether each bound is closed. If the start is later than the end the window
+        # wraps over midnight and a position matches if either side condition holds;
+        # otherwise both must hold. Returns an integer position array.
         """
         Return index locations of values between particular times of day.
 
@@ -1259,6 +1466,24 @@ def date_range(
     unit: TimeUnit | None = None,
     **kwargs,
 ) -> DatetimeIndex:
+    # [FUNCTION DOC]
+    # Build a fixed-frequency DatetimeIndex. Parameters: start and end are bounds
+    # (default none); periods is the number of points; freq is a string, delta or
+    # offset (default none, which becomes daily when any of start, end or periods is
+    # missing); tz is a time zone (default none); normalize (default false) moves the
+    # bounds to midnight; name is the result's name; inclusive is which ends are
+    # kept (both, neither, left or right; default both); unit (keyword-only) is the
+    # resolution s, ms, us or ns (default none to infer); extra keywords are passed
+    # on to the array's range generator.
+    # Steps: apply the daily default; convert freq to an offset; raise a value error
+    # if start or end is NaT. With no unit given, the unit is the finer of the units
+    # of start and end (or whichever exists); with neither bound a value error says
+    # exactly three of the four parameters must be given. The unit is then raised if
+    # the frequency requires a finer one: a tick finer than the unit, an offset
+    # carrying a time-delta offset (like business day with an offset), or a plain
+    # date offset with nanosecond, microsecond or millisecond parts. Delegates to the
+    # array's range generator (which does the parameter-count validation) and
+    # returns a DatetimeIndex with the name.
     """
     Return a fixed frequency DatetimeIndex.
 
@@ -1516,6 +1741,18 @@ def bdate_range(
     inclusive: IntervalClosedType = "both",
     **kwargs,
 ) -> DatetimeIndex:
+    # [FUNCTION DOC]
+    # Build a business-day DatetimeIndex. Parameters like the date range function
+    # except: freq defaults to the business day string; normalize defaults to true;
+    # weekmask and holidays (default none) customize business days. Raises a type
+    # error if freq is none. If freq is a string starting with C (custom business
+    # day variants), it is looked up in the offset prefix table and built with the
+    # holidays and a weekmask (default Monday to Friday); a lookup failure or type
+    # error becomes a value error, and the exact string for custom business hour
+    # gets a hint to use the lowercase form. Otherwise, a value error is raised when
+    # holidays or weekmask are given. Finally calls the date range function with the
+    # arguments and any extra keywords, and returns its result.
+    # KNOWN ISSUE: the docstring says normalize defaults to false, but the signature default is true.
     """
     Return a fixed frequency DatetimeIndex with business day as the default.
 
@@ -1614,5 +1851,9 @@ def bdate_range(
 
 
 def _time_to_micros(time_obj: dt.time) -> int:
+    # [FUNCTION DOC]
+    # HELPER: converts a time of day object into an integer number of microseconds
+    # since midnight (hours, minutes, seconds and microseconds; the time zone is
+    # ignored). Used by the at-time and between-time indexers.
     seconds = time_obj.hour * 60 * 60 + 60 * time_obj.minute + time_obj.second
     return 1_000_000 * seconds + time_obj.microsecond

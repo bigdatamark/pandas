@@ -1,3 +1,26 @@
+# [MODULE DOC]
+# Implementation of MultiIndex, the hierarchical (multi-level) index, together
+# with the compiled-engine adapter classes it uses and a few module-level
+# helpers.
+# Public contents: the MultiIndex class (re-labelled to the top-level package
+# namespace); five engine classes mapping label-code combinations to unsigned
+# integers of increasing width (8, 16, 32, 64 bits) or to Python integers when
+# those would overflow; a decorator letting methods accept either a name or a
+# names keyword; and helper functions: the lexsort depth of code arrays, the
+# sparsification of labels for display, the missing-value text for a dtype, level
+# dropping after a key lookup, coercion of code arrays to read-only small
+# integers, a list-likeness check for the level/codes setters, and the cartesian
+# product of arrays (the module's other public function).
+# Relationships: MultiIndex subclasses the generic Index. Its state is a list of
+# level indexes (the unique labels per level), a parallel list of integer code
+# arrays (positions into the levels, minus one for missing) and a list of level
+# names, stored as frozen lists (the names as a plain list). Operations lean on the
+# frozen list type, the categorical factorization helpers, the sorting utilities
+# and the compiled index engines. The data frame, series and categorical index
+# classes are imported only for type checking or lazily in methods.
+# Import-time side effects: none beyond defining the classes (the class body
+# also installs disabled arithmetic operators, see the class documentation).
+
 from __future__ import annotations
 
 from collections.abc import (
@@ -123,6 +146,12 @@ if TYPE_CHECKING:
 
 
 class MultiIndexUInt64Engine(libindex.BaseMultiIndexCodesEngine, libindex.UInt64Engine):
+    # [CLASS DOC]
+    # HELPER: lookup engine for a MultiIndex whose label-combination count fits in an
+    # unsigned 64-bit integer. Inherits from the compiled multi-index codes engine
+    # base and the unsigned 64-bit hash engine. Class attributes: the base engine
+    # class and the dtype name for the encoded integer codes. All behavior comes from
+    # the bases.
     """Manages a MultiIndex by mapping label combinations to positive integers.
 
     The number of possible label combinations must not overflow the 64 bits integers.
@@ -133,6 +162,9 @@ class MultiIndexUInt64Engine(libindex.BaseMultiIndexCodesEngine, libindex.UInt64
 
 
 class MultiIndexUInt32Engine(libindex.BaseMultiIndexCodesEngine, libindex.UInt32Engine):
+    # [CLASS DOC]
+    # HELPER: same as the 64-bit engine adapter but for combinations that fit in an
+    # unsigned 32-bit integer (codes dtype uint32, base engine the 32-bit engine).
     """Manages a MultiIndex by mapping label combinations to positive integers.
 
     The number of possible label combinations must not overflow the 32 bits integers.
@@ -143,6 +175,9 @@ class MultiIndexUInt32Engine(libindex.BaseMultiIndexCodesEngine, libindex.UInt32
 
 
 class MultiIndexUInt16Engine(libindex.BaseMultiIndexCodesEngine, libindex.UInt16Engine):
+    # [CLASS DOC]
+    # HELPER: same as the 64-bit engine adapter but for combinations that fit in an
+    # unsigned 16-bit integer (codes dtype uint16, base engine the 16-bit engine).
     """Manages a MultiIndex by mapping label combinations to positive integers.
 
     The number of possible label combinations must not overflow the 16 bits integers.
@@ -153,6 +188,9 @@ class MultiIndexUInt16Engine(libindex.BaseMultiIndexCodesEngine, libindex.UInt16
 
 
 class MultiIndexUInt8Engine(libindex.BaseMultiIndexCodesEngine, libindex.UInt8Engine):
+    # [CLASS DOC]
+    # HELPER: same as the 64-bit engine adapter but for combinations that fit in an
+    # unsigned 8-bit integer (codes dtype uint8, base engine the 8-bit engine).
     """Manages a MultiIndex by mapping label combinations to positive integers.
 
     The number of possible label combinations must not overflow the 8 bits integers.
@@ -163,6 +201,10 @@ class MultiIndexUInt8Engine(libindex.BaseMultiIndexCodesEngine, libindex.UInt8En
 
 
 class MultiIndexPyIntEngine(libindex.BaseMultiIndexCodesEngine, libindex.ObjectEngine):
+    # [CLASS DOC]
+    # HELPER: engine adapter for the extreme case where the number of label
+    # combinations overflows 64 bits: it combines the compiled multi-index codes
+    # engine with the object engine and stores Python integers (codes dtype object).
     """Manages a MultiIndex by mapping label combinations to positive integers.
 
     This class manages those (extreme) cases in which the number of possible
@@ -175,6 +217,13 @@ class MultiIndexPyIntEngine(libindex.BaseMultiIndexCodesEngine, libindex.ObjectE
 
 
 def names_compat(meth: F) -> F:
+    # [FUNCTION DOC]
+    # HELPER: decorator so a method accepts either a name keyword or a names keyword,
+    # for sharing code with the base class. Parameter meth is the function to wrap.
+    # Returns a wrapper (preserving the function's metadata) that raises a type error
+    # if both keywords are supplied, renames a name keyword to names, and calls the
+    # wrapped function with the remaining arguments. The result is cast to the
+    # decorated function's type for type checking.
     """
     A decorator to allow either `name` or `names` keyword but not both.
 
@@ -183,6 +232,11 @@ def names_compat(meth: F) -> F:
 
     @wraps(meth)
     def new_meth(self_or_cls, *args, **kwargs):
+        # [FUNCTION DOC]
+        # HELPER: the wrapper produced by the name-compatibility decorator. Takes the
+        # instance or class as first argument followed by arbitrary arguments. Raises a
+        # type error when both name and names keywords are present; otherwise moves the
+        # value of name to names and calls the decorated method, returning its result.
         if "name" in kwargs and "names" in kwargs:
             raise TypeError("Can only provide one of `names` and `name`")
         if "name" in kwargs:
@@ -195,6 +249,27 @@ def names_compat(meth: F) -> F:
 
 @set_module("pandas")
 class MultiIndex(Index):
+    # [CLASS DOC]
+    # Hierarchical index with several levels. Inherits from Index. State: _levels is
+    # a frozen list of level indexes holding unique labels; _codes is a frozen list of
+    # integer arrays (one per level, equal lengths) giving for every row the position
+    # of its label in the level, or minus one for missing; _names is a list with one
+    # name per level; sortorder is the number of leading levels known to be
+    # lexicographically sorted (or none). Class attributes start as empty containers so
+    # a partially built object works. Compared attributes: the names. Invariants (checked
+    # when integrity verification is on): equal numbers of levels and code arrays,
+    # equal code lengths, codes within level bounds, unique level values, and
+    # sortorder not exceeding the true lexsort depth. Construction goes through the
+    # constructor or the from_* class methods (arrays, tuples, product, frame).
+    # Provides level access and replacement, deletion/swap/reorder of levels,
+    # sorting by level, location and slicing lookups, indexer computation, set
+    # operations, conversion to tuples or frames, and pickling support. Values are
+    # exposed as an object array of tuples. Class-level aliases: rename is the same
+    # function as the base class name setter; the duplicated-detection helper used by
+    # the base class is the same as the public duplicated method; and every
+    # arithmetic, reflected, in-place and unary numeric operator (add, subtract, power,
+    # multiply, division variants, modulo, divmod, negation, positive, absolute,
+    # invert) is replaced by an invalid-operation stub that raises a type error.
     """
     A multi-level, or hierarchical, index object for pandas objects.
 
@@ -304,6 +379,20 @@ class MultiIndex(Index):
         name=None,
         verify_integrity: bool = True,
     ) -> Self:
+        # [FUNCTION DOC]
+        # Construct a MultiIndex from explicit levels and codes. Parameters: levels is a
+        # sequence of arrays (unique labels per level); codes a same-length sequence of
+        # integer arrays; sortorder an optional int (level of lexicographic sortedness);
+        # names an optional sequence of level names; copy (default false) copies the
+        # meta-data; name is an alias for names kept for Index compatibility (if given it
+        # overrides names); verify_integrity (default true) validates the structure and
+        # rewrites codes that point to missing level entries to minus one.
+        # Raises a type error if levels or codes is missing, a value error if their
+        # lengths differ or are zero, and (with verification) a value error from the
+        # integrity check. The object is built without calling a base constructor: an
+        # empty cache is created, levels and codes are set without validation, names are
+        # set (validated), sortorder is converted to an int, the identity token reset, and
+        # the reference tracker set to none. Returns the new index.
         # compat with Index
         if name is not None:
             names = name
@@ -341,6 +430,13 @@ class MultiIndex(Index):
         return result
 
     def _validate_codes(self, level: Index, code: np.ndarray) -> np.ndarray:
+        # [FUNCTION DOC]
+        # HELPER: remaps codes that point to missing entries in a level to minus one.
+        # Parameters: level is the level's labels and code is the integer code array.
+        # If the level contains any missing values (not-a-number, not-a-time or none),
+        # codes pointing to them are replaced by minus one. Returns the (possibly new)
+        # code array.
+        # KNOWN ISSUE: the docstring lists the types of the two parameters the wrong way round: it says code is an Index and level is a numpy array, but the code treats level as the labels and code as the numpy array.
         """
         Reassign code values as -1 if their corresponding levels are NaN.
 
@@ -367,6 +463,20 @@ class MultiIndex(Index):
         levels: list | None = None,
         levels_to_verify: list[int] | range | None = None,
     ) -> FrozenList:
+        # [FUNCTION DOC]
+        # HELPER: validates the internal consistency of codes and levels. Parameters:
+        # codes (default none: use the current codes), levels (default none: use the
+        # current levels) and levels_to_verify (default none: all levels; a list or range
+        # of positions). Note that empty lists count as not given, because of the
+        # truthiness test.
+        # KNOWN ISSUE: the docstring names the last parameter levels_to_validate, but the parameter is called levels_to_verify.
+        # Raises a value error when the number of levels and codes differ, when code
+        # lengths differ, when a code is at or above the level length, when a code is
+        # below minus one, when a verified level is not unique, or when sortorder exceeds
+        # the actual lexsort depth. After the checks it returns a frozen list of codes in
+        # which the verified levels have codes pointing at missing labels set to minus
+        # one while others are untouched. Does not check that the cached number of levels
+        # or sortorder match.
         """
         Parameters
         ----------
@@ -446,6 +556,14 @@ class MultiIndex(Index):
         sortorder: int | None = None,
         names: Sequence[Hashable] | Hashable | lib.NoDefault = lib.no_default,
     ) -> MultiIndex:
+        # [FUNCTION DOC]
+        # Class method converting a sequence of array-likes (one per level) to a
+        # MultiIndex. Parameters: arrays; sortorder (default none); names (default the
+        # no-default sentinel meaning take each array's name attribute, or none). Raises
+        # a type error if arrays is not list-like or any element is not list-like, and a
+        # value error if lengths differ. Iterators are first consumed into a list. Each
+        # array is factorized into codes and levels and the instance is built without
+        # integrity verification. Returns the new index.
         """
         Convert arrays to MultiIndex.
 
@@ -518,6 +636,16 @@ class MultiIndex(Index):
         sortorder: int | None = None,
         names: Sequence[Hashable] | Hashable | None = None,
     ) -> MultiIndex:
+        # [FUNCTION DOC]
+        # Class method converting tuples to a MultiIndex (decorated so it accepts name or
+        # names). Parameters: tuples is a list-like of tuple-likes (an iterator is
+        # consumed, an index or array is converted to object values); sortorder
+        # (default none); names (default none). Raises a type error if tuples is not
+        # list-like, or is empty without names. Special cases: if every element is an
+        # empty tuple, a single level with a zero code for each is built; empty input with
+        # names creates empty arrays, one per name; lists, arrays and indexes are
+        # transposed with fast helpers; other iterables are zipped with missing entries
+        # padded by not-a-number. The result is then built with the arrays constructor.
         """
         Convert list of tuples to MultiIndex.
 
@@ -597,6 +725,15 @@ class MultiIndex(Index):
         sortorder: int | None = None,
         names: Sequence[Hashable] | Hashable | lib.NoDefault = lib.no_default,
     ) -> MultiIndex:
+        # [FUNCTION DOC]
+        # Class method building the cartesian product of several iterables as a
+        # MultiIndex. Parameters: iterables (list-like of iterables, an iterator is
+        # consumed); sortorder (default none); names (default the no-default sentinel
+        # meaning use each iterable's name attribute if any). Raises a type error if
+        # iterables is not list-like. Each iterable is factorized into codes and levels,
+        # the codes are expanded into their cartesian product with the module helper,
+        # and the index is built with integrity verification at its default. Returns the
+        # new index.
         """
         Make a MultiIndex from the cartesian product of multiple iterables.
 
@@ -656,6 +793,13 @@ class MultiIndex(Index):
         sortorder: int | None = None,
         names: Sequence[Hashable] | Hashable | None = None,
     ) -> MultiIndex:
+        # [FUNCTION DOC]
+        # Class method building a MultiIndex from the columns of a data frame.
+        # Parameters: df must be a data frame (a type error is raised otherwise);
+        # sortorder (default none); names (default none: the column names are used, or
+        # the column label tuples when the columns are themselves a MultiIndex; a given
+        # sequence replaces them). Each column becomes one level through the arrays
+        # constructor. Returns the new index.
         """
         Make a MultiIndex from a DataFrame.
 
@@ -723,6 +867,13 @@ class MultiIndex(Index):
 
     @cache_readonly
     def _values(self) -> np.ndarray:
+        # [FUNCTION DOC]
+        # HELPER: cached object array of tuples, one per row; overrides the base class
+        # because this class has no single data array. For each level the labels are
+        # looked up by codes (a missing code yields the level's missing value);
+        # categorical levels are first expanded to their underlying values, and
+        # extension or datetime-like levels converted to object arrays. The per-level
+        # arrays are zipped into a single object array of tuples by a fast helper.
         # We override here, since our parent uses _data, which we don't use.
         values = []
 
@@ -749,10 +900,15 @@ class MultiIndex(Index):
 
     @property
     def values(self) -> np.ndarray:
+        # [FUNCTION DOC]
+        # Property: the values as an object array of tuples (the cached result).
         return self._values
 
     @property
     def array(self):
+        # [FUNCTION DOC]
+        # Property: always raises a value error because a MultiIndex has no single backing
+        # array; the message suggests converting to a numpy array of tuples instead.
         """
         Raises a ValueError for `MultiIndex` because there's no single
         array backing a MultiIndex.
@@ -768,6 +924,9 @@ class MultiIndex(Index):
 
     @cache_readonly
     def dtypes(self) -> Series:
+        # [FUNCTION DOC]
+        # Cached property: a series of the dtype of each level, indexed by the level
+        # names (missing names are filled with positional placeholder names).
         """
         Return the dtypes as a Series for the underlying MultiIndex.
 
@@ -800,10 +959,15 @@ class MultiIndex(Index):
         return Series([level.dtype for level in self.levels], index=Index(names))
 
     def __len__(self) -> int:
+        # [FUNCTION DOC]
+        # Return the number of rows, taken from the length of the first code array.
         return len(self.codes[0])
 
     @property
     def size(self) -> int:
+        # [FUNCTION DOC]
+        # Property: the number of rows (the length). Overrides the base class to avoid
+        # materializing the tuple values.
         """
         Return the number of elements in the underlying data.
         """
@@ -815,6 +979,12 @@ class MultiIndex(Index):
 
     @cache_readonly
     def levels(self) -> FrozenList:
+        # [FUNCTION DOC]
+        # Cached property: the levels as a frozen list of Index objects, each renamed to
+        # its level name and flagged so that setting a name on a level directly is
+        # refused. Cached so the index engine is not rebuilt on repeated access
+        # (GH 31648).
+        # KNOWN ISSUE: the docstring says the attribute returns a tuple of Index objects, but it returns a frozen list.
         """
         Levels of the MultiIndex.
 
@@ -891,6 +1061,17 @@ class MultiIndex(Index):
         validate: bool = True,
         verify_integrity: bool = False,
     ) -> None:
+        # [FUNCTION DOC]
+        # HELPER: sets the levels in place (not part of the public property because users
+        # must not set levels directly). Keyword-only parameters: levels (sequence of
+        # index-likes), level (positions or names of levels to replace; default none for
+        # all), copy (default false), validate (default true) and verify_integrity
+        # (default false). With validation: raises a value error for zero levels, for a
+        # length mismatch with the number of levels (when replacing all), or with the
+        # number of selected levels. Replacement levels are converted to indexes and
+        # views taken. With verify_integrity the codes are checked and rewritten for the
+        # replaced levels. Then the new levels are stored, the names are re-applied if
+        # any exists, and the cache is cleared. Returns nothing.
         # This is NOT part of the levels property because it should be
         # externally not allowed to set levels. User beware if you change
         # _levels directly
@@ -930,6 +1111,15 @@ class MultiIndex(Index):
     def set_levels(
         self, levels, *, level=None, verify_integrity: bool = True
     ) -> MultiIndex:
+        # [FUNCTION DOC]
+        # Return a new MultiIndex with levels replaced. Parameters: levels (sequence or
+        # sequence of sequences); level (default none: all; otherwise int, name, or a
+        # list of them, same length as levels); verify_integrity (keyword-only, default
+        # true: checks new levels are consistent with the codes). A single index-like
+        # or array-like input is wrapped as a list. Helper converts scalar level and
+        # levels to lists. Works on a view of this index with its identity reset, so the
+        # original is unchanged. Raises a value error (from the setter) on mismatched
+        # lengths or a failed integrity check. Returns the new index.
         """
         Set new levels on MultiIndex. Defaults to returning new index.
 
@@ -1048,6 +1238,8 @@ class MultiIndex(Index):
 
     @property
     def nlevels(self) -> int:
+        # [FUNCTION DOC]
+        # Property: the number of levels.
         """
         Integer number of levels in this MultiIndex.
 
@@ -1071,6 +1263,9 @@ class MultiIndex(Index):
 
     @property
     def levshape(self) -> Shape:
+        # [FUNCTION DOC]
+        # Property: a tuple of the lengths of each level (the count of unique labels per
+        # level).
         """
         A tuple representing the length of each level in the MultiIndex.
 
@@ -1102,6 +1297,9 @@ class MultiIndex(Index):
 
     @property
     def codes(self) -> FrozenList:
+        # [FUNCTION DOC]
+        # Property: the codes as a frozen list of integer arrays, one per level.
+        # KNOWN ISSUE: the docstring Returns section says a tuple of numpy arrays, but the property returns a frozen list.
         """
         Codes of the MultiIndex.
 
@@ -1136,6 +1334,15 @@ class MultiIndex(Index):
         validate: bool = True,
         verify_integrity: bool = False,
     ) -> None:
+        # [FUNCTION DOC]
+        # HELPER: sets the codes in place. Keyword-only parameters: codes (sequence of
+        # integer sequences), level (levels to replace; default none for all), copy
+        # (default false), validate (default true), verify_integrity (default false).
+        # With validation: raises a value error if the number of code arrays does not
+        # match the number of levels or the number of selected levels. Codes are coerced
+        # to the smallest suitable integer dtype for their level size and made
+        # read-only views. With verify_integrity the replaced levels are checked and
+        # rewritten. The new codes are stored and the cache cleared. Returns nothing.
         if validate:
             if level is None and len(codes) != self.nlevels:
                 raise ValueError("Length of codes must match number of levels")
@@ -1171,6 +1378,13 @@ class MultiIndex(Index):
     def set_codes(
         self, codes, *, level=None, verify_integrity: bool = True
     ) -> MultiIndex:
+        # [FUNCTION DOC]
+        # Return a new MultiIndex with codes replaced. Parameters: codes (sequence or
+        # sequence of sequences); level (default none: all; else int, name or list);
+        # verify_integrity (keyword-only, default true). Operates on a view of this
+        # index with its identity reset, so the original is unchanged. Raises a value
+        # error on mismatched lengths or a failed integrity check. Returns the new index.
+        # KNOWN ISSUE: the docstring Returns section mentions None if inplace is true, but there is no inplace parameter and the method always returns a new index.
         """
         Set new codes on MultiIndex. Defaults to returning new index.
 
@@ -1243,6 +1457,15 @@ class MultiIndex(Index):
 
     @cache_readonly
     def _engine(self):
+        # [FUNCTION DOC]
+        # HELPER: cached lookup engine. Computes for each level the number of bits needed
+        # for its labels (log base two of the level size plus the shift reserved for
+        # missing values), accumulates them from the right to get bit offsets so the
+        # combined integer sorts like the codes, and picks the smallest engine class
+        # whose integer width fits the total bits: 8, 16, 32, 64 bits, or Python
+        # integers beyond 64. Returns the engine instantiated with levels, codes and
+        # offsets.
+        # KNOWN ISSUE: the inline comments for the 32-bit and 16-bit thresholds say to use an 8-bit or 16-bit unsigned integer in the wrong place (the code returns the 32-bit engine for more than 16 bits, but the comment says 8-bit); the returned engines are right, the comments are misleading.
         # Calculate the number of bits needed to represent labels in each
         # level, as log2 of their sizes:
         # NaN values are shifted to 1 and missing values in other while
@@ -1285,9 +1508,18 @@ class MultiIndex(Index):
     # type "Type[MultiIndex]" in supertype "Index"
     @property
     def _constructor(self) -> Callable[..., MultiIndex]:  # type: ignore[override]
+        # [FUNCTION DOC]
+        # HELPER: property returning the callable used to build new indexes from tuples
+        # (the from-tuples class method of this class). The signature differs from the
+        # supertype's on purpose.
         return type(self).from_tuples
 
     def _shallow_copy(self, values: np.ndarray, name=lib.no_default) -> MultiIndex:
+        # [FUNCTION DOC]
+        # HELPER: creates a new MultiIndex from an array of tuples without sharing other
+        # state. Parameters: values (array of tuples) and name (default no-default
+        # sentinel meaning keep the current names; otherwise the new names). Returns
+        # the result of the from-tuples constructor with no sortorder.
         """
         Create a new Index with the same class as the caller, don't copy the
         data, use the same object attributes with passed in attributes taking
@@ -1305,6 +1537,10 @@ class MultiIndex(Index):
         return type(self).from_tuples(values, sortorder=None, names=names)
 
     def _view(self) -> MultiIndex:
+        # [FUNCTION DOC]
+        # HELPER: creates a lightweight view: a new MultiIndex with the same levels,
+        # codes, sortorder and names, built without integrity verification, with a copy of
+        # the cache except the cached levels entry (GH32669). Returns it.
         result = type(self)(
             levels=self.levels,
             codes=self.codes,
@@ -1325,6 +1561,17 @@ class MultiIndex(Index):
         deep: bool = False,
         name=None,
     ) -> Self:
+        # [FUNCTION DOC]
+        # Return a copy of the index. Parameters: names (default none; sequence of level
+        # names to set on the copy), deep (default false) and name (compat alias for
+        # names; default none). Names are validated together (error if both are given)
+        # with the deep flag deciding whether the names are copied. With deep set, the
+        # levels and codes are deep-copied; otherwise they are shared. A new index of the
+        # same class is built with the same sortorder, without integrity verification;
+        # the cache is copied except the cached levels entry (GH32669). A shallow copy
+        # keeps the original's identity token; a deep copy gets a fresh one. Returns the
+        # new index.
+        # KNOWN ISSUE: the summary line of the docstring claims that dtype, levels and codes can be passed and set on the copy, but only names (and deep) are accepted.
         """
         Make a copy of this object. Names, dtype, levels and codes can be passed and \
         will be set on new copy.
@@ -1401,6 +1648,13 @@ class MultiIndex(Index):
         return new_index
 
     def __array__(self, dtype=None, copy=None) -> np.ndarray:
+        # [FUNCTION DOC]
+        # Array interface. Parameters: dtype (default none) and copy (default none).
+        # Raises a value error if copy is explicitly false, because a copy cannot be
+        # avoided when building the array. If copy is true a fresh array is made from
+        # the values (with the dtype), since the cached values array must not be shared.
+        # Otherwise returns the cached values array itself (the dtype argument is
+        # ignored in this case). Returns an object array of tuples.
         """the array interface, return my values"""
         if copy is False:
             # self.values is always a newly construct array, so raise.
@@ -1414,12 +1668,19 @@ class MultiIndex(Index):
         return self.values
 
     def view(self, cls=None) -> Self:
+        # [FUNCTION DOC]
+        # Return a view: a copy that shares this index's identity token. Parameter cls is
+        # accepted for compatibility and ignored. Returns the new index.
         """this is defined as a copy with the same identity"""
         result = self.copy()
         result._id = self._id
         return result
 
     def __contains__(self, key: Any) -> bool:
+        # [FUNCTION DOC]
+        # Membership test. Parameter key must be hashable (the hash call raises a type
+        # error otherwise). Returns true if location lookup succeeds; any lookup error
+        # (key, index, type or value error) gives false.
         """
         Return a boolean indicating whether the provided key is in the index.
 
@@ -1464,13 +1725,22 @@ class MultiIndex(Index):
 
     @cache_readonly
     def dtype(self) -> np.dtype:
+        # [FUNCTION DOC]
+        # Cached property: the dtype, always the object dtype.
         return np.dtype("O")
 
     @cache_readonly
     def _is_memory_usage_qualified(self) -> bool:
+        # [FUNCTION DOC]
+        # HELPER: cached flag saying whether the info display must qualify the memory
+        # usage as a lower bound: true if any level has an object dtype or a Python-
+        # backed string dtype.
         """return a boolean if we need a qualified .info display"""
 
         def f(dtype) -> bool:
+            # [FUNCTION DOC]
+            # HELPER: predicate for one dtype: true when it is the object dtype or a string
+            # dtype whose storage is the Python one.
             return is_object_dtype(dtype) or (
                 is_string_dtype(dtype) and dtype.storage == "python"
             )
@@ -1479,6 +1749,10 @@ class MultiIndex(Index):
 
     # Cannot determine type of "memory_usage"
     def memory_usage(self, deep: bool = False) -> int:
+        # [FUNCTION DOC]
+        # Return the memory usage in bytes. Parameter deep (default false) asks for deep
+        # inspection of object data. Avoids materializing the tuple values by using the
+        # private byte counter. Returns an integer.
         """
         Memory usage of the values.
 
@@ -1516,10 +1790,17 @@ class MultiIndex(Index):
 
     @cache_readonly
     def nbytes(self) -> int:
+        # [FUNCTION DOC]
+        # Cached property: the number of bytes of the underlying data (shallow count).
         """return the number of bytes in the underlying data"""
         return self._nbytes(False)
 
     def _nbytes(self, deep: bool = False) -> int:
+        # [FUNCTION DOC]
+        # HELPER: computes the number of bytes. Parameter deep (default false). Sum of
+        # the levels' memory usage (deep or not), the bytes of the code arrays, and the
+        # sizes of the level name objects (a fixed 24 bytes when the size cannot be
+        # determined), plus the engine's size if the engine is already cached.
         """
         return the number of bytes in the underlying data
         deeply introspect the level data if deep=True
@@ -1546,6 +1827,10 @@ class MultiIndex(Index):
     # Rendering Methods
 
     def _formatter_func(self, tup):
+        # [FUNCTION DOC]
+        # HELPER: formats one row tuple. Parameter tup is a tuple with one element per
+        # level. Applies each level's own formatter function to the corresponding
+        # element and returns a tuple of the results.
         """
         Formats each item in tup according to its level's formatter function.
         """
@@ -1555,6 +1840,16 @@ class MultiIndex(Index):
     def _get_values_for_csv(
         self, *, na_rep: str = "nan", **kwargs
     ) -> npt.NDArray[np.object_]:
+        # [FUNCTION DOC]
+        # HELPER: formats values for CSV output. Keyword-only parameters: na_rep (default
+        # the text nan) and extra formatting keywords passed to the levels. Each level is
+        # formatted by its own method; for levels with missing codes an extra entry with
+        # the missing representation is appended (levels turned to strings) and the
+        # codes pointing at missing become that entry (on a writable copy; an assertion
+        # requires the original codes to be read-only). A single-level index is
+        # formatted through a plain Index built by taking the formatted level by codes.
+        # Otherwise a temporary MultiIndex of the formatted levels is built and its values
+        # returned. Returns an object array.
         new_levels = []
         new_codes = []
 
@@ -1597,6 +1892,19 @@ class MultiIndex(Index):
         sparsify: bool | None | lib.NoDefault,
         formatter: Callable | None = None,
     ) -> list:
+        # [FUNCTION DOC]
+        # HELPER: builds the string columns for displaying the index. Keyword-only
+        # parameters: include_names (whether to add each level name as the first entry of
+        # its column), sparsify (true, false, none or the no-default sentinel; none reads
+        # the display option for multi-level sparsification) and formatter (optional
+        # callable). Returns an empty list for an empty index. Each level is formatted by
+        # taking its labels by codes and applying the flat formatter, with missing codes
+        # shown with a type-specific missing text; a level with no labels (all-missing)
+        # is formatted element by element. Names are prepended (escaped), and when
+        # sparsify is on, repeated leading labels are blanked using the sparsification
+        # helper (the sentinel is the empty string, or the no-default marker when that was
+        # given; a falsy-but-not-bool value is rejected by an assertion). Returns the list
+        # of columns, each a list of strings.
         if len(self) == 0:
             return []
 
@@ -1657,9 +1965,21 @@ class MultiIndex(Index):
     # Names Methods
 
     def _get_names(self) -> FrozenList:
+        # [FUNCTION DOC]
+        # HELPER: getter of the names property: returns the level names as a frozen list.
         return FrozenList(self._names)
 
     def _set_names(self, names, *, level=None) -> None:
+        # [FUNCTION DOC]
+        # HELPER: setter of the names property (also called by the constructor).
+        # Parameters: names (a list-like of hashable names; a non-list-like such as a
+        # single string raises a value error, GH 15110) and level (default none: all
+        # levels; otherwise level numbers or names, converted via the level lookup).
+        # Raises a value error if the count of names does not match the count of levels
+        # or selected levels, and a type error if any non-none name is not hashable
+        # (GH 20527). The names are stored in place (mutation) and the cached levels are
+        # discarded since their names are stale. Returns nothing.
+        # KNOWN ISSUE: the docstring documents the first parameter as values, but the parameter is named names.
         """
         Set new names on index. Each name has to be a hashable type.
 
@@ -1750,9 +2070,19 @@ class MultiIndex(Index):
 
     @cache_readonly
     def inferred_type(self) -> str:
+        # [FUNCTION DOC]
+        # Cached property: constant string "mixed".
         return "mixed"
 
     def _get_level_number(self, level) -> int:
+        # [FUNCTION DOC]
+        # HELPER: converts a level name or number to a zero-based level number.
+        # Parameter level is a name or an integer. A name that occurs more than once
+        # raises a value error unless the argument is an integer. An exact match in the
+        # names wins even for integers; otherwise a non-integer raises a key error
+        # saying the level was not found; a negative integer counts from the end and
+        # raises an index error if still negative; an integer beyond the last level
+        # raises an index error. Returns the level number.
         count = self.names.count(level)
         if (count > 1) and not is_integer(level):
             raise ValueError(
@@ -1781,6 +2111,13 @@ class MultiIndex(Index):
 
     @cache_readonly
     def is_monotonic_increasing(self) -> bool:
+        # [FUNCTION DOC]
+        # Cached property: true when the rows are in non-decreasing lexicographic order.
+        # False if any code is minus one (missing). If every level is monotonic
+        # increasing, the sortedness of the code arrays is checked directly (GH27495).
+        # Otherwise a lexicographic sort order is computed from the level values
+        # (least significant key first) and checked to be increasing; on a type error
+        # (mixed types) the tuple values are checked instead.
         """
         Return a boolean if the values are equal or increasing.
         """
@@ -1812,6 +2149,9 @@ class MultiIndex(Index):
 
     @cache_readonly
     def is_monotonic_decreasing(self) -> bool:
+        # [FUNCTION DOC]
+        # Cached property: true when the rows are in non-increasing order, computed as
+        # whether the reversed index is monotonic increasing.
         """
         Return a boolean if the values are equal or decreasing.
         """
@@ -1819,6 +2159,12 @@ class MultiIndex(Index):
         return self[::-1].is_monotonic_increasing
 
     def duplicated(self, keep: DropKeep = "first") -> npt.NDArray[np.bool_]:
+        # [FUNCTION DOC]
+        # Mark duplicated rows. Parameter keep: first (default; mark all but the first
+        # occurrence), last, or false (mark all duplicates). Combines the codes into one
+        # group id per row without sorting or dropping nulls and delegates to the
+        # compiled duplicate finder. Returns a boolean array. The private duplicated
+        # attribute is aliased to this method.
         """
         Indicate duplicate index values.
 
@@ -1883,12 +2229,20 @@ class MultiIndex(Index):
     _duplicated = duplicated  # type: ignore[misc]
 
     def fillna(self, value):
+        # [FUNCTION DOC]
+        # Always raises a not-implemented error: filling missing values is not defined for
+        # a MultiIndex. Parameter value is ignored.
         """
         fillna is not implemented for MultiIndex
         """
         raise NotImplementedError("fillna is not defined for MultiIndex")
 
     def dropna(self, how: AnyAll = "any") -> MultiIndex:
+        # [FUNCTION DOC]
+        # Remove rows with missing entries. Parameter how: any (default; drop rows where
+        # any level is missing) or all (drop rows where every level is missing).
+        # Raises a value error for any other value. Missing means a code of minus one.
+        # Returns a new MultiIndex built by setting the filtered codes on a view.
         """
         Return MultiIndex without NA/NaN values.
 
@@ -1930,6 +2284,12 @@ class MultiIndex(Index):
         return self.set_codes(codes=new_codes)
 
     def _get_level_values(self, level: int, unique: bool = False) -> Index:
+        # [FUNCTION DOC]
+        # HELPER: returns the labels of one level for every row. Parameters: level (an
+        # integer level number) and unique (default false: only distinct codes are
+        # used). Takes the level's values by codes (missing becomes the level's missing
+        # value) and wraps them in an index of the same kind as the level, with the
+        # level's name. Returns that Index.
         """
         Return vector of label values for requested level,
         equal to the length of the index
@@ -1955,6 +2315,11 @@ class MultiIndex(Index):
         return lev._shallow_copy(filled, name=name)
 
     def get_level_values(self, level) -> Index:
+        # [FUNCTION DOC]
+        # Return the labels of one level, repeated for every row. Parameter level is a
+        # level number or name (resolved with the level lookup; the lookup errors
+        # propagate). Returns an Index (of the level's type, possibly cast to a type that
+        # can hold missing values). The index has the level's name.
         """
         Return vector of label values for requested level.
 
@@ -2024,6 +2389,11 @@ class MultiIndex(Index):
         return values
 
     def unique(self, level=None):
+        # [FUNCTION DOC]
+        # Return distinct values in order of appearance (not sorted). Parameter level
+        # (default none). Without level it removes duplicate rows and returns a
+        # MultiIndex; with a level (number or name) it returns an Index of that level's
+        # distinct values.
         """
         Return unique values in the index.
 
@@ -2072,6 +2442,15 @@ class MultiIndex(Index):
         name=lib.no_default,
         allow_duplicates: bool = False,
     ) -> DataFrame:
+        # [FUNCTION DOC]
+        # Convert to a data frame with one column per level. Parameters: index (default
+        # true: use this MultiIndex as the frame's index; otherwise a default index);
+        # name (default no-default sentinel: use the level names; otherwise a list-like
+        # of column names with the same length as the number of levels); allow_duplicates
+        # (default false: duplicate column names raise). Raises a type error when name is
+        # not list-like, a value error when its length differs from the number of levels,
+        # and a value error for duplicate column names without allow_duplicates.
+        # Columns are the level value arrays by row, in level order.
         """
         Create a DataFrame with the levels of the MultiIndex as columns.
 
@@ -2158,6 +2537,9 @@ class MultiIndex(Index):
     # error: Return type "Index" of "to_flat_index" incompatible with return type
     # "MultiIndex" in supertype "Index"
     def to_flat_index(self) -> Index:  # type: ignore[override]
+        # [FUNCTION DOC]
+        # Convert to a flat Index whose elements are the row tuples (the tuple values,
+        # without splitting tuples into levels and without copying). Returns the Index.
         """
         Convert a MultiIndex to an Index of Tuples containing the level values.
 
@@ -2188,6 +2570,9 @@ class MultiIndex(Index):
         return Index(self._values, tupleize_cols=False, copy=False)
 
     def _is_lexsorted(self) -> bool:
+        # [FUNCTION DOC]
+        # HELPER: returns true when the codes are lexicographically sorted over all
+        # levels, that is, when the lexsort depth equals the number of levels.
         """
         Return True if the codes are lexicographically sorted.
 
@@ -2229,6 +2614,10 @@ class MultiIndex(Index):
 
     @cache_readonly
     def _lexsort_depth(self) -> int:
+        # [FUNCTION DOC]
+        # HELPER: cached number of leading levels that are lexicographically sorted. Uses
+        # sortorder when it is set; otherwise computes it from the codes with the
+        # module helper. Returns an integer.
         """
         Compute and return the lexsort_depth, the number of levels of the
         MultiIndex that are sorted lexically
@@ -2242,6 +2631,15 @@ class MultiIndex(Index):
         return _lexsort_depth(self.codes, self.nlevels)
 
     def _sort_levels_monotonic(self, raise_if_incomparable: bool = False) -> MultiIndex:
+        # [FUNCTION DOC]
+        # HELPER: returns a MultiIndex whose levels are each sorted (monotonic increasing)
+        # while the rows are unchanged in appearance and equal to the original.
+        # Parameter raise_if_incomparable (default false): if true, a level that cannot
+        # be sorted raises a type error; otherwise such a level is left as is. If the
+        # index is already lexsorted and monotonic, returns self. Otherwise each unsorted
+        # level is reordered and its codes remapped through the reverse permutation
+        # (missing stays minus one). The new index keeps names and sortorder and skips
+        # integrity verification.
         """
         This is an *internal* function.
 
@@ -2310,6 +2708,15 @@ class MultiIndex(Index):
         )
 
     def remove_unused_levels(self) -> MultiIndex:
+        # [FUNCTION DOC]
+        # Return a new MultiIndex without level entries that no row uses. The result has
+        # the same values and ordering and is equal to the original. For each level, the
+        # set of used codes is found by counting (cheaper than unique); if some entries
+        # are unused, the used ones are kept in their order of first appearance and the
+        # codes remapped (missing stays minus one). If nothing changed a view of the
+        # original is returned; otherwise the view has a fresh identity and new levels
+        # and codes set without validation.
+        # KNOWN ISSUE: when a level has missing labels and the number of used codes equals its length, the loop is terminated early with a break instead of moving on to the next level; the levels after it are then never examined or added, so if an earlier level was changed the new levels list is shorter than the number of levels.
         """
         Create new MultiIndex from current that removes unused levels.
 
@@ -2411,6 +2818,10 @@ class MultiIndex(Index):
     # Pickling Methods
 
     def __reduce__(self):
+        # [FUNCTION DOC]
+        # Pickle support: returns the shared base-index reconstruction function with the
+        # class and a dictionary of the levels (as a plain list), codes (as a plain
+        # list), sortorder and names (as a plain list), and no extra state.
         """Necessary for making this object picklable"""
         d = {
             "levels": list(self.levels),
@@ -2423,6 +2834,16 @@ class MultiIndex(Index):
     # --------------------------------------------------------------------
 
     def __getitem__(self, key):
+        # [FUNCTION DOC]
+        # Item access. Parameter key: scalar position, slice, boolean mask, integer array
+        # or Index. A zero-dimensional array is unpacked. A scalar (checked by the cast
+        # scalar indexer, which rejects floats) returns a tuple with the label of every
+        # level at that row, using not-a-number where the code is minus one; an
+        # out-of-bounds position raises an index error from the code arrays. Anything
+        # else returns a new MultiIndex made by indexing every code array with the key,
+        # sharing the levels and names without verification. The result keeps sortorder
+        # only for boolean masks and for slices with a positive or missing step;
+        # otherwise it is none.
         key = lib.item_from_zerodim(key)
         if is_scalar(key):
             key = com.cast_scalar_indexer(key)
@@ -2458,6 +2879,10 @@ class MultiIndex(Index):
             )
 
     def _getitem_slice(self: MultiIndex, slobj: slice) -> MultiIndex:
+        # [FUNCTION DOC]
+        # HELPER: slice fast path. Parameter slobj is a slice. Slices every code array
+        # and returns a new MultiIndex of the same class sharing levels and names, keeping
+        # sortorder only for a positive or missing step.
         """
         Fastpath for __getitem__ when we know we have a slice.
         """
@@ -2483,6 +2908,19 @@ class MultiIndex(Index):
         fill_value=None,
         **kwargs,
     ) -> MultiIndex:
+        # [FUNCTION DOC]
+        # Return a new MultiIndex of the rows at the given positions. Parameters:
+        # indices (array-like of integers, converted to platform integers); axis (default
+        # 0, not otherwise used); allow_fill (default true: minus one entries mean missing
+        # rather than counting from the end) and fill_value (default none: filling is only
+        # allowed when a fill value is given); extra keyword arguments are validated for
+        # numpy compatibility. Raises a value error (from the fill check) if filling is
+        # enabled and negative indices other than minus one appear. If the indices are
+        # exactly the full range a copy is returned. Otherwise every code array is taken,
+        # and if filling, positions where the index is minus one get the missing code
+        # minus one. The result shares levels and names, has no sortorder and no
+        # verification. The actual fill value is not used beyond switching filling on.
+        # KNOWN ISSUE: the docstring describes the False setting of allow_fill as the default and the True setting as the other one, but the signature default is true.
         """
         Return a new MultiIndex of the values selected by the indices.
 
@@ -2564,6 +3002,16 @@ class MultiIndex(Index):
         )
 
     def append(self, other):
+        # [FUNCTION DOC]
+        # Append other indexes. Parameter other is an index or a list or tuple of
+        # indexes. If every element is a MultiIndex with at least as many levels as this
+        # one, the result is built from the levels: each level becomes the union of the
+        # corresponding levels, each index's codes are recoded into it and concatenated,
+        # and a level name is kept only if all indexes agree on it (else none); the result
+        # is a MultiIndex without integrity verification and without sortorder.
+        # Otherwise the tuple values of all are concatenated and converted with the
+        # from-tuples constructor (names dropped); if that raises a type or index error
+        # a flat Index of the tuples is returned instead.
         """
         Append a collection of Index options together.
 
@@ -2642,6 +3090,14 @@ class MultiIndex(Index):
     def argsort(
         self, *args, na_position: NaPosition = "last", **kwargs
     ) -> npt.NDArray[np.intp]:
+        # [FUNCTION DOC]
+        # Return the positions that would sort the rows. Parameters: *args and **kwargs
+        # are accepted for numpy compatibility but are not used; na_position (keyword,
+        # default last; first places missing entries first). The levels are first sorted
+        # monotonically (a level that cannot be compared raises a type error), codes are
+        # taken from the sorting-oriented categoricals, and a lexicographic sort of the
+        # codes is performed. Returns an integer position array.
+        # KNOWN ISSUE: the docstring says the extra positional and keyword arguments are passed to the numpy argsort, but they are ignored.
         """
         Return the integer indices that would sort the index.
 
@@ -2695,6 +3151,12 @@ class MultiIndex(Index):
         return lexsort_indexer(keys, na_position=na_position, codes_given=True)
 
     def repeat(self, repeats: int, axis=None) -> MultiIndex:
+        # [FUNCTION DOC]
+        # Repeat each row. Parameters: repeats (an int or array of ints, converted to
+        # platform integers) and axis (must be none; validated for numpy compatibility).
+        # Every code array is repeated accordingly. The result shares levels, names and
+        # sortorder (preserved, since repetition keeps ordering) and is not verified.
+        # Returns the new MultiIndex.
         """
         Repeat elements of a MultiIndex.
 
@@ -2768,6 +3230,19 @@ class MultiIndex(Index):
         level: Index | np.ndarray | Iterable[Hashable] | None = None,
         errors: IgnoreRaise = "raise",
     ) -> MultiIndex:
+        # [FUNCTION DOC]
+        # Return a new MultiIndex with the given labels removed. Parameters: codes
+        # (array-like; tuples if level is not given, otherwise labels of that level);
+        # level (default none; a level number or name); errors (default raise; with ignore
+        # labels that are missing are skipped). If level is given the work is done by the
+        # level-specific helper. Otherwise the labels are converted to an object array
+        # where possible and each label is looked up with the location method: integers
+        # give a single row, slices expand to the row range, and boolean masks expand to
+        # all matching rows (a performance warning is issued if no leading level is
+        # lexsorted and the performance-warnings option is on). Any other lookup result
+        # type raises an assertion error. A key error from a missing label is re-raised
+        # unless errors is ignore. The rows found are deleted from the index and the
+        # result returned.
         """
         Make a new :class:`pandas.MultiIndex` with the passed list of codes deleted.
 
@@ -2873,6 +3348,14 @@ class MultiIndex(Index):
     def _drop_from_level(
         self, codes, level, errors: IgnoreRaise = "raise"
     ) -> MultiIndex:
+        # [FUNCTION DOC]
+        # HELPER: drops labels from one level. Parameters: codes (labels to drop), level
+        # (number or name) and errors (default raise). The labels are looked up in the
+        # level; labels that are absent (but not missing-value markers) are flagged, as
+        # are missing markers when the level has as many entries as the index has rows.
+        # Raises a key error listing the labels not found unless errors is ignore. Returns
+        # the index restricted to rows whose code at this level is not among the found
+        # positions.
         codes = com.index_labels_to_array(codes)
         i = self._get_level_number(level)
         index = self.levels[i]
@@ -2892,6 +3375,12 @@ class MultiIndex(Index):
         return self[mask]
 
     def swaplevel(self, i=-2, j=-1) -> MultiIndex:
+        # [FUNCTION DOC]
+        # Swap two levels. Parameters: i and j (level numbers or names, may be mixed;
+        # defaults minus two and minus one, the last two levels). Lookup errors propagate
+        # from the level-number helper. Returns a new MultiIndex with the levels, codes
+        # and names of the two positions exchanged; row order is unchanged; it is
+        # built without verification and without sortorder.
         """
         Swap level i with level j.
 
@@ -2968,6 +3457,10 @@ class MultiIndex(Index):
         )
 
     def reorder_levels(self, order) -> MultiIndex:
+        # [FUNCTION DOC]
+        # Reorder the levels. Parameter order is a list of level numbers or names that
+        # must mention every level exactly once; each is resolved to a number and the
+        # work is passed to the numeric version. Returns the new MultiIndex.
         """
         Rearrange levels using input order. May not drop or duplicate levels.
 
@@ -3018,6 +3511,11 @@ class MultiIndex(Index):
         return result
 
     def _reorder_ilevels(self, order) -> MultiIndex:
+        # [FUNCTION DOC]
+        # HELPER: reorders levels by numeric positions. Parameter order is a list of
+        # level numbers. Raises an assertion error when its length differs from the number
+        # of levels (duplicates are not checked). Returns a new MultiIndex with levels,
+        # codes and names rearranged, unverified and without sortorder.
         if len(order) != self.nlevels:
             raise AssertionError(
                 f"Length of order must be same as number of levels ({self.nlevels}), "
@@ -3034,6 +3532,12 @@ class MultiIndex(Index):
     def _recode_for_new_levels(
         self, new_levels, *, copy: bool
     ) -> Generator[np.ndarray]:
+        # [FUNCTION DOC]
+        # HELPER: generator recoding codes for replacement levels. Parameters:
+        # new_levels (list of levels, at most as many as this index has; an assertion
+        # error otherwise) and copy (keyword-only, whether recoding must copy). Yields,
+        # for each given level in order, the code array mapped from the old level
+        # entries to the positions in the new level, with minus one for entries not found.
         if len(new_levels) > self.nlevels:
             raise AssertionError(
                 f"Length of new_levels ({len(new_levels)}) "
@@ -3045,6 +3549,12 @@ class MultiIndex(Index):
             )
 
     def _get_codes_for_sorting(self) -> list[Categorical]:
+        # [FUNCTION DOC]
+        # HELPER: converts each code array to a categorical for sorting. The categories
+        # are all integer positions up to the largest code present (not just the observed
+        # ones) with ordering enabled; missing codes (minus one) stay missing so they
+        # sort as missing. No validation is done. Returns a list of categoricals, one
+        # per level.
         """
         we are categorizing our codes by using the
         available categories (all, not just observed)
@@ -3054,6 +3564,9 @@ class MultiIndex(Index):
         """
 
         def cats(level_codes: np.ndarray) -> np.ndarray:
+            # [FUNCTION DOC]
+            # HELPER: builds the category array for one code array: the integers from zero to
+            # the largest code, in the code array's dtype; empty when the codes are empty.
             return np.arange(
                 level_codes.max() + 1 if len(level_codes) else 0,
                 dtype=level_codes.dtype,
@@ -3071,6 +3584,17 @@ class MultiIndex(Index):
         sort_remaining: bool = True,
         na_position: str = "first",
     ) -> tuple[MultiIndex, npt.NDArray[np.intp]]:
+        # [FUNCTION DOC]
+        # Sort by one or more levels. Parameters: level (int, name or list of them;
+        # default 0); ascending (bool or a list of bools of the same length as level;
+        # default true); sort_remaining (default true: after the chosen levels, sort by
+        # all the other levels in order; only applies when ascending is not a list);
+        # na_position (first or last; default first). Raises a value error if ascending is
+        # a list whose length differs from the number of levels. Computes a lexicographic
+        # sort of the code arrays and applies it to the codes; the result keeps the
+        # levels and names. Its sortorder is the first sorting level when remaining
+        # levels are not sorted and ascending is not a list, otherwise none. Returns a
+        # pair of the sorted index and the integer position array that produced it.
         """
         Sort MultiIndex at the requested level.
 
@@ -3183,6 +3707,14 @@ class MultiIndex(Index):
         return new_index, indexer
 
     def _wrap_reindex_result(self, target, indexer, preserve_names: bool):
+        # [FUNCTION DOC]
+        # HELPER: post-processes the result of a reindex. Parameters: target (the
+        # requested new index, any kind), indexer (positions or none) and preserve_names
+        # (bool). If the target is not a MultiIndex: no indexer means this index itself;
+        # an indexer without missing positions means this index taken at those
+        # positions; otherwise the target is converted from tuples, and if that fails
+        # with a type error (not all tuples) the target is returned unchanged without
+        # name handling. Then the names are possibly carried over. Returns the index.
         if not isinstance(target, MultiIndex):
             if indexer is None:
                 target = self
@@ -3199,6 +3731,11 @@ class MultiIndex(Index):
         return target
 
     def _maybe_preserve_names(self, target: IndexT, preserve_names: bool) -> IndexT:
+        # [FUNCTION DOC]
+        # HELPER: carries this index's names over to a target. Parameters: target (an
+        # index) and preserve_names (bool). Only when preserve_names is set, the target has
+        # the same number of levels and different names, a shallow copy of the target
+        # receives this index's names. Returns the target or the renamed copy.
         if (
             preserve_names
             and target.nlevels == self.nlevels
@@ -3212,6 +3749,10 @@ class MultiIndex(Index):
     # Indexing Methods
 
     def _check_indexing_error(self, key) -> None:
+        # [FUNCTION DOC]
+        # HELPER: validates a key for lookups. Raises an invalid-index error when the
+        # key is not hashable or is an iterator (generators are hashable and are excluded
+        # explicitly). Tuples are allowed, unlike the base class. Returns nothing.
         if not is_hashable(key) or is_iterator(key):
             # We allow tuples if they are hashable, whereas other Index
             #  subclasses require scalar.
@@ -3220,6 +3761,9 @@ class MultiIndex(Index):
 
     @cache_readonly
     def _should_fallback_to_positional(self) -> bool:
+        # [FUNCTION DOC]
+        # HELPER: cached property saying whether integer keys should be treated as
+        # positional (GH#33355); taken from the first level.
         """
         Should integer key(s) be treated as positional?
         """
@@ -3229,6 +3773,14 @@ class MultiIndex(Index):
     def _get_indexer_strict(
         self, key, axis_name: str
     ) -> tuple[Index, npt.NDArray[np.intp]]:
+        # [FUNCTION DOC]
+        # HELPER: strict indexer for label lists. Parameters: key (list-like of labels)
+        # and axis_name (used in error messages). Non-index keys are converted to
+        # object arrays preserving tuples. If the first element is not a tuple, the keys
+        # are matched against level zero only; missing keys raise via the missing check,
+        # and the result is this index taken at the indexer, together with the indexer.
+        # Otherwise defers to the base class. Returns a pair of the target index and the
+        # integer position array.
         keyarr = key
         if not isinstance(keyarr, Index):
             keyarr = com.asarray_tuplesafe(keyarr)
@@ -3242,6 +3794,13 @@ class MultiIndex(Index):
         return super()._get_indexer_strict(key, axis_name)
 
     def _raise_if_missing(self, key, indexer, axis_name: str) -> None:
+        # [FUNCTION DOC]
+        # HELPER: raises a key error for missing labels. Parameters: key, indexer (with
+        # minus one for missing) and axis_name. Mirrors the first-level-only case of the
+        # strict indexer: if some positions are missing, the error lists the keys that are
+        # not present in level zero; if all keys are in the level but unused by the rows,
+        # the error lists all the keys. For tuple keys defers to the base class.
+        # Returns nothing in the non-raising path.
         keyarr = key
         if not isinstance(key, Index):
             keyarr = com.asarray_tuplesafe(key)
@@ -3262,6 +3821,10 @@ class MultiIndex(Index):
             return super()._raise_if_missing(key, indexer, axis_name)
 
     def _get_indexer_level_0(self, target) -> npt.NDArray[np.intp]:
+        # [FUNCTION DOC]
+        # HELPER: positions of target labels against the first level only. Parameter target
+        # is list-like. Builds a categorical index from level zero and its codes, then
+        # uses its lookup that allows duplicates. Returns an integer position array.
         """
         Optimized equivalent to `self.get_level_values(0).get_indexer_for(target)`.
         """
@@ -3276,6 +3839,13 @@ class MultiIndex(Index):
         label: Hashable | Sequence[Hashable],
         side: Literal["left", "right"],
     ) -> int:
+        # [FUNCTION DOC]
+        # Compute the slice bound for a label in a lexsorted index. Parameters: label (a
+        # label or tuple of labels for the leading levels) and side (left or right).
+        # A non-tuple is treated as a one-element tuple. Delegates to the partial tuple
+        # search (which may raise an unsorted-index error or a type error) and unboxes a
+        # numpy scalar result. Returns the integer position: the first matching row for
+        # left, one past the last for right.
         """
         For an ordered MultiIndex, compute slice bound
         that corresponds to given label.
@@ -3326,6 +3896,12 @@ class MultiIndex(Index):
         return result
 
     def slice_locs(self, start=None, end=None, step=None) -> tuple[int, int]:
+        # [FUNCTION DOC]
+        # Compute the slice positions for start and end labels (which may be partial
+        # tuples). Parameters: start and end (default none: the beginning and end) and
+        # step (default none). The base class implementation does all the work, using the
+        # bound method of this class; this override exists to attach documentation.
+        # Returns a pair of integers.
         """
         For an ordered MultiIndex, compute the slice locations for input
         labels.
@@ -3382,6 +3958,15 @@ class MultiIndex(Index):
         return super().slice_locs(start, end, step)
 
     def _partial_tup_index(self, tup: tuple, side: Literal["left", "right"] = "left"):
+        # [FUNCTION DOC]
+        # HELPER: finds a bound for a partial key. Parameters: tup (tuple of labels for
+        # the leading levels) and side (left or right; default left). Raises an
+        # unsorted-index error if the tuple is longer than the lexsort depth, and a
+        # type error for labels that cannot be compared to a level. Narrows a window of
+        # rows level by level using binary search on the codes: labels missing from the
+        # level are located by searching the level and returning immediately; present
+        # labels narrow the window (or return the bound at the last level). Returns the
+        # integer bound.
         if len(tup) > self._lexsort_depth:
             raise UnsortedIndexError(
                 f"Key length ({len(tup)}) was greater than MultiIndex lexsort depth "
@@ -3433,6 +4018,12 @@ class MultiIndex(Index):
                 return start + algos.searchsorted(section, idx, side=side)
 
     def _get_loc_single_level_index(self, level_index: Index, key: Hashable) -> int:
+        # [FUNCTION DOC]
+        # HELPER: location of a key in a single level's index. Parameters: level_index and
+        # key. If the key is a scalar missing value the location is minus one (the code
+        # for missing); otherwise the level's own location lookup is used, which may
+        # return an integer or a slice, or raise a key error.
+        # KNOWN ISSUE: the return annotation and docstring say the result is an integer, but the level lookup may return a slice, and callers handle slices.
         """
         If key is NA value, location of index unify as -1.
 
@@ -3458,6 +4049,19 @@ class MultiIndex(Index):
             return level_index.get_loc(key)
 
     def get_loc(self, key):
+        # [FUNCTION DOC]
+        # Return the location of a label or a tuple of labels. Parameter key: a single
+        # label (matched against level zero) or a tuple with at most one label per level.
+        # Returns an integer, a slice, or a boolean mask. Raises a key error when the
+        # tuple is longer than the number of levels or nothing matches; raises an
+        # invalid-index error from the indexing check for unhashable or iterator keys.
+        # Behavior: a non-tuple uses the level-zero indexer and converts an index array to a
+        # slice or mask. A full-length tuple on a unique index goes to the engine (on a type
+        # error, such as partial string slicing, it falls back to the level-wise lookup).
+        # Otherwise the key is split into a part within the lexsort depth, resolved with a
+        # slice, and a remainder that is filtered level by level over that slice (a
+        # performance warning is emitted when the remainder is non-empty and the option is
+        # on). The result is a slice when the filter keeps everything.
         """
         Get location for a label or a tuple of labels. The location is returned \
         as an integer/slice or boolean mask.
@@ -3506,6 +4110,10 @@ class MultiIndex(Index):
         self._check_indexing_error(key)
 
         def _maybe_to_slice(loc):
+            # [FUNCTION DOC]
+            # HELPER: converts an array of integer positions into a slice if the positions are
+            # contiguous, else into a boolean mask over the whole index. Non-array input or
+            # arrays of other dtypes are returned unchanged.
             """convert integer indexer to boolean mask or slice if possible"""
             if not isinstance(loc, np.ndarray) or loc.dtype != np.intp:
                 return loc
@@ -3586,6 +4194,16 @@ class MultiIndex(Index):
         return _maybe_to_slice(loc) if len(loc) != stop - start else slice(start, stop)
 
     def get_loc_level(self, key, level: IndexLabel = 0, drop_level: bool = True):
+        # [FUNCTION DOC]
+        # Get the locations and the reduced index for a key. Parameters: key (a label,
+        # a tuple, or a list of labels); level (a level number or name, or a
+        # range/list/tuple of them; default 0; names are resolved to numbers); drop_level
+        # (default true: the selected levels are removed from the returned index; when
+        # false the returned index keeps all levels and is the index sliced at the
+        # location). Returns a pair: the location (integer, slice or boolean mask) and the
+        # reduced index (an Index or MultiIndex, or none when the key covers every
+        # level). Errors from the helper propagate (key errors, assertion errors for
+        # mismatched key and level lengths, type errors for unsupported keys).
         """
         Get location and sliced index for requested label(s)/level(s).
 
@@ -3651,12 +4269,35 @@ class MultiIndex(Index):
         return loc, mi
 
     def _get_loc_level(self, key, level: int | list[int] = 0):
+        # [FUNCTION DOC]
+        # HELPER: core of the location-and-reduced-index lookup with level numbers
+        # already resolved. Parameters: key (label, tuple, or list) and level (an integer
+        # or a list/tuple of integers; default 0). Returns the pair (location, reduced
+        # index). Cases: for several levels, the key must have the same count (assertion
+        # error otherwise), each is resolved recursively and the boolean masks are
+        # combined with logical and, then the selected levels are dropped (if that would
+        # drop all levels the unreduced selection is returned instead). A list key is
+        # treated as a tuple (kludge for #1796). A tuple key at level zero is first tried
+        # as a single label of level zero; otherwise, if it has no slices, a full-length
+        # key on a unique index goes straight to the engine, else partial selection uses
+        # the location method and drops the levels given by the key (with special
+        # handling when every level is given, and for partial string indexing); a tuple
+        # containing slices intersects per-level indexers. A non-tuple key is resolved
+        # on the single level, and for partial string keys on datetime-like levels the
+        # index is returned without dropping. A key error comes out of lookups; a type
+        # error is raised when a tuple element is neither a label nor a slice.
         """
         get_loc_level but with `level` known to be positional, not name-based.
         """
 
         # different name to distinguish from maybe_droplevels
         def maybe_mi_droplevels(indexer, levels):
+            # [FUNCTION DOC]
+            # HELPER: slices the index by an indexer and drops the given level numbers (from
+            # the highest to the lowest). Parameters: indexer (integer, slice or mask) and
+            # levels (iterable of level numbers). Errors that occur when a level does not
+            # exist or all levels are dropped (value errors) are left to the caller. Returns
+            # the reduced index.
             """
             If level does not exist or all levels were dropped, the exception
             has to be handled outside.
@@ -3802,6 +4443,20 @@ class MultiIndex(Index):
     def _get_level_indexer(
         self, key, level: int = 0, indexer: npt.NDArray[np.bool_] | None = None
     ):
+        # [FUNCTION DOC]
+        # HELPER: locations of a key within one level of the whole index. Parameters:
+        # key (a label, a slice, or a list-like label handled by the level index); level
+        # (positional number only, default 0); indexer (optional boolean array restricting
+        # the positions examined, default none). Returns a slice when the level is sorted
+        # and the match is contiguous, otherwise a boolean array. Slices: start and stop
+        # are found in the level (negative steps handled); partial string slices on
+        # datetime-like levels produce slices from the level; when the level is not the
+        # first or the index is not lexsorted or a step is given, a boolean mask is
+        # built from the code ranges (stop made inclusive); otherwise the bounds are found
+        # by binary search on the codes. Scalar keys: a missing key gives the missing
+        # code; level-wise match produces a mask (error if unused) or, for a sorted first
+        # level, a slice by binary search. Raises a key error if the label is in the
+        # level but used by no row, or is absent.
         # `level` kwarg is _always_ positional, never name
         # return a boolean array or slice showing where the key is
         # in the totality of values
@@ -3811,6 +4466,13 @@ class MultiIndex(Index):
         level_codes = self.codes[level]
 
         def convert_indexer(start, stop, step, indexer=indexer, codes=level_codes):
+            # [FUNCTION DOC]
+            # HELPER: builds a boolean mask of codes within a range. Parameters: start, stop,
+            # step (the code range; step none or one gives a simple range test, otherwise
+            # membership in an arithmetic sequence of codes), indexer (default the enclosing
+            # indexer) and codes (default the level's codes). If an existing indexer is given,
+            # only its true positions are examined and the result is a copy of that indexer
+            # with those positions updated. Returns the boolean mask.
             # Compute a bool indexer to identify the positions to take.
             # If we have an existing indexer, we only need to examine the
             # subset of positions where the existing indexer is True.
@@ -3913,6 +4575,20 @@ class MultiIndex(Index):
             return slice(maybe_unbox_numpy_scalar(start), maybe_unbox_numpy_scalar(end))
 
     def get_locs(self, seq) -> npt.NDArray[np.intp]:
+        # [FUNCTION DOC]
+        # Get integer locations for a selection spanning levels. Parameter seq: one
+        # selection per level, each being a label, slice, list of labels, boolean mask
+        # or the null slice (which skips the level); a missing trailing level means
+        # no restriction. Raises an unsorted-index error if a real slice is used on a
+        # level beyond the lexsort depth, a not-implemented error if an ellipsis appears,
+        # a value error for a boolean mask of the wrong length, and a key error if a
+        # selection combined with earlier ones leaves no rows although the selection
+        # alone matched something. Per-level results are combined with logical and;
+        # lists are or-ed label by label (falling back to per-label lookups when the
+        # list itself is not a single key). If nothing is selected an empty integer
+        # array is returned; a trailing null slice on the first selection returns all
+        # positions. The final positions are ordered like the selection. Returns an
+        # integer position array.
         """
         Get location for a sequence of labels.
 
@@ -3963,6 +4639,9 @@ class MultiIndex(Index):
         n = len(self)
 
         def _to_bool_indexer(indexer) -> npt.NDArray[np.bool_]:
+            # [FUNCTION DOC]
+            # HELPER: converts a slice into a full-length boolean mask (positions in the
+            # slice true) and returns other indexers unchanged.
             if isinstance(indexer, slice):
                 new_indexer = np.zeros(n, dtype=np.bool_)
                 new_indexer[indexer] = True
@@ -4054,6 +4733,19 @@ class MultiIndex(Index):
         seq: tuple[Scalar | Iterable | AnyArrayLike, ...],
         indexer: npt.NDArray[np.intp],
     ) -> npt.NDArray[np.intp]:
+        # [FUNCTION DOC]
+        # HELPER: reorders a position indexer so rows follow the order of the labels in
+        # the selection. Parameters: seq (the per-level selections: label, slice, list,
+        # mask, or a sequence of them) and indexer (integer positions). First checks
+        # whether reordering is required (scalars, null slices and masks need none;
+        # list-likes of more than one element need it unless the index is lexsorted and
+        # the codes of the list are increasing; slices need it unless lexsorted and not
+        # reversed; anything else needs it). If not needed the indexer is returned as is.
+        # Otherwise a key array per level is built: mappings from level codes to the
+        # order in the list (absent labels ignored, unlisted codes last), reversed
+        # order for negative-step slices, constant for the null slice, and natural order
+        # for others, and the indexer is sorted lexicographically by those keys (most
+        # significant level first). Returns the reordered integer positions.
         """
         Reorder an indexer of a MultiIndex (self) so that the labels are in the
         same order as given in seq
@@ -4138,6 +4830,13 @@ class MultiIndex(Index):
         return indexer[ind]
 
     def truncate(self, before=None, after=None) -> MultiIndex:
+        # [FUNCTION DOC]
+        # Cut the index between two labels. Parameters: before and after (labels or
+        # partial tuples, default none: the start and the end). Raises a value error when
+        # both are given and after sorts before before (the check is skipped when either
+        # is falsy). The first level is cut with its slice locations and codes are
+        # sliced by the full slice locations, with the first level codes shifted. Returns
+        # a new MultiIndex that keeps the names and has no sortorder or verification.
         """
         Slice index between two labels / tuples, return new MultiIndex.
 
@@ -4188,6 +4887,15 @@ class MultiIndex(Index):
         )
 
     def equals(self, other: object) -> bool:
+        # [FUNCTION DOC]
+        # Equality of labeling. Parameter other: any object. True if identical objects;
+        # false if not an index, lengths differ, or (for non-MultiIndex input) the
+        # dtype cannot be compared; for a flat index of tuples the tuple values are
+        # compared. For two MultiIndexes: the number of levels must match, and for each
+        # level the missing positions must coincide, the codes recoded onto this
+        # level's labels must be equal, and the empty slices of the levels must be equal
+        # (to distinguish dtypes). The levels themselves need not be equal. Returns a
+        # boolean.
         """
         Determines if two MultiIndex objects have the same labeling information
         (the levels themselves do not necessarily have to be the same)
@@ -4235,6 +4943,9 @@ class MultiIndex(Index):
         return True
 
     def equal_levels(self, other: MultiIndex) -> bool:
+        # [FUNCTION DOC]
+        # Return true if every level of this index equals the corresponding level of the
+        # other and the number of levels agrees.
         """
         Return True if the levels of both MultiIndex objects are the same
 
@@ -4251,6 +4962,15 @@ class MultiIndex(Index):
     # Set Methods
 
     def _union(self, other, sort) -> MultiIndex:
+        # [FUNCTION DOC]
+        # HELPER: union with another index. Parameters: other and sort (true, false or
+        # none). The other is converted for set operations, which also gives the common
+        # names. If other has duplicates the generic base implementation is used on
+        # renamed versions and the result is converted back to a MultiIndex if
+        # needed. Otherwise the rows of other missing here are found and appended (or
+        # this index returns with reconciled names), and unless sort is false the
+        # result is sorted; unorderable values give a runtime warning (or raise a type
+        # error when sort is true). Returns a MultiIndex.
         other, result_names = self._convert_can_do_setop(other)
         if other.has_duplicates:
             # This is only necessary if other has dupes,
@@ -4287,9 +5007,15 @@ class MultiIndex(Index):
             return result
 
     def _is_comparable_dtype(self, dtype: DtypeObj) -> bool:
+        # [FUNCTION DOC]
+        # HELPER: comparability check; true only for the object dtype.
         return is_object_dtype(dtype)
 
     def _get_reconciled_name_object(self, other) -> MultiIndex:
+        # [FUNCTION DOC]
+        # HELPER: returns a result of a set operation that equals this index. Gets the
+        # consensus names with the other index; if they differ from this index's names a
+        # renamed index is returned, otherwise a shallow copy.
         """
         If the result of a set operation will be self,
         return a shallow copy of self.
@@ -4300,6 +5026,11 @@ class MultiIndex(Index):
         return self.copy(deep=False)
 
     def _maybe_match_names(self, other):
+        # [FUNCTION DOC]
+        # HELPER: finds names common to this and another index. Parameter other is
+        # another index. If the numbers of levels differ, a list of none for each level is
+        # returned. Otherwise each level keeps its name only when both are equal, else
+        # none (a pair of not-a-number names is not treated as equal). Returns a list.
         """
         Try to find common names to attach to the result of an operation between
         a and b. Return a consensus list of names if they match at least partly
@@ -4317,10 +5048,18 @@ class MultiIndex(Index):
         return names
 
     def _wrap_intersection_result(self, other, result) -> MultiIndex:
+        # [FUNCTION DOC]
+        # HELPER: finishes an intersection. Parameters: other and result (the computed
+        # intersection). Obtains the consensus names from the setop conversion and sets
+        # them on the result, which is returned.
         _, result_names = self._convert_can_do_setop(other)
         return result.set_names(result_names)
 
     def _wrap_difference_result(self, other, result: MultiIndex) -> MultiIndex:
+        # [FUNCTION DOC]
+        # HELPER: finishes a difference. Parameters: other and result (a MultiIndex).
+        # Obtains the consensus names from the setop conversion; if the result is empty
+        # its unused levels are removed first. Returns the result with those names set.
         _, result_names = self._convert_can_do_setop(other)
 
         if len(result) == 0:
@@ -4329,6 +5068,14 @@ class MultiIndex(Index):
             return result.set_names(result_names)
 
     def _convert_can_do_setop(self, other):
+        # [FUNCTION DOC]
+        # HELPER: prepares the other operand of a set operation. Parameter other is an
+        # index or list-like of tuples. Returns a pair of the other operand as an index and
+        # the result names. A non-index empty list-like returns an empty slice of this index
+        # with this index's names. A non-empty non-index is converted from tuples with this
+        # index's names, and a value or type error is converted to a type error stating
+        # that other must be a MultiIndex or a list of tuples. An index operand gives the
+        # common names of both (names that agree, else none).
         result_names = self.names
 
         if not isinstance(other, Index):
@@ -4350,6 +5097,12 @@ class MultiIndex(Index):
     # --------------------------------------------------------------------
 
     def astype(self, dtype, copy: bool = True):
+        # [FUNCTION DOC]
+        # Cast the values; only the object dtype is supported. Parameters: dtype (numpy
+        # or pandas dtype, resolved) and copy (default true). Raises a not-implemented
+        # error for categorical dtypes and a type error for every other non-object
+        # dtype. For object dtype returns a view when copy is true, otherwise self.
+        # KNOWN ISSUE: the docstring describes integer-dtype normalization and speaks of conversion to other index classes, none of which applies, since any dtype other than object is rejected.
         """
         Create an MultiIndex with values cast to dtypes.
 
@@ -4407,6 +5160,12 @@ class MultiIndex(Index):
         return self
 
     def _validate_fill_value(self, item):
+        # [FUNCTION DOC]
+        # HELPER: validates an item to insert. Parameter item: a MultiIndex (must have the
+        # same number of levels, else value error; its tuple values are returned), a
+        # non-tuple (padded with empty strings for the missing lower levels), or a tuple
+        # (must have exactly one element per level, else value error). Returns the item
+        # as a tuple (or the values array for a MultiIndex).
         if isinstance(item, MultiIndex):
             # GH#43212
             if item.nlevels != self.nlevels:
@@ -4421,6 +5180,15 @@ class MultiIndex(Index):
         return item
 
     def putmask(self, mask, value: MultiIndex) -> MultiIndex:
+        # [FUNCTION DOC]
+        # Return a new MultiIndex with the masked positions replaced. Parameters: mask
+        # (boolean array-like) and value (a MultiIndex, either of the same length as this
+        # index or of length one). If the mask selects nothing, a copy is returned.
+        # Otherwise the replacement values (selected by mask when their length matches the
+        # index) are reduced to used levels, each level is extended with the replacement
+        # level's labels (union without sorting), and the codes of the masked positions
+        # are overwritten with the codes of the replacements. Returns the new index
+        # without verification.
         """
         Return a new MultiIndex of the values set with the mask.
 
@@ -4461,6 +5229,13 @@ class MultiIndex(Index):
         )
 
     def insert(self, loc: int, item) -> MultiIndex:
+        # [FUNCTION DOC]
+        # Insert a row. Parameters: loc (integer position) and item (a tuple with one
+        # label per level; a non-tuple is padded with empty strings; a MultiIndex is also
+        # accepted). Raises a value error when the item has the wrong number of levels.
+        # Labels that are not in a level are appended to that level (a missing-value label
+        # gets the missing code, GH 59003 and 60388). Returns a new MultiIndex with the
+        # codes inserted at loc, without verification.
         """
         Make new MultiIndex inserting new item at location
 
@@ -4498,6 +5273,11 @@ class MultiIndex(Index):
         )
 
     def delete(self, loc) -> MultiIndex:
+        # [FUNCTION DOC]
+        # Delete rows. Parameter loc is an integer position or array of positions. The
+        # code arrays are deleted at those positions (numpy rules apply and can raise an
+        # index error). Returns a new MultiIndex that keeps the levels and names, without
+        # verification and without sortorder.
         """
         Make new index with passed location deleted
 
@@ -4514,6 +5294,14 @@ class MultiIndex(Index):
         )
 
     def isin(self, values, level=None) -> npt.NDArray[np.bool_]:
+        # [FUNCTION DOC]
+        # Test membership. Parameters: values (set or list-like; generators are consumed;
+        # tuples when no level is given) and level (default none; a name or number of the
+        # level to test). Without level: an empty collection gives all false; otherwise the
+        # values are converted to a MultiIndex (raises on non-tuples) and each row is
+        # looked up among the unique values. With level: the labels of that level are
+        # tested with the level's own membership test (all false if empty). Returns a
+        # boolean array.
         """
         Return a boolean array where the index values are in `values`.
 
@@ -4632,6 +5420,11 @@ class MultiIndex(Index):
 
 
 def _lexsort_depth(codes: list[np.ndarray], nlevels: int) -> int:
+    # [FUNCTION DOC]
+    # HELPER: lexsort depth of code arrays. Parameters: codes (list of integer arrays)
+    # and nlevels. Tries prefixes of decreasing length from nlevels down to one and
+    # returns the largest number of leading levels whose codes are lexicographically
+    # sorted, or zero.
     """Count depth (up to a maximum of `nlevels`) with which codes are lexsorted."""
     int64_codes = [ensure_int64(level_codes) for level_codes in codes]
     for k in range(nlevels, 0, -1):
@@ -4641,6 +5434,14 @@ def _lexsort_depth(codes: list[np.ndarray], nlevels: int) -> int:
 
 
 def sparsify_labels(label_list, start: int = 0, sentinel: object = ""):
+    # [FUNCTION DOC]
+    # HELPER: sparsifies rows of label lists for display. Parameters: label_list (one
+    # list of strings per level), start (default 0: index of the first row that is kept
+    # fully) and sentinel (default empty string: the value used to replace repeated
+    # leading labels). The labels are transposed to rows; for each row after the
+    # start the leading entries equal to the previous row are replaced by the
+    # sentinel until the first difference, after which the row is kept as is.
+    # Returns the result transposed back to a list of per-level tuples.
     pivoted = list(zip(*label_list, strict=True))
     k = len(label_list)
 
@@ -4669,6 +5470,10 @@ def sparsify_labels(label_list, start: int = 0, sentinel: object = ""):
 
 
 def _get_na_rep(dtype: DtypeObj) -> str:
+    # [FUNCTION DOC]
+    # HELPER: text for missing values by dtype. Parameter dtype. For extension dtypes
+    # the dtype's own missing value in text form; datetime and timedelta numpy
+    # types give NaT; everything else gives NaN.
     if isinstance(dtype, ExtensionDtype):
         return f"{dtype.na_value}"
     else:
@@ -4678,6 +5483,13 @@ def _get_na_rep(dtype: DtypeObj) -> str:
 
 
 def maybe_droplevels(index: Index, key) -> Index:
+    # [FUNCTION DOC]
+    # Drop leading levels of an index after a key lookup. Parameters: index (an Index
+    # or MultiIndex) and key (a scalar or tuple; the caller guarantees the key is not
+    # an entry of the first level). For a tuple key, one level is dropped per key
+    # element, and if that would drop too much (a value error) the original index is
+    # returned. For a scalar key, the first level is dropped if possible, else the
+    # index is returned unchanged. Returns the resulting index.
     """
     Attempt to drop level or levels from the given index.
 
@@ -4711,6 +5523,12 @@ def maybe_droplevels(index: Index, key) -> Index:
 
 
 def _coerce_indexer_frozen(array_like, categories, copy: bool = False) -> np.ndarray:
+    # [FUNCTION DOC]
+    # HELPER: coerces a code array to the smallest integer dtype able to hold the
+    # categories. Parameters: array_like (codes), categories (the level) and copy
+    # (default false: copy the array). Returns a read-only numpy array. Note the
+    # read-only flag is set on the returned array, which is the input itself when
+    # no copy is made and no cast is needed.
     """
     Coerce the array-like indexer to the smallest integer dtype that can encode all
     of the given categories.
@@ -4734,6 +5552,13 @@ def _coerce_indexer_frozen(array_like, categories, copy: bool = False) -> np.nda
 
 
 def _require_listlike(level, arr, arrname: str):
+    # [FUNCTION DOC]
+    # HELPER: validates arguments for the level and codes setters. Parameters: level
+    # (none, a scalar, or list-like), arr (the new levels or codes) and arrname (text
+    # for error messages, such as Levels or Codes). A scalar level requires arr to be
+    # a list-like of non-list-likes (else type error) and both get wrapped in lists.
+    # A none or list-like level requires arr to be a list of list-likes (else type
+    # error). Returns the pair (level, arr).
     """
     Ensure that level is either None or listlike, and arr is list-of-listlike.
     """
@@ -4751,6 +5576,13 @@ def _require_listlike(level, arr, arrname: str):
 
 
 def cartesian_product(X: list[np.ndarray]) -> list[np.ndarray]:
+    # [FUNCTION DOC]
+    # Cartesian product of arrays as parallel arrays (numpy analogue of the standard
+    # product). Parameter X is a list-like of list-likes (anything else raises a
+    # type error). Returns a list with one array per input, each of length equal to
+    # the product of the input lengths, where earlier inputs vary slowest; an empty
+    # input list returns an empty list, and an empty factor gives empty arrays.
+    # Raises a value error if the product size overflows.
     """
     Numpy version of itertools.product.
     Sometimes faster (for large inputs)...

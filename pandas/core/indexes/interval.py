@@ -1,5 +1,21 @@
 """define the IntervalIndex"""
 
+# [MODULE DOC]
+# Implementation of IntervalIndex, the index of intervals that are all closed on
+# the same side, and the fixed-frequency interval builder function.
+# Public contents: the IntervalIndex class and the interval_range function (both
+# re-labelled to the top-level package namespace); private helpers for computing
+# the label just after or before a given label, for unpickling, and for the
+# argument checks of the range builder.
+# Relationships: data lives in an IntervalArray; the class subclasses the
+# extension-array-backed index base. Lookups use a compiled interval tree engine
+# instead of the usual hash engine. Properties such as the open/closed flags,
+# overlaps, containment, closed-side change and conversion to tuples are pinned
+# from the array at import time by decorators. Imports the multi-level index
+# (to expose left and right as levels), the datetime and timedelta range
+# builders and the shared conversion utilities. No import-time side effects
+# beyond class decoration.
+
 from __future__ import annotations
 
 from operator import (
@@ -99,6 +115,14 @@ if TYPE_CHECKING:
 
 
 def _get_next_label(label):
+    # [FUNCTION DOC]
+    # HELPER: returns the smallest representable label greater than a given label, so
+    # open right bounds can be turned into closed ones during slicing. Parameter
+    # label is a scalar. Its dtype is taken from the object or its type (timestamps
+    # and timedeltas are treated as nanosecond datetimes). Datetime-like and
+    # timedelta labels return the label plus one nanosecond; integers add one;
+    # floats move to the next floating-point number toward positive infinity. Raises
+    # a type error for any other type.
     # see test_slice_locs_with_ints_and_floats_succeeds
     dtype = getattr(label, "dtype", type(label))
     if isinstance(label, (Timestamp, Timedelta)):
@@ -116,6 +140,12 @@ def _get_next_label(label):
 
 
 def _get_prev_label(label):
+    # [FUNCTION DOC]
+    # HELPER: returns the largest representable label less than a given label, mirror
+    # of the next-label helper: one nanosecond earlier for datetime-like, minus one
+    # for integers, the preceding floating-point number for floats. Raises a type
+    # error for other types.
+    # KNOWN ISSUE: the error message says it cannot determine the next label, although this function computes the previous label (copy-paste from the sibling).
     # see test_slice_locs_with_ints_and_floats_succeeds
     dtype = getattr(label, "dtype", type(label))
     if isinstance(label, (Timestamp, Timedelta)):
@@ -133,6 +163,10 @@ def _get_prev_label(label):
 
 
 def _new_IntervalIndex(cls, d):
+    # [FUNCTION DOC]
+    # HELPER: reconstructor used when unpickling. Parameters: cls is the class; d is
+    # the dictionary of saved state (left, right, closed, name). Returns the result
+    # of calling the arrays-based constructor with these as keywords.
     """
     This is called upon unpickling, rather than the default which doesn't have
     arguments and breaks __new__.
@@ -157,6 +191,17 @@ def _new_IntervalIndex(cls, d):
 @inherit_names(["is_non_overlapping_monotonic", "closed"], IntervalArray, cache=True)
 @set_module("pandas")
 class IntervalIndex(ExtensionIndex):
+    # [CLASS DOC]
+    # Immutable index of intervals sharing one closed side (left, right, both, or
+    # neither). Inherits from the extension index base. State: _data is an
+    # IntervalArray; left and right are cached Index views of its bounds; the closed
+    # side and the open/closed flags come from the array. Equality-style lookup uses
+    # a cached interval-tree engine rather than a hash table. Key members: three
+    # alternative constructors (from breaks, arrays and tuples), a containment test
+    # accepting only intervals (or a missing value), location lookup supporting
+    # scalar points inside intervals, indexer computation (exact interval matching,
+    # pointwise fallback for overlapping data), overlap checks, midpoint and length,
+    # and specialized intersection. Arithmetic is not implemented (a note says so).
     """
     Immutable index of intervals that are closed on the same side.
 
@@ -262,6 +307,14 @@ class IntervalIndex(ExtensionIndex):
         name: Hashable | None = None,
         verify_integrity: bool = True,
     ) -> Self:
+        # [FUNCTION DOC]
+        # Construct an IntervalIndex. Parameters: data is a 1-d array-like of Interval
+        # objects (or an interval array); closed is the closed side (default none, taken
+        # from data or right); dtype (default none, inferred); copy tri-state flag
+        # resolved with the shared array-input helper (GH#63388); name (default none,
+        # taken from data); verify_integrity (default true) validates the bounds. Builds an
+        # IntervalArray with errors rewritten to mention this class name instead of the
+        # array class, then wraps it with the private constructor. Returns the index.
         name = maybe_extract_name(name, data, cls)
 
         # GH#63388
@@ -287,6 +340,11 @@ class IntervalIndex(ExtensionIndex):
         copy: bool = False,
         dtype: Dtype | None = None,
     ) -> IntervalIndex:
+        # [FUNCTION DOC]
+        # Class method: build from a 1-d sequence of break points, where consecutive
+        # values form intervals. Parameters: breaks; closed (default right); name
+        # (default none); copy (default false); dtype (default none). Errors from the
+        # array are rewritten to mention this class. Returns a new IntervalIndex.
         """
         Construct an IntervalIndex from an array of splits.
 
@@ -336,6 +394,13 @@ class IntervalIndex(ExtensionIndex):
         copy: bool = False,
         dtype: Dtype | None = None,
     ) -> IntervalIndex:
+        # [FUNCTION DOC]
+        # Class method: build from separate arrays of left and right bounds. Parameters:
+        # left, right (1-d array-likes); closed (default right); name (default none);
+        # copy (default false); dtype (default none, inferred). Raises a value error when
+        # only one of a pair is missing or when a left bound exceeds its right bound, and
+        # a type error for unsupported subtypes (category, object, string); errors are
+        # rewritten to mention this class. Returns a new IntervalIndex.
         """
         Construct from two arrays defining the left and right bounds.
 
@@ -403,6 +468,12 @@ class IntervalIndex(ExtensionIndex):
         copy: bool = False,
         dtype: Dtype | None = None,
     ) -> IntervalIndex:
+        # [FUNCTION DOC]
+        # Class method: build from a sequence of two-element tuples. Parameters: data;
+        # closed (default right); name (default none); copy (default false); dtype
+        # (default none). Delegates to the array constructor (errors rewritten to this
+        # class name) and returns a new IntervalIndex.
+        # KNOWN ISSUE: the docstring says the copy argument is compat-only and ignored, but the value is forwarded to the array constructor.
         """
         Construct an IntervalIndex from an array-like of tuples.
 
@@ -447,6 +518,12 @@ class IntervalIndex(ExtensionIndex):
     # "Union[IndexEngine, ExtensionEngine]" in supertype "Index"
     @cache_readonly
     def _engine(self) -> IntervalTree:  # type: ignore[override]
+        # [FUNCTION DOC]
+        # HELPER: cached interval-tree lookup engine. Converts the left and right bounds
+        # to int64 representation when they are datetime-like and upcasts narrow numeric
+        # types to 64-bit (the tree supports only 64-bit numeric data), then builds the
+        # tree with the same closed side. Returns the tree. The signature intentionally
+        # differs from the supertype.
         # IntervalTree does not supports numpy array unless they are 64 bit
         left = self._maybe_convert_i8(self.left)
         left = maybe_upcast_numeric_to_64bit(left)
@@ -455,6 +532,11 @@ class IntervalIndex(ExtensionIndex):
         return IntervalTree(left, right, closed=self.closed)
 
     def __contains__(self, key: Any) -> bool:
+        # [FUNCTION DOC]
+        # Membership test. The key must be hashable. Only Interval objects can be
+        # members: for other keys the answer is whether the key is a valid missing value
+        # for the dtype and the index contains missing values, else false. For an
+        # Interval, returns whether location lookup finds it (a key error means false).
         """
         return a boolean if this key is IN the index
         We *only* accept an Interval
@@ -480,6 +562,9 @@ class IntervalIndex(ExtensionIndex):
             return False
 
     def _getitem_slice(self, slobj: slice) -> IntervalIndex:
+        # [FUNCTION DOC]
+        # HELPER: slice fast path. Parameter slobj is a slice; slices the array and wraps
+        # the result in a new index of the same class keeping the name. Returns it.
         """
         Fastpath for __getitem__ when we know we have a slice.
         """
@@ -488,9 +573,16 @@ class IntervalIndex(ExtensionIndex):
 
     @cache_readonly
     def _multiindex(self) -> MultiIndex:
+        # [FUNCTION DOC]
+        # HELPER: cached two-level MultiIndex whose levels are the left and right bounds,
+        # named left and right.
         return MultiIndex.from_arrays([self.left, self.right], names=["left", "right"])
 
     def __reduce__(self):
+        # [FUNCTION DOC]
+        # Pickle support: returns the reconstruction function with the class and a state
+        # dictionary of the left bounds, right bounds, closed side and name, and no extra
+        # state.
         d = {
             "left": self.left,
             "right": self.right,
@@ -501,10 +593,16 @@ class IntervalIndex(ExtensionIndex):
 
     @property
     def inferred_type(self) -> str:
+        # [FUNCTION DOC]
+        # Property: constant string "interval".
         """Return a string of the type inferred from the values"""
         return "interval"
 
     def memory_usage(self, deep: bool = False) -> int:
+        # [FUNCTION DOC]
+        # Return the memory usage in bytes as the sum of the left and right bounds'
+        # usage. Parameter deep (default false) is passed on to introspect object dtypes.
+        # No engine memory is counted.
         """
         Memory usage of the values.
 
@@ -543,6 +641,10 @@ class IntervalIndex(ExtensionIndex):
     #  the Index implementation
     @cache_readonly
     def is_monotonic_decreasing(self) -> bool:
+        # [FUNCTION DOC]
+        # Cached property: true if the index is monotonic decreasing, computed as whether
+        # the reversed index is monotonic increasing. Overrides the base class because
+        # the interval tree provides no decreasing check.
         """
         Return True if the IntervalIndex is monotonic decreasing (only equal or
         decreasing values), else False
@@ -551,6 +653,11 @@ class IntervalIndex(ExtensionIndex):
 
     @cache_readonly
     def is_unique(self) -> bool:
+        # [FUNCTION DOC]
+        # Cached property: true if all intervals are distinct. False if there is more than
+        # one missing value; true if either bound array is unique on its own; otherwise
+        # the pairs of bounds at positions where the left bound is duplicated are
+        # collected in a set and a repeated pair gives false.
         """
         Return True if the IntervalIndex contains unique elements, else False.
         """
@@ -575,6 +682,10 @@ class IntervalIndex(ExtensionIndex):
 
     @property
     def is_overlapping(self) -> bool:
+        # [FUNCTION DOC]
+        # Property: true if any two intervals share a point (closed shared endpoints
+        # count; open-only shared endpoints do not). Delegates to the interval tree
+        # engine (GH 23309).
         """
         Return True if the IntervalIndex has overlapping intervals, else False.
 
@@ -624,6 +735,12 @@ class IntervalIndex(ExtensionIndex):
         return self._engine.is_overlapping
 
     def _needs_i8_conversion(self, key) -> bool:
+        # [FUNCTION DOC]
+        # HELPER: tells whether a key must be converted to its integer representation
+        # before querying the tree. Parameter key is a scalar or an index (list-likes
+        # must have been cast already). True for timestamps, timedeltas and datetime or
+        # timedelta indexes; for an Interval or an interval-dtype key the test is applied
+        # recursively to its left bound. Returns a boolean.
         """
         Check if a given key needs i8 conversion. Conversion is necessary for
         Timestamp, Timedelta, DatetimeIndex, and TimedeltaIndex keys. An
@@ -649,6 +766,16 @@ class IntervalIndex(ExtensionIndex):
         return isinstance(key, i8_types)
 
     def _maybe_convert_i8(self, key):
+        # [FUNCTION DOC]
+        # HELPER: converts a key to the numeric form expected by the interval tree.
+        # Parameter key is a scalar or list-like (list-likes are first cast to an Index
+        # with narrow numerics upcast to 64-bit). If no conversion is needed the key is
+        # returned unchanged. Intervals and interval indexes have both bounds converted
+        # and are rebuilt (a scalar Interval or an IntervalIndex) with this index's closed
+        # side. Scalars become their integer value (period ordinal, timestamp value, or
+        # datetime/timedelta view); datetime-like indexes become int64 indexes with
+        # missing values turned into not-a-number. Raises a value error if the key's
+        # dtype does not match this index's subtype. Returns the converted key.
         """
         Maybe convert a given key to its equivalent i8 value(s). Used as a
         preprocessing step prior to IntervalTree queries (self._engine), which
@@ -712,6 +839,15 @@ class IntervalIndex(ExtensionIndex):
         return key_i8
 
     def _searchsorted_monotonic(self, label, side: Literal["left", "right"] = "left"):
+        # [FUNCTION DOC]
+        # HELPER: binary search of a label in the monotonic structure. Parameters: label
+        # (scalar) and side (left or right; default left). Raises a key error unless the
+        # bounds are non-overlapping and monotonic, and a not-implemented error if the
+        # label is an Interval or an IntervalIndex. Chooses the right or left bounds as
+        # the search side depending on the side and the monotonic direction (GH 20921),
+        # moving the label to the next or previous representable value when that bound is
+        # open, and delegates to the bounds index's monotonic search. Returns the
+        # insertion position.
         if not self.is_non_overlapping_monotonic:
             raise KeyError(
                 "can only get slices from an IntervalIndex if bounds are "
@@ -741,6 +877,15 @@ class IntervalIndex(ExtensionIndex):
     # Indexing Methods
 
     def get_loc(self, key) -> int | slice | np.ndarray:
+        # [FUNCTION DOC]
+        # Return the location of a label. Parameter key is an Interval (exact match,
+        # requires the same closed side, else key error), a missing value (matches the
+        # missing entries), or a scalar point (matches all intervals containing it
+        # according to the closed flags; a scalar not comparable to the subtype gives a
+        # key error). Raises a key error when nothing matches (and from the indexing
+        # check for non-scalar keys). Returns an integer for exactly one match, otherwise a
+        # slice if the matches are contiguous (open-ended stops are completed to the
+        # length), otherwise a boolean mask array.
         """
         Get integer location, slice or boolean mask for requested label.
 
@@ -828,6 +973,14 @@ class IntervalIndex(ExtensionIndex):
         limit: int | None = None,
         tolerance: Any | None = None,
     ) -> npt.NDArray[np.intp]:
+        # [FUNCTION DOC]
+        # HELPER: positions of target labels in this index (index must be non-overlapping
+        # when called). Parameters: target; method, limit, tolerance are unused. Interval
+        # targets: if both sides of this index are unique, positions are the entries where
+        # the left and right lookups agree; otherwise the pointwise method is used.
+        # Targets of non-object, non-string dtype use the interval tree (after
+        # integer conversion). Object or string targets use the pointwise method.
+        # Returns a platform integer array with minus one for missing.
         if isinstance(target, IntervalIndex):
             # We only get here with not self.is_overlapping
             # -> at most one match per interval in target
@@ -853,6 +1006,16 @@ class IntervalIndex(ExtensionIndex):
     def get_indexer_non_unique(
         self, target: Index
     ) -> tuple[npt.NDArray[np.intp], npt.NDArray[np.intp]]:
+        # [FUNCTION DOC]
+        # Compute positions in this index for each target element, allowing duplicates.
+        # Parameter target is an index or list of intervals. Returns a pair: the indexer
+        # (positions, with minus one for targets not found) and the array of target
+        # positions that were missing. If the dtypes cannot be compared and cannot be
+        # partially indexed everything is missing. Interval targets use the fast path
+        # when both sides are unique, else the pointwise method. Object targets or
+        # targets that cannot be partially indexed use the pointwise method. Other
+        # scalar targets go through the tree engine.
+        # KNOWN ISSUE: the docstring examples use a plain Index of strings and were evidently copied from the base class; they do not exercise an IntervalIndex.
         """
         Compute indexer and mask for new index given the current index.
 
@@ -933,6 +1096,12 @@ class IntervalIndex(ExtensionIndex):
         return ensure_platform_int(indexer), ensure_platform_int(missing)
 
     def _get_indexer_unique_sides(self, target: IntervalIndex) -> npt.NDArray[np.intp]:
+        # [FUNCTION DOC]
+        # HELPER: exact-interval lookup when both bounds of this index are unique. Parameter
+        # target is an IntervalIndex. The left bounds and right bounds are looked up
+        # separately and a position counts only when both lookups agree; else minus one.
+        # The caller must have checked uniqueness of both sides. Returns the position
+        # array.
         """
         _get_indexer specialized to the case where both of our sides are unique.
         """
@@ -947,6 +1116,14 @@ class IntervalIndex(ExtensionIndex):
     def _get_indexer_pointwise(
         self, target: Index
     ) -> tuple[npt.NDArray[np.intp], npt.NDArray[np.intp]]:
+        # [FUNCTION DOC]
+        # HELPER: elementwise lookup used for get_indexer and its non-unique variant.
+        # Parameter target is an index. For each element, calls location lookup: slices
+        # are expanded to positions, an integer is wrapped, and a mask is converted to
+        # positions; a key error or an invalid-index error (non-scalar key such as a
+        # tuple) records the target position as missing and contributes minus one.
+        # Returns a pair of platform integer arrays: concatenated positions and missing
+        # target positions.
         """
         pointwise implementation for get_indexer and get_indexer_non_unique.
         """
@@ -978,6 +1155,9 @@ class IntervalIndex(ExtensionIndex):
 
     @cache_readonly
     def _index_as_unique(self) -> bool:
+        # [FUNCTION DOC]
+        # HELPER: cached flag used by the indexer machinery: true when the intervals do
+        # not overlap and there is at most one missing value.
         return not self.is_overlapping and self._engine._na_count < 2
 
     _requires_unique_msg = (
@@ -985,6 +1165,12 @@ class IntervalIndex(ExtensionIndex):
     )
 
     def _convert_slice_indexer(self, key: slice, kind: Literal["loc", "getitem"]):
+        # [FUNCTION DOC]
+        # HELPER: validates slice indexers. Parameters: key (a slice) and kind (loc or
+        # getitem). A step other than none or one raises a value error for label-based
+        # (loc) slicing, and for getitem unless the slice can be interpreted as
+        # positional (GH#31658). Otherwise defers to the base class and returns its
+        # result.
         if not (key.step is None or key.step == 1):
             # GH#31658 if label-based, we require step == 1,
             #  if positional, we disallow float start/stop
@@ -1000,6 +1186,9 @@ class IntervalIndex(ExtensionIndex):
 
     @cache_readonly
     def _should_fallback_to_positional(self) -> bool:
+        # [FUNCTION DOC]
+        # HELPER: cached property saying whether integer lookups are positional; true
+        # only when the interval subtype is datetime-like or timedelta-like.
         # integer lookups in Series.__getitem__ are unambiguously
         #  positional in this case
         # error: Item "ExtensionDtype"/"dtype[Any]" of "Union[dtype[Any],
@@ -1007,9 +1196,16 @@ class IntervalIndex(ExtensionIndex):
         return self.dtype.subtype.kind in "mM"  # type: ignore[union-attr]
 
     def _maybe_cast_slice_bound(self, label, side: str):
+        # [FUNCTION DOC]
+        # HELPER: slice-bound casting hook. Parameters: label and side (left or right).
+        # Delegates to the same-named bounds index (left bounds for side left, right
+        # bounds for side right) and returns its result.
         return getattr(self, side)._maybe_cast_slice_bound(label, side)
 
     def _is_comparable_dtype(self, dtype: DtypeObj) -> bool:
+        # [FUNCTION DOC]
+        # HELPER: comparability check. False unless the dtype is an interval dtype; true
+        # if the common type of the two dtypes is not object.
         if not isinstance(dtype, IntervalDtype):
             return False
         common_subtype = find_common_type([self.dtype, dtype])
@@ -1019,6 +1215,8 @@ class IntervalIndex(ExtensionIndex):
 
     @cache_readonly
     def left(self) -> Index:
+        # [FUNCTION DOC]
+        # Cached property: the left bounds as an Index (no copy).
         """
         Return left bounds of the intervals in the IntervalIndex.
 
@@ -1056,6 +1254,8 @@ class IntervalIndex(ExtensionIndex):
 
     @cache_readonly
     def right(self) -> Index:
+        # [FUNCTION DOC]
+        # Cached property: the right bounds as an Index (no copy).
         """
         Return right bounds of the intervals in the IntervalIndex.
 
@@ -1093,6 +1293,9 @@ class IntervalIndex(ExtensionIndex):
 
     @cache_readonly
     def mid(self) -> Index:
+        # [FUNCTION DOC]
+        # Cached property: the midpoints of the intervals as an Index (no copy); the
+        # average of the bounds regardless of closedness.
         """
         Return the midpoint of each interval in the IntervalIndex as an Index.
 
@@ -1134,6 +1337,8 @@ class IntervalIndex(ExtensionIndex):
 
     @property
     def length(self) -> Index:
+        # [FUNCTION DOC]
+        # Property: the lengths of the intervals (right minus left) as an Index (no copy).
         """
         Calculate the length of each interval in the IntervalIndex.
 
@@ -1168,6 +1373,13 @@ class IntervalIndex(ExtensionIndex):
     # Set Operations
 
     def _intersection(self, other, sort: bool = False):
+        # [FUNCTION DOC]
+        # HELPER: intersection for matching dtypes (closed sides already equal).
+        # Parameters: other and sort (default false). If this index has unique sides, the
+        # unique-sides routine is used; otherwise if other has unique sides and this
+        # index has at most one missing value, the roles are swapped; else the
+        # non-unique routine runs. If sort is true the result is sorted. Returns the
+        # intersection.
         """
         intersection specialized to the case with matching dtypes.
         """
@@ -1188,6 +1400,12 @@ class IntervalIndex(ExtensionIndex):
         return taken
 
     def _intersection_unique(self, other: IntervalIndex) -> IntervalIndex:
+        # [FUNCTION DOC]
+        # HELPER: intersection when the endpoints are unique. Parameter other is an
+        # IntervalIndex. Looks up the bounds of other in this index's left and right
+        # bounds and keeps positions where both agree and exist; duplicates are removed
+        # and the corresponding elements of this index are taken. Returns the result
+        # index.
         """
         Used when the IntervalIndex does not have any common endpoint,
         no matter left or right.
@@ -1210,6 +1428,12 @@ class IntervalIndex(ExtensionIndex):
         return self.take(indexer)
 
     def _intersection_non_unique(self, other: IntervalIndex) -> IntervalIndex:
+        # [FUNCTION DOC]
+        # HELPER: intersection when endpoints may repeat. Parameter other is an
+        # IntervalIndex. Marks positions of this index whose (left, right) pair appears in
+        # other (compared as a set of pairs, which requires both sides to be same
+        # length), plus the first missing position when both have missing values.
+        # Returns this index filtered by that mask, so duplicates in this index are kept.
         """
         Used when the IntervalIndex does have some common endpoints,
         on either sides.
@@ -1241,6 +1465,9 @@ class IntervalIndex(ExtensionIndex):
     # --------------------------------------------------------------------
 
     def _get_engine_target(self) -> np.ndarray:
+        # [FUNCTION DOC]
+        # HELPER: always raises a not-implemented error: this index does not pass values
+        # to the numeric engines or the join fast paths.
         # Note: we _could_ use libjoin functions by either casting to object
         #  dtype or constructing tuples (faster than constructing Intervals)
         #  but the libjoin fastpaths are no longer fast in these cases.
@@ -1250,12 +1477,17 @@ class IntervalIndex(ExtensionIndex):
         )
 
     def _from_join_target(self, result):
+        # [FUNCTION DOC]
+        # HELPER: always raises a not-implemented error: the join fast paths are unused.
         raise NotImplementedError("IntervalIndex does not use libjoin fastpaths")
 
     # TODO: arithmetic operations
 
 
 def _is_valid_endpoint(endpoint) -> bool:
+    # [FUNCTION DOC]
+    # HELPER: validity check of start/end for the interval range builder. Returns true
+    # if the endpoint is a number, a Timestamp, a Timedelta or none.
     """
     Helper for interval_range to check if start/end are valid types.
     """
@@ -1270,6 +1502,11 @@ def _is_valid_endpoint(endpoint) -> bool:
 
 
 def _is_type_compatible(a, b) -> bool:
+    # [FUNCTION DOC]
+    # HELPER: type-compatibility check for the interval range builder. Parameters a
+    # and b are start, end or freq values. Returns true if both are numbers, both are
+    # timestamp-or-offset objects, both are timedelta-or-offset objects, or at least
+    # one is none. The two predicates it uses are anonymous inline functions.
     """
     Helper for interval_range to check type compat of start/end/freq.
     """
@@ -1292,6 +1529,24 @@ def interval_range(
     name: Hashable | None = None,
     closed: IntervalClosedType = "right",
 ) -> IntervalIndex:
+    # [FUNCTION DOC]
+    # Build an IntervalIndex with regular spacing. Parameters: start, end (numeric or
+    # datetime-like; default none); periods (number of intervals; default none);
+    # freq (number, string, Timedelta, timedelta or offset; default none, which
+    # becomes one for numeric and one day otherwise when any of start, end, periods
+    # is missing); name (default none); closed (default right).
+    # Raises a value error unless exactly three of start, end, periods, freq are
+    # given, for invalid start/end types, and for a freq that is neither numeric nor
+    # convertible to an offset; raises a type error for incompatible start/end/freq
+    # types. Periods is validated and increased by one to get the number of break
+    # points. Numeric endpoints: when start, end and freq are all given the breaks
+    # come from an arithmetic range extended slightly so the end is included, with
+    # int64 or float64 dtype (or the shared dtype of numpy scalars); otherwise the
+    # missing one of periods, start, end is derived and the breaks are linearly
+    # spaced; integer inputs downcast the result to integers. Timestamp endpoints use
+    # the date range builder, otherwise the timedelta range builder. Returns
+    # the index built from the breaks with the given name, closed side and a matching
+    # interval dtype.
     """
     Return a fixed frequency IntervalIndex.
 
