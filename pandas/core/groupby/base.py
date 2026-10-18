@@ -2,6 +2,17 @@
 Provide basic components for groupby.
 """
 
+# [MODULE DOC]
+# Basic shared components for groupby: a small frozen record type naming an
+# output column (OutputKey) and several frozen sets of method names that
+# classify the groupby public methods: plotting_methods, cythonized_kernels,
+# reduction_kernels (one value per group), transformation_kernels (result has
+# the shape of each group), groupby_other_methods (neither kind), and
+# transform_kernel_allowlist (union of reductions and transformations, the
+# names accepted by transform given as a string). Used by groupby/generic and
+# by tests to validate method coverage. No import-time side effects other
+# than building the constants; the typing-only import is skipped at runtime.
+
 from __future__ import annotations
 
 import dataclasses
@@ -13,6 +24,12 @@ if TYPE_CHECKING:
 
 @dataclasses.dataclass(order=True, frozen=True)
 class OutputKey:
+    # [CLASS DOC]
+    # HELPER: immutable, orderable record identifying one output column of an
+    # aggregation. Fields: label (the hashable column label) and position (the
+    # integer position of that column in the object being grouped). Built as a
+    # frozen dataclass with ordering, so instances are hashable and compare by
+    # label then position. It has no methods.
     label: Hashable
     position: int
 

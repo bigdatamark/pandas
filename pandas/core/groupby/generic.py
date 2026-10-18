@@ -5,6 +5,20 @@ classes that hold the groupby interfaces (and some implementations).
 These are user facing as the result of the ``df.groupby(...)`` operations,
 which here returns a DataFrameGroupBy object.
 """
+# [MODULE DOC]
+# Defines the user facing groupby result classes: SeriesGroupBy and DataFrameGroupBy
+# (subclasses of the generic GroupBy base from the groupby module), the NamedAgg
+# dataclass used for named aggregation, the module level helper that broadcasts
+# transform results for frames, and type aliases for aggregation specifications.
+# Most reductions are implemented in the base class and the ops module; the
+# classes here add aggregate, transform, filter, value counts, nunique, describe,
+# extremum index lookups, plotting and statistics methods that differ between
+# one dimensional and two dimensional objects. Many methods simply delegate to
+# the Series or DataFrame method of the same name through the base class apply
+# helper. NamedAgg and both classes are re-exported from the package init.
+# Import has no side effects beyond decorating the classes with their public module
+# names.
+
 
 from __future__ import annotations
 
@@ -109,6 +123,14 @@ ScalarResult = TypeVar("ScalarResult")
 @set_module("pandas")
 @dataclasses.dataclass
 class NamedAgg:
+    # [CLASS DOC]
+    # Dataclass holding the specification of one named aggregation: the column label,
+    # the aggregation function or name, and optional positional and keyword arguments
+    # forwarded to that function. Attributes: column, aggfunc, args (tuple, default
+    # empty) and kwargs (dict, default empty). A custom initializer takes the column,
+    # the function and then variadic positional and keyword arguments, which is why the
+    # dataclass generated one is replaced. Supports tuple-style integer indexing for
+    # backward compatibility with the earlier tuple based named aggregation.
     """
     Helper for column specific aggregation with control over output column names.
 
@@ -167,12 +189,22 @@ class NamedAgg:
         *args: Any,
         **kwargs: Any,
     ) -> None:
+        # [FUNCTION DOC]
+        # Stores the column label, the aggregation function (callable or name), the extra
+        # positional arguments as a tuple, and the extra keyword arguments as a dict on the
+        # instance. No validation is performed and nothing is returned.
         self.column = column
         self.aggfunc = aggfunc
         self.args = args
         self.kwargs = kwargs
 
     def __getitem__(self, key: int) -> Any:
+        # [FUNCTION DOC]
+        # Backward-compatible tuple-style access. Parameter key is an integer position:
+        # zero gives the column, one the aggregation function, two the positional argument
+        # tuple, three the keyword argument dict. Any other key (including negative
+        # integers and non-integers that do not equal 0 to 3) raises an index error with
+        # the message index out of range.
         """Provide backward-compatible tuple-style access."""
         if key == 0:
             return self.column
@@ -187,7 +219,21 @@ class NamedAgg:
 
 @set_module("pandas.api.typing")
 class SeriesGroupBy(GroupBy[Series]):
+    # [CLASS DOC]
+    # Groupby object for a Series; specializes the generic GroupBy base with the
+    # Series type. State comes from the base class (grouper, selection, as_index,
+    # group_keys, sort, observed, dropna). Overrides result wrapping for apply and
+    # aggregate, the data fetched for cython aggregation, and adds Series specific
+    # methods: aggregate (alias agg), transform, filter, nunique, describe,
+    # value_counts, take, skew, kurt, plot, nlargest, nsmallest, idxmin, idxmax, corr,
+    # cov, monotonicity properties, hist, dtype and unique. Most statistics delegate
+    # to the base class cython or apply machinery.
     def _wrap_agged_manager(self, mgr: Manager) -> Series:
+        # [FUNCTION DOC]
+        # HELPER: converts a single-block manager of aggregated values into a Series. Takes
+        # the manager mgr, builds the result with the constructor of the grouped object using
+        # the manager's axes, then sets the result name to the name of the grouped Series.
+        # Returns that Series.
         out = self.obj._constructor_from_mgr(mgr, axes=mgr.axes)
         out._name = self.obj.name
         return out
@@ -195,6 +241,12 @@ class SeriesGroupBy(GroupBy[Series]):
     def _get_data_to_aggregate(
         self, *, numeric_only: bool = False, name: str | None = None
     ) -> SingleBlockManager:
+        # [FUNCTION DOC]
+        # HELPER: returns the manager holding the data to aggregate. Keyword-only parameters:
+        # numeric_only (default false) and name (default none, the calling method name used
+        # only in the error message). Uses the grouped Series with excluded keys removed.
+        # Raises a type error when numeric_only is true and the dtype is not numeric.
+        # Otherwise returns its single-block manager.
         ser = self._obj_with_exclusions
         single = ser._mgr
         if numeric_only and not is_numeric_dtype(ser.dtype):
@@ -207,6 +259,12 @@ class SeriesGroupBy(GroupBy[Series]):
         return single
 
     def apply(self, func, *args, **kwargs) -> Series:
+        # [FUNCTION DOC]
+        # Applies func to each group (each is a Series) and combines the results. Parameters:
+        # func is a callable taking a Series first, plus extra positional and keyword
+        # arguments forwarded to it. Returns a Series or DataFrame depending on what func
+        # returns. Purely delegates to the base class implementation; this override exists
+        # to carry the Series specific documentation.
         """
         Apply function ``func`` group-wise and combine the results together.
 
@@ -312,6 +370,21 @@ class SeriesGroupBy(GroupBy[Series]):
         return super().apply(func, *args, **kwargs)
 
     def aggregate(self, func=None, *args, engine=None, engine_kwargs=None, **kwargs):
+        # [FUNCTION DOC]
+        # Aggregates each group with one or more operations. Parameters: func (None, a function,
+        # a string method name, or a list of those; none means keyword arguments define named
+        # aggregations), extra positional arguments, engine (cython, numba or none) and
+        # engine_kwargs (numba options), and keyword arguments. When func is none the
+        # keyword arguments are validated and split into output column names and functions.
+        # A string func is dispatched to the same-named method of this object, forwarding
+        # engine settings only when numba was requested or engine kwargs were given. A list
+        # or other non-string iterable of functions is passed through lambda name mangling
+        # and aggregated by the multiple-function helper, producing a frame; named
+        # aggregation then renames the columns, and with as_index false the group keys are
+        # moved to columns. A single callable uses the numba path if numba is selected;
+        # if there are zero groups returns an empty Series with the original dtype and the
+        # result index; otherwise uses the generic python aggregation. Returns a Series
+        # (or a DataFrame for lists of functions).
         """
         Aggregate using one or more operations.
 
@@ -495,6 +568,11 @@ class SeriesGroupBy(GroupBy[Series]):
     agg = aggregate
 
     def _python_agg_general(self, func, *args, **kwargs):
+        # [FUNCTION DOC]
+        # HELPER: aggregates every group by calling func with the group Series plus extra
+        # positional and keyword arguments. Uses the grouper to apply the function per group,
+        # builds a Series named like the grouped object, and passes it through the
+        # base class output wrapping (which restores the index and as_index handling).
         f = lambda x: func(x, *args, **kwargs)
 
         obj = self._obj_with_exclusions
@@ -503,6 +581,15 @@ class SeriesGroupBy(GroupBy[Series]):
         return self._wrap_aggregated_output(res)
 
     def _aggregate_multiple_funcs(self, arg, *args, **kwargs) -> DataFrame:
+        # [FUNCTION DOC]
+        # HELPER: aggregates with several functions and returns a DataFrame with one column per
+        # function. Parameter arg is a list or tuple (a dict raises a specification error with
+        # the message nested renamer is not supported). Items that are pairs give the column
+        # name and function; plain items are named by their callable name or by themselves.
+        # Extra arguments and keyword arguments are forwarded to each aggregation. Aggregation
+        # temporarily forces as_index to true so the results share an index. If any
+        # result is itself a DataFrame, results are concatenated column-wise with the names as
+        # keys; otherwise the results are assembled into a frame whose columns are the names.
         if isinstance(arg, dict):
             raise SpecificationError("nested renamer is not supported")
 
@@ -542,6 +629,19 @@ class SeriesGroupBy(GroupBy[Series]):
         not_indexed_same: bool = False,
         is_transform: bool = False,
     ) -> DataFrame | Series:
+        # [FUNCTION DOC]
+        # HELPER: combines the per-group outputs from apply into the final object. Parameters:
+        # data is the grouped Series, values the list of group results, not_indexed_same says
+        # whether results kept their group's index, is_transform marks a transform call.
+        # Empty values yield an empty Series (indexed by the original index for transforms,
+        # by nothing when group keys are not kept, else by the group result index) with the
+        # data dtype. If the first value is a dict, builds a frame from the dicts and stacks
+        # it into a Series. If the first value is a Series or DataFrame, concatenates them via
+        # the base class concat helper, names the result like the grouped object, and when
+        # as_index is false and the index differs, inserts the group keys as columns and
+        # resets the index. Otherwise builds a Series from the scalars indexed by the group
+        # result index (keys reinserted and a default index when as_index is false).
+        # The result inherits metadata from the grouped object.
         """
         Wrap the output of SeriesGroupBy.apply into the expected result.
 
@@ -649,6 +749,12 @@ class SeriesGroupBy(GroupBy[Series]):
     )
 
     def transform(self, func, *args, engine=None, engine_kwargs=None, **kwargs):
+        # [FUNCTION DOC]
+        # Transforms each group, returning a result aligned with the original index.
+        # Parameters: func (callable, or name of a transform or reduction kernel), extra
+        # positional arguments, engine (cython, numba or none), engine_kwargs (numba
+        # options) and keyword arguments. Delegates entirely to the shared base class
+        # transform implementation.
         """
         Call function producing a same-indexed Series on each group.
 
@@ -788,6 +894,11 @@ class SeriesGroupBy(GroupBy[Series]):
         )
 
     def _cython_transform(self, how: str, numeric_only: bool = False, **kwargs):
+        # [FUNCTION DOC]
+        # HELPER: runs a cythonized transform kernel named how (with numeric_only flag, default
+        # false, and extra kernel keyword arguments) over the selected Series values.
+        # Raises a type error saying the kernel is not supported for the dtype when the kernel
+        # raises not implemented. Returns a Series with the original index and name.
         obj = self._obj_with_exclusions
 
         try:
@@ -803,6 +914,14 @@ class SeriesGroupBy(GroupBy[Series]):
     def _transform_general(
         self, func: Callable, engine, engine_kwargs, *args, **kwargs
     ) -> Series:
+        # [FUNCTION DOC]
+        # HELPER: general (non-cython) transform for a Series. Parameters: func (callable),
+        # engine, engine_kwargs and extra arguments. If numba is selected the numba path is
+        # used. Otherwise each group is passed to func (the group is given a name attribute
+        # holding the group key), results are wrapped to Series with the group's index,
+        # concatenated, and reordered to the original order by the base class helper. With no
+        # groups returns an empty float Series. The result takes the name of the grouped
+        # Series.
         """
         Transform with a callable `func`.
         """
@@ -836,6 +955,13 @@ class SeriesGroupBy(GroupBy[Series]):
         return result
 
     def filter(self, func, dropna: bool = True, *args, **kwargs):
+        # [FUNCTION DOC]
+        # Returns the original Series restricted to the groups for which func is true.
+        # Parameters: func (callable or method name given as a string; extra positional and
+        # keyword arguments are forwarded), dropna (default true; drop failing groups
+        # rather than filling with missing values). Missing results count as false.
+        # Raises a type error saying the filter must return a boolean result if evaluating
+        # func raises a value or type error.
         """
         Filter elements from groups that don't satisfy a criterion.
 
@@ -893,6 +1019,9 @@ class SeriesGroupBy(GroupBy[Series]):
 
         # Interpret np.nan as False.
         def true_and_notna(x) -> bool:
+            # [FUNCTION DOC]
+            # HELPER: evaluates the filter function on a group and returns true only when the
+            # result is not missing and is truthy.
             b = wrapper(x)
             return notna(b) and b
 
@@ -909,6 +1038,13 @@ class SeriesGroupBy(GroupBy[Series]):
         return filtered
 
     def nunique(self, dropna: bool = True) -> Series | DataFrame:
+        # [FUNCTION DOC]
+        # Counts the number of distinct values per group. Parameter dropna (default true)
+        # excludes missing values from the count. Factorizes the values, builds a combined
+        # group-and-value index, counts first occurrences of each pair with a bincount over
+        # group ids (rows with dropped keys are masked out first). Returns a Series indexed by
+        # the group result index and named like the grouped Series; with as_index false the
+        # group keys become columns and a default index is used (a DataFrame then).
         """
         Return number of unique elements in the group.
 
@@ -978,6 +1114,10 @@ class SeriesGroupBy(GroupBy[Series]):
         return result
 
     def describe(self, percentiles=None, include=None, exclude=None) -> Series:
+        # [FUNCTION DOC]
+        # Generates descriptive statistics per group. Parameters percentiles, include and
+        # exclude are forwarded unchanged. Delegates to the base class describe and returns its
+        # result.
         """
         Generate descriptive statistics.
 
@@ -1095,6 +1235,22 @@ class SeriesGroupBy(GroupBy[Series]):
         bins=None,
         dropna: bool = True,
     ) -> Series | DataFrame:
+        # [FUNCTION DOC]
+        # Counts unique values per group, optionally binned. Parameters: normalize (default
+        # false; return proportions of each group), sort (default true; sort counts), ascending
+        # (default false), bins (None, integer or sequence; bins the numeric values first),
+        # dropna (default true; exclude missing values). Without bins uses the shared base
+        # class counting helper and names the result count or proportion. With bins, scalar
+        # bins or categorical values are handled by applying the Series method per group
+        # (names set from group names). Otherwise it factorizes or cuts values to labels,
+        # lexicographically sorts by group id and label, finds run boundaries to count, builds
+        # multi-index codes, handles missing labels and normalization, optionally sorts within
+        # groups, and for binned data fills in absent bins with zero counts by a left join.
+        # Returns a Series with a MultiIndex of group keys and values (a frame with a reset
+        # index when as_index is false).
+        # KNOWN ISSUE: after the early return for the case that bins is none, the later code
+        # still tests whether bins is none (to factorize values, and to decide whether to sort);
+        # those branches are unreachable because bins is never none at that point.
         """
         Return a Series or DataFrame containing counts of unique rows.
 
@@ -1321,6 +1477,10 @@ class SeriesGroupBy(GroupBy[Series]):
 
             # build the multi-index w/ full levels
             def build_codes(lev_codes: np.ndarray) -> np.ndarray:
+                # [FUNCTION DOC]
+                # HELPER: given the integer codes of one index level, repeats the codes of the rows
+                # that begin a new group once for each bin, producing codes aligned with the
+                # zero-filled binned output.
                 return np.repeat(lev_codes[diff], nbin)
 
             codes = [build_codes(lev_codes) for lev_codes in codes[:-1]]
@@ -1342,6 +1502,10 @@ class SeriesGroupBy(GroupBy[Series]):
         indices: TakeIndexer,
         **kwargs,
     ) -> Series:
+        # [FUNCTION DOC]
+        # Takes elements by position within each group. Parameters: indices (positions
+        # relative to each group) and extra keyword arguments. Delegates to the Series take
+        # method per group via the base class apply helper and returns the combined Series.
         """
         Return the elements in the given *positional* indices in each group.
 
@@ -1425,6 +1589,10 @@ class SeriesGroupBy(GroupBy[Series]):
         numeric_only: bool = False,
         **kwargs,
     ) -> Series:
+        # [FUNCTION DOC]
+        # Computes the unbiased skewness within each group. Parameters: skipna (default true),
+        # numeric_only (default false) and extra keyword arguments. Calls the cython
+        # aggregation without a python fallback and returns a Series.
         """
         Return unbiased skew within groups.
 
@@ -1494,6 +1662,11 @@ class SeriesGroupBy(GroupBy[Series]):
         numeric_only: bool = False,
         **kwargs,
     ) -> Series:
+        # [FUNCTION DOC]
+        # Computes the unbiased kurtosis within each group. Parameters: skipna (default true),
+        # numeric_only (default false) and extra keyword arguments. Calls the cython
+        # aggregation with a fallback that raises a type error for unsupported dtypes.
+        # Returns a Series.
         """
         Return unbiased kurtosis within groups.
 
@@ -1558,6 +1731,10 @@ class SeriesGroupBy(GroupBy[Series]):
         """
 
         def alt(obj):
+            # [FUNCTION DOC]
+            # HELPER: fallback used when the cython kurtosis kernel cannot run; it raises a type
+            # error stating kurt is unsupported for the dtype of obj. Intended to be unreachable
+            # because the cython path raises a type error itself.
             # This should not be reached since the cython path should raise
             #  TypeError and not NotImplementedError.
             raise TypeError(f"'kurt' is not supported for dtype={obj.dtype}")
@@ -1568,6 +1745,9 @@ class SeriesGroupBy(GroupBy[Series]):
 
     @property
     def plot(self) -> GroupByPlot:
+        # [FUNCTION DOC]
+        # Property that returns a plotting accessor wrapping this groupby object, so plots
+        # are drawn per group.
         """
         Make plots of groups from a Series.
 
@@ -1595,6 +1775,10 @@ class SeriesGroupBy(GroupBy[Series]):
     def nlargest(
         self, n: int = 5, keep: Literal["first", "last", "all"] = "first"
     ) -> Series:
+        # [FUNCTION DOC]
+        # Returns the n largest values of each group. Parameters: n (default 5) and keep
+        # (first, last or all; how to treat ties). Applies the Series method per group and keeps
+        # the group keys in the index of the result.
         """
         Return the largest `n` elements.
 
@@ -1659,6 +1843,10 @@ class SeriesGroupBy(GroupBy[Series]):
     def nsmallest(
         self, n: int = 5, keep: Literal["first", "last", "all"] = "first"
     ) -> Series:
+        # [FUNCTION DOC]
+        # Returns the n smallest values of each group. Parameters: n (default 5) and keep
+        # (first, last or all; how to treat ties). Applies the Series method per group and keeps
+        # the group keys in the index of the result.
         """
         Return the smallest `n` elements.
 
@@ -1721,6 +1909,10 @@ class SeriesGroupBy(GroupBy[Series]):
         return result
 
     def idxmin(self, skipna: bool = True) -> Series:
+        # [FUNCTION DOC]
+        # Index label of the minimum value in each group. Parameter skipna (default true).
+        # Delegates to the shared index-of-extremum helper with the minimum operation.
+        # Returns a Series.
         """
         Return the row label of the minimum value.
 
@@ -1782,6 +1974,10 @@ class SeriesGroupBy(GroupBy[Series]):
         return self._idxmax_idxmin("idxmin", skipna=skipna)
 
     def idxmax(self, skipna: bool = True) -> Series:
+        # [FUNCTION DOC]
+        # Index label of the maximum value in each group. Parameter skipna (default true).
+        # Delegates to the shared index-of-extremum helper with the maximum operation.
+        # Returns a Series.
         """
         Return the row label of the maximum value.
 
@@ -1848,6 +2044,11 @@ class SeriesGroupBy(GroupBy[Series]):
         method: CorrelationMethod = "pearson",
         min_periods: int | None = None,
     ) -> Series:
+        # [FUNCTION DOC]
+        # Correlation of each group with another Series. Parameters: other (Series),
+        # method (pearson, kendall, spearman or callable; default pearson), min_periods
+        # (optional minimum observations). Delegates to the Series method per group and
+        # returns a Series.
         """
         Compute correlation between each group and another Series.
 
@@ -1884,6 +2085,10 @@ class SeriesGroupBy(GroupBy[Series]):
     def cov(
         self, other: Series, min_periods: int | None = None, ddof: int | None = 1
     ) -> Series:
+        # [FUNCTION DOC]
+        # Covariance of each group with another Series. Parameters: other (Series),
+        # min_periods (optional) and ddof (default 1). Delegates to the Series method per
+        # group and returns a Series.
         """
         Compute covariance between each group and another Series.
 
@@ -1919,6 +2124,9 @@ class SeriesGroupBy(GroupBy[Series]):
 
     @property
     def is_monotonic_increasing(self) -> Series:
+        # [FUNCTION DOC]
+        # Property: for each group, whether its values are monotonically increasing. Returns a
+        # Series of booleans indexed by group.
         """
         Return whether each group's values are monotonically increasing.
 
@@ -1943,6 +2151,9 @@ class SeriesGroupBy(GroupBy[Series]):
 
     @property
     def is_monotonic_decreasing(self) -> Series:
+        # [FUNCTION DOC]
+        # Property: for each group, whether its values are monotonically decreasing. Returns a
+        # Series of booleans indexed by group.
         """
         Return whether each group's values are monotonically decreasing.
 
@@ -1980,6 +2191,11 @@ class SeriesGroupBy(GroupBy[Series]):
         legend: bool = False,
         **kwargs,
     ):
+        # [FUNCTION DOC]
+        # Draws a histogram per group. Parameters mirror the Series histogram method: by, ax,
+        # grid, label sizes and rotations, figsize, bins (default 10), backend, legend (default
+        # false) and extra keyword arguments, all forwarded unchanged. Returns whatever the
+        # per-group plotting produces (a Series of axes objects).
         """
         Draw histogram for each group's values using :meth:`Series.hist` API.
 
@@ -2045,6 +2261,8 @@ class SeriesGroupBy(GroupBy[Series]):
 
     @property
     def dtype(self) -> Series:
+        # [FUNCTION DOC]
+        # Property: the data type of each group's values. Returns a Series indexed by group.
         """
         Return the dtype object of the underlying data for each group.
 
@@ -2058,6 +2276,9 @@ class SeriesGroupBy(GroupBy[Series]):
         return self.apply(lambda ser: ser.dtype)
 
     def unique(self) -> Series:
+        # [FUNCTION DOC]
+        # Returns the unique values of each group in order of appearance. Delegates to the
+        # Series method per group; returns a Series of arrays indexed by group.
         """
         Return unique values for each group.
 
@@ -2107,7 +2328,31 @@ class SeriesGroupBy(GroupBy[Series]):
 
 @set_module("pandas.api.typing")
 class DataFrameGroupBy(GroupBy[DataFrame]):
+    # [CLASS DOC]
+    # Groupby object for a DataFrame; specializes the generic GroupBy base with the
+    # DataFrame type. State comes from the base class. Overrides aggregation, result
+    # wrapping, transform, filter, column selection (getitem and the internal selection
+    # helper), and adds DataFrame specific methods: nunique, idxmax, idxmin, value_counts,
+    # take, skew, kurt, plot, corr, cov, hist, corrwith (deprecated) and the boxplot
+    # alias. Column selection returns a frame groupby for a list key and a series groupby
+    # for a scalar key.
     def aggregate(self, func=None, *args, engine=None, engine_kwargs=None, **kwargs):
+        # [FUNCTION DOC]
+        # Aggregates each group with one or more operations, per column. Parameters: func
+        # (function, name, list or dict mapping column to those; none means named
+        # aggregation through keyword arguments), extra positional arguments, engine (cython,
+        # numba or none), engine_kwargs (numba options) and keyword arguments. First resolves
+        # named aggregation into function, output columns and ordering, mangles lambda names,
+        # and adds engine settings if numba is requested. Tries the generic apply machinery:
+        # when that gives a result for non-dict specs it is returned (with the keys reset to
+        # columns for lists and as_index false); for named aggregation the result columns are
+        # reordered and renamed. If no result (an unknown callable): numba path if requested;
+        # multiple grouping keys use the python aggregation; given extra arguments, the
+        # frame-level aggregation is used; otherwise the callable is tried as a one-element
+        # list, falling back to the frame-level aggregation when that fails with no objects to
+        # concatenate (any other value error propagates). With as_index false, group keys are
+        # inserted as columns and a default index is used. Returns a DataFrame (or Series for a
+        # scalar-returning function).
         """
         Aggregate using one or more operations.
 
@@ -2360,6 +2605,11 @@ class DataFrameGroupBy(GroupBy[DataFrame]):
     agg = aggregate
 
     def _python_agg_general(self, func, *args, **kwargs):
+        # [FUNCTION DOC]
+        # HELPER: python-level aggregation of each column with func and extra arguments. With
+        # zero groups defers to the generic apply helper marked as aggregation; with no
+        # columns also defers to apply. Otherwise aggregates every column by group with the
+        # grouper and builds a frame with the original columns, then applies output wrapping.
         f = lambda x: func(x, *args, **kwargs)
 
         if self.ngroups == 0:
@@ -2383,6 +2633,10 @@ class DataFrameGroupBy(GroupBy[DataFrame]):
         return self._wrap_aggregated_output(res)
 
     def _aggregate_frame(self, func, *args, **kwargs) -> DataFrame:
+        # [FUNCTION DOC]
+        # HELPER: applies func (with extra arguments) to each group's whole frame and returns the
+        # results as a transposed frame indexed by group. Only valid with exactly one grouping
+        # key; raises an assertion error otherwise.
         if self._grouper.nkeys != 1:
             raise AssertionError("Number of keys must be 1")
 
@@ -2406,6 +2660,16 @@ class DataFrameGroupBy(GroupBy[DataFrame]):
         not_indexed_same: bool = False,
         is_transform: bool = False,
     ):
+        # [FUNCTION DOC]
+        # HELPER: combines the per-group outputs of apply for frames. Parameters: data (grouped
+        # frame), values (list of group results, entries may be none), not_indexed_same,
+        # is_transform. Empty values give an empty frame with the original columns and dtypes
+        # (index chosen as for series). If every value is none, an empty frame with original
+        # columns and dtypes. If the first non-none value is a frame, concatenates via the base
+        # class helper. Array-like or index results become a Series (named by the selection)
+        # keyed by group, scalars become a Series keyed by group (or a frame with keys
+        # reinserted when as_index is false), and Series results are handled by the Series
+        # specific helper.
         if len(values) == 0:
             if is_transform:
                 # GH#47787 see test_group_on_empty_multiindex
@@ -2482,6 +2746,15 @@ class DataFrameGroupBy(GroupBy[DataFrame]):
         key_index: Index | None,
         is_transform: bool,
     ) -> DataFrame | Series:
+        # [FUNCTION DOC]
+        # HELPER: combines per-group Series results into a frame. Parameters: values (list of
+        # Series, none entries replaced with an empty Series), not_indexed_same, first_not_none
+        # (first non-none value, supplies axes), key_index (group index or none), is_transform.
+        # If the Series indexes differ, falls back to concatenation. Otherwise stacks the
+        # values row-wise into a two-dimensional array, uses the first Series index as columns
+        # (naming them with the common Series name if unique and no name set), lets the
+        # constructor infer types for object data, and builds a frame keyed by the group index.
+        # Group keys are reinserted if as_index is false. Result inherits metadata.
         kwargs = first_not_none._construct_axes_dict()
         backup = Series(**kwargs)
         values = [x if (x is not None) else backup for x in values]
@@ -2524,6 +2797,11 @@ class DataFrameGroupBy(GroupBy[DataFrame]):
         numeric_only: bool = False,
         **kwargs,
     ) -> DataFrame:
+        # [FUNCTION DOC]
+        # HELPER: cython transform of every block. Parameters: how (kernel name), numeric_only
+        # (default false) and kernel keyword arguments. Gets the data blocks, applies the
+        # grouper's transform operation to each block array, and rebuilds a DataFrame from the
+        # resulting manager. Returns a DataFrame.
         # We have multi-block tests
         #  e.g. test_rank_min_int, test_cython_transform_frame
         #  test_transform_numeric_ret
@@ -2532,6 +2810,9 @@ class DataFrameGroupBy(GroupBy[DataFrame]):
         )
 
         def arr_func(bvalues: ArrayLike) -> ArrayLike:
+            # [FUNCTION DOC]
+            # HELPER: applies the transform kernel named in the enclosing call to one block's values
+            # array and returns the transformed array.
             return self._grouper._cython_operation(
                 "transform", bvalues, how, 1, **kwargs
             )
@@ -2542,6 +2823,14 @@ class DataFrameGroupBy(GroupBy[DataFrame]):
         return res_df
 
     def _transform_general(self, func, engine, engine_kwargs, *args, **kwargs):
+        # [FUNCTION DOC]
+        # HELPER: general (non-cython) frame transform. Parameters: func, engine,
+        # engine_kwargs, extra arguments. Uses the numba path if requested. Otherwise
+        # builds a fast path and a slow path, evaluates the first group to choose one (raising
+        # a value error saying transform must return a scalar value for each group if
+        # choosing fails with a value error), then applies the chosen path to the remaining
+        # groups, skipping empty groups. Each result is broadcast to the group's shape,
+        # concatenated, reindexed to the original columns and put back in original row order.
         if maybe_use_numba(engine):
             return self._transform_with_numba(
                 func, *args, engine_kwargs=engine_kwargs, **kwargs
@@ -2644,6 +2933,11 @@ class DataFrameGroupBy(GroupBy[DataFrame]):
     )
 
     def transform(self, func, *args, engine=None, engine_kwargs=None, **kwargs):
+        # [FUNCTION DOC]
+        # Transforms each group, returning a result aligned with the original index.
+        # Parameters: func (callable or name of a transform or reduction kernel), extra
+        # positional arguments, engine (cython, numba or none), engine_kwargs and keyword
+        # arguments. Delegates entirely to the shared base class transform.
         """
         Call function producing a same-indexed DataFrame on each group.
 
@@ -2794,6 +3088,10 @@ class DataFrameGroupBy(GroupBy[DataFrame]):
         )
 
     def _define_paths(self, func, *args, **kwargs):
+        # [FUNCTION DOC]
+        # HELPER: builds two callables from func for evaluating a group: a fast path that applies
+        # func to the whole group frame and a slow path that applies it to each column. If func is
+        # a string the named method is called, with extra arguments. Returns the pair.
         if isinstance(func, str):
             fast_path = lambda group: getattr(group, func)(*args, **kwargs)
             slow_path = lambda group: group.apply(
@@ -2807,6 +3105,13 @@ class DataFrameGroupBy(GroupBy[DataFrame]):
         return fast_path, slow_path
 
     def _choose_path(self, fast_path: Callable, slow_path: Callable, group: DataFrame):
+        # [FUNCTION DOC]
+        # HELPER: decides between the fast and slow transform path using a sample group. Always
+        # runs the slow path and keeps its result. With a single group, returns slow path and
+        # result immediately. Otherwise tries the fast path; assertion errors propagate, other
+        # exceptions select the slow path. The fast result must be a frame with the same
+        # columns or a Series indexed by those columns, and must equal the slow result for the
+        # fast path to be chosen. Returns the chosen callable and the slow result.
         path = slow_path
         res = slow_path(group)
 
@@ -2843,6 +3148,13 @@ class DataFrameGroupBy(GroupBy[DataFrame]):
         return path, res
 
     def filter(self, func, dropna: bool = True, *args, **kwargs) -> DataFrame:
+        # [FUNCTION DOC]
+        # Returns the frame restricted to groups for which func is true. Parameters: func
+        # (callable taking a group frame, extra args forwarded), dropna (default true).
+        # Each group result is squeezed; a boolean or missing scalar is accepted (missing counts
+        # as false), anything else raises a type error stating the function returned an
+        # unexpected type but a scalar bool was expected. Rows of passing groups are
+        # kept via the base class filter helper.
         """
         Filter elements from groups that don't satisfy a criterion.
 
@@ -2927,6 +3239,10 @@ class DataFrameGroupBy(GroupBy[DataFrame]):
         return self._apply_filter(indices, dropna)
 
     def __getitem__(self, key) -> DataFrameGroupBy | SeriesGroupBy:
+        # [FUNCTION DOC]
+        # Column selection on the groupby. Raises a value error when the key is a tuple with
+        # more than one element (suggesting a list); otherwise delegates to the base class,
+        # returning a frame groupby for list keys or a series groupby for scalar keys.
         # per GH 23566
         if isinstance(key, tuple) and len(key) > 1:
             # if len == 1, then it becomes a SeriesGroupBy and this is actually
@@ -2938,6 +3254,11 @@ class DataFrameGroupBy(GroupBy[DataFrame]):
         return super().__getitem__(key)
 
     def _gotitem(self, key, ndim: int, subset=None):
+        # [FUNCTION DOC]
+        # HELPER: creates a groupby restricted to a selection. Parameters: key (the selected
+        # column(s)), ndim (two gives a frame groupby, one a series groupby), subset (object to
+        # use, defaults to the whole object or the selected column). The new object shares the
+        # grouper, exclusions and all options. Raises an assertion error for other ndim values.
         """
         sub-classes to define
         return a sliced object
@@ -2988,6 +3309,10 @@ class DataFrameGroupBy(GroupBy[DataFrame]):
     def _get_data_to_aggregate(
         self, *, numeric_only: bool = False, name: str | None = None
     ) -> BlockManager:
+        # [FUNCTION DOC]
+        # HELPER: returns the block manager of the data to aggregate (excluding grouping
+        # columns), restricted to numeric blocks when numeric_only is true. The name
+        # parameter is unused here.
         obj = self._obj_with_exclusions
         mgr = obj._mgr
         if numeric_only:
@@ -2995,9 +3320,17 @@ class DataFrameGroupBy(GroupBy[DataFrame]):
         return mgr
 
     def _wrap_agged_manager(self, mgr: BlockManager) -> DataFrame:
+        # [FUNCTION DOC]
+        # HELPER: wraps an aggregated block manager into a DataFrame via the constructor of
+        # the grouped object.
         return self.obj._constructor_from_mgr(mgr, axes=mgr.axes)
 
     def _apply_to_column_groupbys(self, func) -> DataFrame:
+        # [FUNCTION DOC]
+        # HELPER: applies func to a per-column Series groupby for every column and
+        # concatenates the results by column. With no columns, an empty frame indexed by the
+        # result index. With as_index false, resets the index to default and reinserts group
+        # keys. Returns a DataFrame.
         from pandas.core.reshape.concat import concat
 
         obj = self._obj_with_exclusions
@@ -3026,6 +3359,9 @@ class DataFrameGroupBy(GroupBy[DataFrame]):
         return res_df
 
     def nunique(self, dropna: bool = True) -> DataFrame:
+        # [FUNCTION DOC]
+        # Counts distinct values per column for each group. Parameter dropna (default true).
+        # Applies the Series method to each column. Returns a DataFrame.
         """
         Return DataFrame with counts of unique elements in each position.
 
@@ -3084,6 +3420,10 @@ class DataFrameGroupBy(GroupBy[DataFrame]):
         skipna: bool = True,
         numeric_only: bool = False,
     ) -> DataFrame:
+        # [FUNCTION DOC]
+        # Index label of the maximum in each group and column. Parameters skipna (default true)
+        # and numeric_only (default false). Delegates to the shared extremum index helper.
+        # Returns a DataFrame.
         """
         Return index of first occurrence of maximum in each group.
 
@@ -3156,6 +3496,10 @@ class DataFrameGroupBy(GroupBy[DataFrame]):
         skipna: bool = True,
         numeric_only: bool = False,
     ) -> DataFrame:
+        # [FUNCTION DOC]
+        # Index label of the minimum in each group and column. Parameters skipna (default true)
+        # and numeric_only (default false). Delegates to the shared extremum index helper.
+        # Returns a DataFrame.
         """
         Return index of first occurrence of minimum in each group.
 
@@ -3233,6 +3577,10 @@ class DataFrameGroupBy(GroupBy[DataFrame]):
         ascending: bool = False,
         dropna: bool = True,
     ) -> DataFrame | Series:
+        # [FUNCTION DOC]
+        # Counts unique rows per group. Parameters: subset (columns to use, default all), normalize
+        # (default false), sort (default true), ascending (default false), dropna (default
+        # true). Delegates to the shared counting helper and returns a Series or DataFrame.
         """
         Return a Series or DataFrame containing counts of unique rows.
 
@@ -3349,6 +3697,10 @@ class DataFrameGroupBy(GroupBy[DataFrame]):
         indices: TakeIndexer,
         **kwargs,
     ) -> DataFrame:
+        # [FUNCTION DOC]
+        # Takes rows by position within each group. Parameters: indices (positions relative
+        # to each group) and keyword arguments. Delegates per group to the frame method and
+        # returns a DataFrame.
         """
         Return the elements in the given *positional* indices in each group.
 
@@ -3445,6 +3797,10 @@ class DataFrameGroupBy(GroupBy[DataFrame]):
         numeric_only: bool = False,
         **kwargs,
     ) -> DataFrame:
+        # [FUNCTION DOC]
+        # Unbiased skewness per group and column. Parameters: skipna (default true), numeric_only
+        # (default false), extra keyword arguments. Calls the cython aggregation with a
+        # fallback that raises a type error for unsupported dtypes. Returns a DataFrame.
         """
         Return unbiased skew within groups.
 
@@ -3505,6 +3861,9 @@ class DataFrameGroupBy(GroupBy[DataFrame]):
         """
 
         def alt(obj):
+            # [FUNCTION DOC]
+            # HELPER: fallback used when the cython skewness kernel cannot run; raises a type error
+            # stating skew is unsupported for the dtype of obj. Intended to be unreachable.
             # This should not be reached since the cython path should raise
             #  TypeError and not NotImplementedError.
             raise TypeError(f"'skew' is not supported for dtype={obj.dtype}")
@@ -3519,6 +3878,10 @@ class DataFrameGroupBy(GroupBy[DataFrame]):
         numeric_only: bool = False,
         **kwargs,
     ) -> DataFrame:
+        # [FUNCTION DOC]
+        # Unbiased kurtosis per group and column. Parameters: skipna (default true),
+        # numeric_only (default false), extra keyword arguments. Calls the cython aggregation
+        # with no python fallback. Returns a DataFrame.
         """
         Return unbiased kurtosis within groups.
 
@@ -3620,6 +3983,9 @@ class DataFrameGroupBy(GroupBy[DataFrame]):
 
     @property
     def plot(self) -> GroupByPlot:
+        # [FUNCTION DOC]
+        # Property returning a plotting accessor wrapping this groupby object, so plots are drawn
+        # per group.
         """
         Make plots of groups from a DataFrame.
 
@@ -3652,6 +4018,11 @@ class DataFrameGroupBy(GroupBy[DataFrame]):
         min_periods: int = 1,
         numeric_only: bool = False,
     ) -> DataFrame:
+        # [FUNCTION DOC]
+        # Pairwise correlation of columns within each group. Parameters: method (pearson,
+        # kendall, spearman or callable; default pearson), min_periods (default 1), numeric_only
+        # (default false). Delegates per group to the frame method and returns a DataFrame
+        # with a group-by-column index.
         """
         Compute pairwise correlation of columns, excluding NA/null values.
 
@@ -3735,6 +4106,10 @@ class DataFrameGroupBy(GroupBy[DataFrame]):
         ddof: int | None = 1,
         numeric_only: bool = False,
     ) -> DataFrame:
+        # [FUNCTION DOC]
+        # Pairwise covariance of columns within each group. Parameters: min_periods (optional),
+        # ddof (default 1), numeric_only (default false). Delegates per group to the frame
+        # method and returns a DataFrame.
         """
         Compute pairwise covariance of columns, excluding NA/null values.
 
@@ -3853,6 +4228,11 @@ class DataFrameGroupBy(GroupBy[DataFrame]):
         legend: bool = False,
         **kwargs,
     ):
+        # [FUNCTION DOC]
+        # Draws histograms for columns per group. Parameters mirror the frame histogram method:
+        # column, by, grid, label sizes and rotations, ax, sharex, sharey, figsize, layout, bins
+        # (default 10), backend, legend and extra keyword arguments, all forwarded unchanged.
+        # Returns the per-group plotting result.
         """
         Make a histogram of the DataFrame's columns.
 
@@ -3969,6 +4349,11 @@ class DataFrameGroupBy(GroupBy[DataFrame]):
         method: CorrelationMethod = "pearson",
         numeric_only: bool = False,
     ) -> DataFrame:
+        # [FUNCTION DOC]
+        # Deprecated: correlation with another object per group. Parameters: other (frame or
+        # Series), drop (default false), method (default pearson), numeric_only (default false).
+        # Always emits a deprecation warning of the Pandas4Warning category attributed to the
+        # caller, then delegates per group to the frame method and returns a DataFrame.
         """
         Compute pairwise correlation.
 
@@ -4049,6 +4434,14 @@ class DataFrameGroupBy(GroupBy[DataFrame]):
 def _wrap_transform_general_frame(
     obj: DataFrame, group: DataFrame, res: DataFrame | Series
 ) -> DataFrame:
+    # [FUNCTION DOC]
+    # HELPER: broadcasts one group's transform result to the group's shape. Parameters: obj
+    # (original frame), group (the group frame), res (result, Series or frame). A Series result
+    # is expanded across all columns: if its index is identical to the original object's
+    # index, it is concatenated once per column and given the group's columns and index;
+    # otherwise its values are tiled into a frame with the group's index and columns. A frame
+    # result whose index is not identical to the group's is aligned to the group. Anything
+    # else is returned unchanged.
     from pandas import concat
 
     if isinstance(res, Series):

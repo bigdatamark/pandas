@@ -7,6 +7,19 @@ The SeriesGroupBy and DataFrameGroupBy sub-class
 expose these user-facing objects to provide specific functionality.
 """
 
+# [MODULE DOC]
+# Implements the split-apply-combine machinery shared by Series and DataFrame groupby.
+# Public contents: GroupBy (the main generic class), BaseGroupBy (properties and
+# iteration shared with resample-style groupers), GroupByPlot (plot accessor), the
+# public factory get_groupby, and several string templates used to build docstrings
+# for aggregation, pipe and transform methods. Private contents: a type alias for
+# accepted key arguments, a type variable for expanded outputs, and the helper that
+# inserts a quantile level into an index. Relies on the grouper module (key
+# resolution), ops (the low level splitting and cython aggregation), numba_ (jitted
+# kernels), indexing (positional selectors) and base (kernel name registries).
+# The subclasses in the generic module specialize this class. Import has no side
+# effects other than building the docstring templates.
+
 from __future__ import annotations
 
 from collections.abc import (
@@ -411,23 +424,47 @@ Examples
 
 @final
 class GroupByPlot(PandasObject):
+    # [CLASS DOC]
+    # Plot accessor object returned by the plot property of groupby objects. State: the
+    # reference to the groupby it was created for. Calling it, or accessing any attribute
+    # on it (a specific plot kind), draws the plot for each group by applying the
+    # corresponding plot method of the group's object and combining the results.
     """
     Class implementing the .plot attribute for groupby objects.
     """
 
     def __init__(self, groupby: GroupBy) -> None:
+        # [FUNCTION DOC]
+        # Stores the groupby object on the instance; no other effect.
         self._groupby = groupby
 
     def __call__(self, *args, **kwargs):
+        # [FUNCTION DOC]
+        # Plots each group by calling the plot method of the group with the supplied positional and
+        # keyword arguments. The inner function is renamed to plot so that the apply machinery
+        # recognizes plotting. Returns the result of applying it to the selected object.
         def f(self):
+            # [FUNCTION DOC]
+            # HELPER: applied to each group; calls the group's plot method with the arguments captured
+            # by the enclosing call and returns the result.
             return self.plot(*args, **kwargs)
 
         f.__name__ = "plot"
         return self._groupby._python_apply_general(f, self._groupby._selected_obj)
 
     def __getattr__(self, name: str):
+        # [FUNCTION DOC]
+        # Dynamic attribute lookup for specific plot kinds. Parameter name is the plot kind
+        # (an attribute of the plot accessor of the group). Returns a callable that, when called
+        # with arguments, applies that plot method to every group and returns the combined result.
         def attr(*args, **kwargs):
+            # [FUNCTION DOC]
+            # HELPER: the callable returned for a plot kind; accepts positional and keyword arguments
+            # and applies the named plot method to each group, returning the combined result.
             def f(self):
+                # [FUNCTION DOC]
+                # HELPER: applied to each group; looks up the plot method of the group's plot accessor
+                # by the captured name and calls it with the captured arguments.
                 return getattr(self.plot, name)(*args, **kwargs)
 
             return self._groupby._python_apply_general(f, self._groupby._selected_obj)
@@ -445,6 +482,15 @@ _KeysArgType: TypeAlias = (
 
 
 class BaseGroupBy(PandasObject, SelectionMixin[NDFrameT], GroupByIndexingMixin):
+    # [CLASS DOC]
+    # Base for groupby objects. Inherits from the pandas object base, the selection mixin
+    # (column selection and the object with exclusions) and the positional indexing mixin.
+    # Class attributes: keys (the grouping specification, default none), level (the index
+    # level specification, default none), group_keys (flag, set by subclasses) and the
+    # grouper (a low level grouper object). Hidden attributes are excluded from attribute
+    # completion. Provides length (number of groups), the group lookup properties groups
+    # and indices, pipe, get_group, iteration, and internal index lookup. Concrete
+    # behavior (construction, aggregation) is in the GroupBy subclass.
     _hidden_attrs = PandasObject._hidden_attrs | {
         "as_index",
         "dropna",
@@ -465,16 +511,25 @@ class BaseGroupBy(PandasObject, SelectionMixin[NDFrameT], GroupByIndexingMixin):
 
     @final
     def __len__(self) -> int:
+        # [FUNCTION DOC]
+        # Returns the number of groups.
         return self._grouper.ngroups
 
     @final
     def __repr__(self) -> str:
+        # [FUNCTION DOC]
+        # Returns the default object representation (type and address); no custom text.
         # TODO: Better repr for GroupBy object
         return object.__repr__(self)
 
     @final
     @property
     def groups(self) -> dict[Hashable, Index]:
+        # [FUNCTION DOC]
+        # Property: mapping from group key to the labels of the original axis in that group.
+        # Emits a deprecation warning of the Pandas4Warning category when grouping was given as a
+        # list with a single key, because keys will become tuples in future. Returns the
+        # dictionary computed by the grouper.
         """
         Dict {group name -> group labels}.
 
@@ -552,11 +607,16 @@ class BaseGroupBy(PandasObject, SelectionMixin[NDFrameT], GroupByIndexingMixin):
     @final
     @property
     def ngroups(self) -> int:
+        # [FUNCTION DOC]
+        # Property: the number of groups, taken from the grouper.
         return self._grouper.ngroups
 
     @final
     @property
     def indices(self) -> dict[Hashable, npt.NDArray[np.intp]]:
+        # [FUNCTION DOC]
+        # Property: mapping from group key to an integer array of row positions in that group,
+        # taken from the grouper.
         """
         Dict {group name -> group indices}.
 
@@ -627,12 +687,24 @@ class BaseGroupBy(PandasObject, SelectionMixin[NDFrameT], GroupByIndexingMixin):
 
     @final
     def _get_index(self, name):
+        # [FUNCTION DOC]
+        # HELPER: finds the positions of the rows for a group name. Missing-value names look up the
+        # nan key and return an empty list if absent. Tuple names have missing components
+        # normalized to nan. If keys in the indices are tuples the name must be a tuple of the
+        # same length (otherwise raises a value error; a tuple of different length is still tried
+        # as a literal key first), and each component is converted to the key's type. Single keys
+        # are converted likewise (date-time keys become timestamps). Returns the positions, or an
+        # empty list if the group does not exist.
         """
         Safe get multiple indices, translate keys for
         datelike to underlying repr.
         """
 
         def get_converter(s):
+            # [FUNCTION DOC]
+            # HELPER: given a sample key from the indices, returns a function converting a lookup key
+            # to the same type: date-time objects become timestamps, numpy date-times become timestamps
+            # converted to the numpy type, anything else is returned unchanged.
             # possibly convert to the actual key types
             # in the indices, could be a Timestamp or an np.datetime64
             if isinstance(s, datetime.datetime):
@@ -679,6 +751,10 @@ class BaseGroupBy(PandasObject, SelectionMixin[NDFrameT], GroupByIndexingMixin):
     @final
     @cache_readonly
     def _selected_obj(self):
+        # [FUNCTION DOC]
+        # HELPER: cached property giving the object that selections operate on. For a Series the
+        # object itself. With a single hashable selection, the selected column (a Series). With a
+        # list selection, the object with exclusions. Otherwise the whole object.
         # Note: _selected_obj is always just `self.obj` for SeriesGroupBy
         if isinstance(self.obj, Series):
             return self.obj
@@ -699,6 +775,8 @@ class BaseGroupBy(PandasObject, SelectionMixin[NDFrameT], GroupByIndexingMixin):
 
     @final
     def _dir_additions(self) -> set[str]:
+        # [FUNCTION DOC]
+        # HELPER: names to add to attribute completion; delegates to the grouped object.
         return self.obj._dir_additions()
 
     @overload
@@ -723,6 +801,15 @@ class BaseGroupBy(PandasObject, SelectionMixin[NDFrameT], GroupByIndexingMixin):
         *args: Any,
         **kwargs: Any,
     ) -> T:
+        # [FUNCTION DOC]
+        # Overload stub for pipe with a callable first argument; see the implementation below.
+        # [FUNCTION DOC]
+        # Overload stub for pipe with a (callable, data keyword) tuple; see the implementation below.
+        # [FUNCTION DOC]
+        # Applies a function to the groupby object itself and returns its result. Parameters: func
+        # (callable, or a pair of a callable and the name of the keyword argument that should receive
+        # this object), plus positional and keyword arguments forwarded. Delegates to the common
+        # pipe helper.
         """
         Apply a ``func`` with arguments to this GroupBy object and return its result.
 
@@ -796,6 +883,11 @@ class BaseGroupBy(PandasObject, SelectionMixin[NDFrameT], GroupByIndexingMixin):
 
     @final
     def get_group(self, name) -> DataFrame | Series:
+        # [FUNCTION DOC]
+        # Returns one group as an object. Parameter name is the group key (a tuple when grouping
+        # by multiple keys; a one-element tuple is unwrapped when grouping by a one-element list).
+        # Raises a key error when the name is not a tuple for list groupings of length one, or when the group
+        # does not exist. Returns the rows of the selected object belonging to that group.
         """
         Construct DataFrame from group with provided name.
 
@@ -891,6 +983,10 @@ class BaseGroupBy(PandasObject, SelectionMixin[NDFrameT], GroupByIndexingMixin):
 
     @final
     def __iter__(self) -> Iterator[tuple[Hashable, NDFrameT]]:
+        # [FUNCTION DOC]
+        # Iterates over (key, group) pairs. Returns an iterator from the grouper over the selected
+        # object. When grouping by a length-one list of keys or a length-one level list, keys are
+        # wrapped into one-element tuples.
         """
         Groupby iterator.
 
@@ -996,6 +1092,17 @@ OutputFrameOrSeries = TypeVar("OutputFrameOrSeries", bound=NDFrame)
 
 
 class GroupBy(BaseGroupBy[NDFrameT]):
+    # [CLASS DOC]
+    # Main groupby class; generic over the grouped pandas type. Subclass of BaseGroupBy.
+    # State set at construction: the optional selection, level, keys, as_index, sort,
+    # group_keys, dropna, observed, the grouped object, the grouper and the frozen set of
+    # excluded labels. Provides apply, aggregation kernels (cython, python and numba),
+    # transform, filter, cumulative operations, rank, shift, diff, head, tail, nth,
+    # sample, quantile, ohlc, describe, resample, rolling, expanding and ewm. Abstract hook
+    # for wrapping applied output is implemented in subclasses.
+    # KNOWN ISSUE: the class docstring lists constructor parameters groupings and name and
+    # lists the returned attributes as such; the actual constructor takes keys, grouper,
+    # exclusions, selection, as_index, sort, group_keys, observed and dropna instead.
     """
     Class for grouping and aggregating relational data.
 
@@ -1080,6 +1187,15 @@ class GroupBy(BaseGroupBy[NDFrameT]):
         observed: bool = False,
         dropna: bool = True,
     ) -> None:
+        # [FUNCTION DOC]
+        # Constructor (final). Parameters: obj (pandas object to group), keys (grouping
+        # specification), level (index level), grouper (precomputed grouper, otherwise built from keys
+        # and level), exclusions (labels to exclude from the data, only used with a precomputed
+        # grouper), selection (selected column labels), as_index (default true), sort (default
+        # true), group_keys (default true), observed (default false), dropna (default true).
+        # Asserts obj is a pandas object. Stores options. If no grouper is passed, resolves keys with
+        # the grouper helper, which also returns the exclusions and possibly an adjusted obj. Stores
+        # the exclusions as a frozen set (empty if none).
         self._selection = selection
 
         assert isinstance(obj, NDFrame), type(obj)
@@ -1107,6 +1223,9 @@ class GroupBy(BaseGroupBy[NDFrameT]):
         self.exclusions = frozenset(exclusions) if exclusions else frozenset()
 
     def __getattr__(self, attr: str):
+        # [FUNCTION DOC]
+        # Attribute fallback. Internal names resolve to normal lookup. A name that is a label of the
+        # grouped object returns the column selection for that label. Otherwise raises an attribute error naming the type and attribute.
         if attr in self._internal_names_set:
             return object.__getattribute__(self, attr)
         if attr in self.obj:
@@ -1118,10 +1237,20 @@ class GroupBy(BaseGroupBy[NDFrameT]):
 
     @final
     def _op_via_apply(self, name: str, *args, **kwargs):
+        # [FUNCTION DOC]
+        # HELPER: computes an operation of the grouped type's method name by applying it to each group.
+        # Parameters: name (method name), extra positional and keyword arguments. Plotting
+        # methods are applied to the selected object directly. Transformation kernels are applied with
+        # is_transform set and results considered indexed the same; others as not indexed the same.
+        # If the grouper dropped missing-key rows in a transform, the result is reindexed
+        # to the input order with missing values. Returns the combined result.
         """Compute the result of an operation by using GroupBy's apply."""
         f = getattr(type(self._obj_with_exclusions), name)
 
         def curried(x):
+            # [FUNCTION DOC]
+            # HELPER: calls the grouped type's method (captured from the enclosing call) on a group with the captured
+            # arguments; named like the method so plotting can be detected.
             return f(x, *args, **kwargs)
 
         # preserve the name so we can detect it when calling plot methods,
@@ -1157,6 +1286,16 @@ class GroupBy(BaseGroupBy[NDFrameT]):
         not_indexed_same: bool = False,
         is_transform: bool = False,
     ):
+        # [FUNCTION DOC]
+        # HELPER: concatenates per-group results. Parameters: values (list of per-group objects),
+        # not_indexed_same (whether results are indexed differently from the input),
+        # is_transform. With group_keys true and not a transform: concatenates with the group
+        # keys, levels and names as an index when as_index is true, plainly otherwise. For transforms
+        # with results indexed the same, concatenates and restores the original row order, using an
+        # inexpensive reindex or, if the original axis has duplicates, an indexer built from unique
+        # values (rows of dropped keys are removed from the target if dropna). Otherwise plain
+        # concatenation. A Series result takes the name of the grouped Series or the single
+        # selected label. Result carries metadata of the original object.
         from pandas.core.reshape.concat import concat
 
         if self.group_keys and not is_transform:
@@ -1219,6 +1358,12 @@ class GroupBy(BaseGroupBy[NDFrameT]):
     def _set_result_index_ordered(
         self, result: OutputFrameOrSeries
     ) -> OutputFrameOrSeries:
+        # [FUNCTION DOC]
+        # HELPER: puts transform results into the original row order. Parameter result is a pandas
+        # object with one row per kept input row in group order. If the grouper is monotonic and no
+        # rows were dropped, just assigns the original index. Otherwise labels rows with their
+        # original positions, sorts by position, re-adds missing rows when rows were dropped, and
+        # assigns the original index. Returns a new object.
         # set the result index on the passed values object and
         # return the new object, xref 8046
 
@@ -1245,6 +1390,13 @@ class GroupBy(BaseGroupBy[NDFrameT]):
     def _insert_inaxis_grouper(
         self, result: Series | DataFrame, qs: npt.NDArray[np.float64] | None = None
     ) -> DataFrame:
+        # [FUNCTION DOC]
+        # HELPER: inserts the group keys as columns at the front of the result (used when as_index
+        # is false). Parameters: result (Series converted to a frame, or a frame; mutated in place),
+        # qs (optional quantile array: adds a leading level column tiled by quantiles and repeats key
+        # values per quantile). Unnamed key levels get names as in resetting an index: index for a
+        # single key without quantiles, otherwise level plus position. Existing columns with the same
+        # name are not overwritten. Returns the frame.
         if isinstance(result, Series):
             result = result.to_frame()
 
@@ -1288,6 +1440,12 @@ class GroupBy(BaseGroupBy[NDFrameT]):
         result: Series | DataFrame,
         qs: npt.NDArray[np.float64] | None = None,
     ):
+        # [FUNCTION DOC]
+        # HELPER: gives an aggregated result its final index. Parameters: result (aggregated Series or
+        # frame, mutated) and qs (optional quantiles to add as a level). With as_index false, the group
+        # keys are inserted as columns, the frame is consolidated and given a default index.
+        # Otherwise the grouper's result index (with a quantile level if qs is given) becomes the index.
+        # Returns the result.
         """
         Wraps the output of GroupBy aggregations into the expected result.
 
@@ -1326,6 +1484,10 @@ class GroupBy(BaseGroupBy[NDFrameT]):
         not_indexed_same: bool = False,
         is_transform: bool = False,
     ):
+        # [FUNCTION DOC]
+        # HELPER: abstract hook that combines the per-group outputs of apply. Parameters: data,
+        # values, not_indexed_same, is_transform. Always raises the abstract method error here; the
+        # Series and DataFrame subclasses implement it.
         raise AbstractMethodError(self)
 
     # -----------------------------------------------------------------
@@ -1333,6 +1495,12 @@ class GroupBy(BaseGroupBy[NDFrameT]):
 
     @final
     def _numba_prep(self, data: DataFrame):
+        # [FUNCTION DOC]
+        # HELPER: prepares inputs for numba kernels. Parameter data is a frame. Returns a tuple of
+        # group start offsets, end offsets, the index values sorted by group, and the numpy values
+        # sorted by group. Raises not implemented error if the index is a multi-level index and
+        # there are several groupings; with a single grouping the index values come from the
+        # level named after the grouping.
         ngroups = self._grouper.ngroups
         sorted_index = self._grouper.result_ilocs
         sorted_ids = self._grouper._sorted_ids
@@ -1365,6 +1533,13 @@ class GroupBy(BaseGroupBy[NDFrameT]):
         engine_kwargs: dict[str, bool] | None,
         **aggregator_kwargs,
     ):
+        # [FUNCTION DOC]
+        # HELPER: runs a numba aggregation kernel over all groups (non-user-defined function path). Parameters: func
+        # (the kernel), dtype_mapping (mapping of input dtype to output dtype), engine_kwargs (numba
+        # options or none), extra keyword args for the kernel. Raises not implemented error when
+        # as_index is false. Applies the generated shared aggregator to each block with the group
+        # ids and number of groups, sets the result index to the group result index and returns a
+        # Series or frame matching the input dimension.
         """
         Perform groupby with a standard numerical aggregation function (e.g. mean)
         with Numba.
@@ -1403,6 +1578,12 @@ class GroupBy(BaseGroupBy[NDFrameT]):
 
     @final
     def _transform_with_numba(self, func, *args, engine_kwargs=None, **kwargs):
+        # [FUNCTION DOC]
+        # HELPER: transforms with a user-defined numba function. Parameters: func, extra positional
+        # args, engine_kwargs and keyword arguments. Validates the function signature, prepares the
+        # arguments, builds the jitted transform and applies it to group-sorted data. The result is
+        # reordered back to the original row order and wrapped as a Series or frame with the original index
+        # and name or columns. May raise not implemented error for multi-level index with several groupings.
         """
         Perform groupby transform routine with the numba engine.
 
@@ -1443,6 +1624,11 @@ class GroupBy(BaseGroupBy[NDFrameT]):
 
     @final
     def _aggregate_with_numba(self, func, *args, engine_kwargs=None, **kwargs):
+        # [FUNCTION DOC]
+        # HELPER: aggregates with a user-defined numba function. Parameters: func, extra positional
+        # args, engine_kwargs and keyword arguments. Validates the function, prepares arguments, builds the jitted
+        # aggregation, applies it to the group-sorted data and wraps the result with the group result index
+        # as a Series or frame. With as_index false the keys are inserted as columns with a default index.
         """
         Perform groupby aggregation routine with the numba engine.
 
@@ -1485,6 +1671,16 @@ class GroupBy(BaseGroupBy[NDFrameT]):
     # apply/agg/transform
 
     def apply(self, func, *args, include_groups: bool = False, **kwargs) -> NDFrameT:
+        # [FUNCTION DOC]
+        # Applies a function to each group and combines the results. Parameters: func (callable, or a
+        # string naming an attribute of this object), extra positional and keyword arguments, and
+        # include_groups (default false; true is rejected). Raises a value error if include_groups is true. A string func is looked up on this object; if callable it is
+        # called with the arguments, if a property it is returned (value error if arguments were
+        # supplied), else raises a type error. Callable plus extra arguments is bound into a one-argument function;
+        # extra arguments with a non-callable raise a value error. Delegates to the python apply
+        # helper over the object with grouping columns excluded.
+        # KNOWN ISSUE: the docstring text for include_groups describes the true behavior as
+        # supported; the code always rejects true.
         """
         Apply function ``func`` group-wise and combine the results together.
 
@@ -1638,6 +1834,9 @@ class GroupBy(BaseGroupBy[NDFrameT]):
 
                 @wraps(func)
                 def f(g):
+                    # [FUNCTION DOC]
+                    # HELPER: wrapper that calls the user function with the group followed by the captured
+                    # extra positional and keyword arguments.
                     return func(g, *args, **kwargs)
 
             else:
@@ -1658,6 +1857,11 @@ class GroupBy(BaseGroupBy[NDFrameT]):
         is_transform: bool = False,
         is_agg: bool = False,
     ) -> NDFrameT:
+        # [FUNCTION DOC]
+        # HELPER: applies f to each group of data and wraps the result. Parameters: f (callable),
+        # data (object to split), not_indexed_same (when none, taken from whether the grouper
+        # detected that f changed indices), is_transform, is_agg (accepted but unused here).
+        # Returns the output of the subclass applied-output wrapping.
         """
         Apply function f in python space
 
@@ -1705,6 +1909,13 @@ class GroupBy(BaseGroupBy[NDFrameT]):
         npfunc: Callable | None = None,
         **kwargs,
     ):
+        # [FUNCTION DOC]
+        # HELPER: thin wrapper over the cython aggregation used by simple reductions. Parameters:
+        # numeric_only (default false), min_count (default minus one, meaning no minimum
+        # non-missing count; otherwise groups with fewer valid values give missing results),
+        # keyword-only alias (the name of the cython kernel, required), npfunc (optional python
+        # fallback function) and extra keyword arguments for the kernel. Returns the cython
+        # aggregation result with metadata copied from the grouped object.
         result = self._cython_agg_general(
             how=alias,
             alt=npfunc,
@@ -1717,6 +1928,15 @@ class GroupBy(BaseGroupBy[NDFrameT]):
     def _agg_py_fallback(
         self, how: str, values: ArrayLike, ndim: int, alt: Callable
     ) -> ArrayLike:
+        # [FUNCTION DOC]
+        # HELPER: fallback aggregation in python for extension arrays and object data when the
+        # cython kernel is not implemented. Parameters: how (kernel name, for messages), values
+        # (the data array, one dimensional for extension arrays, otherwise a two dimensional
+        # object block with a single column), ndim (dimension the result block must have), alt
+        # (python function applied per group, must not be none). Wraps the values in a Series,
+        # aggregates per group with dtype preservation, and re-raises any failure as an exception of the same
+        # type with a message naming the kernel and dtype. Object results are cast back to object, string dtypes are rebuilt
+        # as that string array type. Returns the result reshaped to the requested dimension.
         """
         Fallback to pure-python aggregation if _cython_operation raises
         NotImplementedError.
@@ -1770,6 +1990,15 @@ class GroupBy(BaseGroupBy[NDFrameT]):
         min_count: int = -1,
         **kwargs,
     ):
+        # [FUNCTION DOC]
+        # HELPER: runs a cython aggregation kernel over all blocks (final). Parameters: how (kernel
+        # name), alt (optional python fallback), numeric_only (default false), min_count
+        # (default minus one) and kernel keyword arguments. Raises a value error unless numeric_only
+        # is a genuine boolean. Fetches the data to aggregate, reduces each block with the grouper's cython aggregation;
+        # when the kernel is not implemented, any and all on sparse arrays fall through to the python fallback, and
+        # other cases without a fallback (or std, sem, any, all) re-raise the error. The reduced manager is
+        # wrapped to the result type; for index-of-extremum kernels the labels are looked up; the
+        # output gets its final index. Returns the aggregated Series or frame.
         # Note: we never get here with how="ohlc" for DataFrameGroupBy;
         #  that goes through SeriesGroupBy
 
@@ -1779,6 +2008,10 @@ class GroupBy(BaseGroupBy[NDFrameT]):
         data = self._get_data_to_aggregate(numeric_only=numeric_only, name=how)
 
         def array_func(values: ArrayLike) -> ArrayLike:
+            # [FUNCTION DOC]
+            # HELPER: aggregates one block. Runs the cython aggregation of the enclosing call's kernel on
+            # the array and returns it; on a not-implemented signal uses the python fallback helper
+            # (or re-raises as described by the enclosing call).
             try:
                 result = self._grouper._cython_operation(
                     "aggregate",
@@ -1814,10 +2047,22 @@ class GroupBy(BaseGroupBy[NDFrameT]):
         return out
 
     def _cython_transform(self, how: str, numeric_only: bool = False, **kwargs):
+        # [FUNCTION DOC]
+        # HELPER: abstract hook for cythonized transforms; subclasses implement it. Always raises
+        # the abstract method error here.
         raise AbstractMethodError(self)
 
     @final
     def _transform(self, func, *args, engine=None, engine_kwargs=None, **kwargs):
+        # [FUNCTION DOC]
+        # HELPER: dispatch for transform (final). Parameters: func (callable or string), extra positional
+        # args, engine, engine_kwargs and keyword args. A non-string func uses the general transform
+        # of the subclass. A string must be in the allowed transform kernel names, else raises a
+        # value error saying it is not a valid function name for transform. Cythonized and
+        # canned transformation kernels call the same-named method (passing engine settings
+        # only when an engine was given). Reduction kernels are computed and broadcast; if observed
+        # is false the computation temporarily switches to the observed-only grouper and observed
+        # true so unobserved categories do not break the broadcast.
         # optimized transforms
         if not isinstance(func, str):
             return self._transform_general(func, engine, engine_kwargs, *args, **kwargs)
@@ -1851,6 +2096,12 @@ class GroupBy(BaseGroupBy[NDFrameT]):
     def _reduction_kernel_transform(
         self, func, *args, engine=None, engine_kwargs=None, **kwargs
     ):
+        # [FUNCTION DOC]
+        # HELPER: transform by a reduction kernel. Parameters: func (kernel name), extra args, engine,
+        # engine_kwargs and keyword args. Temporarily forces as_index true so group keys are in the
+        # index, calls the index-of-extremum helper for idxmin and idxmax, otherwise the same-named
+        # method (passing engine settings if given), and broadcasts the reduction to the original shape
+        # with the helper below.
         # GH#30918 Use _transform_fast only when we know func is an aggregation
         # If func is a reduction, we need to broadcast the
         # result to the whole group. Compute func result
@@ -1871,6 +2122,12 @@ class GroupBy(BaseGroupBy[NDFrameT]):
 
     @final
     def _wrap_transform_fast_result(self, result: NDFrameT) -> NDFrameT:
+        # [FUNCTION DOC]
+        # HELPER: broadcasts a reduction result to the shape of the original object. Parameter result is a
+        # Series or frame indexed by group. Reindexes it to the group result index, then repeats
+        # each group's value for each row using the group ids (dropped keys give missing values).
+        # Series are rebuilt with the original index and name, frames are re-indexed by indexers and given the
+        # original index. Returns the broadcast object.
         """
         Fast transform path for aggregations.
         """
@@ -1899,6 +2156,11 @@ class GroupBy(BaseGroupBy[NDFrameT]):
 
     @final
     def _apply_filter(self, indices, dropna):
+        # [FUNCTION DOC]
+        # HELPER: keeps rows of the groups whose positions are given. Parameters: indices (list of
+        # position arrays, one per kept group) and dropna (true removes other rows; false keeps them
+        # filled with missing values). Positions are concatenated and sorted. Returns the filtered selected
+        # object.
         if len(indices) == 0:
             indices = np.array([], dtype="int64")
         else:
@@ -1916,6 +2178,11 @@ class GroupBy(BaseGroupBy[NDFrameT]):
 
     @final
     def _cumcount_array(self, ascending: bool = True) -> np.ndarray:
+        # [FUNCTION DOC]
+        # HELPER: computes, for every row, its running position within its group. Parameter ascending
+        # (default true): when false the numbering counts down. Sorts rows by group id, finds run
+        # boundaries, computes counts, and restores original row order. Returns an integer array, or a
+        # float array with missing values for rows whose key was dropped.
         """
         Parameters
         ----------
@@ -1958,6 +2225,10 @@ class GroupBy(BaseGroupBy[NDFrameT]):
     @final
     @property
     def _obj_1d_constructor(self) -> Callable:
+        # [FUNCTION DOC]
+        # HELPER: property returning the constructor for one dimensional results: the sliced
+        # constructor of a frame or the constructor of a Series, preserving subclasses. Asserts that the
+        # object is a Series otherwise.
         # GH28330 preserve subclassed Series/DataFrames
         if isinstance(self.obj, DataFrame):
             return self.obj._constructor_sliced
@@ -1966,6 +2237,9 @@ class GroupBy(BaseGroupBy[NDFrameT]):
 
     @final
     def any(self, skipna: bool = True) -> NDFrameT:
+        # [FUNCTION DOC]
+        # Whether any value in the group is true. Parameter skipna (default true) ignores
+        # missing values. Cython aggregation with a python fallback. Returns a Series or frame of booleans.
         """
         Return True if any value in the group is truthful, else False.
 
@@ -2026,6 +2300,9 @@ class GroupBy(BaseGroupBy[NDFrameT]):
 
     @final
     def all(self, skipna: bool = True) -> NDFrameT:
+        # [FUNCTION DOC]
+        # Whether all values in the group are true. Parameter skipna (default true) ignores
+        # missing values. Cython aggregation with a python fallback. Returns a Series or frame of booleans.
         """
         Return True if all values in the group are truthful, else False.
 
@@ -2087,6 +2364,12 @@ class GroupBy(BaseGroupBy[NDFrameT]):
 
     @final
     def count(self) -> NDFrameT:
+        # [FUNCTION DOC]
+        # Counts non-missing values per group and column. No parameters. Rows whose group key was
+        # dropped are excluded. For each block, builds a mask of non-missing values and counts
+        # per group with a compiled routine; masked extension arrays give nullable integer results, arrow
+        # arrays (except string arrays) give arrow int64 results, other results are plain integer arrays.
+        # Returns a Series or frame with the standard output wrapping.
         """
         Compute count of group, excluding missing values.
 
@@ -2160,6 +2443,9 @@ class GroupBy(BaseGroupBy[NDFrameT]):
         is_series = data.ndim == 1
 
         def hfunc(bvalues: ArrayLike) -> ArrayLike:
+            # [FUNCTION DOC]
+            # HELPER: counts non-missing values per group for one block of values, returning an array
+            # of the type described by the enclosing call.
             # TODO(EA2D): reshape would not be necessary with 2D EAs
             if bvalues.ndim == 1:
                 # EA
@@ -2197,6 +2483,11 @@ class GroupBy(BaseGroupBy[NDFrameT]):
         engine: Literal["cython", "numba"] | None = None,
         engine_kwargs: dict[str, bool] | None = None,
     ):
+        # [FUNCTION DOC]
+        # Mean of each group. Parameters: numeric_only (default false), skipna (default true),
+        # engine (cython, numba or none) and engine_kwargs. With numba, uses the shared numba
+        # aggregator with the grouped mean kernel. Otherwise uses cython with a python fallback
+        # and copies metadata from the grouped object. Returns Series or frame.
         """
         Compute mean of groups, excluding missing values.
 
@@ -2294,6 +2585,10 @@ class GroupBy(BaseGroupBy[NDFrameT]):
 
     @final
     def median(self, numeric_only: bool = False, skipna: bool = True) -> NDFrameT:
+        # [FUNCTION DOC]
+        # Median of each group. Parameters: numeric_only (default false), skipna (default true).
+        # Cython aggregation with a python fallback; metadata is copied from the grouped
+        # object.
         """
         Compute median of groups, excluding missing values.
 
@@ -2401,6 +2696,10 @@ class GroupBy(BaseGroupBy[NDFrameT]):
         numeric_only: bool = False,
         skipna: bool = True,
     ):
+        # [FUNCTION DOC]
+        # Standard deviation per group. Parameters: ddof (default 1), engine, engine_kwargs,
+        # numeric_only (default false), skipna (default true). With numba, takes the square root of
+        # the numba variance result; otherwise uses cython with a python fallback.
         """
         Compute standard deviation of groups, excluding missing values.
 
@@ -2517,6 +2816,10 @@ class GroupBy(BaseGroupBy[NDFrameT]):
         numeric_only: bool = False,
         skipna: bool = True,
     ):
+        # [FUNCTION DOC]
+        # Variance per group. Parameters: ddof (default 1), engine, engine_kwargs, numeric_only
+        # (default false), skipna (default true). Numba path uses the grouped variance kernel;
+        # otherwise cython with a python fallback.
         """
         Compute variance of groups, excluding missing values.
 
@@ -2630,6 +2933,16 @@ class GroupBy(BaseGroupBy[NDFrameT]):
         ascending: bool = False,
         dropna: bool = True,
     ) -> DataFrame | Series:
+        # [FUNCTION DOC]
+        # HELPER: counts unique rows per group (shared by the Series and frame value-counts). Parameters:
+        # subset (columns to count on, frames only), normalize, sort (by counts), ascending, dropna. Raises
+        # a value error if the subset overlaps the grouping columns or contains labels that do not
+        # exist, or, when as_index is false, if the output column name (count or proportion)
+        # clashes with a result column label. Builds a combined grouping of the original keys plus the
+        # counted columns, takes group sizes, sorts by values and/or keys as requested, divides by the
+        # size of each outer group when normalizing (filling unobserved categories with zero), and with as_index
+        # false converts the index into columns. Returns a Series, or a frame, labeled with the value
+        # count metadata.
         """
         Shared implementation of value_counts for SeriesGroupBy and DataFrameGroupBy.
 
@@ -2750,6 +3063,9 @@ class GroupBy(BaseGroupBy[NDFrameT]):
     def sem(
         self, ddof: int = 1, numeric_only: bool = False, skipna: bool = True
     ) -> NDFrameT:
+        # [FUNCTION DOC]
+        # Standard error of the mean per group. Parameters: ddof (default 1), numeric_only (default
+        # false), skipna (default true). Cython aggregation without python fallback.
         """
         Compute standard error of the mean of groups, excluding missing values.
 
@@ -2854,6 +3170,13 @@ class GroupBy(BaseGroupBy[NDFrameT]):
 
     @final
     def size(self) -> DataFrame | Series:
+        # [FUNCTION DOC]
+        # Group sizes including missing values. No parameters. Takes sizes from the grouper and wraps
+        # them in a Series constructed with the one dimensional constructor (named like the grouped
+        # Series for Series input). For Series backed by arrow (non-string), the result is converted to pyarrow integers; for
+        # masked arrays or arrow strings with a missing-value marker other than the float one it is
+        # converted to nullable integers; otherwise plain integers. With as_index false, renames to size
+        # and resets the index to give a frame. Returns a Series or frame.
         """
         Compute group sizes.
 
@@ -2959,6 +3282,12 @@ class GroupBy(BaseGroupBy[NDFrameT]):
         engine: Literal["cython", "numba"] | None = None,
         engine_kwargs: dict[str, bool] | None = None,
     ):
+        # [FUNCTION DOC]
+        # Sum of each group. Parameters: numeric_only (default false), min_count (default 0, so empty
+        # or all-missing groups sum to zero), skipna (default true), engine (cython, numba or none), engine_kwargs.
+        # Numba path uses the grouped sum kernel. Otherwise temporarily sets observed true so
+        # unobserved categories give zero rather than missing, and uses the general aggregation. Returns
+        # Series or frame.
         """
         Compute sum of group values.
 
@@ -3076,6 +3405,10 @@ class GroupBy(BaseGroupBy[NDFrameT]):
     def prod(
         self, numeric_only: bool = False, min_count: int = 0, skipna: bool = True
     ) -> NDFrameT:
+        # [FUNCTION DOC]
+        # Product of each group. Parameters: numeric_only (default false), min_count (default 0),
+        # skipna (default true). Uses the general aggregation with the product kernel. Returns Series or
+        # frame.
         """
         Compute prod of group values.
 
@@ -3161,6 +3494,10 @@ class GroupBy(BaseGroupBy[NDFrameT]):
         engine: Literal["cython", "numba"] | None = None,
         engine_kwargs: dict[str, bool] | None = None,
     ):
+        # [FUNCTION DOC]
+        # Minimum of each group. Parameters: numeric_only (default false), min_count (default minus
+        # one: no minimum), skipna (default true), engine, engine_kwargs. Numba path uses the grouped
+        # min-max kernel in minimum mode; otherwise the general aggregation.
         """
         Compute min of group values.
 
@@ -3278,6 +3615,10 @@ class GroupBy(BaseGroupBy[NDFrameT]):
         engine: Literal["cython", "numba"] | None = None,
         engine_kwargs: dict[str, bool] | None = None,
     ):
+        # [FUNCTION DOC]
+        # Maximum of each group. Parameters: numeric_only (default false), min_count (default minus
+        # one: no minimum), skipna (default true), engine, engine_kwargs. Numba path uses the grouped
+        # min-max kernel in maximum mode; otherwise the general aggregation.
         """
         Compute max of group values.
 
@@ -3390,6 +3731,10 @@ class GroupBy(BaseGroupBy[NDFrameT]):
     def first(
         self, numeric_only: bool = False, min_count: int = -1, skipna: bool = True
     ) -> NDFrameT:
+        # [FUNCTION DOC]
+        # First non-missing value of each column in each group. Parameters: numeric_only (default
+        # false), min_count (default minus one), skipna (default true). Uses the general aggregation
+        # with a python fallback that picks the first non-missing entry, or the dtype's missing value if none.
         """
         Compute the first entry of each column within each group.
 
@@ -3449,7 +3794,14 @@ class GroupBy(BaseGroupBy[NDFrameT]):
         """
 
         def first_compat(obj: NDFrameT):
+            # [FUNCTION DOC]
+            # HELPER: python fallback for the first aggregation. Takes the grouped object (a frame, applied
+            # per column, or a Series) and returns the first non-missing item(s). Raises a type error for
+            # other types.
             def first(x: Series):
+                # [FUNCTION DOC]
+                # HELPER: returns the first non-missing element of the Series array, or the dtype's missing
+                # value when all are missing.
                 """Helper function for first item that isn't NA."""
                 arr = x.array[notna(x.array)]
                 if not len(arr):
@@ -3475,6 +3827,10 @@ class GroupBy(BaseGroupBy[NDFrameT]):
     def last(
         self, numeric_only: bool = False, min_count: int = -1, skipna: bool = True
     ) -> NDFrameT:
+        # [FUNCTION DOC]
+        # Last non-missing value of each column in each group. Parameters: numeric_only (default
+        # false), min_count (default minus one), skipna (default true). Uses the general aggregation
+        # with a python fallback that picks the last non-missing entry, or the dtype's missing value if none.
         """
         Compute the last entry of each column within each group.
 
@@ -3517,7 +3873,14 @@ class GroupBy(BaseGroupBy[NDFrameT]):
         """
 
         def last_compat(obj: NDFrameT):
+            # [FUNCTION DOC]
+            # HELPER: python fallback for the last aggregation. Takes the grouped object (a frame, applied
+            # per column, or a Series) and returns the last non-missing item(s). Raises a type error for
+            # other types.
             def last(x: Series):
+                # [FUNCTION DOC]
+                # HELPER: returns the last non-missing element of the Series array, or the dtype's missing
+                # value when all are missing.
                 """Helper function for last item that isn't NA."""
                 arr = x.array[notna(x.array)]
                 if not len(arr):
@@ -3541,6 +3904,11 @@ class GroupBy(BaseGroupBy[NDFrameT]):
 
     @final
     def ohlc(self) -> DataFrame:
+        # [FUNCTION DOC]
+        # Open, high, low, close summary per group. No parameters. For a Series, requires numeric dtype
+        # (otherwise raises a data error saying no numeric types to aggregate), runs the cython ohlc kernel
+        # and returns a frame with columns open, high, low, close indexed by group. For a frame, runs the
+        # Series version on every column and concatenates.
         """
         Compute open, high, low and close values of a group, excluding missing values.
 
@@ -3659,6 +4027,13 @@ class GroupBy(BaseGroupBy[NDFrameT]):
         include=None,
         exclude=None,
     ) -> NDFrameT:
+        # [FUNCTION DOC]
+        # Generates descriptive statistics per group. Parameters: percentiles, include, exclude, passed
+        # through to the describe method of the grouped object. If the object is empty, builds the
+        # description of the empty object (unstacked for frames) and returns an empty frame with those
+        # columns. Otherwise, with as_index temporarily true, applies describe to every group and unstacks
+        # the statistic level into columns; with as_index false the group keys are re-inserted as columns
+        # with a default index. Returns a frame.
         """
         Generate descriptive statistics.
 
@@ -3931,6 +4306,12 @@ class GroupBy(BaseGroupBy[NDFrameT]):
     def resample(
         self, rule, *args, include_groups: bool = False, **kwargs
     ) -> Resampler:
+        # [FUNCTION DOC]
+        # Provides resampling per group (final). Parameters: rule (offset or frequency), extra positional
+        # args and keyword arguments passed to the resampler, include_groups (default false; true raises
+        # a value error as it is no longer allowed). Returns a resampler for the grouping.
+        # KNOWN ISSUE: the docstring says the default of include_groups is true, but the signature default
+        # is false and true is rejected.
         """
         Provide resampling when using a TimeGrouper.
 
@@ -4058,6 +4439,11 @@ class GroupBy(BaseGroupBy[NDFrameT]):
         closed: IntervalClosedType | None = None,
         method: str = "single",
     ) -> RollingGroupby:
+        # [FUNCTION DOC]
+        # Rolling window calculation per group (final). Parameters: window (size or offset or indexer),
+        # min_periods (default none), center (default false), win_type, on, closed, method (default
+        # single). Returns a grouped rolling object built on the selected object and this grouper; the
+        # as_index flag is forwarded. Imports the window module lazily.
         """
         Return a rolling grouper, providing rolling functionality per group.
 
@@ -4212,6 +4598,9 @@ class GroupBy(BaseGroupBy[NDFrameT]):
         min_periods: int = 1,
         method: str = "single",
     ) -> ExpandingGroupby:
+        # [FUNCTION DOC]
+        # Expanding window calculation per group (final). Parameters: min_periods (default 1) and method
+        # (default single). Returns a grouped expanding object over the selected object and this grouper.
         """
         Return an expanding grouper, providing expanding functionality per group.
 
@@ -4289,6 +4678,11 @@ class GroupBy(BaseGroupBy[NDFrameT]):
         times: np.ndarray | Series | None = None,
         method: str = "single",
     ) -> ExponentialMovingWindowGroupby:
+        # [FUNCTION DOC]
+        # Exponentially weighted calculation per group (final). Parameters: com, span, halflife, alpha
+        # (exactly one of the decay specifications), min_periods (default 0), adjust (default true),
+        # ignore_na (default false), times (optional observation times), method (default single). All are
+        # forwarded to the grouped exponential window object built over the selected object and grouper.
         """
         Return an ewm grouper, providing ewm functionality per group.
 
@@ -4384,6 +4778,13 @@ class GroupBy(BaseGroupBy[NDFrameT]):
 
     @final
     def _fill(self, direction: Literal["ffill", "bfill"], limit: int | None = None):
+        # [FUNCTION DOC]
+        # HELPER: forward or backward fill within groups. Parameters: direction (ffill or bfill), limit
+        # (maximum consecutive fills; none means unlimited, mapped to minus one internally). Builds, with
+        # the compiled fill-indexer routine, per-block indexers that point each missing position to the
+        # nearest valid position within the same group, and takes values by them (column by column for
+        # two dimensional blocks). Groups of dropped keys become missing, which may widen dtypes. Returns the filled
+        # object with the original index.
         """
         Shared function for `pad` and `backfill` to call Cython method.
 
@@ -4422,6 +4823,10 @@ class GroupBy(BaseGroupBy[NDFrameT]):
         )
 
         def blk_func(values: ArrayLike) -> ArrayLike:
+            # [FUNCTION DOC]
+            # HELPER: fills one block. One dimensional blocks get one indexer; two dimensional blocks are
+            # filled row by row of the block (each block row being one column of the object). Returns an
+            # array or extension array of the same shape.
             mask = isna(values)
             if values.ndim == 1:
                 indexer = np.empty(values.shape, dtype=np.intp)
@@ -4460,6 +4865,9 @@ class GroupBy(BaseGroupBy[NDFrameT]):
 
     @final
     def ffill(self, limit: int | None = None):
+        # [FUNCTION DOC]
+        # Forward fill missing values within each group. Parameter limit (default none) caps consecutive
+        # fills. Delegates to the fill helper.
         """
         Forward fill the values.
 
@@ -4552,6 +4960,9 @@ class GroupBy(BaseGroupBy[NDFrameT]):
 
     @final
     def bfill(self, limit: int | None = None):
+        # [FUNCTION DOC]
+        # Backward fill missing values within each group. Parameter limit (default none) caps consecutive
+        # fills. Delegates to the fill helper.
         """
         Backward fill the values.
 
@@ -4634,6 +5045,9 @@ class GroupBy(BaseGroupBy[NDFrameT]):
     @final
     @property
     def nth(self) -> GroupByNthSelector:
+        # [FUNCTION DOC]
+        # Property returning the selector object used both as a callable and as an indexable to
+        # pick the n-th rows of each group; see the selector class in the indexing module.
         """
         Take the nth row from each group if n is an int, otherwise a subset of rows.
 
@@ -4721,6 +5135,13 @@ class GroupBy(BaseGroupBy[NDFrameT]):
         n: PositionalIndexer | tuple,
         dropna: Literal["any", "all"] | None = None,
     ) -> NDFrameT:
+        # [FUNCTION DOC]
+        # HELPER: implements picking rows by position within groups. Parameters: n (an integer, slice or
+        # list of those) and dropna (none, any or all). Without dropna, builds a positional mask, removes
+        # rows with dropped keys and returns the masked object. With dropna, n must be an integer
+        # (otherwise raises a value error) and dropna must be any or all (otherwise value error). Missing
+        # rows are dropped from the selected object first, a matching grouper is rebuilt for the remaining
+        # rows (dropped-key rows keep a missing marker), and nth is taken on the regrouped object.
         if not dropna:
             mask = self._make_mask_from_positional_indexer(n)
 
@@ -4780,6 +5201,17 @@ class GroupBy(BaseGroupBy[NDFrameT]):
         ] = "linear",
         numeric_only: bool = False,
     ):
+        # [FUNCTION DOC]
+        # Quantiles of each group (final). Parameters: q (a float or array-like of quantiles in the unit interval,
+        # default 0.5), interpolation (linear, lower, higher, nearest or midpoint; default linear),
+        # numeric_only (default false). Gets the data blocks, sorts them by group with the grouper's splitter and
+        # computes group boundaries. Each block is pre-processed to a float (or integer-preserving, or
+        # datetime-like i8) array, with errors for string, object and numpy-bool dtypes; the compiled
+        # quantile routine fills an array of shape columns by groups by quantiles; the post-processor casts back
+        # to the original type (nullable floating for masked inputs with linear or midpoint, integer dtype kept for other
+        # interpolations, datetime-like rebuilt from the backing data). Dropped-key rows are excluded when dropna is
+        # true. A scalar q gives one result per group; a list adds an inner index level of quantile values (or
+        # columns when as_index is false). Raises type errors for unsupported dtypes. Returns Series or frame.
         """
         Return group values at the given quantile, a la numpy.percentile.
 
@@ -4827,6 +5259,12 @@ class GroupBy(BaseGroupBy[NDFrameT]):
         starts, ends = lib.generate_slices(splitter._slabels, splitter.ngroups)
 
         def pre_processor(vals: ArrayLike) -> tuple[np.ndarray, DtypeObj | None]:
+            # [FUNCTION DOC]
+            # HELPER: converts one block to a float-compatible array before quantile computation. Takes the
+            # values, returns the array and an inference value (the dtype to cast back to, or none). Raises a type error
+            # for string or object dtypes ("does not support operation") and for numpy booleans. Nullable
+            # numeric types are converted to float with nan for missing; integers keep an integer inference; datetime-like
+            # data is returned unconverted with its own dtype as inference.
             if isinstance(vals.dtype, StringDtype) or is_object_dtype(vals.dtype):
                 raise TypeError(
                     f"dtype '{vals.dtype}' does not support operation 'quantile'"
@@ -4870,6 +5308,13 @@ class GroupBy(BaseGroupBy[NDFrameT]):
             result_mask: np.ndarray | None,
             orig_vals: ArrayLike,
         ) -> ArrayLike:
+            # [FUNCTION DOC]
+            # HELPER: converts raw quantile results back to the original type. Parameters: vals (float array of
+            # results), inference (target dtype or none), result_mask (mask for masked arrays or none), orig_vals
+            # (original block). With no inference, returns vals unchanged. Masked inputs give a nullable floating array for linear
+            # and midpoint interpolation when not float, otherwise the original masked type with the inferred numpy dtype
+            # (suppressing runtime warnings). Plain integer inference with linear or midpoint stays float; other
+            # integer inference is cast back; datetime-like results are viewed as the original backing type and rebuilt.
             if inference:
                 # Check for edge case
                 if isinstance(orig_vals, BaseMaskedArray):
@@ -4938,6 +5383,11 @@ class GroupBy(BaseGroupBy[NDFrameT]):
         )
 
         def blk_func(values: ArrayLike) -> ArrayLike:
+            # [FUNCTION DOC]
+            # HELPER: computes quantiles for one block of values, using the compiled routine once for
+            # one dimensional blocks or once per row for two dimensional blocks, handling masks for
+            # nullable types and datetime-like values (viewed as integers). Reshapes results to groups times
+            # quantiles and post-processes them. Returns an array of the block's type.
             orig_vals = values
             if isinstance(values, BaseMaskedArray):
                 mask = values._mask
@@ -4994,6 +5444,12 @@ class GroupBy(BaseGroupBy[NDFrameT]):
 
     @final
     def ngroup(self, ascending: bool = True):
+        # [FUNCTION DOC]
+        # Numbers each group in order of first appearance of the group key (or the sort order when sorting).
+        # Parameter ascending (default true); when false the numbering is reversed. Group ids come from the grouper;
+        # for categorical groupings only observed groups are numbered densely. Rows with dropped
+        # keys get a missing value, giving a float result; otherwise integers. Returns a Series indexed like the
+        # object.
         """
         Number each group from 0 to the number of groups - 1.
 
@@ -5077,6 +5533,10 @@ class GroupBy(BaseGroupBy[NDFrameT]):
 
     @final
     def cumcount(self, ascending: bool = True):
+        # [FUNCTION DOC]
+        # Numbers the rows within each group. Parameter ascending (default true); when false, counts down
+        # from the group's size minus one. Returns a Series of integers (floats with missing values for dropped keys)
+        # indexed like the object.
         """
         Number each item in each group from 0 to the length of that group - 1.
 
@@ -5140,6 +5600,11 @@ class GroupBy(BaseGroupBy[NDFrameT]):
         na_option: str = "keep",
         pct: bool = False,
     ) -> NDFrameT:
+        # [FUNCTION DOC]
+        # Rank of values within each group. Parameters: method (average, min, max, first or dense; default
+        # average), ascending (default true), na_option (keep, top or bottom; default keep), pct (default false;
+        # return percentile ranks). Raises a value error for an unknown na_option. Runs the cython rank transform over
+        # all columns, not only numeric ones. Returns an object of the same shape as the input.
         """
         Provide the rank of values within each group.
 
@@ -5224,6 +5689,10 @@ class GroupBy(BaseGroupBy[NDFrameT]):
 
     @final
     def cumprod(self, numeric_only: bool = False, *args, **kwargs) -> NDFrameT:
+        # [FUNCTION DOC]
+        # Cumulative product within each group. Parameters: numeric_only (default false), extra
+        # positional and keyword arguments which are validated for numpy compatibility (only skipna is allowed).
+        # Runs the cython transform. Returns an object of the same shape.
         """
         Cumulative product for each group.
 
@@ -5288,6 +5757,10 @@ class GroupBy(BaseGroupBy[NDFrameT]):
 
     @final
     def cumsum(self, numeric_only: bool = False, *args, **kwargs) -> NDFrameT:
+        # [FUNCTION DOC]
+        # Cumulative sum within each group. Parameters: numeric_only (default false), extra
+        # positional and keyword arguments which are validated for numpy compatibility (only skipna is allowed).
+        # Runs the cython transform. Returns an object of the same shape.
         """
         Cumulative sum for each group.
 
@@ -5356,6 +5829,9 @@ class GroupBy(BaseGroupBy[NDFrameT]):
         numeric_only: bool = False,
         **kwargs,
     ) -> NDFrameT:
+        # [FUNCTION DOC]
+        # Cumulative minimum within each group. Parameters: numeric_only (default false) and keyword arguments, of which
+        # only skipna (default true) is read; other keywords are ignored without validation. Runs the cython transform.
         """
         Cumulative min for each group.
 
@@ -5430,6 +5906,9 @@ class GroupBy(BaseGroupBy[NDFrameT]):
         numeric_only: bool = False,
         **kwargs,
     ) -> NDFrameT:
+        # [FUNCTION DOC]
+        # Cumulative maximum within each group. Parameters: numeric_only (default false) and keyword arguments, of which
+        # only skipna (default true) is read; other keywords are ignored without validation. Runs the cython transform.
         """
         Cumulative max for each group.
 
@@ -5510,6 +5989,15 @@ class GroupBy(BaseGroupBy[NDFrameT]):
         fill_value=lib.no_default,
         suffix: str | None = None,
     ):
+        # [FUNCTION DOC]
+        # Shifts values within each group (final). Parameters: periods (integer or non-empty sequence of integers;
+        # default 1), freq (optional frequency; when given each group is shifted by the period and frequency with the
+        # object method), fill_value (value for newly introduced positions; default means the dtype's missing value) and
+        # suffix (name suffix for the column copies when periods is a sequence). Raises a value error for an
+        # empty sequence of periods or a suffix with an integer period; raises a type error if a period is not an integer.
+        # Without freq, a compiled routine computes the source positions per group and the object is
+        # reindexed by them. With several periods, each shifted frame gets a suffix naming the period and the frames
+        # are concatenated column-wise. Returns an object of the same type, or a frame for several periods.
         """
         Shift each group by periods observations.
 
@@ -5652,6 +6140,11 @@ class GroupBy(BaseGroupBy[NDFrameT]):
         self,
         periods: int = 1,
     ) -> NDFrameT:
+        # [FUNCTION DOC]
+        # Difference between each element and the previous one in its group. Parameter periods (default
+        # 1, an integer). Computes the object minus its group-wise shift. Small integer columns (8 and 16 bit) are
+        # converted to 32 bit floats first to match the plain object behavior. Returns an object of the same
+        # shape.
         """
         First discrete difference of element.
 
@@ -5744,6 +6237,13 @@ class GroupBy(BaseGroupBy[NDFrameT]):
         fill_method: None = None,
         freq=None,
     ):
+        # [FUNCTION DOC]
+        # Percentage change within each group. Parameters: periods (default 1), fill_method (must be none;
+        # anything else raises a value error), freq (optional frequency). With freq, applies the object method
+        # per group as a transform. Otherwise forward fills with limit zero, groups the filled data by the same
+        # codes, shifts it and returns the ratio minus one.
+        # KNOWN ISSUE: the branch choosing a fill operation name from fill_method is partly dead code: fill_method is
+        # always none at that point, so the else branch can never run.
         """
         Calculate pct_change of each value to previous entry in group.
 
@@ -5839,6 +6339,10 @@ class GroupBy(BaseGroupBy[NDFrameT]):
 
     @final
     def head(self, n: int = 5) -> NDFrameT:
+        # [FUNCTION DOC]
+        # First n rows of each group. Parameter n (default 5; negative means all but the last rows).
+        # Builds a positional mask and returns the selected rows in original order and index (rows with dropped keys
+        # excluded).
         """
         Return first n rows of each group.
 
@@ -5879,6 +6383,9 @@ class GroupBy(BaseGroupBy[NDFrameT]):
 
     @final
     def tail(self, n: int = 5) -> NDFrameT:
+        # [FUNCTION DOC]
+        # Last n rows of each group. Parameter n (default 5; zero gives nothing; negative means all but the first
+        # rows). Returns the selected rows in original order and index (rows with dropped keys excluded).
         """
         Return last n rows of each group.
 
@@ -5926,6 +6433,9 @@ class GroupBy(BaseGroupBy[NDFrameT]):
 
     @final
     def _mask_selected_obj(self, mask: npt.NDArray[np.bool_]) -> NDFrameT:
+        # [FUNCTION DOC]
+        # HELPER: returns the rows of the selected object where mask is true, additionally excluding
+        # rows whose group key was dropped. Parameter mask is a boolean array over rows.
         """
         Return _selected_obj with mask applied.
 
@@ -5952,6 +6462,12 @@ class GroupBy(BaseGroupBy[NDFrameT]):
         weights: Sequence | Series | None = None,
         random_state: RandomState | None = None,
     ):
+        # [FUNCTION DOC]
+        # Random sample within each group. Parameters: n (rows per group) or frac (fraction of each group; rounded
+        # per group), replace (default false), weights (optional per-row sequence or Series), random_state (seed or
+        # generator). Validity of n, frac and replace, and of the weights, is checked by the sampling
+        # helpers (they raise value errors). An empty object is returned unchanged. Each group is sampled independently
+        # and the selected positions are concatenated. Returns the sampled rows.
         """
         Return a random sample of items from each group.
 
@@ -6075,6 +6591,12 @@ class GroupBy(BaseGroupBy[NDFrameT]):
         skipna: bool = True,
         numeric_only: bool = False,
     ) -> NDFrameT:
+        # [FUNCTION DOC]
+        # HELPER: shared implementation of the index-label-of-minimum/maximum operations. Parameters: how (idxmax or
+        # idxmin), ignore_unobserved (default false; skip the unobserved-category error), skipna (default true),
+        # numeric_only (default false). Raises a value error when categorical groupings include unobserved
+        # categories (unless ignored or no columns remain), or when skipna is false and missing values exist. Calls the general
+        # aggregation with min_count one. Returns Series or frame.
         """Compute idxmax/idxmin.
 
         Parameters
@@ -6133,6 +6655,12 @@ class GroupBy(BaseGroupBy[NDFrameT]):
     def _wrap_idxmax_idxmin(
         self, res: NDFrameT, how: Literal["idxmax", "idxmin"], skipna: bool
     ) -> NDFrameT:
+        # [FUNCTION DOC]
+        # HELPER: converts positions returned by the cython index-of-extremum routine into index labels. Parameters: res (positions
+        # per group and column), how (idxmax or idxmin, for messages), skipna. Empty results are cast to the index dtype.
+        # With skipna, a negative position (group of all missing values) raises a value error. Multi-level indexes are
+        # flattened to tuples. Labels are fetched from the original index with missing fill. Returns the same shape
+        # as res with labels.
         index = self.obj.index
         if res.size == 0:
             result = res.astype(index.dtype)
@@ -6170,6 +6698,10 @@ def get_groupby(
     grouper: ops.BaseGrouper | None = None,
     group_keys: bool = True,
 ) -> GroupBy:
+    # [FUNCTION DOC]
+    # Factory returning the groupby object suited to obj. Parameters: obj (Series or frame), by (keys), grouper
+    # (precomputed grouper or none), group_keys (default true). Imports the Series/frame classes lazily and returns
+    # a series groupby or a frame groupby. Raises a type error for other types.
     """
     Class for grouping and aggregating relational data.
 
@@ -6258,6 +6790,10 @@ def get_groupby(
 
 
 def _insert_quantile_level(idx: Index, qs: npt.NDArray[np.float64]) -> MultiIndex:
+    # [FUNCTION DOC]
+    # HELPER: adds an inner level of quantile values to an index. Parameters: idx (index or multi-index), qs (array of
+    # quantiles). Each index entry is repeated once per quantile and the quantiles are tiled. Returns a multi-index
+    # whose names are the old names followed by an unnamed level.
     """
     Insert the sequence 'qs' of quantiles as the inner-most level of a MultiIndex.
 

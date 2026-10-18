@@ -1,3 +1,11 @@
+# [MODULE DOC]
+# HELPER: internal module for groupby on categorical keys. Provides the
+# function recode_for_groupby which re-codes a Categorical so group order
+# follows the requested sort/observed semantics. Used by the grouper module
+# when building groupings. Depends on the unique helper from the algorithms
+# module and on the categorical array, dtype and recoding helper. No
+# import-time side effects.
+
 from __future__ import annotations
 
 import numpy as np
@@ -41,6 +49,21 @@ def recode_for_groupby(c: Categorical, sort: bool, observed: bool) -> Categorica
         original order is preserved), followed by any unrepresented
         categories in the original order.
     """
+    # [FUNCTION DOC]
+    # HELPER: re-codes a categorical key for groupby so that the resulting
+    # group order is right. Inputs: c, the categorical; sort, whether groupby
+    # sorts keys; observed, whether only categories present in the data count.
+    # Returns a categorical (possibly the input itself, never mutated).
+    # Behavior: if observed, builds a new categorical whose categories are only
+    # those that occur in the data (missing-value codes excluded), in sorted
+    # order of the old codes when sort is true, otherwise in order of first
+    # appearance, preserving the ordered flag. If not observed and sort is
+    # true, returns the input unchanged. If not observed and sort is false,
+    # returns a new categorical with categories in order of appearance followed
+    # by all unused categories in original order. No exceptions raised here.
+    # KNOWN ISSUE: the second check of sort inside the unobserved, unsorted
+    # path is dead code, because the function already returned earlier when
+    # sort was true.
     # we only care about observed values
     if observed:
         # In cases with c.ordered, this is equivalent to
