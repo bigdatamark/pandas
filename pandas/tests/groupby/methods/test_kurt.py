@@ -1,3 +1,6 @@
+# [MODULE DOC]
+# Tests for the groupby kurtosis method (GH#40139): equivalence with per-group
+# computation, nullable and arrow float dtypes, skipna handling, and constant data.
 import numpy as np
 import pytest
 
@@ -8,6 +11,11 @@ import pandas._testing as tm
 
 
 def test_groupby_kurt_equivalence():
+    # [FUNCTION DOC]
+    # Verifies the groupby kurtosis (compiled kernel) equals computing kurtosis group by
+    # group (nan-aware reduction) on a 1000 by 2 random frame with 5 percent missing
+    # rows, grouped by random labels from three groups; the expected index is cast to
+    # 64-bit integers for 32-bit builds.
     # GH#40139
     # Test that that groupby kurt method (which uses libgroupby.group_kurt)
     #  matches the results of operating group-by-group (which uses nanops.nankurt)
@@ -39,6 +47,11 @@ def test_groupby_kurt_equivalence():
     ],
 )
 def test_groupby_kurt_arrow_float64(dtype):
+    # [FUNCTION DOC]
+    # Verifies groupby kurtosis for a Float64 or float64[pyarrow] frame containing a
+    # missing value, grouped into a single group, matches known values (about 2.164 and
+    # 0.151) approximately. Parametrized over dtype; the arrow case is skipped without
+    # pyarrow.
     # GH#40139
     # Test groupby.kurt() with float64[pyarrow] and Float64 dtypes
     df = pd.DataFrame(
@@ -56,6 +69,9 @@ def test_groupby_kurt_arrow_float64(dtype):
 
 
 def test_groupby_kurt_noskipna():
+    # [FUNCTION DOC]
+    # Verifies groupby kurtosis with skipna disabled gives missing for the column
+    # containing a missing value and the same value as before for the complete column.
     # GH#40139
     # Test groupby.kurt() with skipna = False
     df = pd.DataFrame(
@@ -72,6 +88,9 @@ def test_groupby_kurt_noskipna():
 
 
 def test_groupby_kurt_all_ones():
+    # [FUNCTION DOC]
+    # Verifies groupby kurtosis (skipna disabled) of a constant column gives zero,
+    # matching the frame-level kurtosis behavior.
     # GH#40139
     # Test groupby.kurt() with constant values
     df = pd.DataFrame(

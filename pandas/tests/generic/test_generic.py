@@ -1,3 +1,9 @@
+# [MODULE DOC]
+# Generic tests exercised on both Series and DataFrame through the frame_or_series
+# fixture: rename, numeric/bool data extraction, truth-value errors, metadata
+# propagation, size/split compatibility, statistic keyword validation, truncate,
+# copying, squeeze, transpose, take and flag identity. Also defines the construct helper
+# that builds an object of a given class and shape. Two test classes.
 from copy import (
     copy,
     deepcopy,
@@ -21,6 +27,22 @@ import pandas._testing as tm
 
 
 def construct(box, shape, value=None, dtype=None, **kwargs):
+    # [FUNCTION DOC]
+    # HELPER: builds a Series or DataFrame for the generic tests. Parameters: box is the
+    # class
+    # (Series or DataFrame); shape is an integer (used for every axis) or a tuple of
+    # lengths; value is
+    # none (random normal data from a fixed seed), a scalar (fill with it; the string
+    # "empty" builds with
+    # no data, float dtype, and removes the info-axis keyword), or an array (flattened
+    # and repeated to fill the shape);
+    # dtype is the dtype passed to the constructor; extra keywords (axis labels) are
+    # forwarded.
+    # Returns the constructed object. Raises a bare exception when an array value does
+    # not evenly tile the shape.
+    # KNOWN ISSUE: the repeat count is computed with true division, giving a float, and
+    # the divisibility check happens only after that division; the exception raised is
+    # the generic base type.
     """
     construct an object for the given shape
     if value is specified use that if its a scalar
@@ -53,6 +75,8 @@ def construct(box, shape, value=None, dtype=None, **kwargs):
 
 
 class TestGeneric:
+    # [CLASS DOC]
+    # Groups generic tests run for both Series and DataFrame. Stateless.
     @pytest.mark.parametrize(
         "func",
         [
@@ -62,6 +86,11 @@ class TestGeneric:
         ],
     )
     def test_rename(self, frame_or_series, func):
+        # [FUNCTION DOC]
+        # Verifies renaming each axis with a function, a mapping or a Series of
+        # lowercase names gives an object equal to a copy with the axis labels set to
+        # lowercase.
+        # Parametrized over the mapper; iterates over all axes of the class.
         # single axis
         idx = list("ABCD")
 
@@ -76,6 +105,11 @@ class TestGeneric:
             tm.assert_equal(result, expected)
 
     def test_get_numeric_data(self, frame_or_series):
+        # [FUNCTION DOC]
+        # Verifies numeric-data extraction returns the object unchanged for numeric
+        # data; bool-data extraction of numeric data gives an empty object (frame keeps
+        # its empty columns index type); and numeric extraction of a boolean-valued
+        # object returns it unchanged.
         n = 4
         kwargs = {
             frame_or_series._get_axis_name(i): list(range(n))
@@ -102,11 +136,18 @@ class TestGeneric:
         tm.assert_equal(result, o)
 
     def test_get_bool_data_empty_preserve_index(self):
+        # [FUNCTION DOC]
+        # Verifies bool-data extraction on an empty boolean series returns an equal
+        # series including index type.
         expected = Series([], dtype="bool")
         result = expected._get_bool_data()
         tm.assert_series_equal(result, expected, check_index_type=True)
 
     def test_nonzero(self, frame_or_series):
+        # [FUNCTION DOC]
+        # Verifies converting any Series or DataFrame (random, constant, NaN,
+        # zero-sized, comparison results) to bool, or using it in an if, and, or, not
+        # expression raises a value error about ambiguous truth value (GH 4633).
         # GH 4633
         # look at the boolean/nonzero behavior for objects
         obj = construct(frame_or_series, shape=4)
@@ -156,10 +197,17 @@ class TestGeneric:
             not obj1
 
     def test_frame_or_series_compound_dtypes(self, frame_or_series):
+        # [FUNCTION DOC]
+        # Verifies that passing a compound (record-style) dtype list to the constructor
+        # raises a not-implemented error, while plain integer, float and datetime dtypes
+        # are accepted (gh-5191).
         # see gh-5191
         # Compound dtypes should raise NotImplementedError.
 
         def f(dtype):
+            # [FUNCTION DOC]
+            # HELPER: builds a length-three constant-one object of the enclosing test's
+            # class with the given dtype.
             return construct(frame_or_series, shape=3, value=1, dtype=dtype)
 
         msg = (
@@ -176,6 +224,11 @@ class TestGeneric:
         f("M8[ns]")
 
     def test_metadata_propagation(self, frame_or_series):
+        # [FUNCTION DOC]
+        # Verifies metadata (such as name) propagation: arithmetic with scalars or with
+        # itself, comparisons and boolean combinations, and combine_first preserve it;
+        # adding or comparing with an object of a different name does not (equivalence
+        # is checked against no metadata).
         # check that the metadata matches up on the resulting ops
 
         o = construct(frame_or_series, shape=3)
@@ -226,6 +279,9 @@ class TestGeneric:
             tm.assert_metadata_equivalent(v1 | v2)
 
     def test_size_compat(self, frame_or_series):
+        # [FUNCTION DOC]
+        # Verifies the size property equals the product of the shape and the length to
+        # the power of the number of axes (GH8846).
         # GH8846
         # size property should be defined
 
@@ -234,6 +290,9 @@ class TestGeneric:
         assert o.size == 10 ** len(o.axes)
 
     def test_split_compat(self, frame_or_series):
+        # [FUNCTION DOC]
+        # Verifies numpy array_split of the object works, returning the requested number
+        # of pieces (GH8846).
         # xref GH8846
         o = construct(frame_or_series, shape=10)
         assert len(np.array_split(o, 5)) == 5
@@ -241,6 +300,11 @@ class TestGeneric:
 
     # See gh-12301
     def test_stat_unexpected_keyword(self, frame_or_series):
+        # [FUNCTION DOC]
+        # Verifies that an unknown keyword on max, var, sum and any raises a type error
+        # mentioning unexpected keyword (gh-12301).
+        # KNOWN ISSUE: the inline comment labels sum as a cumulative function; sum is a
+        # plain statistic function.
         obj = construct(frame_or_series, 5)
         starwars = "Star Wars"
         errmsg = "unexpected keyword"
@@ -256,6 +320,10 @@ class TestGeneric:
 
     @pytest.mark.parametrize("func", ["sum", "cumsum", "any", "var"])
     def test_api_compat(self, func, frame_or_series):
+        # [FUNCTION DOC]
+        # Verifies that bound methods sum, cumsum, any and var expose a name equal to
+        # the method name and a qualified name ending with it (GH 12021). Parametrized
+        # over the method name.
         # GH 12021
         # compat for __name__, __qualname__
 
@@ -265,6 +333,11 @@ class TestGeneric:
         assert f.__qualname__.endswith(func)
 
     def test_stat_non_defaults_args(self, frame_or_series):
+        # [FUNCTION DOC]
+        # Verifies that passing the numpy-compat out argument to max, var, sum and any
+        # raises a value error saying the parameter is not supported.
+        # KNOWN ISSUE: the inline comment labels sum as a cumulative function; sum is a
+        # plain statistic function.
         obj = construct(frame_or_series, 5)
         out = np.array([0])
         errmsg = "the 'out' parameter is not supported"
@@ -279,6 +352,9 @@ class TestGeneric:
             obj.any(out=out)  # logical_function
 
     def test_truncate_out_of_bounds(self, frame_or_series):
+        # [FUNCTION DOC]
+        # Verifies truncate with default and out-of-range bounds returns an equal object
+        # for a small (2000) and a large (2,000,000) int8 object (GH11382).
         # GH11382
 
         # small
@@ -301,6 +377,10 @@ class TestGeneric:
     )
     @pytest.mark.parametrize("shape", [0, 1, 2])
     def test_copy_and_deepcopy(self, frame_or_series, shape, func):
+        # [FUNCTION DOC]
+        # Verifies copy, deepcopy and shallow or deep copy methods return a distinct but
+        # equal object for zero, one and two-length objects (GH 15444). Parametrized
+        # over copy function and size.
         # GH 15444
         obj = construct(frame_or_series, shape)
         obj_copy = func(obj)
@@ -308,12 +388,17 @@ class TestGeneric:
         tm.assert_equal(obj_copy, obj)
 
     def test_stdlib_copy_shallow_copies(self, frame_or_series):
+        # [FUNCTION DOC]
+        # Verifies the standard-library shallow copy shares memory with the original.
         obj = frame_or_series(range(3))
         obj_copy = copy(obj)
         assert tm.shares_memory(obj, obj_copy)
 
 
 class TestNDFrame:
+    # [CLASS DOC]
+    # Groups miscellaneous NDFrame tests: squeeze, transpose, take, axis class methods
+    # and flags. Stateless.
     # tests that don't fit elsewhere
 
     @pytest.mark.parametrize(
@@ -324,15 +409,23 @@ class TestNDFrame:
         ],
     )
     def test_squeeze_series_noop(self, ser):
+        # [FUNCTION DOC]
+        # Verifies squeeze on a multi-element series returns an equal series.
+        # Parametrized over a float and an object series.
         # noop
         tm.assert_series_equal(ser.squeeze(), ser)
 
     def test_squeeze_frame_noop(self):
+        # [FUNCTION DOC]
+        # Verifies squeeze on a 2 by 2 frame returns an equal frame.
         # noop
         df = DataFrame(np.eye(2))
         tm.assert_frame_equal(df.squeeze(), df)
 
     def test_squeeze_frame_reindex(self):
+        # [FUNCTION DOC]
+        # Verifies squeeze on a frame reduced to one column returns that column as a
+        # series.
         # squeezing
         df = DataFrame(
             np.random.default_rng(2).standard_normal((10, 4)),
@@ -342,6 +435,9 @@ class TestNDFrame:
         tm.assert_series_equal(df.squeeze(), df["A"])
 
     def test_squeeze_0_len_dim(self):
+        # [FUNCTION DOC]
+        # Verifies squeeze handles zero-length dimensions: an empty series and a frame
+        # built from it both squeeze to the empty series (GH11229, GH8999).
         # don't fail with 0 length dimensions GH11229 & GH8999
         empty_series = Series([], name="five", dtype=np.float64)
         empty_frame = DataFrame([empty_series])
@@ -349,6 +445,10 @@ class TestNDFrame:
         tm.assert_series_equal(empty_series, empty_frame.squeeze())
 
     def test_squeeze_axis(self):
+        # [FUNCTION DOC]
+        # Verifies squeeze on a one-by-one frame with each valid axis (number or name)
+        # returns the matching row or column series, default squeeze returns the scalar,
+        # and invalid axes (2 and "x") raise a value error naming the missing axis.
         # axis argument
         df = DataFrame(
             np.random.default_rng(2).standard_normal((1, 4)),
@@ -369,6 +469,9 @@ class TestNDFrame:
             df.squeeze(axis="x")
 
     def test_squeeze_axis_len_3(self):
+        # [FUNCTION DOC]
+        # Verifies squeeze along axis zero of a three-row frame returns the frame
+        # unchanged.
         df = DataFrame(
             np.random.default_rng(2).standard_normal((3, 4)),
             columns=Index(list("ABCD"), dtype=object),
@@ -377,6 +480,9 @@ class TestNDFrame:
         tm.assert_frame_equal(df.squeeze(axis=0), df)
 
     def test_numpy_squeeze(self):
+        # [FUNCTION DOC]
+        # Verifies the numpy squeeze function on a series (unchanged) and on a
+        # one-column frame (the column as series).
         s = Series(range(2), dtype=np.float64)
         tm.assert_series_equal(np.squeeze(s), s)
 
@@ -395,10 +501,15 @@ class TestNDFrame:
         ],
     )
     def test_transpose_series(self, ser):
+        # [FUNCTION DOC]
+        # Verifies transpose of a series returns an equal series (base-class
+        # implementation). Parametrized over float and object series.
         # calls implementation in pandas/core/base.py
         tm.assert_series_equal(ser.transpose(), ser)
 
     def test_transpose_frame(self):
+        # [FUNCTION DOC]
+        # Verifies a double transpose of a frame round-trips to an equal frame.
         df = DataFrame(
             np.random.default_rng(2).standard_normal((10, 4)),
             columns=Index(list("ABCD"), dtype=object),
@@ -407,6 +518,10 @@ class TestNDFrame:
         tm.assert_frame_equal(df.transpose().transpose(), df)
 
     def test_numpy_transpose(self, frame_or_series):
+        # [FUNCTION DOC]
+        # Verifies numpy transpose on a frame or series: a no-op for series, round-trips
+        # for both, and passing the axes argument raises a value error saying it is not
+        # supported.
         obj = DataFrame(
             np.random.default_rng(2).standard_normal((10, 4)),
             columns=Index(list("ABCD"), dtype=object),
@@ -433,6 +548,10 @@ class TestNDFrame:
         ],
     )
     def test_take_series(self, ser):
+        # [FUNCTION DOC]
+        # Verifies take with positive and negative positions on a series equals building
+        # a series from the taken values and index. Parametrized over a float and an
+        # object series.
         indices = [1, 5, -2, 6, 3, -1]
         out = ser.take(indices)
         expected = Series(
@@ -443,6 +562,9 @@ class TestNDFrame:
         tm.assert_series_equal(out, expected)
 
     def test_take_frame(self):
+        # [FUNCTION DOC]
+        # Verifies take with positive and negative positions on a frame equals building
+        # a frame from the taken rows and index.
         indices = [1, 5, -2, 6, 3, -1]
         df = DataFrame(
             np.random.default_rng(2).standard_normal((10, 4)),
@@ -458,6 +580,10 @@ class TestNDFrame:
         tm.assert_frame_equal(out, expected)
 
     def test_take_invalid_kwargs(self, frame_or_series):
+        # [FUNCTION DOC]
+        # Verifies take rejects an unknown keyword with a type error, and the
+        # numpy-compat out and mode arguments with value errors saying they are not
+        # supported. Works for frame and series.
         indices = [-3, 2, 0, 1]
 
         obj = DataFrame(range(5))
@@ -476,6 +602,10 @@ class TestNDFrame:
             obj.take(indices, mode="clip")
 
     def test_axis_classmethods(self, frame_or_series):
+        # [FUNCTION DOC]
+        # Verifies for every axis alias that the instance and class versions of
+        # axis-number, axis-name and block-manager-axis lookup agree. Uses an empty
+        # object.
         box = frame_or_series
         obj = box(dtype=object)
         values = box._AXIS_TO_AXIS_NUMBER.keys()
@@ -485,6 +615,9 @@ class TestNDFrame:
             assert obj._get_block_manager_axis(v) == box._get_block_manager_axis(v)
 
     def test_flags_identity(self, frame_or_series):
+        # [FUNCTION DOC]
+        # Verifies the flags accessor returns the same object on repeated access but a
+        # copy of the object gets a different flags object.
         obj = Series([1, 2])
         if frame_or_series is DataFrame:
             obj = obj.to_frame()

@@ -1,3 +1,6 @@
+# [MODULE DOC]
+# Tests for the monotonic-increasing and monotonic-decreasing properties on grouped
+# series (GH 17015).
 import numpy as np
 import pytest
 
@@ -28,6 +31,13 @@ import pandas._testing as tm
     ],
 )
 def test_is_monotonic_increasing(in_vals, out_vals):
+    # [FUNCTION DOC]
+    # Verifies the monotonic-increasing property of a grouped series: for an eleven-row
+    # frame grouped by a four-valued key B (groups of 3, 3, 3 and 2 rows), the result is
+    # a boolean series indexed by the group keys named C, and equals applying the
+    # property group by group.
+    # Parametrized over (values, expected flags): ordinary values, values with
+    # infinities, and values with missing data (always false).
     # GH 17015
     source_dict = {
         "A": ["1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11"],
@@ -64,6 +74,11 @@ def test_is_monotonic_increasing(in_vals, out_vals):
     ],
 )
 def test_is_monotonic_decreasing(in_vals, out_vals):
+    # [FUNCTION DOC]
+    # Verifies the monotonic-decreasing property of a grouped series in the same setup
+    # as the increasing test (without the apply comparison): result is a boolean series
+    # indexed by group keys. Parametrized over ordinary, infinite and missing-value
+    # inputs.
     # GH 17015
     source_dict = {
         "A": ["1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11"],

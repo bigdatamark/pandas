@@ -1,3 +1,9 @@
+# [MODULE DOC]
+# Tests for applying numpy universal functions (ufuncs) to DataFrame objects:
+# unary, binary and many-input ufuncs, argument pass-through, alignment of
+# frames, and the unsupported frame/series combinations.
+# Module-level data: a list of three dtype specs (numpy int, nullable Int, and a
+# per-column mapping) used for parametrization.
 from functools import partial
 import re
 
@@ -17,6 +23,10 @@ dtypes = [
 
 @pytest.mark.parametrize("dtype", dtypes)
 def test_unary_unary(dtype):
+    # [FUNCTION DOC]
+    # Verifies a unary ufunc returning one output (positive) applied to a frame
+    # yields a frame with the same labels, for each dtype spec. Expected is the
+    # numpy result wrapped in a frame and cast to the dtype.
     # unary input, unary output
     values = np.array([[-1, -1], [1, 1]], dtype="int64")
     df = pd.DataFrame(values, columns=["A", "B"], index=["a", "b"]).astype(dtype=dtype)
@@ -29,6 +39,11 @@ def test_unary_unary(dtype):
 
 @pytest.mark.parametrize("dtype", dtypes)
 def test_unary_binary(request, dtype):
+    # [FUNCTION DOC]
+    # Verifies a unary ufunc with two outputs (modf) returns a tuple of two frames,
+    # each equal to the matching numpy output with same index and columns.
+    # Parametrized over dtype specs; extension or per-column dtypes are marked as
+    # expected failures because multiple outputs are not implemented for them.
     # unary input, binary output
     if is_extension_array_dtype(dtype) or isinstance(dtype, dict):
         request.applymarker(
@@ -51,6 +66,10 @@ def test_unary_binary(request, dtype):
 
 @pytest.mark.parametrize("dtype", dtypes)
 def test_binary_input_dispatch_binop(dtype):
+    # [FUNCTION DOC]
+    # Verifies that a binary ufunc (add) called with the same frame twice is
+    # dispatched to the frame arithmetic and equals the numpy result cast to the
+    # dtype. Parametrized over dtype specs.
     # binop ufuncs are dispatched to our dunder methods.
     values = np.array([[-1, -1], [1, 1]], dtype="int64")
     df = pd.DataFrame(values, columns=["A", "B"], index=["a", "b"]).astype(dtype=dtype)
@@ -80,6 +99,13 @@ def test_binary_input_dispatch_binop(dtype):
     ],
 )
 def test_ufunc_passes_args(func, arg, expected):
+    # [FUNCTION DOC]
+    # Verifies extra ufunc keyword arguments (output buffer, where mask) and
+    # second operands are forwarded (GH#40662). Parametrized over the callable, the
+    # second operand (or none for a one-argument ufunc) and the flattened expected
+    # values.
+    # Both the preallocated output array and the returned frame must hold the expected 2
+    # by 2 result.
     # GH#40662
     arr = np.array([[1, 2], [3, 4]])
     df = pd.DataFrame(arr)
@@ -100,6 +126,12 @@ def test_ufunc_passes_args(func, arg, expected):
 @pytest.mark.parametrize("dtype_a", dtypes)
 @pytest.mark.parametrize("dtype_b", dtypes)
 def test_binary_input_aligns_columns(request, dtype_a, dtype_b):
+    # [FUNCTION DOC]
+    # Verifies a binary ufunc (heaviside) on two frames first aligns them on columns,
+    # producing the union of columns with missing entries, and that with a plain
+    # array as second operand no alignment occurs. Parametrized over two dtype
+    # specs; any extension or per-column dtype is marked an expected failure. When
+    # both specs are mappings the second frame's column B is renamed to C.
     if (
         is_extension_array_dtype(dtype_a)
         or isinstance(dtype_a, dict)
@@ -134,6 +166,10 @@ def test_binary_input_aligns_columns(request, dtype_a, dtype_b):
 
 @pytest.mark.parametrize("dtype", dtypes)
 def test_binary_input_aligns_index(request, dtype):
+    # [FUNCTION DOC]
+    # Verifies a binary ufunc on two frames aligns on the index (union with
+    # missing rows) and that an array second operand skips alignment. Parametrized
+    # over dtype specs; extension or per-column dtypes are expected failures.
     if is_extension_array_dtype(dtype) or isinstance(dtype, dict):
         request.applymarker(
             pytest.mark.xfail(
@@ -159,6 +195,9 @@ def test_binary_input_aligns_index(request, dtype):
 
 
 def test_binary_frame_series_raises():
+    # [FUNCTION DOC]
+    # Verifies that a binary ufunc mixing a frame and a series, in either order,
+    # raises a not-implemented error mentioning the ufunc name.
     # We don't currently implement
     df = pd.DataFrame({"A": [1, 2]})
     with pytest.raises(NotImplementedError, match="logaddexp"):
@@ -169,6 +208,11 @@ def test_binary_frame_series_raises():
 
 
 def test_unary_accumulate_axis():
+    # [FUNCTION DOC]
+    # Verifies the accumulate method of a reducing ufunc (maximum) on frames
+    # (GH#39259): default and explicit axis zero accumulate down columns (int
+    # column becomes float when mixed with a float column), axis one accumulates across
+    # columns.
     # https://github.com/pandas-dev/pandas/issues/39259
     df = pd.DataFrame({"a": [1, 3, 2, 4]})
     result = np.maximum.accumulate(df)
@@ -190,6 +234,9 @@ def test_unary_accumulate_axis():
 
 
 def test_frame_outer_disallowed():
+    # [FUNCTION DOC]
+    # Verifies the outer method of a binary ufunc applied to frames raises a
+    # not-implemented error with an empty message (deprecation enforced in 2.0).
     df = pd.DataFrame({"A": [1, 2]})
     with pytest.raises(NotImplementedError, match="^$"):
         # deprecation enforced in 2.0
@@ -197,6 +244,12 @@ def test_frame_outer_disallowed():
 
 
 def test_alignment_deprecation_enforced():
+    # [FUNCTION DOC]
+    # Verifies enforced alignment behavior (2.0, GH#39184) for add on frames and series:
+    # aligned inputs
+    # give no warning; a frame with an array uses positional values; misaligned
+    # frames give the union with missing values; a series aligns on columns; and mixing
+    # a series first with a frame raises a not-implemented error about mixed inputs.
     # Enforced in 2.0
     # https://github.com/pandas-dev/pandas/issues/39184
     df1 = pd.DataFrame({"a": [1, 2, 3], "b": [4, 5, 6]})
@@ -247,6 +300,14 @@ def test_alignment_deprecation_enforced():
 
 @pytest.mark.single_cpu
 def test_alignment_deprecation_many_inputs_enforced():
+    # [FUNCTION DOC]
+    # Verifies alignment enforcement for ufuncs with more than two inputs, using a
+    # numba vectorized three-argument addition (skipped if numba is missing; single
+    # cpu marker). Three misaligned frames give all-missing union; identical
+    # frames give plain sums with no warning; a frame mixed with plain arrays raises a
+    # value
+    # error about broadcasting when shapes disagree, and index/columns come from the
+    # first frame.
     # Enforced in 2.0
     # https://github.com/pandas-dev/pandas/issues/39184
     # test that the deprecation also works with > 2 inputs -> using a numba
@@ -255,6 +316,10 @@ def test_alignment_deprecation_many_inputs_enforced():
 
     @numba.vectorize([numba.float64(numba.float64, numba.float64, numba.float64)])
     def my_ufunc(x, y, z):
+        # [FUNCTION DOC]
+        # HELPER: numba-compiled elementwise ufunc taking three float64 values and
+        # returning their sum; used by the
+        # many-inputs alignment test.
         return x + y + z
 
     df1 = pd.DataFrame({"a": [1, 2, 3], "b": [4, 5, 6]})
@@ -292,8 +357,16 @@ def test_alignment_deprecation_many_inputs_enforced():
 
 
 def test_array_ufuncs_for_many_arguments():
+    # [FUNCTION DOC]
+    # Verifies a ufunc created from a three-argument Python function works on
+    # frames (GH39853): two frames and a scalar give an object-dtype frame of sums,
+    # while a frame/frame/series combination raises a not-implemented error about mixed
+    # inputs.
     # GH39853
     def add3(x, y, z):
+        # [FUNCTION DOC]
+        # HELPER: three-argument addition used to build the ufunc in the enclosing test;
+        # returns x plus y plus z.
         return x + y + z
 
     ufunc = np.frompyfunc(add3, 3, 1)

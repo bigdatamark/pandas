@@ -1,6 +1,18 @@
 """
 An exhaustive list of pandas methods exercising NDFrame.__finalize__.
 """
+# [MODULE DOC]
+# Exhaustive tests that the object-finalize hook (propagation of attrs and flags from
+# inputs to results) is applied by pandas methods.
+# Module data: an expected-failure marker for unimplemented cases; a small multi-index
+# and frame-data tuples;
+# and a list of method specs, each a triple of constructor (Series or DataFrame),
+# constructor arguments, and a callable applying the method under test.
+# Tests cover generic methods, binary operators, string, datetime, timedelta and
+# categorical accessors, groupby results, and merge/merge_asof metadata and
+# duplicate-label flag handling.
+# Header TODOs list areas not yet covered (binary methods, binary outputs, top-level
+# functions, windows, cumulative reductions).
 
 from copy import deepcopy
 from datetime import time
@@ -363,6 +375,10 @@ _all_methods = [
 
 
 def idfn(x):
+    # [FUNCTION DOC]
+    # HELPER: builds a readable test id from a method object. Takes any object, searches
+    # its text form for a single-quoted name and returns that name if found, otherwise
+    # returns the plain text form.
     xpr = re.compile(r"'(.*)?'")
     m = xpr.search(str(x))
     if m:
@@ -373,6 +389,11 @@ def idfn(x):
 
 @pytest.mark.parametrize("ndframe_method", _all_methods, ids=lambda x: idfn(x[-1]))
 def test_finalize_called(ndframe_method):
+    # [FUNCTION DOC]
+    # Verifies that every method in the master method list preserves the attrs
+    # dictionary: builds the object from the spec, sets attrs with one entry, applies
+    # the method, and expects the result's attrs to equal it.
+    # Parametrized over the method specs with ids derived from the callable.
     cls, init_args, method = ndframe_method
     ndframe = cls(*init_args)
 
@@ -384,6 +405,9 @@ def test_finalize_called(ndframe_method):
 
 @not_implemented_mark
 def test_finalize_called_eval_numexpr():
+    # [FUNCTION DOC]
+    # Verifies attrs propagate through frame evaluation with the numexpr engine (skipped
+    # without numexpr). Marked expected failure (not implemented).
     pytest.importorskip("numexpr")
     df = pd.DataFrame({"A": [1, 2]})
     df.attrs["A"] = 1
@@ -411,6 +435,14 @@ def test_finalize_called_eval_numexpr():
     ids=lambda x: f"({type(x[0]).__name__},{type(x[1]).__name__})",
 )
 def test_binops(request, args, annotate, all_binary_operators):
+    # [FUNCTION DOC]
+    # Verifies binary operators propagate attrs. Parametrized over operand pairs
+    # (scalar/Series/DataFrame combinations, with ids by type names), which side carries
+    # attrs (left, right, both), and the all_binary_operators fixture.
+    # Skips when the annotated side is a plain integer. For comparison operators between
+    # a frame and a series, operands are first aligned on columns (silent alignment was
+    # removed in 2.0). The result's attrs must equal the annotated attrs.
+    # The request fixture is unused.
     # This generates 624 tests... Is that needed?
     left, right = args
     if isinstance(left, (pd.DataFrame, pd.Series)):
@@ -449,6 +481,10 @@ def test_binops(request, args, annotate, all_binary_operators):
 @pytest.mark.parametrize("left", [pd.Series, pd.DataFrame])
 @pytest.mark.parametrize("right", [pd.Series, pd.DataFrame])
 def test_attrs_binary_operations(all_binary_operators, left, right):
+    # [FUNCTION DOC]
+    # Verifies (GH 51607) a binary operator on any series/frame pair propagates the
+    # attrs of the operand that has them, in either operand order. Parametrized over
+    # left and right class.
     # GH 51607
     attrs = {"a": 1}
     left = left([1])
@@ -516,6 +552,10 @@ def test_attrs_binary_operations(all_binary_operators, left, right):
     ids=idfn,
 )
 def test_string_method(method):
+    # [FUNCTION DOC]
+    # Verifies that every string accessor method listed keeps attrs on its result when
+    # applied to a one-element string series with attrs. Parametrized over about fifty
+    # methods; ids via the id helper.
     s = pd.Series(["a1"])
     s.attrs = {"a": 1}
     result = method(s.str)
@@ -538,6 +578,10 @@ def test_string_method(method):
     ids=idfn,
 )
 def test_datetime_method(method):
+    # [FUNCTION DOC]
+    # Verifies datetime accessor methods (to period, tz localize, normalize, strftime,
+    # round, floor, ceil, month and day names) keep attrs on a datetime series.
+    # Parametrized over the method.
     s = pd.Series(pd.date_range("2000", periods=4))
     s.attrs = {"a": 1}
     result = method(s.dt)
@@ -575,6 +619,10 @@ def test_datetime_method(method):
     ],
 )
 def test_datetime_property(attr):
+    # [FUNCTION DOC]
+    # Verifies datetime accessor properties (date, time parts, boundary flags, leap
+    # year, days in month, etc.) return results carrying the series' attrs. Parametrized
+    # over property names.
     s = pd.Series(pd.date_range("2000", periods=4))
     s.attrs = {"a": 1}
     result = getattr(s.dt, attr)
@@ -585,6 +633,9 @@ def test_datetime_property(attr):
     "attr", ["days", "seconds", "microseconds", "nanoseconds", "components"]
 )
 def test_timedelta_property(attr):
+    # [FUNCTION DOC]
+    # Verifies timedelta accessor properties (days, seconds, microseconds, nanoseconds,
+    # components) carry attrs. Parametrized over property names.
     s = pd.Series(pd.timedelta_range("2000", periods=4))
     s.attrs = {"a": 1}
     result = getattr(s.dt, attr)
@@ -593,6 +644,9 @@ def test_timedelta_property(attr):
 
 @pytest.mark.parametrize("method", [operator.methodcaller("total_seconds")])
 def test_timedelta_methods(method):
+    # [FUNCTION DOC]
+    # Verifies the timedelta accessor total-seconds method carries attrs. Parametrized
+    # with a single method.
     s = pd.Series(pd.timedelta_range("2000", periods=4))
     s.attrs = {"a": 1}
     result = method(s.dt)
@@ -615,6 +669,10 @@ def test_timedelta_methods(method):
 )
 @not_implemented_mark
 def test_categorical_accessor(method):
+    # [FUNCTION DOC]
+    # Verifies categorical accessor methods (add/remove/rename/reorder/set categories,
+    # ordering, codes) carry attrs. Marked expected failure (not implemented).
+    # Parametrized over the method.
     s = pd.Series(["a", "b"], dtype="category")
     s.attrs = {"a": 1}
     result = method(s.cat)
@@ -639,6 +697,10 @@ def test_categorical_accessor(method):
     ],
 )
 def test_groupby_finalize(obj, method):
+    # [FUNCTION DOC]
+    # Verifies that groupby sum, apply, and aggregations by name (sum, mean, median)
+    # keep attrs for Series and DataFrame input grouped by a constant key with group
+    # keys disabled. Parametrized over object and method.
     obj.attrs = {"a": 1}
     result = method(obj.groupby([0, 0], group_keys=False))
     assert result.attrs == {"a": 1}
@@ -660,12 +722,19 @@ def test_groupby_finalize(obj, method):
 )
 @not_implemented_mark
 def test_groupby_finalize_not_implemented(obj, method):
+    # [FUNCTION DOC]
+    # Verifies attrs propagation for groupby aggregations (multi-function, std, var,
+    # sem, size, ohlc). Marked expected failure (not implemented). Parametrized over
+    # object and method.
     obj.attrs = {"a": 1}
     result = method(obj.groupby([0, 0]))
     assert result.attrs == {"a": 1}
 
 
 def test_finalize_frame_series_name():
+    # [FUNCTION DOC]
+    # Verifies finalize from a frame onto a new Series does not copy a column called
+    # name as the series name (PR 37186).
     # https://github.com/pandas-dev/pandas/pull/37186/files#r506978889
     # ensure we don't copy the column `name` to the Series.
     df = pd.DataFrame({"name": [1, 2]})
@@ -698,6 +767,11 @@ def test_merge_correctly_sets_duplication_allowance_flag(
     allow_on_left: bool,
     allow_on_right: bool,
 ):
+    # [FUNCTION DOC]
+    # Verifies that merging two frames with different duplicate-label flags gives a
+    # result whose flag is true only when both inputs allow duplicates.
+    # Parametrized over merge type (left, right, inner, outer, left_anti, right_anti,
+    # cross) and the four flag combinations; the cross merge is called without a key.
     left = pd.DataFrame({"test": [1]}).set_flags(allows_duplicate_labels=allow_on_left)
     right = pd.DataFrame({"test": [1]}).set_flags(
         allows_duplicate_labels=allow_on_right,
@@ -720,6 +794,10 @@ def test_merge_asof_correctly_sets_duplication_allowance_flag(
     allow_on_left: bool,
     allow_on_right: bool,
 ):
+    # [FUNCTION DOC]
+    # Verifies the same flag-combination rule for as-of merge of two single-column
+    # frames (result allowed only when both inputs allow). Parametrized over the four
+    # flag combinations.
     left = pd.DataFrame({"test": [1]}).set_flags(allows_duplicate_labels=allow_on_left)
     right = pd.DataFrame({"test": [1]}).set_flags(
         allows_duplicate_labels=allow_on_right,
@@ -732,6 +810,10 @@ def test_merge_asof_correctly_sets_duplication_allowance_flag(
 
 
 def test_merge_propagates_metadata_from_equal_input_metadata():
+    # [FUNCTION DOC]
+    # Verifies that merge copies attrs when both inputs have equal attrs, and that the
+    # result's attrs and nested values are deep copies, not the same objects as either
+    # input's.
     metadata = {"a": [1, 2]}
     left = pd.DataFrame({"test": [1]})
     left.attrs = metadata
@@ -750,6 +832,8 @@ def test_merge_propagates_metadata_from_equal_input_metadata():
 
 
 def test_merge_does_not_propagate_metadata_from_unequal_input_metadata():
+    # [FUNCTION DOC]
+    # Verifies that merge result has empty attrs when the inputs' attrs differ.
     left = pd.DataFrame({"test": [1]})
     left.attrs = {"a": 2}
     right = pd.DataFrame({"test": [1]})
@@ -774,6 +858,10 @@ def test_merge_does_not_propagate_metadata_if_one_input_has_no_metadata(
     right_has_metadata: bool,
     expected: dict,
 ):
+    # [FUNCTION DOC]
+    # Verifies that merge result has empty attrs when one or both inputs have empty
+    # attrs. Parametrized over whether left and right have attrs with an expected value
+    # (always empty); case ids are left-empty, right-empty, both-empty.
     left = pd.DataFrame({"test": [1]})
     right = pd.DataFrame({"test": [1]})
 

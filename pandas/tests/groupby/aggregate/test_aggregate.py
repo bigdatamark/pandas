@@ -1,6 +1,13 @@
 """
 test .agg behavior / note that .apply is tested generally in test_groupby.py
 """
+# [MODULE DOC]
+# Main tests for groupby aggregation (agg/aggregate) on Series and DataFrame groupby
+# objects: string, callable, list, dictionary and named-aggregation specifications,
+# extension and arrow dtypes, nullable results, multi-function output ordering and
+# naming, error messages, and many regression cases. Apply is tested elsewhere (the
+# groupby general tests). Uses the shared groupby fixtures (df, ts, tsframe,
+# three_group, reduction_func and others).
 
 import datetime
 import functools
@@ -29,11 +36,16 @@ from pandas.core.groupby.grouper import Grouping
 
 
 def test_groupby_agg_no_extra_calls():
+    # [FUNCTION DOC]
+    # Verifies (GH#31760) aggregation never calls the function with an empty group: the
+    # function asserts non-empty input.
     # GH#31760
     df = DataFrame({"key": ["a", "b", "c", "c"], "value": [1, 2, 3, 4]})
     gb = df.groupby("key")["value"]
 
     def dummy_func(x):
+        # [FUNCTION DOC]
+        # HELPER: function that asserts its input is non-empty and returns its sum.
         assert len(x) != 0
         return x.sum()
 
@@ -41,6 +53,9 @@ def test_groupby_agg_no_extra_calls():
 
 
 def test_agg_regression1(tsframe):
+    # [FUNCTION DOC]
+    # Verifies string aggregation mean on a time series frame grouped by year and month
+    # callables equals the mean method.
     grouped = tsframe.groupby([lambda x: x.year, lambda x: x.month])
     result = grouped.agg("mean")
     expected = grouped.mean()
@@ -48,6 +63,10 @@ def test_agg_regression1(tsframe):
 
 
 def test_agg_must_agg(df):
+    # [FUNCTION DOC]
+    # Verifies that aggregation functions returning non-scalar values (a describe
+    # summary or a slice of the index) raise an error with message "Must produce
+    # aggregated value".
     grouped = df.groupby("A")["C"]
 
     msg = "Must produce aggregated value"
@@ -58,6 +77,9 @@ def test_agg_must_agg(df):
 
 
 def test_agg_ser_multi_key(df):
+    # [FUNCTION DOC]
+    # Verifies aggregating a series by two keys with a sum lambda equals the frame
+    # grouped sum column.
     f = lambda x: x.sum()
     results = df.C.groupby([df.A, df.B]).aggregate(f)
     expected = df.groupby(["A", "B"]).sum()["C"]
@@ -65,6 +87,10 @@ def test_agg_ser_multi_key(df):
 
 
 def test_agg_with_missing_values():
+    # [FUNCTION DOC]
+    # Verifies (GH#58810) frame-level named aggregation of minimum on all-missing
+    # columns of several missing-value kinds and sum on a values column gives a frame
+    # indexed by the result names with missing entries as expected.
     # GH#58810
     missing_df = DataFrame(
         {
@@ -91,6 +117,10 @@ def test_agg_with_missing_values():
 
 
 def test_groupby_aggregation_mixed_dtype():
+    # [FUNCTION DOC]
+    # Verifies (GH 6212) grouped mean over two mixed-type keys (integers, strings and
+    # missing entries) gives the expected multi-index frame; groups with missing keys
+    # are dropped.
     # GH 6212
     expected = DataFrame(
         {
@@ -140,6 +170,11 @@ def test_groupby_aggregation_mixed_dtype():
 
 
 def test_agg_apply_corner(ts, tsframe):
+    # [FUNCTION DOC]
+    # Verifies aggregation when there is nothing to group (grouper all missing): sum and
+    # string sum return an empty float series with float index; apply with sum too
+    # (index type unchecked); for a frame the sum and aggregate are empty with float
+    # columns and apply gives a reset index.
     # nothing to group, all NA
     grouped = ts.groupby(ts * np.nan, group_keys=False)
     assert ts.dtype == np.float64
@@ -166,6 +201,11 @@ def test_agg_apply_corner(ts, tsframe):
 
 
 def test_with_na_groups(any_real_numpy_dtype):
+    # [FUNCTION DOC]
+    # Verifies aggregation with length and a float-returning function on a series
+    # grouped by labels containing missing values (missing keys dropped), for each real
+    # numpy dtype; the length result integer dtype is not checked, the float function
+    # preserves float32.
     index = Index(np.arange(10))
     values = Series(np.ones(10), index, dtype=any_real_numpy_dtype)
     labels = Series(
@@ -184,6 +224,8 @@ def test_with_na_groups(any_real_numpy_dtype):
 
     # explicitly return a float from my function
     def f(x):
+        # [FUNCTION DOC]
+        # HELPER: returns the length of the input as a float.
         return float(len(x))
 
     agged = grouped.agg(f)
@@ -195,6 +237,10 @@ def test_with_na_groups(any_real_numpy_dtype):
 
 
 def test_agg_grouping_is_list_tuple(ts):
+    # [FUNCTION DOC]
+    # Verifies aggregation still works when the first grouping's grouping vector is
+    # replaced by a list or a tuple (private grouper internals are modified in place);
+    # results equal the mean method. Uses the ts fixture for the index.
     df = DataFrame(
         np.random.default_rng(2).standard_normal((30, 4)),
         columns=Index(list("ABCD"), dtype=object),
@@ -217,6 +263,9 @@ def test_agg_grouping_is_list_tuple(ts):
 
 
 def test_agg_python_multiindex(multiindex_dataframe_random_data):
+    # [FUNCTION DOC]
+    # Verifies string aggregation mean on a multi-index frame grouped by two level names
+    # equals the mean method.
     grouped = multiindex_dataframe_random_data.groupby(["A", "B"])
 
     result = grouped.agg("mean")
@@ -228,6 +277,10 @@ def test_agg_python_multiindex(multiindex_dataframe_random_data):
     "groupbyfunc", [lambda x: x.weekday(), [lambda x: x.month, lambda x: x.weekday()]]
 )
 def test_aggregate_str_func(tsframe, groupbyfunc):
+    # [FUNCTION DOC]
+    # Verifies string aggregation (std on a series, var on the frame, and a dictionary
+    # of var, std, mean, sem) equals the corresponding methods. Parametrized over a
+    # weekday callable and a list of month and weekday callables as grouper.
     grouped = tsframe.groupby(groupbyfunc)
 
     # single series
@@ -254,6 +307,10 @@ def test_aggregate_str_func(tsframe, groupbyfunc):
 
 
 def test_std_masked_dtype(any_numeric_ea_dtype):
+    # [FUNCTION DOC]
+    # Verifies (GH#35516) grouped standard deviation of a nullable Float64 column with a
+    # missing value returns Float64 with the expected values. The any_numeric_ea_dtype
+    # fixture is accepted but unused.
     # GH#35516
     df = DataFrame(
         {
@@ -269,6 +326,10 @@ def test_std_masked_dtype(any_numeric_ea_dtype):
 
 
 def test_agg_str_with_kwarg_axis_1_raises(df, reduction_func):
+    # [FUNCTION DOC]
+    # Verifies passing a reduction name with axis one to aggregate raises a value error
+    # ("Operation ... does not support axis=1"). Parametrized over reduction names via
+    # the reduction_func fixture.
     gb = df.groupby(level=0)
     msg = f"Operation {reduction_func} does not support axis=1"
     with pytest.raises(ValueError, match=msg):
@@ -276,6 +337,10 @@ def test_agg_str_with_kwarg_axis_1_raises(df, reduction_func):
 
 
 def test_aggregate_item_by_item(df):
+    # [FUNCTION DOC]
+    # Verifies (GH5782) item-by-item aggregation with a size lambda gives per-column
+    # group sizes for each key, and a function on an empty frame grouped by a series
+    # returns an empty frame.
     grouped = df.groupby("A")
 
     aggfun_0 = lambda ser: ser.size
@@ -292,6 +357,8 @@ def test_aggregate_item_by_item(df):
     tm.assert_almost_equal(result.xs("bar"), exp)
 
     def aggfun_1(ser):
+        # [FUNCTION DOC]
+        # HELPER: returns the size of its input series.
         return ser.size
 
     result = DataFrame().groupby(df.A).agg(aggfun_1)
@@ -300,9 +367,16 @@ def test_aggregate_item_by_item(df):
 
 
 def test_wrap_agg_out(three_group):
+    # [FUNCTION DOC]
+    # Verifies that a function raising a type error for string columns propagates when
+    # applied to all columns, but succeeds when only numeric columns D, E, F are
+    # selected, matching the result on the pre-selected frame.
     grouped = three_group.groupby(["A", "B"])
 
     def func(ser):
+        # [FUNCTION DOC]
+        # HELPER: raises a type error "Test error message" for object or string dtype
+        # series; otherwise returns the sum.
         if ser.dtype in (object, "string"):
             raise TypeError("Test error message")
         return ser.sum()
@@ -316,6 +390,9 @@ def test_wrap_agg_out(three_group):
 
 
 def test_agg_multiple_functions_maintain_order(df):
+    # [FUNCTION DOC]
+    # Verifies (GH #610) a list of named functions keeps the given order as result
+    # columns.
     # GH #610
     funcs = [("mean", np.mean), ("max", np.max), ("min", np.min)]
     result = df.groupby("A")["C"].agg(funcs)
@@ -325,12 +402,19 @@ def test_agg_multiple_functions_maintain_order(df):
 
 
 def test_series_index_name(df):
+    # [FUNCTION DOC]
+    # Verifies aggregation of a single-column frame by a key from another frame keeps
+    # the key's name as the result index name.
     grouped = df.loc[:, ["C"]].groupby(df["A"])
     result = grouped.agg(lambda x: x.mean())
     assert result.index.name == "A"
 
 
 def test_agg_multiple_functions_same_name():
+    # [FUNCTION DOC]
+    # Verifies (GH 30880) resampling aggregation with two partial quantile functions on
+    # the same column gives two columns both labelled quantile, with values equal to
+    # quantiles from the resampler.
     # GH 30880
     df = DataFrame(
         np.random.default_rng(2).standard_normal((1000, 3)),
@@ -352,6 +436,10 @@ def test_agg_multiple_functions_same_name():
 
 
 def test_agg_multiple_functions_same_name_with_ohlc_present():
+    # [FUNCTION DOC]
+    # Verifies (GH 30880) the same with ohlc present: ohlc expands to four sub-columns
+    # and the two quantile columns are labelled with the column name at the third level;
+    # column levels are named.
     # GH 30880
     # ohlc expands dimensions, so different test to the above is required.
     df = DataFrame(
@@ -387,6 +475,10 @@ def test_agg_multiple_functions_same_name_with_ohlc_present():
 
 
 def test_multiple_functions_tuples_and_non_tuples(df):
+    # [FUNCTION DOC]
+    # Verifies (#1359) a list mixing a named function pair and a plain name gives the
+    # same result as the fully named list, for a series and for a frame with only column
+    # D.
     # #1359
     # Columns B and C would cause partial failure
     df = df.drop(columns=["B", "C"])
@@ -404,6 +496,13 @@ def test_multiple_functions_tuples_and_non_tuples(df):
 
 
 def test_more_flexible_frame_multi_function(df):
+    # [FUNCTION DOC]
+    # Verifies flexible frame multi-function aggregation: a dictionary of lists equals
+    # concatenated per-function frames with levels swapped and sorted; a mixed
+    # dictionary compared with itself; nested renaming raises the specification error;
+    # and lists of user functions work without error.
+    # KNOWN ISSUE: the comparison labelled "be careful" evaluates the same aggregation
+    # twice and compares the results with each other, so it cannot detect a regression.
     grouped = df.groupby("A")
 
     exmean = grouped.agg({"C": "mean", "D": "mean"})
@@ -423,9 +522,14 @@ def test_more_flexible_frame_multi_function(df):
     tm.assert_frame_equal(result, expected)
 
     def numpymean(x):
+        # [FUNCTION DOC]
+        # HELPER: returns the numpy mean of the input.
         return np.mean(x)
 
     def numpystd(x):
+        # [FUNCTION DOC]
+        # HELPER: returns the numpy standard deviation (one delta degree of freedom) of
+        # the input.
         return np.std(x, ddof=1)
 
     # this uses column selection & renaming
@@ -440,6 +544,11 @@ def test_more_flexible_frame_multi_function(df):
 
 
 def test_multi_function_flexible_mix(df):
+    # [FUNCTION DOC]
+    # Verifies (GH #1268) nested renaming dictionaries mixed with plain names raise the
+    # specification error.
+    # KNOWN ISSUE: the second and third scenarios (labelled Test 1 and Test 2) use
+    # identical dictionaries, so one of them is redundant.
     # GH #1268
     grouped = df.groupby("A")
 
@@ -464,6 +573,9 @@ def test_multi_function_flexible_mix(df):
 
 
 def test_groupby_agg_coercing_bools():
+    # [FUNCTION DOC]
+    # Verifies (issue 14873) aggregation returning booleans (all nonzero; all null)
+    # gives boolean series and is not coerced to numbers.
     # issue 14873
     dat = DataFrame({"a": [1, 1, 2, 2], "b": [0, 1, 2, 3], "c": [None, None, 1, 1]})
     gp = dat.groupby("a")
@@ -480,6 +592,9 @@ def test_groupby_agg_coercing_bools():
 
 
 def test_groupby_agg_dict_with_getitem():
+    # [FUNCTION DOC]
+    # Verifies (issue 25471) selecting a column list and aggregating with a dictionary
+    # naming that column works.
     # issue 25471
     dat = DataFrame({"A": ["A", "A", "B", "B", "B"], "B": [1, 2, 1, 1, 2]})
     result = dat.groupby("A")[["B"]].agg({"B": "sum"})
@@ -490,6 +605,9 @@ def test_groupby_agg_dict_with_getitem():
 
 
 def test_groupby_agg_dict_dup_columns():
+    # [FUNCTION DOC]
+    # Verifies (GH#55006) dictionary aggregation on a column other than a duplicated
+    # column works when the frame has duplicate column names.
     # GH#55006
     df = DataFrame(
         [[1, 2, 3, 4], [1, 3, 4, 5], [2, 4, 5, 6]],
@@ -513,6 +631,9 @@ def test_groupby_agg_dict_dup_columns():
     ],
 )
 def test_bool_agg_dtype(op):
+    # [FUNCTION DOC]
+    # Verifies (GH 7001) that sum, cumulative sum, transform sum and cumulative sum, and
+    # aggregate sum and cumulative sum of a boolean series give integer results.
     # GH 7001
     # Bool sum aggregations result in int
     df = DataFrame({"a": [1, 1], "b": [False, True]})
@@ -542,6 +663,14 @@ def test_bool_agg_dtype(op):
 def test_callable_result_dtype_frame(
     keys, agg_index, input_dtype, result_dtype, method
 ):
+    # [FUNCTION DOC]
+    # Verifies (GH 21240) the result dtype of a callable that casts the first element of
+    # a group to a given dtype, for a one-row frame grouped by one or two keys, via
+    # apply, aggregate and transform. Parametrized over keys, input dtype, result dtype
+    # (bool, int32, int64, float32, float64) and method. Aggregate retains the input
+    # dtype where feasible (float32 input with float64 result stays float32; int32 input
+    # with int64 result stays int32); transform returns a default range index; apply
+    # result column names are set to a zero label.
     # GH 21240
     df = DataFrame({"a": [1], "b": [2], "c": [True]})
     df["c"] = df["c"].astype(input_dtype)
@@ -575,6 +704,11 @@ def test_callable_result_dtype_frame(
 @pytest.mark.parametrize("dtype", [bool, int, float])
 @pytest.mark.parametrize("method", ["apply", "aggregate", "transform"])
 def test_callable_result_dtype_series(keys, agg_index, input, dtype, method):
+    # [FUNCTION DOC]
+    # Verifies (GH 21240) the same dtype rule for a column selection (series) with
+    # one-element data of boolean, integer or float type and a cast to bool, int or
+    # float. Parametrized over keys, input value, dtype and method (apply, aggregate,
+    # transform).
     # GH 21240
     df = DataFrame({"a": [1], "b": [2], "c": [input]})
     op = getattr(df.groupby(keys)["c"], method)
@@ -585,6 +719,9 @@ def test_callable_result_dtype_series(keys, agg_index, input, dtype, method):
 
 
 def test_order_aggregate_multiple_funcs():
+    # [FUNCTION DOC]
+    # Verifies (GH 25692) the order of function names in the result columns follows the
+    # order requested (sum, max, mean, ohlc, min).
     # GH 25692
     df = DataFrame({"A": [1, 1, 2, 2], "B": [1, 2, 3, 4]})
 
@@ -597,6 +734,11 @@ def test_order_aggregate_multiple_funcs():
 
 
 def test_ohlc_ea_dtypes(any_numeric_ea_dtype):
+    # [FUNCTION DOC]
+    # Verifies (GH#37493) ohlc on nullable numeric extension dtypes yields open, high,
+    # low, close columns with the same extension dtype, missing groups give missing
+    # values, and with as_index false it equals the reset-index version. Parametrized
+    # over any_numeric_ea_dtype.
     # GH#37493
     df = DataFrame(
         {"a": [1, 1, 2, 3, 4, 4], "b": [22, 11, pd.NA, 10, 20, pd.NA]},
@@ -621,6 +763,11 @@ def test_ohlc_ea_dtypes(any_numeric_ea_dtype):
 @pytest.mark.parametrize("dtype", [np.int64, np.uint64])
 @pytest.mark.parametrize("how", ["first", "last", "min", "max", "mean", "median"])
 def test_uint64_type_handling(dtype, how):
+    # [FUNCTION DOC]
+    # Verifies (GH 26310) aggregation (first, last, min, max, mean, median) of a very
+    # large 64-bit value is exact for signed and unsigned 64-bit integers; for non-float
+    # results the unsigned result is cast to signed before comparison with exact
+    # checking. Parametrized over dtype and operation.
     # GH 26310
     df = DataFrame({"x": 6903052872240755750, "y": [1, 2]})
     expected = df.groupby("y").agg({"x": how})
@@ -633,6 +780,9 @@ def test_uint64_type_handling(dtype, how):
 
 
 def test_func_duplicates_raises():
+    # [FUNCTION DOC]
+    # Verifies (GH28426) listing the same function name twice raises the specification
+    # error "Function names ...".
     # GH28426
     msg = "Function names"
     df = DataFrame({"A": [0, 0, 1, 1], "B": [1, 2, 3, 4]})
@@ -650,6 +800,10 @@ def test_func_duplicates_raises():
     ],
 )
 def test_agg_index_has_complex_internals(index):
+    # [FUNCTION DOC]
+    # Verifies (GH 31223) aggregation with the unique-count function of a Series works
+    # when the frame index has complex internals (categorical, interval, period,
+    # multi-index). Parametrized over the index.
     # GH 31223
     df = DataFrame({"group": [1, 1, 2], "value": [0, 1, 0]}, index=index)
     result = df.groupby("group").agg({"value": Series.nunique})
@@ -658,6 +812,9 @@ def test_agg_index_has_complex_internals(index):
 
 
 def test_agg_split_block():
+    # [FUNCTION DOC]
+    # Verifies (issue 31522) minimum of two string columns after the key split gives the
+    # expected string minima, when blocks are split.
     # https://github.com/pandas-dev/pandas/issues/31522
     df = DataFrame(
         {
@@ -675,6 +832,9 @@ def test_agg_split_block():
 
 
 def test_agg_split_object_part_datetime():
+    # [FUNCTION DOC]
+    # Verifies (pull request 31616) minimum over a single group of an object-dtype frame
+    # holding datetimes, strings and integers keeps object dtype and per-column minima.
     # https://github.com/pandas-dev/pandas/pull/31616
     df = DataFrame(
         {
@@ -703,7 +863,13 @@ def test_agg_split_object_part_datetime():
 
 
 class TestNamedAggregationSeries:
+    # [CLASS DOC]
+    # Groups tests of named aggregation (keyword-based result naming) for grouped
+    # Series. Stateless.
     def test_series_named_agg(self):
+        # [FUNCTION DOC]
+        # Verifies named aggregation on a grouped Series returns a frame with columns in
+        # the keyword order, including after swapping the keyword order.
         df = Series([1, 2, 3, 4])
         gr = df.groupby([0, 0, 1, 1])
         result = gr.agg(a="sum", b="min")
@@ -717,6 +883,9 @@ class TestNamedAggregationSeries:
         tm.assert_frame_equal(result, expected)
 
     def test_no_args_raises(self):
+        # [FUNCTION DOC]
+        # Verifies calling aggregate on a grouped Series with no arguments raises a type
+        # error ("Must provide"), while an empty list gives an empty frame.
         gr = Series([1, 2]).groupby([0, 1])
         with pytest.raises(TypeError, match="Must provide"):
             gr.agg()
@@ -727,6 +896,9 @@ class TestNamedAggregationSeries:
         tm.assert_frame_equal(result, expected)
 
     def test_series_named_agg_duplicates_no_raises(self):
+        # [FUNCTION DOC]
+        # Verifies (GH28426) the same function given under two names for a Series does
+        # not raise.
         # GH28426
         gr = Series([1, 2, 3]).groupby([0, 0, 1])
         grouped = gr.agg(a="sum", b="sum")
@@ -734,6 +906,9 @@ class TestNamedAggregationSeries:
         tm.assert_frame_equal(expected, grouped)
 
     def test_mangled(self):
+        # [FUNCTION DOC]
+        # Verifies named aggregation with lambdas on a Series: both are accepted and
+        # give distinct constant columns.
         gr = Series([1, 2, 3]).groupby([0, 0, 1])
         result = gr.agg(a=lambda x: 0, b=lambda x: 1)
         expected = DataFrame({"a": [0, 0], "b": [1, 1]}, index=np.array([0, 1]))
@@ -748,6 +923,10 @@ class TestNamedAggregationSeries:
         ],
     )
     def test_named_agg_nametuple(self, inp):
+        # [FUNCTION DOC]
+        # Verifies (GH34422) passing a named-aggregation tuple, tuple or list as a
+        # Series keyword value raises a type error saying a function is expected.
+        # Parametrized over the three input forms.
         # GH34422
         s = Series([1, 1, 2, 2, 3, 3, 4, 5])
         msg = f"func is expected but received {type(inp).__name__}"
@@ -756,7 +935,14 @@ class TestNamedAggregationSeries:
 
 
 class TestNamedAggregationDataFrame:
+    # [CLASS DOC]
+    # Groups tests of named aggregation for grouped DataFrames. Stateless apart from one
+    # helper method.
     def test_agg_relabel(self):
+        # [FUNCTION DOC]
+        # Verifies named aggregation with column and function pairs gives a frame with
+        # the requested column names and values, independent of the order of keywords,
+        # including a partial percentile function.
         df = DataFrame(
             {"group": ["a", "a", "b", "b"], "A": [0, 1, 2, 3], "B": [5, 6, 7, 8]}
         )
@@ -793,6 +979,9 @@ class TestNamedAggregationDataFrame:
         tm.assert_frame_equal(result, expected)
 
     def test_agg_relabel_non_identifier(self):
+        # [FUNCTION DOC]
+        # Verifies named aggregation with a result name that is not a valid identifier
+        # (passed via dictionary expansion).
         df = DataFrame(
             {"group": ["a", "a", "b", "b"], "A": [0, 1, 2, 3], "B": [5, 6, 7, 8]}
         )
@@ -802,6 +991,10 @@ class TestNamedAggregationDataFrame:
         tm.assert_frame_equal(result, expected)
 
     def test_duplicate_no_raises(self):
+        # [FUNCTION DOC]
+        # Verifies (GH 28426) the same function on the same column under two result
+        # names does not raise, including two partial percentile functions given
+        # distinct names.
         # GH 28426, if use same input function on same column,
         # no error should raise
         df = DataFrame({"A": [0, 0, 1, 1], "B": [1, 2, 3, 4]})
@@ -827,6 +1020,8 @@ class TestNamedAggregationDataFrame:
         tm.assert_frame_equal(grouped, expected)
 
     def test_agg_relabel_with_level(self):
+        # [FUNCTION DOC]
+        # Verifies named aggregation grouped by an index level of a multi-indexed frame.
         df = DataFrame(
             {"A": [0, 0, 1, 1], "B": [1, 2, 3, 4]},
             index=MultiIndex.from_product([["A", "B"], ["a", "b"]]),
@@ -840,6 +1035,9 @@ class TestNamedAggregationDataFrame:
         tm.assert_frame_equal(result, expected)
 
     def test_agg_relabel_other_raises(self):
+        # [FUNCTION DOC]
+        # Verifies bad named aggregation specifications raise a type error "Must
+        # provide": a non-tuple value, no arguments, and a three-element tuple.
         df = DataFrame({"A": [0, 0, 1], "B": [1, 2, 3]})
         grouped = df.groupby("A")
         match = "Must provide"
@@ -853,12 +1051,18 @@ class TestNamedAggregationDataFrame:
             grouped.agg(a=("B", "max"), b=(1, 2, 3))
 
     def test_missing_raises(self):
+        # [FUNCTION DOC]
+        # Verifies naming a missing column in a named aggregation raises a key error
+        # listing the missing label.
         df = DataFrame({"A": [0, 1], "B": [1, 2]})
         msg = r"Label\(s\) \['C'\] do not exist"
         with pytest.raises(KeyError, match=msg):
             df.groupby("A").agg(c=("C", "sum"))
 
     def test_agg_namedtuple(self):
+        # [FUNCTION DOC]
+        # Verifies the NamedAgg container (positional and keyword forms) gives the same
+        # result as a plain tuple.
         df = DataFrame({"A": [0, 1], "B": [1, 2]})
         result = df.groupby("A").agg(
             b=pd.NamedAgg("B", "sum"), c=pd.NamedAgg(column="B", aggfunc="count")
@@ -867,9 +1071,16 @@ class TestNamedAggregationDataFrame:
         tm.assert_frame_equal(result, expected)
 
     def n_between(self, ser, low, high, **kwargs):
+        # [FUNCTION DOC]
+        # HELPER: counts values of the series that lie between low and high (extra
+        # keywords go to the between check, such as inclusive); returns the integer
+        # count. Used as the function of named aggregations with extra arguments.
         return ser.between(low, high, **kwargs).sum()
 
     def test_namedagg_args(self):
+        # [FUNCTION DOC]
+        # Verifies (issue 58283) NamedAgg can carry extra positional arguments for the
+        # function: counting values between 0 and 1 per group.
         # https://github.com/pandas-dev/pandas/issues/58283
         df = DataFrame({"A": [0, 0, 1, 1], "B": [-1, 0, 1, 2]})
 
@@ -880,6 +1091,9 @@ class TestNamedAggregationDataFrame:
         tm.assert_frame_equal(result, expected)
 
     def test_namedagg_kwargs(self):
+        # [FUNCTION DOC]
+        # Verifies (issue 58283) NamedAgg can carry extra keyword arguments (inclusive
+        # both) for the function.
         # https://github.com/pandas-dev/pandas/issues/58283
         df = DataFrame({"A": [0, 0, 1, 1], "B": [-1, 0, 1, 2]})
 
@@ -892,6 +1106,9 @@ class TestNamedAggregationDataFrame:
         tm.assert_frame_equal(result, expected)
 
     def test_namedagg_args_and_kwargs(self):
+        # [FUNCTION DOC]
+        # Verifies (issue 58283) NamedAgg can carry both positional and keyword
+        # arguments (inclusive neither gives zero counts).
         # https://github.com/pandas-dev/pandas/issues/58283
         df = DataFrame({"A": [0, 0, 1, 1], "B": [-1, 0, 1, 2]})
 
@@ -906,6 +1123,9 @@ class TestNamedAggregationDataFrame:
         tm.assert_frame_equal(result, expected)
 
     def test_multiple_named_agg_with_args_and_kwargs(self):
+        # [FUNCTION DOC]
+        # Verifies (issue 58283) several NamedAgg entries each with its own positional
+        # arguments give the expected count columns.
         # https://github.com/pandas-dev/pandas/issues/58283
         df = DataFrame({"A": [0, 1, 2, 3], "B": [1, 2, 3, 4]})
 
@@ -925,6 +1145,9 @@ class TestNamedAggregationDataFrame:
         tm.assert_frame_equal(result, expected)
 
     def test_mangled(self):
+        # [FUNCTION DOC]
+        # Verifies named aggregation with lambdas on a frame gives distinct constant
+        # columns.
         df = DataFrame({"A": [0, 1], "B": [1, 2], "C": [3, 4]})
         result = df.groupby("A").agg(b=("B", lambda x: 0), c=("C", lambda x: 1))
         expected = DataFrame({"b": [0, 0], "c": [1, 1]}, index=Index([0, 1], name="A"))
@@ -963,6 +1186,11 @@ class TestNamedAggregationDataFrame:
 def test_agg_relabel_multiindex_column(
     agg_col1, agg_col2, agg_col3, agg_result1, agg_result2, agg_result3
 ):
+    # [FUNCTION DOC]
+    # Verifies (GH 29422) named aggregation on a frame with multi-index columns,
+    # selecting columns by tuple, with string, numpy and lambda functions and the
+    # NamedAgg container. Parametrized over three column and function specifications
+    # with their expected result values.
     # GH 29422, add tests for multiindex column cases
     df = DataFrame(
         {"group": ["a", "a", "b", "b"], "A": [0, 1, 2, 3], "B": [5, 6, 7, 8]}
@@ -984,6 +1212,9 @@ def test_agg_relabel_multiindex_column(
 
 
 def test_agg_relabel_multiindex_raises_not_exist():
+    # [FUNCTION DOC]
+    # Verifies (GH 29422) naming a tuple column that does not exist in a multi-index
+    # column frame raises a key error ("do not exist").
     # GH 29422, add test for raises scenario when aggregate column does not exist
     df = DataFrame(
         {"group": ["a", "a", "b", "b"], "A": [0, 1, 2, 3], "B": [5, 6, 7, 8]}
@@ -995,6 +1226,9 @@ def test_agg_relabel_multiindex_raises_not_exist():
 
 
 def test_agg_relabel_multiindex_duplicates():
+    # [FUNCTION DOC]
+    # Verifies (GH29422, GH28426) the same function on the same multi-index column under
+    # two names works.
     # GH29422, add test for raises scenario when getting duplicates
     # GH28426, after this change, duplicates should also work if the relabelling is
     # different
@@ -1013,6 +1247,10 @@ def test_agg_relabel_multiindex_duplicates():
 
 @pytest.mark.parametrize("kwargs", [{"c": ["min"]}, {"b": [], "c": ["min"]}])
 def test_groupby_aggregate_empty_key(kwargs):
+    # [FUNCTION DOC]
+    # Verifies (GH: 32580) aggregation with a dictionary containing an empty list for
+    # one column and a function list for another keeps only the column with functions,
+    # with a two-level column index. Parametrized over the dictionary.
     # GH: 32580
     df = DataFrame({"a": [1, 1, 2], "b": [1, 2, 3], "c": [1, 2, 4]})
     result = df.groupby("a").agg(kwargs)
@@ -1025,6 +1263,10 @@ def test_groupby_aggregate_empty_key(kwargs):
 
 
 def test_groupby_aggregate_empty_key_empty_return():
+    # [FUNCTION DOC]
+    # Verifies (GH: 32580) aggregation with a dictionary whose only entry is an empty
+    # list gives an empty frame with a column index of one level-zero label and empty
+    # second level.
     # GH: 32580 Check if everything works, when return is empty
     df = DataFrame({"a": [1, 1, 2], "b": [1, 2, 3], "c": [1, 2, 4]})
     result = df.groupby("a").agg({"b": []})
@@ -1033,6 +1275,10 @@ def test_groupby_aggregate_empty_key_empty_return():
 
 
 def test_groupby_aggregate_empty_with_multiindex_frame():
+    # [FUNCTION DOC]
+    # Verifies (GH 39178) named aggregation with the list constructor on an empty frame
+    # grouped by two keys gives an empty frame with a two-level empty index and the
+    # single result column.
     # GH 39178
     df = DataFrame(columns=["a", "b", "c"])
     result = df.groupby(["a", "b"], group_keys=False).agg(d=("c", list))
@@ -1043,6 +1289,9 @@ def test_groupby_aggregate_empty_with_multiindex_frame():
 
 
 def test_grouby_agg_loses_results_with_as_index_false_relabel():
+    # [FUNCTION DOC]
+    # Verifies (GH 32240) named aggregation with as_index false keeps the group key
+    # column and the relabelled result.
     # GH 32240: When the aggregate function relabels column names and
     # as_index=False is specified, the results are dropped.
 
@@ -1057,6 +1306,9 @@ def test_grouby_agg_loses_results_with_as_index_false_relabel():
 
 
 def test_grouby_agg_loses_results_with_as_index_false_relabel_multiindex():
+    # [FUNCTION DOC]
+    # Verifies (GH 32240) the same with two keys and as_index false: the multi-key
+    # columns are returned in the right order.
     # GH 32240: When the aggregate function relabels column names and
     # as_index=False is specified, the results are dropped. Check if
     # multiindex is returned in the right order
@@ -1078,6 +1330,15 @@ def test_grouby_agg_loses_results_with_as_index_false_relabel_multiindex():
 
 
 def test_groupby_as_index_agg(df):
+    # [FUNCTION DOC]
+    # Verifies aggregation with as_index false: mean of selected columns and a
+    # dictionary of mean and sum equal the corresponding method results (single key and
+    # two keys); nested renamers on a selected column raise the specification error; and
+    # (GH7115, GH8112, GH8582) for a random integer frame grouped by a series, selecting
+    # the first rows works and a set of methods (mean, max, count, idxmax, cumsum, all)
+    # with as_index false equals the as_index true result with its index reset.
+    # KNOWN ISSUE: an expected frame (renaming the sum column to Q) is built for the
+    # two-key case but never used or compared; only the error check follows.
     grouped = df.groupby("A", as_index=False)
 
     # single-key
@@ -1140,6 +1401,10 @@ def test_groupby_as_index_agg(df):
     "func", [lambda s: s.mean(), lambda s: np.mean(s), lambda s: np.nanmean(s)]
 )
 def test_multiindex_custom_func(func):
+    # [FUNCTION DOC]
+    # Verifies (GH 31777) custom functions (mean method, numpy mean, numpy nan-aware
+    # mean) aggregate a multi-index-column frame grouped by an array, keeping the column
+    # multi-index. Parametrized over the function.
     # GH 31777
     data = [[1, 4, 2], [5, 7, 1]]
     df = DataFrame(
@@ -1159,11 +1424,18 @@ def test_multiindex_custom_func(func):
 
 
 def myfunc(s):
+    # [FUNCTION DOC]
+    # HELPER: module-level function used by the lambda-named aggregation test; returns
+    # the numpy percentile of the input at q equal to 0.90.
     return np.percentile(s, q=0.90)
 
 
 @pytest.mark.parametrize("func", [lambda s: np.percentile(s, q=0.90), myfunc])
 def test_lambda_named_agg(func):
+    # [FUNCTION DOC]
+    # Verifies (gh-28467) named aggregation works with a lambda and with a named
+    # function for a percentile of a column, alongside a mean. Parametrized over the
+    # callable.
     # see gh-28467
     animals = DataFrame(
         {
@@ -1186,6 +1458,10 @@ def test_lambda_named_agg(func):
 
 
 def test_aggregate_mixed_types():
+    # [FUNCTION DOC]
+    # Verifies (GH 16916) aggregation with a list-converting function on a frame with
+    # mixed-type group keys gives list cells and an object-dtype index with the integer
+    # key first.
     # GH 16916
     df = DataFrame(
         data=np.array([0] * 9).reshape(3, 3), columns=list("XYZ"), index=list("abc")
@@ -1203,6 +1479,11 @@ def test_aggregate_mixed_types():
 
 @pytest.mark.xfail(reason="Not implemented;see GH 31256")
 def test_aggregate_udf_na_extension_type():
+    # [FUNCTION DOC]
+    # Verifies (pull request 31359, GH 31256) a user function that returns an integer or
+    # the missing marker over a nullable integer column should give a nullable integer
+    # result. Marked expected failure (not implemented): the missing marker forces
+    # object results that are not cast back.
     # https://github.com/pandas-dev/pandas/pull/31359
     # This is currently failing to cast back to Int64Dtype.
     # The presence of the NA causes two problems
@@ -1211,6 +1492,9 @@ def test_aggregate_udf_na_extension_type():
     #    a Python int rather than a NumPy int64. Python ints aren't
     #    instances of numpy.int64.
     def aggfunc(x):
+        # [FUNCTION DOC]
+        # HELPER: returns one if all values in the group exceed 2, otherwise the missing
+        # marker.
         if all(x > 2):
             return 1
         else:
@@ -1223,7 +1507,13 @@ def test_aggregate_udf_na_extension_type():
 
 
 class TestLambdaMangling:
+    # [CLASS DOC]
+    # Groups tests of automatic naming of multiple lambda functions in aggregation.
+    # Stateless.
     def test_basic(self):
+        # [FUNCTION DOC]
+        # Verifies two lambdas in a dictionary entry get the names lambda_0 and lambda_1
+        # as second-level columns.
         df = DataFrame({"A": [0, 0, 1, 1], "B": [1, 2, 3, 4]})
         result = df.groupby("A").agg({"B": [lambda x: 0, lambda x: 1]})
 
@@ -1234,6 +1524,9 @@ class TestLambdaMangling:
         tm.assert_frame_equal(result, expected)
 
     def test_mangle_series_groupby(self):
+        # [FUNCTION DOC]
+        # Verifies two lambdas in a list for a Series group get the names lambda_0 and
+        # lambda_1.
         gr = Series([1, 2, 3, 4]).groupby([0, 0, 1, 1])
         result = gr.agg([lambda x: 0, lambda x: 1])
         exp_data = {"<lambda_0>": [0, 0], "<lambda_1>": [1, 1]}
@@ -1242,6 +1535,10 @@ class TestLambdaMangling:
 
     @pytest.mark.xfail(reason="GH-26611. kwargs for multi-agg.")
     def test_with_kwargs(self):
+        # [FUNCTION DOC]
+        # Verifies (GH-26611) extra positional and keyword arguments passed to
+        # aggregation with a list of functions are forwarded to each function. Marked
+        # expected failure (keyword arguments for multi-aggregation are not supported).
         f1 = lambda x, y, b=1: x.sum() + y + b
         f2 = lambda x, y, b=2: x.sum() + y * b
         result = Series([1, 2]).groupby([0, 0]).agg([f1, f2], 0)
@@ -1253,6 +1550,10 @@ class TestLambdaMangling:
         tm.assert_frame_equal(result, expected)
 
     def test_agg_with_one_lambda(self):
+        # [FUNCTION DOC]
+        # Verifies (GH 25719) a frame aggregation with one lambda among named
+        # aggregations, using both the NamedAgg container and plain tuples, gives the
+        # expected columns.
         # GH 25719, write tests for DataFrameGroupby.agg with only one lambda
         df = DataFrame(
             {
@@ -1290,6 +1591,10 @@ class TestLambdaMangling:
         tm.assert_frame_equal(result2, expected)
 
     def test_agg_multiple_lambda(self):
+        # [FUNCTION DOC]
+        # Verifies (GH25719) several lambdas mixed with string functions in named
+        # aggregations give the expected five columns, with both plain tuples and
+        # NamedAgg.
         # GH25719, test for DataFrameGroupby.agg with multiple lambdas
         # with mixed aggfunc
         df = DataFrame(
@@ -1340,6 +1645,12 @@ class TestLambdaMangling:
 
 
 def test_pass_args_kwargs_duplicate_columns(tsframe, as_index):
+    # [FUNCTION DOC]
+    # Verifies aggregation passing a function with a positional argument and axis zero
+    # on a frame with duplicate column names, grouped by month with as_index true or
+    # false: result equals per-month quantiles, with the group labels as a column when
+    # as_index is false. Uses the tsframe and as_index fixtures; the frame columns are
+    # renamed in place.
     # go through _aggregate_frame with self.axis == 0 and duplicate columns
     tsframe.columns = ["A", "B", "A", "C"]
     gb = tsframe.groupby(lambda x: x.month, as_index=as_index)
@@ -1359,6 +1670,9 @@ def test_pass_args_kwargs_duplicate_columns(tsframe, as_index):
 
 
 def test_groupby_get_by_index():
+    # [FUNCTION DOC]
+    # Verifies (GH 33439) an aggregation lambda that looks up the value at the group's
+    # last index label works.
     # GH 33439
     df = DataFrame({"A": ["S", "W", "W"], "B": [1.0, 1.0, 2.0]})
     res = df.groupby("A").agg({"B": lambda x: x.get(x.index[-1])})
@@ -1375,6 +1689,10 @@ def test_groupby_get_by_index():
     ],
 )
 def test_groupby_single_agg_cat_cols(grp_col_dict, exp_data):
+    # [FUNCTION DOC]
+    # Verifies (GH27800) single aggregation (minimum) on numeric and ordered categorical
+    # columns grouped by an unordered categorical key keeps the ordered categorical
+    # dtype. Parametrized over the aggregation dictionary and expected data.
     # test single aggregations on ordered categorical cols GHGH27800
 
     # create the result dataframe
@@ -1414,6 +1732,11 @@ def test_groupby_single_agg_cat_cols(grp_col_dict, exp_data):
     ],
 )
 def test_groupby_combined_aggs_cat_cols(grp_col_dict, exp_data):
+    # [FUNCTION DOC]
+    # Verifies (GH27800) combined list aggregations (minimum and maximum) on numeric and
+    # ordered categorical columns give a multi-index column frame preserving the ordered
+    # categorical dtype. Parametrized over the aggregation dictionary and expected
+    # tuples.
     # test combined aggregations on ordered categorical cols GH27800
 
     # create the result dataframe
@@ -1454,6 +1777,10 @@ def test_groupby_combined_aggs_cat_cols(grp_col_dict, exp_data):
 
 
 def test_nonagg_agg():
+    # [FUNCTION DOC]
+    # Verifies (GH 35490) a one-element list containing a non-aggregating function
+    # (cumulative sum) gives the same values as the single-name form, after dropping the
+    # function-name column level.
     # GH 35490 - Single/Multiple agg of non-agg function give same results
     # TODO: agg should raise for functions that don't aggregate
     df = DataFrame({"a": [1, 1, 2, 2], "b": [1, 2, 2, 1]})
@@ -1467,6 +1794,9 @@ def test_nonagg_agg():
 
 
 def test_aggregate_datetime_objects():
+    # [FUNCTION DOC]
+    # Verifies (issue 36003) maximum of out-of-bounds datetime objects keeps object
+    # dtype and does not raise.
     # https://github.com/pandas-dev/pandas/issues/36003
     # ensure we don't raise an error but keep object dtype for out-of-bounds
     # datetimes
@@ -1485,6 +1815,9 @@ def test_aggregate_datetime_objects():
 
 
 def test_groupby_index_object_dtype():
+    # [FUNCTION DOC]
+    # Verifies (GH 40014) a user lambda over a series grouped by two keys with an
+    # object-typed index gives the right two-level index and boolean results.
     # GH 40014
     df = DataFrame({"c0": ["x", "x", "x"], "c1": ["x", "x", "y"], "p": [0, 1, 2]})
     df.index = df.index.astype("O")
@@ -1500,9 +1833,16 @@ def test_groupby_index_object_dtype():
 
 
 def test_timeseries_groupby_agg():
+    # [FUNCTION DOC]
+    # Verifies (GH#43290) a function returning none for all-missing groups and a numpy
+    # sum otherwise works on a frame with a tz-aware index grouped by a constant
+    # callable.
     # GH#43290
 
     def func(ser):
+        # [FUNCTION DOC]
+        # HELPER: returns none if every value of the series is missing, otherwise the
+        # numpy sum.
         if ser.isna().all():
             return None
         return np.sum(ser)
@@ -1515,6 +1855,11 @@ def test_timeseries_groupby_agg():
 
 
 def test_groupby_agg_precision(any_real_numeric_dtype):
+    # [FUNCTION DOC]
+    # Verifies aggregation by an identity lambda keeps the maximum value precisely (no
+    # precision loss) for each real numeric dtype, numpy or extension. Parametrized via
+    # any_real_numeric_dtype; the maximum is taken from the integer or float info of the
+    # dtype.
     if any_real_numeric_dtype in tm.ALL_INT_NUMPY_DTYPES:
         max_value = np.iinfo(any_real_numeric_dtype).max
     if any_real_numeric_dtype in tm.FLOAT_NUMPY_DTYPES:
@@ -1542,6 +1887,13 @@ def test_groupby_agg_precision(any_real_numeric_dtype):
 
 
 def test_groupby_aggregate_directory(reduction_func):
+    # [FUNCTION DOC]
+    # Verifies (GH#32793) that aggregating a frame with a missing value by each
+    # reduction name gives the same result whether the name is applied to the whole
+    # frame or through a dictionary for column 1: frames and column dtypes equal; for
+    # size and ngroup (which return series with different names) the series equals the
+    # column ignoring names. Parametrized over reduction_func; corrwith and nth return
+    # early (skipped).
     # GH#32793
     if reduction_func in ["corrwith", "nth"]:
         return None
@@ -1564,6 +1916,9 @@ def test_groupby_aggregate_directory(reduction_func):
 
 
 def test_group_mean_timedelta_nat():
+    # [FUNCTION DOC]
+    # Verifies (GH43132) mean of a timedelta series with NaT in a single group skips the
+    # missing value (two days).
     # GH43132
     data = Series(["1 day", "3 days", "NaT"], dtype="timedelta64[ns]")
     expected = Series(["2 days"], dtype="timedelta64[ns]", index=np.array([0]))
@@ -1587,6 +1942,9 @@ def test_group_mean_timedelta_nat():
     ],
 )
 def test_group_mean_datetime64_nat(input_data, expected_output):
+    # [FUNCTION DOC]
+    # Verifies (GH43132) mean of a datetime series (naive or tz-aware) with NaT in one
+    # group skips the missing value. Parametrized over input data and expected output.
     # GH43132
     data = to_datetime(Series(input_data))
     expected = to_datetime(Series(expected_output, index=np.array([0])))
@@ -1599,6 +1957,9 @@ def test_group_mean_datetime64_nat(input_data, expected_output):
     "func, output", [("mean", [8 + 18j, 10 + 22j]), ("sum", [40 + 90j, 50 + 110j])]
 )
 def test_groupby_complex(func, output):
+    # [FUNCTION DOC]
+    # Verifies (GH#43701) mean and sum on complex data grouped by index parity give the
+    # expected complex values. Parametrized over function and output.
     # GH#43701
     data = Series(np.arange(20).reshape(10, 2).dot([1, 2j]))
     result = data.groupby(data.index % 2).agg(func)
@@ -1608,6 +1969,9 @@ def test_groupby_complex(func, output):
 
 @pytest.mark.parametrize("func", ["min", "max", "var"])
 def test_groupby_complex_raises(func):
+    # [FUNCTION DOC]
+    # Verifies (GH#43701) min, max and var on complex data raise a type error "No
+    # matching signature found". Parametrized over function.
     # GH#43701
     data = Series(np.arange(20).reshape(10, 2).dot([1, 2j]))
     msg = "No matching signature found"
@@ -1629,6 +1993,11 @@ def test_groupby_complex_raises(func):
     ],
 )
 def test_agg_of_mode_list(test, constant):
+    # [FUNCTION DOC]
+    # Verifies (GH#25581) aggregating with the series mode function gives scalars for
+    # unique modes and lists for ties. Parametrized over the input rows and expected
+    # data; the last case (tie in the first group, single mode in the second) is an
+    # expected failure.
     # GH#25581
     df1 = DataFrame(test)
     result = df1.groupby(0).agg(Series.mode)
@@ -1641,14 +2010,25 @@ def test_agg_of_mode_list(test, constant):
 
 
 def test_dataframe_groupy_agg_list_like_func_with_args():
+    # [FUNCTION DOC]
+    # Verifies (GH#50624) a list of functions with extra positional and keyword
+    # arguments on a frame: an argument not accepted by the first function raises a type
+    # error ("unexpected keyword argument"), while compatible arguments are forwarded
+    # and each function gets its own result column.
     # GH#50624
     df = DataFrame({"x": [1, 2, 3], "y": ["a", "b", "c"]})
     gb = df.groupby("y")
 
     def foo1(x, a=1, c=0):
+        # [FUNCTION DOC]
+        # HELPER: returns the sum plus two optional addends a (default one) and c
+        # (default zero).
         return x.sum() + a + c
 
     def foo2(x, b=2, c=0):
+        # [FUNCTION DOC]
+        # HELPER: returns the sum plus two optional addends b (default two) and c
+        # (default zero).
         return x.sum() + b + c
 
     msg = r"foo1\(\) got an unexpected keyword argument 'b'"
@@ -1665,14 +2045,23 @@ def test_dataframe_groupy_agg_list_like_func_with_args():
 
 
 def test_series_groupy_agg_list_like_func_with_args():
+    # [FUNCTION DOC]
+    # Verifies (GH#50624) the same argument forwarding for a list of functions on a
+    # grouped Series.
     # GH#50624
     s = Series([1, 2, 3])
     sgb = s.groupby(s)
 
     def foo1(x, a=1, c=0):
+        # [FUNCTION DOC]
+        # HELPER: returns the sum plus two optional addends a (default one) and c
+        # (default zero).
         return x.sum() + a + c
 
     def foo2(x, b=2, c=0):
+        # [FUNCTION DOC]
+        # HELPER: returns the sum plus two optional addends b (default two) and c
+        # (default zero).
         return x.sum() + b + c
 
     msg = r"foo1\(\) got an unexpected keyword argument 'b'"
@@ -1687,6 +2076,10 @@ def test_series_groupy_agg_list_like_func_with_args():
 
 
 def test_agg_groupings_selection():
+    # [FUNCTION DOC]
+    # Verifies (GH#51186) aggregating a column selection that includes a grouping column
+    # keeps the grouping column (here b) in the output with both key levels in the
+    # index.
     # GH#51186 - a selected grouping should be in the output of agg
     df = DataFrame({"a": [1, 1, 2], "b": [3, 3, 4], "c": [5, 6, 7]})
     gb = df.groupby(["a", "b"])
@@ -1700,6 +2093,9 @@ def test_agg_groupings_selection():
 
 
 def test_agg_multiple_with_as_index_false_subset_to_a_single_column():
+    # [FUNCTION DOC]
+    # Verifies (GH#50724) with as_index false and selecting a single column, aggregating
+    # with sum and mean returns the key column plus the two statistics.
     # GH#50724
     df = DataFrame({"a": [1, 1, 2], "b": [3, 4, 5]})
     gb = df.groupby("a", as_index=False)["b"]
@@ -1709,6 +2105,10 @@ def test_agg_multiple_with_as_index_false_subset_to_a_single_column():
 
 
 def test_agg_with_as_index_false_with_list():
+    # [FUNCTION DOC]
+    # Verifies (GH#52849) aggregating with a one-element list under as_index false gives
+    # key columns with empty second-level labels and the statistic under the value
+    # column.
     # GH#52849
     df = DataFrame({"a1": [0, 0, 1], "a2": [2, 3, 3], "b": [4, 5, 6]})
     gb = df.groupby(by=["a1", "a2"], as_index=False)
@@ -1722,6 +2122,9 @@ def test_agg_with_as_index_false_with_list():
 
 
 def test_groupby_agg_extension_timedelta_cumsum_with_named_aggregation():
+    # [FUNCTION DOC]
+    # Verifies (GH#41720) cumulative sum of a timedelta extension column via named
+    # aggregation gives the cumulated timedeltas per row.
     # GH#41720
     expected = DataFrame(
         {
@@ -1747,8 +2150,15 @@ def test_groupby_agg_extension_timedelta_cumsum_with_named_aggregation():
 
 
 def test_groupby_aggregation_empty_group():
+    # [FUNCTION DOC]
+    # Verifies (issue 18869) a function that raises a value error for empty groups is
+    # called for an unobserved categorical group when observed is false, so the error
+    # propagates.
     # https://github.com/pandas-dev/pandas/issues/18869
     def func(x):
+        # [FUNCTION DOC]
+        # HELPER: raises a value error for an empty group; otherwise returns the group
+        # length.
         if len(x) == 0:
             raise ValueError("length must not be 0")
         return len(x)
@@ -1762,6 +2172,9 @@ def test_groupby_aggregation_empty_group():
 
 
 def test_groupby_aggregation_duplicate_columns_single_dict_value():
+    # [FUNCTION DOC]
+    # Verifies (GH#55041) dictionary aggregation naming a duplicated column sums both
+    # duplicates, returning two columns with that name.
     # GH#55041
     df = DataFrame(
         [[1, 2, 3, 4], [1, 3, 4, 5], [2, 4, 5, 6]],
@@ -1777,6 +2190,9 @@ def test_groupby_aggregation_duplicate_columns_single_dict_value():
 
 
 def test_groupby_aggregation_duplicate_columns_multiple_dict_values():
+    # [FUNCTION DOC]
+    # Verifies (GH#55041) aggregation with a list of functions including a repeated one
+    # on a duplicated column returns all eight output columns in order.
     # GH#55041
     df = DataFrame(
         [[1, 2, 3, 4], [1, 3, 4, 5], [2, 4, 5, 6]],
@@ -1797,6 +2213,10 @@ def test_groupby_aggregation_duplicate_columns_multiple_dict_values():
 
 
 def test_groupby_aggregation_duplicate_columns_some_empty_result():
+    # [FUNCTION DOC]
+    # Verifies (GH#55041) a dictionary with an empty function list for a duplicated
+    # column and a variance for another duplicated column returns only the variance
+    # columns.
     # GH#55041
     df = DataFrame(
         [
@@ -1819,6 +2239,10 @@ def test_groupby_aggregation_duplicate_columns_some_empty_result():
 
 
 def test_groupby_aggregation_multi_index_duplicate_columns():
+    # [FUNCTION DOC]
+    # Verifies (GH#55041) dictionary aggregation naming a column by tuple in a frame
+    # with multi-index columns containing duplicates and a multi-index row index returns
+    # all matching duplicate columns, grouped by level zero.
     # GH#55041
     df = DataFrame(
         [
@@ -1848,6 +2272,9 @@ def test_groupby_aggregation_multi_index_duplicate_columns():
 
 
 def test_groupby_aggregation_func_list_multi_index_duplicate_columns():
+    # [FUNCTION DOC]
+    # Verifies (GH#55041) the same with a list of functions (min and max), giving a
+    # three-level column index.
     # GH#55041
     df = DataFrame(
         [
@@ -1885,6 +2312,10 @@ def test_groupby_aggregation_func_list_multi_index_duplicate_columns():
     ["float[pyarrow]", "int64[pyarrow]", "uint64[pyarrow]", "bool[pyarrow]"],
 )
 def test_agg_lambda_pyarrow_dtype_conversion(dtype):
+    # [FUNCTION DOC]
+    # Verifies (GH#59601) aggregation by a lambda computing the minimum over
+    # pyarrow-backed float, integer, unsigned and boolean columns converts the result
+    # back to the same pyarrow dtype. Parametrized over dtype; requires pyarrow.
     # GH#59601
     # Test PyArrow dtype conversion back to PyArrow dtype
     df = DataFrame(
@@ -1905,6 +2336,9 @@ def test_agg_lambda_pyarrow_dtype_conversion(dtype):
 
 @td.skip_if_no("pyarrow")
 def test_agg_lambda_complex128_dtype_conversion():
+    # [FUNCTION DOC]
+    # Verifies (GH#59601) a lambda returning complex numbers from pyarrow integer data
+    # gives a complex128 column. Requires pyarrow.
     # GH#59601
     df = DataFrame(
         {"A": ["c1", "c2", "c3"], "B": pd.array([100, 200, 255], "int64[pyarrow]")}
@@ -1925,6 +2359,9 @@ def test_agg_lambda_complex128_dtype_conversion():
 
 @td.skip_if_no("pyarrow")
 def test_agg_lambda_numpy_uint64_to_pyarrow_dtype_conversion():
+    # [FUNCTION DOC]
+    # Verifies (GH#59601) a lambda returning numpy unsigned values from pyarrow unsigned
+    # data converts back to the pyarrow unsigned dtype. Requires pyarrow.
     # GH#59601
     df = DataFrame(
         {
@@ -1946,6 +2383,9 @@ def test_agg_lambda_numpy_uint64_to_pyarrow_dtype_conversion():
 
 @td.skip_if_no("pyarrow")
 def test_agg_lambda_pyarrow_struct_to_object_dtype_conversion():
+    # [FUNCTION DOC]
+    # Verifies (GH#59601) a lambda returning dictionaries from pyarrow integer data
+    # gives a column backed by an arrow struct array. Requires pyarrow.
     # GH#59601
     import pyarrow as pa
 
@@ -1968,6 +2408,9 @@ def test_agg_lambda_pyarrow_struct_to_object_dtype_conversion():
 
 
 def test_groupby_aggregate_empty_builtin_sum():
+    # [FUNCTION DOC]
+    # Verifies the sum of an empty column grouped by an empty key column with as_index
+    # false gives an empty frame with the key and data columns.
     df = DataFrame(columns=["Group", "Data"])
     result = df.groupby(["Group"], as_index=False)["Data"].agg("sum")
     expected = DataFrame(columns=["Group", "Data"])
@@ -1975,7 +2418,12 @@ def test_groupby_aggregate_empty_builtin_sum():
 
 
 def test_groupby_aggregate_empty_udf():
+    # [FUNCTION DOC]
+    # Verifies the same empty aggregation with a user function (builtin sum) instead of
+    # the string name.
     def func(x):
+        # [FUNCTION DOC]
+        # HELPER: returns the builtin sum of the group.
         return sum(x)
 
     df = DataFrame(columns=["Group", "Data"])

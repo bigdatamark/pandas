@@ -1,3 +1,10 @@
+# [MODULE DOC]
+# Tests for DataFrame and Series stack and unstack (and related reshaping such as stack
+# with levels, fill values, dtype preservation, sorting, categorical and extension
+# dtypes, multi-level columns, and missing-value handling).
+# Defines the future_stack fixture and a single large test class. Uses the float_frame,
+# using_infer_string and other shared fixtures; imports the reshape helper module for
+# internal checks.
 from datetime import datetime
 import itertools
 import re
@@ -24,14 +31,25 @@ from pandas.core.reshape import reshape as reshape_lib
 
 @pytest.fixture(params=[True, False])
 def future_stack(request):
+    # [FUNCTION DOC]
+    # Fixture parametrized over true and false; selects the new (future) or the previous
+    # implementation of stack in the tests that use it. Returns the parameter.
     return request.param
 
 
 class TestDataFrameReshape:
+    # [CLASS DOC]
+    # Groups the stack, unstack and related reshape tests for DataFrame. Stateless.
     @pytest.mark.filterwarnings(
         "ignore:The previous implementation of stack is deprecated"
     )
     def test_stack_unstack(self, float_frame, future_stack):
+        # [FUNCTION DOC]
+        # Verifies stack followed by unstack round-trips: a numeric frame filled with
+        # consecutive integers is stacked, then unstacked (series and
+        # frame-of-two-columns versions), and unstacked at level zero then transposed,
+        # each equal to the original. Parametrized by future_stack; the
+        # previous-implementation deprecation warning is ignored.
         df = float_frame.copy()
         df[:] = np.arange(np.prod(df.shape)).reshape(df.shape)
 
@@ -53,6 +71,11 @@ class TestDataFrameReshape:
         "ignore:The previous implementation of stack is deprecated"
     )
     def test_stack_mixed_level(self, future_stack):
+        # [FUNCTION DOC]
+        # Verifies (GH 18310) stacking when level labels have mixed types (integers and
+        # strings): flat columns give a series with product index; multi-index columns
+        # stacked on level one give the expected frame, and selecting only the string
+        # labels works too. Parametrized by future_stack.
         # GH 18310
         levels = [range(3), [3, "a", "b"], [1, 2]]
 
@@ -76,6 +99,9 @@ class TestDataFrameReshape:
         tm.assert_frame_equal(result, expected)
 
     def test_unstack_not_consolidated(self):
+        # [FUNCTION DOC]
+        # Verifies (Gh#34708) unstacking a frame whose internal storage is not
+        # consolidated (two blocks) equals unstacking the consolidated frame.
         # Gh#34708
         df = DataFrame({"x": [1, 2, np.nan], "y": [3.0, 4, np.nan]})
         df2 = df[["x"]]
@@ -90,6 +116,13 @@ class TestDataFrameReshape:
         "ignore:The previous implementation of stack is deprecated"
     )
     def test_unstack_fill(self, future_stack):
+        # [FUNCTION DOC]
+        # Verifies (GH #9746, GH #13971) the fill value keyword when unstacking: a
+        # series with a fill gives filled frame of the same dtype; a fill value that
+        # cannot be held in the dtype gives a deprecation warning and a float result;
+        # unstacking several levels with fill works and round-trips through stack; a
+        # series column selection with several levels equals the frame slice.
+        # Parametrized by future_stack.
         # GH #9746: fill_value keyword argument for Series
         # and DataFrame unstack
 
@@ -140,6 +173,11 @@ class TestDataFrameReshape:
         tm.assert_frame_equal(result, expected)
 
     def test_unstack_fill_frame(self):
+        # [FUNCTION DOC]
+        # Verifies fill value when unstacking a frame: integer data with fill minus one
+        # keeps 32-bit integers; mixed 16-bit integer and float columns keep their
+        # dtypes; a float fill on integer data warns (deprecation) and gives float
+        # results.
         # From a dataframe
         rows = [[1, 2], [3, 4], [5, 6], [7, 8]]
         df = DataFrame(rows, columns=list("AB"), dtype=np.int32)
@@ -180,6 +218,9 @@ class TestDataFrameReshape:
         tm.assert_frame_equal(result, expected)
 
     def test_unstack_fill_frame_datetime(self):
+        # [FUNCTION DOC]
+        # Verifies unstacking a datetime series: missing entries become NaT by default
+        # and are replaced by the fill value when given.
         # Test unstacking with date times
         dv = date_range("2012-01-01", periods=4).values
         data = Series(dv)
@@ -202,6 +243,9 @@ class TestDataFrameReshape:
         tm.assert_frame_equal(result, expected)
 
     def test_unstack_fill_frame_timedelta(self):
+        # [FUNCTION DOC]
+        # Verifies unstacking a timedelta series: missing entries become NaT, or the
+        # fill value when given.
         # Test unstacking with time deltas
         td = [Timedelta(days=i) for i in range(4)]
         data = Series(td)
@@ -224,6 +268,9 @@ class TestDataFrameReshape:
         tm.assert_frame_equal(result, expected)
 
     def test_unstack_fill_frame_period(self):
+        # [FUNCTION DOC]
+        # Verifies unstacking a period series: missing entries become none, or the fill
+        # value when given.
         # Test unstacking with period
         periods = [
             Period("2012-01"),
@@ -254,6 +301,13 @@ class TestDataFrameReshape:
         tm.assert_frame_equal(result, expected)
 
     def test_unstack_fill_frame_categorical(self):
+        # [FUNCTION DOC]
+        # Verifies unstacking a categorical series: missing entries become missing by
+        # default and keep the categories; a fill value that is not a category raises a
+        # type error mentioning the new category; a fill value that is a category fills
+        # the gaps.
+        # KNOWN ISSUE: the comment says the non-category fill results in a value error,
+        # but the test expects a type error.
         # Test unstacking with categorical
         data = Series(["a", "b", "c", "a"], dtype="category")
         data.index = MultiIndex.from_tuples(
@@ -288,6 +342,9 @@ class TestDataFrameReshape:
         tm.assert_frame_equal(result, expected)
 
     def test_unstack_tuplename_in_multiindex(self):
+        # [FUNCTION DOC]
+        # Verifies (GH 19966) unstacking by a level whose name is a tuple in a
+        # multi-index gives a column index with that name preserved as a tuple.
         # GH 19966
         idx = MultiIndex.from_product(
             [["a", "b", "c"], [1, 2, 3]], names=[("A", "a"), ("B", "b")]
@@ -349,6 +406,11 @@ class TestDataFrameReshape:
     def test_unstack_mixed_type_name_in_multiindex(
         self, unstack_idx, expected_values, expected_index, expected_columns
     ):
+        # [FUNCTION DOC]
+        # Verifies (GH 19966) unstacking levels given by tuple-valued name (alone, or
+        # together with another level name) in a three-level index, giving the expected
+        # values, index and column names. Parametrized over the unstack level
+        # specification and expected values, index and columns.
         # GH 19966
         idx = MultiIndex.from_product(
             [["a", "b"], [1, 2], [3, 4]], names=[("A", "a"), "B", "C"]
@@ -362,6 +424,10 @@ class TestDataFrameReshape:
         tm.assert_frame_equal(result, expected)
 
     def test_unstack_preserve_dtypes(self):
+        # [FUNCTION DOC]
+        # Verifies (#11847) unstacking with a single level name and with a one-element
+        # list of it give equal results, for various index constructions mixing strings,
+        # categoricals, floats, booleans, integers and timestamps, and for a series.
         # Checks fix for #11847
         df = DataFrame(
             {
@@ -380,6 +446,9 @@ class TestDataFrameReshape:
         )
 
         def unstack_and_compare(df, column_name):
+            # [FUNCTION DOC]
+            # HELPER: unstacks the object by the given column name both as a list and as
+            # a bare name and asserts the two results are equal.
             unstacked1 = df.unstack([column_name])
             unstacked2 = df.unstack(column_name)
             tm.assert_frame_equal(unstacked1, unstacked2)
@@ -407,6 +476,10 @@ class TestDataFrameReshape:
         "ignore:The previous implementation of stack is deprecated"
     )
     def test_stack_ints(self, future_stack):
+        # [FUNCTION DOC]
+        # Verifies stacking several levels of integer-labelled column levels at once
+        # (positive and negative positions) equals stacking one level twice, including
+        # with named levels. Parametrized by future_stack.
         columns = MultiIndex.from_tuples(list(itertools.product(range(3), repeat=3)))
         df = DataFrame(
             np.random.default_rng(2).standard_normal((30, 27)), columns=columns
@@ -440,6 +513,12 @@ class TestDataFrameReshape:
         "ignore:The previous implementation of stack is deprecated"
     )
     def test_stack_mixed_levels(self, future_stack):
+        # [FUNCTION DOC]
+        # Verifies stack with level names and positions when level names are mixed or
+        # integers (GH #8584): integer names that are also valid positions are treated
+        # as names; mixing names and numbers that are not names raises a value error
+        # ("level should contain all level names or all level numbers..."); zero as a
+        # level name works. Parametrized by future_stack.
         columns = MultiIndex.from_tuples(
             [
                 ("A", "cat", "long"),
@@ -499,6 +578,10 @@ class TestDataFrameReshape:
         "ignore:The previous implementation of stack is deprecated"
     )
     def test_stack_int_level_names(self, future_stack):
+        # [FUNCTION DOC]
+        # Verifies stack with integer-named column levels, including out-of-order names,
+        # equals stacking by the corresponding string names (names not checked).
+        # Parametrized by future_stack.
         columns = MultiIndex.from_tuples(
             [
                 ("A", "cat", "long"),
@@ -560,6 +643,9 @@ class TestDataFrameReshape:
         )
 
     def test_unstack_bool(self):
+        # [FUNCTION DOC]
+        # Verifies unstacking a boolean column with missing combinations produces object
+        # columns holding booleans and missing values.
         df = DataFrame(
             [False, False],
             index=MultiIndex.from_arrays([["a", "b"], ["c", "l"]]),
@@ -577,6 +663,10 @@ class TestDataFrameReshape:
         "ignore:The previous implementation of stack is deprecated"
     )
     def test_unstack_level_binding(self, future_stack):
+        # [FUNCTION DOC]
+        # Verifies (GH9856) that unstacking levels by position and then stacking level
+        # zero binds levels correctly and gives the expected float frame with missing
+        # entries. Parametrized by future_stack.
         # GH9856
         mi = MultiIndex(
             levels=[["foo", "bar"], ["one", "two"], ["a", "b"]],
@@ -603,6 +693,10 @@ class TestDataFrameReshape:
         tm.assert_frame_equal(result, expected)
 
     def test_unstack_to_series(self, float_frame):
+        # [FUNCTION DOC]
+        # Verifies unstack of a frame to a series: round trip with transpose, missing
+        # values handling, and repeated unstacking four times returns the original
+        # frame.
         # check reversibility
         data = float_frame.unstack()
 
@@ -630,6 +724,11 @@ class TestDataFrameReshape:
         tm.assert_frame_equal(old_data, data)
 
     def test_unstack_dtypes(self, using_infer_string):
+        # [FUNCTION DOC]
+        # Verifies (GH 2929) dtypes after unstack: integer data stays integer; mixed
+        # float column and integer columns keep float64 and int64; adding a string
+        # column gives the string or object dtype (depending on using_infer_string) for
+        # that column.
         # GH 2929
         rows = [[1, 1, 3, 4], [1, 2, 3, 4], [2, 1, 3, 4], [2, 2, 3, 4]]
 
@@ -686,6 +785,11 @@ class TestDataFrameReshape:
         ),
     )
     def test_unstack_dtypes_mixed_date(self, c, d):
+        # [FUNCTION DOC]
+        # Verifies (GH7405) unstacking a frame with a datetime index level and float and
+        # int columns keeps the integer dtype of the column cast to int64 and produces a
+        # 3 by 2 result equal to the reshaped right-hand frame. Parametrized over two
+        # float data pairs (zeros; ranges).
         # GH7405
         df = DataFrame(
             {
@@ -712,6 +816,11 @@ class TestDataFrameReshape:
         "ignore:The previous implementation of stack is deprecated"
     )
     def test_unstack_non_unique_index_names(self, future_stack):
+        # [FUNCTION DOC]
+        # Verifies unstacking or stacking by a level name that occurs more than once
+        # raises a value error ("The name c1 occurs multiple times, use a level
+        # number"), for unstack on the frame and stack on its transpose. Parametrized by
+        # future_stack.
         idx = MultiIndex.from_tuples([("a", "b"), ("c", "d")], names=["c1", "c1"])
         df = DataFrame([1, 2], index=idx)
         msg = "The name c1 occurs multiple times, use a level number"
@@ -722,6 +831,9 @@ class TestDataFrameReshape:
             df.T.stack("c1", future_stack=future_stack)
 
     def test_unstack_unused_levels(self):
+        # [FUNCTION DOC]
+        # Verifies (GH 17845) unstacking an index with unused codes keeps integer dtype
+        # and the original level values, including unused items on both levels.
         # GH 17845: unused codes in index make unstack() cast int to float
         idx = MultiIndex.from_product([["a"], ["A", "B", "C", "D"]])[:-1]
         df = DataFrame([[1, 0]] * 3, index=idx)
@@ -755,6 +867,10 @@ class TestDataFrameReshape:
     def test_unstack_unused_levels_mixed_with_nan(
         self, level, idces, col_level, idx_level
     ):
+        # [FUNCTION DOC]
+        # Verifies unstacking an index with mixed-type levels and missing codes places
+        # the data at the expected positions with missing values elsewhere. Parametrized
+        # over the unstack level, destination positions and expected labels.
         # With mixed dtype and NaN
         levels = [["a", 2, "c"], [1, 3, 5, 7]]
         codes = [[0, -1, 1, 1], [0, 2, -1, 2]]
@@ -771,6 +887,10 @@ class TestDataFrameReshape:
 
     @pytest.mark.parametrize("cols", [["A", "C"], slice(None)])
     def test_unstack_unused_level(self, cols):
+        # [FUNCTION DOC]
+        # Verifies (GH 18562) unstacking a selection whose unstacked level has unused
+        # codes gives the expected single-row frame. Parametrized over the selected
+        # columns (two columns, or all).
         # GH 18562 : unused codes on the unstacked level
         df = DataFrame([[2010, "a", "I"], [2011, "b", "II"]], columns=["A", "B", "C"])
 
@@ -786,6 +906,9 @@ class TestDataFrameReshape:
         tm.assert_frame_equal(result, expected)
 
     def test_unstack_long_index(self):
+        # [FUNCTION DOC]
+        # Verifies (PH 32624) unstacking six levels of a seven-level index works (a
+        # regression that only occurred with many levels).
         # PH 32624: Error when using a lot of indices to unstack.
         # The error occurred only, if a lot of indices are used.
         df = DataFrame(
@@ -808,6 +931,9 @@ class TestDataFrameReshape:
         tm.assert_frame_equal(result, expected)
 
     def test_unstack_multi_level_cols(self):
+        # [FUNCTION DOC]
+        # Verifies (PH 24729) unstacking two index levels of a frame with multi-level
+        # columns appends those names to the end of the column level names.
         # PH 24729: Unstack a df with multi level columns
         df = DataFrame(
             [[0.0, 0.0], [0.0, 0.0]],
@@ -821,6 +947,9 @@ class TestDataFrameReshape:
         assert df.unstack(["i2", "i1"]).columns.names[-2:] == ["i2", "i1"]
 
     def test_unstack_multi_level_rows_and_cols(self):
+        # [FUNCTION DOC]
+        # Verifies (PH 28306) unstacking two levels at once in a frame with multi-level
+        # rows and columns equals unstacking them one at a time.
         # PH 28306: Unstack df with multi level cols and rows
         df = DataFrame(
             [[1, 2], [3, 4], [-1, -2], [-3, -4]],
@@ -842,8 +971,16 @@ class TestDataFrameReshape:
     @pytest.mark.parametrize("idx", [("jim", "joe"), ("joe", "jim")])
     @pytest.mark.parametrize("lev", list(range(2)))
     def test_unstack_nan_index1(self, idx, lev):
+        # [FUNCTION DOC]
+        # Verifies (GH7466) unstacking with missing values in the index: the result
+        # values match the labels built from the row and column coordinates, for both
+        # index orders and both unstack levels. Parametrized over the index column order
+        # and the level.
         # GH7466
         def cast(val):
+            # [FUNCTION DOC]
+            # HELPER: converts a label to a string, treating missing values as an empty
+            # string, formatted to width one.
             val_str = "" if val != val else val
             return f"{val_str:1}"
 
@@ -874,7 +1011,16 @@ class TestDataFrameReshape:
     @pytest.mark.parametrize("lev", list(range(3)))
     @pytest.mark.parametrize("col", ["4th", "5th"])
     def test_unstack_nan_index_repeats(self, idx, lev, col):
+        # [FUNCTION DOC]
+        # Verifies unstacking an index with missing values and repeated labels: for
+        # every permutation of three index columns, each unstack level, and two derived
+        # string columns, the count of non-missing results is twice the row count and
+        # each cell content matches its coordinates. Parametrized over the permutation,
+        # level and column.
         def cast(val):
+            # [FUNCTION DOC]
+            # HELPER: converts a label to a string, treating missing values as an empty
+            # string, formatted to width one.
             val_str = "" if val != val else val
             return f"{val_str:1}"
 
@@ -935,6 +1081,11 @@ class TestDataFrameReshape:
             assert left == right
 
     def test_unstack_nan_index2(self):
+        # [FUNCTION DOC]
+        # Verifies (GH7403) unstacking by level zero when the float index level contains
+        # a missing value gives the expected frame with the missing value as a first
+        # index entry; checked for three variations of the position of the missing
+        # value.
         # GH7403
         df = DataFrame({"A": list("aaaabbbb"), "B": range(8), "C": range(8)})
         # Explicit cast to avoid implicit cast when setting to np.nan
@@ -984,6 +1135,9 @@ class TestDataFrameReshape:
         tm.assert_frame_equal(left, right)
 
     def test_unstack_nan_index3(self):
+        # [FUNCTION DOC]
+        # Verifies (GH7401) unstacking with a datetime index level containing a missing
+        # value puts the missing group first with a code of minus one in the columns.
         # GH7401
         df = DataFrame(
             {
@@ -1008,6 +1162,10 @@ class TestDataFrameReshape:
         tm.assert_frame_equal(left, right)
 
     def test_unstack_nan_index4(self):
+        # [FUNCTION DOC]
+        # Verifies (GH4862) unstacking three index levels including missing values gives
+        # the expected multi-index frame with missing codes, also after slicing off the
+        # first rows.
         # GH4862
         vals = [
             ["Hg", np.nan, np.nan, 680585148],
@@ -1049,6 +1207,10 @@ class TestDataFrameReshape:
         tm.assert_frame_equal(left.unstack(), right)
 
     def test_unstack_nan_index5(self):
+        # [FUNCTION DOC]
+        # Verifies (GH9497) multiple unstack of two levels (datetime and timedelta with
+        # missing values) keeps all values: non-missing count is twice the row count and
+        # each cell can be looked up by key.
         # GH9497 - multiple unstack with nulls
         df = DataFrame(
             {
@@ -1072,6 +1234,10 @@ class TestDataFrameReshape:
                 assert r[col] == left.loc[key]
 
     def test_stack_datetime_column_multiIndex(self, future_stack):
+        # [FUNCTION DOC]
+        # Verifies (GH 8039) stacking a frame whose columns are a multi-index with a
+        # datetime first level; the previous implementation issues a deprecation
+        # warning, the new one does not. Parametrized by future_stack.
         # GH 8039
         t = datetime(2014, 1, 1)
         df = DataFrame([1, 2, 3, 4], columns=MultiIndex.from_tuples([(t, "A", "B")]))
@@ -1116,6 +1282,13 @@ class TestDataFrameReshape:
     )
     @pytest.mark.parametrize("level", (-1, 0, 1, [0, 1], [1, 0]))
     def test_stack_partial_multiIndex(self, multiindex_columns, level, future_stack):
+        # [FUNCTION DOC]
+        # Verifies (GH 8844) stacking partial multi-index column selections (21 column
+        # subsets in different orders) at various levels (negative, zero, one, lists)
+        # gives the same result as rebuilding the column index from tuples; for a single
+        # integer level with the old implementation dropping missing rows or not gives
+        # the same result. Parametrized over the column selection, level and
+        # future_stack.
         # GH 8844
         dropna = False if not future_stack else lib.no_default
         full_multiindex = MultiIndex.from_tuples(
@@ -1152,6 +1325,10 @@ class TestDataFrameReshape:
         "ignore:The previous implementation of stack is deprecated"
     )
     def test_stack_full_multiIndex(self, future_stack):
+        # [FUNCTION DOC]
+        # Verifies (GH 8844) stacking a frame whose columns form a partial multi-index
+        # gives missing values for absent combinations, with the original dtype of the
+        # first column.
         # GH 8844
         full_multiindex = MultiIndex.from_tuples(
             [("B", "x"), ("B", "z"), ("A", "y"), ("C", "x"), ("C", "u")],
@@ -1177,6 +1354,10 @@ class TestDataFrameReshape:
     )
     @pytest.mark.parametrize("ordered", [False, True])
     def test_stack_preserve_categorical_dtype(self, ordered, future_stack):
+        # [FUNCTION DOC]
+        # Verifies (GH13854) stacking a frame with categorical column labels keeps the
+        # categorical dtype in the resulting index. Parametrized over ordered or not and
+        # future_stack.
         # GH13854
         cidx = pd.CategoricalIndex(list("yxz"), categories=list("xyz"), ordered=ordered)
         df = DataFrame([[10, 11, 12]], columns=cidx)
@@ -1203,6 +1384,11 @@ class TestDataFrameReshape:
     def test_stack_multi_preserve_categorical_dtype(
         self, ordered, labels, data, future_stack
     ):
+        # [FUNCTION DOC]
+        # Verifies (GH-36991) stacking two levels of categorical column labels preserves
+        # the categorical dtype of each level; label order in the result depends on the
+        # implementation (sorted by categories for the old one, original order for the
+        # new). Parametrized over ordered, label order, expected data and future_stack.
         # GH-36991
         cidx = pd.CategoricalIndex(labels, categories=sorted(labels), ordered=ordered)
         cidx2 = pd.CategoricalIndex(["u", "v"], ordered=ordered)
@@ -1223,6 +1409,9 @@ class TestDataFrameReshape:
         "ignore:The previous implementation of stack is deprecated"
     )
     def test_stack_preserve_categorical_dtype_values(self, future_stack):
+        # [FUNCTION DOC]
+        # Verifies (GH-23077) stacking categorical columns keeps categorical dtype of
+        # the values. Parametrized by future_stack.
         # GH-23077
         cat = pd.Categorical(["a", "a", "b", "c"])
         df = DataFrame({"A": cat, "B": cat})
@@ -1245,6 +1434,10 @@ class TestDataFrameReshape:
         ],
     )
     def test_stack_multi_columns_non_unique_index(self, index, future_stack):
+        # [FUNCTION DOC]
+        # Verifies (GH-28301) stacking a frame with multi-index columns and a non-unique
+        # index preserves the index codes. Parametrized over three index values and
+        # future_stack.
         # GH-28301
         columns = MultiIndex.from_product([[1, 2], ["a", "b"]])
         df = DataFrame(index=index, columns=columns).fillna(1)
@@ -1271,6 +1464,11 @@ class TestDataFrameReshape:
     def test_stack_multi_columns_mixed_extension_types(
         self, vals1, vals2, dtype1, dtype2, expected_dtype, future_stack
     ):
+        # [FUNCTION DOC]
+        # Verifies (GH45740) stacking columns of mixed extension dtypes gives the common
+        # dtype (Float64 for Int64 and Float64; object for Int64 and string), equal to
+        # stacking the object version cast to that dtype. Parametrized over data, dtypes
+        # and future_stack.
         # GH45740
         df = DataFrame(
             {
@@ -1286,6 +1484,10 @@ class TestDataFrameReshape:
 
     @pytest.mark.parametrize("level", [0, 1])
     def test_unstack_mixed_extension_types(self, level):
+        # [FUNCTION DOC]
+        # Verifies unstacking a frame with a nullable integer column and a categorical
+        # column at level zero or one keeps each column's dtype and the missing values
+        # (as the missing marker). Parametrized over level.
         index = MultiIndex.from_tuples([("A", 0), ("A", 1), ("B", 1)], names=["a", "b"])
         df = DataFrame(
             {
@@ -1310,6 +1512,10 @@ class TestDataFrameReshape:
 
     @pytest.mark.parametrize("level", [0, "baz"])
     def test_unstack_swaplevel_sortlevel(self, level):
+        # [FUNCTION DOC]
+        # Verifies (GH 20994) unstack followed by swapping column levels and sorting by
+        # a level (number or name) gives the expected arrangement. Parametrized over the
+        # sort level.
         # GH 20994
         mi = MultiIndex.from_product([range(1), ["d", "c"]], names=["bar", "baz"])
         df = DataFrame([[0, 2], [1, 3]], index=mi, columns=["B", "A"])
@@ -1329,6 +1535,11 @@ class TestDataFrameReshape:
 
 @pytest.mark.parametrize("dtype", ["float64", "Float64"])
 def test_unstack_sort_false(frame_or_series, dtype):
+    # [FUNCTION DOC]
+    # Verifies (GH 15105) unstack with sorting disabled keeps the order of appearance of
+    # labels, for frame and series, float64 and Float64, unstacking by level zero, the
+    # last level, and two levels. Parametrized over dtype and the frame_or_series
+    # fixture.
     # GH 15105
     index = MultiIndex.from_tuples(
         [("two", "z", "b"), ("two", "y", "a"), ("one", "z", "b"), ("one", "y", "a")]
@@ -1409,6 +1620,11 @@ def test_unstack_sort_false(frame_or_series, dtype):
     ids=["nan=first", "nan=second", "nan=third", "nan=last"],
 )
 def test_unstack_sort_false_nan(levels2, expected_columns):
+    # [FUNCTION DOC]
+    # Verifies (GH#61221) unstack with sorting disabled places a missing label among the
+    # unstacked level in the order of appearance (first, second, third or last
+    # position). Parametrized over the level values and expected column tuples; ids name
+    # the missing position.
     # GH#61221
     levels1 = ["b", "a"]
     index = MultiIndex.from_product([levels1, levels2], names=["level1", "level2"])
@@ -1424,6 +1640,9 @@ def test_unstack_sort_false_nan(levels2, expected_columns):
 
 
 def test_unstack_fill_frame_object():
+    # [FUNCTION DOC]
+    # Verifies (GH12815) unstacking an object series: missing entries are NaN by default
+    # and any fill value (a string) replaces them.
     # GH12815 Test unstacking with object.
     data = Series(["a", "b", "c", "a"], dtype="object")
     data.index = MultiIndex.from_tuples(
@@ -1448,6 +1667,9 @@ def test_unstack_fill_frame_object():
 
 
 def test_unstack_timezone_aware_values():
+    # [FUNCTION DOC]
+    # Verifies (GH 18338) unstacking a frame with a tz-aware timestamp column and a
+    # string column keeps values in a two-level column frame.
     # GH 18338
     df = DataFrame(
         {
@@ -1473,6 +1695,9 @@ def test_unstack_timezone_aware_values():
 
 @pytest.mark.filterwarnings("ignore:The previous implementation of stack is deprecated")
 def test_stack_timezone_aware_values(future_stack):
+    # [FUNCTION DOC]
+    # Verifies (GH 19420) stacking a tz-aware datetime column keeps the dtype and time
+    # zone. Parametrized by future_stack.
     # GH 19420
     ts = date_range(freq="D", start="20180101", end="20180103", tz="America/New_York")
     df = DataFrame({"A": ts}, index=["a", "b", "c"])
@@ -1487,6 +1712,11 @@ def test_stack_timezone_aware_values(future_stack):
 @pytest.mark.filterwarnings("ignore:The previous implementation of stack is deprecated")
 @pytest.mark.parametrize("dropna", [True, False, lib.no_default])
 def test_stack_empty_frame(dropna, future_stack):
+    # [FUNCTION DOC]
+    # Verifies (GH 36113) stacking an empty frame gives an empty float series with an
+    # empty two-level index; with the new implementation specifying the drop-missing
+    # argument raises a value error ("dropna must be unspecified"). Parametrized over
+    # the dropna choice (true, false, default) and future_stack.
     # GH 36113
     levels = [pd.RangeIndex(0), pd.RangeIndex(0)]
     expected = Series(dtype=np.float64, index=MultiIndex(levels=levels, codes=[[], []]))
@@ -1503,6 +1733,11 @@ def test_stack_empty_frame(dropna, future_stack):
 @pytest.mark.filterwarnings("ignore:The previous implementation of stack is deprecated")
 @pytest.mark.parametrize("dropna", [True, False, lib.no_default])
 def test_stack_empty_level(dropna, future_stack, int_frame):
+    # [FUNCTION DOC]
+    # Verifies (GH 60740) stacking with an empty list of levels returns the frame
+    # unchanged (and an empty frame stays empty); the new implementation rejects an
+    # explicit drop-missing argument with a value error. Parametrized over dropna and
+    # future_stack; uses the int_frame fixture.
     # GH 60740
     if future_stack and dropna is not lib.no_default:
         with pytest.raises(ValueError, match="dropna must be unspecified"):
@@ -1523,6 +1758,11 @@ def test_stack_empty_level(dropna, future_stack, int_frame):
 @pytest.mark.parametrize("dropna", [True, False, lib.no_default])
 @pytest.mark.parametrize("fill_value", [None, 0])
 def test_stack_unstack_empty_frame(dropna, fill_value, future_stack):
+    # [FUNCTION DOC]
+    # Verifies (GH 36113) stacking then unstacking an empty integer frame returns an
+    # empty integer frame; with the new implementation an explicit drop-missing value
+    # raises a value error. Parametrized over dropna, fill value (none or zero) and
+    # future_stack.
     # GH 36113
     if future_stack and dropna is not lib.no_default:
         with pytest.raises(ValueError, match="dropna must be unspecified"):
@@ -1540,6 +1780,9 @@ def test_stack_unstack_empty_frame(dropna, fill_value, future_stack):
 
 
 def test_unstack_single_index_series():
+    # [FUNCTION DOC]
+    # Verifies (GH 36113) unstacking a series without a multi-index raises a value error
+    # ("index must be a MultiIndex to unstack").
     # GH 36113
     msg = r"index must be a MultiIndex to unstack.*"
     with pytest.raises(ValueError, match=msg):
@@ -1547,6 +1790,11 @@ def test_unstack_single_index_series():
 
 
 def test_unstacking_multi_index_df():
+    # [FUNCTION DOC]
+    # Verifies (gh-30740) unstacking several levels of a four-level index with a fill
+    # value gives the expected frame with column levels gender, employed and kids.
+    # KNOWN ISSUE: the first assignment to the expected variable (unstacking one level
+    # at a time) is overwritten before being compared, so that computation is dead code.
     # see gh-30740
     df = DataFrame(
         {
@@ -1579,6 +1827,9 @@ def test_unstacking_multi_index_df():
 
 @pytest.mark.filterwarnings("ignore:The previous implementation of stack is deprecated")
 def test_stack_positional_level_duplicate_column_names(future_stack):
+    # [FUNCTION DOC]
+    # Verifies (issue 36353) stacking by position when column levels have duplicate
+    # names works. Parametrized by future_stack.
     # https://github.com/pandas-dev/pandas/issues/36353
     columns = MultiIndex.from_product([("x", "y"), ("y", "z")], names=["a", "a"])
     df = DataFrame([[1, 1, 1, 1]], columns=columns)
@@ -1594,6 +1845,9 @@ def test_stack_positional_level_duplicate_column_names(future_stack):
 
 
 def test_unstack_non_slice_like_blocks():
+    # [FUNCTION DOC]
+    # Verifies unstack works when the frame's internal blocks have non-slice-like
+    # positions, equal to concatenating the unstacked columns one by one.
     # Case where the mgr_locs of a DataFrame's underlying blocks are not slice-like
 
     mi = MultiIndex.from_product([range(5), ["A", "B", "C"]])
@@ -1616,6 +1870,11 @@ def test_unstack_non_slice_like_blocks():
 
 @pytest.mark.filterwarnings("ignore:The previous implementation of stack is deprecated")
 def test_stack_sort_false(future_stack):
+    # [FUNCTION DOC]
+    # Verifies (GH 15105) stack with sorting disabled keeps the original order of the
+    # stacked level labels, for sorted and unsorted column codes; with the new
+    # implementation sorting is not an argument and missing rows are retained.
+    # Parametrized by future_stack.
     # GH 15105
     data = [[1, 2, 3.0, 4.0], [2, 3, 4.0, 5.0], [3, 4, np.nan, np.nan]]
     df = DataFrame(
@@ -1655,6 +1914,9 @@ def test_stack_sort_false(future_stack):
 
 @pytest.mark.filterwarnings("ignore:The previous implementation of stack is deprecated")
 def test_stack_sort_false_multi_level(future_stack):
+    # [FUNCTION DOC]
+    # Verifies (GH 15105) stacking two levels with sorting disabled keeps original label
+    # order. Parametrized by future_stack.
     # GH 15105
     idx = MultiIndex.from_tuples([("weight", "kg"), ("height", "m")])
     df = DataFrame([[1.0, 2.0], [3.0, 4.0]], index=["cat", "dog"], columns=idx)
@@ -1673,7 +1935,13 @@ def test_stack_sort_false_multi_level(future_stack):
 
 
 class TestStackUnstackMultiLevel:
+    # [CLASS DOC]
+    # Groups stack and unstack tests on multi-level indexes, using the shared
+    # multi-index fixtures. Stateless.
     def test_unstack(self, multiindex_year_month_day_dataframe_random_data):
+        # [FUNCTION DOC]
+        # Verifies unstack runs on a year-month-day frame, repeated unstacking works,
+        # and integer and 32-bit integer data work (no value assertion).
         # just check that it works for now
         ymd = multiindex_year_month_day_dataframe_random_data
 
@@ -1712,6 +1980,10 @@ class TestStackUnstackMultiLevel:
     def test_unstack_partial(
         self, result_rows, result_columns, index_product, expected_row
     ):
+        # [FUNCTION DOC]
+        # Verifies (issue 19351) unstack on a subset of a frame whose index levels
+        # contain values not present in the subset. Parametrized over data rows, column
+        # names, the expected label in the new level and the expected row.
         # check for regressions on this issue:
         # https://github.com/pandas-dev/pandas/issues/19351
         # make sure DataFrame.unstack() works when its run on a subset of the DataFrame
@@ -1730,6 +2002,9 @@ class TestStackUnstackMultiLevel:
         tm.assert_frame_equal(result, expected)
 
     def test_unstack_multiple_no_empty_columns(self):
+        # [FUNCTION DOC]
+        # Verifies unstacking two levels of a series leaves no all-missing columns
+        # (equal to the result with those columns dropped).
         index = MultiIndex.from_tuples(
             [(0, "foo", 0), (0, "bar", 0), (1, "baz", 1), (1, "qux", 1)]
         )
@@ -1744,6 +2019,11 @@ class TestStackUnstackMultiLevel:
         "ignore:The previous implementation of stack is deprecated"
     )
     def test_stack(self, multiindex_year_month_day_dataframe_random_data, future_stack):
+        # [FUNCTION DOC]
+        # Verifies stack inverts unstack on a year-month-day frame in several
+        # arrangements (lexsorted, reversed, swapped levels, columns unsorted, deeper
+        # column levels, uneven echelons, negative level); with the new implementation
+        # missing rows are dropped before comparing. Parametrized by future_stack.
         ymd = multiindex_year_month_day_dataframe_random_data
 
         # regular roundtrip
@@ -1846,6 +2126,11 @@ class TestStackUnstackMultiLevel:
         ],
     )
     def test_stack_duplicate_index(self, idx, exp_idx, future_stack):
+        # [FUNCTION DOC]
+        # Verifies (GH10417) stacking a frame with duplicate column labels: the previous
+        # implementation gives a series with a non-unique index; the new one raises a
+        # value error ("Columns with duplicate values are not supported in stack").
+        # Parametrized over two row indexes with expected index and future_stack.
         # GH10417
         df = DataFrame(
             np.arange(12).reshape(4, 3),
@@ -1868,6 +2153,10 @@ class TestStackUnstackMultiLevel:
         "ignore:The previous implementation of stack is deprecated"
     )
     def test_unstack_odd_failure(self, future_stack):
+        # [FUNCTION DOC]
+        # Verifies (#2100) unstacking a three-level index with uneven groups works and
+        # stacking back reproduces the frame (dropping all-missing rows for the new
+        # implementation). Parametrized by future_stack.
         mi = MultiIndex.from_arrays(
             [
                 ["Fri"] * 4 + ["Sat"] * 2 + ["Sun"] * 2 + ["Thu"] * 3,
@@ -1896,6 +2185,10 @@ class TestStackUnstackMultiLevel:
         "ignore:The previous implementation of stack is deprecated"
     )
     def test_stack_mixed_dtype(self, multiindex_dataframe_random_data, future_stack):
+        # [FUNCTION DOC]
+        # Verifies stacking a transposed multi-index frame with an added string column
+        # keeps float dtype for the numeric columns and matches stacking the string
+        # sub-frame. Parametrized by future_stack.
         frame = multiindex_dataframe_random_data
 
         df = frame.T
@@ -1912,6 +2205,9 @@ class TestStackUnstackMultiLevel:
         "ignore:The previous implementation of stack is deprecated"
     )
     def test_unstack_bug(self, future_stack):
+        # [FUNCTION DOC]
+        # Verifies unstacking and restacking the result of a group-by length apply
+        # reproduces the counts as floats. Parametrized by future_stack.
         df = DataFrame(
             {
                 "state": ["naive", "naive", "naive", "active", "active", "active"],
@@ -1933,6 +2229,9 @@ class TestStackUnstackMultiLevel:
     def test_stack_unstack_preserve_names(
         self, multiindex_dataframe_random_data, future_stack
     ):
+        # [FUNCTION DOC]
+        # Verifies the index and column names are preserved by unstack and stack.
+        # Parametrized by future_stack.
         frame = multiindex_dataframe_random_data
 
         unstacked = frame.unstack()
@@ -1949,6 +2248,10 @@ class TestStackUnstackMultiLevel:
     def test_stack_unstack_wrong_level_name(
         self, method, multiindex_dataframe_random_data, future_stack
     ):
+        # [FUNCTION DOC]
+        # Verifies (GH 18303) using a wrong level name in stack or unstack raises a key
+        # error ("does not match index name"), for a frame and (for unstack) a series.
+        # Parametrized over method and future_stack.
         # GH 18303 - wrong level name should raise
         frame = multiindex_dataframe_random_data
 
@@ -1966,6 +2269,8 @@ class TestStackUnstackMultiLevel:
                 getattr(s, method)("mistake", **kwargs)
 
     def test_unstack_level_name(self, multiindex_dataframe_random_data):
+        # [FUNCTION DOC]
+        # Verifies unstacking by level name equals unstacking by position.
         frame = multiindex_dataframe_random_data
 
         result = frame.unstack("second")
@@ -1976,6 +2281,9 @@ class TestStackUnstackMultiLevel:
         "ignore:The previous implementation of stack is deprecated"
     )
     def test_stack_level_name(self, multiindex_dataframe_random_data, future_stack):
+        # [FUNCTION DOC]
+        # Verifies stacking by level name equals stacking by position, for frame and for
+        # the series result. Parametrized by future_stack.
         frame = multiindex_dataframe_random_data
 
         unstacked = frame.unstack("second")
@@ -1993,6 +2301,11 @@ class TestStackUnstackMultiLevel:
     def test_stack_unstack_multiple(
         self, multiindex_year_month_day_dataframe_random_data, future_stack
     ):
+        # [FUNCTION DOC]
+        # Verifies unstacking several levels by name or position equals sequential
+        # unstacking and keeps column names; stacking back restores the frame and index
+        # names (GH #451 also covered with all-missing columns dropped). Parametrized by
+        # future_stack.
         ymd = multiindex_year_month_day_dataframe_random_data
 
         unstacked = ymd.unstack(["year", "month"])
@@ -2030,6 +2343,9 @@ class TestStackUnstackMultiLevel:
     def test_stack_names_and_numbers(
         self, multiindex_year_month_day_dataframe_random_data, future_stack
     ):
+        # [FUNCTION DOC]
+        # Verifies mixing level names and numbers in a stack level list raises a value
+        # error ("level should contain ..."). Parametrized by future_stack.
         ymd = multiindex_year_month_day_dataframe_random_data
 
         unstacked = ymd.unstack(["year", "month"])
@@ -2044,6 +2360,10 @@ class TestStackUnstackMultiLevel:
     def test_stack_multiple_out_of_bounds(
         self, multiindex_year_month_day_dataframe_random_data, future_stack
     ):
+        # [FUNCTION DOC]
+        # Verifies out-of-range level numbers in stack raise index errors: too many
+        # levels ("Too many levels") and negative numbers beyond the first level ("not a
+        # valid level number"). Parametrized by future_stack.
         # nlevels == 3
         ymd = multiindex_year_month_day_dataframe_random_data
 
@@ -2055,6 +2375,11 @@ class TestStackUnstackMultiLevel:
             unstacked.stack([-4, -3], future_stack=future_stack)
 
     def test_unstack_period_series(self):
+        # [FUNCTION DOC]
+        # Verifies (GH4342) unstacking a series with a period-index level and a string
+        # level (default, level one, level zero), and with two period levels (columns
+        # become sorted periods with missing entries), including transposed results for
+        # level zero.
         # GH4342
         idx1 = pd.PeriodIndex(
             ["2013-01", "2013-01", "2013-02", "2013-02", "2013-03", "2013-03"],
@@ -2124,6 +2449,10 @@ class TestStackUnstackMultiLevel:
         tm.assert_frame_equal(result3, expected.T)
 
     def test_unstack_period_frame(self):
+        # [FUNCTION DOC]
+        # Verifies (GH4342) unstacking a frame with two period index levels, default, by
+        # level one (identical) and by level zero, giving multi-index columns of period
+        # labels in sorted order.
         # GH4342
         idx1 = pd.PeriodIndex(
             ["2014-01", "2014-02", "2014-02", "2014-02", "2014-01", "2014-01"],
@@ -2174,6 +2503,12 @@ class TestStackUnstackMultiLevel:
         "ignore:The previous implementation of stack is deprecated"
     )
     def test_stack_multiple_bug(self, future_stack, using_infer_string):
+        # [FUNCTION DOC]
+        # Verifies (GH#3170) stacking after a resample when some unique values are not
+        # present in the data: a mean over the unstacked frame with a string column
+        # raises a type error (message depends on using_infer_string); with numeric-only
+        # the stacked result equals the one built from the numeric column. Parametrized
+        # by future_stack.
         # bug when some uniques are not present in the data GH#3170
         id_col = ([1] * 3) + ([2] * 3)
         name = (["a"] * 3) + (["b"] * 3)
@@ -2204,6 +2539,11 @@ class TestStackUnstackMultiLevel:
         "ignore:The previous implementation of stack is deprecated"
     )
     def test_stack_dropna(self, future_stack):
+        # [FUNCTION DOC]
+        # Verifies (GH#3997) the drop-missing option of stack: with dropna false (old
+        # implementation) missing rows are kept; with the new implementation an explicit
+        # true raises a value error ("dropna must be unspecified"); with the old
+        # implementation true drops the missing rows. Parametrized by future_stack.
         # GH#3997
         df = DataFrame({"A": ["a1", "a2"], "B": ["b1", "b2"], "C": [1, 1]})
         df = df.set_index(["A", "B"])
@@ -2220,6 +2560,10 @@ class TestStackUnstackMultiLevel:
             tm.assert_frame_equal(stacked, stacked.dropna())
 
     def test_unstack_multiple_hierarchical(self, future_stack):
+        # [FUNCTION DOC]
+        # Verifies unstacking two levels of a frame with multi-index rows and columns
+        # runs without error (no value assertion). The future_stack parameter is
+        # accepted but unused.
         df = DataFrame(
             index=[
                 [0, 0, 0, 0, 1, 1, 1, 1],
@@ -2236,6 +2580,10 @@ class TestStackUnstackMultiLevel:
         df.unstack(["b", "c"])
 
     def test_unstack_sparse_keyspace(self):
+        # [FUNCTION DOC]
+        # Verifies (GH#2278) unstacking one level of a five-level index from a sparse
+        # key space of 1000 random rows runs without memory problems (no value
+        # assertion).
         # memory problems with naive impl GH#2278
         # Generate Long File & Test Pivot
         NUM_ROWS = 1000
@@ -2260,6 +2608,9 @@ class TestStackUnstackMultiLevel:
         "ignore:The previous implementation of stack is deprecated"
     )
     def test_unstack_unobserved_keys(self, future_stack):
+        # [FUNCTION DOC]
+        # Verifies (GH#2278 refactoring) unstack with unobserved level keys gives four
+        # columns and stacking back reproduces the frame. Parametrized by future_stack.
         # related to GH#2278 refactoring
         levels = [[0, 1], [0, 1, 2, 3]]
         codes = [[0, 0, 1, 1], [0, 2, 0, 2]]
@@ -2278,16 +2629,32 @@ class TestStackUnstackMultiLevel:
     def test_unstack_number_of_levels_larger_than_int32_warns(
         self, performance_warning, monkeypatch
     ):
+        # [FUNCTION DOC]
+        # Verifies (GH#20601, GH 26314) that unstacking a frame whose level counts
+        # exceed the 32-bit integer limit issues a performance warning ("The following
+        # operation may generate ...") rather than failing; the unstacker class is
+        # replaced by a mock (via monkeypatch) whose initializer raises an exception
+        # after the warning so no result is computed, and the exception message is
+        # checked. Marked slow; uses the performance_warning fixture.
         # GH#20601
         # GH 26314: Change ValueError to PerformanceWarning
 
         class MockUnstacker(reshape_lib._Unstacker):
+            # [CLASS DOC]
+            # HELPER: mock replacement for the internal unstacker class. Calls the
+            # parent initializer (which emits the warning) and then raises an exception
+            # "Don't compute final result." to avoid building the large result.
             def __init__(self, *args, **kwargs) -> None:
+                # [FUNCTION DOC]
+                # HELPER: forwards all arguments to the parent initializer, then raises
+                # a generic exception with the message "Don't compute final result.".
                 # __init__ will raise the warning
                 super().__init__(*args, **kwargs)
                 raise Exception("Don't compute final result.")
 
             def _make_selectors(self) -> None:
+                # [FUNCTION DOC]
+                # HELPER: overrides selector construction with a no-op.
                 pass
 
         with monkeypatch.context() as m:
@@ -2315,6 +2682,12 @@ class TestStackUnstackMultiLevel:
     def test_stack_order_with_unsorted_levels(
         self, levels, stack_lev, sort, future_stack
     ):
+        # [FUNCTION DOC]
+        # Verifies (GH#16323) stacking a one-row frame whose multi-index column levels
+        # are in unsorted order places every value at the expected row and column
+        # labels. Parametrized over level orderings (permutations of 2 and 3 labels),
+        # the stacked level and the sort fixture; the sort keyword is only passed to the
+        # old implementation.
         # GH#16323
         # deep check for 1-row case
         columns = MultiIndex(levels=levels, codes=[[0, 0, 1, 1], [0, 1, 0, 1]])
@@ -2333,6 +2706,10 @@ class TestStackUnstackMultiLevel:
         "ignore:The previous implementation of stack is deprecated"
     )
     def test_stack_order_with_unsorted_levels_multi_row(self, future_stack):
+        # [FUNCTION DOC]
+        # Verifies (GH#16323) the multi-row case: every cell of a five-row frame with
+        # unsorted two-level columns can be found after stacking level zero at the row
+        # and column labels. Parametrized by future_stack.
         # GH#16323
 
         # check multi-row case
@@ -2354,6 +2731,10 @@ class TestStackUnstackMultiLevel:
         "ignore:The previous implementation of stack is deprecated"
     )
     def test_stack_order_with_unsorted_levels_multi_row_2(self, future_stack):
+        # [FUNCTION DOC]
+        # Verifies (GH#53636) stacking the second level (with sorting for the old
+        # implementation) of a multi-row frame with unsorted levels and a non-monotonic
+        # index gives the expected index and values. Parametrized by future_stack.
         # GH#53636
         levels = ((0, 1), (1, 0))
         stack_lev = 1
@@ -2378,6 +2759,10 @@ class TestStackUnstackMultiLevel:
         "ignore:The previous implementation of stack is deprecated"
     )
     def test_stack_unstack_unordered_multiindex(self, future_stack):
+        # [FUNCTION DOC]
+        # Verifies (GH# 18265) stacking then unstacking unordered multi-index columns
+        # round-trips to the expected two-column frame with names first and second.
+        # Parametrized by future_stack.
         # GH# 18265
         values = np.arange(5)
         data = np.vstack(
@@ -2407,6 +2792,13 @@ class TestStackUnstackMultiLevel:
     def test_unstack_preserve_types(
         self, multiindex_year_month_day_dataframe_random_data, using_infer_string
     ):
+        # [FUNCTION DOC]
+        # Verifies (GH#403) unstacking by month keeps the dtype of a numeric column
+        # (float64) and a constant integer column (float64 because of missing combos),
+        # and string column dtype is object (or string under inferred strings).
+        # KNOWN ISSUE: the string column assertion has a conditional expression inside
+        # the assert, so under inferred strings it asserts only that a non-empty string
+        # literal is truthy and never checks the dtype.
         # GH#403
         ymd = multiindex_year_month_day_dataframe_random_data
         ymd["E"] = "foo"
@@ -2425,6 +2817,11 @@ class TestStackUnstackMultiLevel:
         "ignore:The previous implementation of stack is deprecated"
     )
     def test_unstack_group_index_overflow(self, future_stack):
+        # [FUNCTION DOC]
+        # Verifies group-index overflow handling when unstacking an index with nine
+        # levels of 500 values (at the end, the beginning and the middle): the result
+        # has shape 500 by 2, and a round trip with stack restores the series.
+        # Parametrized by future_stack.
         codes = np.tile(np.arange(500), 2)
         level = np.arange(500)
 
@@ -2462,6 +2859,10 @@ class TestStackUnstackMultiLevel:
         assert result.shape == (500, 2)
 
     def test_unstack_with_missing_int_cast_to_float(self):
+        # [FUNCTION DOC]
+        # Verifies (issue 37115) unstacking a frame with two blocks where an integer
+        # column gets missing combinations casts it to float; filling a column with zero
+        # gives the expected frame.
         # https://github.com/pandas-dev/pandas/issues/37115
         df = DataFrame(
             {
@@ -2489,6 +2890,9 @@ class TestStackUnstackMultiLevel:
         tm.assert_frame_equal(result, expected)
 
     def test_unstack_with_level_has_nan(self):
+        # [FUNCTION DOC]
+        # Verifies (GH 37510) unstacking when index levels contain a missing label gives
+        # the expected two-level index.
         # GH 37510
         df1 = DataFrame(
             {
@@ -2516,6 +2920,10 @@ class TestStackUnstackMultiLevel:
         "ignore:The previous implementation of stack is deprecated"
     )
     def test_stack_nan_in_multiindex_columns(self, future_stack):
+        # [FUNCTION DOC]
+        # Verifies (GH#39481) stacking when multi-index columns contain missing labels
+        # gives the expected index and columns (multi-index for the new implementation,
+        # tuple index for the old). Parametrized by future_stack.
         # GH#39481
         df = DataFrame(
             np.zeros([1, 5]),
@@ -2547,6 +2955,10 @@ class TestStackUnstackMultiLevel:
         "ignore:The previous implementation of stack is deprecated"
     )
     def test_multi_level_stack_categorical(self, future_stack):
+        # [FUNCTION DOC]
+        # Verifies (GH 15239) stacking two categorical levels gives categorical index
+        # levels; the row order differs between the old and new implementations.
+        # Parametrized by future_stack; index type not checked.
         # GH 15239
         midx = MultiIndex.from_arrays(
             [
@@ -2605,6 +3017,9 @@ class TestStackUnstackMultiLevel:
         "ignore:The previous implementation of stack is deprecated"
     )
     def test_stack_nan_level(self, future_stack):
+        # [FUNCTION DOC]
+        # Verifies (GH 9406) stacking when a column level contains a missing label keeps
+        # the missing label in the index. Parametrized by future_stack.
         # GH 9406
         df_nan = DataFrame(
             np.arange(4).reshape(2, 2),
@@ -2633,6 +3048,9 @@ class TestStackUnstackMultiLevel:
         tm.assert_frame_equal(result, expected)
 
     def test_unstack_categorical_columns(self):
+        # [FUNCTION DOC]
+        # Verifies (GH 14018) unstacking a categorical column keeps the categorical
+        # dtype and categories in the unstacked columns.
         # GH 14018
         idx = MultiIndex.from_product([["A"], [0, 1]])
         df = DataFrame({"cat": pd.Categorical(["a", "b"])}, index=idx)
@@ -2651,6 +3069,10 @@ class TestStackUnstackMultiLevel:
         "ignore:The previous implementation of stack is deprecated"
     )
     def test_stack_unsorted(self, future_stack):
+        # [FUNCTION DOC]
+        # Verifies (GH 16925) stacking a frame with unsorted columns (after adding a
+        # column) gives the same series as stacking the sorted-columns frame (both
+        # sorted by index). Parametrized by future_stack.
         # GH 16925
         PAE = ["ITA", "FRA"]
         VAR = ["A1", "A2"]
@@ -2676,6 +3098,10 @@ class TestStackUnstackMultiLevel:
         "ignore:The previous implementation of stack is deprecated"
     )
     def test_stack_nullable_dtype(self, future_stack):
+        # [FUNCTION DOC]
+        # Verifies (GH#43561) stacking nullable Int64 columns preserves the nullable
+        # dtype and, for non-homogeneous Float64 and Int64 columns, preserves each
+        # column's extension dtype. Parametrized by future_stack.
         # GH#43561
         columns = MultiIndex.from_product(
             [["54511", "54515"], ["r", "t_mean"]], names=["station", "element"]
@@ -2713,6 +3139,9 @@ class TestStackUnstackMultiLevel:
         tm.assert_frame_equal(result, expected)
 
     def test_unstack_mixed_level_names(self):
+        # [FUNCTION DOC]
+        # Verifies (GH#48763) unstacking by a level named with a string when other
+        # levels have an integer name gives the expected frame and index names.
         # GH#48763
         arrays = [["a", "a"], [1, 2], ["red", "blue"]]
         idx = MultiIndex.from_arrays(arrays, names=("x", 0, "y"))
@@ -2728,6 +3157,10 @@ class TestStackUnstackMultiLevel:
 
 @pytest.mark.filterwarnings("ignore:The previous implementation of stack is deprecated")
 def test_stack_tuple_columns(future_stack):
+    # [FUNCTION DOC]
+    # Verifies (GH#54948) stacking a frame whose columns are plain tuples (not a
+    # multi-index) gives a two-level index whose second level holds the tuples.
+    # Parametrized by future_stack.
     # GH#54948 - test stack when the input has a non-MultiIndex with tuples
     df = DataFrame(
         [[1, 2, 3], [4, 5, 6], [7, 8, 9]], columns=[("a", 1), ("a", 2), ("b", 1)]
@@ -2754,6 +3187,10 @@ def test_stack_tuple_columns(future_stack):
 )
 @pytest.mark.parametrize("test_multiindex", [True, False])
 def test_stack_preserves_na(dtype, na_value, test_multiindex):
+    # [FUNCTION DOC]
+    # Verifies (GH#56573) stacking preserves missing values of float and nullable index
+    # dtypes in the resulting (single- or multi-level) index. Parametrized over dtype
+    # and missing marker, and whether the index is a multi-index.
     # GH#56573
     if test_multiindex:
         index = MultiIndex.from_arrays(2 * [Index([na_value], dtype=dtype)])

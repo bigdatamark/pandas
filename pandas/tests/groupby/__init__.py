@@ -1,4 +1,14 @@
+# [PACKAGE DOC]
+# Test-support package for groupby tests, defining one shared helper for
+# building method arguments.
 def get_groupby_method_args(name, obj):
+    # [FUNCTION DOC]
+    # HELPER: shared by groupby tests parametrized over method names.
+    # Returns the extra positional arguments a groupby method needs. Parameters:
+    # name is the method name, obj is the grouped Series or DataFrame.
+    # Returns a tuple: a single zero for the nth and take methods, a single 0.5
+    # for quantile, a single-element tuple holding obj for corrwith, otherwise an empty
+    # tuple.
     """
     Get required arguments for a groupby method.
 

@@ -1,6 +1,12 @@
 """
 test all other .agg behavior
 """
+# [MODULE DOC]
+# Tests for groupby aggregation behaviors not covered elsewhere: error propagation,
+# dictionary and list specifications (including the unsupported nested renamer forms),
+# callables, datetimes and time zones, structure-valued results, categorical grouping
+# with numpy sums, and error suppression in the Python aggregation path. Uses the
+# observed fixture and the specification error type.
 
 import datetime as dt
 from functools import partial
@@ -26,6 +32,10 @@ from pandas.io.formats.printing import pprint_thing
 
 
 def test_agg_partial_failure_raises():
+    # [FUNCTION DOC]
+    # Verifies (GH#43741) that a function failing for non-numeric columns (max minus min
+    # on strings) raises a type error mentioning unsupported operand types, both when
+    # given in a list and on its own.
     # GH#43741
 
     df = DataFrame(
@@ -39,6 +49,9 @@ def test_agg_partial_failure_raises():
     grouped = df.groupby("key1")
 
     def peak_to_peak(arr):
+        # [FUNCTION DOC]
+        # HELPER: reducer returning the maximum minus the minimum of its input; used to
+        # trigger a type error on string columns.
         return arr.max() - arr.min()
 
     with pytest.raises(TypeError, match="unsupported operand type"):
@@ -49,6 +62,9 @@ def test_agg_partial_failure_raises():
 
 
 def test_agg_datetimes_mixed():
+    # [FUNCTION DOC]
+    # Verifies grouping by a date column aggregated with sum gives the same number of
+    # groups whether the dates are strings or date objects with a missing entry.
     data = [[1, "2012-01-01", 1.0], [2, "2012-01-02", 2.0], [3, None, 3.0]]
 
     df1 = DataFrame(
@@ -86,6 +102,10 @@ def test_agg_datetimes_mixed():
 
 
 def test_agg_period_index():
+    # [FUNCTION DOC]
+    # Verifies sum grouped by index level zero of a period-indexed frame keeps a period
+    # index, and (GH 3579) grouping a period-indexed frame by month can be iterated
+    # without error. Only the index type and non-failure are checked.
     prng = period_range("2012-1-1", freq="M", periods=3)
     df = DataFrame(np.random.default_rng(2).standard_normal((3, 2)), index=prng)
     rs = df.groupby(level=0).sum()
@@ -101,6 +121,11 @@ def test_agg_period_index():
 
 
 def test_agg_dict_parameter_cast_result_dtypes():
+    # [FUNCTION DOC]
+    # Verifies (GH 12821) first, last, via method, string aggregation and dictionary
+    # aggregation on a datetime column with missing values give matching expected frames
+    # and series, and that length-based aggregation and size equal two per group while
+    # count gives non-missing counts.
     # GH 12821
 
     df = DataFrame(
@@ -139,6 +164,9 @@ def test_agg_dict_parameter_cast_result_dtypes():
 
 
 def test_agg_cast_results_dtypes():
+    # [FUNCTION DOC]
+    # Verifies (xref #11444) aggregating with the length function on a datetime column
+    # equals the grouped count.
     # similar to GH12821
     # xref #11444
     u = [dt.datetime(2015, x + 1, 1) for x in range(12)]
@@ -151,6 +179,9 @@ def test_agg_cast_results_dtypes():
 
 
 def test_aggregate_float64_no_int64():
+    # [FUNCTION DOC]
+    # Verifies (gh-11199) grouped mean of integer columns returns float values, for one
+    # and two selected columns.
     # see gh-11199
     df = DataFrame({"a": [1, 2, 3, 4, 5], "b": [1, 2, 2, 4, 5], "c": [1, 2, 3, 4, 5]})
 
@@ -168,6 +199,13 @@ def test_aggregate_float64_no_int64():
 
 
 def test_aggregate_api_consistency():
+    # [FUNCTION DOC]
+    # Verifies (GH 9052) aggregation with lists and dictionaries is consistent with
+    # computing each statistic separately and concatenating: series with sum and mean,
+    # frame with list, reordered column selection, a dictionary of single functions, and
+    # that dictionary keys naming non-existing labels raise a key error listing them.
+    # KNOWN ISSUE: the expected frame built for the dictionary of function lists is
+    # never compared with a result, so that case is not actually checked.
     # GH 9052
     # make sure that the aggregates via dict
     # are consistent
@@ -215,6 +253,11 @@ def test_aggregate_api_consistency():
 
 
 def test_agg_dict_renaming_deprecation():
+    # [FUNCTION DOC]
+    # Verifies (15931) that nested renaming dictionaries in aggregation raise the
+    # specification error ("nested renamer is not supported"), a dictionary with a
+    # non-existing label raises a key error, and a renamer dictionary on a series group
+    # also raises the specification error.
     # 15931
     df = DataFrame({"A": [1, 1, 1, 2, 2], "B": range(5), "C": range(5)})
 
@@ -234,6 +277,9 @@ def test_agg_dict_renaming_deprecation():
 
 
 def test_agg_compat():
+    # [FUNCTION DOC]
+    # Verifies (GH 12334) that selecting a series and aggregating with dictionaries
+    # keyed by other column names raises the specification error for nested renamers.
     # GH 12334
     df = DataFrame(
         {
@@ -255,6 +301,10 @@ def test_agg_compat():
 
 
 def test_agg_nested_dicts():
+    # [FUNCTION DOC]
+    # Verifies that nested dictionaries in groupby aggregation, including dictionaries
+    # naming new result labels on a selected series and reusing the original column name
+    # (GH9052), raise the specification error.
     # API change for disallowing these types of nested dicts
     df = DataFrame(
         {
@@ -284,9 +334,15 @@ def test_agg_nested_dicts():
 
 
 def test_agg_item_by_item_raise_typeerror():
+    # [FUNCTION DOC]
+    # Verifies that a type error raised inside a user aggregation function propagates
+    # unchanged out of the grouped aggregation.
     df = DataFrame(np.random.default_rng(2).integers(10, size=(20, 10)))
 
     def raiseException(df):
+        # [FUNCTION DOC]
+        # HELPER: aggregation function that prints the frame it receives and raises a
+        # type error with message test.
         pprint_thing("----------------------------------------")
         pprint_thing(df.to_string())
         raise TypeError("test")
@@ -296,6 +352,9 @@ def test_agg_item_by_item_raise_typeerror():
 
 
 def test_series_agg_multikey():
+    # [FUNCTION DOC]
+    # Verifies string aggregation sum on a series grouped by year and month callables
+    # equals the sum method.
     ts = Series(
         np.arange(10, dtype=np.float64), index=date_range("2020-01-01", periods=10)
     )
@@ -307,6 +366,11 @@ def test_series_agg_multikey():
 
 
 def test_series_agg_multi_pure_python():
+    # [FUNCTION DOC]
+    # Verifies the pure-Python aggregation path with a function that returns a constant
+    # string for a frame grouped by two keys equals the result of a lambda returning the
+    # same string. The helper also asserts that array data passed in has a base object
+    # (is a view).
     data = DataFrame(
         {
             "A": [
@@ -355,6 +419,10 @@ def test_series_agg_multi_pure_python():
     )
 
     def bad(x):
+        # [FUNCTION DOC]
+        # HELPER: aggregation function returning the constant string foo; when the input
+        # values are a numpy array, asserts the array has a non-empty base (so the data
+        # is a view, not a copy).
         if isinstance(x.values, np.ndarray):
             assert len(x.values.base) > 0
         return "foo"
@@ -365,9 +433,16 @@ def test_series_agg_multi_pure_python():
 
 
 def test_agg_consistency():
+    # [FUNCTION DOC]
+    # Verifies (GH 6715) that aggregating with a single function and with a one-element
+    # list of the function gives the same values (after flattening the column levels).
+    # Grouped by date.
     # agg with ([]) and () not consistent
     # GH 6715
     def P1(a):
+        # [FUNCTION DOC]
+        # HELPER: returns the first percentile of the input after dropping missing
+        # values.
         return np.percentile(a.dropna(), q=1)
 
     df = DataFrame(
@@ -393,11 +468,20 @@ def test_agg_consistency():
 
 
 def test_agg_callables():
+    # [FUNCTION DOC]
+    # Verifies (GH 7929) that equivalent callables (builtin sum, numpy sum, lambdas, a
+    # partial, and a callable class instance) give the same result as the string sum for
+    # an integer frame.
     # GH 7929
     df = DataFrame({"foo": [1, 2], "bar": [3, 4]}).astype(np.int64)
 
     class fn_class:
+        # [CLASS DOC]
+        # HELPER: callable class whose call method returns the builtin sum of its
+        # argument; one of the callables compared in the enclosing test.
         def __call__(self, x):
+            # [FUNCTION DOC]
+            # HELPER: returns the builtin sum of the given sequence.
             return sum(x)
 
     equiv_callables = [
@@ -416,6 +500,9 @@ def test_agg_callables():
 
 
 def test_agg_over_numpy_arrays():
+    # [FUNCTION DOC]
+    # Verifies (GH 3788) summing object columns holding numpy arrays with numeric-only
+    # disabled gives element-wise array sums, via method and via aggregate.
     # GH 3788
     df = DataFrame(
         [
@@ -444,6 +531,11 @@ def test_agg_over_numpy_arrays():
 
 @pytest.mark.parametrize("as_period", [True, False])
 def test_agg_tzaware_non_datetime_result(as_period):
+    # [FUNCTION DOC]
+    # Verifies (GH#29589, GH#29641) aggregation of tz-aware (or period) values: a
+    # dtype-preserving function keeps the dtype, a function extracting the year gives
+    # integers, and a subtraction function gives time deltas (or day offsets for
+    # periods). Parametrized over whether the values are periods.
     # discussed in GH#29589, fixed in GH#29641, operating on tzaware values
     #  with function that is not dtype-preserving
     dti = date_range("2012-01-01", periods=4, tz="UTC")
@@ -477,6 +569,10 @@ def test_agg_tzaware_non_datetime_result(as_period):
 
 
 def test_agg_timezone_round_trip():
+    # [FUNCTION DOC]
+    # Verifies (GH 15426, GH#27110) time zone round trip: min via string, lambda and
+    # method of tz-aware values returns the original timestamp; nth, head, first, last
+    # and apply with positional selection return the right timestamps.
     # GH 15426
     ts = pd.Timestamp("2016-01-01 12:00:00", tz="US/Pacific")
     df = DataFrame({"a": 1, "b": [ts + dt.timedelta(minutes=nn) for nn in range(10)]})
@@ -511,6 +607,10 @@ def test_agg_timezone_round_trip():
 
 
 def test_sum_uint64_overflow():
+    # [FUNCTION DOC]
+    # Verifies (gh-14758) summing object-dtype data near the 64-bit signed maximum does
+    # not overflow, produces unsigned 64-bit index labels, and with numeric-only enabled
+    # drops the non-numeric result column.
     # see gh-14758
     # Convert to uint64 and don't overflow
     df = DataFrame([[1, 2], [3, 4], [5, 6]], dtype=object)
@@ -545,6 +645,10 @@ def test_sum_uint64_overflow():
     ],
 )
 def test_agg_structs_dataframe(structure, cast_as):
+    # [FUNCTION DOC]
+    # Verifies aggregation of a frame grouped by two keys with tuple or list
+    # constructors (or lambdas wrapping them) yields tuples or lists per group as cell
+    # values. Parametrized over the structure callable and the expected container type.
     df = DataFrame(
         {"A": [1, 1, 1, 3, 3, 3], "B": [1, 1, 1, 4, 4, 4], "C": [1, 1, 1, 3, 4, 4]}
     )
@@ -567,6 +671,9 @@ def test_agg_structs_dataframe(structure, cast_as):
     ],
 )
 def test_agg_structs_series(structure, cast_as):
+    # [FUNCTION DOC]
+    # Verifies (Issue #18079) the same structure aggregation on a selected series
+    # grouped by one key.
     # Issue #18079
     df = DataFrame(
         {"A": [1, 1, 1, 3, 3, 3], "B": [1, 1, 1, 4, 4, 4], "C": [1, 1, 1, 3, 4, 4]}
@@ -579,6 +686,10 @@ def test_agg_structs_series(structure, cast_as):
 
 
 def test_agg_category_nansum(observed):
+    # [FUNCTION DOC]
+    # Verifies aggregation with the numpy nan-aware sum on a categorical key gives zero
+    # for unobserved categories, which are dropped when observed is true. Uses the
+    # observed fixture.
     categories = ["a", "b", "c"]
     df = DataFrame(
         {"A": pd.Categorical(["a", "a", "b"], categories=categories), "B": [1, 2, 3]}
@@ -595,6 +706,9 @@ def test_agg_category_nansum(observed):
 
 
 def test_agg_list_like_func():
+    # [FUNCTION DOC]
+    # Verifies (GH 18473) aggregation with a dictionary naming a lambda that returns a
+    # list, with as_index false and no sorting, yields list cells and the key column.
     # GH 18473
     df = DataFrame({"A": [str(x) for x in range(3)], "B": [str(x) for x in range(3)]})
     grouped = df.groupby("A", as_index=False, sort=False)
@@ -606,6 +720,9 @@ def test_agg_list_like_func():
 
 
 def test_agg_lambda_with_timezone():
+    # [FUNCTION DOC]
+    # Verifies (GH 23683) aggregation of a tz-aware column with a lambda taking the head
+    # of each group keeps the timestamp and its UTC time zone.
     # GH 23683
     df = DataFrame(
         {
@@ -639,6 +756,18 @@ def test_agg_lambda_with_timezone():
     ],
 )
 def test_groupby_agg_err_catching(err_cls):
+    # [FUNCTION DOC]
+    # Verifies the Python-path aggregation suppresses errors other than type or
+    # assertion errors, using the decimal extension array so the numpy paths are not
+    # taken. Parametrized over several exception classes (not-implemented, runtime, key,
+    # index, OS, value, arithmetic, attribute errors); the aggregate takes the first
+    # element per group.
+    # KNOWN ISSUE: the helper function raises only for an empty group, and groups are
+    # never empty here, so the exception is never raised and the suppression logic is
+    # not actually exercised.
+    # KNOWN ISSUE: the helper's comment says exceptions other than a type error or an
+    # index error, while the leading comment says type or assertion error, and the
+    # parametrization includes an index error.
     # make sure we suppress anything other than TypeError or AssertionError
     #  in _python_agg_general
 
@@ -657,6 +786,10 @@ def test_groupby_agg_err_catching(err_cls):
     expected = Series(to_decimal([data[0], data[3]]))
 
     def weird_func(x):
+        # [FUNCTION DOC]
+        # HELPER: aggregation function for the enclosing test. Raises the parametrized
+        # exception class when given an empty group; otherwise returns the first element
+        # of the group.
         # weird function that raise something other than TypeError or IndexError
         #  in _python_agg_general
         if len(x) == 0:

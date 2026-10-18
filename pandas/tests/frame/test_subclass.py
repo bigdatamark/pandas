@@ -1,3 +1,10 @@
+# [MODULE DOC]
+# Tests that DataFrame and Series subclasses keep their class (and metadata) through
+# many operations: slicing, indexing, alignment, stacking, pivot, melt, apply,
+# reductions, and others, using the SubclassedDataFrame and SubclassedSeries helper
+# classes from the testing module. Also defines extra subclasses (with metadata, and
+# with no constructor override). Import-time side effect: a module-wide marker ignores
+# deprecation warnings about passing a block manager.
 import numpy as np
 import pytest
 
@@ -16,7 +23,14 @@ pytestmark = pytest.mark.filterwarnings(
 
 
 class TestDataFrameSubclassing:
+    # [CLASS DOC]
+    # Groups subclassing tests for DataFrame using the testing-module subclass types.
+    # Stateless.
     def test_no_warning_on_mgr(self):
+        # [FUNCTION DOC]
+        # Verifies (GH#57032) that isna on a subclassed frame and on one of its columns
+        # raises no warning (the construct-from-manager path must not hand a manager to
+        # the initializer).
         # GH#57032
         df = tm.SubclassedDataFrame(
             {"X": [1, 2, 3], "Y": [1, 2, 3]}, index=["a", "b", "c"]
@@ -28,33 +42,60 @@ class TestDataFrameSubclassing:
             df["X"].isna()
 
     def test_frame_subclassing_and_slicing(self):
+        # [FUNCTION DOC]
+        # Verifies (PR 9632) that a custom frame subclass with custom series class and
+        # constructors returns its own classes: selecting a column gives the custom
+        # series, row slicing gives the custom frame, selecting a top-level label of a
+        # multi-index column gives a custom frame, and a label with empty second level
+        # gives a custom series.
         # Subclass frame and ensure it returns the right class on slicing it
         # In reference to PR 9632
 
         class CustomSeries(Series):
+            # [CLASS DOC]
+            # Series subclass used by the slicing test; its constructor property returns
+            # its own class and it has one extra method returning OK.
             @property
             def _constructor(self):
+                # [FUNCTION DOC]
+                # HELPER: property returning the subclass itself as the constructor.
                 return CustomSeries
 
             def custom_series_function(self):
+                # [FUNCTION DOC]
+                # HELPER: method returning the string OK, used to show the custom series
+                # class is preserved.
                 return "OK"
 
         class CustomDataFrame(DataFrame):
+            # [CLASS DOC]
+            # Frame subclass used by the slicing test: sets its own class as constructor
+            # and the custom series class as sliced-constructor, with an extra method
+            # returning OK. The class docstring describes simulation results and
+            # plotting helpers which the class does not actually contain.
             """
             Subclasses pandas DF, fills DF with simulation results, adds some
             custom plotting functions.
             """
 
             def __init__(self, *args, **kw) -> None:
+                # [FUNCTION DOC]
+                # HELPER: initializer that only forwards all arguments to the parent
+                # initializer.
                 super().__init__(*args, **kw)
 
             @property
             def _constructor(self):
+                # [FUNCTION DOC]
+                # HELPER: property returning the subclass itself as the constructor.
                 return CustomDataFrame
 
             _constructor_sliced = CustomSeries
 
             def custom_frame_function(self):
+                # [FUNCTION DOC]
+                # HELPER: method returning the string OK, used to show the custom frame
+                # class is preserved.
                 return "OK"
 
         data = {"col1": range(10), "col2": range(10)}
@@ -83,6 +124,11 @@ class TestDataFrameSubclassing:
         assert isinstance(cdf_multi2["A"], CustomSeries)
 
     def test_dataframe_metadata(self, temp_file):
+        # [FUNCTION DOC]
+        # Verifies custom attributes in the metadata list survive column selection,
+        # label and position row selection (gh-9776) and a pickle round trip (gh-10553),
+        # and that the metadata list and attribute value are equal after unpickling.
+        # Uses the temp_file fixture.
         df = tm.SubclassedDataFrame(
             {"X": [1, 2, 3], "Y": [1, 2, 3]}, index=["a", "b", "c"]
         )
@@ -103,6 +149,10 @@ class TestDataFrameSubclassing:
         assert df.testattr == unpickled.testattr
 
     def test_indexing_sliced(self):
+        # [FUNCTION DOC]
+        # Verifies (GH 11559) label and position selection of a single column or row
+        # from a subclassed frame returns the subclassed series with the expected
+        # values, index and name.
         # GH 11559
         df = tm.SubclassedDataFrame(
             {"X": [1, 2, 3], "Y": [4, 5, 6], "Z": [7, 8, 9]}, index=["a", "b", "c"]
@@ -138,16 +188,28 @@ class TestDataFrameSubclassing:
         assert isinstance(res, tm.SubclassedSeries)
 
     def test_subclass_attr_err_propagation(self):
+        # [FUNCTION DOC]
+        # Verifies (GH 11808) an attribute error raised inside a property of a frame
+        # subclass propagates with the missing attribute name, rather than being masked.
         # GH 11808
         class A(DataFrame):
+            # [CLASS DOC]
+            # Frame subclass with one property that reads a non-existing attribute;
+            # used to check that attribute errors propagate with their own message.
             @property
             def nonexistence(self):
+                # [FUNCTION DOC]
+                # HELPER: property that accesses a non-existing attribute, to trigger an
+                # attribute error.
                 return self.i_dont_exist
 
         with pytest.raises(AttributeError, match=".*i_dont_exist.*"):
             A().nonexistence
 
     def test_subclass_align(self):
+        # [FUNCTION DOC]
+        # Verifies (GH 12983) aligning two subclassed frames on rows, and two subclassed
+        # series, returns the subclass types with union index and missing values.
         # GH 12983
         df1 = tm.SubclassedDataFrame(
             {"a": [1, 3, 5], "b": [1, 3, 5]}, index=list("ACE")
@@ -177,6 +239,11 @@ class TestDataFrameSubclassing:
         tm.assert_series_equal(res2, exp2.c)
 
     def test_subclass_align_combinations(self):
+        # [FUNCTION DOC]
+        # Verifies (GH 12983) aligning a subclassed frame with a subclassed series, in
+        # either order, returns the matching subclass types with the union index.
+        # KNOWN ISSUE: the comment saying the name is lost is truncated, and the
+        # expected series actually keeps its name.
         # GH 12983
         df = tm.SubclassedDataFrame({"a": [1, 3, 5], "b": [1, 3, 5]}, index=list("ACE"))
         s = tm.SubclassedSeries([1, 2, 4], index=list("ABD"), name="x")
@@ -205,6 +272,9 @@ class TestDataFrameSubclassing:
         tm.assert_frame_equal(res2, exp1)
 
     def test_subclass_iterrows(self):
+        # [FUNCTION DOC]
+        # Verifies (GH 13977) iterating rows of a subclassed frame yields the subclassed
+        # series equal to the row selection.
         # GH 13977
         df = tm.SubclassedDataFrame({"a": [1]})
         for i, row in df.iterrows():
@@ -212,6 +282,9 @@ class TestDataFrameSubclassing:
             tm.assert_series_equal(row, df.loc[i])
 
     def test_subclass_stack(self):
+        # [FUNCTION DOC]
+        # Verifies (GH 15564) stacking a subclassed single-level frame returns the
+        # subclassed series with a two-level index.
         # GH 15564
         df = tm.SubclassedDataFrame(
             [[1, 2, 3], [4, 5, 6], [7, 8, 9]],
@@ -227,6 +300,11 @@ class TestDataFrameSubclassing:
         tm.assert_series_equal(res, exp)
 
     def test_subclass_stack_multi(self):
+        # [FUNCTION DOC]
+        # Verifies (GH 15564) stacking a subclassed frame with multi-index rows and
+        # columns: the default level and the named level yyy give a subclassed frame
+        # with the last column level moved into the index, and the level www gives the
+        # other arrangement.
         # GH 15564
         df = tm.SubclassedDataFrame(
             [[10, 11, 12, 13], [20, 21, 22, 23], [30, 31, 32, 33], [40, 41, 42, 43]],
@@ -284,6 +362,9 @@ class TestDataFrameSubclassing:
         tm.assert_frame_equal(res, exp)
 
     def test_subclass_stack_multi_mixed(self):
+        # [FUNCTION DOC]
+        # Verifies (GH 15564) the same stacking cases with mixed integer and float
+        # columns, keeping per-column dtypes.
         # GH 15564
         df = tm.SubclassedDataFrame(
             [
@@ -346,6 +427,9 @@ class TestDataFrameSubclassing:
         tm.assert_frame_equal(res, exp)
 
     def test_subclass_unstack(self):
+        # [FUNCTION DOC]
+        # Verifies (GH 15564) unstacking a subclassed single-level frame returns the
+        # subclassed series.
         # GH 15564
         df = tm.SubclassedDataFrame(
             [[1, 2, 3], [4, 5, 6], [7, 8, 9]],
@@ -361,6 +445,10 @@ class TestDataFrameSubclassing:
         tm.assert_series_equal(res, exp)
 
     def test_subclass_unstack_multi(self):
+        # [FUNCTION DOC]
+        # Verifies (GH 15564) unstacking multi-index frames: default level and named
+        # levels ccc and aaa give subclassed frames with the unstacked level moved to
+        # the columns.
         # GH 15564
         df = tm.SubclassedDataFrame(
             [[10, 11, 12, 13], [20, 21, 22, 23], [30, 31, 32, 33], [40, 41, 42, 43]],
@@ -400,6 +488,9 @@ class TestDataFrameSubclassing:
         tm.assert_frame_equal(res, exp)
 
     def test_subclass_unstack_multi_mixed(self):
+        # [FUNCTION DOC]
+        # Verifies (GH 15564) the same unstack cases with mixed integer and float
+        # columns.
         # GH 15564
         df = tm.SubclassedDataFrame(
             [
@@ -450,6 +541,9 @@ class TestDataFrameSubclassing:
         tm.assert_frame_equal(res, exp)
 
     def test_subclass_pivot(self):
+        # [FUNCTION DOC]
+        # Verifies (GH 15564) pivot on a subclassed frame returns a subclassed frame
+        # with named index and columns.
         # GH 15564
         df = tm.SubclassedDataFrame(
             {
@@ -473,6 +567,9 @@ class TestDataFrameSubclassing:
         tm.assert_frame_equal(pivoted, expected)
 
     def test_subclassed_melt(self):
+        # [FUNCTION DOC]
+        # Verifies (GH 15564) melting a subclassed frame with identifier columns returns
+        # a subclassed frame with variable and value columns.
         # GH 15564
         cheese = tm.SubclassedDataFrame(
             {
@@ -498,6 +595,9 @@ class TestDataFrameSubclassing:
         tm.assert_frame_equal(melted, expected)
 
     def test_subclassed_wide_to_long(self):
+        # [FUNCTION DOC]
+        # Verifies (GH 9762) wide-to-long conversion of a subclassed frame returns a
+        # subclassed frame with a two-level index (id and year) and the expected values.
         # GH 9762
 
         x = np.random.default_rng(2).standard_normal(3)
@@ -526,12 +626,23 @@ class TestDataFrameSubclassing:
         tm.assert_frame_equal(long_frame, expected)
 
     def test_subclassed_apply(self):
+        # [FUNCTION DOC]
+        # Verifies (GH 19822) apply on a subclassed frame passes subclassed series rows,
+        # and results: a row-modifying function (axis one) gives a subclassed frame with
+        # heights increased by half; returning subclassed series or an expanded list
+        # gives a subclassed frame; returning plain lists without expansion gives a
+        # plain Series result that is not a subclassed frame.
         # GH 19822
 
         def check_row_subclass(row):
+            # [FUNCTION DOC]
+            # HELPER: asserts that the given row is a subclassed series.
             assert isinstance(row, tm.SubclassedSeries)
 
         def stretch(row):
+            # [FUNCTION DOC]
+            # HELPER: for a row whose variable is height, increases its value by one
+            # half; returns the row.
             if row["variable"] == "height":
                 row["value"] += 0.5
             return row
@@ -580,6 +691,9 @@ class TestDataFrameSubclassing:
         tm.assert_series_equal(result, expected)
 
     def test_subclassed_reductions(self, all_reductions):
+        # [FUNCTION DOC]
+        # Verifies (GH 25596) every reduction in the all_reductions fixture returns the
+        # subclassed series on a subclassed frame.
         # GH 25596
 
         df = tm.SubclassedDataFrame({"A": [1, 2, 3], "B": [4, 5, 6], "C": [7, 8, 9]})
@@ -587,6 +701,9 @@ class TestDataFrameSubclassing:
         assert isinstance(result, tm.SubclassedSeries)
 
     def test_subclassed_count(self):
+        # [FUNCTION DOC]
+        # Verifies the count method returns a subclassed series for mixed data, numeric
+        # data, multi-index frames and an empty frame.
         df = tm.SubclassedDataFrame(
             {
                 "Person": ["John", "Myla", "Lewis", "John", "Myla"],
@@ -618,6 +735,8 @@ class TestDataFrameSubclassing:
         assert isinstance(result, tm.SubclassedSeries)
 
     def test_isin(self):
+        # [FUNCTION DOC]
+        # Verifies membership testing on a subclassed frame returns a subclassed frame.
         df = tm.SubclassedDataFrame(
             {"num_legs": [2, 4], "num_wings": [2, 0]}, index=["falcon", "dog"]
         )
@@ -625,6 +744,9 @@ class TestDataFrameSubclassing:
         assert isinstance(result, tm.SubclassedDataFrame)
 
     def test_duplicated(self):
+        # [FUNCTION DOC]
+        # Verifies duplicated returns a subclassed series for a non-empty and an empty
+        # subclassed frame.
         df = tm.SubclassedDataFrame({"A": [1, 2, 3], "B": [4, 5, 6], "C": [7, 8, 9]})
         result = df.duplicated()
         assert isinstance(result, tm.SubclassedSeries)
@@ -635,11 +757,17 @@ class TestDataFrameSubclassing:
 
     @pytest.mark.parametrize("idx_method", ["idxmax", "idxmin"])
     def test_idx(self, idx_method):
+        # [FUNCTION DOC]
+        # Verifies idxmax and idxmin return a subclassed series. Parametrized over the
+        # method name.
         df = tm.SubclassedDataFrame({"A": [1, 2, 3], "B": [4, 5, 6], "C": [7, 8, 9]})
         result = getattr(df, idx_method)()
         assert isinstance(result, tm.SubclassedSeries)
 
     def test_dot(self):
+        # [FUNCTION DOC]
+        # Verifies the dot product of a subclassed frame with a subclassed series gives
+        # a subclassed series, and with a subclassed frame gives a subclassed frame.
         df = tm.SubclassedDataFrame([[0, 1, -2, -1], [1, 1, 1, 1]])
         s = tm.SubclassedSeries([1, 1, 2, 1])
         result = df.dot(s)
@@ -651,6 +779,8 @@ class TestDataFrameSubclassing:
         assert isinstance(result, tm.SubclassedDataFrame)
 
     def test_memory_usage(self):
+        # [FUNCTION DOC]
+        # Verifies memory usage (with and without index) returns a subclassed series.
         df = tm.SubclassedDataFrame({"A": [1, 2, 3], "B": [4, 5, 6], "C": [7, 8, 9]})
         result = df.memory_usage()
         assert isinstance(result, tm.SubclassedSeries)
@@ -659,6 +789,9 @@ class TestDataFrameSubclassing:
         assert isinstance(result, tm.SubclassedSeries)
 
     def test_corrwith(self):
+        # [FUNCTION DOC]
+        # Verifies correlation with another subclassed frame (row-wise, dropping
+        # unmatched, Kendall method) returns a subclassed series. Skipped without scipy.
         pytest.importorskip("scipy")
         index = ["a", "b", "c", "d", "e"]
         columns = ["one", "two", "three", "four"]
@@ -677,6 +810,10 @@ class TestDataFrameSubclassing:
         assert isinstance(correls, (tm.SubclassedSeries))
 
     def test_asof(self):
+        # [FUNCTION DOC]
+        # Verifies as-of lookup on a subclassed frame returns a subclassed frame for a
+        # list of labels and a subclassed series for scalar labels (including a label
+        # before the first row).
         N = 3
         rng = pd.date_range("1/1/1990", periods=N, freq="53s")
         df = tm.SubclassedDataFrame(
@@ -698,6 +835,8 @@ class TestDataFrameSubclassing:
         assert isinstance(result, tm.SubclassedSeries)
 
     def test_idxmin_preserves_subclass(self):
+        # [FUNCTION DOC]
+        # Verifies (GH 28330) idxmin returns a subclassed series.
         # GH 28330
 
         df = tm.SubclassedDataFrame({"A": [1, 2, 3], "B": [4, 5, 6], "C": [7, 8, 9]})
@@ -705,6 +844,8 @@ class TestDataFrameSubclassing:
         assert isinstance(result, tm.SubclassedSeries)
 
     def test_idxmax_preserves_subclass(self):
+        # [FUNCTION DOC]
+        # Verifies (GH 28330) idxmax returns a subclassed series.
         # GH 28330
 
         df = tm.SubclassedDataFrame({"A": [1, 2, 3], "B": [4, 5, 6], "C": [7, 8, 9]})
@@ -712,15 +853,25 @@ class TestDataFrameSubclassing:
         assert isinstance(result, tm.SubclassedSeries)
 
     def test_convert_dtypes_preserves_subclass(self):
+        # [FUNCTION DOC]
+        # Verifies (GH 43668) convert_dtypes returns a subclassed frame.
         # GH 43668
         df = tm.SubclassedDataFrame({"A": [1, 2, 3], "B": [4, 5, 6], "C": [7, 8, 9]})
         result = df.convert_dtypes()
         assert isinstance(result, tm.SubclassedDataFrame)
 
     def test_convert_dtypes_preserves_subclass_with_constructor(self):
+        # [FUNCTION DOC]
+        # Verifies convert_dtypes preserves a locally defined subclass that only defines
+        # the constructor property.
         class SubclassedDataFrame(DataFrame):
+            # [CLASS DOC]
+            # Local frame subclass defining only the constructor property, used by the
+            # preceding test.
             @property
             def _constructor(self):
+                # [FUNCTION DOC]
+                # HELPER: property returning the local subclass as the constructor.
                 return SubclassedDataFrame
 
         df = SubclassedDataFrame({"a": [1, 2, 3]})
@@ -728,6 +879,9 @@ class TestDataFrameSubclassing:
         assert isinstance(result, SubclassedDataFrame)
 
     def test_astype_preserves_subclass(self):
+        # [FUNCTION DOC]
+        # Verifies (GH#40810) astype with a per-column dtype mapping returns a
+        # subclassed frame.
         # GH#40810
         df = tm.SubclassedDataFrame({"A": [1, 2, 3], "B": [4, 5, 6], "C": [7, 8, 9]})
 
@@ -735,6 +889,9 @@ class TestDataFrameSubclassing:
         assert isinstance(result, tm.SubclassedDataFrame)
 
     def test_equals_subclass(self):
+        # [FUNCTION DOC]
+        # Verifies (PR 34402) equality comparison works between a plain frame and a
+        # subclassed frame in both directions.
         # https://github.com/pandas-dev/pandas/pull/34402
         # allow subclass in both directions
         df1 = DataFrame({"a": [1, 2, 3]})
@@ -744,9 +901,22 @@ class TestDataFrameSubclassing:
 
 
 class MySubclassWithMetadata(DataFrame):
+    # [CLASS DOC]
+    # Frame subclass with a metadata attribute (my_metadata) used to check
+    # constructor-with-metadata behavior. Inherits from the frame; state: the attribute,
+    # set at initialization to the keyword value, or copied from the first argument if
+    # that is an instance of the same class. The constructor property returns this
+    # class.
     _metadata = ["my_metadata"]
 
     def __init__(self, *args, **kwargs) -> None:
+        # [FUNCTION DOC]
+        # Initializer: forwards arguments to the parent initializer, then sets the
+        # metadata attribute from the keyword (default none) or from the first argument
+        # when it is another instance.
+        # KNOWN ISSUE: the metadata keyword is removed only after the parent initializer
+        # has already received it, so passing it would reach the parent initializer; the
+        # removal has no effect on that call.
         super().__init__(*args, **kwargs)
 
         my_metadata = kwargs.pop("my_metadata", None)
@@ -756,10 +926,15 @@ class MySubclassWithMetadata(DataFrame):
 
     @property
     def _constructor(self):
+        # [FUNCTION DOC]
+        # HELPER: property returning this class so operations keep the subclass.
         return MySubclassWithMetadata
 
 
 def test_constructor_with_metadata():
+    # [FUNCTION DOC]
+    # Verifies (PR 54922, issue 55120) selecting a column subset of a metadata subclass
+    # frame returns the same subclass.
     # https://github.com/pandas-dev/pandas/pull/54922
     # https://github.com/pandas-dev/pandas/issues/55120
     df = MySubclassWithMetadata(
@@ -770,6 +945,9 @@ def test_constructor_with_metadata():
 
 
 def test_constructor_with_metadata_from_records():
+    # [FUNCTION DOC]
+    # Verifies (GH#57008) building the metadata subclass from records yields the
+    # subclass with metadata none.
     # GH#57008
     df = MySubclassWithMetadata.from_records([{"a": 1, "b": 2}])
     assert df.my_metadata is None
@@ -777,15 +955,27 @@ def test_constructor_with_metadata_from_records():
 
 
 class SimpleDataFrameSubClass(DataFrame):
+    # [CLASS DOC]
+    # Frame subclass that does not define a constructor property; used to check default
+    # behavior.
     """A subclass of DataFrame that does not define a constructor."""
 
 
 class SimpleSeriesSubClass(Series):
+    # [CLASS DOC]
+    # Series subclass that does not define a constructor property; used to check default
+    # behavior.
     """A subclass of Series that does not define a constructor."""
 
 
 class TestSubclassWithoutConstructor:
+    # [CLASS DOC]
+    # Groups tests of subclasses that do not override the constructor property.
+    # Stateless.
     def test_copy_df(self):
+        # [FUNCTION DOC]
+        # Verifies copying a constructor-less frame subclass returns a plain frame equal
+        # to the original.
         expected = DataFrame({"a": [1, 2, 3]})
         result = SimpleDataFrameSubClass(expected).copy()
 
@@ -795,12 +985,18 @@ class TestSubclassWithoutConstructor:
         tm.assert_frame_equal(result, expected)
 
     def test_copy_series(self):
+        # [FUNCTION DOC]
+        # Verifies copying a constructor-less series subclass returns a series equal to
+        # the original.
         expected = Series([1, 2, 3])
         result = SimpleSeriesSubClass(expected).copy()
 
         tm.assert_series_equal(result, expected)
 
     def test_series_to_frame(self):
+        # [FUNCTION DOC]
+        # Verifies converting a constructor-less series subclass to a frame gives a
+        # plain frame.
         orig = Series([1, 2, 3])
         expected = orig.to_frame()
         result = SimpleSeriesSubClass(orig).to_frame()
@@ -811,6 +1007,9 @@ class TestSubclassWithoutConstructor:
         tm.assert_frame_equal(result, expected)
 
     def test_groupby(self):
+        # [FUNCTION DOC]
+        # Verifies iterating the groups of a constructor-less frame subclass yields
+        # plain frames.
         df = SimpleDataFrameSubClass(DataFrame({"a": [1, 2, 3]}))
 
         for _, v in df.groupby("a"):

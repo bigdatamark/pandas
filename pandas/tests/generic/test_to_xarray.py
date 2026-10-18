@@ -1,3 +1,10 @@
+# [MODULE DOC]
+# Tests for converting DataFrame and Series to xarray objects. The whole module is
+# skipped
+# if xarray is not installed (checked at import); for xarray older than 2025.1.0 it also
+# ignores warnings about non-nanosecond precision conversion through a module-wide
+# marker.
+# Uses the index_flat fixture for index type coverage.
 import numpy as np
 import pytest
 
@@ -20,8 +27,13 @@ if xarray is not None and Version(xarray.__version__) < Version("2025.1.0"):
 
 
 class TestDataFrameToXArray:
+    # [CLASS DOC]
+    # Groups DataFrame to xarray conversion tests.
     @pytest.fixture
     def df(self):
+        # [FUNCTION DOC]
+        # Fixture providing a four-row frame with string, integer, unsigned byte, float,
+        # bool, categorical, naive datetime and tz-aware datetime columns.
         return DataFrame(
             {
                 "a": list("abcd"),
@@ -36,6 +48,13 @@ class TestDataFrameToXArray:
         )
 
     def test_to_xarray_index_types(self, index_flat, df, request):
+        # [FUNCTION DOC]
+        # Verifies converting a frame with each flat index type yields a dataset with
+        # the index as the single coordinate and eight data variables,
+        # and that converting back gives the original frame (column name lost). Skipped
+        # for empty indexes and for xarray older than 2025.9.0.
+        # The request fixture is unused. Uses the first four index entries, named foo,
+        # with column name bar.
         index = index_flat
         # MultiIndex is tested in test_to_xarray_with_multiindex
         if len(index) == 0:
@@ -61,12 +80,21 @@ class TestDataFrameToXArray:
         tm.assert_frame_equal(result.to_dataframe(), expected)
 
     def test_to_xarray_empty(self, df):
+        # [FUNCTION DOC]
+        # Verifies converting an empty (zero-row) slice of the frame gives a dataset
+        # whose dimension has size zero.
         df.index.name = "foo"
         result = df[0:0].to_xarray()
         assert result.sizes["foo"] == 0
         assert isinstance(result, xarray.Dataset)
 
     def test_to_xarray_with_multiindex(self, df, using_infer_string):
+        # [FUNCTION DOC]
+        # Verifies converting a frame with a two-level multi-index yields two
+        # coordinates and eight variables, and
+        # round-trips; the categorical column returns as object (or string under
+        # inferred strings) and, for xarray older than 2025.1.0, datetime columns are
+        # cast to nanosecond precision.
         # MultiIndex
         df.index = MultiIndex.from_product([["a"], range(4)], names=["one", "two"])
         result = df.to_xarray()
@@ -90,7 +118,14 @@ class TestDataFrameToXArray:
 
 
 class TestSeriesToXArray:
+    # [CLASS DOC]
+    # Groups Series to xarray conversion tests.
     def test_to_xarray_index_types(self, index_flat, request):
+        # [FUNCTION DOC]
+        # Verifies converting an integer series for each flat index type gives a data
+        # array of the same length with the
+        # index as sole coordinate and round-trips to the same series. The request
+        # fixture is unused.
         # MultiIndex is tested in test_to_xarray_with_multiindex
         index = index_flat
 
@@ -107,6 +142,9 @@ class TestSeriesToXArray:
         tm.assert_series_equal(result.to_series(), ser)
 
     def test_to_xarray_empty(self):
+        # [FUNCTION DOC]
+        # Verifies converting an empty object series with a named index gives an empty
+        # data array keeping one coordinate.
         ser = Series([], dtype=object)
         ser.index.name = "foo"
         result = ser.to_xarray()
@@ -116,6 +154,9 @@ class TestSeriesToXArray:
         assert isinstance(result, xarray.DataArray)
 
     def test_to_xarray_with_multiindex(self):
+        # [FUNCTION DOC]
+        # Verifies converting a series with a two-level multi-index gives a data array
+        # with the two level coordinates; converting back reproduces the series.
         mi = MultiIndex.from_product([["a", "b"], range(3)], names=["one", "two"])
         ser = Series(range(6), dtype="int64", index=mi)
         result = ser.to_xarray()

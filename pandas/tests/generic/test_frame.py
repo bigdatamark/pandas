@@ -1,3 +1,10 @@
+# [MODULE DOC]
+# DataFrame-specific tests living in the generic test package: axis naming,
+# truth-value ambiguity, metadata propagation through groupby, resample, merge and
+# concat,
+# attribute versus column assignment, deep copy of empty frames, and argument
+# validation.
+# Contains two test classes.
 from copy import deepcopy
 from operator import methodcaller
 from typing import Literal
@@ -16,8 +23,17 @@ import pandas._testing as tm
 
 
 class TestDataFrame:
+    # [CLASS DOC]
+    # Groups DataFrame tests for axis naming, metadata propagation, attribute setting
+    # and copying. Stateless.
     @pytest.mark.parametrize("func", ["_set_axis_name", "rename_axis"])
     def test_set_axis_name(self, func):
+        # [FUNCTION DOC]
+        # Verifies that setting an axis name (through the private setter or the public
+        # rename method) returns a
+        # frame with the index name set, then with the column name set when axis is one,
+        # leaving the original unchanged.
+        # Parametrized over the two method names.
         df = DataFrame([[1, 2], [3, 4]])
 
         result = methodcaller(func, "foo")(df)
@@ -30,6 +46,11 @@ class TestDataFrame:
 
     @pytest.mark.parametrize("func", ["_set_axis_name", "rename_axis"])
     def test_set_axis_name_mi(self, func):
+        # [FUNCTION DOC]
+        # Verifies that setting axis names with a list of level names on a frame with
+        # row and column multi-indexes only changes the targeted axis (rows by default,
+        # columns for axis one);
+        # the other axis keeps unnamed levels. Parametrized over the two method names.
         df = DataFrame(
             np.empty((3, 3)),
             index=MultiIndex.from_tuples([("A", x) for x in list("aBc")]),
@@ -47,12 +68,18 @@ class TestDataFrame:
         assert result.index.names == [None, None]
 
     def test_nonzero_single_element(self):
+        # [FUNCTION DOC]
+        # Verifies that converting a one-element boolean frame to a bool raises a value
+        # error about ambiguous truth value.
         df = DataFrame([[False, False]])
         msg_err = "The truth value of a DataFrame is ambiguous"
         with pytest.raises(ValueError, match=msg_err):
             bool(df)
 
     def test_metadata_propagation_indiv_groupby(self):
+        # [FUNCTION DOC]
+        # Verifies that metadata of a frame survives a groupby sum, using the
+        # metadata-equivalence assertion helper.
         # groupby
         df = DataFrame(
             {
@@ -66,6 +93,10 @@ class TestDataFrame:
         tm.assert_metadata_equivalent(df, result)
 
     def test_metadata_propagation_indiv_resample(self):
+        # [FUNCTION DOC]
+        # Verifies that metadata of a frame is preserved on the resampler object of a
+        # one-thousand-row
+        # second-frequency frame resampled to one minute.
         # resample
         df = DataFrame(
             np.random.default_rng(2).standard_normal((1000, 2)),
@@ -75,6 +106,14 @@ class TestDataFrame:
         tm.assert_metadata_equivalent(df, result)
 
     def test_metadata_propagation_indiv(self, monkeypatch):
+        # [FUNCTION DOC]
+        # Verifies customized metadata propagation (GH 6923, GH#6927) by temporarily
+        # replacing the
+        # frame metadata list with a single filename attribute and the finalize hook
+        # with a custom one. Merge must
+        # join the two inputs' filenames with a pipe; concat must join non-empty
+        # filenames with a plus.
+        # Uses monkeypatch so class attributes are restored afterwards.
         # merging with override
         # GH 6923
 
@@ -84,6 +123,15 @@ class TestDataFrame:
             method: Literal["merge", "concat"] | None = None,
             **kwargs,
         ):
+            # [FUNCTION DOC]
+            # HELPER: replacement finalize hook installed by the enclosing test.
+            # Parameters: self is the new frame, other is the
+            # source (or an object holding the input objects for merge and concat),
+            # method is merge, concat or none, extra keywords ignored.
+            # For each metadata name: on merge, sets the pipe-joined values of the left
+            # and right inputs (default empty string); on concat,
+            # sets the plus-joined truthy values of the inputs; otherwise copies from
+            # other (default empty string). Returns self.
             for name in self._metadata:
                 if method == "merge":
                     left, right = other.input_objs
@@ -131,6 +179,11 @@ class TestDataFrame:
             assert result.filename == "foo+foo"
 
     def test_set_attribute(self):
+        # [FUNCTION DOC]
+        # Verifies attribute assignment when an attribute and a column share a name
+        # (Issue 8994): the attribute and the
+        # column coexist, the attribute keeps the last assigned scalar and the column
+        # keeps its own data.
         # Test for consistent setattr behavior when an attribute and a column
         # have the same name (Issue #8994)
         df = DataFrame({"x": [1, 2, 3]})
@@ -143,6 +196,9 @@ class TestDataFrame:
         tm.assert_series_equal(df["y"], Series([2, 4, 6], name="y"))
 
     def test_deepcopy_empty(self):
+        # [FUNCTION DOC]
+        # Verifies deep copying a frame with no rows but one column (GH15370) gives an
+        # equal frame.
         # This test covers empty frame copying with non-empty column sets
         # as reported in issue GH15370
         empty_frame = DataFrame(data=[], index=[], columns=["A"])
@@ -153,8 +209,17 @@ class TestDataFrame:
 
 # formerly in Generic but only test DataFrame
 class TestDataFrame2:
+    # [CLASS DOC]
+    # Groups DataFrame tests formerly in the generic test module; they only exercise
+    # frames. Stateless.
     @pytest.mark.parametrize("value", [1, "True", [1, 2, 3], 5.0])
     def test_validate_bool_args(self, value):
+        # [FUNCTION DOC]
+        # Verifies that a non-bool inplace value raises a value error ("expected type
+        # bool") for rename_axis,
+        # drop, fillna, replace, interpolate, the private where and mask methods.
+        # Parametrized over invalid values (int,
+        # string, list, float); each call is made on a copy.
         df = DataFrame({"a": [1, 2, 3], "b": [4, 5, 6]})
 
         msg = 'For argument "inplace" expected type bool, received type'
@@ -180,6 +245,11 @@ class TestDataFrame2:
             df.copy().mask(cond=df.a > 2, inplace=value)
 
     def test_unexpected_keyword(self):
+        # [FUNCTION DOC]
+        # Verifies that an unexpected keyword (misspelled in_place, or inplace on
+        # reindex) raises a type error
+        # mentioning unexpected keyword, for frame drop, frame reindex, categorical
+        # fillna and series fillna (GH8597).
         # GH8597
         df = DataFrame(
             np.random.default_rng(2).standard_normal((5, 2)), columns=["jim", "joe"]
