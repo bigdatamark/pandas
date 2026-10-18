@@ -1,3 +1,5 @@
+# [MODULE DOC]
+# Tests for groupby behavior with missing data: fill methods, minimum count and the indices mapping.
 import numpy as np
 import pytest
 
@@ -11,6 +13,8 @@ import pandas._testing as tm
 
 @pytest.mark.parametrize("func", ["ffill", "bfill"])
 def test_groupby_column_index_name_lost_fill_funcs(func):
+    # [FUNCTION DOC]
+    # Issue 29764: forward and backward fill on a selected-column groupby keep the column index name.
     # GH: 29764 groupby loses index sometimes
     df = DataFrame(
         [[1, 1.0, -1.0], [1, np.nan, np.nan], [1, 2.0, -2.0]],
@@ -24,6 +28,8 @@ def test_groupby_column_index_name_lost_fill_funcs(func):
 
 @pytest.mark.parametrize("func", ["ffill", "bfill"])
 def test_groupby_fill_duplicate_column_names(func):
+    # [FUNCTION DOC]
+    # Issue 25610: forward and backward fill work when the frame has duplicate column names.
     # GH: 25610 ValueError with duplicate column names
     df1 = DataFrame({"field1": [1, 3, 4], "field2": [1, 3, 4]})
     df2 = DataFrame({"field1": [1, np.nan, 4]})
@@ -38,6 +44,8 @@ def test_groupby_fill_duplicate_column_names(func):
 @pytest.mark.parametrize("method", ["ffill", "bfill"])
 @pytest.mark.parametrize("has_nan_group", [True, False])
 def test_ffill_handles_nan_groups(dropna, method, has_nan_group):
+    # [FUNCTION DOC]
+    # Issue 34725: forward and backward fill within groups with and without a NaN group key and dropna settings; rows in the NaN group are filled within the group when dropna is False and left unfilled (missing) when dropna is True. Expected rows are chosen from a table keyed by method, dropna and nan-group flag.
     # GH 34725
 
     df_without_nan_rows = DataFrame([(1, 0.1), (2, 0.2)])
@@ -73,6 +81,8 @@ def test_ffill_handles_nan_groups(dropna, method, has_nan_group):
 @pytest.mark.parametrize("min_count, value", [(2, np.nan), (-1, 1.0)])
 @pytest.mark.parametrize("func", ["first", "last", "max", "min"])
 def test_min_count(func, min_count, value):
+    # [FUNCTION DOC]
+    # Issue 37821: first, last, max and min with a minimum count return NaN when the group has too few non-missing values, otherwise the value (minimum count of -1 meaning no limit).
     # GH#37821
     df = DataFrame({"a": [1] * 3, "b": [1, np.nan, np.nan], "c": [np.nan] * 3})
     result = getattr(df.groupby("a"), func)(min_count=min_count)
@@ -81,6 +91,8 @@ def test_min_count(func, min_count, value):
 
 
 def test_indices_with_missing():
+    # [FUNCTION DOC]
+    # Issue 9304: the indices mapping omits groups with missing keys and maps tuple keys to row positions.
     # GH 9304
     df = DataFrame({"a": [1, 1, np.nan], "b": [2, 3, 4], "c": [5, 6, 7]})
     g = df.groupby(["a", "b"])

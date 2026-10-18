@@ -1,3 +1,6 @@
+# [MODULE DOC]
+# Tests for groupby reductions: boolean aggregations (any, all) including masked and object data, index of extremes, first/last/min/max/mean/sum/product/variance with skipna and missing data, count, size, nunique, quantile, skew, kurtosis, correlation-style reductions and related edge cases across dtypes.
+# Uses shared fixtures for the boolean reductions, skipna flag, dtype lists and frame-or-series parametrization, and the helper that builds method arguments.
 import builtins
 import datetime as dt
 from string import ascii_lowercase
@@ -26,6 +29,8 @@ from pandas.util import _test_decorators as td
 
 @pytest.mark.parametrize("dtype", ["int64", "int32", "float64", "float32"])
 def test_basic_aggregations(dtype):
+    # [FUNCTION DOC]
+    # Basic aggregations on a shuffled series for four numeric dtypes: iteration group sizes, aggregate with numpy mean/sum, apply and transform with a function, grouping by values, a list of functions, a nested renamer raising a specification error, and an aggregate that does not reduce raising an exception about producing an aggregated value.
     data = Series(np.arange(9) // 3, index=np.arange(9), dtype=dtype)
 
     index = np.arange(9)
@@ -92,6 +97,8 @@ def test_basic_aggregations(dtype):
     ],
 )
 def test_groupby_bool_aggs(skipna, all_boolean_reductions, vals):
+    # [FUNCTION DOC]
+    # Boolean reductions any and all (with skipna) over many value lists (strings, ints, floats, bools, NaN): each group's result equals the Python builtin on the values; an all-missing group with skipna and any yields false.
     df = DataFrame({"key": ["a"] * 3 + ["b"] * 3, "val": vals * 2})
 
     # Figure out expectation using Python builtin
@@ -109,6 +116,8 @@ def test_groupby_bool_aggs(skipna, all_boolean_reductions, vals):
 
 
 def test_any():
+    # [FUNCTION DOC]
+    # Any with a missing numeric column and a string column: groups with only missing values give false for the numeric column, true for non-empty strings.
     df = DataFrame(
         [[1, 2, "foo"], [1, np.nan, "bar"], [3, np.nan, "baz"]],
         columns=["A", "B", "C"],
@@ -122,6 +131,8 @@ def test_any():
 
 
 def test_bool_aggs_dup_column_labels(all_boolean_reductions):
+    # [FUNCTION DOC]
+    # Issue 21668: boolean reductions on a frame with duplicated column labels keep both columns.
     # GH#21668
     df = DataFrame([[True, True]], columns=["a", "a"])
     grp_by = df.groupby([0])
@@ -143,6 +154,8 @@ def test_bool_aggs_dup_column_labels(all_boolean_reductions):
     ],
 )
 def test_masked_kleene_logic(all_boolean_reductions, skipna, data):
+    # [FUNCTION DOC]
+    # Issue 37506: Kleene logic for boolean extension arrays with missing values: the grouped result equals aggregating the whole series (parametrized over skipna and data).
     # GH#37506
     ser = Series(data, dtype="boolean")
 
@@ -185,6 +198,8 @@ def test_masked_kleene_logic(all_boolean_reductions, skipna, data):
     ],
 )
 def test_masked_mixed_types(dtype1, dtype2, exp_col1, exp_col2):
+    # [FUNCTION DOC]
+    # Issue 37506: all with skipna False on pairs of numeric/masked dtypes yields NA only for masked columns containing NA and a plain boolean for float columns with NaN (NaN is truthy).
     # GH#37506
     data1 = [1.0, np.nan] if dtype1.startswith("f") else [1.0, pd.NA]
     data2 = [1.0, np.nan] if dtype2.startswith("f") else [1.0, pd.NA]
@@ -201,6 +216,8 @@ def test_masked_mixed_types(dtype1, dtype2, exp_col1, exp_col2):
 def test_masked_bool_aggs_skipna(
     all_boolean_reductions, dtype, skipna, frame_or_series
 ):
+    # [FUNCTION DOC]
+    # Issue 40585: boolean reductions on masked numeric/boolean data with NA: result is true, except all with skipna False which is NA; for frame and series.
     # GH#40585
     obj = frame_or_series([pd.NA, 1], dtype=dtype)
     expected_res = True
@@ -222,6 +239,8 @@ def test_masked_bool_aggs_skipna(
     ],
 )
 def test_object_type_missing_vals(bool_agg_func, data, expected_res, frame_or_series):
+    # [FUNCTION DOC]
+    # Issue 37501: boolean reductions on object data with missing values treat them as skipped (parametrized any/all, data, expected result).
     # GH#37501
     obj = frame_or_series(data, dtype=object)
     result = obj.groupby([1] * len(data)).agg(bool_agg_func)
@@ -230,6 +249,8 @@ def test_object_type_missing_vals(bool_agg_func, data, expected_res, frame_or_se
 
 
 def test_object_NA_raises_with_skipna_false(all_boolean_reductions):
+    # [FUNCTION DOC]
+    # Issue 37501: a boolean reduction with skipna False on an object series containing NA raises a type error about the ambiguous truth of NA.
     # GH#37501
     ser = Series([pd.NA], dtype=object)
     with pytest.raises(TypeError, match="boolean value of NA is ambiguous"):
@@ -237,6 +258,8 @@ def test_object_NA_raises_with_skipna_false(all_boolean_reductions):
 
 
 def test_empty(frame_or_series, all_boolean_reductions):
+    # [FUNCTION DOC]
+    # Issue 45231: boolean reductions on an empty frame or series of object dtype yield an empty result of boolean dtype.
     # GH 45231
     kwargs = {"columns": ["a"]} if frame_or_series is DataFrame else {"name": "a"}
     obj = frame_or_series(**kwargs, dtype=object)
@@ -247,6 +270,8 @@ def test_empty(frame_or_series, all_boolean_reductions):
 
 @pytest.mark.parametrize("how", ["idxmin", "idxmax"])
 def test_idxmin_idxmax_extremes(how, any_real_numpy_dtype):
+    # [FUNCTION DOC]
+    # Issue 57040: index of minimum/maximum for extreme dtype values (smallest and largest) returns the correct positions; returns early for the generic integer/float types.
     # GH#57040
     if any_real_numpy_dtype is int or any_real_numpy_dtype is float:
         # No need to test
@@ -268,6 +293,8 @@ def test_idxmin_idxmax_extremes(how, any_real_numpy_dtype):
 
 @pytest.mark.parametrize("how", ["idxmin", "idxmax"])
 def test_idxmin_idxmax_extremes_skipna(skipna, how, float_numpy_dtype):
+    # [FUNCTION DOC]
+    # Issue 57040: index of minimum/maximum with skipna False raises a value error mentioning the option when the group has NaN, and with skipna True gives the positions of the extremes; parametrized over float dtypes.
     # GH#57040
     min_value = np.finfo(float_numpy_dtype).min
     max_value = np.finfo(float_numpy_dtype).max
@@ -312,6 +339,8 @@ def test_idxmin_idxmax_extremes_skipna(skipna, how, float_numpy_dtype):
 )
 @pytest.mark.parametrize("numeric_only", [True, False])
 def test_idxmin_idxmax_returns_int_types(func, values, numeric_only):
+    # [FUNCTION DOC]
+    # Issue 25444: index of minimum/maximum returns integer positions for int, float, date, tz-aware date, timedelta, period and masked columns, with and without numeric_only (which drops the date column).
     # GH 25444
     df = DataFrame(
         {
@@ -355,6 +384,8 @@ def test_idxmin_idxmax_returns_int_types(func, values, numeric_only):
 )
 @pytest.mark.parametrize("method", ["count", "min", "max", "first", "last"])
 def test_groupby_non_arithmetic_agg_int_like_precision(method, data):
+    # [FUNCTION DOC]
+    # Issues 6620 and 9311: count, minimum, maximum, first and last retain full precision for timestamps and large integers.
     # GH#6620, GH#9311
     df = DataFrame({"a": [1, 1], "b": data})
 
@@ -375,6 +406,8 @@ def test_groupby_non_arithmetic_agg_int_like_precision(method, data):
 
 @pytest.mark.parametrize("how", ["first", "last"])
 def test_first_last_skipna(any_real_nullable_dtype, sort, skipna, how):
+    # [FUNCTION DOC]
+    # Issue 57019: first and last honor skipna for nullable real dtypes with and without sorting; expected rows are chosen by position.
     # GH#57019
     na_value = na_value_for_dtype(pandas_dtype(any_real_nullable_dtype))
     df = DataFrame(
@@ -404,6 +437,8 @@ def test_first_last_skipna(any_real_nullable_dtype, sort, skipna, how):
 
 
 def test_groupby_mean_no_overflow():
+    # [FUNCTION DOC]
+    # Issue 22487: mean of very large integers does not overflow.
     # Regression test for (#22487)
     df = DataFrame(
         {
@@ -415,6 +450,8 @@ def test_groupby_mean_no_overflow():
 
 
 def test_mean_on_timedelta():
+    # [FUNCTION DOC]
+    # Issue 17382: mean of a timedelta column grouped by category.
     # GH 17382
     df = DataFrame({"time": pd.to_timedelta(range(10)), "cat": ["A", "B"] * 5})
     result = df.groupby("cat")["time"].mean()
@@ -452,6 +489,8 @@ def test_mean_on_timedelta():
     ],
 )
 def test_mean_skipna(values, dtype, result_dtype, skipna):
+    # [FUNCTION DOC]
+    # Issue 15675: mean honors skipna for float, masked, timedelta and datetime data; expected computed via per-group apply and cast to the result dtype.
     # GH#15675
     df = DataFrame(
         {
@@ -480,6 +519,8 @@ def test_mean_skipna(values, dtype, result_dtype, skipna):
     ],
 )
 def test_sum_skipna(values, dtype, skipna):
+    # [FUNCTION DOC]
+    # Issue 15675: sum honors skipna for float, masked and timedelta data, compared with per-group apply cast to the original dtype.
     # GH#15675
     df = DataFrame(
         {
@@ -497,6 +538,8 @@ def test_sum_skipna(values, dtype, skipna):
 
 
 def test_sum_skipna_object(skipna):
+    # [FUNCTION DOC]
+    # Issue 15675: sum of object strings concatenates; with skipna False a group containing a missing value gives NaN, with skipna True the missing value is skipped.
     # GH#15675
     df = DataFrame(
         {
@@ -639,6 +682,8 @@ def test_sum_skipna_object(skipna):
     ],
 )
 def test_multifunc_skipna(func, values, dtype, result_dtype, skipna):
+    # [FUNCTION DOC]
+    # Issue 15675: product, variance, standard deviation, standard error, minimum, maximum and median honor skipna across float, masked, timedelta and datetime data (including all-missing); expected via per-group apply cast to the result dtype.
     # GH#15675
     df = DataFrame(
         {
@@ -658,6 +703,8 @@ def test_multifunc_skipna(func, values, dtype, result_dtype, skipna):
 
 
 def test_cython_median():
+    # [FUNCTION DOC]
+    # Median via the compiled routine with NaN data and NaN labels equals aggregating with the numpy NaN-aware median; also checked on a 5-column frame against the numpy median.
     arr = np.random.default_rng(2).standard_normal(1000)
     arr[::2] = np.nan
     df = DataFrame(arr)
@@ -676,6 +723,8 @@ def test_cython_median():
 
 
 def test_median_empty_bins(observed):
+    # [FUNCTION DOC]
+    # Median over empty bins of a cut grouping equals aggregating with a median function, parametrized on observed.
     df = DataFrame(np.random.default_rng(2).integers(0, 44, 500))
 
     grps = range(0, 55, 5)
@@ -687,6 +736,8 @@ def test_median_empty_bins(observed):
 
 
 def test_max_min_non_numeric():
+    # [FUNCTION DOC]
+    # Issue 2700: maximum and minimum keep a string column with and without numeric_only False.
     # #2700
     aa = DataFrame({"nn": [11, 11, 22, 22], "ii": [1, 2, 3, 4], "ss": 4 * ["mama"]})
 
@@ -704,6 +755,9 @@ def test_max_min_non_numeric():
 
 
 def test_max_min_object_multiple_columns(using_infer_string):
+    # [FUNCTION DOC]
+    # Issue 41111: maximum and minimum on a selected string column work even though an object column with mixed types would fail; consistent with column-wise reduction on the object blocks.
+    # KNOWN ISSUE: the assertion on the number of blocks is parsed as a conditional expression, so when string inference is off it asserts the constant two (always true) instead of comparing the block count.
     # GH#41111 case where the aggregation is valid for some columns but not
     # others; we split object blocks column-wise, consistent with
     # DataFrame._reduce
@@ -734,6 +788,8 @@ def test_max_min_object_multiple_columns(using_infer_string):
 
 
 def test_min_date_with_nans():
+    # [FUNCTION DOC]
+    # Issue 26321: minimum of date objects per group with NaN-containing neighbor columns works for as_index False and True.
     # GH26321
     dates = pd.to_datetime(
         Series(["2019-05-09", "2019-05-09", "2019-05-09"]), format="%Y-%m-%d"
@@ -752,6 +808,8 @@ def test_min_date_with_nans():
 
 
 def test_max_inat():
+    # [FUNCTION DOC]
+    # Issue 40767: the integer NaT sentinel is not interpreted as missing for maximum/minimum with a minimum count: sufficient count returns the integer, insufficient count returns NaN.
     # GH#40767 dont interpret iNaT as NaN
     ser = Series([1, iNaT])
     key = np.array([1, 1], dtype=np.int64)
@@ -772,6 +830,8 @@ def test_max_inat():
 
 
 def test_max_inat_not_all_na():
+    # [FUNCTION DOC]
+    # Issue 40767: minimum with a minimum count when the group contains the integer NaT sentinel plus one: no rounding of the sentinel plus one (the float conversion is lossy, noted in the source).
     # GH#40767 dont interpret iNaT as NaN
 
     # make sure we dont round iNaT+1 to iNaT
@@ -787,6 +847,8 @@ def test_max_inat_not_all_na():
 
 @pytest.mark.parametrize("func", ["min", "max"])
 def test_groupby_aggregate_period_column(func):
+    # [FUNCTION DOC]
+    # Issue 31471: minimum and maximum of a period column per group return the periods.
     # GH 31471
     groups = [1, 2]
     periods = pd.period_range("2020", periods=2, freq="Y")
@@ -801,6 +863,8 @@ def test_groupby_aggregate_period_column(func):
 
 @pytest.mark.parametrize("func", ["min", "max"])
 def test_groupby_aggregate_period_frame(func):
+    # [FUNCTION DOC]
+    # Issue 31471: minimum and maximum on a frame with a period column return the periods per group.
     # GH 31471
     groups = [1, 2]
     periods = pd.period_range("2020", periods=2, freq="Y")
@@ -814,6 +878,8 @@ def test_groupby_aggregate_period_frame(func):
 
 
 def test_aggregate_numeric_object_dtype():
+    # [FUNCTION DOC]
+    # Issue 39329: minimum on object frames where one object column is all NaN (so is split by inference) or numeric works and keeps object dtype.
     # https://github.com/pandas-dev/pandas/issues/39329
     # simplified case: multiple object columns where one is all-NaN
     # -> gets split as the all-NaN is inferred as float
@@ -845,6 +911,8 @@ def test_aggregate_numeric_object_dtype():
 
 @pytest.mark.parametrize("func", ["min", "max"])
 def test_aggregate_categorical_lost_index(func: str):
+    # [FUNCTION DOC]
+    # Issue 28641: aggregating an ordered categorical column with minimum or maximum via a dict keeps the group index and the ordered categorical dtype.
     # GH: 28641 groupby drops index, when grouping over categorical column with min/max
     ds = Series(["b"], dtype="category").cat.as_ordered()
     df = DataFrame({"A": [1997], "B": ds})
@@ -859,6 +927,8 @@ def test_aggregate_categorical_lost_index(func: str):
 
 @pytest.mark.parametrize("dtype", ["Int64", "Int32", "Float64", "Float32", "boolean"])
 def test_groupby_min_max_nullable(dtype):
+    # [FUNCTION DOC]
+    # Minimum and maximum on nullable integer, float and boolean dtypes: correct values, precision of a large 64-bit integer preserved (issue 41743), NA results when the minimum count exceeds the group size, and NA values skipped.
     if dtype == "Int64":
         # GH#41743 avoid precision loss
         ts = 1618556707013635762
@@ -906,6 +976,8 @@ def test_groupby_min_max_nullable(dtype):
 
 
 def test_min_max_nullable_uint64_empty_group():
+    # [FUNCTION DOC]
+    # A minimum and maximum on a nullable unsigned 64-bit column grouped by an unobserved categorical does not raise a not-implemented error from the low-level routine and gives NA for the empty group.
     # don't raise NotImplementedError from libgroupby
     cat = pd.Categorical([0] * 10, categories=[0, 1])
     df = DataFrame({"A": cat, "B": pd.array(np.arange(10, dtype=np.uint64))})
@@ -924,6 +996,8 @@ def test_min_max_nullable_uint64_empty_group():
 
 @pytest.mark.parametrize("func", ["first", "last", "min", "max"])
 def test_groupby_min_max_categorical(func):
+    # [FUNCTION DOC]
+    # Issue 52151: first, last, minimum and maximum of ordered categorical values with observed False give missing values for the unobserved category and keep the categorical dtype.
     # GH: 52151
     df = DataFrame(
         {
@@ -947,6 +1021,8 @@ def test_groupby_min_max_categorical(func):
 
 @pytest.mark.parametrize("func", ["min", "max"])
 def test_min_empty_string_dtype(func, string_dtype_no_object):
+    # [FUNCTION DOC]
+    # Issue 55619: minimum and maximum on an empty frame of string dtype keep the string dtype for the columns and the index.
     # GH#55619
     dtype = string_dtype_no_object
     df = DataFrame({"a": ["a"], "b": "a", "c": "a"}, dtype=dtype).iloc[:0]
@@ -962,6 +1038,9 @@ def test_min_empty_string_dtype(func, string_dtype_no_object):
 def test_string_dtype_all_na(
     string_dtype_no_object, reduction_func, skipna, min_count, test_series
 ):
+    # [FUNCTION DOC]
+    # Issue 60985: for every reduction function, a single group with only an NA string value: the result value and dtype depend on the function, skipna and min_count (boolean for any/all, integer counts for count, nunique and size, NA or empty string for others), or a type error for unsupported reductions and a value error for index of min/max. Returns early for the deprecated correlation-with-other reduction.
+    # KNOWN ISSUE: comments in the source note the expected results are inconsistent (boolean of NA raising with skipna False, and integer dtype choice for pyarrow storage).
     # https://github.com/pandas-dev/pandas/issues/60985
     if reduction_func == "corrwith":
         # corrwith is deprecated.
@@ -1051,6 +1130,8 @@ def test_string_dtype_all_na(
 
 
 def test_max_nan_bug():
+    # [FUNCTION DOC]
+    # Maximum of a string column selected as a frame equals the maximum of the selected series, and there are no missing results, even when an unrelated object column holds NaN.
     df = DataFrame(
         {
             "Unnamed: 0": ["-04-23", "-05-06", "-05-07"],
@@ -1074,6 +1155,8 @@ def test_max_nan_bug():
 @pytest.mark.parametrize("with_nan", [True, False])
 @pytest.mark.parametrize("keys", [["joe"], ["joe", "jim"]])
 def test_series_groupby_nunique(sort, dropna, as_index, with_nan, keys):
+    # [FUNCTION DOC]
+    # Number of unique values per group on a series equals applying the unique-count function, with and without missing values, various keys, sort, dropna and as_index; the input frame is not mutated. Marked slow.
     n = 100
     m = 10
     days = date_range("2015-08-23", periods=10)
@@ -1108,6 +1191,8 @@ def test_series_groupby_nunique(sort, dropna, as_index, with_nan, keys):
 
 
 def test_nunique():
+    # [FUNCTION DOC]
+    # Unique counts per column on a frame with as_index False and True, with missing values replaced by None and dropna False or True.
     df = DataFrame({"A": list("abbacc"), "B": list("abxacc"), "C": list("abbacx")})
 
     expected = DataFrame({"A": list("abc"), "B": [1, 2, 1], "C": [1, 1, 2]})
@@ -1133,6 +1218,8 @@ def test_nunique():
 
 
 def test_nunique_with_object():
+    # [FUNCTION DOC]
+    # Issue 11077: unique count of an object column grouped by two numeric keys.
     # GH 11077
     data = DataFrame(
         [
@@ -1152,6 +1239,8 @@ def test_nunique_with_object():
 
 
 def test_nunique_with_empty_series():
+    # [FUNCTION DOC]
+    # Issue 12553: unique count on an empty object series gives an empty 64-bit integer series with the name kept.
     # GH 12553
     data = Series(name="name", dtype=object)
     result = data.groupby(level=0).nunique()
@@ -1160,6 +1249,8 @@ def test_nunique_with_empty_series():
 
 
 def test_nunique_with_timegrouper():
+    # [FUNCTION DOC]
+    # Issue 13453: unique count with a time Grouper equals applying the unique count function.
     # GH 13453
     test = DataFrame(
         {
@@ -1218,6 +1309,8 @@ def test_nunique_with_timegrouper():
     ],
 )
 def test_nunique_with_NaT(key, data, dropna, expected):
+    # [FUNCTION DOC]
+    # Issue 27951: unique count with NaT in timestamps or dates, with dropna True and False, gives the expected counts per key (parametrized key, data, dropna, expected).
     # GH 27951
     df = DataFrame({"key": key, "data": data})
     result = df.groupby(["key"])["data"].nunique(dropna=dropna)
@@ -1225,6 +1318,8 @@ def test_nunique_with_NaT(key, data, dropna, expected):
 
 
 def test_nunique_preserves_column_level_names():
+    # [FUNCTION DOC]
+    # Issue 23222: unique counts keep the name of the columns index.
     # GH 23222
     test = DataFrame([1, 2, 2], columns=pd.Index(["A"], name="level_0"))
     result = test.groupby([0, 0, 0]).nunique()
@@ -1233,6 +1328,8 @@ def test_nunique_preserves_column_level_names():
 
 
 def test_nunique_transform_with_datetime():
+    # [FUNCTION DOC]
+    # Issue 35109: transform with the unique-count name on datetimes returns integers.
     # GH 35109 - transform with nunique on datetimes results in integers
     df = DataFrame(date_range("2008-12-31", "2009-01-02"), columns=["date"])
     result = df.groupby([0, 0, 1])["date"].transform("nunique")
@@ -1241,6 +1338,8 @@ def test_nunique_transform_with_datetime():
 
 
 def test_empty_categorical(observed):
+    # [FUNCTION DOC]
+    # Issue 21334: unique count on an empty categorical series grouped by itself gives empty result when observed is true, or a zero count for the unobserved category when false.
     # GH#21334
     cat = Series([1]).astype("category")
     ser = cat[:0]
@@ -1254,6 +1353,8 @@ def test_empty_categorical(observed):
 
 
 def test_intercept_builtin_sum():
+    # [FUNCTION DOC]
+    # Issue 53425: aggregate or apply with the Python builtin sum is intercepted and gives the same result as sum with NaN skipped logic (group of 1 and 2 values and a NaN group).
     s = Series([1.0, 2.0, np.nan, 3.0])
     grouped = s.groupby([0, 1, 2, 2])
 
@@ -1268,6 +1369,8 @@ def test_intercept_builtin_sum():
 
 @pytest.mark.parametrize("min_count", [0, 10])
 def test_groupby_sum_mincount_boolean(min_count):
+    # [FUNCTION DOC]
+    # Sum with a minimum count on a nullable boolean column: integer sums when the count is zero, NA when the minimum count exceeds the size.
     b = True
     a = False
     na = np.nan
@@ -1290,6 +1393,8 @@ def test_groupby_sum_mincount_boolean(min_count):
 
 
 def test_groupby_sum_below_mincount_nullable_integer():
+    # [FUNCTION DOC]
+    # Issue 32861: sum with a minimum count of two on nullable integers where each group has one value gives NA for series and frame.
     # https://github.com/pandas-dev/pandas/issues/32861
     df = DataFrame({"a": [0, 1, 2], "b": [0, 1, 2], "c": [0, 1, 2]}, dtype="Int64")
     grouped = df.groupby("a")
@@ -1305,6 +1410,8 @@ def test_groupby_sum_below_mincount_nullable_integer():
 
 
 def test_groupby_sum_timedelta_with_nat():
+    # [FUNCTION DOC]
+    # Issue 42659: sum of timedeltas with NaT skips NaT, returns microsecond resolution, and gives NaT when the minimum count is not met.
     # GH#42659
     df = DataFrame(
         {
@@ -1342,6 +1449,8 @@ def test_groupby_sum_timedelta_with_nat():
     ],
 )
 def test_groupby_non_arithmetic_agg_types(dtype, method, data):
+    # [FUNCTION DOC]
+    # Issues 9311 and 6620: first, last, minimum, maximum and count preserve the integer/float dtype (count gives 64-bit integer) across several numeric dtypes. The test fills a default argument list in the parametrized data dictionary, so it mutates the shared parameter value.
     # GH9311, GH6620
     df = DataFrame(
         [{"a": 1, "b": 1}, {"a": 1, "b": 2}, {"a": 2, "b": 3}, {"a": 2, "b": 4}]
@@ -1369,6 +1478,8 @@ def test_groupby_non_arithmetic_agg_types(dtype, method, data):
 
 
 def scipy_sem(*args, **kwargs):
+    # [FUNCTION DOC]
+    # HELPER: wraps the scipy standard error function with one degree of freedom; imports scipy at call time.
     from scipy.stats import sem
 
     return sem(*args, ddof=1, **kwargs)
@@ -1392,6 +1503,8 @@ def scipy_sem(*args, **kwargs):
     ],
 )
 def test_ops_general(op, targop):
+    # [FUNCTION DOC]
+    # Parametrized over reduction names and numpy equivalents (standard error via scipy when available): the groupby method equals aggregation with the numpy function on random float data with float labels (variance and standard deviation use one degree of freedom).
     df = DataFrame(np.random.default_rng(2).standard_normal(1000))
     labels = np.random.default_rng(2).integers(0, 50, size=1000).astype(float)
 
@@ -1413,6 +1526,8 @@ def test_ops_general(op, targop):
 )
 @pytest.mark.parametrize("function", ["mean", "median", "var"])
 def test_apply_to_nullable_integer_returns_float(values, function):
+    # [FUNCTION DOC]
+    # Issue 32219: mean, median and variance of nullable integers return nullable floats; via method, aggregate by name, and aggregate with a list (column multiindex). Parametrized over data with and without NA.
     # https://github.com/pandas-dev/pandas/issues/32219
     output = 0.5 if function == "var" else 1.5
     arr = np.array([output] * 3, dtype=float)
@@ -1449,6 +1564,8 @@ def test_apply_to_nullable_integer_returns_float(values, function):
     ],
 )
 def test_regression_allowlist_methods(op, skipna, sort):
+    # [FUNCTION DOC]
+    # Issues 6944 and 17537: sum, product, minimum, maximum, median, mean, skewness, kurtosis, standard deviation, variance and standard error on a one-row frame grouped by level match applying the same frame method per group; honors skipna for the methods that have it and sort.
     # GH6944
     # GH 17537
     # explicitly test the allowlist methods
@@ -1472,6 +1589,8 @@ def test_regression_allowlist_methods(op, skipna, sort):
 
 
 def test_groupby_prod_with_int64_dtype():
+    # [FUNCTION DOC]
+    # Issue 46573: product of 64-bit integers is computed exactly.
     # GH#46573
     data = [
         [1, 11],
@@ -1496,6 +1615,8 @@ def test_groupby_prod_with_int64_dtype():
 
 
 def test_groupby_std_datetimelike():
+    # [FUNCTION DOC]
+    # Issue 48481: standard deviation of timedelta, datetime and tz-aware datetime data with NaT in the last group returns timedelta values matching floating point results of the integer computation.
     # GH#48481
     tdi = pd.timedelta_range("1 Day", periods=10000, unit="ns")
     ser = Series(tdi)
@@ -1523,6 +1644,8 @@ def test_groupby_std_datetimelike():
 
 
 def test_mean_numeric_only_validates_bool():
+    # [FUNCTION DOC]
+    # Issue 62778: mean validates numeric_only: a list, a string or an integer raises a value error saying only boolean values are accepted.
     # GH#62778
 
     df = DataFrame({"A": range(5), "B": range(5)})

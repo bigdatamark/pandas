@@ -1,3 +1,6 @@
+# [MODULE DOC]
+# Tests for the dropna option of groupby: missing keys excluded or kept as their own group, across single and multi-column keys, index levels, series, datetime-like data, categorical keys and many nullable/extension dtypes.
+# Uses the shared null-value fixtures, the observed/sort/as_index fixtures and the helper that builds method arguments for reduction and transformation functions.
 import numpy as np
 import pytest
 
@@ -33,6 +36,8 @@ from pandas.tests.groupby import get_groupby_method_args
 def test_groupby_dropna_multi_index_dataframe_nan_in_one_group(
     dropna, tuples, outputs, nulls_fixture
 ):
+    # [FUNCTION DOC]
+    # Issue 3729: with a two-column key where one null appears in the second key, summing keeps the null as its own group in the multiindex only when dropna is False (parametrized over dropna and null representation); the expected multiindex level is patched manually to contain the null.
     # GH 3729 this is to test that NA is in one group
     df_list = [
         ["A", "B", 12, 12, 12],
@@ -76,6 +81,8 @@ def test_groupby_dropna_multi_index_dataframe_nan_in_one_group(
 def test_groupby_dropna_multi_index_dataframe_nan_in_two_groups(
     dropna, tuples, outputs, nulls_fixture, nulls_fixture2
 ):
+    # [FUNCTION DOC]
+    # Issue 3729: two different null representations in different key columns (parametrized with two null fixtures) give separate null groups when dropna is False and are dropped when True.
     # GH 3729 this is to test that NA in different groups with different representations
     df_list = [
         ["A", "B", 12, 12, 12],
@@ -114,6 +121,8 @@ def test_groupby_dropna_multi_index_dataframe_nan_in_two_groups(
     ],
 )
 def test_groupby_dropna_normal_index_dataframe(dropna, idx, outputs):
+    # [FUNCTION DOC]
+    # Issue 3729: with a single string key containing a missing value, sum includes a null-labelled group only when dropna is False.
     # GH 3729
     df_list = [
         ["B", 12, 12, 12],
@@ -141,6 +150,8 @@ def test_groupby_dropna_normal_index_dataframe(dropna, idx, outputs):
     ],
 )
 def test_groupby_dropna_series_level(dropna, idx, expected):
+    # [FUNCTION DOC]
+    # Sums a series grouped by index level 0, with a missing index label retained only when dropna is False.
     ser = pd.Series([1, 2, 3, 3], index=idx)
 
     result = ser.groupby(level=0, dropna=dropna).sum()
@@ -158,6 +169,8 @@ def test_groupby_dropna_series_level(dropna, idx, expected):
     ],
 )
 def test_groupby_dropna_series_by(dropna, expected):
+    # [FUNCTION DOC]
+    # Averages a series grouped by a list of keys including NaN, keeping the NaN group only when dropna is False.
     ser = pd.Series(
         [390.0, 350.0, 30.0, 20.0],
         index=["Falcon", "Falcon", "Parrot", "Parrot"],
@@ -169,6 +182,8 @@ def test_groupby_dropna_series_by(dropna, expected):
 
 
 def test_grouper_dropna_propagation(dropna):
+    # [FUNCTION DOC]
+    # Issue 36604: the dropna setting of the groupby object is propagated to the internal grouper object.
     # GH 36604
     df = pd.DataFrame({"A": [0, 0, 1, None], "B": [1, 2, 3, None]})
     gb = df.groupby("A", dropna=dropna)
@@ -184,6 +199,8 @@ def test_grouper_dropna_propagation(dropna):
     ],
 )
 def test_groupby_dataframe_slice_then_transform(dropna, index):
+    # [FUNCTION DOC]
+    # Issues 35014 and 35612: transform with the length builtin on a frame, a selected frame and a selected column keeps the original index and gives NaN for the missing-key rows when dropna is True, for three index types.
     # GH35014 & GH35612
     expected_data = {"B": [2, 2, 1, np.nan if dropna else 1]}
 
@@ -223,6 +240,8 @@ def test_groupby_dataframe_slice_then_transform(dropna, index):
     ],
 )
 def test_groupby_dropna_multi_index_dataframe_agg(dropna, tuples, outputs):
+    # [FUNCTION DOC]
+    # Issue 3729: aggregating with a dict of sum, max and min keeps the null key group only when dropna is False in a multiindex result.
     # GH 3729
     df_list = [
         ["A", "B", 12, 12, 12],
@@ -258,6 +277,8 @@ def test_groupby_dropna_multi_index_dataframe_agg(dropna, tuples, outputs):
 def test_groupby_dropna_datetime_like_data(
     dropna, values, datetime1, datetime2, unique_nulls_fixture, unique_nulls_fixture2
 ):
+    # [FUNCTION DOC]
+    # Issue 3729: grouping by datetime-like keys (timestamp, timedelta, period) containing nulls sums values; null group appears only when dropna is False. Marked slow on ARM.
     # 3729
     df = pd.DataFrame(
         {
@@ -320,6 +341,8 @@ def test_groupby_dropna_datetime_like_data(
     ],
 )
 def test_groupby_apply_with_dropna_for_multi_index(dropna, data, selected_data, levels):
+    # [FUNCTION DOC]
+    # Issue 35889: apply returning a frame per group with dropna on a multiindex result: the first index level keeps missing keys only when dropna is False; the parametrization includes cases without missing keys that must behave identically.
     # GH 35889
 
     df = pd.DataFrame(data)
@@ -341,6 +364,8 @@ def test_groupby_apply_with_dropna_for_multi_index(dropna, data, selected_data, 
 @pytest.mark.parametrize("keys", [["a"], ["a", "b"]])
 @pytest.mark.parametrize("series", [True, False])
 def test_groupby_dropna_with_multiindex_input(input_index, keys, series):
+    # [FUNCTION DOC]
+    # Issue 46783: summing with dropna False over frame or series with the key columns in the index, as columns, or partially, gives the same result as setting the keys as the index; parametrized over input index, keys and series vs frame.
     # GH#46783
     obj = pd.DataFrame(
         {
@@ -368,6 +393,8 @@ def test_groupby_dropna_with_multiindex_input(input_index, keys, series):
 
 
 def test_groupby_nan_included():
+    # [FUNCTION DOC]
+    # Issue 35646: the indices mapping includes the NaN key when dropna is False, in order of first appearance of non-null keys with NaN last.
     # GH 35646
     data = {"group": ["g1", np.nan, "g1", "g2", np.nan], "B": [0, 1, 2, 3, 4]}
     df = pd.DataFrame(data)
@@ -388,6 +415,8 @@ def test_groupby_nan_included():
 
 
 def test_groupby_drop_nan_with_multi_index():
+    # [FUNCTION DOC]
+    # Issue 39895: grouping a one-row frame whose index is a NaN-containing multiindex by both levels with dropna False and taking the first element reproduces the frame.
     # GH 39895
     df = pd.DataFrame([[np.nan, 0, 1]], columns=["a", "b", "c"])
     df = df.set_index(["a", "b"])
@@ -434,6 +463,8 @@ def test_groupby_drop_nan_with_multi_index():
 )
 @pytest.mark.parametrize("test_series", [True, False])
 def test_no_sort_keep_na(sequence, dtype, test_series, as_index):
+    # [FUNCTION DOC]
+    # Issues 46584 and 48794: with dropna False and sort False the null group appears in order of first appearance, across many dtypes (integer, float, nullable, category, string, datetime, period, sparse), sequences of keys, series vs frame, and as_index; the expected result is computed by hand from the key sequence.
     # GH#46584, GH#48794
 
     # Unique values to use for grouper, depends on dtype
@@ -490,6 +521,8 @@ def test_no_sort_keep_na(sequence, dtype, test_series, as_index):
 def test_null_is_null_for_dtype(
     sort, dtype, nulls_fixture, nulls_fixture2, test_series
 ):
+    # [FUNCTION DOC]
+    # Issue 48506: with dropna False, different null values for object or default dtype are merged into one group labelled with the null for that dtype; sum is checked for series and frames.
     # GH#48506 - groups should always result in using the null for the dtype
     df = pd.DataFrame({"a": [1, 2]})
     groups = pd.Series([nulls_fixture, nulls_fixture2], dtype=dtype)
@@ -506,6 +539,8 @@ def test_null_is_null_for_dtype(
 
 @pytest.mark.parametrize("index_kind", ["range", "single", "multi"])
 def test_categorical_reducers(reduction_func, observed, sort, as_index, index_kind):
+    # [FUNCTION DOC]
+    # Compares every reduction function on categorical keys with dropna False against grouping with dropna True after filling nulls with an extra category, then removing it; covers range, single-index and multi-index key layouts, observed, sort and as_index. Handles special cases for correlation-with-other (deprecation warning), index of min or max (unobserved category error or value translation) and size.
     # Ensure there is at least one null value by appending to the end
     values = np.append(np.random.default_rng(2).choice([1, 2, None], size=19), None)
     df = pd.DataFrame(
@@ -592,6 +627,9 @@ def test_categorical_reducers(reduction_func, observed, sort, as_index, index_ki
 
 
 def test_categorical_transformers(transformation_func, observed, sort, as_index):
+    # [FUNCTION DOC]
+    # Issue 36327: transformation functions on categorical keys with dropna False give the same result as dropna True for non-null rows, with the null group's values computed separately (cumulative count, group number or applying the method to the null group's values) and spliced in.
+    # KNOWN ISSUE: both branches of the observed check compute the same null group number, and a TODO questions whether the unobserved case should differ.
     # GH#36327
     values = np.append(np.random.default_rng(2).choice([1, 2, None], size=19), None)
     df = pd.DataFrame(
@@ -644,6 +682,8 @@ def test_categorical_transformers(transformation_func, observed, sort, as_index)
 
 @pytest.mark.parametrize("method", ["head", "tail"])
 def test_categorical_head_tail(method, observed, sort, as_index):
+    # [FUNCTION DOC]
+    # Issue 36327: head and tail with dropna False on categorical keys with nulls return the first or last five rows of each group including the null group, matching a boolean mask computed by hand.
     # GH#36327
     values = np.random.default_rng(2).choice([1, 2, None], 30)
     df = pd.DataFrame(
@@ -669,6 +709,8 @@ def test_categorical_head_tail(method, observed, sort, as_index):
 
 
 def test_categorical_agg():
+    # [FUNCTION DOC]
+    # Issue 36327: aggregating with a Python function equals sum when the categorical key has nulls and dropna is False.
     # GH#36327
     values = np.random.default_rng(2).choice([1, 2, None], 30)
     df = pd.DataFrame(
@@ -681,6 +723,8 @@ def test_categorical_agg():
 
 
 def test_categorical_transform():
+    # [FUNCTION DOC]
+    # Issue 36327: transforming with a Python function equals the sum transform when the categorical key has nulls and dropna is False.
     # GH#36327
     values = np.random.default_rng(2).choice([1, 2, None], 30)
     df = pd.DataFrame(

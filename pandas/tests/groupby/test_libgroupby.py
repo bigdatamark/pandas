@@ -1,3 +1,6 @@
+# [MODULE DOC]
+# Tests for the low-level compiled groupby kernels (variance, OHLC, cumulative sum/product, mean, sum) called directly with prepared output, count, value and label arrays instead of going through the groupby API.
+# Imports the compiled groupby module and its kernel functions, so requires the compiled extension to be built.
 import numpy as np
 import pytest
 
@@ -18,7 +21,11 @@ import pandas._testing as tm
 
 @pytest.mark.parametrize("dtype, rtol", [("float32", 1e-2), ("float64", 1e-5)])
 class TestGroupVar:
+    # [CLASS DOC]
+    # Tests of the group variance kernel, parametrized at class level over float32 (loose tolerance) and float64 (tight tolerance); each test fills an output array of NaN, counts and checks against a reference standard deviation computed with numpy.
     def test_group_var_generic_1d(self, dtype, rtol):
+        # [FUNCTION DOC]
+        # Variance for one value column and five groups of three values each: matches the sample variance and counts of three per group.
         prng = np.random.default_rng(2)
 
         out = (np.nan * np.ones((5, 1))).astype(dtype)
@@ -36,6 +43,8 @@ class TestGroupVar:
         tm.assert_numpy_array_equal(counts, expected_counts)
 
     def test_group_var_generic_1d_flat_labels(self, dtype, rtol):
+        # [FUNCTION DOC]
+        # Variance for one group of five values: matches the overall sample variance and counts five.
         prng = np.random.default_rng(2)
 
         out = (np.nan * np.ones((1, 1))).astype(dtype)
@@ -52,6 +61,8 @@ class TestGroupVar:
         tm.assert_numpy_array_equal(counts, expected_counts)
 
     def test_group_var_generic_2d_all_finite(self, dtype, rtol):
+        # [FUNCTION DOC]
+        # Variance for two finite columns and five groups of two: matches reference and counts two per group.
         prng = np.random.default_rng(2)
 
         out = (np.nan * np.ones((5, 2))).astype(dtype)
@@ -67,6 +78,8 @@ class TestGroupVar:
         tm.assert_numpy_array_equal(counts, expected_counts)
 
     def test_group_var_generic_2d_some_nan(self, dtype, rtol):
+        # [FUNCTION DOC]
+        # Variance when the second column is all NaN: the first column matches reference and the second yields NaN for every group; counts remain two.
         prng = np.random.default_rng(2)
 
         out = (np.nan * np.ones((5, 2))).astype(dtype)
@@ -88,6 +101,8 @@ class TestGroupVar:
         tm.assert_numpy_array_equal(counts, expected_counts)
 
     def test_group_var_constant(self, dtype, rtol):
+        # [FUNCTION DOC]
+        # Regression test (issue 10448): variance of a constant-valued group is non-negative and approximately zero, with count three.
         # Regression test from GH 10448.
 
         out = np.array([[np.nan]], dtype=dtype)
@@ -103,6 +118,8 @@ class TestGroupVar:
 
 
 def test_group_var_large_inputs():
+    # [FUNCTION DOC]
+    # Variance of a million values with a large offset (numerical stability): the result is close to one twelfth and the count is a million.
     dtype = np.float64
     prng = np.random.default_rng(2)
 
@@ -119,6 +136,8 @@ def test_group_var_large_inputs():
 
 @pytest.mark.parametrize("dtype", ["float32", "float64"])
 def test_group_ohlc(dtype):
+    # [FUNCTION DOC]
+    # OHLC kernel for float32/float64 over three bins of size 6, 6, 8: output rows are open, high, low, close per bin and counts match; after setting the first bin to NaN the first output row becomes NaN.
     obj = np.array(np.random.default_rng(2).standard_normal(20), dtype=dtype)
 
     bins = np.array([6, 12, 20])
@@ -130,6 +149,8 @@ def test_group_ohlc(dtype):
     func(out, counts, obj[:, None], labels)
 
     def _ohlc(group):
+        # [FUNCTION DOC]
+        # HELPER: reference OHLC for a group (first, maximum, minimum, last), or four NaN when all values are missing.
         if isna(group).all():
             return np.repeat(np.nan, 4)
         return [group[0], group.max(), group.min(), group[-1]]
@@ -154,6 +175,8 @@ def test_group_ohlc(dtype):
     ],
 )
 def test_cython_group_transform(dtype, pd_op, np_op):
+    # [FUNCTION DOC]
+    # Cumulative sum and cumulative product kernels on a single group of integer or float data (issue 4095) match the numpy cumulative functions; parametrized over dtype and operation.
     # see gh-4095
     is_datetimelike = False
 
@@ -168,6 +191,8 @@ def test_cython_group_transform(dtype, pd_op, np_op):
 
 
 def test_cython_group_transform_algos():
+    # [FUNCTION DOC]
+    # Cumulative product and sum kernels with a NaN in the data propagate NaN only at that position (floats), and the cumulative sum on timedelta data viewed as integers with the datetime-like flag gives running totals.
     # see gh-4095
     is_datetimelike = False
 
@@ -206,6 +231,8 @@ def test_cython_group_transform_algos():
 
 
 def test_cython_group_mean_datetimelike():
+    # [FUNCTION DOC]
+    # Mean kernel with the datetime-like flag ignores NaT values (stored as the minimum integer) and returns the mean of the rest.
     actual = np.zeros(shape=(1, 1), dtype="float64")
     counts = np.array([0], dtype="int64")
     data = (
@@ -228,6 +255,8 @@ def test_cython_group_mean_datetimelike():
 
 
 def test_cython_group_mean_wrong_min_count():
+    # [FUNCTION DOC]
+    # Mean kernel called with a minimum count of zero while the datetime-like flag is true raises an assertion error mentioning the minimum count.
     actual = np.zeros(shape=(1, 1), dtype="float64")
     counts = np.zeros(1, dtype="int64")
     data = np.zeros(1, dtype="float64")[:, None]
@@ -238,6 +267,8 @@ def test_cython_group_mean_wrong_min_count():
 
 
 def test_cython_group_mean_not_datetimelike_but_has_NaT_values():
+    # [FUNCTION DOC]
+    # Mean kernel without the datetime-like flag treats NaT-valued integers as ordinary numbers and returns their numeric average.
     actual = np.zeros(shape=(1, 1), dtype="float64")
     counts = np.array([0], dtype="int64")
     data = (
@@ -258,6 +289,8 @@ def test_cython_group_mean_not_datetimelike_but_has_NaT_values():
 
 
 def test_cython_group_mean_Inf_at_beginning_and_end():
+    # [FUNCTION DOC]
+    # Issue 50367: mean kernel with infinite values at the start and end of groups gives infinity rather than NaN.
     # GH 50367
     actual = np.array([[np.nan, np.nan], [np.nan, np.nan]], dtype="float64")
     counts = np.array([0, 0], dtype="int64")
@@ -287,6 +320,8 @@ def test_cython_group_mean_Inf_at_beginning_and_end():
     ],
 )
 def test_cython_group_sum_Inf_at_beginning_and_end(values, out):
+    # [FUNCTION DOC]
+    # Issue 53606: sum kernel with infinity and negative infinity combinations: matching signs give the infinity, opposite signs give NaN; parametrized over input values and expected output.
     # GH #53606
     actual = np.array([[np.nan], [np.nan]], dtype="float64")
     counts = np.array([0, 0], dtype="int64")
@@ -335,6 +370,8 @@ def test_cython_group_sum_Inf_at_beginning_and_end(values, out):
     ],
 )
 def test_cython_group_sum_overflow(values, expected_values):
+    # [FUNCTION DOC]
+    # Issue 60303: sum kernel overflow of float and complex values saturates to the signed infinity per component (and keeps finite parts finite); parametrized over values and expected result.
     # GH-60303
     data = np.array([[values] for _ in range(3)])
     labels = np.array([0, 0, 0], dtype=np.intp)

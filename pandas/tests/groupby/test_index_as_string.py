@@ -1,3 +1,5 @@
+# [MODULE DOC]
+# Tests that index level names can be used as grouping keys by string (alone, in lists, or mixed with column names) and give the same result as explicit level groupers, for frames and series.
 import numpy as np
 import pytest
 
@@ -16,6 +18,8 @@ import pandas._testing as tm
 )
 @pytest.mark.parametrize("levels", [["inner"], ["inner", "outer"]])
 def test_grouper_index_level_as_string(levels, key_strs, groupers):
+    # [FUNCTION DOC]
+    # Parametrized over index levels and keys: grouping a frame by string keys naming index levels and/or columns gives the same mean as using Grouper objects on the level; numeric_only is applied when a non-numeric column would be involved.
     frame = pd.DataFrame(
         {
             "outer": ["a", "a", "a", "b", "b", "b"],
@@ -50,6 +54,8 @@ def test_grouper_index_level_as_string(levels, key_strs, groupers):
     ],
 )
 def test_grouper_index_level_as_string_series(levels):
+    # [FUNCTION DOC]
+    # Grouping a three-level-indexed series by each level name or lists of them (including column-like name B) gives the same mean as using level groupers.
     # Compute expected result
     df = pd.DataFrame(
         {

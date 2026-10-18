@@ -1,6 +1,9 @@
 """
 test with the TimeGrouper / grouping with datetimes
 """
+# [MODULE DOC]
+# Tests for grouping by datetimes and time-based Grouper (frequency binning): equivalence with resample, combination with ordinary keys, level and key selection, get_group by timestamp, timezone-aware and period data, NaT handling, and apply/aggregate on bin groupers where the result index is longer than the observed bins.
+# Uses the internal bin grouper class and the Grouper class from the groupby modules; some tests are skipped without numba or pyarrow.
 
 from datetime import (
     datetime,
@@ -31,6 +34,8 @@ from pandas.core.groupby.ops import BinGrouper
 
 @pytest.fixture
 def frame_for_truncated_bingrouper():
+    # [FUNCTION DOC]
+    # HELPER: fixture returning a six-row frame with a Quantity column and a Date column of timestamps in September and October 2013 including one NaT. Shared by the truncated bin grouper fixture and a test that applies a squeezing function.
     """
     DataFrame used by groupby_with_truncated_bingrouper, made into
     a separate fixture for easier reuse in
@@ -54,6 +59,9 @@ def frame_for_truncated_bingrouper():
 
 @pytest.fixture
 def groupby_with_truncated_bingrouper(frame_for_truncated_bingrouper):
+    # [FUNCTION DOC]
+    # HELPER: fixture returning a groupby on the Date column with a five-day frequency Grouper such that the internal grouper is a bin grouper whose result index length differs from its number of codes (asserted in the fixture). Aggregations should produce the date range from September 1 to October 1 at five-day frequency as index or index level.
+    # KNOWN ISSUE: the docstring describes the result index being shorter than the group keys sequence, while the assertion in the body compares the result index length with the length of the codes and only requires them to differ.
     """
     GroupBy object such that gb._grouper is a BinGrouper and
     len(gb._grouper.result_index) < len(gb._grouper.group_keys_seq)
@@ -76,7 +84,11 @@ def groupby_with_truncated_bingrouper(frame_for_truncated_bingrouper):
 
 
 class TestGroupBy:
+    # [CLASS DOC]
+    # Groups tests of grouping by time (class).
     def test_groupby_with_timegrouper(self, using_infer_string):
+        # [FUNCTION DOC]
+        # Issue 4161: resampling and grouping by a five-day frequency Grouper on a date index give the same sums (bins between September 1 and December 5, with the concatenated buyer strings and quantity totals), for the original frame and one sorted by quantity; the buyer column is cast to string under string inference.
         # GH 4161
         # TimeGrouper requires a sorted index
         # also verifies that the resultant index has the correct name
@@ -135,6 +147,8 @@ class TestGroupBy:
 
     @pytest.mark.parametrize("should_sort", [True, False])
     def test_groupby_with_timegrouper_methods(self, should_sort):
+        # [FUNCTION DOC]
+        # Issue 3881: grouping by a six-month-end Grouper (with or without sorting the frame) yields a bin grouper, a groups mapping with three entries, and group keys enabled.
         # GH 3881
         # make sure API of timegrouper conforms
 
@@ -167,6 +181,9 @@ class TestGroupBy:
         assert len(groups) == 3
 
     def test_timegrouper_with_reg_groups(self):
+        # [FUNCTION DOC]
+        # Issue 3794: combining a Grouper (year-end, six-month-start, daily, month-end frequency) with the Buyer column sums numeric data correctly; covers key passing, level passing by name and number, missing key or level raising errors (key error for unknown name, value error for invalid level), multiple names, error when both key and level are given, and single groupers in or out of a list. Runs on original and sorted frames.
+        # KNOWN ISSUE: a variable holding a message about the default value of numeric_only is assigned early in the test but never used.
         # GH 3794
         # allow combination of timegrouper/reg groups
 
@@ -349,6 +366,8 @@ class TestGroupBy:
 
     @pytest.mark.parametrize("freq", ["D", "ME", "YE", "QE-APR"])
     def test_timegrouper_with_reg_groups_freq(self, freq):
+        # [FUNCTION DOC]
+        # Issue 6764: multiple grouping with a Grouper at several frequencies (daily, month-end, year-end, quarter) and a user id gives the same sums as grouped resampling reordered and sorted, with and without pre-sorting the index.
         # GH 6764 multiple grouping with/without sort
         df = DataFrame(
             {
@@ -407,6 +426,8 @@ class TestGroupBy:
         tm.assert_series_equal(result2, expected)
 
     def test_timegrouper_get_group(self):
+        # [FUNCTION DOC]
+        # Issue 6914: get_group with a timestamp works for month-end Groupers on a key column, with two keys and on the index, for original and reordered frames.
         # GH 6914
 
         df_original = DataFrame(
@@ -473,6 +494,8 @@ class TestGroupBy:
                 tm.assert_frame_equal(result, expected)
 
     def test_timegrouper_apply_return_type_series(self):
+        # [FUNCTION DOC]
+        # Issue 11742: applying a function returning a series to groups from a frequency Grouper gives the same shape as with a plain key Grouper (index reset before comparison).
         # Using `apply` with the `TimeGrouper` should give the
         # same return type as an `apply` with a `Grouper`.
         # Issue #11742
@@ -481,6 +504,8 @@ class TestGroupBy:
         df_dt["date"] = pd.to_datetime(df_dt["date"])
 
         def sumfunc_series(x):
+            # [FUNCTION DOC]
+            # HELPER: apply function returning a one-element series named sum holding the sum of the value column.
             return Series([x["value"].sum()], ("sum",))
 
         expected = df.groupby(Grouper(key="date")).apply(sumfunc_series)
@@ -490,6 +515,8 @@ class TestGroupBy:
         )
 
     def test_timegrouper_apply_return_type_value(self):
+        # [FUNCTION DOC]
+        # Issue 11742: applying a function returning a scalar to groups from a frequency Grouper gives the same values as a plain key Grouper.
         # Using `apply` with the `TimeGrouper` should give the
         # same return type as an `apply` with a `Grouper`.
         # Issue #11742
@@ -498,6 +525,8 @@ class TestGroupBy:
         df_dt["date"] = pd.to_datetime(df_dt["date"])
 
         def sumfunc_value(x):
+            # [FUNCTION DOC]
+            # HELPER: apply function returning the sum of the value column.
             return x.value.sum()
 
         expected = df.groupby(Grouper(key="date")).apply(sumfunc_value)
@@ -507,6 +536,8 @@ class TestGroupBy:
         )
 
     def test_groupby_groups_datetimeindex(self):
+        # [FUNCTION DOC]
+        # Issue 1430: the groups of a grouping by a callable creating dates from timestamps have datetime keys.
         # GH#1430
         periods = 1000
         ind = date_range(start="2012/1/1", freq="5min", periods=periods)
@@ -520,6 +551,8 @@ class TestGroupBy:
         assert isinstance(next(iter(groups.keys())), datetime)
 
     def test_groupby_groups_datetimeindex2(self):
+        # [FUNCTION DOC]
+        # Issue 11442: the groups mapping when grouping by an index level of dates has timestamp keys with named datetime indexes, and getting each group by string returns one row with the right index (frequency day).
         # GH#11442
         index = date_range("2015/01/01", periods=5, name="date")
         df = DataFrame({"A": [5, 6, 7, 8, 9], "B": [1, 2, 3, 4, 5]}, index=index)
@@ -541,6 +574,8 @@ class TestGroupBy:
             tm.assert_frame_equal(result, expected)
 
     def test_groupby_groups_datetimeindex_tz(self):
+        # [FUNCTION DOC]
+        # Issue 3950: grouping by a time-zone-aware datetime column and a label, and by a time-zone-aware index level, preserves the time zone in the result index.
         # GH 3950
         dates = [
             "2011-07-19 07:00:00",
@@ -604,6 +639,8 @@ class TestGroupBy:
         tm.assert_frame_equal(result, expected)
 
     def test_frame_datetime64_handling_groupby(self):
+        # [FUNCTION DOC]
+        # A frame holding numpy datetime values grouped with first returns the timestamp.
         # it works!
         df = DataFrame(
             [(3, np.datetime64("2012-07-03")), (3, np.datetime64("2012-07-04"))],
@@ -613,6 +650,8 @@ class TestGroupBy:
         assert result["date"][3] == Timestamp("2012-07-03")
 
     def test_groupby_multi_timezone(self):
+        # [FUNCTION DOC]
+        # Combining different time zones yields object dtype of zone-aware timestamps from apply with localization; get_group on a zone label returns the right rows.
         # combining multiple / different timezones yields UTC
         df = DataFrame(
             {
@@ -663,6 +702,8 @@ class TestGroupBy:
         tm.assert_series_equal(result, expected)
 
     def test_groupby_groups_periods(self):
+        # [FUNCTION DOC]
+        # Grouping by a period column and a label, and by a period index level, keeps hourly period dtype in the result index.
         dates = [
             "2011-07-19 07:00:00",
             "2011-07-19 08:00:00",
@@ -724,6 +765,8 @@ class TestGroupBy:
         tm.assert_frame_equal(result, expected)
 
     def test_groupby_first_datetime64(self):
+        # [FUNCTION DOC]
+        # First on datetime64 data keeps the datetime dtype for frame and series.
         df = DataFrame([(1, 1351036800000000000), (2, 1351036800000000000)])
         df[1] = df[1].astype("M8[ns]")
 
@@ -738,6 +781,8 @@ class TestGroupBy:
         assert issubclass(got_dt.type, np.datetime64)
 
     def test_groupby_max_datetime64(self):
+        # [FUNCTION DOC]
+        # Issue 5869: maximum of a second-resolution datetime column keeps second resolution and equals applying maximum. A TODO notes whether apply could retain the resolution.
         # GH 5869
         # datetimelike dtype conversion from int
         df = DataFrame({"A": Timestamp("20130101").as_unit("s"), "B": np.arange(5)})
@@ -747,6 +792,8 @@ class TestGroupBy:
         tm.assert_series_equal(result, expected)
 
     def test_groupby_datetime64_32_bit(self):
+        # [FUNCTION DOC]
+        # Issue 6410: transform with minimum on a datetime column works on all platforms (32-bit indexing issue).
         # GH 6410 / numpy 4328
         # 32-bit under 1.9-dev indexing issue
 
@@ -756,6 +803,8 @@ class TestGroupBy:
         tm.assert_series_equal(result, expected)
 
     def test_groupby_with_timezone_selection(self):
+        # [FUNCTION DOC]
+        # Issue 11616: selecting the time column before or after the maximum returns the same UTC datetimes.
         # GH 11616
         # Test that column selection returns output in correct timezone.
 
@@ -770,6 +819,8 @@ class TestGroupBy:
         tm.assert_series_equal(df1, df2)
 
     def test_timezone_info(self):
+        # [FUNCTION DOC]
+        # Issue 11682: time zone information is retained when constructing frames with a scalar datetime. This test does not use groupby.
         # see gh-11682: Timezone info lost when broadcasting
         # scalar datetime to DataFrame
         utc = timezone.utc
@@ -780,6 +831,8 @@ class TestGroupBy:
         assert df["b"][0].tzinfo == utc
 
     def test_datetime_count(self):
+        # [FUNCTION DOC]
+        # Count of a datetime column per group.
         df = DataFrame(
             {"a": [1, 2, 3] * 2, "dates": date_range("now", periods=6, freq="min")}
         )
@@ -788,6 +841,8 @@ class TestGroupBy:
         tm.assert_series_equal(result, expected)
 
     def test_first_last_max_min_on_time_data(self):
+        # [FUNCTION DOC]
+        # Issue 10295: maximum, minimum, first and last of datetime and timedelta data ignore NaT (results equal to those on the frame without missing rows).
         # GH 10295
         # Verify that NaT is not in the result of max, min, first and last on
         # Dataframe with datetime or timedelta values.
@@ -822,6 +877,8 @@ class TestGroupBy:
         tm.assert_frame_equal(grouped_ref.last(), grouped_test.last())
 
     def test_nunique_with_timegrouper_and_nat(self):
+        # [FUNCTION DOC]
+        # Issue 17575: unique count by a hourly Grouper with NaT in the time column equals the one without the NaT row (freq of the index dropped).
         # GH 17575
         test = DataFrame(
             {
@@ -841,6 +898,8 @@ class TestGroupBy:
         tm.assert_series_equal(result, expected)
 
     def test_scalar_call_versus_list_call(self):
+        # [FUNCTION DOC]
+        # Issue 17530: grouping by a Grouper directly or in a list gives the same count.
         # Issue: 17530
         data_frame = {
             "location": ["shanghai", "beijing", "shanghai"],
@@ -861,6 +920,8 @@ class TestGroupBy:
         tm.assert_frame_equal(result, expected)
 
     def test_grouper_period_index(self):
+        # [FUNCTION DOC]
+        # Issue 32108: grouping a series by a month attribute of a period index gives sums with the index named like the original index.
         # GH 32108
         periods = 2
         index = pd.period_range(
@@ -877,6 +938,8 @@ class TestGroupBy:
     def test_groupby_apply_timegrouper_with_nat_dict_returns(
         self, groupby_with_truncated_bingrouper
     ):
+        # [FUNCTION DOC]
+        # Issue 43500: apply returning dicts on a bin grouper where the result index is longer than the group keys: result is a series with a two-level index (date bin and the dict key), with zero for empty bins.
         # GH#43500 case where gb._grouper.result_index and gb._grouper.group_keys_seq
         #  have different lengths that goes through the `isinstance(values[0], dict)`
         #  path
@@ -894,6 +957,8 @@ class TestGroupBy:
     def test_groupby_apply_timegrouper_with_nat_scalar_returns(
         self, groupby_with_truncated_bingrouper
     ):
+        # [FUNCTION DOC]
+        # Issue 43500: apply returning scalars on such a bin grouper gives the right-length result (previously raised a value error), with NaN for empty bins and no frequency on the index.
         # GH#43500 Previously raised ValueError bc used index with incorrect
         #  length in wrap_applied_result
         gb = groupby_with_truncated_bingrouper
@@ -914,6 +979,8 @@ class TestGroupBy:
     def test_groupby_apply_timegrouper_with_nat_apply_squeeze(
         self, frame_for_truncated_bingrouper
     ):
+        # [FUNCTION DOC]
+        # Apply returning a series per group, with a very large frequency so only one non-NaT group exists, goes through the single-series wrapping path and yields a one-row frame with the quantity labels as columns.
         df = frame_for_truncated_bingrouper
 
         # We need to create a GroupBy object with only one non-NaT group,
@@ -941,6 +1008,8 @@ class TestGroupBy:
     def test_groupby_agg_numba_timegrouper_with_nat(
         self, groupby_with_truncated_bingrouper
     ):
+        # [FUNCTION DOC]
+        # Aggregation with the numba engine on a bin grouper with NaT (issue 43487 discussion) equals the aggregate by name for a series and a frame selection. Skipped without numba; single CPU.
         pytest.importorskip("numba")
 
         # See discussion in GH#43487
@@ -961,6 +1030,8 @@ class TestGroupBy:
 
     @td.skip_if_no("pyarrow")
     def test_pyarrow_index_retention(self):
+        # [FUNCTION DOC]
+        # Issue 63518: grouping by a daily frequency on a pyarrow time-zone-aware timestamp index retains the pyarrow dtype in the result index. Skipped without pyarrow.
         # https://github.com/pandas-dev/pandas/issues/63518
         df = DataFrame(
             {

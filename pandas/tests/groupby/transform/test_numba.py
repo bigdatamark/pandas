@@ -1,3 +1,5 @@
+# [MODULE DOC]
+# Tests for groupby transform with the numba engine: function signature validation, keyword handling, equivalence with the Cython engine, caching of compiled functions, global option use, index passing and multi-key restrictions. Module is skipped when numba is missing, runs on a single CPU, and is skipped on ARM with the numba release that segfaults.
 import numpy as np
 import pytest
 
@@ -24,9 +26,13 @@ pytestmark.append(
 
 
 def test_correct_function_signature():
+    # [FUNCTION DOC]
+    # The user function must accept values and index as its first two arguments; a function with the wrong signature raises a numba utility error with a message about the first two arguments, for frame and selected column transforms.
     pytest.importorskip("numba")
 
     def incorrect_function(x):
+        # [FUNCTION DOC]
+        # HELPER: user function with the wrong signature (single argument) used to trigger the error.
         return x + 1
 
     data = DataFrame(
@@ -41,12 +47,18 @@ def test_correct_function_signature():
 
 
 def test_check_nopython_kwargs():
+    # [FUNCTION DOC]
+    # Checks keyword argument handling: missing required argument (including a keyword-only argument) raises a type error from signature binding, and a keyword-only function raises a numba utility error since numba does not support it; a correct function works and adds the argument. Done for frame and selected column.
     pytest.importorskip("numba")
 
     def incorrect_function(values, index, *, a):
+        # [FUNCTION DOC]
+        # HELPER: function with values, index and a keyword-only argument added to values.
         return values + a
 
     def correct_function(values, index, a):
+        # [FUNCTION DOC]
+        # HELPER: function with values, index and a normal third argument added to values.
         return values + a
 
     data = DataFrame(
@@ -86,9 +98,13 @@ def test_check_nopython_kwargs():
 # Filter warnings when parallel=True and the function can't be parallelized by Numba
 @pytest.mark.parametrize("jit", [True, False])
 def test_numba_vs_cython(jit, frame_or_series, nogil, parallel, nopython, as_index):
+    # [FUNCTION DOC]
+    # Parametrized over jitted or plain function, frame or series, numba options and as_index: transforming with the numba engine equals the Cython engine with a plain function adding one. Warnings ignored (parallel mode may not apply).
     pytest.importorskip("numba")
 
     def func(values, index):
+        # [FUNCTION DOC]
+        # HELPER: user function adding one to values; wrapped by numba compile when the jit flag is set.
         return values + 1
 
     if jit:
@@ -115,13 +131,19 @@ def test_numba_vs_cython(jit, frame_or_series, nogil, parallel, nopython, as_ind
 # Filter warnings when parallel=True and the function can't be parallelized by Numba
 @pytest.mark.parametrize("jit", [True, False])
 def test_cache(jit, frame_or_series, nogil, parallel, nopython):
+    # [FUNCTION DOC]
+    # Checks that compiled functions are cached correctly when alternating between two different functions and returning to the first one; results match the Cython engine each time.
     # Test that the functions are cached correctly if we switch functions
     pytest.importorskip("numba")
 
     def func_1(values, index):
+        # [FUNCTION DOC]
+        # HELPER: first user function adding one.
         return values + 1
 
     def func_2(values, index):
+        # [FUNCTION DOC]
+        # HELPER: second user function multiplying by five.
         return values * 5
 
     if jit:
@@ -153,9 +175,13 @@ def test_cache(jit, frame_or_series, nogil, parallel, nopython):
 
 
 def test_use_global_config():
+    # [FUNCTION DOC]
+    # When the global use-numba option is enabled and the engine is none, transform uses numba and gives the same result as an explicit numba engine.
     pytest.importorskip("numba")
 
     def func_1(values, index):
+        # [FUNCTION DOC]
+        # HELPER: user function adding one to values.
         return values + 1
 
     data = DataFrame(
@@ -173,6 +199,9 @@ def test_use_global_config():
     "agg_func", [["min", "max"], "min", {"B": ["min", "max"], "C": "sum"}]
 )
 def test_string_cython_vs_numba(agg_func, numba_supported_reductions):
+    # [FUNCTION DOC]
+    # Compares numba with Cython for string-named reductions on a frame and a selected column.
+    # KNOWN ISSUE: the parametrized aggregation function is immediately overwritten by the value from the numba-supported-reductions fixture, so the parametrization is dead and only repeats the fixture cases. A leading TODO notes only reductions are tested rather than real transformations.
     pytest.importorskip("numba")
     agg_func, kwargs = numba_supported_reductions
     data = DataFrame(
@@ -190,10 +219,14 @@ def test_string_cython_vs_numba(agg_func, numba_supported_reductions):
 
 
 def test_args_not_cached():
+    # [FUNCTION DOC]
+    # Issue 41647: positional arguments passed to the user function are not cached between calls: using different values for the last-n argument gives different results.
     # GH 41647
     pytest.importorskip("numba")
 
     def sum_last(values, index, n):
+        # [FUNCTION DOC]
+        # HELPER: user function summing the last n values of the group.
         return values[-n:].sum()
 
     df = DataFrame({"id": [0, 0, 1, 1], "x": [1, 1, 1, 1]})
@@ -208,10 +241,14 @@ def test_args_not_cached():
 
 
 def test_index_data_correctly_passed():
+    # [FUNCTION DOC]
+    # Issue 43133: the index passed to the user function contains the original index values of the group rows.
     # GH 43133
     pytest.importorskip("numba")
 
     def f(values, index):
+        # [FUNCTION DOC]
+        # HELPER: user function returning the index minus one.
         return index - 1
 
     df = DataFrame({"group": ["A", "A", "B"], "v": [4, 5, 6]}, index=[-1, -2, -3])
@@ -221,10 +258,14 @@ def test_index_data_correctly_passed():
 
 
 def test_index_order_consistency_preserved():
+    # [FUNCTION DOC]
+    # Issue 57069: the order of index values passed to the function is consistent with the order of values for a descending index; the result keeps the original order.
     # GH 57069
     pytest.importorskip("numba")
 
     def f(values, index):
+        # [FUNCTION DOC]
+        # HELPER: user function returning values unchanged.
         return values
 
     df = DataFrame(
@@ -236,6 +277,8 @@ def test_index_order_consistency_preserved():
 
 
 def test_engine_kwargs_not_cached():
+    # [FUNCTION DOC]
+    # Passing different engine options (here the no-GIL flag) must not reuse a previously compiled function: the function reads these variables as closure constants and the result changes (two versus one) between calls.
     # If the user passes a different set of engine_kwargs don't return the same
     # jitted function
     pytest.importorskip("numba")
@@ -244,6 +287,8 @@ def test_engine_kwargs_not_cached():
     nopython = True
 
     def func_kwargs(values, index):
+        # [FUNCTION DOC]
+        # HELPER: user function returning the sum of three closure flags, so the result reveals which options were used at compile time.
         return nogil + parallel + nopython
 
     engine_kwargs = {"nopython": nopython, "nogil": nogil, "parallel": parallel}
@@ -265,9 +310,13 @@ def test_engine_kwargs_not_cached():
 
 @pytest.mark.filterwarnings("ignore")
 def test_multiindex_one_key(nogil, parallel, nopython):
+    # [FUNCTION DOC]
+    # A frame with a single-key multiindex grouped by the first level transforms with numba, producing the expected constant column while keeping the index. Warnings ignored.
     pytest.importorskip("numba")
 
     def numba_func(values, index):
+        # [FUNCTION DOC]
+        # HELPER: user function returning a constant one.
         return 1
 
     df = DataFrame([{"A": 1, "B": 2, "C": 3}]).set_index(["A", "B"])
@@ -280,9 +329,13 @@ def test_multiindex_one_key(nogil, parallel, nopython):
 
 
 def test_multiindex_multi_key_not_supported(nogil, parallel, nopython):
+    # [FUNCTION DOC]
+    # Grouping by more than one key with the numba engine raises a not-implemented error about more than one grouping label.
     pytest.importorskip("numba")
 
     def numba_func(values, index):
+        # [FUNCTION DOC]
+        # HELPER: user function returning a constant one.
         return 1
 
     df = DataFrame([{"A": 1, "B": 2, "C": 3}]).set_index(["A", "B"])
@@ -294,6 +347,8 @@ def test_multiindex_multi_key_not_supported(nogil, parallel, nopython):
 
 
 def test_multilabel_numba_vs_cython(numba_supported_reductions):
+    # [FUNCTION DOC]
+    # Multi-key grouping with a numba-supported reduction: numba and Cython transforms give equal frames.
     pytest.importorskip("numba")
     reduction, kwargs = numba_supported_reductions
     df = DataFrame(
@@ -311,6 +366,8 @@ def test_multilabel_numba_vs_cython(numba_supported_reductions):
 
 
 def test_multilabel_udf_numba_vs_cython():
+    # [FUNCTION DOC]
+    # Multi-key grouping with a min-max scaling function: numba (with values and index arguments) matches Cython.
     pytest.importorskip("numba")
     df = DataFrame(
         {

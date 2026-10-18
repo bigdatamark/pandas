@@ -1,3 +1,6 @@
+# [MODULE DOC]
+# Tests for the numeric_only option of groupby reductions and transformations: which columns remain in the result by default, with numeric_only True, and with numeric_only False, and which errors are raised for non-numeric columns.
+# Provides a class of per-family tests sharing a mixed-dtype frame fixture, a test over all kernels (with the shared method-argument helper) and a test of the series-level behavior.
 import re
 
 import pytest
@@ -18,10 +21,14 @@ from pandas.tests.groupby import get_groupby_method_args
 
 
 class TestNumericOnly:
+    # [CLASS DOC]
+    # Groups tests that run one family of groupby methods against a frame with int, float, string, object, categorical, datetime, timezone-aware datetime and timedelta columns grouped by a group column; the shared checker verifies default and explicit numeric_only behavior. Holds the frame fixture, one test per method family and the checker helper.
     # make sure that we are passing thru kwargs to our agg functions
 
     @pytest.fixture
     def df(self):
+        # [FUNCTION DOC]
+        # Fixture building the mixed-dtype frame (issues 3668, 5724): a group column plus integer, float, string, object, categorical (string and integer), datetime, timezone-aware datetime and timedelta columns, three rows.
         # GH3668
         # GH5724
         df = DataFrame(
@@ -54,6 +61,8 @@ class TestNumericOnly:
 
     @pytest.mark.parametrize("method", ["mean", "median"])
     def test_averages(self, df, method):
+        # [FUNCTION DOC]
+        # Parametrized over mean and median: with numeric_only True the numeric columns (int, float, integer categorical, as float means) are returned and match the expectation reindexed like the expected frame; then the common checker verifies default and explicit False behavior.
         # mean / median
         expected_columns_numeric = Index(["int", "float", "category_int"])
 
@@ -90,6 +99,8 @@ class TestNumericOnly:
 
     @pytest.mark.parametrize("method", ["min", "max"])
     def test_extrema(self, df, method):
+        # [FUNCTION DOC]
+        # Parametrized over minimum and maximum: expects the columns that support ordering (not object or unordered categorical), then runs the checker. A TODO in the source notes ordered categoricals should eventually be supported.
         # TODO: min, max *should* handle
         # categorical (ordered) dtype
 
@@ -110,6 +121,8 @@ class TestNumericOnly:
 
     @pytest.mark.parametrize("method", ["first", "last"])
     def test_first_last(self, df, method):
+        # [FUNCTION DOC]
+        # Parametrized over first and last: all columns are valid, including object and categorical, for both the default and numeric_only False.
         expected_columns = Index(
             [
                 "int",
@@ -129,6 +142,8 @@ class TestNumericOnly:
 
     @pytest.mark.parametrize("method", ["sum", "cumsum"])
     def test_sum_cumsum(self, df, method):
+        # [FUNCTION DOC]
+        # Parametrized over sum and cumulative sum: numeric_only True returns int, float and integer categorical; the string column is kept for sum but lost for cumulative sum; timedelta is included.
         expected_columns_numeric = Index(["int", "float", "category_int"])
         expected_columns = Index(
             ["int", "float", "string", "category_int", "timedelta"]
@@ -141,6 +156,8 @@ class TestNumericOnly:
 
     @pytest.mark.parametrize("method", ["prod", "cumprod"])
     def test_prod_cumprod(self, df, method):
+        # [FUNCTION DOC]
+        # Parametrized over product and cumulative product: only int, float and integer categorical columns are valid in all modes.
         expected_columns = Index(["int", "float", "category_int"])
         expected_columns_numeric = expected_columns
 
@@ -148,6 +165,8 @@ class TestNumericOnly:
 
     @pytest.mark.parametrize("method", ["cummin", "cummax"])
     def test_cummin_cummax(self, df, method):
+        # [FUNCTION DOC]
+        # Parametrized over cumulative minimum and maximum: includes datetimes and timedeltas but not strings; the default is numeric_only False like minimum and maximum (issue 15561).
         # like min, max, but don't include strings
         expected_columns = Index(
             ["int", "float", "category_int", "datetime", "datetimetz", "timedelta"]
@@ -159,6 +178,8 @@ class TestNumericOnly:
         self._check(df, method, expected_columns, expected_columns_numeric)
 
     def _check(self, df, method, expected_columns, expected_columns_numeric):
+        # [FUNCTION DOC]
+        # HELPER: shared checker for the family tests. Groups by the group column and, depending on the method, verifies: the default call (and, for non-first/last methods, the numeric_only False call) either raises a type error (or not-implemented error for cumulative methods) with one of several accepted messages when nuisance columns cannot be handled, or returns a frame whose columns equal the expected numeric column index (for default) or the expected full column index (for numeric_only False, first/last only). Parameters: the frame, the method name, the expected column index for numeric_only False, and the expected index for the default call.
         gb = df.groupby("group")
 
         # object dtypes for transformations are not implemented in Cython and
@@ -254,6 +275,8 @@ class TestNumericOnly:
 @pytest.mark.parametrize("numeric_only", [True, False, lib.no_default])
 @pytest.mark.parametrize("keys", [["a1"], ["a1", "a2"]])
 def test_numeric_only(kernel, has_arg, numeric_only, keys):
+    # [FUNCTION DOC]
+    # Parametrized over many kernels, whether they accept a numeric_only argument, numeric_only values (True, False or unspecified) and one or two keys (issue 46072): on a frame with one object column, checks that the object column is absent with numeric_only True; present for first/last and for dtype-agnostic kernels without the argument; errors with kernel-specific messages when numeric_only is False and the kernel needs numeric data; an unexpected-keyword type error for kernels without the argument when it is given; and for diff and percent change a type error from unsupported operands. Expects a deprecation warning for the correlation-with-other kernel.
     # GH#46072
     # drops_nuisance: Whether the op drops nuisance columns even when numeric_only=False
     # has_arg: Whether the op has a numeric_only arg
@@ -334,6 +357,8 @@ def test_numeric_only(kernel, has_arg, numeric_only, keys):
 
 @pytest.mark.parametrize("dtype", [bool, int, float, object])
 def test_deprecate_numeric_only_series(dtype, groupby_func, request):
+    # [FUNCTION DOC]
+    # Issue 46560: for series groupby over bool, int, float and object dtype and each groupby function, checks default behavior on object dtype (type error for kernels not supported on object, otherwise result equal to the numeric result cast to object where appropriate) and the numeric_only keyword (unexpected-keyword error when unsupported; type error on object dtype; quantile on bool raises; otherwise numeric_only True and False agree). The correlation-with-other kernel is asserted to be absent from series groupby and the test returns early.
     # GH#46560
     grouper = [0, 0, 1]
 

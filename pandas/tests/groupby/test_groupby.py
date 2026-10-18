@@ -1,3 +1,7 @@
+# [MODULE DOC]
+# Tests for core groupby behavior on Series and DataFrame: aggregation, apply, transform, naming of results, multi-key and level grouping, empty/NaN groups, complex and categorical keys, and error handling for nuisance columns.
+# Relies on shared fixtures (the random frame, timeseries, multiindex frames, dropna/observed/sort parametrizations) and the testing helpers for equality assertions.
+# Module-level mark: ignores the runtime warning about the mean of an empty slice.
 from datetime import datetime
 import decimal
 from decimal import Decimal
@@ -32,6 +36,8 @@ pytestmark = pytest.mark.filterwarnings("ignore:Mean of empty slice:RuntimeWarni
 
 
 def test_repr():
+    # [FUNCTION DOC]
+    # Verifies the string representation of a Grouper built with a key and a level, including its default sort and dropna settings.
     # GH18203
     result = repr(Grouper(key="A", level="B"))
     expected = "Grouper(key='A', level='B', sort=False, dropna=True)"
@@ -39,6 +45,8 @@ def test_repr():
 
 
 def test_groupby_nonobject_dtype(multiindex_dataframe_random_data):
+    # [FUNCTION DOC]
+    # Groups a multiindex frame by an integer code array and checks the result index keeps the small integer dtype of the key while grouping by the same codes cast to object gives a 64-bit integer index; the frames are otherwise equal.
     key = multiindex_dataframe_random_data.index.codes[0]
     grouped = multiindex_dataframe_random_data.groupby(key)
     result = grouped.sum()
@@ -50,6 +58,8 @@ def test_groupby_nonobject_dtype(multiindex_dataframe_random_data):
 
 
 def test_groupby_nonobject_dtype_mixed():
+    # [FUNCTION DOC]
+    # Regression test for mixed-type frames: applies a function selecting the row with the maximum value per group and checks that the resulting column dtypes equal the original frame's dtypes without the grouping column.
     # GH 3911, mixed frame non-conversion
     df = DataFrame(
         {
@@ -62,6 +72,8 @@ def test_groupby_nonobject_dtype_mixed():
     df["value"] = range(len(df))
 
     def max_value(group):
+        # [FUNCTION DOC]
+        # HELPER: apply function for the mixed-dtype test; returns the row of the group whose value column is largest.
         return group.loc[group["value"].idxmax()]
 
     applied = df.groupby("A").apply(max_value)
@@ -71,7 +83,11 @@ def test_groupby_nonobject_dtype_mixed():
 
 
 def test_pass_args_kwargs(ts):
+    # [FUNCTION DOC]
+    # Checks that extra positional and keyword arguments are forwarded by aggregate, apply and transform on a SeriesGroupBy when using a percentile function, and that results match the quantile-based expectation.
     def f(x, q=None, axis=0):
+        # [FUNCTION DOC]
+        # HELPER: percentile wrapper taking the data, the quantile q and axis; used to test keyword argument passing.
         return np.percentile(x, q, axis=axis)
 
     g = lambda x: np.percentile(x, 80, axis=0)
@@ -98,7 +114,11 @@ def test_pass_args_kwargs(ts):
 
 
 def test_pass_args_kwargs_dataframe(tsframe, as_index):
+    # [FUNCTION DOC]
+    # Same as the Series argument-passing test but on a DataFrameGroupBy, parametrized over as_index: checks aggregate and apply with positional and keyword arguments against quantile results, including a list of quantiles (where, for non-index output, index and level columns are rebuilt by hand before comparison).
     def f(x, q=None, axis=0):
+        # [FUNCTION DOC]
+        # HELPER: percentile wrapper taking the data, the quantile q and axis; used to test keyword argument passing.
         return np.percentile(x, q, axis=axis)
 
     df_grouped = tsframe.groupby(lambda x: x.month, as_index=as_index)
@@ -124,6 +144,8 @@ def test_pass_args_kwargs_dataframe(tsframe, as_index):
 
 
 def test_len():
+    # [FUNCTION DOC]
+    # Checks the length of a groupby object equals the number of distinct groups, for grouping by several callables and by two callables.
     df = DataFrame(
         np.random.default_rng(2).standard_normal((10, 4)),
         columns=Index(list("ABCD"), dtype=object),
@@ -138,6 +160,8 @@ def test_len():
 
 
 def test_len_nan_group():
+    # [FUNCTION DOC]
+    # Issue 11016: groups whose key is all NaN are excluded, so the length is zero when grouping by an all-NaN column or by it together with another, and equals the row count when grouping by the other column.
     # issue 11016
     df = DataFrame({"a": [np.nan] * 3, "b": [1, 2, 3]})
     assert len(df.groupby("a")) == 0
@@ -146,6 +170,8 @@ def test_len_nan_group():
 
 
 def test_groupby_timedelta_median():
+    # [FUNCTION DOC]
+    # Issue 57926: median of a timedelta column per group ignoring NaT yields a timedelta result with microsecond resolution.
     # issue 57926
     expected = Series(data=Timedelta("1D"), index=["foo"], dtype="m8[us]")
     df = DataFrame({"label": ["foo", "foo"], "timedelta": [pd.NaT, Timedelta("1D")]})
@@ -156,6 +182,8 @@ def test_groupby_timedelta_median():
 
 @pytest.mark.parametrize("keys", [["a"], ["a", "b"]])
 def test_len_categorical(dropna, observed, keys):
+    # [FUNCTION DOC]
+    # Issue 57595: the length of a groupby on categorical keys depends on the parametrized observed and dropna flags and on the number of keys (one or two); verifies the expected count of groups, including unobserved categories and NaN groups.
     # GH#57595
     df = DataFrame(
         {
@@ -178,6 +206,8 @@ def test_len_categorical(dropna, observed, keys):
 
 
 def test_basic_regression():
+    # [FUNCTION DOC]
+    # Smoke regression test: grouping a float series by a random float series and taking the mean must not raise.
     # regression
     result = Series([1.0 * x for x in list(range(1, 10)) * 10])
 
@@ -189,9 +219,13 @@ def test_basic_regression():
 
 
 def test_indices_concatenation_order():
+    # [FUNCTION DOC]
+    # Issue 2808: checks that applying functions that return frames with differing index shapes works when consistent, and raises an assertion error about differing numbers of index levels when the per-group result indexes are inconsistent (an empty frame with no index, or a differently named empty multiindex).
     # GH 2808
 
     def f1(x):
+        # [FUNCTION DOC]
+        # HELPER: group function returning the squared odd-b rows indexed by b and c, or an empty frame with a two-level multiindex named b and c.
         y = x[(x.b % 2) == 1] ** 2
         if y.empty:
             multiindex = MultiIndex(levels=[[]] * 2, codes=[[]] * 2, names=["b", "c"])
@@ -202,6 +236,8 @@ def test_indices_concatenation_order():
             return y
 
     def f2(x):
+        # [FUNCTION DOC]
+        # HELPER: group function like the first but returns an empty frame with no index levels for empty groups.
         y = x[(x.b % 2) == 1] ** 2
         if y.empty:
             return DataFrame()
@@ -210,6 +246,8 @@ def test_indices_concatenation_order():
             return y
 
     def f3(x):
+        # [FUNCTION DOC]
+        # HELPER: group function returning the squared odd-b rows unchanged, or an empty frame with a two-level index with different names and an extra column.
         y = x[(x.b % 2) == 1] ** 2
         if y.empty:
             multiindex = MultiIndex(
@@ -244,6 +282,8 @@ def test_indices_concatenation_order():
 
 
 def test_attr_wrapper(ts):
+    # [FUNCTION DOC]
+    # Checks attribute wrapping on a SeriesGroupBy grouped by weekday: std, describe and dtype attributes delegate to per-group computation, and unknown attributes raise an attribute error naming the group object type.
     grouped = ts.groupby(lambda x: x.weekday())
 
     result = grouped.std()
@@ -268,6 +308,8 @@ def test_attr_wrapper(ts):
 
 
 def test_frame_groupby(tsframe):
+    # [FUNCTION DOC]
+    # Walks through DataFrameGroupBy basics on a timeseries frame: aggregate by function and by column name, transform (reducing and non-reducing), iteration over groups, and consistency of the groups and indices attributes.
     grouped = tsframe.groupby(lambda x: x.weekday())
 
     # aggregate
@@ -308,6 +350,8 @@ def test_frame_groupby(tsframe):
 
 
 def test_frame_set_name_single(df):
+    # [FUNCTION DOC]
+    # Checks the name of the result index is preserved as the grouping column name for various aggregation forms, that it is not for as_index False, and that a nested renamer dict on a selected column raises a specification error.
     grouped = df.groupby("A")
 
     result = grouped.mean(numeric_only=True)
@@ -335,6 +379,8 @@ def test_frame_set_name_single(df):
 
 
 def test_multi_func(df):
+    # [FUNCTION DOC]
+    # Groups by two key functions and checks aggregation matches grouping by the corresponding columns; also checks aggregating a frame whose key combinations have no data works.
     col1 = df["A"]
     col2 = df["B"]
 
@@ -363,6 +409,8 @@ def test_multi_func(df):
 
 
 def test_multi_key_multiple_functions(df):
+    # [FUNCTION DOC]
+    # Aggregating a selected column with a list of functions over two keys equals a frame built from the separate aggregations.
     grouped = df.groupby(["A", "B"])["C"]
 
     agged = grouped.agg(["mean", "std"])
@@ -371,6 +419,8 @@ def test_multi_key_multiple_functions(df):
 
 
 def test_frame_multi_key_function_list():
+    # [FUNCTION DOC]
+    # Aggregating with a list of functions over two keys equals the concatenation of each column's aggregation with column keys, with a multiindex row index.
     data = DataFrame(
         {
             "A": [
@@ -419,6 +469,8 @@ def test_frame_multi_key_function_list():
 
 
 def test_frame_multi_key_function_list_partial_failure(using_infer_string):
+    # [FUNCTION DOC]
+    # Aggregating with a list of functions when a string column is present raises a type error whose message depends on whether the string dtype inference option is on.
     data = DataFrame(
         {
             "A": [
@@ -477,6 +529,8 @@ def test_frame_multi_key_function_list_partial_failure(using_infer_string):
 
 @pytest.mark.parametrize("op", [lambda x: x.sum(), lambda x: x.mean()])
 def test_groupby_multiple_columns(df, op):
+    # [FUNCTION DOC]
+    # Parametrized over sum and mean operations: groups by two keys and checks the operation applied to the groupby object, to selected columns, and to manually iterated subgroups all agree; also checks a single series grouped by two series.
     data = df
     grouped = data.groupby(["A", "B"])
 
@@ -509,6 +563,8 @@ def test_groupby_multiple_columns(df, op):
 
 
 def test_as_index_select_column():
+    # [FUNCTION DOC]
+    # Issue 5764: selecting a column with as_index False and getting a group returns a plain series, and applying a cumulative sum returns a series with a default range index.
     # GH 5764
     df = DataFrame([[1, 2], [1, 4], [5, 6]], columns=["A", "B"])
     result = df.groupby("A", as_index=False)["B"].get_group(1)
@@ -523,6 +579,8 @@ def test_as_index_select_column():
 
 
 def test_groupby_as_index_select_column_sum_empty_df():
+    # [FUNCTION DOC]
+    # Issue 35246: summing a selected column on an empty frame with as_index False returns an empty frame with the first two columns and no column names.
     # GH 35246
     df = DataFrame(columns=Index(["A", "B", "C"], name="alpha"))
     left = df.groupby(by="A", as_index=False)["B"].sum(numeric_only=False)
@@ -534,6 +592,8 @@ def test_groupby_as_index_select_column_sum_empty_df():
 
 
 def test_ops_not_as_index(reduction_func):
+    # [FUNCTION DOC]
+    # Parametrized over reduction functions: for as_index False, the reduction result equals the as_index True result reset to columns, whether called directly, via aggregate, or on a selected column. Skips the correlation-with-other, nth and group-number reductions.
     # GH 10355, 21090
     # Using as_index=False should not modify grouped column
 
@@ -568,6 +628,8 @@ def test_ops_not_as_index(reduction_func):
 
 
 def test_as_index_series_return_frame(df):
+    # [FUNCTION DOC]
+    # Selecting a column from an as_index False groupby and aggregating or summing returns a DataFrame including the key columns, for one and two keys.
     grouped = df.groupby("A", as_index=False)
     grouped2 = df.groupby(["A", "B"], as_index=False)
 
@@ -593,6 +655,8 @@ def test_as_index_series_return_frame(df):
 
 
 def test_as_index_series_column_slice_raises(df):
+    # [FUNCTION DOC]
+    # Issue 15072: selecting a column twice on an as_index False groupby raises an index error saying the columns are already selected.
     # GH15072
     grouped = df.groupby("A", as_index=False)
     msg = r"Column\(s\) C already selected"
@@ -602,6 +666,8 @@ def test_as_index_series_column_slice_raises(df):
 
 
 def test_groupby_as_index_cython(df):
+    # [FUNCTION DOC]
+    # Checks the Cython-implemented mean with as_index False equals the as_index True result with key columns inserted and a range index, for single and multiple keys.
     data = df
 
     # single-key
@@ -625,6 +691,8 @@ def test_groupby_as_index_cython(df):
 
 
 def test_groupby_as_index_series_scalar(df):
+    # [FUNCTION DOC]
+    # Issue 421: aggregating with the length builtin on a selected column of an as_index False multi-key groupby matches the frame-level aggregation restricted to key and value columns.
     grouped = df.groupby(["A", "B"], as_index=False)
 
     # GH #421
@@ -635,6 +703,8 @@ def test_groupby_as_index_series_scalar(df):
 
 
 def test_groupby_multiple_key():
+    # [FUNCTION DOC]
+    # Grouping a frame by three date-component functions yields one row per original row, so the values are unchanged by the sum.
     df = DataFrame(
         np.random.default_rng(2).standard_normal((10, 4)),
         columns=Index(list("ABCD"), dtype=object),
@@ -646,6 +716,8 @@ def test_groupby_multiple_key():
 
 
 def test_groupby_multi_corner(df):
+    # [FUNCTION DOC]
+    # Checks that an all-NaN column added to the frame is carried through mean aggregation as NaN.
     # test that having an all-NA column doesn't mess you up
     df = df.copy()
     df["bad"] = np.nan
@@ -658,6 +730,8 @@ def test_groupby_multi_corner(df):
 
 
 def test_raises_on_nuisance(df, using_infer_string):
+    # [FUNCTION DOC]
+    # Aggregating or taking the mean with a string column raises a type error (message depends on the string inference option); with a datetime column, sum raises a type error stating the datetime type does not support sum.
     grouped = df.groupby("A")
     msg = re.escape("agg function failed [how->mean,dtype->")
     if using_infer_string:
@@ -682,6 +756,8 @@ def test_raises_on_nuisance(df, using_infer_string):
     ["max", "min"],
 )
 def test_keep_nuisance_agg(df, agg_function):
+    # [FUNCTION DOC]
+    # Issue 38815: maximum and minimum keep the non-numeric column B, with values matching per-group computation.
     # GH 38815
     grouped = df.groupby("A")
     result = getattr(grouped, agg_function)()
@@ -697,6 +773,8 @@ def test_keep_nuisance_agg(df, agg_function):
 )
 @pytest.mark.parametrize("numeric_only", [True, False])
 def test_omit_nuisance_agg(df, agg_function, numeric_only, using_infer_string):
+    # [FUNCTION DOC]
+    # Parametrized over several aggregations and numeric_only. For aggregations that cannot drop nuisance columns when numeric_only is False, expects an error (type or value, depending on function and string inference); otherwise checks the result equals the aggregation on the frame restricted to the expected columns (sum keeps the string column when numeric_only is False).
     # GH 38774, GH 38815
     grouped = df.groupby("A")
 
@@ -729,6 +807,8 @@ def test_omit_nuisance_agg(df, agg_function, numeric_only, using_infer_string):
 
 
 def test_raise_on_nuisance_python_single(df, using_infer_string):
+    # [FUNCTION DOC]
+    # Issue 38815: skew with a string column raises a value error about conversion, or a type error under string inference.
     # GH 38815
     grouped = df.groupby("A")
 
@@ -742,6 +822,8 @@ def test_raise_on_nuisance_python_single(df, using_infer_string):
 
 
 def test_raise_on_nuisance_python_multiple(three_group, using_infer_string):
+    # [FUNCTION DOC]
+    # Aggregating by mean or calling mean on a two-key grouping of a frame with a non-numeric column raises a type error.
     grouped = three_group.groupby(["A", "B"])
     msg = re.escape("agg function failed [how->mean,dtype->")
     if using_infer_string:
@@ -753,6 +835,8 @@ def test_raise_on_nuisance_python_multiple(three_group, using_infer_string):
 
 
 def test_empty_groups_corner(multiindex_dataframe_random_data):
+    # [FUNCTION DOC]
+    # Checks aggregation with a column selection equals the numeric-only mean, and applying a mean on a slice of a multiindex frame grouped by level keeps the index name of the first level.
     # handle empty groups
     df = DataFrame(
         {
@@ -777,6 +861,8 @@ def test_empty_groups_corner(multiindex_dataframe_random_data):
 
 
 def test_nonsense_func():
+    # [FUNCTION DOC]
+    # Grouping by a callable that fails when applied (adding a string to an integer) raises a type error at groupby creation time.
     df = DataFrame([0])
     msg = r"unsupported operand type\(s\) for \+: 'int' and 'str'"
     with pytest.raises(TypeError, match=msg):
@@ -786,6 +872,8 @@ def test_nonsense_func():
 def test_wrap_aggregated_output_multindex(
     multiindex_dataframe_random_data, using_infer_string
 ):
+    # [FUNCTION DOC]
+    # Aggregating a transposed multiindex-column frame containing a string column raises a type error; after dropping that column the aggregated columns stay a multiindex; an aggregation function raising a custom type error propagates it.
     df = multiindex_dataframe_random_data.T
     df["baz", "two"] = "peekaboo"
 
@@ -799,6 +887,8 @@ def test_wrap_aggregated_output_multindex(
     assert isinstance(agged.columns, MultiIndex)
 
     def aggfun(ser):
+        # [FUNCTION DOC]
+        # HELPER: aggregation function that raises a type error for the series named by the foo/one column and otherwise sums.
         if ser.name == ("foo", "one"):
             raise TypeError("Test error message")
         return ser.sum()
@@ -808,6 +898,8 @@ def test_wrap_aggregated_output_multindex(
 
 
 def test_groupby_level_apply(multiindex_dataframe_random_data):
+    # [FUNCTION DOC]
+    # Checks that grouping by level number and counting names the index after the corresponding level, for frames and series.
     result = multiindex_dataframe_random_data.groupby(level=0).count()
     assert result.index.name == "first"
     result = multiindex_dataframe_random_data.groupby(level=1).count()
@@ -818,6 +910,8 @@ def test_groupby_level_apply(multiindex_dataframe_random_data):
 
 
 def test_groupby_level_mapper(multiindex_dataframe_random_data):
+    # [FUNCTION DOC]
+    # Checks grouping by a mapping applied to a level equals grouping by the manually mapped integer arrays, with index names set to the level names.
     deleveled = multiindex_dataframe_random_data.reset_index()
 
     mapper0 = {"foo": 0, "bar": 0, "baz": 1, "qux": 1}
@@ -841,6 +935,8 @@ def test_groupby_level_mapper(multiindex_dataframe_random_data):
 
 
 def test_groupby_level_nonmulti():
+    # [FUNCTION DOC]
+    # Issues 1313 and 13901: grouping a series with a single-level index by level 0 or -1 (scalar or list) works; invalid levels, an empty list of levels, and multiple levels raise value errors with specific messages.
     # GH 1313, GH 13901
     s = Series([1, 2, 3, 10, 4, 5, 20, 6], Index([1, 2, 3, 1, 4, 5, 2, 6], name="foo"))
     expected = Series([11, 22, 3, 4, 5, 6], Index(list(range(1, 7)), name="foo"))
@@ -873,6 +969,8 @@ def test_groupby_level_nonmulti():
 
 
 def test_groupby_complex():
+    # [FUNCTION DOC]
+    # Issue 12902: summing complex numbers per group keeps complex values.
     # GH 12902
     a = Series(data=np.arange(4) * (1 + 2j), index=[0, 0, 1, 1])
     expected = Series((1 + 2j, 5 + 10j), index=Index([0, 1]))
@@ -882,6 +980,8 @@ def test_groupby_complex():
 
 
 def test_groupby_complex_mean():
+    # [FUNCTION DOC]
+    # Issue 26475: mean grouped by a complex-valued column works and yields a complex-labelled index in sorted order.
     # GH 26475
     df = DataFrame(
         [
@@ -900,6 +1000,8 @@ def test_groupby_complex_mean():
 
 
 def test_groupby_complex_numbers():
+    # [FUNCTION DOC]
+    # Issue 17927: grouping by a complex column counts correctly; unsorted keeps order of appearance, sorted orders by magnitude.
     # GH 17927
     df = DataFrame(
         [
@@ -923,6 +1025,8 @@ def test_groupby_complex_numbers():
 
 
 def test_groupby_series_indexed_differently():
+    # [FUNCTION DOC]
+    # Grouping a series by another series with a differently-ordered, partially overlapping index aligns on the index first, equalling grouping by the reindexed values.
     s1 = Series(
         [5.0, -9.0, 4.0, 100.0, -5.0, 55.0, 6.7],
         index=Index(["a", "b", "c", "d", "e", "f", "g"]),
@@ -938,6 +1042,8 @@ def test_groupby_series_indexed_differently():
 
 
 def test_groupby_with_hier_columns():
+    # [FUNCTION DOC]
+    # Checks that groupby on level 0 with mean, aggregate mean and apply on a frame with hierarchical columns preserves the column index, and that mean with numeric_only drops an added string column.
     tuples = list(
         zip(
             *[
@@ -972,6 +1078,8 @@ def test_groupby_with_hier_columns():
 
 
 def test_grouping_ndarray(df):
+    # [FUNCTION DOC]
+    # Grouping by a numpy array of a column's values, or by the column with its name removed, gives the same sum.
     grouped = df.groupby(df["A"].values)
     grouped2 = df.groupby(df["A"].rename(None))
 
@@ -981,6 +1089,8 @@ def test_grouping_ndarray(df):
 
 
 def test_groupby_wrong_multi_labels():
+    # [FUNCTION DOC]
+    # Aggregation with mean over four keys on a frame equals the groupby mean (checks that aggregate and the method agree).
     index = Index([0, 1, 2, 3, 4], name="index")
     data = DataFrame(
         {
@@ -1001,6 +1111,8 @@ def test_groupby_wrong_multi_labels():
 
 
 def test_groupby_series_with_name(df):
+    # [FUNCTION DOC]
+    # Grouping by a named series gives an index named after the series (or an A column for as_index False); with two series, a two-level index with both names.
     result = df.groupby(df["A"]).mean(numeric_only=True)
     result2 = df.groupby(df["A"], as_index=False).mean(numeric_only=True)
     assert result.index.name == "A"
@@ -1014,6 +1126,8 @@ def test_groupby_series_with_name(df):
 
 
 def test_seriesgroupby_name_attr(df):
+    # [FUNCTION DOC]
+    # Issue 6265: a selected column groupby keeps the name for count, mean and an aggregation with a custom function.
     # GH 6265
     result = df.groupby("A")["C"]
     assert result.count().name == "C"
@@ -1024,6 +1138,8 @@ def test_seriesgroupby_name_attr(df):
 
 
 def test_consistency_name():
+    # [FUNCTION DOC]
+    # Issue 12363: counting a column by grouping with a keyed column attribute gives the same result as the series grouped by another series.
     # GH 12363
 
     df = DataFrame(
@@ -1041,11 +1157,17 @@ def test_consistency_name():
 
 
 def test_groupby_name_propagation(df):
+    # [FUNCTION DOC]
+    # Issue 6124: apply returning a series per group keeps the column name only when all returned series share one name (given by an argument), and drops it when names differ.
     # GH 6124
     def summarize(df, name=None):
+        # [FUNCTION DOC]
+        # HELPER: apply function returning a fixed three-element series named by an optional argument.
         return Series({"count": 1, "mean": 2, "omissions": 3}, name=name)
 
     def summarize_random_name(df):
+        # [FUNCTION DOC]
+        # HELPER: apply function returning the fixed series named by a per-group value, so names are inconsistent across groups.
         # Provide a different name for each Series.  In this case, groupby
         # should not attempt to propagate the Series name since they are
         # inconsistent.
@@ -1060,6 +1182,8 @@ def test_groupby_name_propagation(df):
 
 
 def test_groupby_nonstring_columns():
+    # [FUNCTION DOC]
+    # Grouping by an integer column label on a frame with integer column names gives the same mean as grouping by the column's values.
     df = DataFrame([np.arange(10) for x in range(10)])
     grouped = df.groupby(0)
     result = grouped.mean()
@@ -1068,6 +1192,8 @@ def test_groupby_nonstring_columns():
 
 
 def test_groupby_mixed_type_columns():
+    # [FUNCTION DOC]
+    # Issue 13432: a frame with mixed-type column labels can be grouped and aggregated by first and sum without ordering errors.
     # GH 13432, unorderable types in py3
     df = DataFrame([[0, 1, 2]], columns=["A", "B", 0])
     expected = DataFrame([[1, 2]], columns=["B", 0], index=Index([0], name="A"))
@@ -1080,6 +1206,8 @@ def test_groupby_mixed_type_columns():
 
 
 def test_cython_grouper_series_bug_noncontig():
+    # [FUNCTION DOC]
+    # Regression: aggregating with the series median over groups of a non-contiguous all-NaN array yields all NaN.
     arr = np.empty((100, 100))
     arr.fill(np.nan)
     obj = Series(arr[:, 0])
@@ -1090,6 +1218,8 @@ def test_cython_grouper_series_bug_noncontig():
 
 
 def test_series_grouper_noncontig_index():
+    # [FUNCTION DOC]
+    # Regression: aggregation over a series whose index is non-contiguous object data with repeated strings works (formerly segfaulted when accessing index elements).
     index = Index(["a" * 10] * 100)
 
     values = Series(np.random.default_rng(2).standard_normal(50), index=index[::2])
@@ -1104,13 +1234,19 @@ def test_series_grouper_noncontig_index():
 
 
 def test_convert_objects_leave_decimal_alone():
+    # [FUNCTION DOC]
+    # Aggregating with a function returning Decimal values keeps object dtype and Decimal instances, both for the fast path and a function forcing the pure path.
     s = Series(range(5))
     labels = np.array(["a", "b", "c", "d", "e"], dtype="O")
 
     def convert_fast(x):
+        # [FUNCTION DOC]
+        # HELPER: aggregation function returning the mean as a decimal number.
         return Decimal(str(x.mean()))
 
     def convert_force_pure(x):
+        # [FUNCTION DOC]
+        # HELPER: aggregation function that asserts the underlying array has a base with positive length, then returns the mean as a decimal number; forces the non-fast path.
         # base will be length 0
         assert len(x.values.base) > 0
         return Decimal(str(x.mean()))
@@ -1127,6 +1263,8 @@ def test_convert_objects_leave_decimal_alone():
 
 
 def test_groupby_dtype_inference_empty():
+    # [FUNCTION DOC]
+    # Issue 6733: groupby first on an empty float key column gives an empty result with a float index named x and 64-bit integer data.
     # GH 6733
     df = DataFrame({"x": [], "range": np.arange(0, dtype="int64")})
     assert df["x"].dtype == np.float64
@@ -1138,6 +1276,8 @@ def test_groupby_dtype_inference_empty():
 
 
 def test_groupby_unit64_float_conversion():
+    # [FUNCTION DOC]
+    # Issue 30859: the maximum of an unsigned 64-bit value stays exact (is not converted to float).
     # GH: 30859 groupby converts unit64 to floats sometimes
     df = DataFrame({"first": [1], "second": [1], "value": [16148277970000000000]})
     result = df.groupby(["first", "second"])["value"].max()
@@ -1150,6 +1290,9 @@ def test_groupby_unit64_float_conversion():
 
 
 def test_groupby_list_infer_array_like(df):
+    # [FUNCTION DOC]
+    # Grouping by a list equal to a column's values groups like the series; a list of wrong length treated as a column name raises a key error.
+    # KNOWN ISSUE: the final ambiguity case computes a result and an expected frame but never compares them, so it asserts nothing.
     result = df.groupby(list(df["A"])).mean(numeric_only=True)
     expected = df.groupby(df["A"]).mean(numeric_only=True)
     tm.assert_frame_equal(result, expected, check_names=False)
@@ -1171,6 +1314,8 @@ def test_groupby_list_infer_array_like(df):
 
 
 def test_groupby_keys_same_size_as_index():
+    # [FUNCTION DOC]
+    # Issue 11185: grouping by a time Grouper on the index level plus a column yields the same as setting both as a multiindex, as float values.
     # GH 11185
     freq = "s"
     index = date_range(
@@ -1184,6 +1329,8 @@ def test_groupby_keys_same_size_as_index():
 
 
 def test_groupby_one_row():
+    # [FUNCTION DOC]
+    # Issue 11741: grouping a one-row or two-row frame by a missing column name raises a key error.
     # GH 11741
     msg = r"^'Z'$"
     df1 = DataFrame(
@@ -1199,6 +1346,8 @@ def test_groupby_one_row():
 
 
 def test_groupby_nat_exclude():
+    # [FUNCTION DOC]
+    # Issue 6992: NaT/NaN keys are excluded; checks groups, indices, group retrieval, group count, the unfiltered grouping object, key errors for getting NaN/NaT groups, and an all-NaN or all-NaT key giving no groups.
     # GH 6992
     df = DataFrame(
         {
@@ -1265,6 +1414,8 @@ def test_groupby_nat_exclude():
 
 
 def test_groupby_two_group_keys_all_nan():
+    # [FUNCTION DOC]
+    # Issue 36842: grouping by two all-NaN keys gives empty indices without raising.
     # GH #36842: Grouping over two group keys shouldn't raise an error
     df = DataFrame({"a": [np.nan, np.nan], "b": [np.nan, np.nan], "c": [1, 2]})
     result = df.groupby(["a", "b"]).indices
@@ -1272,6 +1423,8 @@ def test_groupby_two_group_keys_all_nan():
 
 
 def test_groupby_2d_malformed():
+    # [FUNCTION DOC]
+    # Grouping a small frame by a string column and averaging with numeric_only gives the numeric columns only, as a 2-d array of the expected values.
     d = DataFrame(index=range(2))
     d["group"] = ["g1", "g2"]
     d["zeros"] = [0, 0]
@@ -1284,6 +1437,8 @@ def test_groupby_2d_malformed():
 
 
 def test_int32_overflow():
+    # [FUNCTION DOC]
+    # Grouping by four keys with a large number of combinations (that would overflow 32-bit codes) works in either key order and gives the same number of groups.
     B = np.concatenate((np.arange(10000), np.arange(10000), np.arange(5000)))
     A = np.arange(25000)
     df = DataFrame(
@@ -1302,6 +1457,8 @@ def test_int32_overflow():
 
 
 def test_groupby_sort_multi():
+    # [FUNCTION DOC]
+    # Checks sorted multi-key grouping orders keys lexicographically for several column permutations, and that per-group sums match those from grouping by tuples.
     df = DataFrame(
         {
             "a": ["foo", "bar", "baz"],
@@ -1337,6 +1494,8 @@ def test_groupby_sort_multi():
     result = grouped.sum()
 
     def _check_groupby(df, result, keys, field, f=lambda x: x.sum()):
+        # [FUNCTION DOC]
+        # HELPER: compares each result entry to the expected value computed by grouping on tuples of the key columns, with an overridable reduction (default sum).
         tups = [tuple(row) for row in df[keys].values]
         tups = com.asarray_tuplesafe(tups)
         expected = f(df.groupby(tups)[field])
@@ -1347,6 +1506,8 @@ def test_groupby_sort_multi():
 
 
 def test_dont_clobber_name_column():
+    # [FUNCTION DOC]
+    # A column named name does not clash with the group name; apply with group_keys False returns the frame minus the key column.
     df = DataFrame(
         {"key": ["a", "a", "a", "b", "b", "b"], "name": ["foo", "bar", "baz"] * 2}
     )
@@ -1356,6 +1517,8 @@ def test_dont_clobber_name_column():
 
 
 def test_skip_group_keys():
+    # [FUNCTION DOC]
+    # Checks skipping group keys: apply returning the top rows after sorting, with group_keys False, equals the concatenation of the pieces, for frames and series.
     tsf = DataFrame(
         np.random.default_rng(2).standard_normal((10, 4)),
         columns=Index(list("ABCD"), dtype=object),
@@ -1380,6 +1543,8 @@ def test_skip_group_keys():
 
 
 def test_no_nonsense_name(float_frame):
+    # [FUNCTION DOC]
+    # Aggregating a series with name set to none yields a result with no name.
     # GH #995
     s = float_frame["C"].copy()
     s.name = None
@@ -1389,6 +1554,8 @@ def test_no_nonsense_name(float_frame):
 
 
 def test_multifunc_sum_bug():
+    # [FUNCTION DOC]
+    # Issue 1065: aggregating a float column by sum and a column by size with a dict keeps the float dtype.
     # GH #1065
     x = DataFrame(np.arange(9).reshape(3, 3))
     x["test"] = 0
@@ -1400,10 +1567,16 @@ def test_multifunc_sum_bug():
 
 
 def test_handle_dict_return_value(df):
+    # [FUNCTION DOC]
+    # Applying a function returning a dict per group on a selected column gives the same as returning a series.
     def f(group):
+        # [FUNCTION DOC]
+        # HELPER: returns a dict with the maximum and minimum of the group.
         return {"max": group.max(), "min": group.min()}
 
     def g(group):
+        # [FUNCTION DOC]
+        # HELPER: returns a series with the maximum and minimum of the group.
         return Series({"max": group.max(), "min": group.min()})
 
     result = df.groupby("A")["C"].apply(f)
@@ -1415,15 +1588,23 @@ def test_handle_dict_return_value(df):
 
 @pytest.mark.parametrize("grouper", ["A", ["A", "B"]])
 def test_set_group_name(df, grouper):
+    # [FUNCTION DOC]
+    # Parametrized over a single and a list grouping key: functions receiving groups can access the group name in apply, aggregate (including dict and list forms) and transform for frames and selected columns.
     def f(group):
+        # [FUNCTION DOC]
+        # HELPER: asserts the group name is available and returns the group.
         assert group.name is not None
         return group
 
     def freduce(group):
+        # [FUNCTION DOC]
+        # HELPER: asserts the group name is available and returns the sum.
         assert group.name is not None
         return group.sum()
 
     def freducex(x):
+        # [FUNCTION DOC]
+        # HELPER: wrapper delegating to the reducing helper; used for a differently named function.
         return freduce(x)
 
     grouped = df.groupby(grouper, group_keys=False)
@@ -1441,12 +1622,16 @@ def test_set_group_name(df, grouper):
 
 
 def test_group_name_available_in_inference_pass():
+    # [FUNCTION DOC]
+    # Issue 15062: the group name is available in the inference pass, checked by collecting names in apply and seeing exactly each group once in order of appearance.
     # gh-15062
     df = DataFrame({"a": [0, 0, 1, 1, 2, 2], "b": np.arange(6)})
 
     names = []
 
     def f(group):
+        # [FUNCTION DOC]
+        # HELPER: records the name of the group in an outer list and returns a copy.
         names.append(group.name)
         return group.copy()
 
@@ -1456,6 +1641,8 @@ def test_group_name_available_in_inference_pass():
 
 
 def test_no_dummy_key_names(df):
+    # [FUNCTION DOC]
+    # Grouping by raw value arrays gives index names of none (one level or two levels).
     # see gh-1291
     result = df.groupby(df["A"].values).sum()
     assert result.index.name is None
@@ -1465,6 +1652,8 @@ def test_no_dummy_key_names(df):
 
 
 def test_groupby_sort_multiindex_series():
+    # [FUNCTION DOC]
+    # Issue 9444: the sort flag is honored when grouping a series by two named levels: unsorted keeps order of appearance, sorted equals the sorted index.
     # series multiindex groupby sort argument was not being passed through
     # _compress_group_index
     # GH 9444
@@ -1486,16 +1675,22 @@ def test_groupby_sort_multiindex_series():
 
 
 def test_groupby_reindex_inside_function():
+    # [FUNCTION DOC]
+    # Checks aggregating a dict with a closure that reindexes (accessing data by index label) gives the same result regardless of the fix flag.
     periods = 1000
     ind = date_range(start="2012/1/1", freq="5min", periods=periods)
     df = DataFrame({"high": np.arange(periods), "low": np.arange(periods)}, index=ind)
 
     def agg_before(func, fix=False):
+        # [FUNCTION DOC]
+        # HELPER: builds an aggregation function that restricts data to hours before 11, drops missing values, and returns nothing for empty data; optionally accesses the first element by label first.
         """
         Run an aggregate func on the subset of data.
         """
 
         def _func(data):
+            # [FUNCTION DOC]
+            # HELPER: the inner function returned by the builder.
             d = data.loc[data.index.map(lambda x: x.hour < 11)].dropna()
             if fix:
                 data[data.index[0]]
@@ -1513,6 +1708,8 @@ def test_groupby_reindex_inside_function():
 
 
 def test_groupby_multiindex_missing_pair():
+    # [FUNCTION DOC]
+    # Issue 9049: grouping by two levels of a multiindex with a missing combination sums correctly in sorted order.
     # GH9049
     df = DataFrame(
         {
@@ -1534,6 +1731,8 @@ def test_groupby_multiindex_missing_pair():
 
 
 def test_groupby_multiindex_not_lexsorted(performance_warning):
+    # [FUNCTION DOC]
+    # Issue 11640 and 14776: grouping on a frame whose columns are not lexsorted gives the same mean as the lexsorted version (warning of a performance issue is expected); transforming functions work regardless of lexsortedness of the index and the sort option.
     # GH 11640
 
     # define the lexsorted version
@@ -1583,6 +1782,8 @@ def test_groupby_multiindex_not_lexsorted(performance_warning):
 
 
 def test_index_label_overlaps_location():
+    # [FUNCTION DOC]
+    # Checks filter does not confuse labels and positions when index labels overlap positional indices, for frames and series and a float index.
     # checking we don't have any label/location confusion in the
     # wake of GH5375
     df = DataFrame(list("ABCDE"), index=[2, 0, 2, 1, 1])
@@ -1612,6 +1813,8 @@ def test_index_label_overlaps_location():
 
 
 def test_transform_doesnt_clobber_ints():
+    # [FUNCTION DOC]
+    # Issue 7972: transform with mean on a frame with integer group labels gives the same as with float group labels.
     # GH 7972
     n = 6
     x = np.arange(n)
@@ -1634,6 +1837,8 @@ def test_transform_doesnt_clobber_ints():
     "group_column", ["int_groups", "string_groups", ["int_groups", "string_groups"]]
 )
 def test_groupby_preserves_sort(sort_column, group_column):
+    # [FUNCTION DOC]
+    # Parametrized over sort columns and group columns: after sorting the frame, every group passed to apply is still sorted in the same order (group order preserves original order).
     # Test to ensure that groupby always preserves sort order of original
     # object. Issue #8588 and #9651
 
@@ -1653,12 +1858,16 @@ def test_groupby_preserves_sort(sort_column, group_column):
     g = df.groupby(group_column)
 
     def test_sort(x):
+        # [FUNCTION DOC]
+        # HELPER: asserts the group equals itself sorted by the outer sort column(s).
         tm.assert_frame_equal(x, x.sort_values(by=sort_column))
 
     g.apply(test_sort)
 
 
 def test_pivot_table_values_key_error():
+    # [FUNCTION DOC]
+    # Issue 14938: pivot table with a missing value column raises a key error naming the column.
     # This test is designed to replicate the error in issue #14938
     df = DataFrame(
         {
@@ -1712,6 +1921,8 @@ def test_pivot_table_values_key_error():
     "op", ["idxmax", "idxmin", "min", "max", "sum", "prod", "skew", "kurt"]
 )
 def test_empty_groupby(columns, keys, values, method, op, dropna, using_infer_string):
+    # [FUNCTION DOC]
+    # Large parametrized test over key columns, value types, method of invocation (attribute, aggregate, apply), operation and dropna: an empty grouped frame gives an empty result with the expected index and dtypes, or raises the expected type or value errors for ordered/unordered categorical, datetime, period, string types; with numeric_only the invalid columns are dropped and an empty frame is returned.
     # GH8093 & GH26411
     override_dtype = None
 
@@ -1734,12 +1945,16 @@ def test_empty_groupby(columns, keys, values, method, op, dropna, using_infer_st
     gb = df.groupby(keys, group_keys=False, dropna=dropna, observed=False)[columns]
 
     def get_result(**kwargs):
+        # [FUNCTION DOC]
+        # HELPER: calls the operation either as an attribute or via aggregate/apply with given keyword arguments.
         if method == "attr":
             return getattr(gb, op)(**kwargs)
         else:
             return getattr(gb, method)(op, **kwargs)
 
     def get_categorical_invalid_expected():
+        # [FUNCTION DOC]
+        # HELPER: builds the expected empty frame with a categorical index that includes the unobserved category entry, with no columns.
         # Categorical is special without 'observed=True', we get a NaN entry
         #  corresponding to the unobserved group. If we passed observed=True
         #  to groupby, expected would just be 'df.set_index(keys)[columns]'
@@ -1836,6 +2051,8 @@ def test_empty_groupby(columns, keys, values, method, op, dropna, using_infer_st
 
 
 def test_empty_groupby_apply_nonunique_columns():
+    # [FUNCTION DOC]
+    # Issue 44417: applying identity to an empty frame with duplicate column labels preserves the dtypes of the non-key columns.
     # GH#44417
     df = DataFrame(np.random.default_rng(2).standard_normal((0, 4)))
     df[3] = df[3].astype(np.int64)
@@ -1846,6 +2063,8 @@ def test_empty_groupby_apply_nonunique_columns():
 
 
 def test_tuple_as_grouping():
+    # [FUNCTION DOC]
+    # Issue 18314: grouping by a tuple column label works for selecting a column, and a key error is raised if the tuple column is missing.
     # https://github.com/pandas-dev/pandas/issues/18314
     df = DataFrame(
         {
@@ -1865,6 +2084,8 @@ def test_tuple_as_grouping():
 
 
 def test_tuple_correct_keyerror():
+    # [FUNCTION DOC]
+    # Issue 18798: grouping by a missing tuple key on multiindex columns raises a key error showing the tuple.
     # https://github.com/pandas-dev/pandas/issues/18798
     df = DataFrame(1, index=range(3), columns=MultiIndex.from_product([[1, 2], [3, 4]]))
     with pytest.raises(KeyError, match=r"^\(7, 8\)$"):
@@ -1872,6 +2093,8 @@ def test_tuple_correct_keyerror():
 
 
 def test_groupby_agg_ohlc_non_first():
+    # [FUNCTION DOC]
+    # Issue 21716: aggregating with sum and ohlc on a time-grouped frame produces a multiindex columns with three levels.
     # GH 21716
     df = DataFrame(
         [[1], [1]],
@@ -1900,6 +2123,8 @@ def test_groupby_agg_ohlc_non_first():
 
 
 def test_groupby_multiindex_nat():
+    # [FUNCTION DOC]
+    # Issue 9236: NaT in a multiindex level used for grouping by level 1 does not affect the mean.
     # GH 9236
     values = [
         (pd.NaT, "a"),
@@ -1916,6 +2141,8 @@ def test_groupby_multiindex_nat():
 
 
 def test_groupby_empty_list_raises():
+    # [FUNCTION DOC]
+    # Issue 5289: grouping by a list containing an empty list raises a value error saying the grouper and axis must be the same length.
     # GH 5289
     values = zip(range(10), range(10), strict=True)
     df = DataFrame(values, columns=["apple", "b"])
@@ -1925,6 +2152,8 @@ def test_groupby_empty_list_raises():
 
 
 def test_groupby_multiindex_series_keys_len_equal_group_axis():
+    # [FUNCTION DOC]
+    # Issue 25704: grouping a multiindex series by names of two levels yields a multiindex of those levels.
     # GH 25704
     index_array = [["x", "x"], ["a", "b"], ["k", "k"]]
     index_names = ["first", "second", "third"]
@@ -1941,6 +2170,8 @@ def test_groupby_multiindex_series_keys_len_equal_group_axis():
 
 
 def test_groupby_groups_in_BaseGrouper():
+    # [FUNCTION DOC]
+    # Issue 26326: the groups attribute is the same whether grouping by a Grouper on a level or by the level name.
     # GH 26326
     # Test if DataFrame grouped with a pandas.Grouper has correct groups
     mi = MultiIndex.from_product([["A", "B"], ["C", "D"]], names=["alpha", "beta"])
@@ -1955,6 +2186,8 @@ def test_groupby_groups_in_BaseGrouper():
 
 
 def test_groups_sort_dropna(sort, dropna):
+    # [FUNCTION DOC]
+    # Issues 56966 and 56851: groups attribute with NaN keys honors sort and dropna parametrizations; checks ordered keys (as arrays to compare NaN) and index values.
     # GH#56966, GH#56851
     df = DataFrame([[2.0, 1.0], [np.nan, 4.0], [0.0, 3.0]])
     keys = [(2.0, 1.0), (np.nan, 4.0), (0.0, 3.0)]
@@ -2028,6 +2261,8 @@ def test_groups_sort_dropna(sort, dropna):
     ],
 )
 def test_shift_bfill_ffill_tz(tz_naive_fixture, op, expected):
+    # [FUNCTION DOC]
+    # Issues 19995 and 27992: shift, backward fill and forward fill on a grouped datetime column preserve the time zone (parametrized over the timezone fixture and operation); compares to expected timestamps localized to the same zone.
     # GH19995, GH27992: Check that timezone does not drop in shift, bfill, and ffill
     tz = tz_naive_fixture
     data = {
@@ -2050,6 +2285,8 @@ def test_shift_bfill_ffill_tz(tz_naive_fixture, op, expected):
 
 
 def test_groupby_only_none_group():
+    # [FUNCTION DOC]
+    # Issue 21624: transform with sum on a group whose only key is missing returns a single NaN rather than crashing with a length error.
     # see GH21624
     # this was crashing with "ValueError: Length of passed values is 1, index implies 0"
     df = DataFrame({"g": [None], "x": 1})
@@ -2060,6 +2297,8 @@ def test_groupby_only_none_group():
 
 
 def test_groupby_duplicate_index():
+    # [FUNCTION DOC]
+    # Issue 29189: grouping by level 0 of a series with duplicate float index labels works and averages duplicates.
     # GH#29189 the groupby call here used to raise
     ser = Series([2, 5, 6, 8], index=[2.0, 4.0, 4.0, 5.0])
     gb = ser.groupby(level=0)
@@ -2070,6 +2309,8 @@ def test_groupby_duplicate_index():
 
 
 def test_group_on_empty_multiindex(transformation_func, request):
+    # [FUNCTION DOC]
+    # Issue 47787: transforming an empty slice of a frame with a two-level index grouped by one level gives the same schema as the empty slice of the non-empty transform; diff and shift expectations are cast to integer. Runs for frames and a selected column, parametrized over each transformation function.
     # GH 47787
     # With one row, those are transforms so the schema should be the same
     df = DataFrame(
@@ -2093,6 +2334,8 @@ def test_group_on_empty_multiindex(transformation_func, request):
 
 
 def test_groupby_crash_on_nunique():
+    # [FUNCTION DOC]
+    # Follow-up to issue 30253: nunique on a grouped transposed frame with named multiindex columns works, including when all columns are removed.
     # Fix following 30253
     dti = date_range("2016-01-01", periods=2, name="foo")
     df = DataFrame({("A", "B"): [1, 2], ("A", "C"): [1, 3], ("D", "B"): [0, 0]})
@@ -2118,6 +2361,8 @@ def test_groupby_crash_on_nunique():
 
 
 def test_groupby_list_level():
+    # [FUNCTION DOC]
+    # Issue 9790: grouping by a one-element list of levels gives the same frame (mean of the single rows).
     # GH 9790
     expected = DataFrame(np.arange(0, 9).reshape(3, 3), dtype=float)
     result = expected.groupby(level=[0]).mean()
@@ -2133,6 +2378,8 @@ def test_groupby_list_level():
     ],
 )
 def test_groups_repr_truncates(max_seq_items, expected):
+    # [FUNCTION DOC]
+    # Issue 1135: the representation of the groups mapping is truncated according to the maximum sequence items display option, for both column and array keys.
     # GH 1135
     df = DataFrame(np.random.default_rng(2).standard_normal((5, 1)))
     df["a"] = df.index
@@ -2146,6 +2393,8 @@ def test_groups_repr_truncates(max_seq_items, expected):
 
 
 def test_group_on_two_row_multiindex_returns_one_tuple_key():
+    # [FUNCTION DOC]
+    # Issue 18451: grouping by two index levels with two rows returns exactly one tuple key in the indices mapping with both positions.
     # GH 18451
     df = DataFrame([{"a": 1, "b": 2, "c": 99}, {"a": 1, "b": 2, "c": 88}])
     df = df.set_index(["a", "b"])
@@ -2177,6 +2426,9 @@ def test_group_on_two_row_multiindex_returns_one_tuple_key():
     ],
 )
 def test_subsetting_columns_keeps_attrs(klass, attr, value):
+    # [FUNCTION DOC]
+    # Issue 9959: subsetting columns of a groupby (frame or series) keeps the grouping attributes (level, as_index, sort, group_keys, observed, dropna), parametrized over class, attribute and value.
+    # KNOWN ISSUE: the condition comparing the attribute name with an axis name is always true here because no parametrization uses that attribute; the index is always set.
     # GH 9959 - When subsetting columns, don't drop attributes
     df = DataFrame({"a": [1], "b": [2], "c": [3]})
     if attr != "axis":
@@ -2189,6 +2441,8 @@ def test_subsetting_columns_keeps_attrs(klass, attr, value):
 
 @pytest.mark.parametrize("func", ["sum", "any", "shift"])
 def test_groupby_column_index_name_lost(func):
+    # [FUNCTION DOC]
+    # Issue 29764: the column index name survives sum, any and shift on a grouped frame (checked for the columns only).
     # GH: 29764 groupby loses index sometimes
     expected = Index(["a"], name="idx")
     df = DataFrame([[1]], columns=expected)
@@ -2205,6 +2459,8 @@ def test_groupby_column_index_name_lost(func):
     ],
 )
 def test_groupby_duplicate_columns(infer_string):
+    # [FUNCTION DOC]
+    # Issue 31735: grouping a frame with duplicate column labels and taking the minimum works, with and without the inferred string option (the second variant is skipped if pyarrow is missing).
     # GH: 31735
     if infer_string:
         pytest.importorskip("pyarrow")
@@ -2221,6 +2477,8 @@ def test_groupby_duplicate_columns(infer_string):
 
 
 def test_groupby_series_with_tuple_name():
+    # [FUNCTION DOC]
+    # Issue 37755: taking the last element per group keeps tuple names for both the series and its index.
     # GH 37755
     ser = Series([1, 2, 3, 4], index=[1, 1, 2, 2], name=("a", "a"))
     ser.index.name = ("b", "b")
@@ -2234,6 +2492,8 @@ def test_groupby_series_with_tuple_name():
     "func, values", [("sum", [97.0, 98.0]), ("mean", [24.25, 24.5])]
 )
 def test_groupby_numerical_stability_sum_mean(func, values):
+    # [FUNCTION DOC]
+    # Issue 38778: sum and mean over large mixed-magnitude values are numerically stable (Kahan-style compensation) and give the expected values.
     # GH#38778
     data = [1e16, 1e16, 97, 98, -5e15, -5e15, -5e15, -5e15]
     df = DataFrame({"group": [1, 2] * 4, "a": data, "b": data})
@@ -2243,6 +2503,8 @@ def test_groupby_numerical_stability_sum_mean(func, values):
 
 
 def test_groupby_numerical_stability_cumsum():
+    # [FUNCTION DOC]
+    # Issue 38934: the cumulative sum over large mixed-magnitude values is numerically stable and exact.
     # GH#38934
     data = [1e16, 1e16, 97, 98, -5e15, -5e15, -5e15, -5e15]
     df = DataFrame({"group": [1, 2] * 4, "a": data, "b": data})
@@ -2255,6 +2517,8 @@ def test_groupby_numerical_stability_cumsum():
 
 
 def test_groupby_cumsum_skipna_false():
+    # [FUNCTION DOC]
+    # Issue 46216: cumulative sum with skipna False propagates NaN only downward within each group (not above the diagonal), matching the frame-level cumulative sum.
     # GH#46216 don't propagate np.nan above the diagonal
     arr = np.random.default_rng(2).standard_normal((5, 5))
     df = DataFrame(arr)
@@ -2271,6 +2535,8 @@ def test_groupby_cumsum_skipna_false():
 
 
 def test_groupby_cumsum_timedelta64():
+    # [FUNCTION DOC]
+    # Issue 46216: cumulative sum on timedelta values handles NaT correctly with skipna True and False, treating the data as datetime-like in the low-level routine.
     # GH#46216 don't ignore is_datetimelike in libgroupby.group_cumsum
     dti = date_range("2016-01-01", periods=5, unit="ns")
     ser = Series(dti) - dti[0]
@@ -2289,6 +2555,8 @@ def test_groupby_cumsum_timedelta64():
 
 
 def test_groupby_mean_duplicate_index(rand_series_with_duplicate_datetimeindex):
+    # [FUNCTION DOC]
+    # Grouping a series with a duplicated datetime index by level 0 gives the same mean as grouping by the index itself.
     dups = rand_series_with_duplicate_datetimeindex
     result = dups.groupby(level=0).mean()
     expected = dups.groupby(dups.index).mean()
@@ -2296,6 +2564,8 @@ def test_groupby_mean_duplicate_index(rand_series_with_duplicate_datetimeindex):
 
 
 def test_groupby_all_nan_groups_drop():
+    # [FUNCTION DOC]
+    # Issue 15036: grouping by an all-NaN index drops all groups, so the sum is an empty integer series with an empty float index.
     # GH 15036
     s = Series([1, 2, 3], [np.nan, np.nan, np.nan])
     result = s.groupby(s.index).sum()
@@ -2305,6 +2575,8 @@ def test_groupby_all_nan_groups_drop():
 
 @pytest.mark.parametrize("numeric_only", [True, False])
 def test_groupby_empty_multi_column(as_index, numeric_only):
+    # [FUNCTION DOC]
+    # Issues 15106 and 41998: sum on an empty frame grouped by two keys gives an empty result whose index and columns depend on as_index and numeric_only.
     # GH 15106 & GH 41998
     df = DataFrame(data=[], columns=["A", "B", "C"])
     gb = df.groupby(["A", "B"], as_index=as_index)
@@ -2320,6 +2592,8 @@ def test_groupby_empty_multi_column(as_index, numeric_only):
 
 
 def test_groupby_aggregation_non_numeric_dtype():
+    # [FUNCTION DOC]
+    # Issue 43108: summing a column of lists concatenates the lists per group.
     # GH #43108
     df = DataFrame(
         [["M", [1]], ["M", [1]], ["W", [10]], ["W", [20]]], columns=["MW", "v"]
@@ -2338,6 +2612,8 @@ def test_groupby_aggregation_non_numeric_dtype():
 
 
 def test_groupby_aggregation_multi_non_numeric_dtype():
+    # [FUNCTION DOC]
+    # Issue 42395: sum over multiple timedelta columns per group gives timedelta sums.
     # GH #42395
     df = DataFrame(
         {
@@ -2361,6 +2637,8 @@ def test_groupby_aggregation_multi_non_numeric_dtype():
 
 
 def test_groupby_aggregation_numeric_with_non_numeric_dtype():
+    # [FUNCTION DOC]
+    # Issue 43108: sum with a numeric column and a timedelta column both aggregate correctly.
     # GH #43108
     df = DataFrame(
         {
@@ -2381,6 +2659,8 @@ def test_groupby_aggregation_numeric_with_non_numeric_dtype():
 
 
 def test_groupby_filtered_df_std():
+    # [FUNCTION DOC]
+    # Issue 16174: std on a filtered frame grouped by a boolean column works and gives the expected values for the remaining columns.
     # GH 16174
     dicts = [
         {"filter_col": False, "groupby_col": True, "bool_col": True, "float_col": 10.5},
@@ -2401,6 +2681,8 @@ def test_groupby_filtered_df_std():
 
 
 def test_datetime_categorical_multikey_groupby_indices():
+    # [FUNCTION DOC]
+    # Issue 26859: the indices of a grouping on a string column and a categorical datetime column, with unobserved categories included, map each key tuple to its position.
     # GH 26859
     df = DataFrame(
         {
@@ -2422,6 +2704,8 @@ def test_datetime_categorical_multikey_groupby_indices():
 
 
 def test_rolling_wrong_param_min_period():
+    # [FUNCTION DOC]
+    # Issue 34037: a misspelled min_periods keyword passed to a grouped rolling window raises a type error naming the unexpected argument.
     # GH34037
     name_l = ["Alice"] * 5 + ["Bob"] * 5
     val_l = [np.nan, np.nan, 1, 2, 3, np.nan, 1, 2, 3, 4]
@@ -2436,6 +2720,8 @@ def test_rolling_wrong_param_min_period():
 
 
 def test_by_column_values_with_same_starting_value(any_string_dtype):
+    # [FUNCTION DOC]
+    # Issue 29635: grouping by names where one is a prefix of another and aggregating mode (as a function) and sum works for every string dtype; expected values are adjusted for pyarrow-backed storage.
     # GH29635
     dtype = any_string_dtype
     df = DataFrame(
@@ -2462,6 +2748,8 @@ def test_by_column_values_with_same_starting_value(any_string_dtype):
 
 
 def test_groupby_none_in_first_mi_level():
+    # [FUNCTION DOC]
+    # Issue 47348: a missing value in the first level of a multiindex grouped by both levels is dropped, and the first level is coerced to float.
     # GH#47348
     arr = [[None, 1, 0, 1], [2, 3, 2, 3]]
     ser = Series(1, index=MultiIndex.from_arrays(arr, names=["a", "b"]))
@@ -2473,6 +2761,8 @@ def test_groupby_none_in_first_mi_level():
 
 
 def test_groupby_none_column_name(using_infer_string):
+    # [FUNCTION DOC]
+    # Issue 47348: grouping by a key of none (or NaN under string inference) when a column is labelled by none works.
     # GH#47348
     df = DataFrame({None: [1, 1, 2, 2], "b": [1, 1, 2, 3], "c": [4, 5, 6, 7]})
     by = [np.nan] if using_infer_string else [None]
@@ -2484,6 +2774,8 @@ def test_groupby_none_column_name(using_infer_string):
 
 @pytest.mark.parametrize("selection", [None, "a", ["a"]])
 def test_single_element_list_grouping(selection):
+    # [FUNCTION DOC]
+    # Issues 42795 and 53500: iterating a grouping by a one-element list yields one-element tuple keys; parametrized over no selection, a selected column and a selected list of columns.
     # GH#42795, GH#53500
     df = DataFrame({"a": [1, 2], "b": [np.nan, 5], "c": [np.nan, 2]}, index=["x", "y"])
     grouped = df.groupby(["a"]) if selection is None else df.groupby(["a"])[selection]
@@ -2494,6 +2786,8 @@ def test_single_element_list_grouping(selection):
 
 
 def test_groupby_string_dtype():
+    # [FUNCTION DOC]
+    # Issue 40148: grouping by a string-dtype column with as_index False keeps the string dtype of the key in the result.
     # GH 40148
     df = DataFrame({"str_col": ["a", "b", "c", "a"], "num_col": [1, 2, 3, 2]})
     df["str_col"] = df["str_col"].astype("string")
@@ -2517,6 +2811,8 @@ def test_groupby_string_dtype():
     "level_arg, multiindex", [([0], False), ((0,), False), ([0], True), ((0,), True)]
 )
 def test_single_element_listlike_level_grouping(level_arg, multiindex):
+    # [FUNCTION DOC]
+    # Issue 51583: iterating a groupby with a one-element list-like level yields one-element tuple keys, for single and multi level indexes.
     # GH 51583
     df = DataFrame({"a": [1, 2], "b": [3, 4], "c": [5, 6]}, index=["x", "y"])
     if multiindex:
@@ -2528,6 +2824,8 @@ def test_single_element_listlike_level_grouping(level_arg, multiindex):
 
 @pytest.mark.parametrize("func", ["sum", "cumsum", "cumprod", "prod"])
 def test_groupby_avoid_casting_to_float(func):
+    # [FUNCTION DOC]
+    # Issue 37493: sum, cumulative sum, cumulative product and product of a very large 64-bit integer do not go through float casting (parametrized over function).
     # GH#37493
     val = 922337203685477580
     df = DataFrame({"a": 1, "b": [val]})
@@ -2540,6 +2838,8 @@ def test_groupby_avoid_casting_to_float(func):
 
 @pytest.mark.parametrize("func, val", [("sum", 3), ("prod", 2)])
 def test_groupby_sum_support_mask(any_numeric_ea_dtype, func, val):
+    # [FUNCTION DOC]
+    # Issue 37493: sum and product with masked extension arrays skip missing values and preserve the extension dtype, for each numeric extension dtype.
     # GH#37493
     df = DataFrame({"a": 1, "b": [1, 2, pd.NA]}, dtype=any_numeric_ea_dtype)
     result = getattr(df.groupby("a"), func)()
@@ -2553,6 +2853,8 @@ def test_groupby_sum_support_mask(any_numeric_ea_dtype, func, val):
 
 @pytest.mark.parametrize("val, dtype", [(111, "int"), (222, "uint")])
 def test_groupby_overflow(val, dtype):
+    # [FUNCTION DOC]
+    # Issue 37493: sum, cumulative sum and product of small integer and unsigned dtypes are computed in 64-bit to avoid overflow.
     # GH#37493
     df = DataFrame({"a": 1, "b": [val, val]}, dtype=f"{dtype}8")
     result = df.groupby("a").sum()
@@ -2578,6 +2880,8 @@ def test_groupby_overflow(val, dtype):
 
 @pytest.mark.parametrize("skipna, val", [(True, 3), (False, pd.NA)])
 def test_groupby_cumsum_mask(any_numeric_ea_dtype, skipna, val):
+    # [FUNCTION DOC]
+    # Issue 37493: cumulative sum for masked extension arrays honors skipna; with skipna False the value after a missing one is missing.
     # GH#37493
     df = DataFrame({"a": 1, "b": [1, pd.NA, 2]}, dtype=any_numeric_ea_dtype)
     result = df.groupby("a").cumsum(skipna=skipna)
@@ -2604,6 +2908,8 @@ def test_groupby_cumsum_mask(any_numeric_ea_dtype, skipna, val):
     ],
 )
 def test_groupby_index_name_in_index_content(val_in, index, val_out):
+    # [FUNCTION DOC]
+    # Issue 48567: grouping by the name of an index that is also in the content works for series and frames; sorts keys.
     # GH 48567
     series = Series(data=val_in, name="values", index=Index(index, name="blah"))
     result = series.groupby("blah").sum()
@@ -2621,6 +2927,8 @@ def test_groupby_index_name_in_index_content(val_in, index, val_out):
 
 @pytest.mark.parametrize("n", [1, 10, 32, 100, 1000])
 def test_sum_of_booleans(n):
+    # [FUNCTION DOC]
+    # Issue 50347: summing a boolean column gives the count of true values for various sizes.
     # GH 50347
     df = DataFrame({"groupby_col": 1, "bool": [True] * n})
     df["bool"] = df["bool"].eq(True)
@@ -2634,6 +2942,8 @@ def test_sum_of_booleans(n):
 )
 @pytest.mark.parametrize("method", ["head", "tail", "nth", "first", "last"])
 def test_groupby_method_drop_na(method):
+    # [FUNCTION DOC]
+    # Issue 21755: head, tail, nth, first and last drop the rows with missing keys; the expected form depends on whether the method is a reduction or a filter. Ignores a remainder runtime warning.
     # GH 21755
     df = DataFrame({"A": ["a", np.nan, "b", np.nan, "c"], "B": range(5)})
 
@@ -2654,6 +2964,8 @@ def test_groupby_method_drop_na(method):
 
 
 def test_groupby_reduce_period():
+    # [FUNCTION DOC]
+    # Issue 51040: for period data, sum, cumulative sum, product and cumulative product raise type errors, while maximum and minimum work and return the expected periods.
     # GH#51040
     pi = pd.period_range("2016-01-01", periods=100, freq="D")
     grps = list(range(10)) * 10
@@ -2685,6 +2997,8 @@ def test_groupby_reduce_period():
 
 
 def test_obj_with_exclusions_duplicate_columns():
+    # [FUNCTION DOC]
+    # Issue 50806: the private selection excluding the grouping column from a frame with duplicate column labels keeps all positionally unrelated columns.
     # GH#50806
     df = DataFrame([[0, 1, 2, 3]])
     df.columns = [0, 1, 2, 0]
@@ -2696,6 +3010,8 @@ def test_obj_with_exclusions_duplicate_columns():
 
 @pytest.mark.parametrize("numeric_only", [True, False])
 def test_groupby_numeric_only_std_no_result(numeric_only):
+    # [FUNCTION DOC]
+    # Issue 51080: standard deviation on an object frame with only non-numeric data returns only the key column when numeric_only is True, and raises a value error about string conversion when False.
     # GH 51080
     dicts_non_numeric = [{"a": "foo", "b": "bar"}, {"a": "car", "b": "dar"}]
     df = DataFrame(dicts_non_numeric, dtype=object)
@@ -2713,6 +3029,8 @@ def test_groupby_numeric_only_std_no_result(numeric_only):
 
 
 def test_grouping_with_categorical_interval_columns():
+    # [FUNCTION DOC]
+    # Issue 34164: grouping by quantile-based interval categories and a string column with observed False gives a full product index with NaN for empty cells.
     # GH#34164
     df = DataFrame({"x": [0.1, 0.2, 0.3, -0.4, 0.5], "w": ["a", "b", "a", "c", "a"]})
     qq = pd.qcut(df["x"], q=np.linspace(0, 1, 5))
@@ -2755,6 +3073,8 @@ def test_grouping_with_categorical_interval_columns():
 
 @pytest.mark.parametrize("bug_var", [1, "a"])
 def test_groupby_sum_on_nan_should_return_nan(bug_var):
+    # [FUNCTION DOC]
+    # Issue 24196: sum with a minimum count of one of an all-NaN or single-value group gives NaN for the missing group and preserves dtype (numeric and object parametrization).
     # GH 24196
     df = DataFrame({"A": [bug_var, bug_var, bug_var, np.nan]})
     if isinstance(bug_var, str):
@@ -2791,6 +3111,8 @@ def test_groupby_sum_on_nan_should_return_nan(bug_var):
     ],
 )
 def test_groupby_selection_with_methods(df, method):
+    # [FUNCTION DOC]
+    # Parametrized over many methods: selecting a list of columns from the groupby object gives the same frame as grouping the selected frame by the key series.
     # some methods which require DatetimeIndex
     rng = date_range("2014", periods=len(df))
     df.index = rng
@@ -2807,6 +3129,8 @@ def test_groupby_selection_with_methods(df, method):
 
 
 def test_groupby_selection_other_methods(df):
+    # [FUNCTION DOC]
+    # Checks apply, resample (mean and ohlc) and filter on a groupby after selecting columns equal those on the frame grouped by a key series.
     # some methods which require DatetimeIndex
     rng = date_range("2014", periods=len(df))
     df.columns.name = "foo"
@@ -2827,6 +3151,8 @@ def test_groupby_selection_other_methods(df):
 
 
 def test_groupby_with_Time_Grouper(unit):
+    # [FUNCTION DOC]
+    # Checks grouping by a time Grouper keyed on a datetime column with one-minute frequency counts per bin, filling empty bins with zero (parametrized over time unit).
     idx2 = to_datetime(
         [
             "2016-08-31 22:08:12.000",
@@ -2855,6 +3181,8 @@ def test_groupby_with_Time_Grouper(unit):
 
 
 def test_groupby_series_with_datetimeindex_month_name():
+    # [FUNCTION DOC]
+    # Issue 48509: grouping a series by itself where the series name matches a month name works and names the resulting index after the series.
     # GH 48509
     s = Series([0, 1, 0], index=date_range("2022-01-01", periods=3), name="jan")
     result = s.groupby(s).count()
@@ -2874,6 +3202,9 @@ def test_groupby_series_with_datetimeindex_month_name():
     ],
 )
 def test_get_group_len_1_list_likes(test_series, kwarg, value, name, warn):
+    # [FUNCTION DOC]
+    # Issue 25971: get_group with a one-length list-like grouping (by or level, scalar or list) works for series and frames, with scalar or tuple names as appropriate.
+    # KNOWN ISSUE: the warn parameter is accepted and parametrized but never used in the body.
     # GH#25971
     obj = DataFrame({"b": [3, 4, 5]}, index=Index([1, 1, 2], name="a"))
     if test_series:
@@ -2888,6 +3219,8 @@ def test_get_group_len_1_list_likes(test_series, kwarg, value, name, warn):
 
 
 def test_groupby_ngroup_with_nan():
+    # [FUNCTION DOC]
+    # Issue 50100: the group number of a categorical all-NaN key with dropna False and observed False is zero.
     # GH#50100
     df = DataFrame({"a": Categorical([np.nan]), "b": [1]})
     result = df.groupby(["a", "b"], dropna=False, observed=False).ngroup()
@@ -2896,6 +3229,8 @@ def test_groupby_ngroup_with_nan():
 
 
 def test_groupby_ffill_with_duplicated_index():
+    # [FUNCTION DOC]
+    # Issue 43412: forward fill within a grouping by index level keeps values aligned when the index has duplicates.
     # GH#43412
     df = DataFrame({"a": [1, 2, 3, 4, np.nan, np.nan]}, index=[0, 1, 2, 0, 1, 2])
 
@@ -2906,6 +3241,8 @@ def test_groupby_ffill_with_duplicated_index():
 
 @pytest.mark.parametrize("test_series", [True, False])
 def test_decimal_na_sort(test_series):
+    # [FUNCTION DOC]
+    # Issue 54847: sorting a Decimal key containing missing values with dropna False yields a result index with the decimal and a missing entry; first asserts the invalid-operation exception is not a type error subclass (to know both must be caught). Parametrized over frame vs. selected column.
     # GH#54847
     # We catch both TypeError and decimal.InvalidOperation exceptions in safe_sort.
     # If this next assert raises, we can just catch TypeError
@@ -2925,6 +3262,8 @@ def test_decimal_na_sort(test_series):
 
 
 def test_groupby_dropna_with_nunique_unique():
+    # [FUNCTION DOC]
+    # Issue 42016: aggregating with nunique and unique under dropna False groups the null key correctly into separate groups.
     # GH#42016
     df = [[1, 1, 1, "A"], [1, None, 1, "A"], [1, None, 2, "A"], [1, None, 3, "A"]]
     df_dropna = DataFrame(df, columns=["a", "b", "c", "partner"])
@@ -2945,6 +3284,8 @@ def test_groupby_dropna_with_nunique_unique():
 
 
 def test_groupby_agg_namedagg_with_duplicate_columns():
+    # [FUNCTION DOC]
+    # Issue 58446: named aggregation with duplicate key columns and as_index False works and gives the expected frame.
     # GH#58446
     df = DataFrame(
         {
@@ -2976,6 +3317,8 @@ def test_groupby_agg_namedagg_with_duplicate_columns():
 
 
 def test_groupby_multi_index_codes():
+    # [FUNCTION DOC]
+    # Issue 54347: the index produced by sum with dropna False and missing keys has codes consistent with reconstructing the index from its frame form.
     # GH#54347
     df = DataFrame(
         {"A": [1, 2, 3, 4], "B": [1, float("nan"), 2, float("nan")], "C": [2, 4, 6, 8]}
@@ -2987,6 +3330,8 @@ def test_groupby_multi_index_codes():
 
 
 def test_groupby_datetime_with_nat():
+    # [FUNCTION DOC]
+    # Issue 35202: the number of groups for a datetime key including NaT with dropna False counts the NaT group.
     # GH##35202
     df = DataFrame(
         {

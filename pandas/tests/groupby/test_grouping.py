@@ -1,6 +1,9 @@
 """
 test where we are determining what we are grouping, or getting groups
 """
+# [MODULE DOC]
+# Tests for how the grouping keys are determined and how groups are obtained: selecting columns from a groupby, Grouper construction (key, level, frequency), grouping by levels, mappings, callables and tuples, get_group, iteration, groups mapping and Grouping objects.
+# Organized into test classes for column selection, grouping, get_group and iteration, followed by a few module-level tests. Uses the internal Grouping class from the grouper module and the shared frame fixtures.
 
 from datetime import (
     date,
@@ -35,7 +38,11 @@ from pandas.core.groupby.grouper import Grouping
 
 
 class TestSelection:
+    # [CLASS DOC]
+    # Groups tests of column selection (getitem) on groupby objects: bad columns, list selection, numeric column names, tuple rejection, attribute access and selection from a grouper.
     def test_select_bad_cols(self):
+        # [FUNCTION DOC]
+        # Selecting a missing column list raises a key error saying the columns were not found, and a mixed list of present and missing columns reports only the missing one.
         df = DataFrame([[1, 2]], columns=["A", "B"])
         g = df.groupby("A")
         with pytest.raises(KeyError, match="\"Columns not found: 'C'\""):
@@ -47,6 +54,8 @@ class TestSelection:
             g[["A", "C"]]
 
     def test_groupby_duplicated_column_errormsg(self):
+        # [FUNCTION DOC]
+        # Issue 7511: grouping by a duplicated column label raises a value error saying the grouper is not one-dimensional, while grouping by a unique column of the same frame still works with columns kept at one level.
         # GH7511
         df = DataFrame(
             columns=["A", "B", "A", "C"], data=[range(4), range(2, 6), range(0, 8, 2)]
@@ -64,6 +73,8 @@ class TestSelection:
         assert c.columns.size == 3
 
     def test_column_select_via_attr(self, df):
+        # [FUNCTION DOC]
+        # Accessing a column as an attribute of the groupby gives the same series sum as item access; a numeric_only mean includes an added column named like a method.
         result = df.groupby("A").C.sum()
         expected = df.groupby("A")["C"].sum()
         tm.assert_series_equal(result, expected)
@@ -74,6 +85,8 @@ class TestSelection:
         tm.assert_frame_equal(result, expected)
 
     def test_getitem_list_of_columns(self):
+        # [FUNCTION DOC]
+        # Selecting a list of columns (or an index slice of column labels) from the groupby then averaging equals the mean of the frame restricted to key and selected columns.
         df = DataFrame(
             {
                 "A": ["foo", "bar", "foo", "bar", "foo", "bar", "foo", "foo"],
@@ -93,6 +106,8 @@ class TestSelection:
         tm.assert_frame_equal(result2, expected)
 
     def test_getitem_numeric_column_names(self):
+        # [FUNCTION DOC]
+        # Issue 13731: with integer column names, selection via a slice of the column index or a list works; selecting with several positional keys raises a value error saying a tuple cannot be used to subset columns.
         # GH #13731
         df = DataFrame(
             {
@@ -115,11 +130,15 @@ class TestSelection:
             df.groupby(0)[2, 4].mean()
 
     def test_getitem_single_tuple_of_columns_raises(self, df):
+        # [FUNCTION DOC]
+        # Selecting two columns with positional keys (a tuple) raises a value error saying a tuple cannot be used to subset columns.
         # per GH 23566 enforced deprecation raises a ValueError
         with pytest.raises(ValueError, match="Cannot subset columns with a tuple"):
             df.groupby("A")["C", "D"].mean()
 
     def test_getitem_single_column(self):
+        # [FUNCTION DOC]
+        # Selecting a single column and averaging equals the series from the frame-level mean.
         df = DataFrame(
             {
                 "A": ["foo", "bar", "foo", "bar", "foo", "bar", "foo", "foo"],
@@ -142,6 +161,8 @@ class TestSelection:
         "func", [lambda x: x.sum(), lambda x: x.agg(lambda y: y.sum())]
     )
     def test_getitem_from_grouper(self, func):
+        # [FUNCTION DOC]
+        # Issue 50383: selecting columns that include a grouping key from a multi-key groupby and summing (directly or via aggregate with a function) gives the expected frame with a two-level index; parametrized over the sum form.
         # GH 50383
         df = DataFrame({"a": [1, 1, 2], "b": 3, "c": 4, "d": 5})
         gb = df.groupby(["a", "b"])[["a", "c"]]
@@ -153,6 +174,8 @@ class TestSelection:
         tm.assert_frame_equal(result, expected)
 
     def test_indices_grouped_by_tuple_with_lambda(self):
+        # [FUNCTION DOC]
+        # Issue 36158: grouping by a column of tuples and by a callable returning the tuple for each row label gives the same indices mapping.
         # GH 36158
         df = DataFrame(
             {
@@ -178,6 +201,8 @@ class TestSelection:
 
 
 class TestGrouping:
+    # [CLASS DOC]
+    # Groups tests of grouping behavior (Grouper, levels, mappings, empty cases).
     @pytest.mark.parametrize(
         "index",
         [
@@ -189,6 +214,8 @@ class TestGrouping:
         ],
     )
     def test_grouper_index_types(self, index):
+        # [FUNCTION DOC]
+        # Related to issue 5375: apply with identity on a frame grouped by a list of labels works for several index types (string, integer, float, datetime, period), also after reversing the index.
         # related GH5375
         # groupby misbehaving when using a Floatlike index
         df = DataFrame(np.arange(10).reshape(5, 2), columns=list("AB"), index=index)
@@ -199,6 +226,8 @@ class TestGrouping:
         df.groupby(list("abcde"), group_keys=False).apply(lambda x: x)
 
     def test_grouper_multilevel_freq(self):
+        # [FUNCTION DOC]
+        # Issue 7885: grouping a two-level date multiindex by two frequency Groupers on levels (by name and by number) gives the same sum as grouping the reset frame by key.
         # GH 7885
         # with level and freq specified in a Grouper
         d0 = date.today() - timedelta(days=14)
@@ -227,6 +256,8 @@ class TestGrouping:
         tm.assert_frame_equal(result, expected)
 
     def test_grouper_creation_bug(self):
+        # [FUNCTION DOC]
+        # Issue 8795: grouping by a key Grouper gives the same sum and apply result as grouping by the column name.
         # GH 8795
         df = DataFrame({"A": [0, 0, 1, 1, 2, 2], "B": [1, 2, 3, 4, 5, 6]})
         g = df.groupby("A")
@@ -240,6 +271,8 @@ class TestGrouping:
         tm.assert_frame_equal(result, expected)
 
     def test_grouper_creation_bug2(self):
+        # [FUNCTION DOC]
+        # Issue 14334: a key Grouper may appear inside a list, alone or mixed with strings, and gives the same result as the string names.
         # GH14334
         # Grouper(key=...) may be passed in a list
         df = DataFrame(
@@ -271,6 +304,8 @@ class TestGrouping:
         tm.assert_frame_equal(result, expected)
 
     def test_grouper_creation_bug3(self, unit):
+        # [FUNCTION DOC]
+        # Issue 8866: grouping a series by a month-end frequency Grouper on a level of a multiindex gives monthly sums with the expected time unit; a Grouper with only a level equals grouping by that level.
         # GH8866
         dti = date_range("20130101", periods=2, unit=unit)
         mi = MultiIndex.from_product(
@@ -298,6 +333,8 @@ class TestGrouping:
 
     @pytest.mark.parametrize("func", [False, True])
     def test_grouper_returning_tuples(self, func):
+        # [FUNCTION DOC]
+        # Issue 22257: grouping by a mapping or callable returning tuples uses the tuple as the group name; the first group has the tuple key and get_group with it returns the same group. Parametrized over mapping or callable.
         # GH 22257 , both with dict and with callable
         df = DataFrame({"X": ["A", "B", "A", "B"], "Y": [1, 4, 3, 2]})
         mapping = dict(zip(range(4), [("C", 5), ("D", 6)] * 2, strict=True))
@@ -314,6 +351,8 @@ class TestGrouping:
         tm.assert_frame_equal(result, expected)
 
     def test_grouper_column_and_index(self):
+        # [FUNCTION DOC]
+        # Issue 14327: grouping a multi-index or single-index frame by a column plus an index level Grouper (in both orders) gives the same mean as resetting the index and grouping by two columns.
         # GH 14327
 
         # Grouping a multi-index frame by a column and an index level should
@@ -360,6 +399,8 @@ class TestGrouping:
         tm.assert_frame_equal(result, expected)
 
     def test_groupby_levels_and_columns(self):
+        # [FUNCTION DOC]
+        # Issues 9344 and 9049: grouping by both level names equals resetting the index and grouping by the columns.
         # GH9344, GH9049
         idx_names = ["x", "y"]
         idx = MultiIndex.from_tuples([(1, 1), (1, 2), (3, 4), (5, 6)], names=idx_names)
@@ -374,6 +415,8 @@ class TestGrouping:
         tm.assert_frame_equal(by_levels, by_columns)
 
     def test_groupby_categorical_index_and_columns(self, observed):
+        # [FUNCTION DOC]
+        # Issues 18432 and 25871: grouping a frame whose index is an ordered categorical with duplicate labels by level 0, parametrized on observed, sums per category in category order.
         # GH18432, adapted for GH25871
         columns = ["A", "B", "A", "B"]
         categories = ["B", "A"]
@@ -393,6 +436,8 @@ class TestGrouping:
         tm.assert_frame_equal(result, expected)
 
     def test_grouper_getting_correct_binner(self):
+        # [FUNCTION DOC]
+        # Issue 10063: combining a non-time grouper by level with a monthly-frequency time grouper on another level gives the correct bins.
         # GH 10063
         # using a non-time-based grouper and a time-based grouper
         # and specifying levels
@@ -415,6 +460,8 @@ class TestGrouping:
         tm.assert_frame_equal(result, expected)
 
     def test_grouper_iter(self, df):
+        # [FUNCTION DOC]
+        # Iterating the internal grouper of a groupby yields the sorted group labels.
         gb = df.groupby("A")
         grouper = gb._grouper
         result = sorted(grouper)
@@ -422,11 +469,15 @@ class TestGrouping:
         assert result == expected
 
     def test_empty_groups(self, df):
+        # [FUNCTION DOC]
+        # Issue 1048: grouping by an empty list raises a value error saying no group keys were passed.
         # see gh-1048
         with pytest.raises(ValueError, match="No group keys passed!"):
             df.groupby([])
 
     def test_groupby_grouper(self, df):
+        # [FUNCTION DOC]
+        # Grouping by the internal grouper of an existing groupby gives the same mean as the original.
         grouped = df.groupby("A")
         grouper = grouped._grouper
         result = df.groupby(grouper).mean(numeric_only=True)
@@ -434,6 +485,8 @@ class TestGrouping:
         tm.assert_frame_equal(result, expected)
 
     def test_groupby_dict_mapping(self):
+        # [FUNCTION DOC]
+        # Issue 679: grouping a series by a dict mapping labels to groups equals grouping by the equivalent key array, for a one-entry and a four-entry series.
         # GH #679
         s = Series({"T1": 5})
         result = s.groupby({"T1": "T2"}).agg("sum")
@@ -461,6 +514,8 @@ class TestGrouping:
         ],
     )
     def test_groupby_series_named_with_tuple(self, frame_or_series, index):
+        # [FUNCTION DOC]
+        # Issue 42731: grouping a series or frame by a series named with a tuple gives a result whose index name is that tuple; parametrized over index kinds (integers, strings, timestamps).
         # GH 42731
         obj = frame_or_series([1, 2, 3, 4], index=index)
         groups = Series([1, 0, 1, 0], index=index, name=("a", "a"))
@@ -470,6 +525,8 @@ class TestGrouping:
         tm.assert_equal(result, expected)
 
     def test_groupby_grouper_f_sanity_checked(self):
+        # [FUNCTION DOC]
+        # Issue 51979: a callable grouper is applied per index label (not to the whole index); a callable slicing the label raises a type error about the timestamp not being subscriptable; an identity callable gives the same as grouping by the index.
         dates = date_range("01-Jan-2013", periods=12, freq="MS")
         ts = Series(np.random.default_rng(2).standard_normal(12), index=dates)
 
@@ -485,6 +542,8 @@ class TestGrouping:
         tm.assert_series_equal(result, expected)
 
     def test_groupby_with_datetime_key(self):
+        # [FUNCTION DOC]
+        # Issue 51158: grouping by a daily Grouper on a datetime column plus another column gives groups keyed by tuples with the day start and id, with the expected positions.
         # GH 51158
         df = DataFrame(
             {
@@ -508,11 +567,15 @@ class TestGrouping:
         assert len(gb.groups.keys()) == 4
 
     def test_grouping_error_on_multidim_input(self, df):
+        # [FUNCTION DOC]
+        # Constructing a Grouping object with an index and a two-column slice raises a value error saying the grouper is not one-dimensional.
         msg = "Grouper for '<class 'pandas.DataFrame'>' not 1-dimensional"
         with pytest.raises(ValueError, match=msg):
             Grouping(df.index, df[["A", "A"]])
 
     def test_multiindex_negative_level(self, multiindex_dataframe_random_data):
+        # [FUNCTION DOC]
+        # Issue 13901: negative level numbers (and mixes with level names) select the right levels of a multiindex.
         # GH 13901
         result = multiindex_dataframe_random_data.groupby(level=-1).sum()
         expected = multiindex_dataframe_random_data.groupby(level="second").sum()
@@ -533,12 +596,16 @@ class TestGrouping:
         tm.assert_frame_equal(result, expected)
 
     def test_agg_with_dict_raises(self, df):
+        # [FUNCTION DOC]
+        # Aggregating a selected column with a dict containing a new name raises a specification error about nested renaming.
         df.columns = np.arange(len(df.columns))
         msg = "nested renamer is not supported"
         with pytest.raises(SpecificationError, match=msg):
             df.groupby(1, as_index=False)[2].agg({"Q": np.mean})
 
     def test_multiindex_columns_empty_level(self):
+        # [FUNCTION DOC]
+        # Grouping by a column of a multiindex columns frame with an empty second level label works with the plain name; using the tuple in a list emits a deprecation warning about future key handling; results equal the plain name.
         lst = [["count", "values"], ["to filter", ""]]
         midx = MultiIndex.from_tuples(lst)
 
@@ -567,6 +634,9 @@ class TestGrouping:
         tm.assert_dict_equal(result, expected)
 
     def test_groupby_multiindex_tuple(self):
+        # [FUNCTION DOC]
+        # Issues 17979 and 59179: grouping by a tuple column label gives the same groups as the list containing the tuple (which warns about future behavior); checked for integer, string and flat tuple-labelled columns.
+        # KNOWN ISSUE: in the second and third comparisons the result is computed from the original frame, not from the second or third frame whose expected value is built, so those cases only repeat the first comparison.
         # GH 17979, GH#59179
         df = DataFrame(
             [[1, 2, 3, 4], [3, 4, 5, 6], [1, 4, 2, 3]],
@@ -599,6 +669,8 @@ class TestGrouping:
         tm.assert_dict_equal(expected, result)
 
     def test_groupby_multiindex_partial_indexing_equivalence(self):
+        # [FUNCTION DOC]
+        # Issues 17977 and 59179: selecting the second-level label of a multiindex column grouped by a tuple key gives the same frame as selecting the explicit tuple list, for mean, sum, count, min, max; the groups attribute warns about the future key behavior but agrees.
         # GH 17977, GH#59179
         df = DataFrame(
             [[1, 2, 3, 4], [3, 4, 5, 6], [1, 4, 2, 3]],
@@ -632,6 +704,8 @@ class TestGrouping:
         tm.assert_dict_equal(expected_groups, result_groups)
 
     def test_groupby_level(self, sort, multiindex_dataframe_random_data, df):
+        # [FUNCTION DOC]
+        # Issue 17537: grouping by level number or name with sort on and off equals grouping by the level values, with index name set to the level name; a non-multiindex frame raises a value error for level 1.
         # GH 17537
         frame = multiindex_dataframe_random_data
         deleveled = frame.reset_index()
@@ -665,6 +739,8 @@ class TestGrouping:
             df.groupby(level=1)
 
     def test_groupby_level_index_names(self):
+        # [FUNCTION DOC]
+        # Issue 4014: grouping by a level name works; a missing level name raises a value error saying the name is not the name of the index.
         # GH4014 this used to raise ValueError since 'exp'>1 (in py2)
         df = DataFrame({"exp": ["A"] * 3 + ["B"] * 3, "var1": range(6)}).set_index(
             "exp"
@@ -675,6 +751,8 @@ class TestGrouping:
             df.groupby(level="foo")
 
     def test_groupby_level_with_nas(self, sort):
+        # [FUNCTION DOC]
+        # Issue 17537: grouping a series by level 0 where codes include a missing marker gives sums with the NaN group dropped (parametrized on sort).
         # GH 17537
         index = MultiIndex(
             levels=[[1, 0], [0, 1, 2, 3]],
@@ -699,6 +777,8 @@ class TestGrouping:
         tm.assert_series_equal(result, expected)
 
     def test_groupby_args(self, multiindex_dataframe_random_data):
+        # [FUNCTION DOC]
+        # Issues 8618 and 8015: calling groupby with no arguments, or with both by and level none, raises a type error saying one of them must be supplied.
         # PR8618 and issue 8015
         frame = multiindex_dataframe_random_data
 
@@ -718,12 +798,16 @@ class TestGrouping:
         ],
     )
     def test_level_preserve_order(self, sort, labels, multiindex_dataframe_random_data):
+        # [FUNCTION DOC]
+        # Issue 17537: the group codes assigned when grouping by level 0 depend on sort (sorted label order vs order of appearance); parametrized on sort and expected codes.
         # GH 17537
         grouped = multiindex_dataframe_random_data.groupby(level=0, sort=sort)
         exp_labels = np.array(labels, np.intp)
         tm.assert_almost_equal(grouped._grouper.ids, exp_labels)
 
     def test_grouping_labels(self, multiindex_dataframe_random_data):
+        # [FUNCTION DOC]
+        # Grouping by level values gives the expected integer codes in the first grouping.
         grouped = multiindex_dataframe_random_data.groupby(
             multiindex_dataframe_random_data.index.get_level_values(0)
         )
@@ -731,6 +815,8 @@ class TestGrouping:
         tm.assert_almost_equal(grouped._grouper.codes[0], exp_labels)
 
     def test_list_grouper_with_nat(self):
+        # [FUNCTION DOC]
+        # Issues 14715 and 59179: grouping a date column (with NaT in the last row) by a yearly Grouper in a list gives groups without the NaT row and warns about future behavior; without a list the group size is as expected.
         # GH 14715, GH#59179
         df = DataFrame({"date": date_range("1/1/2011", periods=365, freq="D")})
         df.iloc[-1] = pd.NaT
@@ -771,6 +857,8 @@ class TestGrouping:
         ],
     )
     def test_evaluate_with_empty_groups(self, func, expected):
+        # [FUNCTION DOC]
+        # Issue 26208: transform, aggregate and apply of the identity function on an empty frame grouped by a column return empty series with the expected dtype, name and index.
         # 26208
         # test transform'ing empty groups
         # (not testing other agg fns, because they return
@@ -781,6 +869,8 @@ class TestGrouping:
         tm.assert_series_equal(result, expected)
 
     def test_groupby_apply_empty_with_group_keys_false(self):
+        # [FUNCTION DOC]
+        # Issue 60471: apply on an empty grouped frame with group keys False returns an empty frame with the non-key columns.
         # 60471
         # test apply'ing empty groups with group_keys False
         # (not testing other agg fns, because they return
@@ -792,6 +882,8 @@ class TestGrouping:
         tm.assert_frame_equal(result, expected)
 
     def test_groupby_empty(self):
+        # [FUNCTION DOC]
+        # Issue 27190: grouping an empty series by an empty list yields an empty mean and one empty grouping with zero groups; grouping by itself keeps the key name.
         # https://github.com/pandas-dev/pandas/issues/27190
         s = Series([], name="name", dtype="float64")
         gr = s.groupby([])
@@ -816,6 +908,8 @@ class TestGrouping:
         assert result == expected
 
     def test_groupby_level_index_value_all_na(self):
+        # [FUNCTION DOC]
+        # Issue 20519: grouping by two levels where all combinations contain missing values produces an empty result with the right multiindex levels and integer dtype.
         # issue 20519
         df = DataFrame(
             [["x", np.nan, 10], [None, np.nan, 20]], columns=["A", "B", "C"]
@@ -834,6 +928,8 @@ class TestGrouping:
         tm.assert_frame_equal(result, expected)
 
     def test_groupby_multiindex_level_empty(self):
+        # [FUNCTION DOC]
+        # Issue 31670: grouping an empty filtered multiindex frame by one level returns an empty frame with a named integer index and float values.
         # https://github.com/pandas-dev/pandas/issues/31670
         df = DataFrame(
             [[123, "a", 1.0], [123, "b", 2.0]], columns=["id", "category", "value"]
@@ -849,6 +945,8 @@ class TestGrouping:
         tm.assert_frame_equal(result, expected)
 
     def test_groupby_tuple_keys_handle_multiindex(self):
+        # [FUNCTION DOC]
+        # Issue 21340: grouping by a column of tuples with differing lengths and applying a sort gives the same result as sorting by the tuple column and number.
         # https://github.com/pandas-dev/pandas/issues/21340
         df = DataFrame(
             {
@@ -876,6 +974,8 @@ class TestGrouping:
         tm.assert_frame_equal(result.reset_index(drop=True), expected)
 
     def test_groupby_grouper_immutable_list_item(self):
+        # [FUNCTION DOC]
+        # Issue 26564: reusing the same list of Grouper objects on frames (including an empty frame) does not raise a shape error.
         # GH 26564 - prevent 'ValueError: all keys need to be the same shape'
         # when reusing a list of groupers
         df1 = DataFrame([["05/29/2019"], ["05/28/2019"]], columns=["date"]).assign(
@@ -897,7 +997,12 @@ class TestGrouping:
 
 
 class TestGetGroup:
+    # [CLASS DOC]
+    # Groups tests of get_group.
     def test_get_group(self):
+        # [FUNCTION DOC]
+        # Issue 5267: get_group accepts datetime-like keys as a Timestamp, a Python datetime or a string, for single and multiple keys; a non-tuple or wrong-length tuple with multiple keys raises a value error with specific messages.
+        # KNOWN ISSUE: the check for a non-tuple key is executed twice identically; the second occurrence is redundant.
         # GH 5267
         # be datelike friendly
         df = DataFrame(
@@ -945,6 +1050,8 @@ class TestGetGroup:
             g.get_group(("foo", "bar", "baz"))
 
     def test_get_group_empty_bins(self, observed):
+        # [FUNCTION DOC]
+        # Getting a group for an interval from a cut grouping returns the rows in it; an absent interval raises a key error naming it. Parametrized on observed. A TODO notes string intervals are not accepted.
         d = DataFrame([3, 1, 7, 6])
         bins = [0, 5, 10, 15]
         g = d.groupby(pd.cut(d[0], bins), observed=observed)
@@ -960,6 +1067,8 @@ class TestGetGroup:
             g.get_group(pd.Interval(10, 15))
 
     def test_get_group_grouped_by_tuple(self):
+        # [FUNCTION DOC]
+        # Issue 8121: get_group works for tuple-valued keys, including tuples containing datetimes looked up by string.
         # GH 8121
         df = DataFrame([[(1,), (1, 2), (1,), (1, 2)]], index=["ids"]).T
         gr = df.groupby("ids")
@@ -975,6 +1084,8 @@ class TestGetGroup:
         tm.assert_frame_equal(result, expected)
 
     def test_get_group_grouped_by_tuple_with_lambda(self):
+        # [FUNCTION DOC]
+        # Issue 36158: get_group via a callable grouper returning tuples equals get_group via the tuple column.
         # GH 36158
         df = DataFrame(
             {
@@ -995,6 +1106,8 @@ class TestGetGroup:
         tm.assert_frame_equal(result, expected)
 
     def test_groupby_with_empty(self):
+        # [FUNCTION DOC]
+        # Grouping an empty datetime-indexed series by a daily Grouper yields no groups when iterated.
         index = pd.DatetimeIndex(())
         data = ()
         series = Series(data, index, dtype=object)
@@ -1003,6 +1116,8 @@ class TestGetGroup:
         assert next(iter(grouped), None) is None
 
     def test_groupby_with_single_column(self):
+        # [FUNCTION DOC]
+        # Issue 13530: a frame with only the key column: get_group returns the rows, count and sum give an empty frame with the group index and no columns, and nth gives rows.
         df = DataFrame({"a": list("abssbab")})
         tm.assert_frame_equal(df.groupby("a").get_group("a"), df.iloc[[0, 5]])
         # GH 13530
@@ -1016,6 +1131,8 @@ class TestGetGroup:
         tm.assert_frame_equal(df.groupby("a").nth(1), exp)
 
     def test_gb_key_len_equal_axis_len(self):
+        # [FUNCTION DOC]
+        # Issue 16843: grouping by index levels and a column where the number of keys equals the number of index levels recognizes level names and columns correctly; sizes are as expected.
         # GH16843
         # test ensures that index and column keys are recognized correctly
         # when number of keys equals axis length of groupby
@@ -1034,7 +1151,11 @@ class TestGetGroup:
 
 
 class TestIteration:
+    # [CLASS DOC]
+    # Groups tests of iterating over a groupby and the groups attribute.
     def test_groups(self, df):
+        # [FUNCTION DOC]
+        # Checks the groups mapping (warning of future key behavior for a one-element list key), that it is cached, and that each group's rows match the key values; also for two keys.
         grouped = df.groupby(["A"])
         msg = "In a future version, the keys"
 
@@ -1054,6 +1175,8 @@ class TestIteration:
             assert (df.loc[v]["B"] == k[1]).all()
 
     def test_grouping_is_iterable(self, tsframe):
+        # [FUNCTION DOC]
+        # Iterating over the first grouping of the internal grouper works (a rarely used code path).
         # this code path isn't used anywhere else
         # not sure it's useful
         grouped = tsframe.groupby([lambda x: x.weekday(), lambda x: x.year])
@@ -1063,6 +1186,8 @@ class TestIteration:
             pass
 
     def test_multi_iter(self):
+        # [FUNCTION DOC]
+        # Iterating a series grouped by two arrays yields sorted ((key1, key2), group) pairs with the expected members.
         s = Series(np.arange(6))
         k1 = np.array(["a", "a", "a", "b", "b", "b"])
         k2 = np.array(["1", "2", "1", "2", "1", "2"])
@@ -1083,6 +1208,8 @@ class TestIteration:
             tm.assert_series_equal(three, e3)
 
     def test_multi_iter_frame(self, three_group):
+        # [FUNCTION DOC]
+        # Iterating a frame grouped by two keys yields sorted pairs with expected sub-frames; groups with no data are not iterated (two groups remain after changing the second key).
         k1 = np.array(["b", "b", "b", "a", "a", "a"])
         k2 = np.array(["1", "2", "1", "2", "1", "2"])
         df = DataFrame(
@@ -1122,6 +1249,8 @@ class TestIteration:
         assert len(groups) == 2
 
     def test_dictify(self, df):
+        # [FUNCTION DOC]
+        # Building a dict from iterating groupby objects of many forms (frame, series, selected column) works without error.
         dict(iter(df.groupby("A")))
         dict(iter(df.groupby(["A", "B"])))
         dict(iter(df["C"].groupby(df["A"])))
@@ -1130,6 +1259,8 @@ class TestIteration:
         dict(iter(df.groupby(["A", "B"])["C"]))
 
     def test_groupby_with_small_elem(self):
+        # [FUNCTION DOC]
+        # Issue 8542: grouping by monthly frequency and a column for small frames (2 or 3 rows) gives the right number of groups, keys and group contents.
         # GH 8542
         # length=2
         df = DataFrame(
@@ -1182,6 +1313,8 @@ class TestIteration:
         tm.assert_frame_equal(res, df.iloc[[2], :])
 
     def test_grouping_string_repr(self):
+        # [FUNCTION DOC]
+        # Issue 13394: the repr of a Grouping for a tuple-labelled column shows the tuple.
         # GH 13394
         mi = MultiIndex.from_arrays([list("AAB"), list("aba")])
         df = DataFrame([[1, 2, 3]], columns=mi)
@@ -1193,6 +1326,8 @@ class TestIteration:
 
 
 def test_grouping_by_key_is_in_axis():
+    # [FUNCTION DOC]
+    # Issue 50413: a Grouper given by key is in-axis and one given by level is not; summing with as_index False gives the expected frame.
     # GH#50413 - Groupers specified by key are in-axis
     df = DataFrame({"a": [1, 1, 2], "b": [1, 1, 2], "c": [3, 4, 5]}).set_index("a")
     gb = df.groupby([Grouper(level="a"), Grouper(key="b")], as_index=False)
@@ -1205,6 +1340,8 @@ def test_grouping_by_key_is_in_axis():
 
 
 def test_groupby_any_with_timedelta():
+    # [FUNCTION DOC]
+    # Issue 59712: any on a timedelta column with a NaT groups to true for a non-null and false for NaT.
     # GH#59712
     df = DataFrame({"value": [pd.Timedelta(1), pd.NaT]})
 

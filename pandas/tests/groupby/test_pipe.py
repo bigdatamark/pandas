@@ -1,3 +1,5 @@
+# [MODULE DOC]
+# Tests for the pipe method of groupby objects (frame and series): chaining with plain functions and passing arguments.
 import numpy as np
 
 import pandas as pd
@@ -9,6 +11,8 @@ import pandas._testing as tm
 
 
 def test_pipe():
+    # [FUNCTION DOC]
+    # Issue 17871: pipe on a DataFrameGroupBy followed by pipe on the resulting series; checks the numeric result of the max minus the minimum of minima, squared.
     # Test the pipe method of DataFrameGroupBy.
     # Issue #17871
 
@@ -23,9 +27,13 @@ def test_pipe():
     )
 
     def f(dfgb):
+        # [FUNCTION DOC]
+        # HELPER: pipe function taking a groupby and returning the maximum of one column minus the overall minimum of another.
         return dfgb.B.max() - dfgb.C.min().min()
 
     def square(srs):
+        # [FUNCTION DOC]
+        # HELPER: pipe function squaring a series.
         return srs**2
 
     # Note that the transformations are
@@ -42,6 +50,8 @@ def test_pipe():
 
 
 def test_pipe_args():
+    # [FUNCTION DOC]
+    # Issue 17871: pipe with positional arguments through a chain of three functions (filtering by group mean returning a new groupby, normalizing sums and adding a constant, then combining columns), plus pipe on a SeriesGroupBy with a lambda.
     # Test passing args to the pipe method of DataFrameGroupBy.
     # Issue #17871
 
@@ -54,13 +64,19 @@ def test_pipe_args():
     )
 
     def f(dfgb, arg1):
+        # [FUNCTION DOC]
+        # HELPER: pipe function that filters groups by mean of one column exceeding an argument (keeping the rows as missing) and regroups by the group column.
         filtered = dfgb.filter(lambda grp: grp.y.mean() > arg1, dropna=False)
         return filtered.groupby("group")
 
     def g(dfgb, arg2):
+        # [FUNCTION DOC]
+        # HELPER: pipe function dividing group sums by the total sum and adding an argument.
         return dfgb.sum() / dfgb.sum().sum() + arg2
 
     def h(df, arg3):
+        # [FUNCTION DOC]
+        # HELPER: pipe function on a frame returning the sum of two columns minus an argument.
         return df.x + df.y - arg3
 
     result = df.groupby("group").pipe(f, 0).pipe(g, 10).pipe(h, 100)
