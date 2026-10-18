@@ -1,3 +1,7 @@
+# [MODULE DOC]
+# Tests for the openpyxl engine: style conversion, merged and styled cell writing, engine keyword arguments, append modes and the sheet-exists policies, reading from already loaded workbooks (with and without the read-only option), and several reader edge cases (missing dimension metadata, trailing empty rows, multi-level headers).
+# Skipped at import time when openpyxl is missing. Defines local fixtures for the extension and a temporary file path. Reader data files live in the excel test data directory and are located through the data path fixture.
+
 import contextlib
 from pathlib import Path
 import re
@@ -21,17 +25,24 @@ openpyxl = pytest.importorskip("openpyxl")
 
 @pytest.fixture
 def ext():
+    # [FUNCTION DOC]
+    # Fixture returning the extension used by these tests: ".xlsx".
     return ".xlsx"
 
 
 @pytest.fixture
 def tmp_excel(ext, tmp_path):
+    # [FUNCTION DOC]
+    # Fixture creating an empty file with a unique random name and the extension fixture inside the temporary directory fixture; returns its path as text.
     tmp = tmp_path / f"{uuid.uuid4()}{ext}"
     tmp.touch()
     return str(tmp)
 
 
 def test_to_excel_styleconverter():
+    # [FUNCTION DOC]
+    # Verifies the writer's style conversion maps a nested style description to equal openpyxl style objects.
+    # Input style has font (color and bold), borders on four sides, alignment, a solid fill with a tinted foreground color, a number format code and protection. Expected: the converted keyword mapping has font, border, alignment, fill, number format and protection equal to separately constructed openpyxl objects (thin side borders, center and top alignment, and so on).
     from openpyxl import styles
 
     hstyle = {
@@ -65,6 +76,9 @@ def test_to_excel_styleconverter():
 
 
 def test_write_cells_merge_styled(tmp_excel):
+    # [FUNCTION DOC]
+    # Verifies writing a merged, styled cell range over earlier styled cells.
+    # Writes two single cells in B1 and A2 with different font colors, then a merged region starting at A1 spanning to row and column one with a bold blue font. Expected: the cells B1 and A2 in the worksheet both carry the merged cell's converted font.
     from pandas.io.formats.excel import ExcelCell
 
     sheet_name = "merge_styled"
@@ -99,6 +113,9 @@ def test_write_cells_merge_styled(tmp_excel):
 
 @pytest.mark.parametrize("iso_dates", [True, False])
 def test_engine_kwargs_write(tmp_excel, iso_dates):
+    # [FUNCTION DOC]
+    # Verifies that engine keyword arguments reach the workbook for writing.
+    # Parametrized over the iso dates flag true and false (issues 42286 and 43445). The writer's workbook reports the flag as given; an empty frame is written because the writer requires something to be written to close cleanly.
     # GH 42286 GH 43445
     engine_kwargs = {"iso_dates": iso_dates}
     with ExcelWriter(
@@ -110,6 +127,8 @@ def test_engine_kwargs_write(tmp_excel, iso_dates):
 
 
 def test_engine_kwargs_append_invalid(tmp_excel):
+    # [FUNCTION DOC]
+    # Verifies that an invalid engine keyword argument in append mode is forwarded to the workbook loader and raises a type error naming the unexpected argument (issue 43445). A first file is written normally; the append attempt raises when the writer opens.
     # GH 43445
     # test whether an invalid engine kwargs actually raises
     DataFrame(["hello", "world"]).to_excel(tmp_excel)
@@ -131,6 +150,9 @@ def test_engine_kwargs_append_invalid(tmp_excel):
 
 @pytest.mark.parametrize("data_only, expected", [(True, 0), (False, "=1+1")])
 def test_engine_kwargs_append_data_only(tmp_excel, data_only, expected):
+    # [FUNCTION DOC]
+    # Verifies the data-only engine keyword in append mode and in reading (issue 43445).
+    # Parametrized over (flag, expected cell value): when true the cell with a formula text evaluates (no cached value) and is expected to read as zero; when false the formula text is preserved. The same expectation must hold when the file is read through the generic reader with the same engine keyword.
     # GH 43445
     # tests whether the data_only engine_kwarg actually works well for
     # openpyxl's load_workbook
@@ -158,6 +180,8 @@ def test_engine_kwargs_append_data_only(tmp_excel, data_only, expected):
 @pytest.mark.parametrize("kwarg_name", ["read_only", "data_only"])
 @pytest.mark.parametrize("kwarg_value", [True, False])
 def test_engine_kwargs_append_reader(datapath, ext, kwarg_name, kwarg_value):
+    # [FUNCTION DOC]
+    # Verifies the read-only and data-only options are passed through the reader's engine keyword mapping to the workbook (issue 55027): the workbook attribute with that name has the passed value. Parametrized over the option name and value; uses a bundled data file, and the reader is closed afterwards.
     # GH 55027
     # test that `read_only` and `data_only` can be passed to
     #  `openpyxl.reader.excel.load_workbook` via `engine_kwargs`
@@ -172,6 +196,9 @@ def test_engine_kwargs_append_reader(datapath, ext, kwarg_name, kwarg_value):
     "mode,expected", [("w", ["baz"]), ("a", ["foo", "bar", "baz"])]
 )
 def test_write_append_mode(tmp_excel, mode, expected):
+    # [FUNCTION DOC]
+    # Verifies write versus append mode.
+    # Parametrized over (mode, expected sheet titles): write mode replaces the file so only the new sheet remains; append mode keeps the existing two sheets and adds the new sheet at the end. Also checks the first-cell value of each sheet is the sheet title (existing sheets keep their data).
     df = DataFrame([1], columns=["baz"])
 
     wb = openpyxl.Workbook()
@@ -201,6 +228,9 @@ def test_write_append_mode(tmp_excel, mode, expected):
     ],
 )
 def test_if_sheet_exists_append_modes(tmp_excel, if_sheet_exists, num_sheets, expected):
+    # [FUNCTION DOC]
+    # Verifies the policy for appending to a sheet that already exists.
+    # Parametrized over (policy, expected sheet count, expected values of the first sheet): new keeps the old sheet and creates a second one (the new sheet's content equals the new data), replace leaves one sheet with the new data, overlay writes over the old cells so remaining old values persist. Issue 40230.
     # GH 40230
     df1 = DataFrame({"fruit": ["apple", "banana"]})
     df2 = DataFrame({"fruit": ["pear"]})
@@ -233,6 +263,9 @@ def test_if_sheet_exists_append_modes(tmp_excel, if_sheet_exists, num_sheets, ex
 def test_append_overlay_startrow_startcol(
     tmp_excel, startrow, startcol, greeting, goodbye
 ):
+    # [FUNCTION DOC]
+    # Verifies overlay-mode writing with a start row and start column.
+    # Parametrized over (start row, start column, expected greeting column, expected goodbye column). A single value is written without header or index, shifted by one row for the header, over an existing two-by-two table, and the expected frames show which cell was replaced.
     df1 = DataFrame({"greeting": ["hello", "world"], "goodbye": ["goodbye", "people"]})
     df2 = DataFrame(["poop"])
 
@@ -274,6 +307,9 @@ def test_append_overlay_startrow_startcol(
     ],
 )
 def test_if_sheet_exists_raises(tmp_excel, if_sheet_exists, msg):
+    # [FUNCTION DOC]
+    # Verifies errors from the sheet-exists policy.
+    # Parametrized over (policy, message): an invalid policy value raises a value error listing the valid options; the error policy and the missing policy (none) raise a value error saying the sheet already exists and the policy is error. Issue 40230.
     # GH 40230
     df = DataFrame({"fruit": ["pear"]})
     df.to_excel(tmp_excel, sheet_name="foo", engine="openpyxl")
@@ -285,6 +321,8 @@ def test_if_sheet_exists_raises(tmp_excel, if_sheet_exists, msg):
 
 
 def test_to_excel_with_openpyxl_engine(tmp_excel):
+    # [FUNCTION DOC]
+    # Verifies that a styled frame (map of font colors and highlight of the maximum) can be written with the openpyxl engine (issue 29854). There is no assertion beyond completing without error.
     # GH 29854
     df1 = DataFrame({"A": np.linspace(1, 10, 10)})
     df2 = DataFrame({"B": np.linspace(1, 20, 10)})
@@ -298,6 +336,8 @@ def test_to_excel_with_openpyxl_engine(tmp_excel):
 
 @pytest.mark.parametrize("read_only", [True, False])
 def test_read_workbook(datapath, ext, read_only):
+    # [FUNCTION DOC]
+    # Verifies reading from an already loaded openpyxl workbook object, parametrized over read-only true and false (issue 39528): the result equals reading the same file by path.
     # GH 39528
     filename = datapath("io", "data", "excel", "test1" + ext)
     with contextlib.closing(
@@ -330,6 +370,9 @@ def test_read_workbook(datapath, ext, read_only):
 def test_read_with_bad_dimension(
     datapath, ext, header, expected_data, filename, read_only
 ):
+    # [FUNCTION DOC]
+    # Verifies reading sheets whose dimension metadata is missing, too small or too large (issues 38956 and 39001).
+    # Parametrized over header row (0 or 2) with matching expected data, three file names, and the loading mode (read-only workbook, normal workbook, or reading directly by path when none). The expected frame is the same for all files in each header case.
     # GH 38956, 39001 - no/incorrect dimension information
     path = datapath("io", "data", "excel", f"{filename}{ext}")
     if read_only is None:
@@ -344,6 +387,8 @@ def test_read_with_bad_dimension(
 
 
 def test_append_mode_file(tmp_excel):
+    # [FUNCTION DOC]
+    # Verifies appending to an existing workbook does not concatenate zip archives (issue 39576): after writing an empty frame twice (the second as a new sheet in append mode) the raw bytes contain the document properties entry name exactly twice.
     # GH 39576
     df = DataFrame()
 
@@ -366,6 +411,8 @@ def test_append_mode_file(tmp_excel):
 # When read_only is None, use read_excel instead of a workbook
 @pytest.mark.parametrize("read_only", [True, False, None])
 def test_read_with_empty_trailing_rows(datapath, ext, read_only):
+    # [FUNCTION DOC]
+    # Verifies a sheet with empty trailing rows is read without the trailing rows (issue 39181), for read-only workbook, normal workbook, and path; the result is a five-row frame with the title row and a letters row.
     # GH 39181
     path = datapath("io", "data", "excel", f"empty_trailing_rows{ext}")
     if read_only is None:
@@ -388,6 +435,8 @@ def test_read_with_empty_trailing_rows(datapath, ext, read_only):
 # When read_only is None, use read_excel instead of a workbook
 @pytest.mark.parametrize("read_only", [True, False, None])
 def test_read_empty_with_blank_row(datapath, ext, read_only):
+    # [FUNCTION DOC]
+    # Verifies a sheet that is empty except for a blank row is read as an empty frame (issue 39547), for the three loading modes.
     # GH 39547 - empty excel file with a row that has no data
     path = datapath("io", "data", "excel", f"empty_with_blank_row{ext}")
     if read_only is None:
@@ -402,6 +451,8 @@ def test_read_empty_with_blank_row(datapath, ext, read_only):
 
 
 def test_book_and_sheets_consistent(tmp_excel):
+    # [FUNCTION DOC]
+    # Verifies the sheets mapping reflects a sheet created directly through the workbook (issue 45687): initially empty, then it maps the new sheet name to the sheet object.
     # GH#45687 - Ensure sheets is updated if user modifies book
     with ExcelWriter(tmp_excel, engine="openpyxl") as writer:
         assert writer.sheets == {}
@@ -410,6 +461,8 @@ def test_book_and_sheets_consistent(tmp_excel):
 
 
 def test_ints_spelled_with_decimals(datapath, ext):
+    # [FUNCTION DOC]
+    # Verifies a sheet whose integer values are stored with a decimal part is read back as integers (issue 46988), as a one-column frame with the column label one and values two to eleven.
     # GH 46988 - openpyxl returns this sheet with floats
     path = datapath("io", "data", "excel", f"ints_spelled_with_decimals{ext}")
     result = pd.read_excel(path)
@@ -418,6 +471,8 @@ def test_ints_spelled_with_decimals(datapath, ext):
 
 
 def test_read_multiindex_header_no_index_names(datapath, ext):
+    # [FUNCTION DOC]
+    # Verifies reading a three-row header and three index columns with no index names (issue 47487), producing a frame with multi-level columns and a multi-level index, with missing values where cells are empty.
     # GH#47487
     path = datapath("io", "data", "excel", f"multiindex_no_index_names{ext}")
     result = pd.read_excel(path, index_col=[0, 1, 2], header=[0, 1, 2])

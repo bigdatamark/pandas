@@ -1,3 +1,7 @@
+# [MODULE DOC]
+# Tests for the dataframe interchange protocol implementation: producing the interchange object from a pandas frame (columns, null descriptions, buffers, dtypes, chunks) and consuming interchange objects (pandas or pyarrow) back into frames with the conversion function.
+# Public targets under test come from the core interchange package: the column class, the null-type and dtype-kind enumerations, the from-dataframe converter and the Arrow C format constants. Most tests assert that creating the interchange object emits the interchange deprecation-style warning. Many tests are skipped when a minimum pyarrow version is missing. No import-time side effects.
+
 from datetime import (
     datetime,
     timezone,
@@ -26,6 +30,9 @@ from pandas.core.interchange.utils import ArrowCTypes
 
 @pytest.mark.parametrize("data", [("ordered", True), ("unordered", False)])
 def test_categorical_dtype(data):
+    # [FUNCTION DOC]
+    # Verifies the interchange column for ordered and unordered categorical data and a round trip.
+    # Parametrized by (kind label, expected ordered flag). The column has a repeated letter pattern producing five categories. Expected: dtype kind is categorical, null count zero, null description is a sentinel with value minus one, one chunk, categorical description reports the ordered flag as given, a dictionary flag true and a categories column wrapping a series of the sorted unique letters; converting back reproduces the original frame.
     data_categorical = {
         "ordered": pd.Categorical(list("testdata") * 30, ordered=True),
         "unordered": pd.Categorical(list("testdata") * 30, ordered=False),
@@ -51,6 +58,8 @@ def test_categorical_dtype(data):
 
 
 def test_categorical_pyarrow():
+    # [FUNCTION DOC]
+    # Verifies that a pyarrow dictionary-encoded string column converts to a pandas categorical whose categories are in order of first appearance (issue 49889). Requires pyarrow 11 or newer.
     # GH 49889
     pa = pytest.importorskip("pyarrow", "11.0.0")
 
@@ -70,6 +79,8 @@ def test_categorical_pyarrow():
     "ignore:Constructing a Categorical with a dtype and values containing"
 )
 def test_empty_categorical_pyarrow():
+    # [FUNCTION DOC]
+    # Verifies converting a pyarrow dictionary-encoded column that contains only a null (float values) to a categorical with a missing value (issue 53077). Filters the warning about constructing a categorical with a dtype and values containing missing data. Requires pyarrow 11 or newer.
     # https://github.com/pandas-dev/pandas/issues/53077
     pa = pytest.importorskip("pyarrow", "11.0.0")
 
@@ -83,6 +94,8 @@ def test_empty_categorical_pyarrow():
 
 
 def test_large_string_pyarrow():
+    # [FUNCTION DOC]
+    # Verifies a pyarrow large string column converts to a string column (issue 52795) and that a round trip back through the pyarrow interchange reader gives an equal table; stack level checking is disabled in the round trip because pyarrow itself calls the deprecated method. Requires pyarrow 11.
     # GH 52795
     pa = pytest.importorskip("pyarrow", "11.0.0")
 
@@ -112,6 +125,9 @@ def test_large_string_pyarrow():
     ],
 )
 def test_bitmasks_pyarrow(offset, length, expected_values):
+    # [FUNCTION DOC]
+    # Verifies validity bitmask handling for sliced pyarrow tables (issue 52795), including a round trip to pyarrow.
+    # Parametrized by (offset, length, expected float values) covering slices from the start, from offsets one and two and bounded lengths over a float column with one missing value. Expected: the converted frame has the expected values (missing as nan) and converting back to pyarrow equals the sliced table. Requires pyarrow 11.
     # GH 52795
     pa = pytest.importorskip("pyarrow", "11.0.0")
 
@@ -144,6 +160,9 @@ def test_bitmasks_pyarrow(offset, length, expected_values):
     ],
 )
 def test_dataframe(data):
+    # [FUNCTION DOC]
+    # Verifies frame-level interchange behavior for random single-type data.
+    # Parametrized by a generator of cell values (random integer, random positive integer, random float, random boolean and random datetime). Builds a ten by twenty frame with column names generated from a rotated numbering. Expected: column count, row count and names match; selecting columns by position and by the corresponding names convert to equal frames; and the converted frames keep the interchange buffers list in their attributes.
     NCOLS, NROWS = 10, 20
     data = {
         f"col{int((i - NCOLS / 2) % NCOLS + 1)}": [data() for _ in range(NROWS)]
@@ -172,6 +191,8 @@ def test_dataframe(data):
 
 
 def test_missing_from_masked():
+    # [FUNCTION DOC]
+    # Verifies null counts for float columns that had random entries set to missing: the interchange column null count equals the number of values nulled for each of the three columns. The random generator is seeded.
     df = pd.DataFrame(
         {
             "x": np.array([1.0, 2.0, 3.0, 4.0, 0.0]),
@@ -209,6 +230,8 @@ def test_missing_from_masked():
     ],
 )
 def test_mixed_data(data):
+    # [FUNCTION DOC]
+    # Verifies that columns without missing values (floats, mixed int and float, bool, int, float arrays) report a null count of zero.
     df = pd.DataFrame(data)
     with tm.assert_produces_warning(match="Interchange"):
         df2 = df.__dataframe__()
@@ -218,6 +241,8 @@ def test_mixed_data(data):
 
 
 def test_mixed_missing():
+    # [FUNCTION DOC]
+    # Verifies that boolean-like, integer-like and float arrays containing none values (object or float dtype) report a null count of two in each column.
     df = pd.DataFrame(
         {
             "x": np.array([True, None, False, None, True]),
@@ -234,6 +259,8 @@ def test_mixed_missing():
 
 
 def test_string():
+    # [FUNCTION DOC]
+    # Verifies the string column description: size, null count of one (missing value), string dtype kind and a byte-mask null description with value zero. Repeats the checks on a slice that skips the first row (size reduces by one, the null is still counted).
     string_data = {
         "separator data": [
             "abC|DeF,Hik",
@@ -263,6 +290,8 @@ def test_string():
 
 
 def test_nonstring_object():
+    # [FUNCTION DOC]
+    # Verifies that an object column with mixed non-string values raises a not-implemented error saying the type is not supported yet when its dtype is requested.
     df = pd.DataFrame({"A": ["a", 10, 1.0, ()]})
     with tm.assert_produces_warning(match="Interchange"):
         col = df.__dataframe__().get_column_by_name("A")
@@ -271,6 +300,8 @@ def test_nonstring_object():
 
 
 def test_datetime():
+    # [FUNCTION DOC]
+    # Verifies a datetime column with a missing value: size two, one null, datetime kind, a sentinel null description using the integer minimum used for not-a-time, and a lossless round trip.
     df = pd.DataFrame({"A": [pd.Timestamp("2022-01-01"), pd.NaT]})
     with tm.assert_produces_warning(match="Interchange"):
         col = df.__dataframe__().get_column_by_name("A")
@@ -285,6 +316,8 @@ def test_datetime():
 
 
 def test_categorical_to_numpy_dlpack():
+    # [FUNCTION DOC]
+    # Verifies the categorical codes buffer can be consumed through the dlpack protocol into a numpy array of small signed integers (issue 48393).
     # https://github.com/pandas-dev/pandas/issues/48393
     df = pd.DataFrame({"A": pd.Categorical(["a", "b", "a"])})
     with tm.assert_produces_warning(match="Interchange"):
@@ -296,6 +329,8 @@ def test_categorical_to_numpy_dlpack():
 
 @pytest.mark.parametrize("data", [{}, {"a": []}])
 def test_empty_pyarrow(data):
+    # [FUNCTION DOC]
+    # Verifies converting an empty pyarrow-produced frame (with no columns, or with one empty column) into pandas (issue 53155). The column type is not compared. Requires pyarrow 14.
     # GH 53155
     pytest.importorskip("pyarrow", "14.0.0")
     from pyarrow.interchange import from_dataframe as pa_from_dataframe
@@ -309,6 +344,8 @@ def test_empty_pyarrow(data):
 
 
 def test_multi_chunk_pyarrow() -> None:
+    # [FUNCTION DOC]
+    # Verifies that converting a multi-chunk pyarrow table with copying disallowed raises a runtime error saying a zero copy conversion into a multi-column block is not possible. Requires pyarrow 14.
     pa = pytest.importorskip("pyarrow", "14.0.0")
     n_legs = pa.chunked_array([[2, 2, 4], [4, 5, 100]])
     names = ["n_legs"]
@@ -321,6 +358,9 @@ def test_multi_chunk_pyarrow() -> None:
 
 
 def test_multi_chunk_column() -> None:
+    # [FUNCTION DOC]
+    # Verifies handling of a pandas Arrow-backed integer column with more than one chunk.
+    # With copying disallowed the conversion raises a runtime error saying a multi-chunk array was found; with copying allowed it returns float64 values with missing as nan (the interchange default is numpy-backed); the original frame is unchanged and its column still has two chunks. Requires pyarrow 11.
     pytest.importorskip("pyarrow", "11.0.0")
     ser = pd.Series([1, 2, None], dtype="Int64[pyarrow]")
     df = pd.concat([ser, ser], ignore_index=True).to_frame("a")
@@ -346,6 +386,8 @@ def test_multi_chunk_column() -> None:
 
 
 def test_timestamp_ns_pyarrow():
+    # [FUNCTION DOC]
+    # Verifies a nanosecond timestamp Arrow-backed column round trips through the interchange to an equal timestamp value (issue 56712). Requires pyarrow 11.
     # GH 56712
     pytest.importorskip("pyarrow", "11.0.0")
     timestamp_args = {
@@ -372,6 +414,8 @@ def test_timestamp_ns_pyarrow():
 
 @pytest.mark.parametrize("tz", ["UTC", "US/Pacific"])
 def test_datetimetzdtype(tz, unit):
+    # [FUNCTION DOC]
+    # Verifies a timezone-aware datetime column, with the unit fixture and the two time zones UTC and a Pacific zone, survives an interchange round trip unchanged (issue 54239).
     # GH 54239
     tz_data = (
         pd.date_range("2018-01-01", periods=5, freq="D").tz_localize(tz).as_unit(unit)
@@ -382,6 +426,8 @@ def test_datetimetzdtype(tz, unit):
 
 
 def test_interchange_from_non_pandas_tz_aware(request):
+    # [FUNCTION DOC]
+    # Verifies converting a timezone-aware pyarrow column (Kathmandu) with a null into a pandas frame with a datetime column of microsecond unit and that zone (issues 54239 and 54287). On Windows CI with an old pyarrow the test is marked as an expected failure because of a missing tz database.
     # GH 54239, 54287
     pa = pytest.importorskip("pyarrow", "11.0.0")
     import pyarrow.compute as pc
@@ -412,6 +458,9 @@ def test_interchange_from_non_pandas_tz_aware(request):
 
 
 def test_interchange_from_corrected_buffer_dtypes(monkeypatch) -> None:
+    # [FUNCTION DOC]
+    # Verifies that conversion uses the data buffer dtype reported by the column rather than the column dtype (issue 54781).
+    # Replaces the data buffer dtype of a string column with unsigned 8-bit, wires the replaced column into the interchange object and patches the frame's interchange method (via the monkeypatch fixture) to return it, then checks the conversion works.
     # https://github.com/pandas-dev/pandas/issues/54781
     with tm.assert_produces_warning(match="Interchange"):
         df = pd.DataFrame({"a": ["foo", "bar"]}).__dataframe__()
@@ -435,6 +484,8 @@ def test_interchange_from_corrected_buffer_dtypes(monkeypatch) -> None:
 
 
 def test_empty_string_column():
+    # [FUNCTION DOC]
+    # Verifies that an empty string column survives the interchange round trip unchanged (issue 56703).
     # https://github.com/pandas-dev/pandas/issues/56703
     df = pd.DataFrame({"a": []}, dtype=str)
     with tm.assert_produces_warning(match="Interchange"):
@@ -444,6 +495,8 @@ def test_empty_string_column():
 
 
 def test_large_string():
+    # [FUNCTION DOC]
+    # Verifies an Arrow-backed large string column converts to the default string dtype (issue 56702); stack level is not checked. Requires pyarrow.
     # GH#56702
     pytest.importorskip("pyarrow")
     df = pd.DataFrame({"a": ["x"]}, dtype="large_string[pyarrow]")
@@ -455,6 +508,8 @@ def test_large_string():
 
 
 def test_non_str_names():
+    # [FUNCTION DOC]
+    # Verifies that integer column names are exposed as strings by the interchange object (issue 56701).
     # https://github.com/pandas-dev/pandas/issues/56701
     df = pd.Series([1, 2, 3], name=0).to_frame()
     with tm.assert_produces_warning(match="Interchange"):
@@ -463,6 +518,8 @@ def test_non_str_names():
 
 
 def test_non_str_names_w_duplicates():
+    # [FUNCTION DOC]
+    # Verifies that converting an interchange object whose string-converted column names collide (a text zero and an integer zero) raises a type error explaining a series was expected but a frame was received because of duplicate names (issue 56701).
     # https://github.com/pandas-dev/pandas/issues/56701
     df = pd.DataFrame({"0": [1, 2, 3], 0: [4, 5, 6]})
     with tm.assert_produces_warning(match="Interchange"):
@@ -528,6 +585,9 @@ def test_non_str_names_w_duplicates():
 def test_pandas_nullable_with_missing_values(
     data: list, dtype: str, expected_dtype: str
 ) -> None:
+    # [FUNCTION DOC]
+    # Verifies conversion of pandas nullable and Arrow-backed dtypes with a missing value to pyarrow (issues 57643 and 57664).
+    # Parametrized by (data, pandas dtype, expected pyarrow type name): integer, unsigned, float, boolean, string and timestamp dtypes in numpy-backed nullable and pyarrow-backed forms. Expected: the pyarrow column has the expected type, the first two values equal the input and the third is none. The time zone case builds the expected pyarrow type explicitly. Requires pyarrow 14.
     # https://github.com/pandas-dev/pandas/issues/57643
     # https://github.com/pandas-dev/pandas/issues/57664
     pa = pytest.importorskip("pyarrow", "14.0.0")
@@ -596,6 +656,8 @@ def test_pandas_nullable_with_missing_values(
 def test_pandas_nullable_without_missing_values(
     data: list, dtype: str, expected_dtype: str
 ) -> None:
+    # [FUNCTION DOC]
+    # Same as the previous test but without missing values; all three values are compared with the input (issue 57643). Requires pyarrow 14.
     # https://github.com/pandas-dev/pandas/issues/57643
     pa = pytest.importorskip("pyarrow", "14.0.0")
     import pyarrow.interchange as pai
@@ -613,6 +675,8 @@ def test_pandas_nullable_without_missing_values(
 
 
 def test_string_validity_buffer() -> None:
+    # [FUNCTION DOC]
+    # Verifies that the validity buffer of an Arrow-backed large string column with no missing values is none (issue 57761). Requires pyarrow 11.
     # https://github.com/pandas-dev/pandas/issues/57761
     pytest.importorskip("pyarrow", "11.0.0")
     df = pd.DataFrame({"a": ["x"]}, dtype="large_string[pyarrow]")
@@ -622,6 +686,9 @@ def test_string_validity_buffer() -> None:
 
 
 def test_string_validity_buffer_no_missing() -> None:
+    # [FUNCTION DOC]
+    # Verifies that the validity buffer of an Arrow-backed large string column that does contain a missing value is present and describes a one-bit boolean (issue 57762). Requires pyarrow 11.
+    # KNOWN ISSUE: the test name says no missing values but the data contains a missing value; its name and the name of the previous test appear swapped relative to what they check.
     # https://github.com/pandas-dev/pandas/issues/57762
     pytest.importorskip("pyarrow", "11.0.0")
     df = pd.DataFrame({"a": ["x", None]}, dtype="large_string[pyarrow]")
@@ -634,6 +701,8 @@ def test_string_validity_buffer_no_missing() -> None:
 
 
 def test_empty_dataframe():
+    # [FUNCTION DOC]
+    # Verifies that an empty frame with an 8-bit integer column round trips with copying disallowed and keeps its dtype (issue 56700).
     # https://github.com/pandas-dev/pandas/issues/56700
     df = pd.DataFrame({"a": []}, dtype="int8")
     with tm.assert_produces_warning(match="Interchange"):
@@ -681,6 +750,9 @@ def test_buffer_dtype_categorical(
     expected_dtype: tuple[DtypeKind, int, str, str],
     expected_buffer_dtype: tuple[DtypeKind, int, str, str],
 ) -> None:
+    # [FUNCTION DOC]
+    # Verifies the column dtype and the data buffer dtype for several kinds of series.
+    # Parametrized by (series, expected column dtype tuple, expected buffer dtype tuple), each tuple being kind, bit width, Arrow format string and byte order: categorical, datetime, string with a missing value, integer and float (issue 54781). Despite the name, not only categorical data is covered.
     # https://github.com/pandas-dev/pandas/issues/54781
     df = pd.DataFrame({"data": data})
     with tm.assert_produces_warning(match="Interchange"):
@@ -691,6 +763,8 @@ def test_buffer_dtype_categorical(
 
 
 def test_from_dataframe_list_dtype():
+    # [FUNCTION DOC]
+    # Verifies converting a pyarrow table with a list-typed column to a frame preserves the lists. Requires pyarrow 14. Does not assert the interchange warning.
     pa = pytest.importorskip("pyarrow", "14.0.0")
     data = {"a": [[1, 2], [4, 5, 6]]}
     tbl = pa.table(data)

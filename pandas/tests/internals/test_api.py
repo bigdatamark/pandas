@@ -3,6 +3,10 @@ Tests for the pseudo-public API implemented in internals/api.py and exposed
 in core.internals
 """
 
+# [MODULE DOC]
+# Tests for the semi-public internals API: the block-construction shim module and its re-exports in the core internals namespace, the deprecations in that namespace, and the public function that builds a frame from raw blocks.
+# Imports the internals package, its api module and the public internals module; no import-time side effects beyond imports.
+
 import datetime
 
 import numpy as np
@@ -18,10 +22,15 @@ from pandas.core.internals import api
 
 
 def test_internals_api():
+    # [FUNCTION DOC]
+    # Verifies that the block factory exposed in the core internals namespace is the same object as the one defined in the api module.
     assert internals.make_block is api.make_block
 
 
 def test_namespace():
+    # [FUNCTION DOC]
+    # Verifies the exact public namespace of the core internals package (marked subject to change).
+    # Expected: the non-dunder names present equal the union of the submodule names (blocks, concat, managers, construction, api, ops) and the exported names (block factory, the two block manager classes and the manager concatenation function); on failure the symmetric difference is shown.
     # SUBJECT TO CHANGE
 
     modules = [
@@ -51,6 +60,9 @@ def test_namespace():
     ],
 )
 def test_deprecations(name):
+    # [FUNCTION DOC]
+    # Verifies that accessing the legacy block class names in the internals namespace emits the deprecation warning (issue 55139).
+    # Parametrized over the two names (generic block and extension block). The message must say the name is deprecated and to use public APIs instead.
     # GH#55139
     msg = f"{name} is deprecated.* Use public APIs instead"
     with tm.assert_produces_warning(Pandas4Warning, match=msg):
@@ -58,6 +70,9 @@ def test_deprecations(name):
 
 
 def test_make_block_2d_with_dti():
+    # [FUNCTION DOC]
+    # Verifies the block factory is deprecated and still builds a two-dimensional block from a timezone-aware datetime index (issue 41168).
+    # Expected: the deprecation warning about the factory is emitted, and the resulting block and its values both have shape one by three.
     # GH#41168
     dti = pd.date_range("2012", periods=3, tz="UTC")
 
@@ -70,6 +85,8 @@ def test_make_block_2d_with_dti():
 
 
 def test_create_block_manager_from_blocks_deprecated():
+    # [FUNCTION DOC]
+    # Verifies that accessing the manager-from-blocks creator through the internals namespace emits the deprecation warning stating it will be removed and to use public APIs (issue 33892). The access alone triggers the warning.
     # GH#33892
     # If they must, downstream packages should get this from internals.api,
     #  not internals.
@@ -82,6 +99,9 @@ def test_create_block_manager_from_blocks_deprecated():
 
 
 def test_maybe_infer_ndim_deprecated():
+    # [FUNCTION DOC]
+    # Verifies that the legacy ndim inference helper in the api module emits a deprecation warning (issue 40226).
+    # Calls it with a five-element integer array, a block placement of one position and the integer one; expects a standard deprecation warning (not the project warning class) whose message says it will be removed in a future version.
     # GH#40226
     msg = "maybe_infer_ndim is deprecated and will be removed in a future version."
     arr = np.arange(5)
@@ -91,6 +111,9 @@ def test_maybe_infer_ndim_deprecated():
 
 
 def test_create_dataframe_from_blocks(float_frame):
+    # [FUNCTION DOC]
+    # Verifies building a frame from a single raw block with the public function.
+    # Uses the float frame fixture: takes its first block's values and placement array together with copies of the index and columns, and expects a frame equal to the fixture.
     block = float_frame._mgr.blocks[0]
     index = float_frame.index.copy()
     columns = float_frame.columns.copy()
@@ -102,6 +125,9 @@ def test_create_dataframe_from_blocks(float_frame):
 
 
 def test_create_dataframe_from_blocks_types():
+    # [FUNCTION DOC]
+    # Verifies the public block-based constructor round trips frames of many dtypes.
+    # Setup: a frame with integer, unsigned, float, bool, nullable boolean, string, datetime, timezone-aware datetime, timedelta, period, categorical and interval columns. Rebuilds the frame from the values and placements of all its blocks, with the same index and columns; expected equal to the original.
     df = pd.DataFrame(
         {
             "int": list(range(1, 4)),
@@ -130,6 +156,9 @@ def test_create_dataframe_from_blocks_types():
 
 
 def test_create_dataframe_from_blocks_datetimelike():
+    # [FUNCTION DOC]
+    # Verifies that datetime-like data passed as plain numpy arrays (datetime and timedelta arrays whose dtypes match extension dtypes) is accepted.
+    # Setup: two two-by-three arrays of day-spaced datetimes and timedeltas placed at columns zero/two and one/three of a four-column frame. Expected: columns of datetimes and timedeltas with microsecond resolution as listed.
     # extension dtypes that have an exact matching numpy dtype can also be
     # be passed as a numpy array
     index, columns = pd.RangeIndex(3), pd.Index(["a", "b", "c", "d"])
@@ -168,6 +197,9 @@ def test_create_dataframe_from_blocks_datetimelike():
     ],
 )
 def test_create_dataframe_from_blocks_1dEA(array):
+    # [FUNCTION DOC]
+    # Verifies that one-dimensional extension arrays may be passed even though the block stores them as two-dimensional.
+    # Parametrized over datetime, timezone-aware datetime, period and timedelta arrays. Builds a frame, then re-creates it from the first row of the block values and the placement; expected equal to the original.
     # ExtensionArrays can be passed as 1D even if stored under the hood as 2D
     df = pd.DataFrame({"a": array})
 

@@ -1,3 +1,7 @@
+# [MODULE DOC]
+# Tests for the utility that maps a dtype to its Arrow C data interface format string, as used by the dataframe interchange implementation.
+# Covers numpy dtypes, pandas dtypes and pyarrow-backed extension dtypes. The reference strings are hard-coded because there is no pyarrow API to obtain the format string from Python (see the note in the module about exporting the schema to a C pointer).
+
 import numpy as np
 import pytest
 
@@ -36,6 +40,9 @@ from pandas.core.interchange.utils import dtype_to_arrow_c_fmt
     ],
 )
 def test_dtype_to_arrow_c_fmt(pandas_dtype, c_string):  # PR01
+    # [FUNCTION DOC]
+    # Verifies that the format-string utility returns the expected Arrow C format string for numpy and pandas dtypes.
+    # Parametrized over (dtype, expected string) pairs: boolean, signed and unsigned integers of all widths, three float widths, the default string dtype, nanosecond datetime, categorical (formatted as the integer code type) and object dtype (formatted as a string). Asserts exact equality of the returned string.
     """Test ``dtype_to_arrow_c_fmt`` utility function."""
     assert dtype_to_arrow_c_fmt(pandas_dtype) == c_string
 
@@ -77,6 +84,10 @@ def test_dtype_to_arrow_c_fmt(pandas_dtype, c_string):  # PR01
     ],
 )
 def test_dtype_to_arrow_c_fmt_arrowdtype(pa_dtype, args_kwargs, c_string):
+    # [FUNCTION DOC]
+    # Verifies the format string for pyarrow-backed extension dtypes (issue 52323). Skipped when pyarrow is not installed.
+    # Parametrized over (pyarrow factory name, arguments, expected string); arguments are empty, a positional tuple or a keyword mapping and are used to construct the pyarrow type by name, which is then wrapped in the pandas Arrow extension dtype. Covers null, boolean, integers, floats, string, binary, time, date, timestamp (with and without time zone), duration and decimal types. Asserts exact equality with the expected string.
+    # KNOWN ISSUE: the case for the signed 16-bit integer expects the unsigned 16-bit format letter, but the Arrow specification uses the lowercase letter for signed 16-bit; the expectation mirrors the same mistake in the lookup table of the implementation rather than the specification.
     # GH 52323
     pa = pytest.importorskip("pyarrow")
     if not args_kwargs:

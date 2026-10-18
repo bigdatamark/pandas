@@ -4,6 +4,10 @@ test setting *parts* of objects both positionally and label based
 TODO: these should be split among the indexer tests
 """
 
+# [MODULE DOC]
+# Tests for setting parts of series and frames by position and by label, with an emphasis on enlargement (setting with expansion), setting on empty frames, partial selection with missing keys, and label lists given as strings for date-like indexes. A module note says these tests should eventually be split among the indexer-specific modules.
+# Classes: expansion of empty frames, partial setting on non-empty objects, and string slicing on date-like indexes. Uses the shared frame-or-series fixture and the infer-string fixture.
+
 import numpy as np
 import pytest
 
@@ -21,7 +25,11 @@ import pandas._testing as tm
 
 
 class TestEmptyFrameSetitemExpansion:
+    # [CLASS DOC]
+    # Tests for assigning columns or rows into frames that start empty (no rows, no columns or both), verifying index handling, dtype of the new data and error messages.
     def test_empty_frame_setitem_index_name_retained(self):
+        # [FUNCTION DOC]
+        # Verifies that assigning a series to a new column of a frame with an empty named range index keeps the frame's index name and takes the series' length (issue 31368).
         # GH#31368 empty frame has non-None index.name -> retained
         df = DataFrame({}, index=pd.RangeIndex(0, name="df_index"))
         series = Series(1.23, index=pd.RangeIndex(4, name="series_index"))
@@ -36,6 +44,8 @@ class TestEmptyFrameSetitemExpansion:
         tm.assert_frame_equal(df, expected)
 
     def test_empty_frame_setitem_index_name_inherited(self):
+        # [FUNCTION DOC]
+        # Verifies that assigning a series into a completely empty frame (no index name) makes the frame take the series' index including its name (issue 36527).
         # GH#36527 empty frame has None index.name -> not retained
         df = DataFrame()
         series = Series(1.23, index=pd.RangeIndex(4, name="series_index"))
@@ -48,6 +58,9 @@ class TestEmptyFrameSetitemExpansion:
         tm.assert_frame_equal(df, expected)
 
     def test_loc_setitem_zerolen_series_columns_align(self):
+        # [FUNCTION DOC]
+        # Verifies row assignment of a series into a frame with two columns and no rows aligns on columns.
+        # A series with unrelated integer labels leaves the new row with missing values in both columns (float dtype); a series labelled with only the second column name sets just that column and leaves the first missing.
         # columns will align
         df = DataFrame(columns=["A", "B"])
         df.loc[0] = Series(1, index=range(4))
@@ -62,6 +75,8 @@ class TestEmptyFrameSetitemExpansion:
         tm.assert_frame_equal(df, exp)
 
     def test_loc_setitem_zerolen_list_length_must_match_columns(self):
+        # [FUNCTION DOC]
+        # Verifies that assigning a list as a new row to a frame with columns but no rows needs the list length to equal the column count: a longer list raises a value error saying the row has mismatched columns; a list of the right length creates the row at that label with integer dtype.
         # list-like must conform
         df = DataFrame(columns=["A", "B"])
 
@@ -76,6 +91,8 @@ class TestEmptyFrameSetitemExpansion:
         tm.assert_frame_equal(df, exp)
 
     def test_partial_set_empty_frame(self):
+        # [FUNCTION DOC]
+        # Verifies error cases when label-assigning into a frame with no columns: assigning a scalar or a series to a row label raises a value error saying a frame with no defined columns cannot be set; assigning a scalar to a column label across all rows raises a value error saying a frame with no defined index cannot be set with a scalar.
         # partially set with an empty object
         # frame
         df = DataFrame()
@@ -93,6 +110,8 @@ class TestEmptyFrameSetitemExpansion:
             df.loc[:, 1] = 1
 
     def test_partial_set_empty_frame2(self):
+        # [FUNCTION DOC]
+        # Verifies that adding a column to a frame with an empty index works when it only changes the columns (issue 5632): an empty object series, a series built from the empty index and the empty index itself all give the same expected frame with one object column and an empty object index.
         # these work as they don't really change
         # anything but the index
         # GH#5632
@@ -114,6 +133,8 @@ class TestEmptyFrameSetitemExpansion:
         tm.assert_frame_equal(df, expected)
 
     def test_partial_set_empty_frame3(self):
+        # [FUNCTION DOC]
+        # Verifies dtype of a column added to a frame with an empty integer index: an empty list and an empty float series both give a float64 column.
         expected = DataFrame(columns=Index(["foo"]), index=Index([], dtype="int64"))
         expected["foo"] = expected["foo"].astype("float64")
 
@@ -128,6 +149,8 @@ class TestEmptyFrameSetitemExpansion:
         tm.assert_frame_equal(df, expected)
 
     def test_partial_set_empty_frame4(self):
+        # [FUNCTION DOC]
+        # Verifies assigning an empty range to a new column of a frame with an empty integer index gives an int64 column.
         df = DataFrame(index=Index([], dtype="int64"))
         df["foo"] = range(len(df))
 
@@ -137,6 +160,8 @@ class TestEmptyFrameSetitemExpansion:
         tm.assert_frame_equal(df, expected)
 
     def test_partial_set_empty_frame5(self):
+        # [FUNCTION DOC]
+        # Verifies that an empty frame has a zero-length range as columns, and that setting a column by label over all rows with a one-element series (indexed by a string) gives the same frame as plain column assignment: one row indexed by that string and column labelled one.
         df = DataFrame()
         tm.assert_index_equal(df.columns, pd.RangeIndex(0))
         df2 = DataFrame()
@@ -146,6 +171,8 @@ class TestEmptyFrameSetitemExpansion:
         tm.assert_frame_equal(df, df2)
 
     def test_partial_set_empty_frame_no_index(self):
+        # [FUNCTION DOC]
+        # Verifies adding a new column labelled zero to a frame that has two columns and no index, by plain assignment or all-rows label assignment, from a constant series of four rows: the result has four rows with the old columns missing.
         # no index to start
         expected = DataFrame({0: Series(1, index=range(4))}, columns=["A", "B", 0])
 
@@ -158,6 +185,9 @@ class TestEmptyFrameSetitemExpansion:
         tm.assert_frame_equal(df, expected)
 
     def test_partial_set_empty_frame_row(self):
+        # [FUNCTION DOC]
+        # Verifies that no rows are created when assigning to empty frames (issues 5720 and 5744).
+        # Cases: adding a column to an empty row selection keeps the empty frame with an integer first column, float second and a float new column; adding a scalar column to a frame with columns but no rows gives an integer column without rows while the text-named column remains an empty object series; reindexing columns of an empty selection keeps dtypes and adds a float column.
         # GH#5720, GH#5744
         # don't create rows when empty
         expected = DataFrame(columns=["A", "B", "New"], index=Index([], dtype="int64"))
@@ -188,6 +218,8 @@ class TestEmptyFrameSetitemExpansion:
         tm.assert_frame_equal(result, expected)
 
     def test_partial_set_empty_frame_set_series(self):
+        # [FUNCTION DOC]
+        # Verifies a frame built from an empty object series has one column (labelled zero or by the series name) and no rows (issue 5756).
         # GH#5756
         # setting with empty Series
         df = DataFrame(Series(dtype=object))
@@ -199,6 +231,8 @@ class TestEmptyFrameSetitemExpansion:
         tm.assert_frame_equal(df, expected)
 
     def test_partial_set_empty_frame_empty_copy_assignment(self):
+        # [FUNCTION DOC]
+        # Verifies that copying a frame with an index but no columns and then assigning a scalar column works and fills the existing row (issue 5932).
         # GH#5932
         # copy on empty with assignment fails
         df = DataFrame(index=[0])
@@ -208,6 +242,9 @@ class TestEmptyFrameSetitemExpansion:
         tm.assert_frame_equal(df, expected)
 
     def test_partial_set_empty_frame_empty_consistencies(self, using_infer_string):
+        # [FUNCTION DOC]
+        # Verifies consistency of dtype when filling an empty frame with columns (issue 6171), parametrized by the infer-string fixture.
+        # Cases: assigning a list of integers to one column leaves the other column missing (dtypes not compared); assigning a list of strings gives a string-typed (or object when inference is off) column and an object missing column; label-assigning a single cell in a new row gives one row with the other column missing (dtypes not compared).
         # GH#6171
         # consistency on empty frames
         df = DataFrame(columns=["x", "y"])
@@ -235,7 +272,11 @@ class TestEmptyFrameSetitemExpansion:
 
 
 class TestPartialSetting:
+    # [CLASS DOC]
+    # Tests for setting with enlargement and partial selection on non-empty series and frames, and for label lists on date-like indexes.
     def test_partial_setting(self):
+        # [FUNCTION DOC]
+        # Verifies enlargement of a series by setting a missing label (issue 2578): via direct and label-based setting with an integer or float value, the series gets the new label at the end; the float value upcasts. Position-based setting out of range raises an index error saying positional setting cannot enlarge the object, and scalar position setting raises an index error about the position being out of bounds.
         # GH2578, allow ix and friends to partially set
 
         # series
@@ -274,6 +315,10 @@ class TestPartialSetting:
 
     @pytest.mark.filterwarnings("ignore:Setting a value on a view:FutureWarning")
     def test_partial_setting_frame(self):
+        # [FUNCTION DOC]
+        # Verifies partial setting on frames; ignores the future warning about setting a value on a view.
+        # Position-based setting out of range raises an index error (cannot enlarge; out of bounds on the scalar accessor). Row setting where it exists by position and label overwrites the row; label setting of a new row appends it and preserves integer dtypes; whole-column label setting on a single-dtype frame overwrites; on a mixed frame (second column converted to float first) it sets in place keeping the float dtype; setting a new column by label adds it.
+        # KNOWN ISSUE: the final block labelled as a mixed frame uses exactly the same steps as the single-dtype partial setting block just before it (the frame is reset from the original, which has a single dtype), so it checks nothing new.
         df_orig = DataFrame(
             np.arange(6).reshape(3, 2), columns=["A", "B"], dtype="int64"
         )
@@ -336,6 +381,9 @@ class TestPartialSetting:
         tm.assert_frame_equal(df, expected)
 
     def test_partial_setting2(self):
+        # [FUNCTION DOC]
+        # Verifies enlargement of a datetime-indexed frame by label (issue 8473).
+        # Setting a missing next date in an existing column by the label setter or the scalar setter gives the same frame as concatenating a one-row frame (columns sorted); setting a new column labelled zero at the next date gives the frame concatenated along columns.
         # GH 8473
         dates = date_range("1/1/2000", periods=8)
         df_orig = DataFrame(
@@ -365,6 +413,8 @@ class TestPartialSetting:
         tm.assert_frame_equal(df, expected)
 
     def test_partial_setting_mixed_dtype(self):
+        # [FUNCTION DOC]
+        # Verifies that enlarging a mixed bool/integer frame with a row copied from another keeps the column dtypes by appending (infer objects on the transposed row), equal to concatenating the row.
         # in a mixed dtype environment, try to preserve dtypes
         # by appending
         df = DataFrame([[True, 1], [False, 2]], columns=["female", "fitness"])
@@ -377,6 +427,9 @@ class TestPartialSetting:
         tm.assert_frame_equal(df, expected)
 
     def test_series_partial_set(self):
+        # [FUNCTION DOC]
+        # Verifies partial label lists on a series (regression from issue 4825) across many index and key combinations.
+        # For each: label-list selection with any missing key raises a key error saying labels are not in the index; the same keys with reindex produce missing values at those positions; keys all present (including repeated ones) work and keep duplicates; a list in which nothing is present raises a key error saying none of the labels are in the index (message includes the index repr with integer dtype); and position-list selection with repeats works.
         # partial set with new index
         # Regression from GH4825
         ser = Series([0.1, 0.2], index=[1, 2])
@@ -468,6 +521,9 @@ class TestPartialSetting:
         tm.assert_series_equal(result, expected, check_index_type=True)
 
     def test_series_partial_set_with_name(self):
+        # [FUNCTION DOC]
+        # Verifies the same behaviors with a named index and series (issue 11497).
+        # Missing-key errors name the missing labels; the none-found error message includes the index name; repeated present labels keep the index name and series name; position-list selection with repeats keeps names.
         # GH 11497
 
         idx = Index([1, 2], dtype="int64", name="idx")
@@ -527,6 +583,8 @@ class TestPartialSetting:
 
     @pytest.mark.parametrize("key", [100, 100.0])
     def test_setitem_with_expansion_numeric_into_datetimeindex(self, key):
+        # [FUNCTION DOC]
+        # Verifies setting a numeric label (integer or float) on a datetime-indexed frame with the whole-row label setter appends a row and converts the index to object dtype keeping the index name (issue 4940). Parametrized over 100 and 100.0.
         # GH#4940 inserting non-strings
         orig = DataFrame(
             np.random.default_rng(2).standard_normal((10, 4)),
@@ -543,6 +601,8 @@ class TestPartialSetting:
         tm.assert_frame_equal(df, expected)
 
     def test_partial_set_invalid(self):
+        # [FUNCTION DOC]
+        # Verifies that setting a text label on a datetime-indexed frame is allowed and converts the index to object dtype (issue 4940): the new row equals the first row, the result equals concatenation with an object-inferred row.
         # GH 4940
         # allow only setting of 'valid' values
 
@@ -592,6 +652,9 @@ class TestPartialSetting:
     def test_loc_with_list_of_strings_representing_datetimes(
         self, idx, labels, expected_idx, frame_or_series
     ):
+        # [FUNCTION DOC]
+        # Verifies label-list selection with strings that parse to the index type (issue 11278).
+        # Parametrized over period, second-unit datetime and timedelta indexes with matching string labels and expected index values. Selection by the label indexer returns the three expected values with a typed index; for series, direct bracket selection returns the same. Uses the frame-or-series fixture.
         # GH 11278
         obj = frame_or_series(range(20), index=idx)
 
@@ -619,6 +682,8 @@ class TestPartialSetting:
     def test_loc_with_list_of_strings_representing_datetimes_missing_value(
         self, idx, labels
     ):
+        # [FUNCTION DOC]
+        # Verifies a list of strings in which one is valid but outside the index range raises a key error saying labels are not in the index, for series and frame label selection and series bracket selection (issue 11278). Parametrized over period, datetime and timedelta indexes.
         # GH 11278
         ser = Series(range(20), index=idx)
         df = DataFrame(range(20), index=idx)
@@ -663,6 +728,8 @@ class TestPartialSetting:
     def test_loc_with_list_of_strings_representing_datetimes_not_matched_type(
         self, idx, labels, msg
     ):
+        # [FUNCTION DOC]
+        # Verifies that an object index of strings that cannot match the index type (period/datetime index with day-offset strings, timedelta index with date strings) raises a key error saying none of the labels are in the index (issue 11278), for series and frame.
         # GH 11278
         ser = Series(range(20), index=idx)
         df = DataFrame(range(20), index=idx)
@@ -676,7 +743,11 @@ class TestPartialSetting:
 
 
 class TestStringSlicing:
+    # [CLASS DOC]
+    # Tests for slicing with string bounds on date-like indexes.
     def test_slice_irregular_datetime_index_with_nan(self):
+        # [FUNCTION DOC]
+        # Verifies slicing an unordered datetime index with a missing entry (issue 36953). A string slice whose upper bound is absent from the index raises a key error saying non-existing keys are not allowed (issues 53983 and 37819); a slice whose right bound is given with full nanosecond precision (so the rounded-up bound is exact) returns the first three rows.
         # GH36953
         index = pd.to_datetime(["2012-01-01", "2012-01-02", "2012-01-03", None])
         df = DataFrame(range(len(index)), index=index)

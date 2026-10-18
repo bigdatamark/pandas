@@ -1,3 +1,7 @@
+# [MODULE DOC]
+# Tests for converting Styler (css) styles to spreadsheet cell styles when exporting through the xlsxwriter and openpyxl engines, plus custom style converters, export to cloud storage and period-index hierarchical row formatting.
+# Skipped at import time when jinja2 is unavailable (needed by the styler constructor). Defines a module-level list of shared style parameters (css text, attribute path into the loaded cell, and the expected value, sometimes per engine because the engines write colors with different alpha prefixes and xlsxwriter fails on bottom alignment) and a list of border style names. Checks always load the written file with openpyxl, so tests skip if it is missing.
+
 import contextlib
 import uuid
 
@@ -26,12 +30,16 @@ pytest.importorskip("jinja2")
 
 @pytest.fixture
 def tmp_excel(tmp_path):
+    # [FUNCTION DOC]
+    # Fixture creating an empty ".xlsx" file with a unique random name in the temporary directory fixture; returns the path as text.
     tmp = tmp_path / f"{uuid.uuid4()}.xlsx"
     tmp.touch()
     return str(tmp)
 
 
 def assert_equal_cell_styles(cell1, cell2):
+    # [FUNCTION DOC]
+    # HELPER: asserts two openpyxl cells have equal styles by comparing the attribute dictionaries of alignment, border, fill, font and protection and the number format. A better equality check is noted as desired.
     # TODO: should find a better way to check equality
     assert cell1.alignment.__dict__ == cell2.alignment.__dict__
     assert cell1.border.__dict__ == cell2.border.__dict__
@@ -42,6 +50,9 @@ def assert_equal_cell_styles(cell1, cell2):
 
 
 def test_styler_default_values(tmp_excel):
+    # [FUNCTION DOC]
+    # Verifies that a plain frame written with the openpyxl engine has default cell styling (issue 54154): the header cell is not bold, has no horizontal or vertical alignment, and borders on all four sides have no color.
+    # KNOWN ISSUE: the name suggests a Styler is involved, but the test writes a plain frame with the frame export method and never creates a Styler.
     # GH 54154
     openpyxl = pytest.importorskip("openpyxl")
     df = DataFrame([{"A": 1, "B": 2, "C": 3}, {"A": 1, "B": 2, "C": 3}])
@@ -64,6 +75,9 @@ def test_styler_default_values(tmp_excel):
 
 @pytest.mark.parametrize("engine", ["xlsxwriter", "openpyxl"])
 def test_styler_to_excel_unstyled(engine, tmp_excel):
+    # [FUNCTION DOC]
+    # Verifies exporting a frame directly and via a Styler with no styles gives identical cells.
+    # Parametrized over the xlsxwriter and openpyxl engines. Writes the same random frame to two sheets; every column has equal length and each pair of cells has equal values and equal styles (via the style-equality helper). Zip pairing is strict.
     # compare DataFrame.to_excel and Styler.to_excel when no styles applied
     pytest.importorskip(engine)
     df = DataFrame(np.random.default_rng(2).standard_normal((2, 2)))
@@ -155,6 +169,9 @@ shared_style_params = [
 
 
 def test_styler_custom_style(tmp_excel):
+    # [FUNCTION DOC]
+    # Verifies a custom background color applied to every cell by a Styler map and exported with openpyxl (issue 54154).
+    # The index is not written. The header cell has default styling; all four data cells have the foreground color index equal to the expected eight-digit value.
     # GH 54154
     css_style = "background-color: #111222"
     openpyxl = pytest.importorskip("openpyxl")
@@ -186,6 +203,9 @@ def test_styler_custom_style(tmp_excel):
 @pytest.mark.parametrize("engine", ["xlsxwriter", "openpyxl"])
 @pytest.mark.parametrize("css, attrs, expected", shared_style_params)
 def test_styler_to_excel_basic(engine, css, attrs, expected, tmp_excel):
+    # [FUNCTION DOC]
+    # Verifies the css to cell style mapping for data cells, for both engines.
+    # Parametrized over engine and the shared style parameters (css, attribute path, expected). Writes the frame to an unstyled sheet and a styled sheet, loads the file, follows the attribute path from the data cell of each sheet; the styled value must equal the expected value (taken from the per-engine mapping when the expected value is a mapping) and the unstyled one must be missing or differ.
     pytest.importorskip(engine)
     df = DataFrame(np.random.default_rng(2).standard_normal((1, 1)))
     styler = df.style.map(lambda x: css)
@@ -213,6 +233,9 @@ def test_styler_to_excel_basic(engine, css, attrs, expected, tmp_excel):
 @pytest.mark.parametrize("engine", ["xlsxwriter", "openpyxl"])
 @pytest.mark.parametrize("css, attrs, expected", shared_style_params)
 def test_styler_to_excel_basic_indexes(engine, css, attrs, expected, tmp_excel):
+    # [FUNCTION DOC]
+    # Verifies the css to style mapping for index and column header cells.
+    # Parametrized as the basic test. A Styler with the css applied to both axis indexes and a null Styler with an unrecognized css property applied to values and both indexes are written to two sheets. The index header cell and the column header cell on the styled sheet must have the expected value; on the null sheet they must be missing or differ.
     pytest.importorskip(engine)
     df = DataFrame(np.random.default_rng(2).standard_normal((1, 1)))
 
@@ -274,6 +297,10 @@ excel_border_styles = [
 @pytest.mark.parametrize("engine", ["xlsxwriter", "openpyxl"])
 @pytest.mark.parametrize("border_style", excel_border_styles)
 def test_styler_to_excel_border_style(engine, border_style, tmp_excel):
+    # [FUNCTION DOC]
+    # Verifies border styles named by css map to the same-named openpyxl border style on the left border.
+    # Parametrized over engine and a list of border style names (some styles commented out of the list because they conflict with the width). Uses a left border css with the style, black and thin; unstyled versus styled cells are compared as in the basic test.
+    # KNOWN ISSUE: the expected value is always a plain string, so the branch handling a per-engine mapping can never run (dead code copied from the basic test).
     css = f"border-left: {border_style} black thin"
     attrs = ["border", "left", "style"]
     expected = border_style
@@ -303,9 +330,14 @@ def test_styler_to_excel_border_style(engine, border_style, tmp_excel):
 
 
 def test_styler_custom_converter(tmp_excel):
+    # [FUNCTION DOC]
+    # Verifies a custom style converter passed to the formatter is used instead of the default css conversion.
+    # The converter always returns a font color mapping with a six-digit value; the Styler maps a different color. After writing with the formatter, the data cell font color value is the converter's color prefixed with the default alpha digits.
     openpyxl = pytest.importorskip("openpyxl")
 
     def custom_converter(css):
+        # [FUNCTION DOC]
+        # HELPER: custom style converter used by the preceding test. Takes the css (ignored) and returns a fixed mapping with a font whose color rgb is 111222.
         return {"font": {"color": {"rgb": "111222"}}}
 
     df = DataFrame(np.random.default_rng(2).standard_normal((1, 1)))
@@ -322,6 +354,9 @@ def test_styler_custom_converter(tmp_excel):
 @pytest.mark.single_cpu
 @td.skip_if_not_us_locale
 def test_styler_to_s3(s3_bucket_public, s3so):
+    # [FUNCTION DOC]
+    # Verifies exporting a Styler to a mock S3 location and reading it back (issue 46381).
+    # Marked single-cpu and requires a US locale. Uses the public bucket and storage options fixtures; a sticky-index Styler of a small frame is written to a unique key and read with the first column as index; the result equals the original frame.
     # GH#46381
     mock_bucket_name = s3_bucket_public.name
     target_file = f"{uuid.uuid4()}.xlsx"
@@ -335,6 +370,9 @@ def test_styler_to_s3(s3_bucket_public, s3so):
 
 @pytest.mark.parametrize("merge_cells", [True, False, "columns"])
 def test_format_hierarchical_rows_periodindex(merge_cells):
+    # [FUNCTION DOC]
+    # Verifies hierarchical row formatting converts period level values to timestamps (issue 60099).
+    # Parametrized over the merge cells option true, false and the columns setting. Builds a frame with a two-level index (daily periods and category labels), asks the formatter for its hierarchical row cells, and for every cell beyond the first row in column zero asserts the value is a timestamp.
     # GH#60099
     df = DataFrame(
         {"A": [1, 2]},

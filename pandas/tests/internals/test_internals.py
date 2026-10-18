@@ -1,3 +1,8 @@
+# [MODULE DOC]
+# Tests for the internal storage layer: blocks, the two-dimensional block manager, the single-block manager used by series, and block placement objects, plus the can-hold-element and should-store checks.
+# Defines builder helpers at module level that create blocks and managers from compact text descriptions (a type code per block, comma-separated item names), which are shared by all tests here. Imports the internal block factories (the internal new block function and the pseudo-public make block function).
+# The indexing test class builds a list of managers at class-definition (import) time.
+
 from datetime import (
     date,
     datetime,
@@ -47,6 +52,8 @@ from pandas.core.internals.blocks import (
 
 @pytest.fixture(params=[new_block, make_block])
 def block_maker(request):
+    # [FUNCTION DOC]
+    # Fixture parametrized over the internal block factory and the pseudo-public block factory, returning whichever is selected so a test can run against both.
     """
     Fixture to test both the internal new_block and pseudo-public make_block.
     """
@@ -55,6 +62,8 @@ def block_maker(request):
 
 @pytest.fixture
 def mgr():
+    # [FUNCTION DOC]
+    # Fixture returning a block manager built from a text description with float, object, bool, integer, complex, two naive datetime and two timezone-aware datetime blocks over items a through l (ten rows each).
     return create_mgr(
         "a: f8; b: object; c: f8; d: object; e: f8;"
         "f: bool; g: i8; h: complex; i: datetime-1; j: datetime-2;"
@@ -63,6 +72,9 @@ def mgr():
 
 
 def assert_block_equal(left, right):
+    # [FUNCTION DOC]
+    # HELPER: asserts two blocks are equal.
+    # Compares values as numpy arrays, the dtypes, requires that both placements are block placement objects and that their placement arrays are equal. Raises an assertion error on any difference.
     tm.assert_numpy_array_equal(left.values, right.values)
     assert left.dtype == right.dtype
     assert isinstance(left.mgr_locs, BlockPlacement)
@@ -71,6 +83,9 @@ def assert_block_equal(left, right):
 
 
 def get_numeric_mat(shape):
+    # [FUNCTION DOC]
+    # HELPER: builds a numeric matrix of the given shape in which every row along the first axis is constant and equal to the row number.
+    # Input: shape, a sequence of dimension sizes. Returns an integer array (an independent copy) where element values depend only on the index along the first axis.
     arr = np.arange(shape[0])
     return np.lib.stride_tricks.as_strided(
         x=arr, shape=shape, strides=(arr.itemsize,) + (0,) * (len(shape) - 1)
@@ -81,6 +96,11 @@ N = 10
 
 
 def create_block(typestr, placement, item_shape=None, num_offset=0, maker=new_block):
+    # [FUNCTION DOC]
+    # HELPER: builds a single block of a given type code for use by the manager builders.
+    # Inputs: typestr, a type code (floats, signed and unsigned integers by width, complex, bool, object or string, naive datetime, timezone-aware datetime given as a code with the zone, timedelta, sparse with fill zero, sparse with missing fill, two categorical variants); placement, anything convertible to a block placement; item_shape, the shape of each item, default a single axis of length ten; num_offset, an integer added to the generated values (default zero); maker, the block factory (default the internal one).
+    # Behavior: the number of items is the placement length and the block has a leading item axis followed by item_shape. Numeric blocks are filled with the row number plus the offset; complex are imaginary; object blocks hold text labels derived from the numbers; bool is all true; datetime and timedelta come from scaled integers (the zone code is parsed with a regular expression and the timezone-aware variant must have exactly one item); categorical variants use fixed ten-element categoricals; sparse variants need a last dimension of ten and all other dimensions one, else a not-implemented error is raised.
+    # Raises a value error for an unsupported type code; asserts when a zone code is malformed or more than one item is requested for a timezone-aware block. Values are passed through the coercion helper before the factory is called, and the number of dimensions is the length of the full shape.
     """
     Supported typestr:
 
@@ -170,6 +190,9 @@ def create_block(typestr, placement, item_shape=None, num_offset=0, maker=new_bl
 
 
 def create_single_mgr(typestr, num_rows=None):
+    # [FUNCTION DOC]
+    # HELPER: builds a single-block manager (the one-dimensional container behind a series).
+    # Inputs: typestr, a type code as for the block builder; num_rows, the length (default ten). The block has placement covering all rows with scalar items, and the index is a range of that length.
     if num_rows is None:
         num_rows = N
 
@@ -180,6 +203,10 @@ def create_single_mgr(typestr, num_rows=None):
 
 
 def create_mgr(descr, item_shape=None):
+    # [FUNCTION DOC]
+    # HELPER: builds a two-dimensional block manager from a text description.
+    # Input: descr, semicolon-separated components of the form comma-separated names, a colon and a type code (see the block builder); item_shape, the shape of each item (default one axis of length ten). Whitespace is trimmed and empty components are skipped. Components with the same type code are merged into one block; a dash followed by any suffix on the code forces separate blocks of the same dtype. Item names become the first axis, with range indexes for the remaining axes; each block receives an increasing numeric offset (the count of items placed before it) added to its values; blocks are sorted by their first placement and passed to the manager constructor.
+    # Returns the new manager.
     """
     Construct BlockManager from string description.
 
@@ -244,11 +271,17 @@ def create_mgr(descr, item_shape=None):
 
 @pytest.fixture
 def fblock():
+    # [FUNCTION DOC]
+    # Fixture returning a float block with three items at positions zero, two and four.
     return create_block("float", [0, 2, 4])
 
 
 class TestBlock:
+    # [CLASS DOC]
+    # Tests for single block behavior: construction, pickling, placement, attributes, copying, deletion and splitting.
     def test_constructor(self):
+        # [FUNCTION DOC]
+        # Verifies a block created with a 32-bit integer type code has that dtype.
         int32block = create_block("i4", [0])
         assert int32block.dtype == np.int32
 
@@ -262,26 +295,37 @@ class TestBlock:
         ],
     )
     def test_pickle(self, typ, data, temp_file):
+        # [FUNCTION DOC]
+        # Verifies blocks of float, complex, object and bool types survive a pickle round trip (via the temp file fixture), as judged by the block equality helper.
         blk = create_block(typ, data)
         assert_block_equal(tm.round_trip_pickle(blk, temp_file), blk)
 
     def test_mgr_locs(self, fblock):
+        # [FUNCTION DOC]
+        # Verifies the block placement is a block placement object holding the positions zero, two and four as a platform integer array.
         assert isinstance(fblock.mgr_locs, BlockPlacement)
         tm.assert_numpy_array_equal(
             fblock.mgr_locs.as_array, np.array([0, 2, 4], dtype=np.intp)
         )
 
     def test_attrs(self, fblock):
+        # [FUNCTION DOC]
+        # Verifies the shape, dtype and length of a block equal those of its underlying values.
         assert fblock.shape == fblock.values.shape
         assert fblock.dtype == fblock.values.dtype
         assert len(fblock) == len(fblock.values)
 
     def test_copy(self, fblock):
+        # [FUNCTION DOC]
+        # Verifies a deep copy of a block is a different object but equal to the original.
         cop = fblock.copy(deep=True)
         assert cop is not fblock
         assert_block_equal(fblock, cop)
 
     def test_delete(self, fblock):
+        # [FUNCTION DOC]
+        # Verifies deleting items from a float block by position.
+        # Deleting the first item returns a single new block with placement two and four, leaving the original placement unchanged and its values untouched (the new block's values reflect the second row). Deleting the middle item returns two blocks with placements zero and four. Deleting the last item returns one block with placements zero and two. Deleting an out-of-range position raises an index error.
         newb = fblock.copy(deep=True)
         locs = newb.mgr_locs
         nb = newb.delete(0)[0]
@@ -324,6 +368,8 @@ class TestBlock:
             newb.delete(3)
 
     def test_delete_datetimelike(self):
+        # [FUNCTION DOC]
+        # Verifies that deleting from blocks holding datetime-like arrays keeps the extension array type (timedelta and datetime arrays) and returns two blocks when deleting one or two non-adjacent positions, rather than coercing to plain numpy arrays.
         # dont use np.delete on values, as that will coerce from DTA/TDA to ndarray
         arr = np.arange(20, dtype="i8").reshape(5, 4).view("m8[ns]")
         df = DataFrame(arr)
@@ -345,6 +391,8 @@ class TestBlock:
         assert isinstance(nb[1].values, DatetimeArray)
 
     def test_split(self):
+        # [FUNCTION DOC]
+        # Verifies the block split helper (issue 37799): a three-item block with placements three, one and six splits into three one-item blocks with the matching placement and values; the pieces are views (writing into the original values changes the block values).
         # GH#37799
         values = np.random.default_rng(2).standard_normal((3, 4))
         blk = new_block(values, placement=BlockPlacement([3, 1, 6]), ndim=2)
@@ -365,12 +413,19 @@ class TestBlock:
 
 
 class TestBlockManager:
+    # [CLASS DOC]
+    # Tests for the block manager: attributes, pickling, item access, setting, copying, array conversion, astype, convert, interleave, consolidation, reindex, numeric and bool selection, equality and split-set helpers.
     def test_attrs(self):
+        # [FUNCTION DOC]
+        # Verifies a manager with two float blocks of three items has two blocks and length six.
         mgr = create_mgr("a,b,c: f8-1; d,e,f: f8-2")
         assert mgr.nblocks == 2
         assert len(mgr) == 6
 
     def test_duplicate_ref_loc_failure(self):
+        # [FUNCTION DOC]
+        # Verifies detection of overlapping placements.
+        # Sets two blocks to the same placement; rebuilding the position maps raises an assertion error about gaps in block reference locations. After assigning non-overlapping placements again, a new manager can fetch the second item without error.
         tmp_mgr = create_mgr("a:bool; a: f8")
 
         axes, blocks = tmp_mgr.axes, tmp_mgr.blocks
@@ -392,6 +447,8 @@ class TestBlockManager:
         mgr.iget(1)
 
     def test_pickle(self, mgr, temp_file):
+        # [FUNCTION DOC]
+        # Verifies pickling of a mixed manager (issue 2431): the frame built from the unpickled manager equals the original, the unpickled manager has the consolidation flags and both are reset to false on load.
         mgr2 = tm.round_trip_pickle(mgr, temp_file)
         tm.assert_frame_equal(
             DataFrame._from_mgr(mgr, axes=mgr.axes),
@@ -408,6 +465,8 @@ class TestBlockManager:
 
     @pytest.mark.parametrize("mgr_string", ["a,a,a:f8", "a: f8; a: i8"])
     def test_non_unique_pickle(self, mgr_string, temp_file):
+        # [FUNCTION DOC]
+        # Verifies pickle round trip for managers with duplicate item names (three equal names in one block, or the same name in two blocks of different dtypes); frames built from the managers must be equal.
         mgr = create_mgr(mgr_string)
         mgr2 = tm.round_trip_pickle(mgr, temp_file)
         tm.assert_frame_equal(
@@ -416,6 +475,8 @@ class TestBlockManager:
         )
 
     def test_categorical_block_pickle(self, temp_file):
+        # [FUNCTION DOC]
+        # Verifies pickle round trip of a manager with a categorical block and of a single-block manager of a categorical type; the resulting frame and series are equal.
         mgr = create_mgr("a: category")
         mgr2 = tm.round_trip_pickle(mgr, temp_file)
         tm.assert_frame_equal(
@@ -431,6 +492,8 @@ class TestBlockManager:
         )
 
     def test_iget(self):
+        # [FUNCTION DOC]
+        # Verifies positional item retrieval from a manager with one float block of three items: each item's internal values equal the matching row of the source matrix.
         cols = Index(list("abc"))
         values = np.random.default_rng(2).random((3, 3))
         block = new_block(
@@ -445,6 +508,8 @@ class TestBlockManager:
         tm.assert_almost_equal(mgr.iget(2).internal_values(), values[2])
 
     def test_set(self):
+        # [FUNCTION DOC]
+        # Verifies insert and set by position on an integer manager with three items of three values: inserting a text item at the end and replacing the second item with text. The untouched integer items keep their values and the text items are object arrays.
         mgr = create_mgr("a,b,c: int", item_shape=(3,))
 
         mgr.insert(len(mgr.items), "d", np.array(["foo"] * 3))
@@ -459,6 +524,9 @@ class TestBlockManager:
         )
 
     def test_set_change_dtype(self, mgr):
+        # [FUNCTION DOC]
+        # Verifies dtype changes when setting items on a manager.
+        # Inserts a bool item, replaces it by text (object dtype expected); after consolidation, repeats; inserts an integer item (integer dtype) and replaces it with floats (float dtype expected).
         mgr.insert(len(mgr.items), "baz", np.zeros(N, dtype=bool))
 
         mgr.iset(mgr.items.get_loc("baz"), np.repeat("foo", N))
@@ -484,6 +552,9 @@ class TestBlockManager:
         assert mgr2.iget(idx).dtype == np.float64
 
     def test_copy(self, mgr):
+        # [FUNCTION DOC]
+        # Verifies shallow and deep manager copies.
+        # Shallow copy: block values are equal to the originals and share the same underlying memory base (for datetime-like arrays, the same numpy base). Then the manager is consolidated in place (deep copy consolidates, so block-wise comparison needs it) and a deep copy must hold equal values with independent memory (no base at all for plain arrays, a different base for extension arrays; for datetime arrays either no base or different bases).
         cp = mgr.copy(deep=False)
         for blk, cp_blk in zip(mgr.blocks, cp.blocks):
             # view assertion
@@ -521,10 +592,14 @@ class TestBlockManager:
                 assert lbase is None and rbase is None
 
     def test_sparse(self):
+        # [FUNCTION DOC]
+        # Verifies that a manager of two sparse blocks converts to a float64 array.
         mgr = create_mgr("a: sparse-1; b: sparse-2")
         assert mgr.as_array().dtype == np.float64
 
     def test_sparse_mixed(self):
+        # [FUNCTION DOC]
+        # Verifies that a manager made of two sparse blocks and a float block keeps three separate blocks.
         mgr = create_mgr("a: sparse-1; b: sparse-2; c: f8")
         assert len(mgr.blocks) == 3
         assert isinstance(mgr, BlockManager)
@@ -534,6 +609,9 @@ class TestBlockManager:
         [("c: f4; d: f2", np.float32), ("c: f4; d: f2; e: f8", np.float64)],
     )
     def test_as_array_float(self, mgr_string, dtype):
+        # [FUNCTION DOC]
+        # Verifies conversion to a single array yields the common float dtype.
+        # Parametrized over (description, dtype): 32-bit and 16-bit floats give 32-bit; adding a 64-bit float gives 64-bit.
         mgr = create_mgr(mgr_string)
         assert mgr.as_array().dtype == dtype
 
@@ -546,14 +624,20 @@ class TestBlockManager:
         ],
     )
     def test_as_array_int_bool(self, mgr_string, dtype):
+        # [FUNCTION DOC]
+        # Verifies conversion to a single array for bool and integer blocks: two bool blocks give bool, mixed 64, 32, 16-bit and unsigned 8-bit integers give 64-bit, and 32-bit, 16-bit and unsigned 8-bit give 32-bit. Parametrized over (description, dtype).
         mgr = create_mgr(mgr_string)
         assert mgr.as_array().dtype == dtype
 
     def test_as_array_datetime(self):
+        # [FUNCTION DOC]
+        # Verifies conversion of two naive datetime blocks to an array gives nanosecond datetime dtype.
         mgr = create_mgr("h: datetime-1; g: datetime-2")
         assert mgr.as_array().dtype == "M8[ns]"
 
     def test_as_array_datetime_tz(self):
+        # [FUNCTION DOC]
+        # Verifies two timezone-aware blocks keep their own dtypes per item, while the combined array has object dtype.
         mgr = create_mgr("h: M8[ns, US/Eastern]; g: M8[ns, CET]")
         assert mgr.iget(0).dtype == "datetime64[ns, US/Eastern]"
         assert mgr.iget(1).dtype == "datetime64[ns, CET]"
@@ -561,6 +645,9 @@ class TestBlockManager:
 
     @pytest.mark.parametrize("t", ["float16", "float32", "float64", "int32", "int64"])
     def test_astype(self, t):
+        # [FUNCTION DOC]
+        # Verifies casting the entire manager to a numeric type, parametrized over 16, 32, 64-bit floats and 32, 64-bit integers.
+        # First on an all-float manager where every item takes the dtype. Then on a mixed manager with object, bool, datetime, 32-bit, 16-bit and 64-bit float blocks, using the mode that ignores errors: numeric items and bool take the target; object items stay object; the datetime stays datetime unless the target is the 64-bit integer, in which case it is converted.
         # coerce all
         mgr = create_mgr("c: f4; d: f2; e: f8")
 
@@ -588,7 +675,13 @@ class TestBlockManager:
             assert tmgr.iget(3).dtype.type == t
 
     def test_convert(self, using_infer_string):
+        # [FUNCTION DOC]
+        # Verifies the manager convert method (type inference for object blocks), parametrized by the infer-string fixture.
+        # No-op case: numeric blocks stay as they are. Conversion case: object items holding the texts "1", "2." and "foo." remain object (or the string dtype when inference of strings is on) while integer and float items keep their dtypes. A second manager with more dtypes checks the preserved dtypes of 32-bit integer, bool, 64-bit integer, 64-bit float and 16-bit float items.
+        # KNOWN ISSUE: the assertion for the datetime item passes the dtype type and the expected type as the assertion message rather than comparing them, so it always succeeds.
         def _compare(old_mgr, new_mgr):
+            # [FUNCTION DOC]
+            # HELPER: checks two managers hold the same set of blocks irrespective of order. Requires the same number of blocks and that every block of each manager has some block in the other with fully equal values.
             """compare the blocks, numeric compare ==, object don't"""
             old_blocks = set(old_mgr.blocks)
             new_blocks = set(new_mgr.blocks)
@@ -647,6 +740,8 @@ class TestBlockManager:
         assert new_mgr.iget(8).dtype == np.float16
 
     def test_interleave(self):
+        # [FUNCTION DOC]
+        # Verifies that for each of float, integer, object, bool, complex, datetime and timedelta types, a manager with one or two items of that type converts to an array of the same dtype.
         # self
         for dtype in ["f8", "i8", "object", "bool", "complex", "M8[ns]", "m8[ns]"]:
             mgr = create_mgr(f"a: {dtype}")
@@ -678,6 +773,10 @@ class TestBlockManager:
         ],
     )
     def test_interleave_dtype(self, mgr_string, dtype):
+        # [FUNCTION DOC]
+        # Verifies the common dtype produced when converting managers with mixed block types to a single array.
+        # Parametrized over (description, dtype) pairs: categoricals of integers give 64-bit integer, string categoricals give object, floats with integers give 64-bit float, bool with integer gives object, datetimes or timedeltas mixed with other types give object, and so on.
+        # KNOWN ISSUE: the parameters are never used. The body repeats the same combinations as hard-coded constructions, so every parametrized case runs the identical full body.
         # will be converted according the actual dtype of the underlying
         mgr = create_mgr("a: category")
         assert mgr.as_array().dtype == "i8"
@@ -715,6 +814,9 @@ class TestBlockManager:
         assert mgr.as_array().dtype == "object"
 
     def test_consolidate_ordering_issues(self, mgr):
+        # [FUNCTION DOC]
+        # Verifies consolidation behavior on a manager with datetime and timezone-aware blocks after several items were replaced by random floats.
+        # Consolidation gives four blocks; the numeric part after consolidation is a single block whose placement is the full range of positions.
         mgr.iset(mgr.items.get_loc("f"), np.random.default_rng(2).standard_normal(N))
         mgr.iset(mgr.items.get_loc("d"), np.random.default_rng(2).standard_normal(N))
         mgr.iset(mgr.items.get_loc("b"), np.random.default_rng(2).standard_normal(N))
@@ -732,6 +834,8 @@ class TestBlockManager:
         )
 
     def test_reindex_items(self):
+        # [FUNCTION DOC]
+        # Verifies reindexing a non-consolidated manager along the item axis with an item list that reorders and drops items: the result is not consolidated, has the new item index, and each result item equals the corresponding source item.
         # mgr is not consolidated, f8 & f8-2 blocks
         mgr = create_mgr("a: f8; b: i8; c: f8; d: i8; e: f8; f: bool; g: f8-2")
 
@@ -753,6 +857,8 @@ class TestBlockManager:
         )
 
     def test_get_numeric_data(self):
+        # [FUNCTION DOC]
+        # Verifies selecting numeric items from a manager (integer, float, complex, bool; text, object and datetime excluded after one object item is replaced by objects). The selected items equal the originals, and an in-place set on the selection does not change the original (the data was copied).
         mgr = create_mgr(
             "int: int; float: float; complex: complex;"
             "str: object; bool: bool; obj: object; dt: datetime",
@@ -779,6 +885,8 @@ class TestBlockManager:
         )
 
     def test_get_bool_data(self):
+        # [FUNCTION DOC]
+        # Verifies selecting only bool items; an in-place set on the selection writes through to the original manager (the selection shares memory), unlike the numeric selection case. Object-typed bool values placed in a non-bool block are not selected.
         mgr = create_mgr(
             "int: int; float: float; complex: complex;"
             "str: object; bool: bool; obj: object; dt: datetime",
@@ -800,12 +908,16 @@ class TestBlockManager:
         )
 
     def test_unicode_repr_doesnt_raise(self):
+        # [FUNCTION DOC]
+        # Verifies that taking the text representation of a manager with a non-ASCII item name does not raise.
         repr(create_mgr("b,\u05d0: object"))
 
     @pytest.mark.parametrize(
         "mgr_string", ["a,b,c: i8-1; d,e,f: i8-2", "a,a,a: i8-1; b,b,b: i8-2"]
     )
     def test_equals(self, mgr_string):
+        # [FUNCTION DOC]
+        # Verifies that managers with the same blocks in reverse order compare equal, for unique names and for duplicate names.
         # unique items
         bm1 = create_mgr(mgr_string)
         bm2 = BlockManager(bm1.blocks[::-1], bm1.axes)
@@ -822,6 +934,9 @@ class TestBlockManager:
         ],
     )
     def test_equals_block_order_different_dtypes(self, mgr_string):
+        # [FUNCTION DOC]
+        # Verifies manager equality ignores block order for many dtype mixes (issue 9330).
+        # Parametrized over descriptions (basic, many types, more types, categoricals, sparse). Every permutation of the blocks gives a manager equal to the original in both directions.
         # GH 9330
         bm = create_mgr(mgr_string)
         block_perms = itertools.permutations(bm.blocks)
@@ -831,11 +946,15 @@ class TestBlockManager:
             assert bm_this.equals(bm)
 
     def test_single_mgr_ctor(self):
+        # [FUNCTION DOC]
+        # Verifies a single-block float manager of five rows has the external values zero through four.
         mgr = create_single_mgr("f8", num_rows=5)
         assert mgr.external_values().tolist() == [0.0, 1.0, 2.0, 3.0, 4.0]
 
     @pytest.mark.parametrize("value", [1, "True", [1, 2, 3], 5.0])
     def test_validate_bool_args(self, value):
+        # [FUNCTION DOC]
+        # Verifies that passing a non-bool value (an integer, text, list or float) as the in-place argument to the replace-list method raises a value error naming the argument, the expected bool type and the received type name.
         bm1 = create_mgr("a,b,c: i8-1; d,e,f: i8-2")
 
         msg = (
@@ -846,6 +965,9 @@ class TestBlockManager:
             bm1.replace_list([1], [2], inplace=value)
 
     def test_iset_split_block(self):
+        # [FUNCTION DOC]
+        # Verifies the helper that splits a block when one item is set.
+        # Starting with three integer items and one float item, splitting the first item keeps two blocks and the per-item positions in blocks (all zero except the second block) and block numbers as expected (platform integer width).
         bm = create_mgr("a,b,c: i8; d: f8")
         bm._iset_split_block(0, np.array([0]))
         tm.assert_numpy_array_equal(
@@ -858,6 +980,8 @@ class TestBlockManager:
         assert len(bm.blocks) == 2
 
     def test_iset_split_block_values(self):
+        # [FUNCTION DOC]
+        # Same as the previous test but with replacement values supplied: three blocks result, and the new item gets its own block number.
         bm = create_mgr("a,b,c: i8; d: f8")
         bm._iset_split_block(0, np.array([0]), np.array([list(range(10))]))
         tm.assert_numpy_array_equal(
@@ -871,12 +995,16 @@ class TestBlockManager:
 
 
 def _as_array(mgr):
+    # [FUNCTION DOC]
+    # HELPER: converts a manager to a numpy array oriented like the equivalent frame or series. For a one-dimensional manager returns the external values; otherwise returns the transposed interleaved array. Used by the indexing tests.
     if mgr.ndim == 1:
         return mgr.external_values()
     return mgr.as_array().T
 
 
 class TestIndexing:
+    # [CLASS DOC]
+    # Data-driven tests applying slicing, take and reindex operations to block managers and comparing with the same operations on numpy arrays. The managers cover single float and integer managers and several two-dimensional ones; sparse blocks are excluded because they fail many checks.
     # Nosetests-style data-driven tests.
     #
     # This test applies different indexing routines to block managers and
@@ -897,7 +1025,12 @@ class TestIndexing:
 
     @pytest.mark.parametrize("mgr", MANAGERS)
     def test_get_slice(self, mgr):
+        # [FUNCTION DOC]
+        # Verifies slicing of managers (and boolean masks for one-dimensional ones) against numpy results; parametrized over the class-level managers.
+        # For each axis tries full, head, over-long, middle and reversed strided slices; for one-dimensional managers also all-true, all-false and periodic boolean masks.
         def assert_slice_ok(mgr, axis, slobj):
+            # [FUNCTION DOC]
+            # HELPER: asserts one slice or mask on one axis matches numpy behavior. Pads a too-short mask with false values to the axis length; uses the manager slice method for slices and the mask-based row selection for one-dimensional bool arrays, otherwise raises a type error. Compares the resulting array (dtype not checked) and the sliced axis index.
             mat = _as_array(mgr)
 
             # we maybe using an ndarray to test slicing and
@@ -953,7 +1086,11 @@ class TestIndexing:
 
     @pytest.mark.parametrize("mgr", MANAGERS)
     def test_take(self, mgr):
+        # [FUNCTION DOC]
+        # Verifies the take operation on managers along each axis with an empty indexer, repeated positions, all positions, the first three positions and negative positions; parametrized over the class-level managers.
         def assert_take_ok(mgr, axis, indexer):
+            # [FUNCTION DOC]
+            # HELPER: asserts the take result matches numpy take on the array form and that the taken axis index matches the index take.
             mat = _as_array(mgr)
             taken = mgr.take(indexer, axis)
             tm.assert_numpy_array_equal(
@@ -976,7 +1113,12 @@ class TestIndexing:
     @pytest.mark.parametrize("mgr", MANAGERS)
     @pytest.mark.parametrize("fill_value", [None, np.nan, 100.0])
     def test_reindex_axis(self, fill_value, mgr):
+        # [FUNCTION DOC]
+        # Verifies reindexing along an axis against the numpy-style take-with-fill helper, parametrized over the managers and fill values none, nan and 100.0.
+        # Labels tried: empty, same, repeated, all-new, partially new, and for axes of length at least three: dropping the last three, reversed, and repeated.
         def assert_reindex_axis_is_ok(mgr, axis, new_labels, fill_value):
+            # [FUNCTION DOC]
+            # HELPER: asserts the reindexed manager equals the take-with-fill of the array form (using the index indexer for the new labels) and has the new labels as the axis.
             mat = _as_array(mgr)
             indexer = mgr.axes[axis].get_indexer_for(new_labels)
 
@@ -1007,7 +1149,12 @@ class TestIndexing:
     @pytest.mark.parametrize("mgr", MANAGERS)
     @pytest.mark.parametrize("fill_value", [None, np.nan, 100.0])
     def test_reindex_indexer(self, fill_value, mgr):
+        # [FUNCTION DOC]
+        # Verifies reindexing with explicit indexers against the take-with-fill helper, parametrized over the managers and fill values none, nan and 100.0.
+        # Uses empty, identity, new labels with identity indexer, reversed labels, reversed indexer, repeated positions, positions with missing markers and, for long axes, three distinct positions.
         def assert_reindex_indexer_is_ok(mgr, axis, new_labels, indexer, fill_value):
+            # [FUNCTION DOC]
+            # HELPER: asserts the reindex-indexer result equals the take-with-fill of the array form and its axis equals the new labels.
             mat = _as_array(mgr)
             reindexed_mat = algos.take_nd(mat, indexer, axis, fill_value=fill_value)
             reindexed = mgr.reindex_indexer(
@@ -1063,6 +1210,8 @@ class TestIndexing:
 
 
 class TestBlockPlacement:
+    # [CLASS DOC]
+    # Tests for the block placement type (slice or array of positions), covering length, validation, slice-likeness, conversion and addition.
     @pytest.mark.parametrize(
         "slc, expected",
         [
@@ -1074,15 +1223,21 @@ class TestBlockPlacement:
         ],
     )
     def test_slice_len(self, slc, expected):
+        # [FUNCTION DOC]
+        # Verifies length of placements made from slices: parametrized over stepped and reversed slices with expected lengths four, two, two, one, one.
         assert len(BlockPlacement(slc)) == expected
 
     @pytest.mark.parametrize("slc", [slice(1, 1, 0), slice(1, 2, 0)])
     def test_zero_step_raises(self, slc):
+        # [FUNCTION DOC]
+        # Verifies that a placement built from a slice with step zero raises a value error saying the step cannot be zero.
         msg = "slice step cannot be zero"
         with pytest.raises(ValueError, match=msg):
             BlockPlacement(slc)
 
     def test_slice_canonize_negative_stop(self):
+        # [FUNCTION DOC]
+        # Verifies a slice with positive start, negative stop and negative step is canonicalized by replacing the stop with an open end (issue 37524).
         # GH#37524 negative stop is OK with negative step and positive start
         slc = slice(3, -1, -2)
 
@@ -1107,6 +1262,8 @@ class TestBlockPlacement:
         ],
     )
     def test_unbounded_slice_raises(self, slc):
+        # [FUNCTION DOC]
+        # Verifies that unbounded slices (missing start or stop, or negative bounds whose meaning depends on the container) raise a value error mentioning an unbounded slice.
         msg = "unbounded slice"
         with pytest.raises(ValueError, match=msg):
             BlockPlacement(slc)
@@ -1122,6 +1279,8 @@ class TestBlockPlacement:
         ],
     )
     def test_not_slice_like_slices(self, slc):
+        # [FUNCTION DOC]
+        # Verifies that empty or degenerate slices make placements that are not slice-like.
         assert not BlockPlacement(slc).is_slice_like
 
     @pytest.mark.parametrize(
@@ -1136,6 +1295,8 @@ class TestBlockPlacement:
         ],
     )
     def test_array_to_slice_conversion(self, arr, slc):
+        # [FUNCTION DOC]
+        # Verifies that placements built from monotonic evenly spaced position lists are converted to the equal slice (including a descending pair).
         assert BlockPlacement(arr).as_slice == slc
 
     @pytest.mark.parametrize(
@@ -1152,6 +1313,8 @@ class TestBlockPlacement:
         ],
     )
     def test_not_slice_like_arrays(self, arr):
+        # [FUNCTION DOC]
+        # Verifies that empty lists, negative positions, repeated positions and non-monotonic lists are not slice-like.
         assert not BlockPlacement(arr).is_slice_like
 
     @pytest.mark.parametrize(
@@ -1159,6 +1322,8 @@ class TestBlockPlacement:
         [(slice(0, 3), [0, 1, 2]), (slice(0, 0), []), (slice(3, 0), [])],
     )
     def test_slice_iter(self, slc, expected):
+        # [FUNCTION DOC]
+        # Verifies iterating over a placement from a slice yields the covered positions (empty for empty or reversed-bound slices).
         assert list(BlockPlacement(slc)) == expected
 
     @pytest.mark.parametrize(
@@ -1171,11 +1336,15 @@ class TestBlockPlacement:
         ],
     )
     def test_slice_to_array_conversion(self, slc, arr):
+        # [FUNCTION DOC]
+        # Verifies the integer array form of placements from slices, including empty and reversed ones, equals the expected array of platform integer dtype.
         tm.assert_numpy_array_equal(
             BlockPlacement(slc).as_array, np.asarray(arr, dtype=np.intp)
         )
 
     def test_blockplacement_add(self):
+        # [FUNCTION DOC]
+        # Verifies adding to a placement: adding one gives the shifted slice, adding an array gives the strided slice, and adding a descending array gives constant positions.
         bpl = BlockPlacement(slice(0, 5))
         assert bpl.add(1).as_slice == slice(1, 6, 1)
         assert bpl.add(np.arange(5)).as_slice == slice(0, 10, 2)
@@ -1198,16 +1367,22 @@ class TestBlockPlacement:
         ],
     )
     def test_blockplacement_add_int(self, val, inc, expected):
+        # [FUNCTION DOC]
+        # Verifies adding an integer increment to placements from slices and lists, including empty ones, zero, positive and negative increments.
         assert list(BlockPlacement(val).add(inc)) == expected
 
     @pytest.mark.parametrize("val", [slice(1, 4), [1, 2, 4]])
     def test_blockplacement_add_int_raises(self, val):
+        # [FUNCTION DOC]
+        # Verifies adding a negative number that would make positions negative raises a value error mentioning an in-place add that causes a length change.
         msg = "iadd causes length change"
         with pytest.raises(ValueError, match=msg):
             BlockPlacement(val).add(-10)
 
 
 class TestCanHoldElement:
+    # [CLASS DOC]
+    # Tests that blocks report correctly whether they can hold an element without casting, using datetime, interval and period blocks; includes helpers that compare with the series set-item behavior.
     @pytest.fixture(
         params=[
             lambda x: x,
@@ -1221,6 +1396,8 @@ class TestCanHoldElement:
         ]
     )
     def element(self, request):
+        # [FUNCTION DOC]
+        # Fixture parametrized over eight functions that convert an index into candidate elements: the index itself, a series, the underlying array, a list, an object-dtype copy, a numpy array, the first scalar and an empty slice.
         """
         Functions that take an Index and return an element that should have
         blk._can_hold_element(element) for a Block with this index's dtype.
@@ -1228,6 +1405,9 @@ class TestCanHoldElement:
         return request.param
 
     def test_datetime_block_can_hold_element(self):
+        # [FUNCTION DOC]
+        # Verifies the datetime block can-hold-element rules and that they agree with array set-item.
+        # An empty list and none are acceptable (none becomes not-a-time); numpy datetime64 and datetime objects are acceptable; a plain date is not acceptable and setting it raises a type error saying the value should be a timestamp, not-a-time or an array of those, got date.
         block = create_block("datetime", [0])
 
         assert block._can_hold_element([])
@@ -1258,6 +1438,9 @@ class TestCanHoldElement:
 
     @pytest.mark.parametrize("dtype", [np.int64, np.uint64, np.float64])
     def test_interval_can_hold_element_emptylist(self, dtype, element):
+        # [FUNCTION DOC]
+        # Verifies an interval block can hold an empty list for several numeric subtypes.
+        # KNOWN ISSUE: the test requests the element fixture but never uses it, so each case runs eight times identically; a trailing note says the same check should hold for all blocks.
         arr = np.array([1, 3, 4], dtype=dtype)
         ii = IntervalIndex.from_breaks(arr)
         blk = new_block(ii._data, BlockPlacement([1]), ndim=2)
@@ -1267,6 +1450,9 @@ class TestCanHoldElement:
 
     @pytest.mark.parametrize("dtype", [np.int64, np.uint64, np.float64])
     def test_interval_can_hold_element(self, dtype, element):
+        # [FUNCTION DOC]
+        # Verifies the can-hold-element results of an interval block agree with series set-item for several elements.
+        # Parametrized over the dtype (signed, unsigned, float) and the element-making fixture. The same-interval elements can be held in place; elements with different closure, with timestamp bounds and with timedelta bounds cannot, and setting them raises a type error about an invalid value.
         arr = np.array([1, 3, 4, 9], dtype=dtype)
         ii = IntervalIndex.from_breaks(arr)
         blk = new_block(ii._data, BlockPlacement([1]), ndim=2)
@@ -1296,12 +1482,16 @@ class TestCanHoldElement:
         assert not blk._can_hold_element(elem)
 
     def test_period_can_hold_element_emptylist(self):
+        # [FUNCTION DOC]
+        # Verifies a period block can hold an empty list.
         pi = period_range("2016", periods=3, freq="Y")
         blk = new_block(pi._data.reshape(1, 3), BlockPlacement([1]), ndim=2)
 
         assert blk._can_hold_element([])
 
     def test_period_can_hold_element(self, element):
+        # [FUNCTION DOC]
+        # Verifies can-hold-element for period arrays: same-frequency elements are held in place; elements with a different frequency or timestamps cannot be held, and setting raises an invalid-value type error.
         pi = period_range("2016", periods=3, freq="Y")
 
         elem = element(pi)
@@ -1320,6 +1510,8 @@ class TestCanHoldElement:
             self.check_series_setitem(elem, pi, False)
 
     def test_period_reindex_axis(self):
+        # [FUNCTION DOC]
+        # Verifies reindexing a manager containing a period-dtype block along the item axis (issue 60273) and that the frame built from the result equals the expected frame.
         # GH#60273 Test reindexing of block with PeriodDtype
         pi = period_range("2020", periods=5, freq="Y")
         blk = new_block(pi._data.reshape(5, 1), BlockPlacement(slice(5)), ndim=2)
@@ -1330,6 +1522,8 @@ class TestCanHoldElement:
         tm.assert_frame_equal(result, expected)
 
     def check_can_hold_element(self, obj, elem, inplace: bool):
+        # [FUNCTION DOC]
+        # HELPER: asserts that the first block of a series' manager can or cannot hold an element, according to the in-place flag.
         blk = obj._mgr.blocks[0]
         if inplace:
             assert blk._can_hold_element(elem)
@@ -1337,6 +1531,8 @@ class TestCanHoldElement:
             assert not blk._can_hold_element(elem)
 
     def check_series_setitem(self, elem, index: Index, inplace: bool):
+        # [FUNCTION DOC]
+        # HELPER: for an index and candidate element, checks the block can-hold result and then performs the series set-item (scalar at position zero, otherwise a leading range). If in-place is true the series still uses the original array; otherwise the dtype becomes object.
         arr = index._data.copy()
         ser = Series(arr, copy=False)
 
@@ -1354,7 +1550,11 @@ class TestCanHoldElement:
 
 
 class TestShouldStore:
+    # [CLASS DOC]
+    # Tests for the block should-store check.
     def test_should_store_categorical(self):
+        # [FUNCTION DOC]
+        # Verifies a categorical block should store a categorical with the same dtype (and a slice of it) but not an ordered variant or a plain numpy array.
         cat = Categorical(["A", "B", "C"])
         df = DataFrame(cat)
         blk = df._mgr.blocks[0]
@@ -1371,6 +1571,8 @@ class TestShouldStore:
 
 
 def test_validate_ndim():
+    # [FUNCTION DOC]
+    # Verifies the pseudo-public block factory raises a value error when the values have fewer dimensions than requested (message about wrong number of dimensions), and also emits its deprecation warning.
     values = np.array([1.0, 2.0])
     placement = BlockPlacement(slice(2))
     msg = r"Wrong number of dimensions. values.ndim != ndim \[1 != 2\]"
@@ -1382,6 +1584,8 @@ def test_validate_ndim():
 
 
 def test_block_shape():
+    # [FUNCTION DOC]
+    # Verifies that a reindexed integer series and a reindexed categorical series have identical block placement indexers.
     idx = Index([0, 1, 2, 3, 4])
     a = Series([1, 2, 3]).reindex(idx)
     b = Series(Categorical([1, 2, 3])).reindex(idx)
@@ -1390,6 +1594,9 @@ def test_block_shape():
 
 
 def test_make_block_no_pandas_array(block_maker):
+    # [FUNCTION DOC]
+    # Verifies the block factories unwrap numpy-extension arrays: the result has an integer dtype kind. Parametrized by the block-maker fixture; the pseudo-public factory also emits a deprecation warning.
+    # When the pseudo-public factory is used, the block is not an extension block, with or without an explicit dtype, and with a plain numpy array together with the numpy extension dtype (the internal factory needs callers to unwrap and no longer accepts a dtype).
     # https://github.com/pandas-dev/pandas/pull/24866
     arr = pd.arrays.NumpyExtensionArray(np.array([1, 2]))
 

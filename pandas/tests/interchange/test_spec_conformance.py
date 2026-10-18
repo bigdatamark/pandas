@@ -3,6 +3,10 @@ A verbatim copy (vendored) of the spec tests.
 Taken from https://github.com/data-apis/dataframe-api
 """
 
+# [MODULE DOC]
+# Vendored copy of the dataframe-api specification conformance tests, applied to the pandas interchange implementation.
+# Every test builds a frame, obtains the interchange object (which emits an interchange warning that is asserted) and checks the spec-mandated properties of columns, chunks, categorical description and buffers. The tests intentionally use raw integer dtype kind codes instead of importing the spec, because the file is meant to be vendored anywhere.
+
 import ctypes
 import math
 
@@ -14,7 +18,12 @@ import pandas._testing as tm
 
 @pytest.fixture
 def df_from_dict():
+    # [FUNCTION DOC]
+    # Fixture returning a factory that builds a frame from a column mapping.
+    # The factory takes the mapping of column names to values and an optional flag (default false) to convert all columns to categorical dtype; it returns the constructed frame.
     def maker(dct, is_categorical=False):
+        # [FUNCTION DOC]
+        # HELPER: factory returned by the frame-building fixture; builds a frame from the mapping and converts every column to categorical dtype when the flag is true, otherwise returns it unchanged.
         df = pd.DataFrame(dct)
         return df.astype("category") if is_categorical else df
 
@@ -31,6 +40,9 @@ def df_from_dict():
     ids=["str_data", "float_data", "int_data"],
 )
 def test_only_one_dtype(test_data, df_from_dict):
+    # [FUNCTION DOC]
+    # Verifies a frame whose columns share one dtype (strings, floats or integers) through the interchange object.
+    # Parametrized by three data sets with ids. For each column checks the null count is zero and is a Python integer, the size equals the row count and the offset is zero. Constructing the interchange object must emit the interchange warning.
     columns = list(test_data.keys())
     df = df_from_dict(test_data)
     with tm.assert_produces_warning(match="Interchange"):
@@ -46,6 +58,8 @@ def test_only_one_dtype(test_data, df_from_dict):
 
 
 def test_mixed_dtypes(df_from_dict):
+    # [FUNCTION DOC]
+    # Verifies a frame with integer, float, boolean and string columns: each column has zero nulls, size three, offset zero and the spec dtype kind code (integer 0, float 2, boolean 20, string 21). The float column bit width is 64.
     df = df_from_dict(
         {
             "a": [1, 2, 3],  # dtype kind INT = 0
@@ -76,6 +90,8 @@ def test_mixed_dtypes(df_from_dict):
 
 
 def test_na_float(df_from_dict):
+    # [FUNCTION DOC]
+    # Verifies that the null count of a float column containing a missing value is one and is a Python integer.
     df = df_from_dict({"a": [1.0, math.nan, 2.0]})
     with tm.assert_produces_warning(match="Interchange"):
         dfX = df.__dataframe__()
@@ -85,6 +101,8 @@ def test_na_float(df_from_dict):
 
 
 def test_noncategorical(df_from_dict):
+    # [FUNCTION DOC]
+    # Verifies that asking a non-categorical column for its categorical description raises a type error whose message mentions categorical.
     df = df_from_dict({"a": [1, 2, 3]})
     with tm.assert_produces_warning(match="Interchange"):
         dfX = df.__dataframe__()
@@ -94,6 +112,8 @@ def test_noncategorical(df_from_dict):
 
 
 def test_categorical(df_from_dict):
+    # [FUNCTION DOC]
+    # Verifies a categorical column of weekday names: the categorical description reports an ordered flag and a dictionary flag, both Python booleans.
     df = df_from_dict(
         {"weekday": ["Mon", "Tue", "Mon", "Wed", "Mon", "Thu", "Fri", "Sat", "Sun"]},
         is_categorical=True,
@@ -107,6 +127,8 @@ def test_categorical(df_from_dict):
 
 
 def test_dataframe(df_from_dict):
+    # [FUNCTION DOC]
+    # Verifies frame-level properties of the interchange object for a three-column, three-row frame: three columns, three rows, one chunk, the column names in order, and that selecting columns by position yields the same names as selecting by name.
     df = df_from_dict(
         {"x": [True, True, False], "y": [1, 2, 0], "z": [9.2, 10.5, 11.8]}
     )
@@ -124,6 +146,9 @@ def test_dataframe(df_from_dict):
 
 @pytest.mark.parametrize(["size", "n_chunks"], [(10, 3), (12, 3), (12, 5)])
 def test_df_get_chunks(size, n_chunks, df_from_dict):
+    # [FUNCTION DOC]
+    # Verifies splitting the interchange frame into the requested number of chunks.
+    # Parametrized over (row count, requested chunks) of (10, 3), (12, 3) and (12, 5). Expected: exactly the requested number of chunks is returned and their row counts sum to the original row count.
     df = df_from_dict({"x": list(range(size))})
     with tm.assert_produces_warning(match="Interchange"):
         dfX = df.__dataframe__()
@@ -134,6 +159,8 @@ def test_df_get_chunks(size, n_chunks, df_from_dict):
 
 @pytest.mark.parametrize(["size", "n_chunks"], [(10, 3), (12, 3), (12, 5)])
 def test_column_get_chunks(size, n_chunks, df_from_dict):
+    # [FUNCTION DOC]
+    # Same as the frame-chunks test but for a single column: splitting the first column into the requested chunk count gives that many chunks whose sizes sum to the row count. Same parametrization.
     df = df_from_dict({"x": list(range(size))})
     with tm.assert_produces_warning(match="Interchange"):
         dfX = df.__dataframe__()
@@ -143,6 +170,8 @@ def test_column_get_chunks(size, n_chunks, df_from_dict):
 
 
 def test_get_columns(df_from_dict):
+    # [FUNCTION DOC]
+    # Verifies column enumeration: each of the two columns reports size two and one chunk, and the kind codes of the first and second columns are integer (0) and float (2).
     df = df_from_dict({"a": [0, 1], "b": [2.5, 3.5]})
     with tm.assert_produces_warning(match="Interchange"):
         dfX = df.__dataframe__()
@@ -156,6 +185,9 @@ def test_get_columns(df_from_dict):
 
 
 def test_buffer(df_from_dict):
+    # [FUNCTION DOC]
+    # Verifies the data buffer of an integer column holding negative and positive values.
+    # Checks the buffer size is positive and the pointer is non-null, the dtype kind is integer, and, only when the buffer device code indicates CPU, reads each element straight from memory using the declared bit width and compares with the source values, reporting the index of any mismatch.
     arr = [0, 1, -1]
     df = df_from_dict({"a": arr})
     with tm.assert_produces_warning(match="Interchange"):
