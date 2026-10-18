@@ -9,6 +9,27 @@ alignment and a host of useful data manipulation methods having to do with the
 labeling information
 """
 
+# [MODULE DOC]
+# Defines the DataFrame class, the primary two-dimensional, labeled, potentially
+# heterogeneous tabular container of the library, plus two private module-level helper
+# functions. Also defines the shared docstring-template dictionaries (a keyword
+# dictionary used by decorators to fill docstrings, and the large documentation template
+# for the merge method) that are consumed by decorators at class-creation time.
+# Public content: the DataFrame class only. Private content: a helper that pivots a
+# mapping of mappings into a mapping keyed by inner key, and a helper that reindexes a
+# column value to a frame index for assignment.
+# Relationships: DataFrame extends the generic N-dimensional base class from the generic
+# module and the operator mixin from the arraylike module; it stores its data in a block
+# manager from the internals package (the single attribute holding it is the manager);
+# it returns Series objects from the series module for single columns/rows; it delegates
+# most heavy operations lazily (by importing inside the method) to the reshape, groupby,
+# apply, computation, io, and interchange modules to avoid circular imports.
+# Import-time side effects: imports the plotting package, registers plotting and sparse
+# accessors as class attributes, evaluates the decorators that build docstrings
+# (substitution and appender decorators) for the class's methods, registers extra
+# entries in the shared docstring dictionary for items, pivot and pivot_table, and sets
+# the class to report its module as the top-level package.
+
 from __future__ import annotations
 
 import collections
@@ -514,6 +535,37 @@ ValueError: columns overlap but no suffix specified:
 
 @set_module("pandas")
 class DataFrame(NDFrame, OpsMixin):
+    # [CLASS DOC]
+    # Two-dimensional, size-mutable, potentially heterogeneous tabular data with labeled
+    # axes (row index and column labels). It is the main user-facing container; each
+    # column behaves like a Series sharing the frame's row index.
+    # State: all data lives in the inherited block manager attribute (_mgr), which
+    # groups columns of the same dtype into blocks. The row labels are exposed as the
+    # index attribute and the column labels as the columns attribute (both are axis
+    # properties defined at the end of the class body that read and write the manager's
+    # axes). Class-level constants declare the type tag ("dataframe"), the axis
+    # names/ordering (index is axis 0, columns is axis 1, the info axis is columns), the
+    # set of internal attribute names that must not be treated as columns, the types
+    # handled in binary operations, the accessor names (only the sparse accessor is
+    # registered), and a priority value used so that DataFrame wins over Series, Index
+    # and extension arrays in mixed binary operations (subclasses must not override it).
+    # Inheritance: extends NDFrame (shared generic behavior such as copy, indexing
+    # helpers, reindex machinery, and inplace updates) and the operator mixin (which
+    # maps Python operators onto the private arithmetic, comparison and logical hooks
+    # defined here). Subclasses customize results through the constructor hooks
+    # (_constructor, _constructor_sliced and their from-manager variants).
+    # Method groups: constructors and conversions (initializer, from_* and to_*
+    # methods), rendering (repr, to_string, to_html, info), indexing and item assignment
+    # (getitem/setitem machinery, insert, assign, query, eval, select_dtypes),
+    # reindexing/relabeling (reindex, drop, rename, set_index, reset_index, sorting),
+    # missing-data and duplicate handling, flexible arithmetic and comparison methods,
+    # combination and reshaping (join, merge, groupby, pivot, stack, melt, explode),
+    # function application (apply, map, aggregate, transform), and reductions/statistics
+    # (sum, mean, corr, quantile, cumulative operations, and so on).
+    # Invariants: the number of block-manager axes is two; the manager's row axis length
+    # equals the frame length; column labels may be non-unique (unless the flags forbid
+    # duplicate labels). Methods generally return new frames and only mutate in place
+    # when an inplace argument is true.
     """
     Two-dimensional, size-mutable, potentially heterogeneous tabular data.
 
@@ -662,9 +714,27 @@ class DataFrame(NDFrame, OpsMixin):
 
     @property
     def _constructor(self) -> type[DataFrame]:
+        # [FUNCTION DOC]
+        # HELPER: Hook for NDFrame machinery that needs to know which class to use when
+        # building a new frame.
+        # Property returning the DataFrame class itself (not the runtime class of the
+        # instance). Subclasses override it to make pandas methods return their own
+        # type. Takes no arguments, no side effects.
         return DataFrame
 
     def _constructor_from_mgr(self, mgr, axes) -> DataFrame:
+        # [FUNCTION DOC]
+        # HELPER: Constructor hook that builds a frame of the appropriate subclass from
+        # a block manager and its axes; used internally by fast paths that produce a
+        # manager.
+        # Inputs: mgr is a block manager; axes is the list of its axes. Builds a plain
+        # DataFrame from the manager without copying (internal factory). If the instance
+        # is exactly a DataFrame, returns that result directly (fast path). For a
+        # subclass named GeoDataFrame it passes the raw manager to the subclass
+        # constructor (a shim for geopandas, whose constructor treats managers
+        # differently from frames). For any other subclass it passes the plain DataFrame
+        # to the subclass constructor, assuming the subclass initializer can wrap a
+        # DataFrame. Returns the new frame. No other side effects.
         df = DataFrame._from_mgr(mgr, axes=axes)
 
         if type(self) is DataFrame:
@@ -684,6 +754,15 @@ class DataFrame(NDFrame, OpsMixin):
     _constructor_sliced: Callable[..., Series] = Series
 
     def _constructor_sliced_from_mgr(self, mgr, axes) -> Series:
+        # [FUNCTION DOC]
+        # HELPER: Constructor hook that builds a Series (or the subclass's sliced type)
+        # from a single-block manager and its axes; counterpart of the frame constructor
+        # hook for one-dimensional results.
+        # Inputs: mgr is a single-block manager; axes its axes. Builds a plain Series
+        # from them and resets its name to nothing (the caller must assign the real
+        # name). If the instance is exactly a DataFrame, returns the Series directly;
+        # otherwise passes it through the subclass's sliced constructor attribute,
+        # assuming that constructor accepts a Series. Returns the result.
         ser = Series._from_mgr(mgr, axes)
         ser._name = None  # caller is responsible for setting real name
 
@@ -707,6 +786,44 @@ class DataFrame(NDFrame, OpsMixin):
         dtype: Dtype | None = None,
         copy: bool | None = None,
     ) -> None:
+        # [FUNCTION DOC]
+        # Initializer. Builds the block manager from the supplied data and passes it to
+        # the base class initializer.
+        # Parameters: data may be nothing, another DataFrame, a block manager, a mapping
+        # of column name to array-like, a masked array, a numpy ndarray (including
+        # structured arrays), a Series, Index or extension array, a list-like/iterable
+        # (including a list of dataclass instances, list of mappings, list of lists,
+        # list of records), or a scalar. index and columns are optional label sequences
+        # (axes) used to label or select the result; dtype optionally forces a dtype
+        # (validated before use); copy controls copying and defaults to nothing
+        # (resolved below).
+        # Behavior: validates dtype if given. A DataFrame input is unwrapped to its
+        # manager (shallow-copied unless copy is truthy). A block manager input that is
+        # not an internal DataFrame unwrap triggers a deprecation warning (category: the
+        # library's next-major-version warning) saying to use public APIs; a manager
+        # given with no other arguments takes a fast path that just stores a shallow
+        # copy and returns. Raises a value error if index or columns is a set. When copy
+        # is unspecified it becomes true for mappings and for inputs that are not an
+        # Index, DataFrame or Series, otherwise false. When data is nothing it becomes
+        # an empty list with empty default indexes and object dtype. Dispatch by data
+        # kind: a manager is re-initialized with the given axes and dtype; a mapping
+        # goes through dict-to-manager conversion (copy defaults to true here to retain
+        # historical behavior); a masked array is sanitized (masked record arrays raise
+        # a type error) then converted from ndarray; ndarray/Series/Index/extension
+        # arrays use the record-array path when the dtype has field names, use the
+        # mapping path when a named Series/Index is supplied (the name becomes the
+        # column label), and otherwise the ndarray path; list-likes that are not
+        # sequences are converted to an array if they expose the array protocol or else
+        # a list; non-empty list-likes whose first element is a dataclass are converted
+        # to dictionaries, nested (list of list-like/mapping) data is turned into arrays
+        # via nested-to-arrays then arrays-to-manager, flat data uses the ndarray path,
+        # and empty data builds an empty-column frame; scalars require both index and
+        # columns (raising a value error "DataFrame constructor not properly called!"
+        # otherwise), infer the dtype from the scalar when no dtype was given, and fill
+        # either per-column 1-D extension arrays (for extension dtypes) or a 2-D array.
+        # Finally calls the base initializer with the manager.
+        # Raises: value error for set axes or missing axes with a scalar; type error for
+        # masked record arrays; the deprecation warning described above.
         allow_mgr = False
         if dtype is not None:
             dtype = self._validate_dtype(dtype)
@@ -907,6 +1024,16 @@ class DataFrame(NDFrame, OpsMixin):
     def __dataframe__(
         self, nan_as_null: bool = False, allow_copy: bool = True
     ) -> DataFrameXchg:
+        # [FUNCTION DOC]
+        # Implements the dataframe interchange protocol entry point.
+        # Inputs: nan_as_null (bool, default False) and allow_copy (bool, default True;
+        # whether copying is permitted when exporting). Emits a deprecation warning of
+        # the library's next-major-version category (pointing at the Arrow PyCapsule
+        # interface and Narwhals as alternatives), then imports lazily and returns a
+        # pandas interchange wrapper frame around this frame honoring allow_copy. The
+        # nan_as_null argument is accepted but never used.
+        # KNOWN ISSUE: the nan_as_null parameter is accepted but is not forwarded to the
+        # wrapper, so it has no effect.
         """
         Return the dataframe interchange object implementing the interchange protocol.
 
@@ -985,6 +1112,13 @@ class DataFrame(NDFrame, OpsMixin):
         return PandasDataFrameXchg(self, allow_copy=allow_copy)
 
     def __arrow_c_stream__(self, requested_schema=None):
+        # [FUNCTION DOC]
+        # Implements the Arrow PyCapsule stream export protocol.
+        # Input: requested_schema is nothing or a schema capsule. Requires the optional
+        # pyarrow dependency (minimum version 14.0.0; raises an import error if
+        # missing). If a schema capsule was given it is imported into a pyarrow schema.
+        # Converts the frame to a pyarrow table (using that schema if given) and returns
+        # the table's Arrow C stream capsule. No mutation of the frame.
         """
         Export the pandas DataFrame as an Arrow C stream PyCapsule.
 
@@ -1015,6 +1149,9 @@ class DataFrame(NDFrame, OpsMixin):
 
     @property
     def axes(self) -> list[Index]:
+        # [FUNCTION DOC]
+        # Property returning a list of the two axes: first the row index, then the
+        # column labels.
         """
         Return a list representing the axes of the DataFrame.
 
@@ -1036,6 +1173,9 @@ class DataFrame(NDFrame, OpsMixin):
 
     @property
     def shape(self) -> tuple[int, int]:
+        # [FUNCTION DOC]
+        # Property returning a tuple of two integers: number of rows (length of the
+        # index) and number of columns.
         """
         Return a tuple representing the dimensionality of the DataFrame.
 
@@ -1061,6 +1201,10 @@ class DataFrame(NDFrame, OpsMixin):
 
     @property
     def _is_homogeneous_type(self) -> bool:
+        # [FUNCTION DOC]
+        # HELPER: Internal property. Returns True when all blocks in the manager share a
+        # single dtype (an empty frame counts as homogeneous), computed by collecting
+        # the set of block dtypes and checking it has at most one element.
         """
         Whether all the columns in a DataFrame have the same type.
 
@@ -1091,6 +1235,10 @@ class DataFrame(NDFrame, OpsMixin):
 
     @property
     def _can_fast_transpose(self) -> bool:
+        # [FUNCTION DOC]
+        # HELPER: Internal property. Returns True when the transpose can be done as a
+        # cheap view operation: exactly one block exists and its dtype is not a one-
+        # dimensional-only extension dtype. Otherwise False.
         """
         Can we transpose this DataFrame without creating any new array objects.
         """
@@ -1104,6 +1252,15 @@ class DataFrame(NDFrame, OpsMixin):
 
     @property
     def _values(self) -> np.ndarray | DatetimeArray | TimedeltaArray | PeriodArray:
+        # [FUNCTION DOC]
+        # HELPER: Internal property giving the underlying 2-D array representation used
+        # for operations, preserving datetime-like array wrappers.
+        # Behavior: with multiple blocks it builds the combined array via the public
+        # values property and wraps datetime-like results in their extension array
+        # types. With a single block holding a 1-D (non-2D extension) array it returns
+        # the public values. Otherwise it returns the transpose of the single block's
+        # 2-D values, which may be a numpy array or a datetime/timedelta/period array.
+        # Does not copy in the single-block case.
         """
         Analogue to ._values that may return a 2D ExtensionArray.
         """
@@ -1126,6 +1283,9 @@ class DataFrame(NDFrame, OpsMixin):
     # Rendering Methods
 
     def _repr_fits_vertical_(self) -> bool:
+        # [FUNCTION DOC]
+        # HELPER: Rendering helper. Returns True if the number of rows does not exceed
+        # the display option for maximum rows.
         """
         Check length against max_rows.
         """
@@ -1133,6 +1293,16 @@ class DataFrame(NDFrame, OpsMixin):
         return len(self) <= max_rows
 
     def _repr_fits_horizontal_(self) -> bool:
+        # [FUNCTION DOC]
+        # HELPER: Rendering helper. Decides whether the repr fits in the available
+        # terminal/notebook width. Returns False if the column count exceeds the display
+        # option for maximum columns, or if the console width is known and more than
+        # half that many columns exist. Returns True if the width is unknown or the
+        # session is not interactive. Otherwise it renders up to the maximum number of
+        # rows (a single row if a display width option is set or the frontend is
+        # IPython) with to_string into a buffer and returns whether the widest rendered
+        # line is narrower than the console width. Returns True when the row limit is
+        # unlimited. Side effect: none beyond the temporary buffer.
         """
         Check if full repr fits in horizontal boundaries imposed by the display
         options width and max_columns.
@@ -1180,6 +1350,10 @@ class DataFrame(NDFrame, OpsMixin):
         return repr_width < width
 
     def _info_repr(self) -> bool:
+        # [FUNCTION DOC]
+        # HELPER: Rendering helper. Returns True when the large-repr display option is
+        # set to the summary (info) mode and the frame does not fit both horizontally
+        # and vertically, meaning the repr should be a summary instead of a table.
         """
         True if the repr should show the info view.
         """
@@ -1189,6 +1363,11 @@ class DataFrame(NDFrame, OpsMixin):
         )
 
     def __repr__(self) -> str:
+        # [FUNCTION DOC]
+        # Return the text representation. If the summary mode applies (see the info repr
+        # helper) it returns the output of the info method captured in a string buffer;
+        # otherwise it returns to_string called with the display-option parameters from
+        # the formatting module.
         """
         Return a string representation for a particular DataFrame.
         """
@@ -1201,6 +1380,15 @@ class DataFrame(NDFrame, OpsMixin):
         return self.to_string(**repr_params)
 
     def _repr_html_(self) -> str | None:
+        # [FUNCTION DOC]
+        # HELPER: Notebook rich display hook. Returns a string of HTML or nothing. If
+        # the summary mode applies it returns the info text inside a pre element with
+        # the first less-than and greater-than characters escaped. Else, if the notebook
+        # HTML display option is enabled, it builds a DataFrameFormatter from the
+        # display options (max rows, min rows, max columns, show dimensions, float
+        # format; NaN rep, escape on, bold rows on, header and index on, decimal point)
+        # and returns the renderer's HTML for notebooks. If the HTML option is disabled
+        # returns nothing.
         """
         Return a html representation for a particular DataFrame.
 
@@ -1268,7 +1456,11 @@ class DataFrame(NDFrame, OpsMixin):
         min_rows: int | None = ...,
         max_colwidth: int | None = ...,
         encoding: str | None = ...,
-    ) -> str: ...
+    ) -> str:
+        # [FUNCTION DOC]
+        # Typing overload stub: form of to_string with no buffer, returning a string.
+        # The behavior is in the implementation defined after the overloads.
+        ...
 
     @overload
     def to_string(
@@ -1293,7 +1485,12 @@ class DataFrame(NDFrame, OpsMixin):
         min_rows: int | None = ...,
         max_colwidth: int | None = ...,
         encoding: str | None = ...,
-    ) -> None: ...
+    ) -> None:
+        # [FUNCTION DOC]
+        # Typing overload stub: form of to_string given a file path or writable text
+        # buffer, returning nothing. The behavior is in the implementation defined after
+        # the overloads.
+        ...
 
     @Substitution(
         header_type="bool or list of str",
@@ -1329,6 +1526,23 @@ class DataFrame(NDFrame, OpsMixin):
         max_colwidth: int | None = None,
         encoding: str | None = None,
     ) -> str | None:
+        # [FUNCTION DOC]
+        # Render the frame as a console-friendly tabular string.
+        # Parameters (all but buf keyword-only): buf is a path or text buffer to write
+        # to, or nothing to return the string; columns selects columns to write;
+        # col_space is the minimum column width (int, list, or mapping); header (bool or
+        # list of aliases, default true); index (bool, default true); na_rep (str,
+        # default "NaN"); formatters, float_format; sparsify; index_names (default
+        # true); justify; max_rows, max_cols, min_rows; show_dimensions (default false);
+        # decimal (default "."); line_width (wrap width); max_colwidth (maximum
+        # characters per cell, applied through a temporary display option); encoding for
+        # file output.
+        # Behavior: temporarily sets the display option for maximum column width to
+        # max_colwidth (restored on exit), builds a DataFrameFormatter with the
+        # formatting arguments, and calls the renderer's string output with buf,
+        # encoding and line_width. Returns the string when buf is nothing, otherwise
+        # writes and returns nothing. The docstring is assembled by substitution
+        # decorators.
         """
         Render a DataFrame to a console-friendly tabular output.
         %(shared_params)s
@@ -1392,6 +1606,11 @@ class DataFrame(NDFrame, OpsMixin):
         na_rep: str,
         quoting,  # int csv.QUOTE_FOO from stdlib
     ) -> DataFrame:
+        # [FUNCTION DOC]
+        # HELPER: Support for writing CSV output. Takes keyword-only float_format,
+        # date_format, decimal, na_rep and the csv quoting constant, and returns a new
+        # frame whose values are converted (by the block manager) into their string/CSV-
+        # ready representations. Used by the to_csv machinery.
         # helper used by to_csv
         mgr = self._mgr.get_values_for_csv(
             float_format=float_format,
@@ -1406,6 +1625,12 @@ class DataFrame(NDFrame, OpsMixin):
 
     @property
     def style(self) -> Styler:
+        # [FUNCTION DOC]
+        # Property returning a Styler object for conditional formatting and HTML
+        # styling. Requires the optional jinja2 dependency: if it is missing it raises
+        # an attribute error (not an import error) so that attribute inspection tools
+        # keep working. Otherwise imports the Styler lazily and returns a new Styler
+        # wrapping this frame.
         """
         Returns a Styler object.
 
@@ -1482,6 +1707,11 @@ class DataFrame(NDFrame, OpsMixin):
         """
 
     def items(self) -> Iterable[tuple[Hashable, Series]]:
+        # [FUNCTION DOC]
+        # Iterate over (column label, Series) pairs, one per column, in column order.
+        # Implemented as a generator that yields each label with the column obtained by
+        # position (so duplicate labels are handled). The docstring is shared with the
+        # Series-like items documentation.
         r"""
         Iterate over (column name, Series) pairs.
 
@@ -1536,6 +1766,13 @@ class DataFrame(NDFrame, OpsMixin):
             yield k, self._ixs(i, axis=1)
 
     def iterrows(self) -> Iterable[tuple[Hashable, Series]]:
+        # [FUNCTION DOC]
+        # Iterate over rows as (index label, Series) pairs. For each row of the values
+        # array it builds a Series (using the sliced constructor) indexed by the column
+        # labels and named by the row label, finalizes metadata from the frame, and if
+        # the manager is a single block registers a reference to the frame's manager so
+        # copy-on-write tracking sees the sharing. Dtypes are not preserved across rows
+        # in the mixed-dtype case because the combined values array is used.
         """
         Iterate over DataFrame rows as (index, Series) pairs.
 
@@ -1591,6 +1828,17 @@ class DataFrame(NDFrame, OpsMixin):
     def itertuples(
         self, index: bool = True, name: str | None = "Pandas"
     ) -> Iterable[tuple[Any, ...]]:
+        # [FUNCTION DOC]
+        # Iterate over rows as named tuples (or plain tuples).
+        # Parameters: index (bool, default true) whether to include the index as the
+        # first field named "Index"; name (str or nothing, default "Pandas") is the
+        # namedtuple type name. Returns an iterator. Builds field arrays from the
+        # optional index followed by each column fetched by position (to support
+        # duplicate column names). When name is not nothing it creates a named tuple
+        # type with invalid or duplicate field names automatically renamed to positional
+        # names, and maps its constructor over the zipped columns; with no name it
+        # returns plain tuples from zipping the columns. The zips are strict about equal
+        # length.
         """
         Iterate over DataFrame rows as namedtuples.
 
@@ -1671,18 +1919,44 @@ class DataFrame(NDFrame, OpsMixin):
         return zip(*arrays, strict=True)
 
     def __len__(self) -> int:
+        # [FUNCTION DOC]
+        # Return the number of rows (the length of the index).
         """
         Returns length of info axis, but here we use the index.
         """
         return len(self.index)
 
     @overload
-    def dot(self, other: Series) -> Series: ...
+    def dot(self, other: Series) -> Series:
+        # [FUNCTION DOC]
+        # Typing overload stub: dot with a Series operand returns a Series.
+        # Implementation follows.
+        ...
 
     @overload
-    def dot(self, other: DataFrame | Index | ArrayLike) -> DataFrame: ...
+    def dot(self, other: DataFrame | Index | ArrayLike) -> DataFrame:
+        # [FUNCTION DOC]
+        # Typing overload stub: dot with a DataFrame, Index or array-like operand
+        # returns a DataFrame. Implementation follows.
+        ...
 
     def dot(self, other: AnyArrayLike | DataFrame) -> DataFrame | Series:
+        # [FUNCTION DOC]
+        # Matrix multiplication of this frame with another object.
+        # Input: other is a Series, DataFrame, Index, or array-like. Returns a DataFrame
+        # (for frame/2-D inputs) or a Series (for 1-D inputs).
+        # Behavior: for Series or DataFrame other, aligns the frame's columns with the
+        # other's index by taking their union; raises a value error "matrices are not
+        # aligned" if the union is larger than either side (so the labels must match as
+        # sets); reindexes both along that common label set, then multiplies the raw
+        # values. For other types it converts to an array and raises a value error on a
+        # shape mismatch between this frame's column count and the other's first
+        # dimension. The result dtype: for DataFrame operand the common type of all
+        # column dtypes of both; for Series operand the common type of this frame's
+        # dtypes and the Series dtype; for array operands the numpy result dtype. Result
+        # axes: row labels of the (aligned) left frame, and the columns of the other
+        # frame if it is a DataFrame. For 2-D array results returns a DataFrame, for 1-D
+        # a Series. Any other operand type raises a type error (excluded from coverage).
         """
         Compute the matrix multiplication between the DataFrame and other.
 
@@ -1801,18 +2075,36 @@ class DataFrame(NDFrame, OpsMixin):
             raise TypeError(f"unsupported type: {type(other)}")
 
     @overload
-    def __matmul__(self, other: Series) -> Series: ...
+    def __matmul__(self, other: Series) -> Series:
+        # [FUNCTION DOC]
+        # Typing overload stub: matrix-multiply operator with a Series returns a Series.
+        # Implementation follows.
+        ...
 
     @overload
-    def __matmul__(self, other: AnyArrayLike | DataFrame) -> DataFrame | Series: ...
+    def __matmul__(self, other: AnyArrayLike | DataFrame) -> DataFrame | Series:
+        # [FUNCTION DOC]
+        # Typing overload stub: matrix-multiply operator with other operands returns a
+        # DataFrame or Series. Implementation follows.
+        ...
 
     def __matmul__(self, other: AnyArrayLike | DataFrame) -> DataFrame | Series:
+        # [FUNCTION DOC]
+        # Implements the matrix multiplication operator by delegating to the dot method
+        # with the same operand.
         """
         Matrix multiplication using binary `@` operator.
         """
         return self.dot(other)
 
     def __rmatmul__(self, other) -> DataFrame:
+        # [FUNCTION DOC]
+        # Implements the reflected matrix multiplication operator (other on the left,
+        # this frame on the right). Computes it as the transpose of the dot product of
+        # the transposed frame with the transposed other. If that raises a value error
+        # whose message mentions a shape mismatch, re-raises a value error with a
+        # message reporting the original (untransposed) shapes of other and this frame
+        # as not aligned; other value errors propagate unchanged. Returns a DataFrame.
         """
         Matrix multiplication using binary `@` operator.
         """
@@ -1832,6 +2124,16 @@ class DataFrame(NDFrame, OpsMixin):
     def from_arrow(
         cls, data: ArrowArrayExportable | ArrowStreamExportable
     ) -> DataFrame:
+        # [FUNCTION DOC]
+        # Class method: construct a DataFrame from an Arrow-compatible tabular object.
+        # Input: data is a pyarrow table or any object exposing the Arrow C array or C
+        # stream protocol. Requires the optional pyarrow dependency (min version
+        # 14.0.0). If data is not already a pyarrow table it must have one of the two
+        # Arrow capsule methods, otherwise a type error is raised; it is then converted
+        # to a pyarrow table. The table is converted to pandas and returned.
+        # KNOWN ISSUE: the type error message names the method as having a single
+        # leading underscore ("_arrow_c_array__") whereas the protocol method actually
+        # checked is the one with two leading underscores.
         """
         Construct a DataFrame from a tabular Arrow object.
 
@@ -1899,6 +2201,21 @@ class DataFrame(NDFrame, OpsMixin):
         dtype: Dtype | None = None,
         columns: Axes | None = None,
     ) -> DataFrame:
+        # [FUNCTION DOC]
+        # Class method: construct a DataFrame from a dictionary.
+        # Parameters: data is a dictionary (for the tight orientation, a dictionary with
+        # keys for index, columns, data, index names and column names); orient is one of
+        # columns (default), index or tight (case-insensitive); dtype optional forced
+        # dtype; columns optional labels, only allowed with the index orientation.
+        # Behavior: lowercases orient. For the index orientation with non-empty data: if
+        # the first value is a Series or dict the nested data is pivoted so inner keys
+        # become columns, otherwise the keys become the row index and the values become
+        # the rows. For columns or tight, passing columns raises a value error. Any
+        # other orient raises a value error (excluded from coverage). Non-tight
+        # orientations construct the frame with the class constructor. For tight, builds
+        # the index and columns from the stored labels and names (a multi-level index
+        # when more than one name is given, else a plain Index with the single name) and
+        # constructs from the stored data. Returns the new frame of the calling class.
         """
         Construct DataFrame from dict of array-like or dicts.
 
@@ -2006,6 +2323,11 @@ class DataFrame(NDFrame, OpsMixin):
             realdata = data["data"]
 
             def create_index(indexlist, namelist) -> Index:
+                # [FUNCTION DOC]
+                # HELPER: Nested helper for the tight orientation. Takes a list of
+                # labels (or tuples) and a list of level names; returns a multi-level
+                # index built from tuples with those names when more than one name is
+                # given, otherwise a plain index with the first name.
                 index: Index
                 if len(namelist) > 1:
                     index = MultiIndex.from_tuples(indexlist, names=namelist)
@@ -2023,6 +2345,17 @@ class DataFrame(NDFrame, OpsMixin):
         copy: bool = False,
         na_value: object = lib.no_default,
     ) -> np.ndarray:
+        # [FUNCTION DOC]
+        # Convert the frame to a numpy array.
+        # Parameters: dtype (numpy dtype or nothing) target dtype; copy (bool, default
+        # false) whether to force a copy (a copy may still be made when needed);
+        # na_value (default: a library sentinel meaning unspecified) value to use for
+        # missing entries.
+        # Behavior: normalizes dtype to a numpy dtype if given, asks the block manager
+        # to materialize an array with those options, and if the result's dtype is not
+        # the requested one (compared by identity), casts it with a plain asarray.
+        # Returns a 2-D numpy array of shape rows by columns. For mixed dtypes the
+        # result dtype is the common type (often object).
         """
         Convert the DataFrame to a NumPy array.
 
@@ -2091,7 +2424,11 @@ class DataFrame(NDFrame, OpsMixin):
         *,
         into: type[MutableMappingT] | MutableMappingT,
         index: bool = ...,
-    ) -> MutableMappingT: ...
+    ) -> MutableMappingT:
+        # [FUNCTION DOC]
+        # Typing overload stub: to_dict returning a mapping of the requested type for
+        # non-records orientations. Implementation follows.
+        ...
 
     @overload
     def to_dict(
@@ -2100,7 +2437,11 @@ class DataFrame(NDFrame, OpsMixin):
         *,
         into: type[MutableMappingT] | MutableMappingT,
         index: bool = ...,
-    ) -> list[MutableMappingT]: ...
+    ) -> list[MutableMappingT]:
+        # [FUNCTION DOC]
+        # Typing overload stub: to_dict with the records orientation returning a list of
+        # mappings of the requested type. Implementation follows.
+        ...
 
     @overload
     def to_dict(
@@ -2109,7 +2450,11 @@ class DataFrame(NDFrame, OpsMixin):
         *,
         into: type[dict] = ...,
         index: bool = ...,
-    ) -> dict: ...
+    ) -> dict:
+        # [FUNCTION DOC]
+        # Typing overload stub: to_dict for non-records orientations with the default
+        # dict mapping type, returning a dict. Implementation follows.
+        ...
 
     @overload
     def to_dict(
@@ -2118,7 +2463,11 @@ class DataFrame(NDFrame, OpsMixin):
         *,
         into: type[dict] = ...,
         index: bool = ...,
-    ) -> list[dict]: ...
+    ) -> list[dict]:
+        # [FUNCTION DOC]
+        # Typing overload stub: to_dict with the records orientation and the default
+        # mapping type, returning a list of dicts. Implementation follows.
+        ...
 
     # error: Incompatible default for argument "into" (default has type "type
     # [dict[Any, Any]]", argument has type "type[MutableMappingT] | MutableMappingT")
@@ -2131,6 +2480,17 @@ class DataFrame(NDFrame, OpsMixin):
         into: type[MutableMappingT] | MutableMappingT = dict,  # type: ignore[assignment]
         index: bool = True,
     ) -> MutableMappingT | list[MutableMappingT]:
+        # [FUNCTION DOC]
+        # Convert the frame to a dictionary.
+        # Parameters: orient (one of dict, list, series, split, tight, records, index;
+        # default dict) selects the layout; into (mapping class or an instance such as a
+        # defaultdict, default dict) is the container type used; index (bool, default
+        # true) whether to include the index (only applicable to split and tight
+        # orientations).
+        # Behavior: imports the conversion function from the methods package lazily and
+        # delegates to it, passing the frame, orient, into and index. Returns a mapping,
+        # or for records a list of mappings. Errors for invalid orient or index usage
+        # are raised by the delegate.
         """
         Convert the DataFrame to a dictionary.
 
@@ -2245,6 +2605,39 @@ class DataFrame(NDFrame, OpsMixin):
         coerce_float: bool = False,
         nrows: int | None = None,
     ) -> DataFrame:
+        # [FUNCTION DOC]
+        # Class method: construct a DataFrame from structured/record-like data.
+        # Parameters: data is a structured ndarray, a sequence of tuples or dicts, a
+        # dict of columns, or an iterator of rows (consumed); index is a field/column
+        # name or an array-like of labels (or fields) to use as the row index; exclude
+        # is a list of columns to drop from the result; columns are the column
+        # names/order to use; coerce_float (bool, default false) tries to convert object
+        # columns of non-string numeric objects (such as decimals) to floats for non-
+        # ndarray, non-dict inputs; nrows (int or nothing) limits rows read when data is
+        # an iterator.
+        # Behavior: raises a type error if data is a DataFrame. Normalizes columns to an
+        # index. For an iterator: returns an empty frame when nrows is zero or the
+        # iterator is empty; otherwise reads the first row (remembering its structured
+        # dtype if it has fields), collects the rest (limited to nrows, if given) and
+        # builds an ndarray with that dtype when structured else keeps a list. For a
+        # dict: with no columns given, columns are the sorted keys; with columns given,
+        # only matching keys are kept and then reordered to the requested column order.
+        # For an ndarray: converted to arrays with the given columns. Otherwise
+        # converted to arrays via the generic converter, optionally coercing object
+        # arrays to floats, and then reordered to match the supplied columns if any.
+        # Then determines the result index: if index is a single non-iterable key (or
+        # string) it takes the column of that name as the index and excludes it; if it
+        # is an iterable of fields it tries to use those columns (excluded from the
+        # data) as a possibly multi-level index, and if lookup fails treats it as an
+        # array of labels directly. Excluded columns present in the data are removed.
+        # Finally builds the frame from arrays, columns and index, returning an instance
+        # of the calling class (wrapping without copy when it is a subclass).
+        # Raises: type error for DataFrame input; key errors are swallowed in the index
+        # lookup as described.
+        # KNOWN ISSUE: the exclusion step is guarded by testing whether any element of
+        # the exclude set is truthy, so an exclude set containing only falsy labels (for
+        # example the integer zero or an empty string) is silently ignored and those
+        # columns are not removed.
         """
         Convert structured or record ndarray to DataFrame.
 
@@ -2337,6 +2730,14 @@ class DataFrame(NDFrame, OpsMixin):
         def maybe_reorder(
             arrays: list[ArrayLike], arr_columns: Index, columns: Index, index
         ) -> tuple[list[ArrayLike], Index, Index | None]:
+            # [FUNCTION DOC]
+            # HELPER: Nested helper of from_records. Given the list of arrays, the
+            # current array column index, the requested columns and the requested index,
+            # it reorders the arrays to match the requested columns (padding missing
+            # columns) using the reorder utility, and also decides a fallback result
+            # index: an empty default index is returned only when there are no arrays,
+            # no explicit index, and zero length. Returns the tuple (reordered arrays,
+            # reordered column index, fallback index or nothing).
             """
             If our desired 'columns' do not match the data's pre-existing 'arr_columns',
             we re-order our arrays.  This is like a preemptive (cheap) reindex.
@@ -2458,6 +2859,20 @@ class DataFrame(NDFrame, OpsMixin):
     def to_records(
         self, index: bool = True, column_dtypes=None, index_dtypes=None
     ) -> np.rec.recarray:
+        # [FUNCTION DOC]
+        # Convert the frame to a numpy record array.
+        # Parameters: index (bool, default true) include the index as a field (named
+        # "index", or the level names with missing ones filled for a multi-index);
+        # column_dtypes (a single dtype, or a mapping of column label or position to
+        # dtype) and index_dtypes (same for index levels) override the field dtypes.
+        # Behavior: builds a list of arrays (index level values first when index is
+        # true, then each column by position) and a matching list of string names. For
+        # every array it picks the dtype specification: a mapping is searched by name
+        # first, then by position within the section (index or columns), falling back to
+        # nothing; if nothing is found uses the array's own dtype; a type, numpy dtype
+        # or string is used directly; anything else raises a value error naming whether
+        # the offending spec was for a row (index) or column. Returns the record array
+        # built from the arrays with the names and formats.
         """
         Convert DataFrame to a NumPy record array.
 
@@ -2623,6 +3038,14 @@ class DataFrame(NDFrame, OpsMixin):
         dtype: Dtype | None = None,
         verify_integrity: bool = True,
     ) -> Self:
+        # [FUNCTION DOC]
+        # HELPER: Internal class method that builds a frame directly from a list of
+        # column arrays, bypassing most inference. Inputs: arrays (one per column),
+        # columns (labels, converted to an index), index, dtype (optional, converted via
+        # the dtype lookup), verify_integrity (bool, default true; whether the manager
+        # builder checks lengths). Raises a value error if the number of columns differs
+        # from the number of arrays. Returns an instance of the calling class built from
+        # the resulting manager.
         """
         Create DataFrame from a list of arrays corresponding to the columns.
 
@@ -2678,6 +3101,23 @@ class DataFrame(NDFrame, OpsMixin):
         storage_options: StorageOptions | None = None,
         value_labels: dict[Hashable, dict[float, str]] | None = None,
     ) -> None:
+        # [FUNCTION DOC]
+        # Write the frame to a Stata dta file.
+        # Parameters (all but path keyword-only): path (file path or binary buffer);
+        # convert_dates (mapping of datetime column to Stata format); write_index
+        # (default true); byteorder; time_stamp; data_label; variable_labels (mapping
+        # column to label); version (114, 117, 118, 119 or nothing; default 114; nothing
+        # means choose automatically); convert_strl (columns to store as long strings,
+        # only for versions 117 and later); compression (default "infer");
+        # storage_options; value_labels (mapping of column to mapping of value to
+        # label).
+        # Behavior: raises a value error if version is not one of 114, 117, 118, 119 or
+        # nothing. Version 114 selects the base writer and raises a value error if
+        # convert_strl is given; 117 selects the 117 writer; versions 118/119 (and
+        # nothing) select the UTF-8 writer. Extra keyword arguments are added:
+        # convert_strl for versions 117 or later (or nothing), and version for 118 or
+        # later (or nothing). Creates the writer with all arguments and writes the file
+        # (I/O side effect). Returns nothing.
         """
         Export DataFrame object to Stata dta format.
 
@@ -2831,6 +3271,11 @@ class DataFrame(NDFrame, OpsMixin):
         writer.write_file()
 
     def to_feather(self, path: FilePath | WriteBuffer[bytes], **kwargs) -> None:
+        # [FUNCTION DOC]
+        # Write the frame to the Feather binary file format. Lazily imports the feather
+        # writing function from the io package and delegates, passing the frame, the
+        # path and any extra keyword arguments. Returns nothing. Requires pyarrow
+        # through the delegate.
         """
         Write a DataFrame to the binary Feather format.
 
@@ -2880,7 +3325,11 @@ class DataFrame(NDFrame, OpsMixin):
         index: bool = ...,
         storage_options: StorageOptions | None = ...,
         **kwargs,
-    ) -> str: ...
+    ) -> str:
+        # [FUNCTION DOC]
+        # Typing overload stub: to_markdown with no buffer returns a string.
+        # Implementation follows.
+        ...
 
     @overload
     def to_markdown(
@@ -2891,7 +3340,11 @@ class DataFrame(NDFrame, OpsMixin):
         index: bool = ...,
         storage_options: StorageOptions | None = ...,
         **kwargs,
-    ) -> None: ...
+    ) -> None:
+        # [FUNCTION DOC]
+        # Typing overload stub: to_markdown given a path or text buffer returns nothing.
+        # Implementation follows.
+        ...
 
     @overload
     def to_markdown(
@@ -2902,7 +3355,11 @@ class DataFrame(NDFrame, OpsMixin):
         index: bool = ...,
         storage_options: StorageOptions | None = ...,
         **kwargs,
-    ) -> str | None: ...
+    ) -> str | None:
+        # [FUNCTION DOC]
+        # Typing overload stub: to_markdown with a buffer that may be nothing returns a
+        # string or nothing. Implementation follows.
+        ...
 
     def to_markdown(
         self,
@@ -2913,6 +3370,21 @@ class DataFrame(NDFrame, OpsMixin):
         storage_options: StorageOptions | None = None,
         **kwargs,
     ) -> str | None:
+        # [FUNCTION DOC]
+        # Print the frame in Markdown-friendly format using the optional tabulate
+        # package.
+        # Parameters: buf (path, text buffer or nothing; nothing returns the string),
+        # mode (file mode used when writing, default "wt"), index (bool, default true;
+        # passed to the table formatter as the show-index option), storage_options, and
+        # extra keyword arguments forwarded to the tabulate call.
+        # Behavior: if the extra arguments contain a show-index key it raises a value
+        # error telling the user to use index. Sets defaults: headers from the keys,
+        # table format "pipe", show-index from index. Imports tabulate (raising an
+        # import error if unavailable) and formats the frame. With no buffer, returns
+        # the string; otherwise opens the target via the I/O handle machinery with mode
+        # and storage options, writes the text, and returns nothing.
+        # KNOWN ISSUE: the error message for the disallowed show-index argument is
+        # missing its closing quotation mark after the word index.
         """
         Print DataFrame in Markdown-friendly format.
 
@@ -3001,7 +3473,11 @@ class DataFrame(NDFrame, OpsMixin):
         storage_options: StorageOptions = ...,
         filesystem: Any = ...,
         **kwargs,
-    ) -> bytes: ...
+    ) -> bytes:
+        # [FUNCTION DOC]
+        # Typing overload stub: to_parquet with no path returns bytes. Implementation
+        # follows.
+        ...
 
     @overload
     def to_parquet(
@@ -3015,7 +3491,11 @@ class DataFrame(NDFrame, OpsMixin):
         storage_options: StorageOptions = ...,
         filesystem: Any = ...,
         **kwargs,
-    ) -> None: ...
+    ) -> None:
+        # [FUNCTION DOC]
+        # Typing overload stub: to_parquet with a path or binary buffer returns nothing.
+        # Implementation follows.
+        ...
 
     def to_parquet(
         self,
@@ -3029,6 +3509,19 @@ class DataFrame(NDFrame, OpsMixin):
         filesystem: Any = None,
         **kwargs,
     ) -> bytes | None:
+        # [FUNCTION DOC]
+        # Write the frame to the Parquet columnar format.
+        # Parameters (all but path keyword-only): path (file path, binary buffer or
+        # nothing to return bytes); engine ("auto", "pyarrow" or "fastparquet"; default
+        # "auto"); compression (default "snappy"); index (bool or nothing: nothing saves
+        # a non-default index as a column and a range index as metadata); partition_cols
+        # (columns to partition by for datasets); storage_options; filesystem (a
+        # filesystem object, pyarrow engine only); extra keyword arguments forwarded to
+        # the engine.
+        # Behavior: lazily imports the parquet writing function from the io package and
+        # returns its result with all arguments passed through; engine validation and
+        # writing occur in the delegate. Returns bytes if path is nothing, otherwise
+        # nothing.
         """
         Write a DataFrame to the binary parquet format.
 
@@ -3152,7 +3645,11 @@ class DataFrame(NDFrame, OpsMixin):
         engine: Literal["pyarrow"] = ...,
         index: bool | None = ...,
         engine_kwargs: dict[str, Any] | None = ...,
-    ) -> bytes: ...
+    ) -> bytes:
+        # [FUNCTION DOC]
+        # Typing overload stub: to_orc with no path returns bytes. Implementation
+        # follows.
+        ...
 
     @overload
     def to_orc(
@@ -3162,7 +3659,11 @@ class DataFrame(NDFrame, OpsMixin):
         engine: Literal["pyarrow"] = ...,
         index: bool | None = ...,
         engine_kwargs: dict[str, Any] | None = ...,
-    ) -> None: ...
+    ) -> None:
+        # [FUNCTION DOC]
+        # Typing overload stub: to_orc with a path or binary buffer returns nothing.
+        # Implementation follows.
+        ...
 
     @overload
     def to_orc(
@@ -3172,7 +3673,11 @@ class DataFrame(NDFrame, OpsMixin):
         engine: Literal["pyarrow"] = ...,
         index: bool | None = ...,
         engine_kwargs: dict[str, Any] | None = ...,
-    ) -> bytes | None: ...
+    ) -> bytes | None:
+        # [FUNCTION DOC]
+        # Typing overload stub: to_orc with a path that may be nothing returns bytes or
+        # nothing. Implementation follows.
+        ...
 
     def to_orc(
         self,
@@ -3182,6 +3687,13 @@ class DataFrame(NDFrame, OpsMixin):
         index: bool | None = None,
         engine_kwargs: dict[str, Any] | None = None,
     ) -> bytes | None:
+        # [FUNCTION DOC]
+        # Write the frame to the ORC format.
+        # Parameters (all but path keyword-only): path (file path, binary buffer, or
+        # nothing to return bytes); engine (only "pyarrow" supported); index (bool or
+        # nothing to save non-default indexes); engine_kwargs (extra arguments for the
+        # engine). Lazily imports the ORC writer from the io package and delegates,
+        # returning its result (bytes when path is nothing, else nothing).
         """
         Write a DataFrame to the Optimized Row Columnar (ORC) format.
 
@@ -3290,7 +3802,11 @@ class DataFrame(NDFrame, OpsMixin):
         table_id: str | None = ...,
         render_links: bool = ...,
         encoding: str | None = ...,
-    ) -> None: ...
+    ) -> None:
+        # [FUNCTION DOC]
+        # Typing overload stub: to_html with a path or text buffer returns nothing.
+        # Implementation follows.
+        ...
 
     @overload
     def to_html(
@@ -3319,7 +3835,11 @@ class DataFrame(NDFrame, OpsMixin):
         table_id: str | None = ...,
         render_links: bool = ...,
         encoding: str | None = ...,
-    ) -> str: ...
+    ) -> str:
+        # [FUNCTION DOC]
+        # Typing overload stub: to_html with no buffer returns a string. Implementation
+        # follows.
+        ...
 
     @Substitution(
         header_type="bool",
@@ -3356,6 +3876,23 @@ class DataFrame(NDFrame, OpsMixin):
         render_links: bool = False,
         encoding: str | None = None,
     ) -> str | None:
+        # [FUNCTION DOC]
+        # Render the frame as an HTML table.
+        # Parameters (all but buf keyword-only): buf (path, text buffer or nothing to
+        # return a string); columns; col_space (CSS length; ints are pixels); header
+        # (default true); index (default true); na_rep ("NaN"); formatters;
+        # float_format; sparsify; index_names; justify (must be one of the valid justify
+        # values, else a value error "Invalid value for justify parameter" is raised);
+        # max_rows; max_cols; show_dimensions (bool or "truncate"); decimal; bold_rows
+        # (default true); classes (css classes added to the table); escape (default
+        # true, escapes the characters less-than, greater-than and ampersand); notebook
+        # (default false, selects the notebook-style table); border (table border
+        # attribute, default from the display option); table_id; render_links (convert
+        # URLs to anchors); encoding.
+        # Behavior: validates justify, builds a DataFrameFormatter from the formatting
+        # arguments, then calls the renderer's HTML output with buf, classes, notebook,
+        # border, encoding, table_id and render_links. Returns a string when buf is
+        # nothing, otherwise writes and returns nothing.
         """
         Render a DataFrame as an HTML table.
         %(shared_params)s
@@ -3507,7 +4044,11 @@ class DataFrame(NDFrame, OpsMixin):
         stylesheet: FilePath | ReadBuffer[str] | ReadBuffer[bytes] | None = ...,
         compression: CompressionOptions = ...,
         storage_options: StorageOptions | None = ...,
-    ) -> str: ...
+    ) -> str:
+        # [FUNCTION DOC]
+        # Typing overload stub: to_xml with no path/buffer returns a string.
+        # Implementation follows.
+        ...
 
     @overload
     def to_xml(
@@ -3529,7 +4070,11 @@ class DataFrame(NDFrame, OpsMixin):
         stylesheet: FilePath | ReadBuffer[str] | ReadBuffer[bytes] | None = ...,
         compression: CompressionOptions = ...,
         storage_options: StorageOptions | None = ...,
-    ) -> None: ...
+    ) -> None:
+        # [FUNCTION DOC]
+        # Typing overload stub: to_xml with a path or buffer returns nothing.
+        # Implementation follows.
+        ...
 
     def to_xml(
         self,
@@ -3551,6 +4096,21 @@ class DataFrame(NDFrame, OpsMixin):
         compression: CompressionOptions = "infer",
         storage_options: StorageOptions | None = None,
     ) -> str | None:
+        # [FUNCTION DOC]
+        # Render the frame as an XML document.
+        # Parameters (all keyword-only except path_or_buffer): path_or_buffer (file
+        # path, buffer or nothing to return a string); index (default true); root_name
+        # ("data"); row_name ("row"); na_rep; attr_cols and elem_cols (columns written
+        # as attributes/child elements); namespaces (mapping of prefix to URI); prefix;
+        # encoding ("utf-8"); xml_declaration (default true); pretty_print (default
+        # true); parser ("lxml" default, or "etree"); stylesheet (XSLT, lxml parser
+        # only); compression ("infer"); storage_options.
+        # Behavior: attempts to import the optional lxml package (quietly). With parser
+        # lxml it picks the lxml-based formatter, raising an import error if lxml is
+        # missing; with parser etree it picks the standard-library formatter; any other
+        # parser raises a value error. Builds the formatter with all arguments and
+        # returns the result of its output-writing step (a string when path_or_buffer is
+        # nothing, otherwise nothing; the file is written as a side effect).
         """
         Render a DataFrame to an XML document.
 
@@ -3763,6 +4323,16 @@ class DataFrame(NDFrame, OpsMixin):
         append: bool = False,
         snapshot_properties: dict[str, str] | None = None,
     ) -> None:
+        # [FUNCTION DOC]
+        # Write the frame to an Apache Iceberg table.
+        # Parameters: table_identifier (table name, optionally namespace qualified);
+        # catalog_name (name of a configured catalog, nothing for default);
+        # catalog_properties (extra catalog configuration, keyword-only); location
+        # (table location for creation, keyword-only); append (bool, default false:
+        # overwrite when false, append when true); snapshot_properties (snapshot
+        # metadata, keyword-only). Lazily imports the Iceberg writer from the io package
+        # and delegates; returns nothing. Requires the optional pyiceberg dependency
+        # through the delegate.
         """
         Write a DataFrame to an Apache Iceberg table.
 
@@ -3818,6 +4388,18 @@ class DataFrame(NDFrame, OpsMixin):
         memory_usage: bool | str | None = None,
         show_counts: bool | None = None,
     ) -> None:
+        # [FUNCTION DOC]
+        # Print a concise summary of the frame (index type and range, column names, non-
+        # null counts, dtypes, memory usage).
+        # Parameters: verbose (bool or nothing, whether to print the full per-column
+        # summary; nothing follows the display option for info columns); buf (text
+        # buffer, default standard output); max_cols (column count above which the short
+        # summary is used); memory_usage (bool, or "deep" for deep introspection;
+        # nothing uses the display option); show_counts (bool or nothing, whether to
+        # show non-null counts).
+        # Behavior: constructs the info helper object for this frame with the memory
+        # usage choice, and renders it to buf with max_cols, verbose and show_counts.
+        # Writes text (I/O side effect); returns nothing.
         """
         Print a concise summary of a DataFrame.
 
@@ -3973,6 +4555,15 @@ class DataFrame(NDFrame, OpsMixin):
         )
 
     def memory_usage(self, index: bool = True, deep: bool = False) -> Series:
+        # [FUNCTION DOC]
+        # Return the memory usage of each column in bytes as a Series.
+        # Parameters: index (bool, default true) whether to include the index memory as
+        # the first entry labeled "Index"; deep (bool, default false) whether to
+        # introspect object data for true usage.
+        # Behavior: builds a Series of integer pointer-size dtype with one entry per
+        # column (each column's own usage without its index) labeled by the column
+        # labels; if index is true, prepends an entry for the index memory labeled
+        # "Index" by appending this series to a one-element series. Returns the Series.
         """
         Return the memory usage of each column in bytes.
 
@@ -4077,6 +4668,25 @@ class DataFrame(NDFrame, OpsMixin):
         *args,
         copy: bool | lib.NoDefault = lib.no_default,
     ) -> DataFrame:
+        # [FUNCTION DOC]
+        # Transpose the frame, swapping rows and columns.
+        # Parameters: positional arguments are accepted only for numpy compatibility
+        # (validated to be empty-valued; invalid ones raise an error); copy is
+        # deprecated and only checked for the deprecation (a keyword-only sentinel by
+        # default).
+        # Behavior: checks the deprecated copy argument and validates numpy-style
+        # arguments. Three paths: (1) if a single block can be transposed cheaply,
+        # transposes the 2-D values as a view, builds the frame without copying, and
+        # registers reference tracking with the original manager when non-empty; (2) if
+        # all blocks share one extension dtype: for masked dtypes it uses a fast
+        # homogeneous masked transpose, for Arrow dtypes a fast pyarrow transpose, and
+        # otherwise builds each result column from the corresponding row using the
+        # extension array type; the frame is built from those arrays without integrity
+        # verification, preserving the extension dtype; (3) otherwise transposes the
+        # combined values array (already a copy) producing the resulting dtype. The
+        # result's row index is the original columns and its columns are the original
+        # index. Metadata is finalized with the method name "transpose". Returns the new
+        # DataFrame.
         """
         Transpose index and columns.
 
@@ -4259,6 +4869,9 @@ class DataFrame(NDFrame, OpsMixin):
 
     @property
     def T(self) -> DataFrame:
+        # [FUNCTION DOC]
+        # Property giving the transpose; equal to calling the transpose method with no
+        # arguments.
         """
         The transpose of the DataFrame.
 
@@ -4290,6 +4903,13 @@ class DataFrame(NDFrame, OpsMixin):
     # Indexing Methods
 
     def _ixs(self, i: int, axis: AxisInt = 0) -> Series:
+        # [FUNCTION DOC]
+        # HELPER: Positional single-axis selection used by iloc-style access. Inputs: i
+        # (integer position), axis (0 for a row, 1 for a column; default 0). For axis 0
+        # gets the fast cross-section from the manager, builds a Series via the sliced-
+        # from-manager hook, names it by the index label at that position and finalizes
+        # metadata; for axis 1 gets the column manager at that position and boxes it
+        # into a named Series. Returns a Series. Does no bounds validation of its own.
         """
         Parameters
         ----------
@@ -4314,6 +4934,9 @@ class DataFrame(NDFrame, OpsMixin):
             return self._box_col_values(col_mgr, i)
 
     def _get_column_array(self, i: int) -> ArrayLike:
+        # [FUNCTION DOC]
+        # HELPER: Returns the underlying array (numpy array or extension array) of the
+        # column at the given integer position, without wrapping it in a Series.
         """
         Get the values of the i'th column (ndarray or ExtensionArray, as stored
         in the Block)
@@ -4324,6 +4947,9 @@ class DataFrame(NDFrame, OpsMixin):
         return self._mgr.iget_values(i)
 
     def _iter_column_arrays(self) -> Iterator[ArrayLike]:
+        # [FUNCTION DOC]
+        # HELPER: Generator yielding the underlying array of each column in order, by
+        # position.
         """
         Iterate over the arrays of all columns in order.
         This returns the values as stored in the Block (ndarray or ExtensionArray).
@@ -4335,6 +4961,26 @@ class DataFrame(NDFrame, OpsMixin):
             yield self._get_column_array(i)
 
     def __getitem__(self, key):
+        # [FUNCTION DOC]
+        # Implements the subscript operator for reading (column selection, row slicing,
+        # boolean filtering).
+        # Behavior in order: validates that the key is not a dict or set (via the
+        # indexer checker); converts a zero-dimensional array key to its scalar; calls
+        # callables with the frame. If the key is a hashable non-iterator, non-slice:
+        # for a plain column index, a key that is a unique column or is unique among
+        # duplicates returns that column as a Series (a view); for a multi-level column
+        # index with unique columns and a present key, returns the sub-selection by
+        # level. A slice selects rows (a row slice). A DataFrame key returns a masking
+        # operation (where). A boolean indexer selects rows with a boolean array.
+        # Otherwise the key is either a single key (a tuple or non-list-like) or a
+        # collection of keys. A single key on multi-level columns uses the multi-level
+        # lookup; on flat columns finds the column location(s). A collection of keys is
+        # converted to an iterator-free list and resolved with strict column lookup
+        # (missing labels raise key errors). A boolean mask from the lookup is converted
+        # to positions; a slice location returns a column slice; else takes the columns
+        # by position. For single keys, if exactly one column resulted and the columns
+        # are not multi-level, returns that column as a Series. Otherwise returns a
+        # DataFrame of the selected columns.
         check_dict_or_set_indexers(key)
         key = lib.item_from_zerodim(key)
         key = com.apply_if_callable(key, self)
@@ -4404,6 +5050,13 @@ class DataFrame(NDFrame, OpsMixin):
         return data
 
     def _getitem_bool_array(self, key):
+        # [FUNCTION DOC]
+        # HELPER: Row selection by a boolean array-like key. If the key is a Series
+        # whose index differs from the frame's, emits a user warning that it will be
+        # reindexed; otherwise a length mismatch raises a value error reporting the key
+        # length and index length. Validates and aligns the key via the boolean indexer
+        # checker (which can raise if reindexing is impossible). If every entry is true
+        # returns a shallow copy; else takes the rows at the true positions.
         # also raises Exception if object array with NA values
         # warning here just in case -- previously __setitem__ was
         # reindexing but __getitem__ was not; it seems more reasonable to
@@ -4431,6 +5084,15 @@ class DataFrame(NDFrame, OpsMixin):
         return self.take(indexer, axis=0)
 
     def _getitem_multilevel(self, key):
+        # [FUNCTION DOC]
+        # HELPER: Column selection on a multi-level column index. Looks up the key
+        # location; if it is a slice or boolean array, selects those columns by position
+        # and drops the leading levels named in the key from the resulting columns. If
+        # exactly one column results and its (first-level) name is an empty string, it
+        # treats that empty string as a placeholder and returns that column selected by
+        # the empty-string key, converting a Series result so it has the frame's index
+        # and is named by the original key. Returns a frame or Series. If the location
+        # is a single integer, returns that column as a Series by position.
         # self.columns is a MultiIndex
         loc = self.columns.get_loc(key)
         if isinstance(loc, (slice, np.ndarray)):
@@ -4464,6 +5126,15 @@ class DataFrame(NDFrame, OpsMixin):
             return self._ixs(loc, axis=1)
 
     def _get_value(self, index, col, takeable: bool = False) -> Scalar:
+        # [FUNCTION DOC]
+        # HELPER: Fast scalar lookup used by the at/iat accessors. Inputs: index (row
+        # label, or position when takeable), col (column label or position when
+        # takeable), takeable (bool, default false; treat both as positions). In
+        # position mode returns the element from the column array. In label mode gets
+        # the column Series by label; for non-multi-level indexes finds the row position
+        # via the index and returns the element; for multi-level indexes uses the index
+        # engine's location lookup (which only supports complete same-length tuples).
+        # Returns a scalar.
         """
         Quickly retrieve single value at passed column and index.
 
@@ -4501,6 +5172,16 @@ class DataFrame(NDFrame, OpsMixin):
         return series._values[loc]
 
     def isetitem(self, loc, value) -> None:
+        # [FUNCTION DOC]
+        # Set the values of one or more columns by integer position, always replacing
+        # the column rather than writing into the existing array.
+        # Inputs: loc (integer, or a list/array of integer positions when value is a
+        # DataFrame), value (scalar, array-like, Series, or DataFrame).
+        # Behavior: for a DataFrame value, wraps an integer loc in a list, raises a
+        # value error if the number of positions differs from the number of value
+        # columns, then sanitizes and sets each value column at its position. Otherwise
+        # sanitizes the single value and sets it at loc. Setting is done with in-place
+        # disabled. Returns nothing.
         """
         Set the given value in the column with position `loc`.
 
@@ -4557,6 +5238,20 @@ class DataFrame(NDFrame, OpsMixin):
         self._iset_item_mgr(loc, arraylike, inplace=False, refs=refs)
 
     def __setitem__(self, key, value) -> None:
+        # [FUNCTION DOC]
+        # Implements item assignment (setting a column, rows, or masked cells).
+        # Behavior: unless the chained assignment warning is disabled, if the frame is
+        # only referenced by the expression (reference count at the chained-assignment
+        # threshold) and is not a local variable of the caller, emits the chained-
+        # assignment warning (copy-on-write) at stack level two. Resolves callable keys
+        # with the frame. A slice key does a positional row slice assignment. A
+        # DataFrame or 2-D key dispatches to boolean-frame setting. A
+        # Series/ndarray/list/Index key sets multiple columns or boolean rows (array
+        # path). A DataFrame value assigns a frame to a single column key. A list-like
+        # value with a non-unique column index where the key matches the same number of
+        # duplicate columns as the value length is routed to the array path. Anything
+        # else sets a single column. Returns nothing (or the result of the slice helper,
+        # also nothing).
         """
         Set item(s) in DataFrame by key.
 
@@ -4672,12 +5367,27 @@ class DataFrame(NDFrame, OpsMixin):
             self._set_item(key, value)
 
     def _setitem_slice(self, key: slice, value) -> None:
+        # [FUNCTION DOC]
+        # HELPER: Assignment through a row slice of the frame. Applies the positional
+        # slice assignment (iloc) to keep backward compatible behavior, because label-
+        # based assignment would interpret the slice differently.
         # NB: we can't just use self.loc[key] = value because that
         #  operates on labels and we need to operate positional for
         #  backwards-compat, xref GH#31469
         self.iloc[key] = value
 
     def _setitem_array(self, key, value) -> None:
+        # [FUNCTION DOC]
+        # HELPER: Assignment with an array-like key. If the key is a boolean indexer: a
+        # length mismatch raises a value error; the key is validated; rows with true
+        # entries are assigned by position, and a DataFrame value is first reindexed to
+        # those row labels since positional assignment does not align. Otherwise the key
+        # is a list of column labels: a DataFrame value sets each key column from the
+        # corresponding value column (key length checked against value); a non-list-like
+        # value sets each key column to that scalar; a two-dimensional numpy value is
+        # set column by column without writing in place; a deeper-than-1-D list value is
+        # converted to a 2-D array and retried; any other list-like value is also set
+        # column by column without in-place writes.
         # also raises Exception if object array with NA values
         if com.is_bool_indexer(key):
             # bool indexer is indexing along rows
@@ -4716,6 +5426,17 @@ class DataFrame(NDFrame, OpsMixin):
             self._iset_not_inplace(key, value)
 
     def _iset_not_inplace(self, key, value) -> None:
+        # [FUNCTION DOC]
+        # HELPER: Sets several columns one at a time from list-like value, always
+        # creating new arrays rather than writing in place (unlike label-based loc
+        # assignment). Inputs: key (list of labels) and value (2-D array or list of
+        # sequences). With unique columns: raises a value error if the last dimension of
+        # value differs from the key length, then assigns each column from the
+        # corresponding slice. With duplicate columns: finds all positions of each key
+        # (raising not-implemented if any key is missing), checks length, asserts at
+        # most 2 dimensions, temporarily replaces columns with a default integer index
+        # so positional keys address individual columns, assigns each position, and
+        # restores the original columns in a finally block.
         # GH#39510 when setting with df[key] = obj with a list-like key and
         #  list-like value, we iterate over those listlikes and set columns
         #  one at a time.  This is different from dispatching to
@@ -4723,6 +5444,9 @@ class DataFrame(NDFrame, OpsMixin):
         #  data inplace, whereas this will insert new arrays.
 
         def igetitem(obj, i: int):
+            # [FUNCTION DOC]
+            # HELPER: Nested helper that extracts the i-th column of value: for a numpy
+            # array takes the last-axis slice at i, otherwise indexes the object at i.
             # Note: we catch DataFrame obj before getting here, but
             #  hypothetically would return obj.iloc[:, i]
             if isinstance(obj, np.ndarray):
@@ -4760,6 +5484,13 @@ class DataFrame(NDFrame, OpsMixin):
                 self.columns = orig_columns
 
     def _setitem_frame(self, key, value) -> None:
+        # [FUNCTION DOC]
+        # HELPER: Boolean-frame assignment, as in setting values where a mask is true.
+        # Accepts a boolean numpy array (shape must equal the frame's, else value error;
+        # it is wrapped as a frame with the frame's axes) or a DataFrame. Raises a type
+        # error unless every block of the mask is boolean dtype (when non-empty). Then
+        # calls the generic masked-assignment machinery in place with the negated mask
+        # and the value (so cells where the mask is true get replaced).
         # support boolean setting with DataFrame input, e.g.
         # df[df > df2] = 0
         if isinstance(key, np.ndarray):
@@ -4775,6 +5506,18 @@ class DataFrame(NDFrame, OpsMixin):
         self._where(-key, value, inplace=True)
 
     def _set_item_frame_value(self, key, value: DataFrame) -> None:
+        # [FUNCTION DOC]
+        # HELPER: Assigns a DataFrame value to a single column key. Ensures a valid
+        # index (adopting the value's index if this frame has no index), then: if the
+        # key exists, compares the number of columns it resolves to against the value's
+        # column count (value error if different); for multi-level columns resolving to
+        # multiple columns it aligns value columns to the key's dropped-level columns
+        # (special-casing an all-empty-string case to avoid all-NaN reindexing), then
+        # assigns column by column; for a scalar column label assigns the value's first
+        # column; otherwise computes the integer positions (from a slice, scalar, or
+        # boolean mask) and uses positional column replacement. If the key does not
+        # exist: raises a value error when the value has more than one column or has
+        # none; otherwise assigns its first column.
         self._ensure_valid_index(value)
 
         # align columns
@@ -4842,12 +5585,22 @@ class DataFrame(NDFrame, OpsMixin):
         inplace: bool = False,
         refs: BlockValuesRefs | None = None,
     ) -> None:
+        # [FUNCTION DOC]
+        # HELPER: Thin wrapper to replace column data in the manager at a location
+        # (integer, slice or array from a label lookup). Inputs: loc, value, inplace
+        # (bool, default false: whether to write into existing arrays), refs (reference
+        # tracking object or nothing). Delegates to the manager's set method.
         # when called from _set_item_mgr loc can be anything returned from get_loc
         self._mgr.iset(loc, value, inplace=inplace, refs=refs)
 
     def _set_item_mgr(
         self, key, value: ArrayLike, refs: BlockValuesRefs | None = None
     ) -> None:
+        # [FUNCTION DOC]
+        # HELPER: Sets or inserts a column by label using already-sanitized array data.
+        # Looks up the label location; if it is missing, inserts the new column at the
+        # end of the manager (with reference tracking); otherwise replaces the existing
+        # column(s) via the manager wrapper (not in place).
         try:
             loc = self._info_axis.get_loc(key)
         except KeyError:
@@ -4857,11 +5610,24 @@ class DataFrame(NDFrame, OpsMixin):
             self._iset_item_mgr(loc, value, refs=refs)
 
     def _iset_item(self, loc: int, value: Series, inplace: bool = True) -> None:
+        # [FUNCTION DOC]
+        # HELPER: Replaces the column at an integer position with the values of a given
+        # Series, preserving its reference tracking; the inplace flag (default true)
+        # controls whether the existing array is written into. Only called by the
+        # column-wise replace helper, which guarantees no reindexing is needed.
         # We are only called from _replace_columnwise which guarantees that
         # no reindex is necessary
         self._iset_item_mgr(loc, value._values, inplace=inplace, refs=value._references)
 
     def _set_item(self, key, value) -> None:
+        # [FUNCTION DOC]
+        # HELPER: Core of single-column assignment. Sanitizes the value (reindexing a
+        # Series to the frame's index, or validating length and converting arrays)
+        # obtaining array data and references. If the label already exists, the data is
+        # 1-D and not an extension dtype, and the columns are non-unique or multi-level:
+        # when the existing selection is a DataFrame (several columns), the data is
+        # tiled across them. Then writes via the manager helper. Documented as: add
+        # series as a column, ensure copy-on-write semantics.
         """
         Add series to DataFrame in specified column.
 
@@ -4890,6 +5656,16 @@ class DataFrame(NDFrame, OpsMixin):
     def _set_value(
         self, index: IndexLabel, col, value: Scalar, takeable: bool = False
     ) -> None:
+        # [FUNCTION DOC]
+        # HELPER: Fast scalar assignment used by the at/iat accessors. Inputs: index
+        # (row label, or position if takeable), col (column label or position), value
+        # (scalar), takeable (bool, default false). Tries to set the element in place in
+        # the block via column set with in-place only. If the label is missing, or a
+        # type/value error or lossy-setitem error occurs (e.g. the value cannot be held
+        # by the dtype), falls back to ordinary positional or label assignment (which
+        # can expand the index or upcast). An invalid-index error is re-raised as an
+        # invalid-index error stating that only a scalar value can be assigned. Returns
+        # nothing.
         """
         Put single value at passed column and index.
 
@@ -4931,6 +5707,14 @@ class DataFrame(NDFrame, OpsMixin):
             ) from ii_err
 
     def _ensure_valid_index(self, value) -> None:
+        # [FUNCTION DOC]
+        # HELPER: If the frame has no rows and the value is a non-empty list-like, gives
+        # the frame an index taken from the value: a non-DataFrame value is converted to
+        # a Series (conversion failures raise a value error saying a frame with no
+        # defined index cannot be set from a value that cannot be converted to a
+        # Series); the new index is a copy of the value's index which keeps the frame's
+        # index name when it has one; the manager is reindexed along its row axis with
+        # NaN fill. Mutates the frame.
         """
         Ensure that if we don't have an index, that we can create one from the
         passed value.
@@ -4954,6 +5738,11 @@ class DataFrame(NDFrame, OpsMixin):
             self._mgr = self._mgr.reindex_axis(index_copy, axis=1, fill_value=np.nan)
 
     def _box_col_values(self, values: SingleBlockManager, loc: int) -> Series:
+        # [FUNCTION DOC]
+        # HELPER: Wraps a single-block manager as a Series named by the column label at
+        # the given position (so a string timestamp column label yields the original
+        # label object as the name). Uses the sliced-from-manager hook, then finalizes
+        # metadata. Returns a Series sharing the manager data.
         """
         Provide boxed values for a column.
         """
@@ -4966,6 +5755,10 @@ class DataFrame(NDFrame, OpsMixin):
         return obj.__finalize__(self)
 
     def _get_item(self, item: Hashable) -> Series:
+        # [FUNCTION DOC]
+        # HELPER: Looks up a column by label, using the label's location, and returns it
+        # as a Series via the positional selector (so duplicates need to be resolved by
+        # the caller).
         loc = self.columns.get_loc(item)
         return self._ixs(loc, axis=1)
 
@@ -4984,7 +5777,11 @@ class DataFrame(NDFrame, OpsMixin):
         resolvers: list[Mapping] | None = ...,
         level: int = ...,
         inplace: Literal[False] = ...,
-    ) -> DataFrame: ...
+    ) -> DataFrame:
+        # [FUNCTION DOC]
+        # Typing overload stub: query with inplace false (the default) returns a
+        # DataFrame. Implementation follows.
+        ...
 
     @overload
     def query(
@@ -4998,7 +5795,11 @@ class DataFrame(NDFrame, OpsMixin):
         resolvers: list[Mapping] | None = ...,
         level: int = ...,
         inplace: Literal[True],
-    ) -> None: ...
+    ) -> None:
+        # [FUNCTION DOC]
+        # Typing overload stub: query with inplace true returns nothing. Implementation
+        # follows.
+        ...
 
     @overload
     def query(
@@ -5012,7 +5813,11 @@ class DataFrame(NDFrame, OpsMixin):
         resolvers: list[Mapping] | None = ...,
         level: int = ...,
         inplace: bool = ...,
-    ) -> DataFrame | None: ...
+    ) -> DataFrame | None:
+        # [FUNCTION DOC]
+        # Typing overload stub: query with inplace as a plain bool returns a DataFrame
+        # or nothing. Implementation follows.
+        ...
 
     def query(
         self,
@@ -5026,6 +5831,20 @@ class DataFrame(NDFrame, OpsMixin):
         level: int = 0,
         inplace: bool = False,
     ) -> DataFrame | None:
+        # [FUNCTION DOC]
+        # Filter rows (or arrays) using a boolean expression string over the columns.
+        # Parameters (keyword-only except expr): expr (string expression); parser
+        # ("pandas" default or "python"); engine ("python", "numexpr" or nothing to pick
+        # numexpr when installed); local_dict and global_dict (extra variable
+        # namespaces); resolvers (extra namespace mappings); level (extra stack depth
+        # for name lookup, default 0); inplace (bool, default false).
+        # Behavior: validates inplace as a bool and raises a value error if expr is not
+        # a string. Evaluates the expression through the frame's eval method with the
+        # target disabled and the stack level increased by one so local variables of the
+        # caller resolve. Selects rows using the result with label-based selection; if
+        # that raises a value error (e.g. multi-dimensional result), falls back to plain
+        # subscripting. If inplace, replaces the frame's data in place and returns
+        # nothing; otherwise returns the filtered frame.
         """
         Query the columns of a DataFrame with a boolean expression.
 
@@ -5217,12 +6036,35 @@ class DataFrame(NDFrame, OpsMixin):
             return result
 
     @overload
-    def eval(self, expr: str, *, inplace: Literal[False] = ..., **kwargs) -> Any: ...
+    def eval(self, expr: str, *, inplace: Literal[False] = ..., **kwargs) -> Any:
+        # [FUNCTION DOC]
+        # Typing overload stub: eval with inplace false returns a value of any type.
+        # Implementation follows.
+        ...
 
     @overload
-    def eval(self, expr: str, *, inplace: Literal[True], **kwargs) -> None: ...
+    def eval(self, expr: str, *, inplace: Literal[True], **kwargs) -> None:
+        # [FUNCTION DOC]
+        # Typing overload stub: eval with inplace true returns nothing. Implementation
+        # follows.
+        ...
 
     def eval(self, expr: str, *, inplace: bool = False, **kwargs) -> Any | None:
+        # [FUNCTION DOC]
+        # Evaluate a string expression of operations over the columns (and index levels)
+        # of the frame.
+        # Parameters: expr (string; may include an assignment to create or update a
+        # column); inplace (keyword-only, bool, default false: whether an assignment
+        # modifies the frame); extra keyword arguments are passed to the evaluation
+        # function (for example parser, engine, local_dict, global_dict, resolvers,
+        # target, level).
+        # Behavior: imports the evaluator lazily, validates inplace, increments the
+        # stack level (default 0) in the keyword arguments so the caller's frame is
+        # searched for variables, builds variable resolvers from the cleaned column
+        # names and the index names, defaults the target to the frame itself if none
+        # supplied, appends the frame's resolvers after any user resolvers, and returns
+        # the evaluator's result (a scalar, array, Series, frame, or nothing if assigned
+        # in place).
         """
         Evaluate a string describing operations on DataFrame columns.
 
@@ -5375,6 +6217,26 @@ class DataFrame(NDFrame, OpsMixin):
         return _eval(expr, inplace=inplace, **kwargs)
 
     def select_dtypes(self, include=None, exclude=None) -> DataFrame:
+        # [FUNCTION DOC]
+        # Return a subset of the columns based on their dtypes.
+        # Parameters: include and exclude (each a scalar or list-like of dtypes or dtype
+        # names; at least one must be non-empty).
+        # Behavior: wraps scalar arguments into tuples; raises a value error if both are
+        # empty. Normalizes each set: the generic integer type becomes both 32-bit and
+        # 64-bit integers (platform differences), the generic float becomes 64-bit and
+        # 32-bit floats, others are converted via the dtype-from-object inference;
+        # rejects the generic string dtypes; raises a value error if include and exclude
+        # overlap. A dtype matches a set when the dtype's scalar type is a subclass of
+        # any set member, or when the set contains the generic number type and the dtype
+        # is numeric but not boolean (Arrow dtypes are first mapped to their numpy
+        # dtype), or for backward compatibility when the dtype is the NaN-based string
+        # dtype and the set contains the object type. A column is kept if it matches
+        # include (when given) and does not match exclude (when given). If object is
+        # included, str is neither included nor excluded and the frame has NaN-based
+        # string dtype columns, emits a next-major-version deprecation warning that
+        # strings are selected by object for backward compatibility. Builds the result
+        # from the manager subset (shallow copy, no data copy), finalizes metadata, and
+        # returns the DataFrame.
         """
         Return a subset of the DataFrame's columns based on the column dtypes.
 
@@ -5476,6 +6338,12 @@ class DataFrame(NDFrame, OpsMixin):
 
         # convert the myriad valid dtypes object to a single representation
         def check_int_infer_dtype(dtypes):
+            # [FUNCTION DOC]
+            # HELPER: Nested helper of select_dtypes. Converts each requested dtype into
+            # a canonical set of scalar types: the generic integer maps to 32-bit and
+            # 64-bit integer types, the generic float (by type or name) to the 64-bit
+            # and 32-bit float types, and everything else through the dtype inference.
+            # Returns a frozen set.
             converted_dtypes: list[type] = []
             for dtype in dtypes:
                 # Numpy maps int to different types (int32, in64) on Windows and Linux
@@ -5501,6 +6369,12 @@ class DataFrame(NDFrame, OpsMixin):
             raise ValueError(f"include and exclude overlap on {(include & exclude)}")
 
         def dtype_predicate(dtype: DtypeObj, dtypes_set) -> bool:
+            # [FUNCTION DOC]
+            # HELPER: Nested helper of select_dtypes. Tells whether a dtype matches a
+            # set of scalar types: True if the (Arrow-unwrapped) dtype's scalar type is
+            # a subclass of any member, or if the set holds the generic number type and
+            # the dtype is flagged numeric and not boolean, or if the dtype is the NaN-
+            # based string dtype and the set holds the object type. Returns a bool.
             # GH 46870: BooleanDtype._is_numeric == True but should be excluded
             dtype = dtype if not isinstance(dtype, ArrowDtype) else dtype.numpy_dtype
             return (
@@ -5519,6 +6393,10 @@ class DataFrame(NDFrame, OpsMixin):
             )
 
         def predicate(arr: ArrayLike) -> bool:
+            # [FUNCTION DOC]
+            # HELPER: Nested block predicate of select_dtypes. For an array, returns
+            # False if an include set exists and the dtype does not match it, False if
+            # an exclude set exists and the dtype matches it, otherwise True.
             dtype = arr.dtype
             if include:
                 if not dtype_predicate(dtype, include):
@@ -5558,6 +6436,10 @@ class DataFrame(NDFrame, OpsMixin):
         return self._constructor_from_mgr(mgr, axes=mgr.axes).__finalize__(self)
 
     def _select_dtypes_indices(self, dtype_class) -> np.ndarray:
+        # [FUNCTION DOC]
+        # HELPER: Returns the positional indices of columns whose dtype is an instance
+        # of the given dtype class, using the manager's subset-indices facility. Returns
+        # a numpy integer array.
         """
         Return the indices of the columns of a given dtype.
 
@@ -5565,6 +6447,9 @@ class DataFrame(NDFrame, OpsMixin):
         """
 
         def predicate(arr: ArrayLike) -> bool:
+            # [FUNCTION DOC]
+            # HELPER: Nested block predicate for the dtype class selector; True when the
+            # array's dtype is an instance of the enclosing dtype class argument.
             return isinstance(arr.dtype, dtype_class)
 
         return self._mgr._get_data_subset_indices(predicate)
@@ -5576,6 +6461,20 @@ class DataFrame(NDFrame, OpsMixin):
         value: object,
         allow_duplicates: bool | lib.NoDefault = lib.no_default,
     ) -> None:
+        # [FUNCTION DOC]
+        # Insert a column into the frame at a given integer position, in place.
+        # Parameters: loc (int, 0 to the number of columns), column (label), value
+        # (scalar, Series, or array-like; a one-column DataFrame is accepted),
+        # allow_duplicates (bool, default: a library sentinel meaning false).
+        # Behavior: resolves the default to false. If duplicates are allowed but the
+        # frame's flags disallow duplicate labels, raises a value error. If duplicates
+        # are not allowed and the column exists, raises a value error saying it already
+        # exists. If loc is not an integer, raises a type error; casts to a Python int.
+        # A DataFrame value with more than one column raises a value error; a one-column
+        # DataFrame is reduced to its first column. Sanitizes the value (aligning a
+        # Series to the index) then inserts into the manager with reference tracking.
+        # Mutates the frame; returns nothing. (Out-of-range loc is rejected by the
+        # manager.)
         """
         Insert column into DataFrame at specified location.
 
@@ -5649,6 +6548,14 @@ class DataFrame(NDFrame, OpsMixin):
         self._mgr.insert(loc, column, value, refs=refs)
 
     def assign(self, **kwargs) -> DataFrame:
+        # [FUNCTION DOC]
+        # Return a new frame with additional columns assigned.
+        # Parameters: keyword arguments mapping new column names to values, or callables
+        # taking the frame and returning values.
+        # Behavior: makes a shallow copy and then, in the order the keywords were given,
+        # sets each column; callables are called with the intermediate frame so later
+        # columns can refer to earlier ones. Returns the new frame; the original is
+        # untouched.
         r"""
         Assign new columns to a DataFrame.
 
@@ -5730,6 +6637,14 @@ class DataFrame(NDFrame, OpsMixin):
         return data
 
     def _sanitize_column(self, value) -> tuple[ArrayLike, BlockValuesRefs | None]:
+        # [FUNCTION DOC]
+        # HELPER: Prepares a value for use as a column. Ensures the frame has a valid
+        # index (adopting the value's if the frame is empty), asserts the value is not a
+        # DataFrame, converts dict-likes to a Series and reindexes them to the frame's
+        # index through the setitem reindex helper (returning the array and its
+        # reference tracker). For list-likes verifies the length matches the index
+        # (error otherwise). Other values go through array sanitization with a copy and
+        # 2-D allowed. Returns a tuple of (array-like, reference tracker or nothing).
         """
         Ensures new columns (which go into the BlockManager as new blocks) are
         always copied (or a reference is being tracked to them under CoW)
@@ -5758,12 +6673,23 @@ class DataFrame(NDFrame, OpsMixin):
 
     @property
     def _series(self):
+        # [FUNCTION DOC]
+        # HELPER: Internal property returning a dictionary from column label to the
+        # Series at each column position. Builds new Series each access (note: with
+        # duplicate labels the later column wins).
         return {item: self._ixs(idx, axis=1) for idx, item in enumerate(self.columns)}
 
     # ----------------------------------------------------------------------
     # Reindexing and alignment
 
     def _reindex_multi(self, axes: dict[str, Index], fill_value) -> DataFrame:
+        # [FUNCTION DOC]
+        # HELPER: Reindexes both axes at once. Inputs: axes (mapping with the new index
+        # and columns) and fill_value. Reindexes the row and column indexes to get new
+        # indexes and indexers. If both indexers are needed, takes both axes in one pass
+        # from the 2-D values array (avoiding an extra copy) and builds a frame without
+        # copying; otherwise falls back to the generic reindex-with-indexers path.
+        # Returns the new frame. Only reached when the frame can be cheaply transposed.
         """
         We are guaranteed non-Nones in the axes.
         """
@@ -5795,6 +6721,11 @@ class DataFrame(NDFrame, OpsMixin):
         axis: Axis = 0,
         copy: bool | lib.NoDefault = lib.no_default,
     ) -> DataFrame:
+        # [FUNCTION DOC]
+        # Assign new labels to an axis (index or columns). Overrides only to give the
+        # frame a signature and docs; forwards labels, axis (default 0) and the
+        # deprecated copy argument to the base class implementation and returns its
+        # result.
         """
         Assign desired index to given axis.
 
@@ -5868,6 +6799,14 @@ class DataFrame(NDFrame, OpsMixin):
         limit: int | None = None,
         tolerance=None,
     ) -> DataFrame:
+        # [FUNCTION DOC]
+        # Conform the frame to new row and/or column labels. Overrides the base class
+        # method to give DataFrame-specific parameters and documentation. Parameters:
+        # labels (positional new labels for the axis chosen by axis), index, columns
+        # (keyword new labels), axis, method (fill method for monotonic indexes), copy
+        # (deprecated), level (broadcast across a multi-level), fill_value (default
+        # NaN), limit (maximum fills), tolerance (matching tolerance). Forwards
+        # everything to the base class implementation and returns the new frame.
         """
         Conform DataFrame to new index with optional filling logic.
 
@@ -6113,7 +7052,11 @@ class DataFrame(NDFrame, OpsMixin):
         level: Level = ...,
         inplace: Literal[True],
         errors: IgnoreRaise = ...,
-    ) -> None: ...
+    ) -> None:
+        # [FUNCTION DOC]
+        # Typing overload stub: drop with inplace true returns nothing. Implementation
+        # follows.
+        ...
 
     @overload
     def drop(
@@ -6126,7 +7069,11 @@ class DataFrame(NDFrame, OpsMixin):
         level: Level = ...,
         inplace: Literal[False] = ...,
         errors: IgnoreRaise = ...,
-    ) -> DataFrame: ...
+    ) -> DataFrame:
+        # [FUNCTION DOC]
+        # Typing overload stub: drop with inplace false (default) returns a DataFrame.
+        # Implementation follows.
+        ...
 
     @overload
     def drop(
@@ -6139,7 +7086,11 @@ class DataFrame(NDFrame, OpsMixin):
         level: Level = ...,
         inplace: bool = ...,
         errors: IgnoreRaise = ...,
-    ) -> DataFrame | None: ...
+    ) -> DataFrame | None:
+        # [FUNCTION DOC]
+        # Typing overload stub: drop with inplace as a plain bool returns a DataFrame or
+        # nothing. Implementation follows.
+        ...
 
     def drop(
         self,
@@ -6152,6 +7103,14 @@ class DataFrame(NDFrame, OpsMixin):
         inplace: bool = False,
         errors: IgnoreRaise = "raise",
     ) -> DataFrame | None:
+        # [FUNCTION DOC]
+        # Drop specified labels from rows or columns. Parameters: labels (single label
+        # or list, used with axis), axis (default 0), index and columns (alternative to
+        # labels and axis), level (for multi-level), inplace (default false), errors
+        # ("raise" default, or "ignore" to skip missing labels). Forwards all of them
+        # unchanged to the base class implementation and returns its result (a new
+        # frame, or nothing when inplace). A missing label with errors set to raise
+        # yields a key error from the base class.
         """
         Drop specified labels from rows or columns.
 
@@ -6321,7 +7280,11 @@ class DataFrame(NDFrame, OpsMixin):
         inplace: Literal[True],
         level: Level = ...,
         errors: IgnoreRaise = ...,
-    ) -> None: ...
+    ) -> None:
+        # [FUNCTION DOC]
+        # Typing overload stub: rename with inplace true returns nothing. Implementation
+        # follows.
+        ...
 
     @overload
     def rename(
@@ -6335,7 +7298,11 @@ class DataFrame(NDFrame, OpsMixin):
         inplace: Literal[False] = ...,
         level: Level = ...,
         errors: IgnoreRaise = ...,
-    ) -> DataFrame: ...
+    ) -> DataFrame:
+        # [FUNCTION DOC]
+        # Typing overload stub: rename with inplace false (default) returns a DataFrame.
+        # Implementation follows.
+        ...
 
     @overload
     def rename(
@@ -6349,7 +7316,11 @@ class DataFrame(NDFrame, OpsMixin):
         inplace: bool = ...,
         level: Level = ...,
         errors: IgnoreRaise = ...,
-    ) -> DataFrame | None: ...
+    ) -> DataFrame | None:
+        # [FUNCTION DOC]
+        # Typing overload stub: rename with inplace as a plain bool returns a DataFrame
+        # or nothing. Implementation follows.
+        ...
 
     def rename(
         self,
@@ -6363,6 +7334,15 @@ class DataFrame(NDFrame, OpsMixin):
         level: Level | None = None,
         errors: IgnoreRaise = "ignore",
     ) -> DataFrame | None:
+        # [FUNCTION DOC]
+        # Rename index or column labels. Parameters: mapper (a mapping or function
+        # applied to the axis chosen by axis), index and columns (alternative
+        # mappings/functions), axis, copy (deprecated; checked only for a deprecation
+        # warning), inplace (default false), level (for multi-level), errors ("ignore"
+        # default or "raise" to complain about unknown labels). Checks the deprecated
+        # copy argument and then forwards the remaining arguments to the base class
+        # private rename routine, returning its result (a new frame, or nothing when
+        # inplace).
         """
         Rename columns or index labels.
 
@@ -6493,6 +7473,11 @@ class DataFrame(NDFrame, OpsMixin):
         )
 
     def pop(self, item: Hashable) -> Series:
+        # [FUNCTION DOC]
+        # Return a column by label and remove it from the frame (mutates the frame).
+        # Input: item, a column label. Forwards to the base class pop and returns the
+        # removed column as a Series. A missing label raises a key error from the base
+        # class.
         """
         Return item and drop it from DataFrame. Raise KeyError if not found.
 
@@ -6548,6 +7533,15 @@ class DataFrame(NDFrame, OpsMixin):
     def _replace_columnwise(
         self, mapping: dict[Hashable, tuple[Any, Any]], inplace: bool, regex
     ) -> Self:
+        # [FUNCTION DOC]
+        # HELPER: Support for the replace method. Replaces values column by column.
+        # Inputs: mapping (dict from column label to a pair of the target values and the
+        # replacement), inplace (bool), regex. Works on the frame itself when inplace,
+        # otherwise on a shallow copy. For every column whose label appears in the
+        # mapping, replaces the target by the value in that column (using the Series
+        # replace with regex) and writes the result back at that position (in place when
+        # requested). Returns the (possibly new) frame, with metadata finalized from the
+        # original when not in place.
         """
         Dispatch to Series.replace column-wise.
 
@@ -6585,6 +7579,31 @@ class DataFrame(NDFrame, OpsMixin):
         fill_value: Hashable = lib.no_default,
         suffix: str | None = None,
     ) -> DataFrame:
+        # [FUNCTION DOC]
+        # Shift index by a number of periods, optionally with a frequency, and also
+        # supports multiple shifts.
+        # Parameters: periods (int or a sequence of ints; default 1); freq (offset or
+        # string; shifts the index instead of the data); axis (default 0); fill_value
+        # (value for newly introduced missing cells; default a sentinel meaning use
+        # missing/NaN); suffix (string appended to column names when periods is a
+        # sequence).
+        # Behavior: raises a value error if freq and fill_value are both given. Returns
+        # a copy for an empty frame without freq. When periods is list-like: axis 1
+        # raises a value error; an empty sequence raises a value error; each period must
+        # be an integer (type error otherwise); each period is shifted via the base
+        # class implementation and its columns get a suffix made of the suffix (if any)
+        # and the period; the pieces are concatenated along columns without sorting. A
+        # non-list periods with a suffix raises a value error. For axis 1 with nonzero
+        # periods, columns, and no freq: if fill_value is unspecified, the shift is
+        # built by slicing columns and inserting filler columns (a missing-valued
+        # shifted copy of the first or last column, one filler per shifted column,
+        # allowing duplicate labels) and then restoring the original labels; if
+        # fill_value is given and the frame has multiple blocks or the single block
+        # cannot hold the fill value, builds a column indexer with -1 markers for new
+        # columns and reindexes the manager along columns with that fill and duplicates
+        # allowed; otherwise (single block that can hold it) transposes, shifts and
+        # transposes back. All other cases delegate to the base class shift. Returns a
+        # DataFrame.
         """
         Shift index by desired number of periods with an optional time `freq`.
 
@@ -6807,7 +7826,11 @@ class DataFrame(NDFrame, OpsMixin):
         append: bool = ...,
         inplace: Literal[False] = ...,
         verify_integrity: bool | lib.NoDefault = ...,
-    ) -> DataFrame: ...
+    ) -> DataFrame:
+        # [FUNCTION DOC]
+        # Typing overload stub: set_index with inplace false (default) returns a
+        # DataFrame. Implementation follows.
+        ...
 
     @overload
     def set_index(
@@ -6818,7 +7841,11 @@ class DataFrame(NDFrame, OpsMixin):
         append: bool = ...,
         inplace: Literal[True],
         verify_integrity: bool | lib.NoDefault = ...,
-    ) -> None: ...
+    ) -> None:
+        # [FUNCTION DOC]
+        # Typing overload stub: set_index with inplace true returns nothing.
+        # Implementation follows.
+        ...
 
     def set_index(
         self,
@@ -6829,6 +7856,30 @@ class DataFrame(NDFrame, OpsMixin):
         inplace: bool = False,
         verify_integrity: bool | lib.NoDefault = lib.no_default,
     ) -> DataFrame | None:
+        # [FUNCTION DOC]
+        # Set the row index from existing columns and/or arrays.
+        # Parameters (all but keys keyword-only): keys (a column label, Index, Series,
+        # ndarray, iterator, or a list of those); drop (bool, default true: delete the
+        # columns used); append (bool, default false: keep the existing index as a
+        # leading level); inplace (bool, default false); verify_integrity (deprecated;
+        # default sentinel).
+        # Behavior: if verify_integrity is given, emits a next-major deprecation
+        # warning, otherwise treats it as false. Validates inplace and that duplicate-
+        # label flags permit in-place operation. Wraps a non-list key in a list.
+        # Validates each key: arrays/Index/Series/lists/iterators must be one-
+        # dimensional (value error otherwise), anything else must be a present column
+        # label (an unhashable label raises a type error with extra context); missing
+        # labels raise a key error listing them. Works on the frame itself when inplace,
+        # otherwise on a shallow copy. Builds the arrays and names for the new index:
+        # first the existing index levels if append; then for each key: a multi-level
+        # index contributes all its levels and names, an Index or Series is used with
+        # its name, a list or ndarray is used with no name, an iterator is exhausted
+        # into a list with no name, and a column label contributes that column (and is
+        # marked for removal when drop). Each new array must match the frame length
+        # (value error otherwise). Builds the index from sequences; if verify_integrity
+        # is true and the index is not unique raises a value error listing duplicate
+        # keys. Deletes the marked columns, releases the index's cached lookup memory,
+        # and assigns the index. Returns the new frame, or nothing when inplace.
         """
         Set the DataFrame index using existing columns.
 
@@ -7073,7 +8124,11 @@ class DataFrame(NDFrame, OpsMixin):
         col_fill: Hashable = ...,
         allow_duplicates: bool | lib.NoDefault = ...,
         names: Hashable | Sequence[Hashable] | None = None,
-    ) -> DataFrame: ...
+    ) -> DataFrame:
+        # [FUNCTION DOC]
+        # Typing overload stub: reset_index with inplace false (default) returns a
+        # DataFrame. Implementation follows.
+        ...
 
     @overload
     def reset_index(
@@ -7086,7 +8141,11 @@ class DataFrame(NDFrame, OpsMixin):
         col_fill: Hashable = ...,
         allow_duplicates: bool | lib.NoDefault = ...,
         names: Hashable | Sequence[Hashable] | None = None,
-    ) -> None: ...
+    ) -> None:
+        # [FUNCTION DOC]
+        # Typing overload stub: reset_index with inplace true returns nothing.
+        # Implementation follows.
+        ...
 
     @overload
     def reset_index(
@@ -7099,7 +8158,11 @@ class DataFrame(NDFrame, OpsMixin):
         col_fill: Hashable = ...,
         allow_duplicates: bool | lib.NoDefault = ...,
         names: Hashable | Sequence[Hashable] | None = None,
-    ) -> DataFrame | None: ...
+    ) -> DataFrame | None:
+        # [FUNCTION DOC]
+        # Typing overload stub: reset_index with inplace as a plain bool returns a
+        # DataFrame or nothing. Implementation follows.
+        ...
 
     def reset_index(
         self,
@@ -7112,6 +8175,30 @@ class DataFrame(NDFrame, OpsMixin):
         allow_duplicates: bool | lib.NoDefault = lib.no_default,
         names: Hashable | Sequence[Hashable] | None = None,
     ) -> DataFrame | None:
+        # [FUNCTION DOC]
+        # Reset the row index to a default integer range, optionally moving the old
+        # index to columns.
+        # Parameters (all but level keyword-only): level (label, position, or sequence
+        # of levels to remove; default all); drop (bool, default false: discard instead
+        # of inserting as columns); inplace (default false); col_level (which column
+        # level receives the index name for multi-level columns; default 0); col_fill
+        # (label used to fill the other column levels; default empty string; nothing
+        # means reuse the name); allow_duplicates (default: sentinel meaning false);
+        # names (name or sequence of names for the inserted columns).
+        # Behavior: validates inplace and the duplicate-flags check; works on the frame
+        # or a shallow copy. Validates allow_duplicates when given. Starts with a
+        # default range index; if level is given, converts level labels to numbers and,
+        # if not all levels are removed, keeps the remaining levels as the new index.
+        # Unless drop is true: picks the default name "index" (or "level_0" when a
+        # column named "index" exists) and computes the column names from the index
+        # names and the user's names; iterates the levels (last first) to insert as the
+        # first columns: skips levels not selected; for multi-level columns expands each
+        # name to a full tuple padded with col_fill at the col_level (a nothing col_fill
+        # with an incomplete name that is neither length one nor the number of column
+        # levels raises a value error); converts level values to arrays (inferring
+        # better dtypes for object levels), expands codes using the missing-value for
+        # -1; inserts at position zero with the allow_duplicates option. Finally assigns
+        # the new index. Returns the new frame, or nothing when inplace.
         """
         Reset the index, or a level of it.
 
@@ -7352,6 +8439,11 @@ class DataFrame(NDFrame, OpsMixin):
     # Reindex-based selection methods
 
     def isna(self) -> DataFrame:
+        # [FUNCTION DOC]
+        # Detect missing values. Returns a boolean DataFrame of the same shape and
+        # labels where True marks a missing entry (None, NaN, NaT, and other NA
+        # markers). Computed by the block manager's isna with the missing-value
+        # function; metadata is finalized with method name "isna".
         """
         Detect missing values.
 
@@ -7425,6 +8517,8 @@ class DataFrame(NDFrame, OpsMixin):
         return result.__finalize__(self, method="isna")
 
     def isnull(self) -> DataFrame:
+        # [FUNCTION DOC]
+        # Alias of isna: returns the same boolean mask frame by delegating to isna.
         """
         DataFrame.isnull is an alias for DataFrame.isna.
 
@@ -7498,6 +8592,9 @@ class DataFrame(NDFrame, OpsMixin):
         return self.isna()
 
     def notna(self) -> DataFrame:
+        # [FUNCTION DOC]
+        # Detect existing (non-missing) values: returns the logical negation of the isna
+        # result, a boolean DataFrame of the same shape.
         """
         Detect existing (non-missing) values.
 
@@ -7569,6 +8666,8 @@ class DataFrame(NDFrame, OpsMixin):
         return ~self.isna()
 
     def notnull(self) -> DataFrame:
+        # [FUNCTION DOC]
+        # Alias of notna: returns the logical negation of the isna result.
         """
         DataFrame.notnull is an alias for DataFrame.notna.
 
@@ -7651,7 +8750,11 @@ class DataFrame(NDFrame, OpsMixin):
         subset: IndexLabel = ...,
         inplace: Literal[False] = ...,
         ignore_index: bool = ...,
-    ) -> DataFrame: ...
+    ) -> DataFrame:
+        # [FUNCTION DOC]
+        # Typing overload stub: dropna with inplace false (default) returns a DataFrame.
+        # Implementation follows.
+        ...
 
     @overload
     def dropna(
@@ -7663,7 +8766,11 @@ class DataFrame(NDFrame, OpsMixin):
         subset: IndexLabel = ...,
         inplace: Literal[True],
         ignore_index: bool = ...,
-    ) -> None: ...
+    ) -> None:
+        # [FUNCTION DOC]
+        # Typing overload stub: dropna with inplace true returns nothing. Implementation
+        # follows.
+        ...
 
     def dropna(
         self,
@@ -7675,6 +8782,25 @@ class DataFrame(NDFrame, OpsMixin):
         inplace: bool = False,
         ignore_index: bool = False,
     ) -> DataFrame | None:
+        # [FUNCTION DOC]
+        # Remove rows or columns that contain missing values.
+        # Parameters (all keyword-only): axis (0 or "index" drops rows; 1 or "columns"
+        # drops columns; a list or tuple is no longer allowed); how ("any" default drop
+        # if any NA, "all" drop if all NA; mutually exclusive with thresh); thresh
+        # (minimum number of non-NA values required to keep); subset (labels along the
+        # other axis to consider); inplace (default false); ignore_index (default false;
+        # relabel result 0..n-1).
+        # Behavior: raises a type error if both how and thresh are given; how defaults
+        # to "any". Validates inplace; a tuple/list axis raises a type error. The
+        # aggregation axis is the opposite axis. When subset is given, it is wrapped as
+        # a list if needed, located along the other axis (missing labels raise a key
+        # error listing them) and the check is restricted to those positions. With
+        # thresh the keep-mask is that the non-NA count is at least thresh; with "any"
+        # the mask is that all values are non-missing; with "all" it is that at least
+        # one is non-missing; any other how raises a value error. If every position is
+        # kept returns a shallow copy, else selects by the mask along the axis. If
+        # ignore_index, resets the result's labels to a default range. Returns the
+        # result, or updates the frame in place and returns nothing.
         """
         Remove missing values.
 
@@ -7836,7 +8962,11 @@ class DataFrame(NDFrame, OpsMixin):
         keep: DropKeep = ...,
         inplace: Literal[True],
         ignore_index: bool = ...,
-    ) -> None: ...
+    ) -> None:
+        # [FUNCTION DOC]
+        # Typing overload stub: drop_duplicates with inplace true returns nothing.
+        # Implementation follows.
+        ...
 
     @overload
     def drop_duplicates(
@@ -7846,7 +8976,11 @@ class DataFrame(NDFrame, OpsMixin):
         keep: DropKeep = ...,
         inplace: Literal[False] = ...,
         ignore_index: bool = ...,
-    ) -> DataFrame: ...
+    ) -> DataFrame:
+        # [FUNCTION DOC]
+        # Typing overload stub: drop_duplicates with inplace false (default) returns a
+        # DataFrame. Implementation follows.
+        ...
 
     @overload
     def drop_duplicates(
@@ -7856,7 +8990,11 @@ class DataFrame(NDFrame, OpsMixin):
         keep: DropKeep = ...,
         inplace: bool = ...,
         ignore_index: bool = ...,
-    ) -> DataFrame | None: ...
+    ) -> DataFrame | None:
+        # [FUNCTION DOC]
+        # Typing overload stub: drop_duplicates with inplace as a plain bool returns a
+        # DataFrame or nothing. Implementation follows.
+        ...
 
     def drop_duplicates(
         self,
@@ -7866,6 +9004,16 @@ class DataFrame(NDFrame, OpsMixin):
         inplace: bool = False,
         ignore_index: bool = False,
     ) -> DataFrame | None:
+        # [FUNCTION DOC]
+        # Return the frame with duplicate rows removed.
+        # Parameters: subset (column label or labels to compare; default all columns);
+        # keep ("first" default, "last", or False to drop all duplicates); inplace
+        # (default false); ignore_index (default false: relabel 0..n-1).
+        # Behavior: returns a shallow copy immediately if the frame is empty. Validates
+        # inplace and ignore_index as bools. Computes the duplicated mask and selects
+        # rows where it is not set, using the negation of the boolean series for
+        # selection. Resets the labels when ignore_index is true. Updates in place and
+        # returns nothing if inplace, else returns the result.
         """
         Return DataFrame with duplicate rows removed.
 
@@ -7967,6 +9115,21 @@ class DataFrame(NDFrame, OpsMixin):
         subset: Hashable | Iterable[Hashable] | None = None,
         keep: DropKeep = "first",
     ) -> Series:
+        # [FUNCTION DOC]
+        # Return a boolean Series marking duplicate rows.
+        # Parameters: subset (column label or labels; default all columns); keep
+        # ("first" marks later duplicates, "last" marks earlier ones, False marks all;
+        # default "first").
+        # Behavior: returns an empty boolean Series if the frame is empty. Normalizes
+        # subset: default is all columns; a scalar, string, or a tuple that is itself a
+        # column label is wrapped in a one-tuple. Raises a key error listing labels that
+        # are not columns. If there is one unique subset column, uses that Series's
+        # duplicated method directly and clears its name. Otherwise factorizes each
+        # selected column's values (size-hinted by the frame length) to integer codes,
+        # combines the codes into a single group identifier per row (without sorting and
+        # without treating nulls as extra), and computes duplicates on those identifiers
+        # with the keep option. Returns a Series indexed like the frame with metadata
+        # finalized (method "duplicated").
         """
         Return boolean Series denoting duplicate rows.
 
@@ -8062,6 +9225,10 @@ class DataFrame(NDFrame, OpsMixin):
             return self._constructor_sliced(dtype=bool)
 
         def f(vals) -> tuple[np.ndarray, int]:
+            # [FUNCTION DOC]
+            # HELPER: Nested helper of duplicated. Factorizes an array of values (using
+            # the frame length as size hint) and returns the integer codes as 64-bit
+            # integers together with the number of distinct categories.
             labels, shape = algorithms.factorize(vals, size_hint=len(self))
             return labels.astype("i8"), len(shape)
 
@@ -8111,7 +9278,11 @@ class DataFrame(NDFrame, OpsMixin):
         na_position: NaPosition = ...,
         ignore_index: bool = ...,
         key: ValueKeyFunc = ...,
-    ) -> DataFrame: ...
+    ) -> DataFrame:
+        # [FUNCTION DOC]
+        # Typing overload stub: sort_values with inplace false (default) returns a
+        # DataFrame. Implementation follows.
+        ...
 
     @overload
     def sort_values(
@@ -8125,7 +9296,11 @@ class DataFrame(NDFrame, OpsMixin):
         na_position: str = ...,
         ignore_index: bool = ...,
         key: ValueKeyFunc = ...,
-    ) -> None: ...
+    ) -> None:
+        # [FUNCTION DOC]
+        # Typing overload stub: sort_values with inplace true returns nothing.
+        # Implementation follows.
+        ...
 
     def sort_values(
         self,
@@ -8139,6 +9314,29 @@ class DataFrame(NDFrame, OpsMixin):
         ignore_index: bool = False,
         key: ValueKeyFunc | None = None,
     ) -> DataFrame | None:
+        # [FUNCTION DOC]
+        # Sort by the values along either axis.
+        # Parameters (all but by keyword-only): by (label or list of labels (index level
+        # names are allowed too) to sort by); axis (default 0); ascending (bool or
+        # list/tuple of bools, one per sort key; default true); inplace (default false);
+        # kind (algorithm for a single key only; default quicksort); na_position
+        # ("first" or "last"; default "last"); ignore_index (default false: relabel
+        # 0..n-1); key (function applied to the values before sorting, receives a
+        # Series).
+        # Behavior: validates inplace and ascending, converts axis, wraps a single label
+        # in a list. A sequence for ascending whose length differs from by raises a
+        # value error. With more than one key: fetches the label or level values for
+        # each key (re-wrapping in Series when a key function is given) and computes a
+        # lexicographic sort order. With exactly one key: fetches its values (re-
+        # wrapping in a Series if key given), reduces a one-element ascending sequence
+        # to its element, and computes the sort order with the chosen algorithm. With no
+        # keys, returns the frame unchanged (in place: updates with itself; otherwise a
+        # shallow copy). If the computed order is the identity range, returns a shallow
+        # copy (optionally relabeled) without reordering; in place updates the frame.
+        # Otherwise takes rows from the manager (no bounds verification), relabels if
+        # requested, and builds the result. In place, updates the frame and returns
+        # nothing; otherwise returns the result with metadata finalized (method
+        # sort_values).
         """
         Sort by the values along either axis.
 
@@ -8415,7 +9613,11 @@ class DataFrame(NDFrame, OpsMixin):
         sort_remaining: bool = ...,
         ignore_index: bool = ...,
         key: IndexKeyFunc = ...,
-    ) -> None: ...
+    ) -> None:
+        # [FUNCTION DOC]
+        # Typing overload stub: sort_index with inplace true returns nothing.
+        # Implementation follows.
+        ...
 
     @overload
     def sort_index(
@@ -8430,7 +9632,11 @@ class DataFrame(NDFrame, OpsMixin):
         sort_remaining: bool = ...,
         ignore_index: bool = ...,
         key: IndexKeyFunc = ...,
-    ) -> DataFrame: ...
+    ) -> DataFrame:
+        # [FUNCTION DOC]
+        # Typing overload stub: sort_index with inplace false (default) returns a
+        # DataFrame. Implementation follows.
+        ...
 
     @overload
     def sort_index(
@@ -8445,7 +9651,11 @@ class DataFrame(NDFrame, OpsMixin):
         sort_remaining: bool = ...,
         ignore_index: bool = ...,
         key: IndexKeyFunc = ...,
-    ) -> DataFrame | None: ...
+    ) -> DataFrame | None:
+        # [FUNCTION DOC]
+        # Typing overload stub: sort_index with inplace as a plain bool returns a
+        # DataFrame or nothing. Implementation follows.
+        ...
 
     def sort_index(
         self,
@@ -8460,6 +9670,13 @@ class DataFrame(NDFrame, OpsMixin):
         ignore_index: bool = False,
         key: IndexKeyFunc | None = None,
     ) -> DataFrame | None:
+        # [FUNCTION DOC]
+        # Sort by the index labels (or column labels). Parameters (all keyword-only):
+        # axis (default 0), level, ascending (bool or list of bools), inplace, kind,
+        # na_position, sort_remaining (default true: sort other levels after the given
+        # one), ignore_index, key (function applied to the index values). Forwards all
+        # of them to the base class implementation and returns its result (a new frame,
+        # or nothing when inplace).
         """
         Sort object by labels (along an axis).
 
@@ -8565,6 +9782,19 @@ class DataFrame(NDFrame, OpsMixin):
         ascending: bool = False,
         dropna: bool = True,
     ) -> Series:
+        # [FUNCTION DOC]
+        # Count unique rows.
+        # Parameters: subset (labels of columns to use; default all columns); normalize
+        # (bool, default false: return proportions); sort (bool, default true: sort by
+        # counts); ascending (bool, default false); dropna (bool, default true: do not
+        # count rows containing missing values).
+        # Behavior: when subset is nothing uses all column labels. Groups by the subset
+        # (without group sorting, with the dropna option and unobserved categories not
+        # expanded) and takes the group sizes, naming the result "proportion" if
+        # normalize else "count". If sorting, sorts the counts by value (stable). If
+        # normalize, divides by the total. If subset is list-like with a single entry,
+        # forces the result index to a multi-level index with one level so the shape is
+        # consistent. Returns a Series indexed by the unique rows.
         """
         Return a Series containing the frequency of each distinct row in the DataFrame.
 
@@ -8709,6 +9939,13 @@ class DataFrame(NDFrame, OpsMixin):
     def nlargest(
         self, n: int, columns: IndexLabel, keep: NsmallestNlargestKeep = "first"
     ) -> DataFrame:
+        # [FUNCTION DOC]
+        # Return the first n rows ordered by the given columns in descending order.
+        # Parameters: n (number of rows), columns (label or list of labels), keep
+        # ("first" default, "last", or "all" to decide ties). Delegates to the selection
+        # helper class for frames from the methods package, calling its largest
+        # selection, and returns the DataFrame. Raises errors (for example for non-
+        # numeric columns) from the helper.
         """
         Return the first `n` rows ordered by `columns` in descending order.
 
@@ -8848,6 +10085,10 @@ class DataFrame(NDFrame, OpsMixin):
     def nsmallest(
         self, n: int, columns: IndexLabel, keep: NsmallestNlargestKeep = "first"
     ) -> DataFrame:
+        # [FUNCTION DOC]
+        # Return the first n rows ordered by the given columns in ascending order. Same
+        # parameters as nlargest (n, columns, keep). Delegates to the same selection
+        # helper, calling its smallest selection, and returns the DataFrame.
         """
         Return the first `n` rows ordered by `columns` in ascending order.
 
@@ -8977,6 +10218,15 @@ class DataFrame(NDFrame, OpsMixin):
         return selectn.SelectNFrame(self, n=n, keep=keep, columns=columns).nsmallest()
 
     def swaplevel(self, i: Axis = -2, j: Axis = -1, axis: Axis = 0) -> DataFrame:
+        # [FUNCTION DOC]
+        # Swap two levels of a multi-level index (or multi-level columns) and return a
+        # new frame.
+        # Parameters: i and j (levels to swap, by integer or name; defaults -2 and -1);
+        # axis (default 0).
+        # Behavior: makes a shallow copy, converts axis to a number, raises a type error
+        # if that axis is not multi-level (excluded from coverage), then replaces the
+        # index (axis 0) or columns (axis 1) with the level-swapped version. Returns the
+        # copy.
         """
         Swap levels i and j in a :class:`MultiIndex`.
 
@@ -9067,6 +10317,12 @@ class DataFrame(NDFrame, OpsMixin):
         return result
 
     def reorder_levels(self, order: Sequence[int | str], axis: Axis = 0) -> DataFrame:
+        # [FUNCTION DOC]
+        # Rearrange the levels of a multi-level index (or columns) and return a new
+        # frame. Parameters: order (list of level numbers or names in the new order),
+        # axis (default 0). Raises a type error if the chosen axis is not multi-level
+        # (excluded from coverage). Works on a shallow copy whose index or columns is
+        # replaced by the reordered one. Returns the copy.
         """
         Rearrange index or column levels using input ``order``.
 
@@ -9132,6 +10388,13 @@ class DataFrame(NDFrame, OpsMixin):
     # Arithmetic Methods
 
     def _cmp_method(self, other, op):
+        # [FUNCTION DOC]
+        # HELPER: Comparison operator hook used by the operator mixin. Inputs: other
+        # (any right operand) and op (the comparison function). Aligns the operands
+        # without flex (labels must already match for frame/Series operands; otherwise a
+        # value error), applies the operator column-wise via the dispatcher along axis 1
+        # (columns), and wraps the result as a frame via the construct-result helper.
+        # Scalar semantics are discussed in the upstream issue referenced in the code.
         axis: Literal[1] = 1  # only relevant for Series other case
 
         self, other = self._align_for_op(other, axis, flex=False, level=None)
@@ -9141,6 +10404,15 @@ class DataFrame(NDFrame, OpsMixin):
         return self._construct_result(new_data, other=other)
 
     def _arith_method(self, other, op):
+        # [FUNCTION DOC]
+        # HELPER: Arithmetic operator hook used by the operator mixin. Inputs: other and
+        # op (the binary function). If the operands are frames needing column-wise
+        # reindexing (see the should-reindex helper) it uses the reindexing path.
+        # Otherwise prepares a scalar operand (broadcast-safe conversions), aligns both
+        # operands with the flexible outer join along axis 1, applies the operator
+        # through the dispatcher with floating-point error warnings suppressed, and
+        # wraps the result into a frame. Note the logical-operator hook (the class
+        # attribute assigned right after) reuses this same method.
         if self._should_reindex_frame_op(other, op, 1, None, None):
             return self._arith_method_with_reindex(other, op)
 
@@ -9158,6 +10430,21 @@ class DataFrame(NDFrame, OpsMixin):
     def _dispatch_frame_op(
         self, right, func: Callable, axis: AxisInt | None = None
     ) -> DataFrame:
+        # [FUNCTION DOC]
+        # HELPER: Applies a binary array operation between this frame and an already-
+        # aligned right operand. Inputs: right (scalar, DataFrame, Series or other),
+        # func (the binary function), axis (optional; 1 means a Series operand is
+        # aligned with the columns and the operation proceeds row-wise, otherwise it
+        # aligns with the index). Gets the array-level version of the function. Scalars
+        # (after unwrapping zero-dimensional values) are applied block by block through
+        # the manager. A DataFrame operand (asserted to have identical index and
+        # columns) is applied block-wise between the two managers. A Series operand with
+        # axis 1 (asserted to be aligned to the columns) applies the function column by
+        # column with each element of the Series; a Series with another axis (asserted
+        # aligned to the index) applies the function between each column and the Series
+        # values. Any other operand raises a not-implemented error. For the column-wise
+        # paths builds the result from the list of arrays without integrity checks;
+        # returns a DataFrame.
         """
         Evaluate the frame operation func(left, right) by evaluating
         column-by-column, dispatching to the Series implementation.
@@ -9226,6 +10513,15 @@ class DataFrame(NDFrame, OpsMixin):
         )
 
     def _combine_frame(self, other: DataFrame, func, fill_value=None):
+        # [FUNCTION DOC]
+        # HELPER: Combines two frames that already have identical labels (precondition:
+        # same index and columns). Inputs: other (frame), func (binary function),
+        # fill_value (optional; when given, missing values on one side are filled with
+        # it before calling func). Chooses the plain function when no fill value
+        # (avoiding wrapper overhead) or builds a wrapper that applies the fill-aware
+        # binary-operation fill helper then the function, and dispatches column-wise
+        # through the frame dispatcher. Returns the dispatcher's result (a DataFrame
+        # without the original labels pinned).
         # at this point we have `self._indexed_same(other)`
 
         if fill_value is None:
@@ -9236,6 +10532,11 @@ class DataFrame(NDFrame, OpsMixin):
         else:
 
             def _arith_op(left, right):
+                # [FUNCTION DOC]
+                # HELPER: Nested wrapper of _combine_frame used when a fill value is
+                # supplied: fills missing entries of the two operands with the fill
+                # value (via the fill helper, keeping positions missing on both sides
+                # missing) then returns the function applied to the filled operands.
                 # for the mixed_type case where we iterate over columns,
                 # _arith_op(left, right) is equivalent to
                 # left._binop(right, func, fill_value=fill_value)
@@ -9246,6 +10547,17 @@ class DataFrame(NDFrame, OpsMixin):
         return new_data
 
     def _arith_method_with_reindex(self, right: DataFrame, op) -> DataFrame:
+        # [FUNCTION DOC]
+        # HELPER: Arithmetic between two frames that only operates on the shared
+        # columns, then re-expands to the full outer column set. Inputs: right (a
+        # DataFrame) and op (binary function). Finds the inner join of the columns with
+        # indexers, takes the corresponding column subsets of each frame, and for multi-
+        # level shared columns copies both subsets shallowly and overwrites their column
+        # labels to the shared ones (so the inputs are not modified). Applies the
+        # operator to the subsets (which aligns their indexes). Then reindexes the
+        # result along columns to the outer join of the original columns; if the result
+        # has duplicate columns, uses the non-unique indexer (deduplicated) and the
+        # allow-duplicates reindex path instead. Returns the frame.
         """
         For DataFrame-with-DataFrame operations that require reindexing,
         operate only on shared columns, then reindex.
@@ -9298,6 +10610,15 @@ class DataFrame(NDFrame, OpsMixin):
         return result
 
     def _should_reindex_frame_op(self, right, op, axis: int, fill_value, level) -> bool:
+        # [FUNCTION DOC]
+        # HELPER: Decides whether a frame-frame operation should go through the reindex-
+        # columns path. Inputs: right, op, axis, fill_value, level. Returns False if
+        # level is given, if the operator is power or reflected power (they have special
+        # missing-value semantics), or if right is not a DataFrame. Returns True when
+        # either frame has multi-level columns, the columns differ, and no fill value is
+        # given. Returns True when axis is 1, no fill value or level, and the unique
+        # column sets overlap partially (non-empty intersection that is not equal to
+        # both unique sets). Otherwise False.
         """
         Check if this is an operation between DataFrames that will need to reindex.
         """
@@ -9346,6 +10667,27 @@ class DataFrame(NDFrame, OpsMixin):
         flex: bool | None = False,
         level: Level | None = None,
     ):
+        # [FUNCTION DOC]
+        # HELPER: Aligns the right operand of a binary operation to this frame,
+        # converting it to a Series or DataFrame if necessary. Inputs: other, axis (0
+        # aligns with the index, 1 with the columns), flex (False: labels must already
+        # match; True: outer-join to align; None: skip frame alignment entirely), level
+        # (broadcast level). Returns a tuple of the possibly realigned left frame and
+        # the right operand.
+        # Behavior: an ndarray right operand: 1-D becomes a Series along the axis
+        # (length mismatch raises a value error); 2-D with the same shape becomes a
+        # DataFrame with the left labels; 2-D with one column and matching rows is
+        # broadcast across columns; 2-D with one row and matching columns is treated as
+        # a Series along the columns; any other 2-D shape raises a value error; more
+        # than two dimensions raises a value error. Object dtype is preserved explicitly
+        # to avoid inference. A non-pandas list-like right operand raises a value error
+        # if any element is array-like, else is converted to a Series along the axis. A
+        # DataFrame operand: if labels differ, with flex it is outer-joined (with
+        # level); without flex it raises a value error requiring identical labels. A
+        # Series operand: axis defaults to 1 if none; without flex it must match the
+        # label axis exactly else a value error says the operands are not aligned; then
+        # the pair is outer-aligned along the axis (with level) and the Series is
+        # expanded into a DataFrame via the Series-as-frame helper.
         """
         Convert rhs to meet lhs dims if input is list, tuple or np.ndarray.
 
@@ -9366,6 +10708,13 @@ class DataFrame(NDFrame, OpsMixin):
         left, right = self, other
 
         def to_series(right):
+            # [FUNCTION DOC]
+            # HELPER: Nested helper of the alignment routine. Converts a list-like right
+            # operand into a Series using the labels along the chosen axis of the left
+            # frame (index for axis 0, columns otherwise); raises a value error if the
+            # length does not match, reporting the required and given lengths. Passes
+            # object dtype explicitly to avoid inference when the operand has object
+            # dtype.
             msg = (
                 "Unable to coerce to Series, "
                 "length must be {req_len}: given {given_len}"
@@ -9473,6 +10822,14 @@ class DataFrame(NDFrame, OpsMixin):
         return left, right
 
     def _maybe_align_series_as_frame(self, series: Series, axis: AxisInt):
+        # [FUNCTION DOC]
+        # HELPER: Expands an already-aligned Series into a DataFrame shaped like this
+        # frame by broadcasting. Input: series, axis (0 broadcasts down the columns as a
+        # column vector; otherwise across the rows as a row vector). If the Series is
+        # backed by an extension array that is not datetime/timedelta (cannot be cheaply
+        # cast to numpy), returns the Series unchanged. Otherwise reshapes the values,
+        # broadcasts them to the frame's shape, and builds a frame with the frame's
+        # labels, keeping the dtype, and finalizes metadata from the Series.
         """
         If the Series operand is not EA-dtype, we can broadcast to 2D and operate
         blockwise.
@@ -9504,6 +10861,17 @@ class DataFrame(NDFrame, OpsMixin):
     def _flex_arith_method(
         self, other, op, *, axis: Axis = "columns", level=None, fill_value=None
     ):
+        # [FUNCTION DOC]
+        # HELPER: Shared implementation of the flexible arithmetic methods (add, sub,
+        # and so on). Inputs (keyword-only after op): other, op (binary function), axis
+        # (default "columns"; None means 1), level, fill_value. Converts the axis to a
+        # number. Uses the reindexing path when appropriate. A Series other combined
+        # with a fill value raises a not-implemented error. Prepares scalars, aligns
+        # with flexible outer join, then with floating-point warnings suppressed: frame-
+        # frame operations go through the same-label combiner with the fill value;
+        # Series operands go through the dispatcher along the chosen axis; scalars
+        # optionally fill missing values of this frame first then dispatch. Wraps the
+        # result as a frame.
         axis = self._get_axis_number(axis) if axis is not None else 1
 
         if self._should_reindex_frame_op(other, op, axis, fill_value, level):
@@ -9534,6 +10902,14 @@ class DataFrame(NDFrame, OpsMixin):
         return self._construct_result(new_data, other=other)
 
     def _construct_result(self, result, other) -> DataFrame:
+        # [FUNCTION DOC]
+        # HELPER: Wraps the result of an operation in a DataFrame carrying the metadata
+        # of the operands. Inputs: result (either a frame of data or a manager-
+        # compatible mapping of arrays) and other (the right operand). Builds a frame
+        # without copying, finalizes metadata from this frame, pins the columns and
+        # index afterward from this frame (this is needed for non-unique column
+        # support), and finalizes metadata again from other (merging attributes).
+        # Returns the DataFrame.
         """
         Wrap the result of an arithmetic, comparison, or logical operation.
 
@@ -9554,18 +10930,32 @@ class DataFrame(NDFrame, OpsMixin):
         return out
 
     def __divmod__(self, other) -> tuple[DataFrame, DataFrame]:
+        # [FUNCTION DOC]
+        # Implements the divmod builtin: returns a tuple of (floor division, remainder)
+        # frames. Implemented naively as the floor division, then self minus quotient
+        # times the other operand.
         # Naive implementation, room for optimization
         div = self // other
         mod = self - div * other
         return div, mod
 
     def __rdivmod__(self, other) -> tuple[DataFrame, DataFrame]:
+        # [FUNCTION DOC]
+        # Implements the reflected divmod builtin (other on the left): returns a tuple
+        # of (floor division of other by this frame, remainder computed as other minus
+        # quotient times this frame). Naive implementation.
         # Naive implementation, room for optimization
         div = other // self
         mod = other - div * self
         return div, mod
 
     def _flex_cmp_method(self, other, op, *, axis: Axis = "columns", level=None):
+        # [FUNCTION DOC]
+        # HELPER: Shared implementation of the flexible comparison methods (eq, ne, le,
+        # and so on). Inputs: other, op (comparison function), axis (keyword-only;
+        # default "columns"; None means 1), level (keyword-only). Aligns operands with
+        # the flexible outer join, applies the operator through the dispatcher along the
+        # chosen axis and wraps the result into a frame.
         axis = self._get_axis_number(axis) if axis is not None else 1
 
         self, other = self._align_for_op(other, axis, flex=True, level=level)
@@ -9574,6 +10964,12 @@ class DataFrame(NDFrame, OpsMixin):
         return self._construct_result(new_data, other=other)
 
     def eq(self, other, axis: Axis = "columns", level=None) -> DataFrame:
+        # [FUNCTION DOC]
+        # Equal-to comparison element-wise, with flexible broadcasting. Parameters:
+        # other (scalar, sequence, Series or DataFrame), axis ("columns" default or
+        # "index": how a Series or sequence is matched), level (multi-level broadcast).
+        # Delegates to the flexible comparison helper with the equality operator and
+        # returns a boolean DataFrame.
         """
         Get Not equal to of dataframe and other, element-wise (binary operator `eq`).
 
@@ -9730,6 +11126,11 @@ class DataFrame(NDFrame, OpsMixin):
         return self._flex_cmp_method(other, operator.eq, axis=axis, level=level)
 
     def ne(self, other, axis: Axis = "columns", level=None) -> DataFrame:
+        # [FUNCTION DOC]
+        # Not-equal-to comparison element-wise, with flexible broadcasting. Same
+        # parameters as eq (other, axis defaulting to "columns", level). Delegates to
+        # the flexible comparison helper with the inequality operator and returns a
+        # boolean DataFrame.
         """
         Get Not equal to of dataframe and other, element-wise (binary operator `ne`).
 
@@ -9887,24 +11288,49 @@ class DataFrame(NDFrame, OpsMixin):
 
     @Appender(ops.make_flex_doc("le", "dataframe"))
     def le(self, other, axis: Axis = "columns", level=None) -> DataFrame:
+        # [FUNCTION DOC]
+        # Less-than-or-equal comparison with flexible broadcasting (parameters other,
+        # axis defaulting to columns, level). Documentation is attached by a decorator
+        # that generates the flexible-operation doc. Delegates to the flexible
+        # comparison helper with the less-or-equal operator and returns a boolean
+        # DataFrame.
         return self._flex_cmp_method(other, operator.le, axis=axis, level=level)
 
     @Appender(ops.make_flex_doc("lt", "dataframe"))
     def lt(self, other, axis: Axis = "columns", level=None) -> DataFrame:
+        # [FUNCTION DOC]
+        # Less-than comparison with flexible broadcasting (other, axis, level). Doc
+        # generated by decorator. Delegates to the flexible comparison helper with the
+        # less-than operator; returns a boolean DataFrame.
         return self._flex_cmp_method(other, operator.lt, axis=axis, level=level)
 
     @Appender(ops.make_flex_doc("ge", "dataframe"))
     def ge(self, other, axis: Axis = "columns", level=None) -> DataFrame:
+        # [FUNCTION DOC]
+        # Greater-than-or-equal comparison with flexible broadcasting (other, axis,
+        # level). Doc generated by decorator. Delegates to the flexible comparison
+        # helper with the greater-or-equal operator; returns a boolean DataFrame.
         return self._flex_cmp_method(other, operator.ge, axis=axis, level=level)
 
     @Appender(ops.make_flex_doc("gt", "dataframe"))
     def gt(self, other, axis: Axis = "columns", level=None) -> DataFrame:
+        # [FUNCTION DOC]
+        # Greater-than comparison with flexible broadcasting (other, axis, level). Doc
+        # generated by decorator. Delegates to the flexible comparison helper with the
+        # greater-than operator; returns a boolean DataFrame.
         return self._flex_cmp_method(other, operator.gt, axis=axis, level=level)
 
     @Appender(ops.make_flex_doc("add", "dataframe"))
     def add(
         self, other, axis: Axis = "columns", level=None, fill_value=None
     ) -> DataFrame:
+        # [FUNCTION DOC]
+        # Element-wise addition with flexible broadcasting. Parameters: other (scalar,
+        # sequence, Series, DataFrame), axis ("columns" default or "index"), level
+        # (multi-level broadcast), fill_value (value substituted for missing entries
+        # before computing; entries missing in both stay missing). Doc generated by
+        # decorator. Delegates to the flexible arithmetic helper with the addition
+        # operator and returns a DataFrame.
         return self._flex_arith_method(
             other, operator.add, level=level, fill_value=fill_value, axis=axis
         )
@@ -9913,6 +11339,11 @@ class DataFrame(NDFrame, OpsMixin):
     def radd(
         self, other, axis: Axis = "columns", level=None, fill_value=None
     ) -> DataFrame:
+        # [FUNCTION DOC]
+        # Reflected addition (other plus frame) with flexible broadcasting; same
+        # parameters as add (other, axis, level, fill_value). Delegates to the flexible
+        # arithmetic helper with the reflected-addition operator and returns a
+        # DataFrame.
         return self._flex_arith_method(
             other, roperator.radd, level=level, fill_value=fill_value, axis=axis
         )
@@ -9921,6 +11352,11 @@ class DataFrame(NDFrame, OpsMixin):
     def sub(
         self, other, axis: Axis = "columns", level=None, fill_value=None
     ) -> DataFrame:
+        # [FUNCTION DOC]
+        # Element-wise subtraction (frame minus other) with flexible broadcasting;
+        # parameters other, axis, level, fill_value as for add. Delegates to the
+        # flexible arithmetic helper with the subtraction operator. Returns a DataFrame.
+        # The class attribute named subtract right after is an alias to this method.
         return self._flex_arith_method(
             other, operator.sub, level=level, fill_value=fill_value, axis=axis
         )
@@ -9931,6 +11367,10 @@ class DataFrame(NDFrame, OpsMixin):
     def rsub(
         self, other, axis: Axis = "columns", level=None, fill_value=None
     ) -> DataFrame:
+        # [FUNCTION DOC]
+        # Reflected subtraction (other minus frame) with flexible broadcasting; same
+        # parameters as add. Delegates to the flexible arithmetic helper with the
+        # reflected-subtraction operator. Returns a DataFrame.
         return self._flex_arith_method(
             other, roperator.rsub, level=level, fill_value=fill_value, axis=axis
         )
@@ -9939,6 +11379,11 @@ class DataFrame(NDFrame, OpsMixin):
     def mul(
         self, other, axis: Axis = "columns", level=None, fill_value=None
     ) -> DataFrame:
+        # [FUNCTION DOC]
+        # Element-wise multiplication with flexible broadcasting; parameters other,
+        # axis, level, fill_value as for add. Delegates to the flexible arithmetic
+        # helper with the multiplication operator. Returns a DataFrame. The class
+        # attribute named multiply is an alias.
         return self._flex_arith_method(
             other, operator.mul, level=level, fill_value=fill_value, axis=axis
         )
@@ -9949,6 +11394,10 @@ class DataFrame(NDFrame, OpsMixin):
     def rmul(
         self, other, axis: Axis = "columns", level=None, fill_value=None
     ) -> DataFrame:
+        # [FUNCTION DOC]
+        # Reflected multiplication (other times frame) with flexible broadcasting; same
+        # parameters as add. Delegates with the reflected-multiplication operator.
+        # Returns a DataFrame.
         return self._flex_arith_method(
             other, roperator.rmul, level=level, fill_value=fill_value, axis=axis
         )
@@ -9957,6 +11406,11 @@ class DataFrame(NDFrame, OpsMixin):
     def truediv(
         self, other, axis: Axis = "columns", level=None, fill_value=None
     ) -> DataFrame:
+        # [FUNCTION DOC]
+        # Element-wise true division (frame divided by other) with flexible
+        # broadcasting; parameters other, axis, level, fill_value as for add. Delegates
+        # with the true-division operator. Returns a DataFrame. The class attributes div
+        # and divide are aliases.
         return self._flex_arith_method(
             other, operator.truediv, level=level, fill_value=fill_value, axis=axis
         )
@@ -9968,6 +11422,10 @@ class DataFrame(NDFrame, OpsMixin):
     def rtruediv(
         self, other, axis: Axis = "columns", level=None, fill_value=None
     ) -> DataFrame:
+        # [FUNCTION DOC]
+        # Reflected true division (other divided by frame) with flexible broadcasting;
+        # same parameters as add. Delegates with the reflected true-division operator.
+        # Returns a DataFrame. The class attribute rdiv is an alias.
         return self._flex_arith_method(
             other, roperator.rtruediv, level=level, fill_value=fill_value, axis=axis
         )
@@ -9978,6 +11436,10 @@ class DataFrame(NDFrame, OpsMixin):
     def floordiv(
         self, other, axis: Axis = "columns", level=None, fill_value=None
     ) -> DataFrame:
+        # [FUNCTION DOC]
+        # Element-wise floor division with flexible broadcasting; parameters other,
+        # axis, level, fill_value as for add. Delegates with the floor-division
+        # operator. Returns a DataFrame.
         return self._flex_arith_method(
             other, operator.floordiv, level=level, fill_value=fill_value, axis=axis
         )
@@ -9986,6 +11448,10 @@ class DataFrame(NDFrame, OpsMixin):
     def rfloordiv(
         self, other, axis: Axis = "columns", level=None, fill_value=None
     ) -> DataFrame:
+        # [FUNCTION DOC]
+        # Reflected floor division (other floor-divided by frame) with flexible
+        # broadcasting; same parameters as add. Delegates with the reflected floor-
+        # division operator. Returns a DataFrame.
         return self._flex_arith_method(
             other, roperator.rfloordiv, level=level, fill_value=fill_value, axis=axis
         )
@@ -9994,6 +11460,10 @@ class DataFrame(NDFrame, OpsMixin):
     def mod(
         self, other, axis: Axis = "columns", level=None, fill_value=None
     ) -> DataFrame:
+        # [FUNCTION DOC]
+        # Element-wise modulo (remainder) with flexible broadcasting; parameters other,
+        # axis, level, fill_value as for add. Delegates with the modulo operator.
+        # Returns a DataFrame.
         return self._flex_arith_method(
             other, operator.mod, level=level, fill_value=fill_value, axis=axis
         )
@@ -10002,6 +11472,10 @@ class DataFrame(NDFrame, OpsMixin):
     def rmod(
         self, other, axis: Axis = "columns", level=None, fill_value=None
     ) -> DataFrame:
+        # [FUNCTION DOC]
+        # Reflected modulo (other modulo frame) with flexible broadcasting; same
+        # parameters as add. Delegates with the reflected-modulo operator. Returns a
+        # DataFrame.
         return self._flex_arith_method(
             other, roperator.rmod, level=level, fill_value=fill_value, axis=axis
         )
@@ -10010,6 +11484,11 @@ class DataFrame(NDFrame, OpsMixin):
     def pow(
         self, other, axis: Axis = "columns", level=None, fill_value=None
     ) -> DataFrame:
+        # [FUNCTION DOC]
+        # Element-wise exponentiation (frame to the power of other) with flexible
+        # broadcasting; parameters other, axis, level, fill_value as for add. Delegates
+        # with the power operator. Returns a DataFrame. Power has special missing-value
+        # semantics, so frame-frame operations never use the column-reindexing shortcut.
         return self._flex_arith_method(
             other, operator.pow, level=level, fill_value=fill_value, axis=axis
         )
@@ -10018,6 +11497,10 @@ class DataFrame(NDFrame, OpsMixin):
     def rpow(
         self, other, axis: Axis = "columns", level=None, fill_value=None
     ) -> DataFrame:
+        # [FUNCTION DOC]
+        # Reflected exponentiation (other to the power of frame) with flexible
+        # broadcasting; same parameters as add. Delegates with the reflected-power
+        # operator. Returns a DataFrame.
         return self._flex_arith_method(
             other, roperator.rpow, level=level, fill_value=fill_value, axis=axis
         )
@@ -10033,6 +11516,15 @@ class DataFrame(NDFrame, OpsMixin):
         keep_equal: bool = False,
         result_names: Suffixes = ("self", "other"),
     ) -> DataFrame:
+        # [FUNCTION DOC]
+        # Compare to another frame and show the differences.
+        # Parameters: other (frame with identical labels; the base class raises
+        # otherwise); align_axis (1 or "columns" default: place differences side by
+        # side; 0 or "index": stack them); keep_shape (default false: drop rows/columns
+        # with no differences); keep_equal (default false: show equal values as
+        # missing); result_names (tuple of two labels for the two sides, default "self"
+        # and "other"). Forwards all arguments to the base class implementation and
+        # returns its DataFrame result.
         """
         Compare to another DataFrame and show the differences.
 
@@ -10184,6 +11676,27 @@ class DataFrame(NDFrame, OpsMixin):
         fill_value=None,
         overwrite: bool = True,
     ) -> DataFrame:
+        # [FUNCTION DOC]
+        # Perform column-wise combine with another frame using a function.
+        # Parameters: other (frame); func (function taking two Series, the column from
+        # this frame and the one from other, returning a Series or scalar); fill_value
+        # (scalar substituted for missing entries before calling func; default nothing);
+        # overwrite (bool, default true: columns only in this frame are overwritten with
+        # missing values when absent in other).
+        # Behavior: records other's length and columns, aligns both frames on their
+        # labels (outer). If other is empty and the aligned index length matches self's,
+        # returns a copy of self; if self is empty and the aligned length matches
+        # other's, returns a copy of other. The result's columns are the union of
+        # columns preserving order, with both operands reindexed to it. For each column:
+        # computes missing masks; if overwrite is false and the other column is entirely
+        # missing, copies this column as is; if a fill value is set, copies both columns
+        # and fills their missing entries; if the column is not in self, tries to cast
+        # self's (all-missing) column to the other's dtype (ignoring value errors), else
+        # casts both to their common type; calls func; when the working dtype is a numpy
+        # dtype, downcasts the result to it (extension dtypes are expected to be handled
+        # by func). Builds a frame from the dictionary of results indexed by the aligned
+        # index, assigns the union columns and finalizes metadata (method combine).
+        # Returns a DataFrame.
         """
         Perform column-wise combine with another DataFrame.
 
@@ -10363,6 +11876,19 @@ class DataFrame(NDFrame, OpsMixin):
         return frame_result.__finalize__(self, method="combine")
 
     def combine_first(self, other: DataFrame) -> DataFrame:
+        # [FUNCTION DOC]
+        # Update null elements with the value in the same location in other (fills gaps
+        # from other).
+        # Input: other (frame). Behavior: defines a combiner which keeps other's column
+        # as is when the column is not in self, otherwise takes the value of other where
+        # self's value is missing and self's value elsewhere (preserving extension
+        # dtypes). If other has no rows, reindexes self to include the new columns of
+        # other and casts to other's dtypes; otherwise applies the column-wise combine
+        # with overwrite disabled. Afterwards, for the columns common to both, computes
+        # the common dtype of the two frames' columns and restores that dtype on the
+        # result when the result's dtype differs from self's (only when both are plain
+        # dtype or extension dtype objects; non-unique columns are skipped without
+        # casting). Returns the combined frame with metadata finalized.
         """
         Update null elements with value in the same location in `other`.
 
@@ -10411,6 +11937,11 @@ class DataFrame(NDFrame, OpsMixin):
         """
 
         def combiner(x: Series, y: Series):
+            # [FUNCTION DOC]
+            # HELPER: Nested combiner of combine_first. Takes two Series (this frame's
+            # column and other's column); returns other's column if its name is not
+            # among this frame's columns, otherwise returns the first where it is non-
+            # missing and the second elsewhere, preserving extension dtypes.
             # GH#60128 The combiner is supposed to preserve EA Dtypes.
             return y if y.name not in self.columns else y.where(x.isna(), x)
 
@@ -10446,6 +11977,27 @@ class DataFrame(NDFrame, OpsMixin):
         filter_func=None,
         errors: IgnoreRaise = "ignore",
     ) -> None:
+        # [FUNCTION DOC]
+        # Modify the frame in place using non-NA values from another frame; the frame
+        # itself is mutated and nothing is returned.
+        # Parameters: other (frame, Series with a name, or dict-like convertible to a
+        # frame); join (only "left" is supported; anything else raises a not-implemented
+        # error); overwrite (bool, default true: overwrite non-missing values; false
+        # only fills missing); filter_func (function on the column returning a bool mask
+        # of values to replace; default nothing); errors ("ignore" default or "raise" to
+        # raise a value error if both have non-missing values at the same position;
+        # other values raise a value error).
+        # Behavior: unless disabled, emits the chained-assignment warning for methods
+        # when the frame is only referenced by the expression. Validates join and
+        # errors. Converts other to a frame. Raises a value error if other's index has
+        # duplicates. Restricts to the intersection of the indexes (returns without
+        # change when empty), reindexing other to it. For each shared column, builds a
+        # mask of positions to keep: with filter_func, positions where the filter says
+        # not to replace or where other is missing; otherwise (checking the overlap when
+        # errors is raise) with overwrite, where other is missing; without overwrite,
+        # where this frame is non-missing. Skips columns whose mask is all true;
+        # otherwise assigns, by label, this column where the mask holds and other's
+        # elsewhere.
         """
         Modify in place using non-NA values from another DataFrame.
 
@@ -10620,6 +12172,17 @@ class DataFrame(NDFrame, OpsMixin):
         observed: bool = True,
         dropna: bool = True,
     ) -> DataFrameGroupBy:
+        # [FUNCTION DOC]
+        # Group the frame using a mapper or by columns/levels, returning a
+        # DataFrameGroupBy.
+        # Parameters: by (mapping, function, label, pd.Grouper, or list of those), level
+        # (index level(s)), as_index (default true), sort (default true), group_keys
+        # (default true), observed (default true), dropna (default true). Positional use
+        # of arguments after level is deprecated (via a decorator that warns with the
+        # next-major-version warning category).
+        # Behavior: raises a type error if both by and level are nothing. Lazily imports
+        # and returns a DataFrameGroupBy constructed with the frame and the arguments
+        # (the by argument is passed as keys).
         """
         Group DataFrame using a mapper or by a Series of columns.
 
@@ -10983,6 +12546,12 @@ class DataFrame(NDFrame, OpsMixin):
     def pivot(
         self, *, columns, index=lib.no_default, values=lib.no_default
     ) -> DataFrame:
+        # [FUNCTION DOC]
+        # Pivot the frame by reshaping data based on column values; see the shared pivot
+        # documentation (attached by decorators). Parameters: columns (keyword-only;
+        # column(s) providing the new columns), index (default sentinel: use the
+        # existing index), values (default sentinel: all remaining columns). Lazily
+        # imports the reshape pivot function and returns its result for this frame.
         from pandas.core.reshape.pivot import pivot
 
         return pivot(self, index=index, columns=columns, values=values)
@@ -11156,6 +12725,14 @@ class DataFrame(NDFrame, OpsMixin):
         sort: bool = True,
         **kwargs,
     ) -> DataFrame:
+        # [FUNCTION DOC]
+        # Create a spreadsheet-style pivot table (aggregating duplicates). Documentation
+        # is attached by decorators from the shared template. Parameters: values, index,
+        # columns, aggfunc (default "mean"), fill_value, margins (default false), dropna
+        # (default true), margins_name (default "All"), observed (default true), sort
+        # (default true), plus extra keyword arguments passed to the aggregation. Lazily
+        # imports the reshape pivot-table function and returns its result, passing all
+        # arguments through.
         from pandas.core.reshape.pivot import pivot_table
 
         return pivot_table(
@@ -11180,6 +12757,20 @@ class DataFrame(NDFrame, OpsMixin):
         sort: bool | lib.NoDefault = lib.no_default,
         future_stack: bool = True,
     ):
+        # [FUNCTION DOC]
+        # Stack the prescribed level(s) of the columns into the index, returning a
+        # reshaped frame or a Series.
+        # Parameters: level (int, str or list; default -1: the column level(s) to move);
+        # dropna and sort (deprecated old-implementation options; default a sentinel
+        # meaning unset); future_stack (bool, default true: use the new implementation).
+        # Behavior: with future_stack false it emits a deprecation warning (next-major
+        # category) about the previous implementation, defaults dropna and sort to true,
+        # and uses the multiple-level or single-level legacy stackers depending on
+        # whether level is a list/tuple. With the new implementation: dropna or sort
+        # being set raises a value error (the new implementation neither introduces NA
+        # rows nor sorts); a list/tuple level that mixes level names and numbers raises
+        # a value error; the level is normalized to a list of level numbers and the new
+        # stacker is called. Returns the result with metadata finalized (method stack).
         """
         Stack the prescribed level(s) from columns to index.
 
@@ -11384,6 +12975,22 @@ class DataFrame(NDFrame, OpsMixin):
         column: IndexLabel,
         ignore_index: bool = False,
     ) -> DataFrame:
+        # [FUNCTION DOC]
+        # Transform each element of the given list-like column(s) into a row,
+        # replicating the index values.
+        # Parameters: column (scalar label, tuple, or list of such; multi-column
+        # requires equal element counts), ignore_index (default false: relabel 0..n-1).
+        # Behavior: raises a value error if the columns are not unique (listing the
+        # duplicates). Normalizes column to a list: a scalar or tuple becomes a one-item
+        # list; a list of scalars/tuples must be non-empty (value error) and unique
+        # (value error); anything else raises a value error. Resets the index to a
+        # range; for one column explodes that column; for several columns, computes per-
+        # row element counts (counting empty and scalar entries as one) and raises a
+        # value error if columns' counts differ, then explodes each and builds a frame.
+        # Joins the exploded columns with the remaining columns. Restores the original
+        # index values by taking from the original index (or a fresh range when
+        # ignore_index). Reorders the columns to the original order and returns the
+        # frame with metadata finalized (method explode).
         """
         Transform each element of a list-like to a row, replicating index values.
 
@@ -11493,6 +13100,11 @@ class DataFrame(NDFrame, OpsMixin):
         if len(columns) == 1:
             result = df[columns[0]].explode()
         else:
+            # [FUNCTION DOC]
+            # Single-expression anonymous function (assigned to a local name) used by
+            # explode. It computes the number of elements of an entry: the length for a
+            # non-empty list-like entry, and one for anything else (scalars and empty
+            # list-likes).
             mylen = lambda x: len(x) if (is_list_like(x) and len(x) > 0) else 1
             counts0 = self[columns[0]].apply(mylen)
             for c in columns[1:]:
@@ -11511,6 +13123,14 @@ class DataFrame(NDFrame, OpsMixin):
     def unstack(
         self, level: IndexLabel = -1, fill_value=None, sort: bool = True
     ) -> DataFrame | Series:
+        # [FUNCTION DOC]
+        # Pivot a level of the (necessarily hierarchical) index labels into columns.
+        # Parameters: level (int, str or list; default -1), fill_value (replacement for
+        # missing values created by the pivot), sort (bool, default true: sort the
+        # resulting column labels). Lazily imports the reshape unstack function and
+        # calls it with the frame and the arguments. Returns a DataFrame when the index
+        # is multi-level, or a Series when the index is flat (see the reshape function);
+        # metadata is finalized (method unstack).
         """
         Pivot a level of the (necessarily hierarchical) index labels.
 
@@ -11591,6 +13211,14 @@ class DataFrame(NDFrame, OpsMixin):
         col_level: Level | None = None,
         ignore_index: bool = True,
     ) -> DataFrame:
+        # [FUNCTION DOC]
+        # Unpivot the frame from wide to long format. Parameters: id_vars (identifier
+        # columns), value_vars (columns to unpivot; default all non-id), var_name (name
+        # for the variable column), value_name (default "value"), col_level (level to
+        # melt for multi-level columns), ignore_index (default true: relabel 0..n-1,
+        # else keep original index). Delegates to the melt function from the reshape
+        # package with this frame and the arguments, and returns the long-format frame
+        # with metadata finalized (method melt).
         """
         Unpivot DataFrame from wide to long format, optionally leaving identifiers set.
 
@@ -11726,6 +13354,16 @@ class DataFrame(NDFrame, OpsMixin):
     # Time series-related
 
     def diff(self, periods: int = 1, axis: Axis = 0) -> DataFrame:
+        # [FUNCTION DOC]
+        # First discrete difference of elements along an axis.
+        # Parameters: periods (int, default 1; negative differences with later rows;
+        # float values with an integer value are accepted and converted); axis (0 or
+        # "index" rows, default; 1 or "columns").
+        # Behavior: raises a value error if periods is not an integer (non-integer
+        # floats). For axis 1 with nonzero periods, computes the frame minus its shifted
+        # version along that axis; with zero periods it treats the axis as 0. For axis
+        # 0, uses the manager's diff, builds a frame from it and finalizes metadata
+        # (method diff). Returns a DataFrame.
         """
         First discrete difference of element.
 
@@ -11857,6 +13495,13 @@ class DataFrame(NDFrame, OpsMixin):
         ndim: int,
         subset: DataFrame | Series | None = None,
     ) -> DataFrame | Series:
+        # [FUNCTION DOC]
+        # HELPER: Hook used by aggregation/groupby/window machinery to select from the
+        # frame. Inputs: key (label(s) to select), ndim (the dimension of the result;
+        # unused here), subset (optional object to select from; default the frame
+        # itself). If subset is a Series returns it unchanged; otherwise returns the
+        # subset indexed by the key (a Series for a scalar key or a DataFrame for a
+        # list).
         """
         Sub-classes to define. Return a sliced object.
 
@@ -11937,6 +13582,15 @@ class DataFrame(NDFrame, OpsMixin):
     )
 
     def aggregate(self, func=None, axis: Axis = 0, *args, **kwargs):
+        # [FUNCTION DOC]
+        # Aggregate using one or more operations over the specified axis. Parameters:
+        # func (function, string, list, or dict of column to those; may also use named
+        # aggregation via keyword arguments), axis (default 0), plus positional and
+        # keyword arguments passed to the function. Behavior: converts axis to a number,
+        # builds the application helper for the frame, runs its aggregation, and
+        # reconstructs/relabels the result when named aggregation (keyword arguments) is
+        # used. Returns a scalar, Series or DataFrame depending on the function. The
+        # class attribute named agg after it is an alias.
         """
         Aggregate using one or more operations over the specified axis.
 
@@ -12054,6 +13708,13 @@ class DataFrame(NDFrame, OpsMixin):
     def transform(
         self, func: AggFuncType, axis: Axis = 0, *args, **kwargs
     ) -> DataFrame:
+        # [FUNCTION DOC]
+        # Call a function on the frame producing a frame of the same shape. Parameters:
+        # func (function, string, list-like or dict of such; must work on the whole
+        # frame or when passed to apply), axis (0 default or 1), plus positional and
+        # keyword arguments for the function. Builds the application helper (without
+        # validating the axis here), runs its transform, asserts the result is a
+        # DataFrame and returns it.
         """
         Call ``func`` on self producing a DataFrame with the same axis shape as self.
 
@@ -12211,6 +13872,31 @@ class DataFrame(NDFrame, OpsMixin):
         engine_kwargs: dict[str, bool] | None = None,
         **kwargs,
     ):
+        # [FUNCTION DOC]
+        # Apply a function along an axis of the frame.
+        # Parameters: func (callable or function name; receives each column/row as a
+        # Series, or an array if raw); axis (0 or "index" applies to each column; 1 or
+        # "columns" applies to each row; default 0); raw (default false: if true pass
+        # ndarray instead of Series); result_type (nothing, "expand", "reduce" or
+        # "broadcast"; controls list-like result handling for axis=1); args (tuple of
+        # extra positional arguments); by_row (False, or "compat" default: when func is
+        # a list or dict the semantics keep element-wise application); engine
+        # (nothing/"python"/"numba" or a third-party decorator object exposing the user-
+        # defined-function protocol; default python); engine_kwargs (dict of options for
+        # the engine); extra keyword arguments passed to func.
+        # Behavior: for engine nothing or a string: nothing becomes "python"; any other
+        # value than "python" or "numba" raises a value error; builds the application
+        # helper with all arguments, runs it and finalizes metadata (method apply). For
+        # an engine object exposing the user-defined-function protocol: result_type is
+        # not supported (not-implemented error if given); if either axis is empty, tries
+        # calling func on an empty Series to infer a reduction, returning a Series of
+        # the result broadcast on the aggregation axis, or else a copy of the frame;
+        # otherwise passes the frame (or the raw values array if raw) to the engine's
+        # apply along with func, args, kwargs, the decorator and axis; with raw, a 2-D
+        # result is wrapped as a frame with the frame's labels and a 1-D result as a
+        # Series on the aggregation axis; non-raw results are returned as the engine
+        # gives them. Any other engine value raises a value error naming the unknown
+        # engine.
         """
         Apply a function along an axis of the DataFrame.
 
@@ -12496,6 +14182,13 @@ class DataFrame(NDFrame, OpsMixin):
     def map(
         self, func: PythonFuncType, na_action: Literal["ignore"] | None = None, **kwargs
     ) -> DataFrame:
+        # [FUNCTION DOC]
+        # Apply a function to a frame elementwise. Parameters: func (callable taking and
+        # returning a scalar), na_action (nothing default, or "ignore" to skip missing
+        # values), extra keyword arguments for func. Raises a value error if na_action
+        # is not one of those. Returns a copy for an empty frame. Binds the keyword
+        # arguments to func and applies a per-column mapping of values through the
+        # frame's apply, finalizing metadata (method map). Returns a DataFrame.
         """
         Apply a function to a Dataframe elementwise.
 
@@ -12581,6 +14274,10 @@ class DataFrame(NDFrame, OpsMixin):
         func = functools.partial(func, **kwargs)
 
         def infer(x):
+            # [FUNCTION DOC]
+            # HELPER: Nested function of map applied to each column Series: maps the
+            # (bound) function over the column's values, honoring the na_action option,
+            # and returns the resulting array-like with inferred dtype.
             return x._map_values(func, na_action=na_action)
 
         return self.apply(infer).__finalize__(self, "map")
@@ -12593,6 +14290,16 @@ class DataFrame(NDFrame, OpsMixin):
         other: Series,
         ignore_index: bool = False,
     ) -> DataFrame:
+        # [FUNCTION DOC]
+        # HELPER: Appends a single row (given as a Series) to the end of the frame,
+        # returning a new frame. Inputs: other (Series; asserted), ignore_index (default
+        # false). If the Series has no name and ignore_index is false raises a type
+        # error. Builds the label index from the Series name using the frame's index
+        # name(s); converts the Series to a one-row frame via transpose, casts the row's
+        # index to the original extension index type when applicable, infers better
+        # dtypes, renames the axis names, and concatenates with the original frame
+        # (ignoring labels if requested). Returns the concatenated frame with metadata
+        # finalized (method append).
         assert isinstance(other, Series), type(other)
 
         if other.name is None and not ignore_index:
@@ -12638,6 +14345,26 @@ class DataFrame(NDFrame, OpsMixin):
         sort: bool = False,
         validate: JoinValidate | None = None,
     ) -> DataFrame:
+        # [FUNCTION DOC]
+        # Join columns of another DataFrame (or several objects) on the index or on a
+        # key column.
+        # Parameters: other (DataFrame, a named Series, or a list of DataFrames/Series);
+        # on (column(s) of this frame to match with the other's index; default the
+        # index); how ("left" default, "right", "outer", "inner", "cross"); lsuffix and
+        # rsuffix (suffix for overlapping columns; default empty); sort (default false);
+        # validate (one_to_one / one_to_many / many_to_one / many_to_many check).
+        # Behavior: a Series needs a name (value error otherwise) and is converted to a
+        # frame. For a single frame, "cross" uses the merge function with cross
+        # semantics (without index keys); other joins use the merge function with
+        # left_on from on, left_index true when on is nothing, right_index true and the
+        # suffixes. For a list of objects: on given raises a value error (only index
+        # joins); suffixes given raise a value error; builds the list of frames; if all
+        # indexes are unique it can concatenate along columns: left/right joins
+        # concatenate outer (with duplicate checking) and reindex to the left or the
+        # last frame's index (sorted if requested); other joins concatenate with the
+        # join type (outer forces sorting). If any index is non-unique falls back to
+        # repeated pairwise merges on the index with the how, sort and validate options.
+        # Returns a DataFrame.
         """
         Join columns of another DataFrame.
 
@@ -12895,6 +14622,15 @@ class DataFrame(NDFrame, OpsMixin):
         indicator: str | bool = False,
         validate: MergeValidate | None = None,
     ) -> DataFrame:
+        # [FUNCTION DOC]
+        # Merge with another DataFrame or named Series using database-style join
+        # semantics. Documentation is generated from the shared merge template by
+        # decorators. Parameters: right, how (default "inner"), on, left_on, right_on,
+        # left_index, right_index, sort (default false), suffixes (default "_x","_y"),
+        # copy (deprecated; only checked for the deprecation), indicator (bool or column
+        # name), validate. Checks the deprecated copy argument, lazily imports the merge
+        # function from the reshape package and returns its result for this frame and
+        # the arguments (copy is not forwarded). Returns a DataFrame.
         self._check_copy_deprecation(copy)
 
         from pandas.core.reshape.merge import merge
@@ -12917,6 +14653,24 @@ class DataFrame(NDFrame, OpsMixin):
     def round(
         self, decimals: int | dict[IndexLabel, int] | Series = 0, *args, **kwargs
     ) -> DataFrame:
+        # [FUNCTION DOC]
+        # Round the frame to a variable number of decimal places.
+        # Parameters: decimals (int applied to all columns; or a dict or Series mapping
+        # column label to int, columns not listed are unchanged; default 0); positional
+        # and keyword arguments are accepted only for numpy compatibility (validated).
+        # Behavior: validates numpy-style arguments. For a dict or Series: a Series with
+        # a non-unique index raises a value error; non-integer values raise a type
+        # error; each column is rounded by its entry: numeric (integer or float) columns
+        # are rounded; datetime-like (datetime, timedelta, period) columns warn (user
+        # warning) that rounding has no effect and are returned as is; other columns are
+        # returned unchanged; columns not in the mapping are unchanged; the pieces are
+        # concatenated along columns and rebuilt with the original labels. For an
+        # integer: rounds through the manager and finalizes metadata (method round). Any
+        # other type raises a type error. Returns a DataFrame (a shallow copy when there
+        # are no columns).
+        # KNOWN ISSUE: the final check tests whether the list of rounded columns is not
+        # nothing, but that variable is always defined as a list here, so only the
+        # length test is meaningful.
         """
         Round numeric columns in a DataFrame to a variable number of decimal places.
 
@@ -13004,6 +14758,11 @@ class DataFrame(NDFrame, OpsMixin):
         from pandas.core.reshape.concat import concat
 
         def _dict_round(df: DataFrame, decimals) -> Iterator[Series]:
+            # [FUNCTION DOC]
+            # HELPER: Nested generator of round. For a frame and a mapping of decimals,
+            # yields for each column the column rounded with the decimals for its label,
+            # or the column unchanged when the label is not in the mapping (a missing
+            # key is caught and handled).
             for col, vals in df.items():
                 try:
                     yield _series_round(vals, decimals[col])
@@ -13011,6 +14770,11 @@ class DataFrame(NDFrame, OpsMixin):
                     yield vals
 
         def _series_round(ser: Series, decimals: int) -> Series:
+            # [FUNCTION DOC]
+            # HELPER: Nested helper of round. Rounds an integer or float Series to the
+            # given decimals; for datetime-like, timedelta-like or period-valued Series
+            # emits a user warning that rounding has no effect and suggests the datetime
+            # accessor; returns the Series (rounded or unchanged).
             if is_integer_dtype(ser.dtype) or is_float_dtype(ser.dtype):
                 return ser.round(decimals)
             elif isinstance(ser._values, (DatetimeArray, TimedeltaArray, PeriodArray)):
@@ -13063,6 +14827,21 @@ class DataFrame(NDFrame, OpsMixin):
         min_periods: int = 1,
         numeric_only: bool = False,
     ) -> DataFrame:
+        # [FUNCTION DOC]
+        # Compute pairwise correlation of columns, excluding NA values.
+        # Parameters: method ("pearson" default, "kendall", "spearman", or a callable
+        # taking two 1-D arrays and returning a float); min_periods (minimum number of
+        # valid observations per pair; default 1); numeric_only (default false: restrict
+        # to numeric columns).
+        # Behavior: selects the numeric data if requested; converts to a float numpy
+        # matrix with NaN for missing. Pearson and Spearman use compiled pairwise
+        # routines with min_periods. Kendall or a callable: transposes the matrix,
+        # defaults a missing min_periods to 1, and fills a symmetric matrix by looping
+        # over column pairs: pairs with fewer valid (finite) paired observations than
+        # min_periods yield NaN, the diagonal is 1, others call the correlation function
+        # on the valid values. Any other method raises a value error listing the
+        # options. Returns a square DataFrame labeled by the selected columns on both
+        # axes, with metadata finalized (method corr).
         """
         Compute pairwise correlation of columns, excluding NA/null values.
 
@@ -13178,6 +14957,18 @@ class DataFrame(NDFrame, OpsMixin):
         ddof: int | None = 1,
         numeric_only: bool = False,
     ) -> DataFrame:
+        # [FUNCTION DOC]
+        # Compute pairwise covariance of columns, excluding NA values.
+        # Parameters: min_periods (minimum observations per pair; default nothing), ddof
+        # (delta degrees of freedom; default 1; only used when there are no missing
+        # values), numeric_only (default false).
+        # Behavior: selects numeric data if requested. Raises a type error if any block
+        # has datetime64 or timedelta64 dtype. Converts to a float matrix. If there are
+        # no missing values: if min_periods exceeds the number of rows the result is all
+        # NaN, otherwise uses the numpy covariance with ddof, reshaped square. With
+        # missing values uses the compiled pairwise covariance routine with min_periods
+        # (ddof ignored). Returns a square DataFrame labeled by the selected columns,
+        # with metadata finalized (method cov).
         """
         Compute pairwise covariance of columns, excluding NA/null values.
 
@@ -13316,6 +15107,27 @@ class DataFrame(NDFrame, OpsMixin):
         numeric_only: bool = False,
         min_periods: int | None = None,
     ) -> Series:
+        # [FUNCTION DOC]
+        # Compute pairwise correlation between the rows or columns of this frame and
+        # those of another.
+        # Parameters: other (DataFrame or Series); axis (0 or "index" default: correlate
+        # columns, 1 or "columns": rows); drop (bool, default false: drop missing label
+        # pairs rather than reporting NaN); method (pearson, kendall, spearman or
+        # callable); numeric_only (default false); min_periods (only for the Series
+        # case).
+        # Behavior: with a Series other applies the Series correlation (with method and
+        # min_periods) to each column/row of this frame. Otherwise inner-aligns both
+        # frames on their labels (restricting other to numeric columns if requested) and
+        # transposes both for axis 1. Pearson is computed directly from demeaned data
+        # after masking missing pairs (sum of products of the demeaned data divided by
+        # the product of counts minus one times the two standard deviations). Kendall,
+        # Spearman or a callable compute per column pair using the nan-aware correlation
+        # routine over the transposed values. Other methods raise a value error. Unless
+        # drop is true, missing labels (union of labels on the other axis minus those
+        # correlated) are appended with NaN. Returns a Series.
+        # KNOWN ISSUE: min_periods is only honored when other is a Series; it is
+        # silently ignored for DataFrame inputs, although it is accepted without
+        # restriction.
         """
         Compute pairwise correlation.
 
@@ -13423,6 +15235,10 @@ class DataFrame(NDFrame, OpsMixin):
         elif method in ["kendall", "spearman"] or callable(method):
 
             def c(x):
+                # [FUNCTION DOC]
+                # HELPER: Nested function of corrwith that receives a pair of aligned
+                # 1-D arrays and returns their correlation using the nan-aware
+                # correlation routine with the chosen method.
                 return nanops.nancorr(x[0], x[1], method=method)
 
             correl = self._constructor_sliced(
@@ -13456,6 +15272,14 @@ class DataFrame(NDFrame, OpsMixin):
     # ndarray-like stats methods
 
     def count(self, axis: Axis = 0, numeric_only: bool = False) -> Series:
+        # [FUNCTION DOC]
+        # Count non-NA cells for each column or row.
+        # Parameters: axis (0 or "index" default: count per column; 1 or "columns":
+        # count per row); numeric_only (default false: include only numeric columns).
+        # Behavior: selects numeric data if requested. If the chosen axis is empty
+        # returns a zero Series on the aggregation axis; otherwise sums the non-missing
+        # mask along the axis. Returns a Series of 64-bit integers with metadata
+        # finalized (method count).
         """
         Count non-NA cells for each column or row.
 
@@ -13546,6 +15370,31 @@ class DataFrame(NDFrame, OpsMixin):
         filter_type=None,
         **kwds,
     ):
+        # [FUNCTION DOC]
+        # HELPER: Core reduction used by sum, mean, any, all, and similar. Inputs: op
+        # (the numpy-like reduction function from the nan-aware module), name (the
+        # reduction's name), keyword-only axis (0, 1 or nothing for the whole frame;
+        # default 0), skipna (default true), numeric_only (default false), filter_type
+        # (nothing, or "bool" for logical reductions which select boolean columns and
+        # force a boolean result type), extra keyword arguments for the op.
+        # Behavior: asserts filter_type is nothing or "bool". Normalizes the axis.
+        # Defines nested functions: func (applies op to a 2-D array), blk_func (applies
+        # a reduction on a block's values, using the extension array's own reduce when
+        # the values are extension arrays, with the keepdims option for 1-D-only ones),
+        # and _get_data (selects numeric or boolean data). Subsets to numeric/boolean
+        # columns when numeric_only. For axis nothing: finds a common dtype across
+        # blocks; for an extension dtype, casts the frame, concatenates all columns into
+        # one array and reduces it; otherwise reduces the full values array and unboxes
+        # a numpy scalar. For axis 1: an empty row set reduces along axis 0 and keeps
+        # the empty result with the row index (since a transpose would lose dtype); with
+        # columns and a common extension dtype takes a fast path that flattens the frame
+        # into one array with row identifiers and does a group-by aggregation per row
+        # (renaming argmax/argmin to idxmax/idxmin; for the all reduction forces skipna
+        # true for backward compatibility); otherwise transposes. Remaining case:
+        # reduces each block via the manager, takes the first row as a Series with the
+        # name cleared; for logical reductions casts to the boolean type unless it is
+        # already the nullable boolean; for other reductions on object-dtype frames
+        # (except any/all) casts to object. Returns a Series or scalar.
         assert filter_type is None or filter_type == "bool", filter_type
         out_dtype = "bool" if filter_type == "bool" else None
 
@@ -13553,10 +15402,20 @@ class DataFrame(NDFrame, OpsMixin):
             axis = self._get_axis_number(axis)
 
         def func(values: np.ndarray):
+            # [FUNCTION DOC]
+            # HELPER: Nested function of _reduce applying the reduction op to a 2-D
+            # array along the enclosing axis with the enclosing skipna and extra keyword
+            # arguments. Used only when operating on the whole frame's values.
             # We only use this in the case that operates on self.values
             return op(values, axis=axis, skipna=skipna, **kwds)
 
         def blk_func(values, axis: Axis = 1):
+            # [FUNCTION DOC]
+            # HELPER: Nested function of _reduce applied to each block's values via the
+            # manager. Extension arrays are reduced through their own reduce method by
+            # name (passing the keepdims option for 1-D-only extension types and axis 1
+            # otherwise); numpy arrays use the op with the given axis (default 1) and
+            # the enclosing skipna and keyword arguments.
             if isinstance(values, ExtensionArray):
                 if not is_1d_only_ea_dtype(values.dtype):
                     return values._reduce(name, axis=1, skipna=skipna, **kwds)
@@ -13565,6 +15424,10 @@ class DataFrame(NDFrame, OpsMixin):
                 return op(values, axis=axis, skipna=skipna, **kwds)
 
         def _get_data() -> DataFrame:
+            # [FUNCTION DOC]
+            # HELPER: Nested function of _reduce returning the numeric-only subset of
+            # the frame when no filter type is set, or the boolean-only subset when the
+            # filter type is the logical one.
             if filter_type is None:
                 data = self._get_numeric_data()
             else:
@@ -13643,6 +15506,13 @@ class DataFrame(NDFrame, OpsMixin):
         return out
 
     def _reduce_axis1(self, name: str, func, skipna: bool) -> Series:
+        # [FUNCTION DOC]
+        # HELPER: Fast reduction across columns for logical reductions (any/all) block
+        # by block. Inputs: name ("all" or "any"; else not-implemented error), func (the
+        # nan-aware logical reduction), skipna. Starts with an all-true array (for all)
+        # or all-false array (for any) of the frame length, and for each block combines
+        # the per-row reduction of that block with the running result using logical-and
+        # (all) or logical-or (any). Returns a Series with the frame's index.
         """
         Special case for _reduce to try to avoid a potentially-expensive transpose.
 
@@ -13679,7 +15549,11 @@ class DataFrame(NDFrame, OpsMixin):
         bool_only: bool = ...,
         skipna: bool = ...,
         **kwargs,
-    ) -> Series: ...
+    ) -> Series:
+        # [FUNCTION DOC]
+        # Typing overload stub: any with the default axis returns a Series.
+        # Implementation follows.
+        ...
 
     @overload
     def any(
@@ -13689,7 +15563,11 @@ class DataFrame(NDFrame, OpsMixin):
         bool_only: bool = ...,
         skipna: bool = ...,
         **kwargs,
-    ) -> bool: ...
+    ) -> bool:
+        # [FUNCTION DOC]
+        # Typing overload stub: any with axis nothing returns a bool. Implementation
+        # follows.
+        ...
 
     @overload
     def any(
@@ -13699,7 +15577,11 @@ class DataFrame(NDFrame, OpsMixin):
         bool_only: bool = ...,
         skipna: bool = ...,
         **kwargs,
-    ) -> Series | bool: ...
+    ) -> Series | bool:
+        # [FUNCTION DOC]
+        # Typing overload stub: any with a general axis returns a Series or bool.
+        # Implementation follows.
+        ...
 
     def any(
         self,
@@ -13709,6 +15591,17 @@ class DataFrame(NDFrame, OpsMixin):
         skipna: bool = True,
         **kwargs,
     ) -> Series | bool:
+        # [FUNCTION DOC]
+        # Return whether any element is true (or truthy) along an axis (keyword-only
+        # arguments).
+        # Parameters: axis (0 default: per column; 1: per row; nothing: reduce the whole
+        # frame to a scalar); bool_only (default false: restrict to boolean columns);
+        # skipna (default true: exclude missing values); extra keyword arguments for
+        # numpy compatibility.
+        # Behavior: delegates to the generic logical reduction helper of the base class
+        # with the name "any" and the nan-aware any function. If the result is a Series,
+        # finalizes metadata (method any). Returns a Series, or a bool when axis is
+        # nothing.
         """
         Return whether any element is True, potentially over an axis.
 
@@ -13836,7 +15729,11 @@ class DataFrame(NDFrame, OpsMixin):
         bool_only: bool = ...,
         skipna: bool = ...,
         **kwargs,
-    ) -> Series: ...
+    ) -> Series:
+        # [FUNCTION DOC]
+        # Typing overload stub: all with the default axis returns a Series.
+        # Implementation follows.
+        ...
 
     @overload
     def all(
@@ -13846,7 +15743,11 @@ class DataFrame(NDFrame, OpsMixin):
         bool_only: bool = ...,
         skipna: bool = ...,
         **kwargs,
-    ) -> bool: ...
+    ) -> bool:
+        # [FUNCTION DOC]
+        # Typing overload stub: all with axis nothing returns a bool. Implementation
+        # follows.
+        ...
 
     @overload
     def all(
@@ -13856,7 +15757,11 @@ class DataFrame(NDFrame, OpsMixin):
         bool_only: bool = ...,
         skipna: bool = ...,
         **kwargs,
-    ) -> Series | bool: ...
+    ) -> Series | bool:
+        # [FUNCTION DOC]
+        # Typing overload stub: all with a general axis returns a Series or bool.
+        # Implementation follows.
+        ...
 
     @deprecate_nonkeyword_arguments(Pandas4Warning, allowed_args=["self"], name="all")
     def all(
@@ -13866,6 +15771,15 @@ class DataFrame(NDFrame, OpsMixin):
         skipna: bool = True,
         **kwargs,
     ) -> Series | bool:
+        # [FUNCTION DOC]
+        # Return whether all elements are true (or truthy) along an axis.
+        # Parameters: axis (0 default; 1; or nothing for the whole frame), bool_only
+        # (default false), skipna (default true), extra keyword arguments for numpy
+        # compatibility. Passing these positionally is deprecated (decorator emits a
+        # next-major-version warning; unlike any, whose arguments are keyword-only).
+        # Behavior: delegates to the generic logical reduction helper with the name
+        # "all" and the nan-aware all function; finalizes metadata (method all) when the
+        # result is a Series. Returns a Series or a bool.
         """
         Return whether all elements are True, potentially over an axis.
 
@@ -13967,7 +15881,11 @@ class DataFrame(NDFrame, OpsMixin):
         skipna: bool = ...,
         numeric_only: bool = ...,
         **kwargs,
-    ) -> Series: ...
+    ) -> Series:
+        # [FUNCTION DOC]
+        # Typing overload stub: min with the default axis returns a Series.
+        # Implementation follows.
+        ...
 
     @overload
     def min(
@@ -13977,7 +15895,11 @@ class DataFrame(NDFrame, OpsMixin):
         skipna: bool = ...,
         numeric_only: bool = ...,
         **kwargs,
-    ) -> Any: ...
+    ) -> Any:
+        # [FUNCTION DOC]
+        # Typing overload stub: min with axis nothing returns a scalar of any type.
+        # Implementation follows.
+        ...
 
     @overload
     def min(
@@ -13987,7 +15909,11 @@ class DataFrame(NDFrame, OpsMixin):
         skipna: bool = ...,
         numeric_only: bool = ...,
         **kwargs,
-    ) -> Series | Any: ...
+    ) -> Series | Any:
+        # [FUNCTION DOC]
+        # Typing overload stub: min with a general axis returns a Series or scalar.
+        # Implementation follows.
+        ...
 
     @deprecate_nonkeyword_arguments(Pandas4Warning, allowed_args=["self"], name="min")
     def min(
@@ -13997,6 +15923,13 @@ class DataFrame(NDFrame, OpsMixin):
         numeric_only: bool = False,
         **kwargs,
     ) -> Series | Any:
+        # [FUNCTION DOC]
+        # Return the minimum of the values over the requested axis. Parameters: axis (0
+        # default, 1, or nothing for the whole frame), skipna (default true),
+        # numeric_only (default false), extra keyword arguments for numpy compatibility.
+        # Positional use is deprecated through a decorator. Delegates to the base class
+        # minimum and finalizes metadata (method min) when the result is a Series.
+        # Returns a Series or scalar.
         """
         Return the minimum of the values over the requested axis.
 
@@ -14074,7 +16007,11 @@ class DataFrame(NDFrame, OpsMixin):
         skipna: bool = ...,
         numeric_only: bool = ...,
         **kwargs,
-    ) -> Series: ...
+    ) -> Series:
+        # [FUNCTION DOC]
+        # Typing overload stub: max with the default axis returns a Series.
+        # Implementation follows.
+        ...
 
     @overload
     def max(
@@ -14084,7 +16021,11 @@ class DataFrame(NDFrame, OpsMixin):
         skipna: bool = ...,
         numeric_only: bool = ...,
         **kwargs,
-    ) -> Any: ...
+    ) -> Any:
+        # [FUNCTION DOC]
+        # Typing overload stub: max with axis nothing returns a scalar of any type.
+        # Implementation follows.
+        ...
 
     @overload
     def max(
@@ -14094,7 +16035,11 @@ class DataFrame(NDFrame, OpsMixin):
         skipna: bool = ...,
         numeric_only: bool = ...,
         **kwargs,
-    ) -> Series | Any: ...
+    ) -> Series | Any:
+        # [FUNCTION DOC]
+        # Typing overload stub: max with a general axis returns a Series or scalar.
+        # Implementation follows.
+        ...
 
     @deprecate_nonkeyword_arguments(Pandas4Warning, allowed_args=["self"], name="max")
     def max(
@@ -14104,6 +16049,11 @@ class DataFrame(NDFrame, OpsMixin):
         numeric_only: bool = False,
         **kwargs,
     ) -> Series | Any:
+        # [FUNCTION DOC]
+        # Return the maximum of the values over the requested axis. Same parameters as
+        # min (axis, skipna, numeric_only, extra keywords) with the same deprecation of
+        # positional use. Delegates to the base class maximum and finalizes metadata
+        # (method max) for Series results. Returns a Series or scalar.
         """
         Return the maximum of the values over the requested axis.
 
@@ -14181,6 +16131,14 @@ class DataFrame(NDFrame, OpsMixin):
         min_count: int = 0,
         **kwargs,
     ) -> Series:
+        # [FUNCTION DOC]
+        # Return the sum over the requested axis. Parameters: axis (0 default, 1, or
+        # nothing), skipna (default true), numeric_only (default false), min_count
+        # (minimum number of valid values required, else the result is missing; default
+        # 0), extra keyword arguments for numpy compatibility. Positional use is
+        # deprecated via a decorator. Delegates to the base class sum and finalizes
+        # metadata (method sum) for Series results. Returns a Series (the annotation
+        # does not include the scalar possible with axis nothing).
         """
         Return the sum of the values over the requested axis.
 
@@ -14282,6 +16240,13 @@ class DataFrame(NDFrame, OpsMixin):
         min_count: int = 0,
         **kwargs,
     ) -> Series:
+        # [FUNCTION DOC]
+        # Return the product over the requested axis. Parameters: axis (0 default, 1, or
+        # nothing), skipna (default true), numeric_only (default false), min_count
+        # (default 0), extra keyword arguments. Positional use is deprecated via a
+        # decorator. Delegates to the base class product and finalizes metadata (method
+        # prod) for Series results. Returns a Series. The class attribute named product
+        # is an alias.
         """
         Return the product of the values over the requested axis.
 
@@ -14369,7 +16334,11 @@ class DataFrame(NDFrame, OpsMixin):
         skipna: bool = ...,
         numeric_only: bool = ...,
         **kwargs,
-    ) -> Series: ...
+    ) -> Series:
+        # [FUNCTION DOC]
+        # Typing overload stub: mean with the default axis returns a Series.
+        # Implementation follows.
+        ...
 
     @overload
     def mean(
@@ -14379,7 +16348,11 @@ class DataFrame(NDFrame, OpsMixin):
         skipna: bool = ...,
         numeric_only: bool = ...,
         **kwargs,
-    ) -> Any: ...
+    ) -> Any:
+        # [FUNCTION DOC]
+        # Typing overload stub: mean with axis nothing returns a scalar of any type.
+        # Implementation follows.
+        ...
 
     @overload
     def mean(
@@ -14389,7 +16362,11 @@ class DataFrame(NDFrame, OpsMixin):
         skipna: bool = ...,
         numeric_only: bool = ...,
         **kwargs,
-    ) -> Series | Any: ...
+    ) -> Series | Any:
+        # [FUNCTION DOC]
+        # Typing overload stub: mean with a general axis returns a Series or scalar.
+        # Implementation follows.
+        ...
 
     @deprecate_nonkeyword_arguments(Pandas4Warning, allowed_args=["self"], name="mean")
     def mean(
@@ -14399,6 +16376,12 @@ class DataFrame(NDFrame, OpsMixin):
         numeric_only: bool = False,
         **kwargs,
     ) -> Series | Any:
+        # [FUNCTION DOC]
+        # Return the mean of the values over the requested axis. Parameters: axis (0
+        # default, 1, or nothing), skipna (default true), numeric_only (default false),
+        # extra keyword arguments. Positional use is deprecated via a decorator.
+        # Delegates to the base class mean and finalizes metadata (method mean) for
+        # Series results.
         """
         Return the mean of the values over the requested axis.
 
@@ -14488,7 +16471,11 @@ class DataFrame(NDFrame, OpsMixin):
         skipna: bool = ...,
         numeric_only: bool = ...,
         **kwargs,
-    ) -> Series: ...
+    ) -> Series:
+        # [FUNCTION DOC]
+        # Typing overload stub: median with the default axis returns a Series.
+        # Implementation follows.
+        ...
 
     @overload
     def median(
@@ -14498,7 +16485,11 @@ class DataFrame(NDFrame, OpsMixin):
         skipna: bool = ...,
         numeric_only: bool = ...,
         **kwargs,
-    ) -> Any: ...
+    ) -> Any:
+        # [FUNCTION DOC]
+        # Typing overload stub: median with axis nothing returns a scalar of any type.
+        # Implementation follows.
+        ...
 
     @overload
     def median(
@@ -14508,7 +16499,11 @@ class DataFrame(NDFrame, OpsMixin):
         skipna: bool = ...,
         numeric_only: bool = ...,
         **kwargs,
-    ) -> Series | Any: ...
+    ) -> Series | Any:
+        # [FUNCTION DOC]
+        # Typing overload stub: median with a general axis returns a Series or scalar.
+        # Implementation follows.
+        ...
 
     @deprecate_nonkeyword_arguments(
         Pandas4Warning, allowed_args=["self"], name="median"
@@ -14520,6 +16515,12 @@ class DataFrame(NDFrame, OpsMixin):
         numeric_only: bool = False,
         **kwargs,
     ) -> Series | Any:
+        # [FUNCTION DOC]
+        # Return the median of the values over the requested axis. Parameters: axis (0
+        # default, 1, or nothing), skipna (default true), numeric_only (default false),
+        # extra keyword arguments. Positional use is deprecated via a decorator.
+        # Delegates to the base class median and finalizes metadata (method median) for
+        # Series results.
         """
         Return the median of the values over the requested axis.
 
@@ -14610,7 +16611,11 @@ class DataFrame(NDFrame, OpsMixin):
         ddof: int = ...,
         numeric_only: bool = ...,
         **kwargs,
-    ) -> Series: ...
+    ) -> Series:
+        # [FUNCTION DOC]
+        # Typing overload stub: sem with the default axis returns a Series.
+        # Implementation follows.
+        ...
 
     @overload
     def sem(
@@ -14621,7 +16626,11 @@ class DataFrame(NDFrame, OpsMixin):
         ddof: int = ...,
         numeric_only: bool = ...,
         **kwargs,
-    ) -> Any: ...
+    ) -> Any:
+        # [FUNCTION DOC]
+        # Typing overload stub: sem with axis nothing returns a scalar of any type.
+        # Implementation follows.
+        ...
 
     @overload
     def sem(
@@ -14632,7 +16641,11 @@ class DataFrame(NDFrame, OpsMixin):
         ddof: int = ...,
         numeric_only: bool = ...,
         **kwargs,
-    ) -> Series | Any: ...
+    ) -> Series | Any:
+        # [FUNCTION DOC]
+        # Typing overload stub: sem with a general axis returns a Series or scalar.
+        # Implementation follows.
+        ...
 
     @deprecate_nonkeyword_arguments(Pandas4Warning, allowed_args=["self"], name="sem")
     def sem(
@@ -14643,6 +16656,12 @@ class DataFrame(NDFrame, OpsMixin):
         numeric_only: bool = False,
         **kwargs,
     ) -> Series | Any:
+        # [FUNCTION DOC]
+        # Return the unbiased standard error of the mean over the requested axis.
+        # Parameters: axis (0 default, 1, or nothing), skipna (default true), ddof
+        # (delta degrees of freedom; default 1), numeric_only (default false), extra
+        # keyword arguments. Positional use is deprecated via a decorator. Delegates to
+        # the base class sem and finalizes metadata (method sem) for Series results.
         """
         Return unbiased standard error of the mean over requested axis.
 
@@ -14730,7 +16749,11 @@ class DataFrame(NDFrame, OpsMixin):
         ddof: int = ...,
         numeric_only: bool = ...,
         **kwargs,
-    ) -> Series: ...
+    ) -> Series:
+        # [FUNCTION DOC]
+        # Typing overload stub: var with the default axis returns a Series.
+        # Implementation follows.
+        ...
 
     @overload
     def var(
@@ -14741,7 +16764,11 @@ class DataFrame(NDFrame, OpsMixin):
         ddof: int = ...,
         numeric_only: bool = ...,
         **kwargs,
-    ) -> Any: ...
+    ) -> Any:
+        # [FUNCTION DOC]
+        # Typing overload stub: var with axis nothing returns a scalar of any type.
+        # Implementation follows.
+        ...
 
     @overload
     def var(
@@ -14752,7 +16779,11 @@ class DataFrame(NDFrame, OpsMixin):
         ddof: int = ...,
         numeric_only: bool = ...,
         **kwargs,
-    ) -> Series | Any: ...
+    ) -> Series | Any:
+        # [FUNCTION DOC]
+        # Typing overload stub: var with a general axis returns a Series or scalar.
+        # Implementation follows.
+        ...
 
     @deprecate_nonkeyword_arguments(Pandas4Warning, allowed_args=["self"], name="var")
     def var(
@@ -14763,6 +16794,12 @@ class DataFrame(NDFrame, OpsMixin):
         numeric_only: bool = False,
         **kwargs,
     ) -> Series | Any:
+        # [FUNCTION DOC]
+        # Return the unbiased variance over the requested axis. Parameters: axis (0
+        # default, 1, or nothing), skipna (default true), ddof (default 1; divisor is
+        # the count minus ddof), numeric_only (default false), extra keyword arguments.
+        # Positional use is deprecated via a decorator. Delegates to the base class var
+        # and finalizes metadata (method var) for Series results.
         """
         Return unbiased variance over requested axis.
 
@@ -14849,7 +16886,11 @@ class DataFrame(NDFrame, OpsMixin):
         ddof: int = ...,
         numeric_only: bool = ...,
         **kwargs,
-    ) -> Series: ...
+    ) -> Series:
+        # [FUNCTION DOC]
+        # Typing overload stub: std with the default axis returns a Series.
+        # Implementation follows.
+        ...
 
     @overload
     def std(
@@ -14860,7 +16901,11 @@ class DataFrame(NDFrame, OpsMixin):
         ddof: int = ...,
         numeric_only: bool = ...,
         **kwargs,
-    ) -> Any: ...
+    ) -> Any:
+        # [FUNCTION DOC]
+        # Typing overload stub: std with axis nothing returns a scalar of any type.
+        # Implementation follows.
+        ...
 
     @overload
     def std(
@@ -14871,7 +16916,11 @@ class DataFrame(NDFrame, OpsMixin):
         ddof: int = ...,
         numeric_only: bool = ...,
         **kwargs,
-    ) -> Series | Any: ...
+    ) -> Series | Any:
+        # [FUNCTION DOC]
+        # Typing overload stub: std with a general axis returns a Series or scalar.
+        # Implementation follows.
+        ...
 
     @deprecate_nonkeyword_arguments(Pandas4Warning, allowed_args=["self"], name="std")
     def std(
@@ -14882,6 +16931,12 @@ class DataFrame(NDFrame, OpsMixin):
         numeric_only: bool = False,
         **kwargs,
     ) -> Series | Any:
+        # [FUNCTION DOC]
+        # Return the sample standard deviation over the requested axis. Parameters: axis
+        # (0 default, 1, or nothing), skipna (default true), ddof (default 1),
+        # numeric_only (default false), extra keyword arguments. Positional use is
+        # deprecated via a decorator. Delegates to the base class std and finalizes
+        # metadata (method std) for Series results.
         """
         Return sample standard deviation over requested axis.
 
@@ -14974,7 +17029,11 @@ class DataFrame(NDFrame, OpsMixin):
         skipna: bool = ...,
         numeric_only: bool = ...,
         **kwargs,
-    ) -> Series: ...
+    ) -> Series:
+        # [FUNCTION DOC]
+        # Typing overload stub: skew with the default axis returns a Series.
+        # Implementation follows.
+        ...
 
     @overload
     def skew(
@@ -14984,7 +17043,11 @@ class DataFrame(NDFrame, OpsMixin):
         skipna: bool = ...,
         numeric_only: bool = ...,
         **kwargs,
-    ) -> Any: ...
+    ) -> Any:
+        # [FUNCTION DOC]
+        # Typing overload stub: skew with axis nothing returns a scalar of any type.
+        # Implementation follows.
+        ...
 
     @overload
     def skew(
@@ -14994,7 +17057,11 @@ class DataFrame(NDFrame, OpsMixin):
         skipna: bool = ...,
         numeric_only: bool = ...,
         **kwargs,
-    ) -> Series | Any: ...
+    ) -> Series | Any:
+        # [FUNCTION DOC]
+        # Typing overload stub: skew with a general axis returns a Series or scalar.
+        # Implementation follows.
+        ...
 
     @deprecate_nonkeyword_arguments(Pandas4Warning, allowed_args=["self"], name="skew")
     def skew(
@@ -15004,6 +17071,11 @@ class DataFrame(NDFrame, OpsMixin):
         numeric_only: bool = False,
         **kwargs,
     ) -> Series | Any:
+        # [FUNCTION DOC]
+        # Return the unbiased skew over the requested axis. Parameters: axis (0 default,
+        # 1, or nothing), skipna (default true), numeric_only (default false), extra
+        # keyword arguments. Positional use is deprecated via a decorator. Delegates to
+        # the base class skew and finalizes metadata (method skew) for Series results.
         """
         Return unbiased skew over requested axis.
 
@@ -15094,7 +17166,11 @@ class DataFrame(NDFrame, OpsMixin):
         skipna: bool = ...,
         numeric_only: bool = ...,
         **kwargs,
-    ) -> Series: ...
+    ) -> Series:
+        # [FUNCTION DOC]
+        # Typing overload stub: kurt with the default axis returns a Series.
+        # Implementation follows.
+        ...
 
     @overload
     def kurt(
@@ -15104,7 +17180,11 @@ class DataFrame(NDFrame, OpsMixin):
         skipna: bool = ...,
         numeric_only: bool = ...,
         **kwargs,
-    ) -> Any: ...
+    ) -> Any:
+        # [FUNCTION DOC]
+        # Typing overload stub: kurt with axis nothing returns a scalar of any type.
+        # Implementation follows.
+        ...
 
     @overload
     def kurt(
@@ -15114,7 +17194,11 @@ class DataFrame(NDFrame, OpsMixin):
         skipna: bool = ...,
         numeric_only: bool = ...,
         **kwargs,
-    ) -> Series | Any: ...
+    ) -> Series | Any:
+        # [FUNCTION DOC]
+        # Typing overload stub: kurt with a general axis returns a Series or scalar.
+        # Implementation follows.
+        ...
 
     @deprecate_nonkeyword_arguments(Pandas4Warning, allowed_args=["self"], name="kurt")
     def kurt(
@@ -15124,6 +17208,13 @@ class DataFrame(NDFrame, OpsMixin):
         numeric_only: bool = False,
         **kwargs,
     ) -> Series | Any:
+        # [FUNCTION DOC]
+        # Return the unbiased kurtosis (Fisher definition, normal gives 0) over the
+        # requested axis. Parameters: axis (0 default, 1, or nothing), skipna (default
+        # true), numeric_only (default false), extra keyword arguments. Positional use
+        # is deprecated via a decorator. Delegates to the base class kurt and finalizes
+        # metadata (method kurt) for Series results. The class attribute named kurtosis
+        # is an alias.
         """
         Return unbiased kurtosis over requested axis.
 
@@ -15222,6 +17313,13 @@ class DataFrame(NDFrame, OpsMixin):
         *args,
         **kwargs,
     ) -> Self:
+        # [FUNCTION DOC]
+        # Cumulative minimum over an axis. Parameters: axis (0 default or 1), skipna
+        # (default true), numeric_only (default false: restrict to numeric columns),
+        # plus extra positional and keyword arguments for numpy compatibility. Selects
+        # numeric data if requested and calls the base class cumulative minimum on that
+        # data. Returns a frame of the same shape (columns excluded by numeric_only are
+        # dropped).
         """
         Return cumulative minimum over a DataFrame or Series axis.
 
@@ -15331,6 +17429,12 @@ class DataFrame(NDFrame, OpsMixin):
         *args,
         **kwargs,
     ) -> Self:
+        # [FUNCTION DOC]
+        # Cumulative maximum over an axis. Parameters: axis (0 default or 1), skipna
+        # (default true), numeric_only (default false), plus extra arguments for numpy
+        # compatibility. Selects numeric data if requested and calls the base class
+        # cumulative maximum on it. Returns a frame of the same shape (non-numeric
+        # columns dropped if numeric_only).
         """
         Return cumulative maximum over a DataFrame or Series axis.
 
@@ -15440,6 +17544,11 @@ class DataFrame(NDFrame, OpsMixin):
         *args,
         **kwargs,
     ) -> Self:
+        # [FUNCTION DOC]
+        # Cumulative sum over an axis. Parameters: axis (0 default or 1), skipna
+        # (default true), numeric_only (default false), plus extra arguments for numpy
+        # compatibility. Selects numeric data if requested and calls the base class
+        # cumulative sum on it. Returns a frame of the same shape.
         """
         Return cumulative sum over a DataFrame or Series axis.
 
@@ -15549,6 +17658,11 @@ class DataFrame(NDFrame, OpsMixin):
         *args,
         **kwargs,
     ) -> Self:
+        # [FUNCTION DOC]
+        # Cumulative product over an axis. Parameters: axis (0 default or 1), skipna
+        # (default true), numeric_only (default false), plus extra arguments for numpy
+        # compatibility. Selects numeric data if requested and calls the base class
+        # cumulative product on it. Returns a frame of the same shape.
         """
         Return cumulative product over a DataFrame or Series axis.
 
@@ -15651,6 +17765,11 @@ class DataFrame(NDFrame, OpsMixin):
         return NDFrame.cumprod(data, axis, skipna, *args, **kwargs)
 
     def nunique(self, axis: Axis = 0, dropna: bool = True) -> Series:
+        # [FUNCTION DOC]
+        # Count the number of distinct elements along an axis. Parameters: axis (0
+        # default: per column; 1: per row), dropna (default true: exclude missing).
+        # Applies the Series distinct-count method to each column/row through apply,
+        # passing dropna, and returns a Series of counts.
         """
         Count number of distinct elements in specified axis.
 
@@ -15694,6 +17813,19 @@ class DataFrame(NDFrame, OpsMixin):
     def idxmin(
         self, axis: Axis = 0, skipna: bool = True, numeric_only: bool = False
     ) -> Series:
+        # [FUNCTION DOC]
+        # Return the index label of the first occurrence of the minimum over an axis.
+        # Parameters: axis (0 default: label along index for each column; 1: label along
+        # columns for each row), skipna (default true: exclude NA; if false any NA gives
+        # an error), numeric_only (default false).
+        # Behavior: if the frame is empty but the chosen axis has labels, returns an
+        # empty Series with that axis's dtype. Selects numeric data if requested.
+        # Reduces with the nan-aware argmin function along the axis (via the reduction
+        # helper without numeric restriction) to get positions. If any position is -1
+        # raises a value error ("Encountered all NA values" with skipna true, or an NA
+        # value error with skipna false). Maps positions to labels from the axis index
+        # (with fill of the index's NA value), and builds a Series indexed by the
+        # aggregation axis. Returns it with metadata finalized (method idxmin).
         """
         Return index of first occurrence of minimum over requested axis.
 
@@ -15795,6 +17927,15 @@ class DataFrame(NDFrame, OpsMixin):
     def idxmax(
         self, axis: Axis = 0, skipna: bool = True, numeric_only: bool = False
     ) -> Series:
+        # [FUNCTION DOC]
+        # Return the index label of the first occurrence of the maximum over an axis.
+        # Parameters: axis (0 default or 1), skipna (default true), numeric_only
+        # (default false). Behavior is the mirror of idxmin: returns an empty Series for
+        # an empty frame with a non-empty axis, selects numeric data if requested,
+        # reduces with the nan-aware argmax function to get positions, raises a value
+        # error if any position is -1 (all-NA or NA with skipna false), maps positions
+        # to labels, and returns a Series indexed by the aggregation axis with metadata
+        # finalized (method idxmax).
         """
         Return index of first occurrence of maximum over requested axis.
 
@@ -15894,6 +18035,10 @@ class DataFrame(NDFrame, OpsMixin):
         return final_result.__finalize__(self, method="idxmax")
 
     def _get_agg_axis(self, axis_num: int) -> Index:
+        # [FUNCTION DOC]
+        # HELPER: Returns the axis along which an aggregation produces its result
+        # labels. Input: axis_num (0 returns the columns, 1 returns the index); any
+        # other value raises a value error reporting the invalid axis.
         """
         Let's be explicit about this.
         """
@@ -15907,6 +18052,15 @@ class DataFrame(NDFrame, OpsMixin):
     def mode(
         self, axis: Axis = 0, numeric_only: bool = False, dropna: bool = True
     ) -> DataFrame:
+        # [FUNCTION DOC]
+        # Get the mode(s) of each element along the selected axis.
+        # Parameters: axis (0 default: per column; 1: per row), numeric_only (default
+        # false), dropna (default true: do not count missing).
+        # Behavior: selects numeric data if requested, then applies the Series mode
+        # method (with dropna) along the axis; the result is a frame whose columns are
+        # the modes (padded with missing when counts differ). If the result is empty,
+        # forces the index to an empty default range for type stability. Returns a
+        # DataFrame.
         """
         Get the mode(s) of each element along the selected axis.
 
@@ -15991,6 +18145,9 @@ class DataFrame(NDFrame, OpsMixin):
         data = self if not numeric_only else self._get_numeric_data()
 
         def f(s):
+            # [FUNCTION DOC]
+            # HELPER: Nested function of mode: returns the mode(s) of the given Series
+            # using the enclosing dropna option.
             return s.mode(dropna=dropna)
 
         data = data.apply(f, axis=axis)
@@ -16008,7 +18165,11 @@ class DataFrame(NDFrame, OpsMixin):
         numeric_only: bool = ...,
         interpolation: QuantileInterpolation = ...,
         method: Literal["single", "table"] = ...,
-    ) -> Series: ...
+    ) -> Series:
+        # [FUNCTION DOC]
+        # Typing overload stub: quantile with a scalar q returns a Series.
+        # Implementation follows.
+        ...
 
     @overload
     def quantile(
@@ -16018,7 +18179,11 @@ class DataFrame(NDFrame, OpsMixin):
         numeric_only: bool = ...,
         interpolation: QuantileInterpolation = ...,
         method: Literal["single", "table"] = ...,
-    ) -> Series | DataFrame: ...
+    ) -> Series | DataFrame:
+        # [FUNCTION DOC]
+        # Typing overload stub: quantile with an array-like q returns a Series or
+        # DataFrame. Implementation follows.
+        ...
 
     @overload
     def quantile(
@@ -16028,7 +18193,11 @@ class DataFrame(NDFrame, OpsMixin):
         numeric_only: bool = ...,
         interpolation: QuantileInterpolation = ...,
         method: Literal["single", "table"] = ...,
-    ) -> Series | DataFrame: ...
+    ) -> Series | DataFrame:
+        # [FUNCTION DOC]
+        # Typing overload stub: quantile with a general q returns a Series or DataFrame.
+        # Implementation follows.
+        ...
 
     def quantile(
         self,
@@ -16038,6 +18207,27 @@ class DataFrame(NDFrame, OpsMixin):
         interpolation: QuantileInterpolation = "linear",
         method: Literal["single", "table"] = "single",
     ) -> Series | DataFrame:
+        # [FUNCTION DOC]
+        # Return values at the given quantile(s) over the requested axis.
+        # Parameters: q (float or array-like in [0,1]; default 0.5); axis (0 default or
+        # 1); numeric_only (default false); interpolation (linear default, lower,
+        # higher, midpoint, nearest; for method table only nearest, lower, higher);
+        # method ("single" default: per column; "table": across all columns jointly,
+        # sorted lexicographically).
+        # Behavior: validates q is within range. A scalar q is wrapped in a list, the
+        # call is recursed, and the result is unwrapped to a Series (single method takes
+        # the first row; table takes the first column of the transpose); for axis 1 with
+        # no rows tries to recover an appropriate datetime-like dtype. For a list q:
+        # converts q to a float index; selects numeric data if requested; transposes for
+        # axis 1. If no columns remain returns an empty frame indexed by q (with a
+        # datetime-like dtype for axis 1 where applicable), finalized. An invalid method
+        # raises a value error. Method single uses the manager's quantile. Method table
+        # requires interpolation in nearest, lower, higher (else value error); an empty
+        # frame returns an empty frame indexed by q; otherwise computes the row
+        # positions at the quantiles of the row order, lexicographically sorts rows by
+        # the columns (or by the single column), takes those rows, and relabels the row
+        # axis with q. Returns a Series (scalar q) or a DataFrame indexed by q with
+        # metadata finalized (method quantile).
         """
         Return values at the given quantile over requested axis.
 
@@ -16215,6 +18405,14 @@ class DataFrame(NDFrame, OpsMixin):
         axis: Axis = 0,
         copy: bool | lib.NoDefault = lib.no_default,
     ) -> DataFrame:
+        # [FUNCTION DOC]
+        # Cast to a DatetimeIndex of timestamps at the start (or end) of each period
+        # along an axis.
+        # Parameters: freq (target frequency; default the period index's), how ("start"
+        # default, or "end"), axis (0 default or 1), copy (deprecated; checked only).
+        # Behavior: checks the deprecated copy argument; works on a shallow copy; raises
+        # a type error if the chosen axis is not a PeriodIndex; converts that axis to
+        # timestamps with freq and how and assigns it on the copy. Returns the copy.
         """
         Cast PeriodIndex to DatetimeIndex of timestamps, at *beginning* of period.
 
@@ -16302,6 +18500,12 @@ class DataFrame(NDFrame, OpsMixin):
         axis: Axis = 0,
         copy: bool | lib.NoDefault = lib.no_default,
     ) -> DataFrame:
+        # [FUNCTION DOC]
+        # Convert the DatetimeIndex axis to a PeriodIndex at the given frequency.
+        # Parameters: freq (default: inferred from the index), axis (0 default or 1),
+        # copy (deprecated; checked only). Works on a shallow copy; raises a type error
+        # if the chosen axis is not a DatetimeIndex; converts it with the frequency and
+        # assigns it. Returns the copy.
         """
         Convert DataFrame from DatetimeIndex to PeriodIndex.
 
@@ -16374,6 +18578,20 @@ class DataFrame(NDFrame, OpsMixin):
         return new_obj
 
     def isin(self, values: Series | DataFrame | Sequence | Mapping) -> DataFrame:
+        # [FUNCTION DOC]
+        # Whether each element in the frame is contained in values.
+        # Parameter: values (iterable, Series, DataFrame or dict). Returns a boolean
+        # DataFrame of the same shape.
+        # Behavior: a dict is wrapped so missing columns map to an empty list, each
+        # column is tested against its entry, and the results are concatenated along
+        # columns. A Series must have a unique index, else value error; it is reindexed
+        # like the frame and compared equal along the index axis (matches by index
+        # label). A DataFrame must have unique columns and index, else value error;
+        # reindexed like the frame and compared equal element-wise (requires matching
+        # labels). Otherwise values must be list-like (type error for scalars/strings)
+        # and each block is tested via a nested function that works on the raveled array
+        # and restores the shape, using the manager to apply it. Metadata is finalized
+        # (method isin).
         """
         Whether each element in the DataFrame is contained in values.
 
@@ -16477,6 +18695,11 @@ class DataFrame(NDFrame, OpsMixin):
                 )
 
             def isin_(x):
+                # [FUNCTION DOC]
+                # HELPER: Nested function of isin for the list-like case. Flattens a
+                # block's values, tests membership against the enclosing values with the
+                # library's isin algorithm and reshapes the boolean result to the
+                # original block shape.
                 # error: Argument 2 to "isin" has incompatible type "Union[Series,
                 # DataFrame, Sequence[Any], Mapping[Any, Any]]"; expected
                 # "Union[Union[Union[ExtensionArray, ndarray[Any, Any]], Index,
@@ -16594,6 +18817,10 @@ class DataFrame(NDFrame, OpsMixin):
     # Internal Interface Methods
 
     def _to_dict_of_blocks(self):
+        # [FUNCTION DOC]
+        # HELPER: Returns a dictionary mapping a dtype name to a DataFrame containing
+        # all columns of that dtype (one frame per distinct dtype, built from the block
+        # manager's per-dtype split and finalized from this frame). Internal use.
         """
         Return a dict of dtype -> Constructor Types that
         each is a homogeneous dtype.
@@ -16608,6 +18835,12 @@ class DataFrame(NDFrame, OpsMixin):
 
     @property
     def values(self) -> np.ndarray:
+        # [FUNCTION DOC]
+        # Property returning the underlying data as a 2-D numpy array of shape rows by
+        # columns. For frames with a single dtype that dtype is used; for mixed dtypes
+        # the common type (often object) is used. Delegates to the block manager's
+        # whole-array conversion, which may return a view or a copy. Does not accept
+        # arguments; use the to_numpy method for control over dtype and na_value.
         """
         Return a Numpy representation of the DataFrame.
 
@@ -16690,6 +18923,11 @@ class DataFrame(NDFrame, OpsMixin):
 def _from_nested_dict(
     data: Mapping[HashableT, Mapping[HashableT2, T]],
 ) -> collections.defaultdict[HashableT2, dict[HashableT, T]]:
+    # [FUNCTION DOC]
+    # HELPER: Module-level helper for the dictionary constructors. Turns a mapping of
+    # outer key to mapping of inner key to value into a default-dictionary keyed by
+    # inner key whose values are plain dictionaries keyed by outer key. Used to rotate a
+    # dict of dicts so that inner keys become columns.
     new_data: collections.defaultdict[HashableT2, dict[HashableT, T]] = (
         collections.defaultdict(dict)
     )
@@ -16702,6 +18940,16 @@ def _from_nested_dict(
 def _reindex_for_setitem(
     value: DataFrame | Series, index: Index
 ) -> tuple[ArrayLike, BlockValuesRefs | None]:
+    # [FUNCTION DOC]
+    # HELPER: Module-level helper for column assignment. Inputs: value (a Series or
+    # DataFrame whose index may differ from the target) and index (the target row
+    # index). If the value's index equals the target (or the target is empty) returns
+    # the underlying values and their reference tracker for a Series (without copy), or
+    # a copy of the values with no tracker for a DataFrame. Otherwise reindexes the
+    # value to the target and returns the new values (no tracker). A value error from
+    # reindexing is re-raised as is when the source index is non-unique (duplicate
+    # axis), and otherwise converted into a type error saying the inserted column's
+    # index is incompatible with the frame's index.
     # reindex if necessary
 
     if value.index.equals(index) or not len(index):
