@@ -1,3 +1,11 @@
+# [MODULE DOC]
+# Tests of copy-on-write / memory-sharing semantics for type conversion
+# (astype and convert_dtypes) on DataFrame and Series.
+# Each test checks whether the result shares its underlying buffer with the
+# original (via the get_array helper from the sibling util module) and that
+# later mutation of either object never leaks into the other.
+# Also covers pickle round trips that must not alter the original data.
+
 import pickle
 
 import numpy as np
@@ -14,6 +22,12 @@ from pandas.tests.copy_view.util import get_array
 
 
 def test_astype_single_dtype():
+    # [FUNCTION DOC]
+    # Converting a mixed frame to a single float dtype: the already-float column
+    # shares memory with the original, the integer columns do not.
+    # Writing to the result triggers a copy for the shared column and leaves the
+    # original unchanged; writing to the original afterwards does not alter a fresh
+    # converted result.
     df = DataFrame({"a": [1, 2, 3], "b": [4, 5, 6], "c": 1.5})
     df_orig = df.copy()
     df2 = df.astype("float64")
@@ -35,6 +49,12 @@ def test_astype_single_dtype():
 @pytest.mark.parametrize("dtype", ["int64", "Int64"])
 @pytest.mark.parametrize("new_dtype", ["int64", "Int64", "int64[pyarrow]"])
 def test_astype_avoids_copy(dtype, new_dtype):
+    # [FUNCTION DOC]
+    # Parametrized over source dtype (int64, Int64) and target dtype (int64, Int64,
+    # int64 pyarrow; the pyarrow case is skipped if pyarrow is missing).
+    # Conversion between these equivalent integer types must share memory; mutating
+    # the result copies on write and mutating the original does not change a fresh
+    # converted result.
     if new_dtype == "int64[pyarrow]":
         pytest.importorskip("pyarrow")
     df = DataFrame({"a": [1, 2, 3]}, dtype=dtype)
@@ -55,6 +75,12 @@ def test_astype_avoids_copy(dtype, new_dtype):
 
 @pytest.mark.parametrize("dtype", ["float64", "int32", "Int32", "int32[pyarrow]"])
 def test_astype_different_target_dtype(dtype):
+    # [FUNCTION DOC]
+    # Parametrized over target dtypes that require a real conversion (float64,
+    # int32, Int32, int32 pyarrow; pyarrow case skipped when unavailable).
+    # The result must not share memory and must hold no references to other
+    # blocks; modifying it leaves the original unchanged, and modifying the original
+    # does not affect a fresh result.
     if dtype == "int32[pyarrow]":
         pytest.importorskip("pyarrow")
     df = DataFrame({"a": [1, 2, 3]})
@@ -74,6 +100,9 @@ def test_astype_different_target_dtype(dtype):
 
 
 def test_astype_numpy_to_ea():
+    # [FUNCTION DOC]
+    # Converting an int64 Series to the nullable Int64 dtype is zero-copy: the
+    # result shares its buffer with the source.
     ser = Series([1, 2, 3])
     result = ser.astype("Int64")
     assert np.shares_memory(get_array(ser), get_array(result))
@@ -83,6 +112,10 @@ def test_astype_numpy_to_ea():
     "dtype, new_dtype", [("object", "string[python]"), ("string[python]", "object")]
 )
 def test_astype_string_and_object(dtype, new_dtype):
+    # [FUNCTION DOC]
+    # Parametrized over conversion object to python string dtype and back.
+    # The result shares memory with the original, but setting a value in the result
+    # must not modify the original frame (copy on write).
     df = DataFrame({"a": ["a", "b", "c"]}, dtype=dtype)
     df_orig = df.copy()
     df2 = df.astype(new_dtype)
@@ -96,6 +129,10 @@ def test_astype_string_and_object(dtype, new_dtype):
     "dtype, new_dtype", [("object", "string[python]"), ("string[python]", "object")]
 )
 def test_astype_string_and_object_update_original(dtype, new_dtype):
+    # [FUNCTION DOC]
+    # Same parametrization as the previous test, but the original is mutated after
+    # the conversion: the converted frame (copied beforehand for comparison) must not
+    # change even though they initially share memory.
     df = DataFrame({"a": ["a", "b", "c"]}, dtype=dtype)
     df2 = df.astype(new_dtype)
     df_orig = df2.copy()
@@ -106,6 +143,10 @@ def test_astype_string_and_object_update_original(dtype, new_dtype):
 
 
 def test_astype_str_copy_on_pickle_roundrip():
+    # [FUNCTION DOC]
+    # Regression test for a GitHub issue about string conversion altering an
+    # array in place: a pickle round-tripped object-dtype Series converted to str
+    # must leave the round-tripped object equal to the original.
     # TODO(infer_string) this test can be removed after 3.0 (once str is the default)
     # https://github.com/pandas-dev/pandas/issues/54654
     # ensure_string_array may alter array inplace
@@ -116,6 +157,10 @@ def test_astype_str_copy_on_pickle_roundrip():
 
 
 def test_astype_string_copy_on_pickle_roundrip(any_string_dtype):
+    # [FUNCTION DOC]
+    # Fixture any_string_dtype supplies the target string dtype. Converting a pickle
+    # round-tripped object Series to it must not modify the source array in place;
+    # afterwards the source and the round-tripped object compare equal.
     # https://github.com/pandas-dev/pandas/issues/54654
     # ensure_string_array may alter array inplace
     base = Series(np.array([(1, 2), None, 1], dtype="object"))
@@ -125,6 +170,9 @@ def test_astype_string_copy_on_pickle_roundrip(any_string_dtype):
 
 
 def test_astype_string_read_only_on_pickle_roundrip(any_string_dtype):
+    # [FUNCTION DOC]
+    # As the previous test, but the round-tripped Series' underlying array is first
+    # marked read-only; the conversion must still succeed and leave data unchanged.
     # https://github.com/pandas-dev/pandas/issues/54654
     # ensure_string_array may alter read-only array inplace
     base = Series(np.array([(1, 2), None, 1], dtype="object"))
@@ -135,6 +183,11 @@ def test_astype_string_read_only_on_pickle_roundrip(any_string_dtype):
 
 
 def test_astype_dict_dtypes():
+    # [FUNCTION DOC]
+    # astype with a per-column mapping: columns already of the requested dtype or
+    # not mentioned share memory with the original; converted column does not.
+    # Mutating the result's columns triggers copy on write and leaves the original
+    # unchanged.
     df = DataFrame(
         {"a": [1, 2, 3], "b": [4, 5, 6], "c": Series([1.5, 1.5, 1.5], dtype="float64")}
     )
@@ -155,6 +208,9 @@ def test_astype_dict_dtypes():
 
 
 def test_astype_different_datetime_resos():
+    # [FUNCTION DOC]
+    # Casting datetime64 (ns) to millisecond resolution requires a real conversion:
+    # no memory sharing and the result block has no references.
     df = DataFrame({"a": date_range("2019-12-31", periods=2, freq="D")})
     result = df.astype("datetime64[ms]")
 
@@ -163,6 +219,9 @@ def test_astype_different_datetime_resos():
 
 
 def test_astype_different_timezones():
+    # [FUNCTION DOC]
+    # Casting a tz-aware column to a different timezone with the same unit only
+    # changes metadata: the result shares memory and still holds a reference.
     df = DataFrame(
         {"a": date_range("2019-12-31", periods=5, freq="D", tz="US/Pacific", unit="ns")}
     )
@@ -172,6 +231,9 @@ def test_astype_different_timezones():
 
 
 def test_astype_different_timezones_different_reso():
+    # [FUNCTION DOC]
+    # Casting a tz-aware column to a different timezone and a different time unit
+    # needs a real conversion: no sharing and no references.
     df = DataFrame(
         {"a": date_range("2019-12-31", periods=5, freq="D", tz="US/Pacific", unit="ns")}
     )
@@ -181,6 +243,9 @@ def test_astype_different_timezones_different_reso():
 
 
 def test_astype_arrow_timestamp():
+    # [FUNCTION DOC]
+    # Skipped without pyarrow. Casting datetime64 ns to a pyarrow timestamp dtype
+    # shares memory with the pyarrow-backed array, and the result keeps a reference.
     pytest.importorskip("pyarrow")
     df = DataFrame(
         {
@@ -197,6 +262,10 @@ def test_astype_arrow_timestamp():
 
 
 def test_convert_dtypes_infer_objects():
+    # [FUNCTION DOC]
+    # convert_dtypes with every conversion option disabled on an object Series of
+    # strings performs only object inference and should share memory with the source;
+    # setting a value in the result leaves the source unchanged.
     ser = Series(["a", "b", "c"])
     ser_orig = ser.copy()
     result = ser.convert_dtypes(
@@ -212,6 +281,11 @@ def test_convert_dtypes_infer_objects():
 
 
 def test_convert_dtypes(using_infer_string):
+    # [FUNCTION DOC]
+    # Fixture using_infer_string selects the expectation for the string column:
+    # shares memory when strings are already arrow-backed, otherwise it is converted
+    # and does not share. Integer, float and boolean columns always share memory.
+    # Mutating the result must not change the original frame.
     df = DataFrame({"a": ["a", "b"], "b": [1, 2], "c": [1.5, 2.5], "d": [True, False]})
     df_orig = df.copy()
     df2 = df.convert_dtypes()

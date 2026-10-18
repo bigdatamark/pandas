@@ -1,3 +1,9 @@
+# [MODULE DOC]
+# Tests for dtype inference from scalars and arrays in the dtype cast module
+# (scalar inference, array inference and the combined entry point), covering
+# numpy scalars, python scalars, datetimes, timedeltas, periods, intervals,
+# timezone-aware timestamps, zero-dimensional arrays and error cases.
+
 from datetime import (
     date,
     datetime,
@@ -26,6 +32,9 @@ from pandas import (
 
 
 def test_infer_dtype_from_int_scalar(any_int_numpy_dtype):
+    # [FUNCTION DOC]
+    # Fixture any_int_numpy_dtype. A numpy integer scalar of that type is inferred
+    # as exactly its own type.
     # Test that infer_dtype_from_scalar is
     # returning correct dtype for int and float.
     data = np.dtype(any_int_numpy_dtype).type(12)
@@ -34,6 +43,9 @@ def test_infer_dtype_from_int_scalar(any_int_numpy_dtype):
 
 
 def test_infer_dtype_from_float_scalar(float_numpy_dtype):
+    # [FUNCTION DOC]
+    # Fixture float_numpy_dtype. A numpy float scalar is inferred as exactly its own
+    # type.
     float_numpy_dtype = np.dtype(float_numpy_dtype).type
     data = float_numpy_dtype(12)
 
@@ -45,23 +57,33 @@ def test_infer_dtype_from_float_scalar(float_numpy_dtype):
     "data,exp_dtype", [(12, np.int64), (np.float64(12), np.float64)]
 )
 def test_infer_dtype_from_python_scalar(data, exp_dtype):
+    # [FUNCTION DOC]
+    # Parametrized over a python integer (int64) and a numpy float64 (float64).
+    # Inferred dtype equals the expected one.
     dtype, val = infer_dtype_from_scalar(data)
     assert dtype == exp_dtype
 
 
 @pytest.mark.parametrize("bool_val", [True, False])
 def test_infer_dtype_from_boolean(bool_val):
+    # [FUNCTION DOC]
+    # Parametrized over true and false: inferred dtype is numpy bool.
     dtype, val = infer_dtype_from_scalar(bool_val)
     assert dtype == np.bool_
 
 
 def test_infer_dtype_from_complex(complex_dtype):
+    # [FUNCTION DOC]
+    # Fixture complex_dtype. Any numpy complex scalar is inferred as complex128.
     data = np.dtype(complex_dtype).type(1)
     dtype, val = infer_dtype_from_scalar(data)
     assert dtype == np.complex128
 
 
 def test_infer_dtype_from_datetime():
+    # [FUNCTION DOC]
+    # Numpy datetime64 and Timestamp scalars infer nanosecond datetime; a python
+    # datetime infers microsecond resolution.
     dt64 = np.datetime64(1, "ns")
     dtype, val = infer_dtype_from_scalar(dt64)
     assert dtype == "M8[ns]"
@@ -76,6 +98,9 @@ def test_infer_dtype_from_datetime():
 
 
 def test_infer_dtype_from_timedelta():
+    # [FUNCTION DOC]
+    # Numpy timedelta64 and Timedelta scalars infer nanosecond timedelta; a python
+    # timedelta infers microsecond resolution.
     td64 = np.timedelta64(1, "ns")
     dtype, val = infer_dtype_from_scalar(td64)
     assert dtype == "m8[ns]"
@@ -91,6 +116,9 @@ def test_infer_dtype_from_timedelta():
 
 @pytest.mark.parametrize("freq", ["M", "D"])
 def test_infer_dtype_from_period(freq):
+    # [FUNCTION DOC]
+    # Parametrized over monthly and daily frequency. A Period scalar infers the
+    # matching period dtype and the returned value is the period itself.
     p = Period("2011-01-01", freq=freq)
     dtype, val = infer_dtype_from_scalar(p)
 
@@ -101,6 +129,9 @@ def test_infer_dtype_from_period(freq):
 
 
 def test_infer_dtype_misc():
+    # [FUNCTION DOC]
+    # A plain date object infers object dtype; a tz-aware Timestamp infers the
+    # nanosecond tz-aware datetime dtype for its zone.
     dt = date(2000, 1, 1)
     dtype, val = infer_dtype_from_scalar(dt)
     assert dtype == np.object_
@@ -112,6 +143,9 @@ def test_infer_dtype_misc():
 
 @pytest.mark.parametrize("tz", ["UTC", "US/Eastern", "Asia/Tokyo"])
 def test_infer_from_scalar_tz(tz):
+    # [FUNCTION DOC]
+    # Parametrized over UTC, US/Eastern, Asia/Tokyo. A tz-aware Timestamp infers the
+    # nanosecond datetime dtype with that zone and the value returned unchanged.
     dt = Timestamp(1, tz=tz)
     dtype, val = infer_dtype_from_scalar(dt)
 
@@ -132,6 +166,11 @@ def test_infer_from_scalar_tz(tz):
     ],
 )
 def test_infer_from_interval(left, right, subtype, closed):
+    # [FUNCTION DOC]
+    # Regression test for a GitHub issue; parametrized over (left, right, subtype
+    # name) for integers, floats, naive and UTC timestamps, timedeltas; fixture
+    # closed supplies the closure. An Interval infers an interval dtype with the
+    # matching subtype and closure, and the returned value is the interval.
     # GH 30337
     interval = Interval(left, right, closed)
     result_dtype, result_value = infer_dtype_from_scalar(interval)
@@ -141,6 +180,9 @@ def test_infer_from_interval(left, right, subtype, closed):
 
 
 def test_infer_dtype_from_scalar_errors():
+    # [FUNCTION DOC]
+    # Passing a non-zero-dimensional ndarray to the scalar inference function raises
+    # a value error saying the ndarray is invalid.
     msg = "invalid ndarray passed to infer_dtype_from_scalar"
 
     with pytest.raises(ValueError, match=msg):
@@ -160,6 +202,12 @@ def test_infer_dtype_from_scalar_errors():
     ],
 )
 def test_infer_dtype_from_scalar(value, expected, using_infer_string):
+    # [FUNCTION DOC]
+    # Parametrized over (value, expected dtype): string and bytes give object
+    # (string dtype for str when strings are inferred, via the using_infer_string
+    # fixture), python int and float, numpy datetime and second-resolution Timestamps
+    # (naive and UTC). Scalar inference must equal the expected dtype. Then the array
+    # inference function must raise a type error saying the argument must be list-like.
     dtype, _ = infer_dtype_from_scalar(value)
     if using_infer_string and value == "foo":
         expected = "string"
@@ -192,6 +240,12 @@ def test_infer_dtype_from_scalar(value, expected, using_infer_string):
     ],
 )
 def test_infer_dtype_from_array(arr, expected, using_infer_string):
+    # [FUNCTION DOC]
+    # Parametrized over (array-like, expected dtype): lists, numpy arrays, mixed
+    # object list, 2-D float array, categoricals, naive and tz-aware date ranges, and
+    # Series of floats, strings, tz-aware datetimes. The string Series expects the
+    # string dtype when strings are inferred (fixture using_infer_string). Inferred
+    # dtype must equal the expected one.
     dtype, _ = infer_dtype_from_array(arr)
     if (
         using_infer_string
@@ -204,6 +258,11 @@ def test_infer_dtype_from_array(arr, expected, using_infer_string):
 
 @pytest.mark.parametrize("cls", [np.datetime64, np.timedelta64])
 def test_infer_dtype_from_scalar_zerodim_datetimelike(cls):
+    # [FUNCTION DOC]
+    # Parametrized over numpy datetime64 and timedelta64. A zero-dimensional array
+    # holding a nanosecond value infers a dtype of that type with an unboxed value of
+    # the same numpy scalar type (not an integer), through both the scalar-inference
+    # function and the combined function.
     # ndarray.item() can incorrectly return int instead of td64/dt64
     val = cls(1234, "ns")
     arr = np.array(val)

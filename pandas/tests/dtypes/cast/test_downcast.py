@@ -1,3 +1,8 @@
+# [MODULE DOC]
+# Tests for the maybe-downcast-to-dtype helper: leaves Decimal objects alone,
+# handles booleans and empty arrays, and converts NaN containing float data to
+# datetime-like NaT.
+
 import decimal
 
 import numpy as np
@@ -24,11 +29,17 @@ import pandas._testing as tm
     ],
 )
 def test_downcast(arr, expected, dtype):
+    # [FUNCTION DOC]
+    # Parametrized (one case): an object array holding a Decimal is not downcast to
+    # int64; the result equals the input array.
     result = maybe_downcast_to_dtype(arr, dtype)
     tm.assert_numpy_array_equal(result, expected)
 
 
 def test_downcast_booleans():
+    # [FUNCTION DOC]
+    # Regression test for a GitHub issue: downcasting a boolean Series to float64
+    # returns its boolean values unchanged.
     # see gh-16875: coercing of booleans.
     ser = Series([True, True, False])
     result = maybe_downcast_to_dtype(ser, np.dtype(np.float64))
@@ -38,6 +49,9 @@ def test_downcast_booleans():
 
 
 def test_downcast_conversion_empty(any_real_numpy_dtype):
+    # [FUNCTION DOC]
+    # Fixture any_real_numpy_dtype. An empty array of that dtype downcast to int64
+    # gives an empty int64 array.
     dtype = any_real_numpy_dtype
     arr = np.array([], dtype=dtype)
     result = maybe_downcast_to_dtype(arr, np.dtype("int64"))
@@ -52,6 +66,10 @@ def test_downcast_conversion_empty(any_real_numpy_dtype):
     ],
 )
 def test_datetime_likes_nan(klass, nat):
+    # [FUNCTION DOC]
+    # Parametrized over datetime64 and timedelta64 with their NaT. A float array
+    # with a NaN downcast to the nanosecond datetime-like dtype yields the integer
+    # values and NaT as that dtype.
     dtype = np.dtype(klass.__name__ + "[ns]")
     arr = np.array([1, 2, np.nan])
 

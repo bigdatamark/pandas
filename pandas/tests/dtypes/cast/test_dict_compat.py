@@ -1,3 +1,7 @@
+# [MODULE DOC]
+# Test for the function that makes dictionary keys pandas compatible by
+# converting numpy datetime keys to Timestamps.
+
 import numpy as np
 
 from pandas.core.dtypes.cast import dict_compat
@@ -6,6 +10,9 @@ from pandas import Timestamp
 
 
 def test_dict_compat():
+    # [FUNCTION DOC]
+    # Numpy datetime64 keys become Timestamp keys; a dictionary already keyed by
+    # Timestamps is unchanged; a dictionary with integer keys is unchanged.
     data_datetime64 = {np.datetime64("1990-03-15"): 1, np.datetime64("2015-03-15"): 2}
     data_unchanged = {1: 2, 3: 4, 5: 6}
     expected = {Timestamp("1990-3-15"): 1, Timestamp("2015-03-15"): 2}

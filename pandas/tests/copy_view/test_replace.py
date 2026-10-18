@@ -1,3 +1,10 @@
+# [MODULE DOC]
+# Copy-on-write tests for replace (also where and mask in place): unchanged
+# columns are shared lazily, only modified columns are copied, in-place replace
+# reuses the buffer unless other references exist, and categorical, regex, list
+# and dictionary forms follow the same rules. Uses get_array from the sibling
+# util module.
+
 import numpy as np
 import pytest
 
@@ -25,6 +32,12 @@ from pandas.tests.copy_view.util import get_array
     ],
 )
 def test_replace(replace_kwargs):
+    # [FUNCTION DOC]
+    # Parametrized over several mapping-style replace argument sets (replace within
+    # column a, column b, both, or nested mapping). The result shares memory for
+    # unchanged column b when its values are equal, and always for untouched column
+    # c; writing to column c copies on write; if column a was a target, writing to
+    # it afterwards does not copy again. Original equals its saved copy.
     df = DataFrame({"a": [1, 2, 3], "b": [4, 5, 6], "c": [0.1, 0.2, 0.3]})
     df_orig = df.copy()
 
@@ -46,6 +59,9 @@ def test_replace(replace_kwargs):
 
 
 def test_replace_regex_inplace_refs():
+    # [FUNCTION DOC]
+    # In-place regex replace on a string column with a view alive: the column gets
+    # a new buffer, the frame has no references and the view is unchanged.
     df = DataFrame({"a": ["aaa", "bbb"]})
     df_orig = df.copy()
     view = df[:]
@@ -57,6 +73,10 @@ def test_replace_regex_inplace_refs():
 
 
 def test_replace_regex_inplace():
+    # [FUNCTION DOC]
+    # In-place regex replace without references reuses the buffer and leaves no
+    # references. A non-inplace regex replace that matches returns a result that does not
+    # share memory and leaves the original unchanged.
     df = DataFrame({"a": ["aaa", "bbb"]})
     arr = get_array(df, "a")
     df.replace(to_replace=r"^a.*$", value="new", inplace=True, regex=True)
@@ -70,6 +90,10 @@ def test_replace_regex_inplace():
 
 
 def test_replace_regex_inplace_no_op():
+    # [FUNCTION DOC]
+    # Regex replace on an integer column (nothing matches): in-place keeps buffer
+    # and no references; non-inplace returns a lazy copy that shares memory and
+    # leaves the original unchanged.
     df = DataFrame({"a": [1, 2]})
     arr = get_array(df, "a")
     df.replace(to_replace=r"^a.$", value="new", inplace=True, regex=True)
@@ -83,6 +107,13 @@ def test_replace_regex_inplace_no_op():
 
 
 def test_replace_mask_all_false_second_block():
+    # [FUNCTION DOC]
+    # Replace a float that occurs only in column a of a frame with two float
+    # columns and two integer columns. Column a gets new data; the integer
+    # columns (a different block with no match) stay shared with the original.
+    # Writing to column c then copies just that column while column d keeps
+    # sharing; the original is never modified. The unchanged float column b is
+    # copied too, because blocks are not split here (see the comment in the test).
     df = DataFrame({"a": [1.5, 2, 3], "b": 100.5, "c": 1, "d": 2})
     df_orig = df.copy()
 
@@ -100,6 +131,10 @@ def test_replace_mask_all_false_second_block():
 
 
 def test_replace_coerce_single_column():
+    # [FUNCTION DOC]
+    # Replacing a float with a string in one column forces a type change for it only;
+    # the other column still shares memory. Writing to the other column later copies
+    # it and leaves the original unchanged.
     df = DataFrame({"a": [1.5, 2, 3], "b": 100.5})
     df_orig = df.copy()
 
@@ -113,6 +148,10 @@ def test_replace_coerce_single_column():
 
 
 def test_replace_to_replace_wrong_dtype():
+    # [FUNCTION DOC]
+    # Replacing a string in float-only data replaces nothing: all columns still share
+    # memory with the result; writing to the result copies the touched column and
+    # leaves the original unchanged.
     df = DataFrame({"a": [1.5, 2, 3], "b": 100.5})
     df_orig = df.copy()
 
@@ -127,6 +166,10 @@ def test_replace_to_replace_wrong_dtype():
 
 
 def test_replace_list_categorical():
+    # [FUNCTION DOC]
+    # In-place list replace on a categorical column keeps the codes buffer and leaves no
+    # references. A non-inplace replace and a category rename produce new codes
+    # and the original is unchanged.
     df = DataFrame({"a": ["a", "b", "c"]}, dtype="category")
     arr = get_array(df, "a")
 
@@ -143,6 +186,9 @@ def test_replace_list_categorical():
 
 
 def test_replace_list_inplace_refs_categorical():
+    # [FUNCTION DOC]
+    # In-place list replace on a categorical column with a view alive: the view must
+    # remain equal to the earlier copy.
     df = DataFrame({"a": ["a", "b", "c"]}, dtype="category")
     view = df[:]
     df_orig = df.copy()
@@ -152,6 +198,11 @@ def test_replace_list_inplace_refs_categorical():
 
 @pytest.mark.parametrize("to_replace", [1.5, [1.5], []])
 def test_replace_inplace(to_replace):
+    # [FUNCTION DOC]
+    # Parametrized over to_replace (scalar, list, empty list), which is not used.
+    # KNOWN ISSUE: the call always passes the fixed scalar value instead of the parametrized to_replace, so the list and empty-list variants are not exercised.
+    # In-place replace of a float without references keeps the buffer and leaves no
+    # references.
     df = DataFrame({"a": [1.5, 2, 3]})
     arr_a = get_array(df, "a")
     df.replace(to_replace=1.5, value=15.5, inplace=True)
@@ -162,6 +213,9 @@ def test_replace_inplace(to_replace):
 
 @pytest.mark.parametrize("to_replace", [1.5, [1.5]])
 def test_replace_inplace_reference(to_replace):
+    # [FUNCTION DOC]
+    # Parametrized over to_replace (scalar or list). In-place replace with a view
+    # alive moves the column to a new buffer and drops references on both objects.
     df = DataFrame({"a": [1.5, 2, 3]})
     arr_a = get_array(df, "a")
     view = df[:]
@@ -174,6 +228,10 @@ def test_replace_inplace_reference(to_replace):
 
 @pytest.mark.parametrize("to_replace", ["a", 100.5])
 def test_replace_inplace_reference_no_op(to_replace):
+    # [FUNCTION DOC]
+    # Parametrized over to_replace values that match nothing (a string or an absent
+    # float). In-place replace with a view alive keeps the buffer and both objects
+    # still hold references.
     df = DataFrame({"a": [1.5, 2, 3]})
     arr_a = get_array(df, "a")
     view = df[:]
@@ -186,6 +244,10 @@ def test_replace_inplace_reference_no_op(to_replace):
 
 @pytest.mark.parametrize("to_replace", [1, [1]])
 def test_replace_categorical_inplace_reference(to_replace):
+    # [FUNCTION DOC]
+    # Parametrized over scalar and list to_replace. In-place replace on a
+    # categorical column with a view alive copies the codes, drops references on
+    # both, and leaves the view unchanged.
     df = DataFrame({"a": Categorical([1, 2, 3])})
     df_orig = df.copy()
     arr_a = get_array(df, "a")
@@ -198,6 +260,9 @@ def test_replace_categorical_inplace_reference(to_replace):
 
 
 def test_replace_categorical_inplace():
+    # [FUNCTION DOC]
+    # In-place replacement of a category with itself keeps the codes buffer,
+    # leaves no references and the data equal the original categorical frame.
     df = DataFrame({"a": Categorical([1, 2, 3])})
     arr_a = get_array(df, "a")
     df.replace(to_replace=1, value=1, inplace=True)
@@ -210,6 +275,10 @@ def test_replace_categorical_inplace():
 
 
 def test_replace_categorical():
+    # [FUNCTION DOC]
+    # Non-inplace replace of a category with itself returns a copy: no references on
+    # either, codes not shared and original unchanged. After setting a valid value
+    # in the result, the codes buffer is not copied again.
     df = DataFrame({"a": Categorical([1, 2, 3])})
     df_orig = df.copy()
     df2 = df.replace(to_replace=1, value=1)
@@ -226,6 +295,10 @@ def test_replace_categorical():
 
 @pytest.mark.parametrize("method", ["where", "mask"])
 def test_masking_inplace(method):
+    # [FUNCTION DOC]
+    # Parametrized over where and mask. In-place masking with a view alive moves the
+    # column to a new buffer, drops references on both objects and leaves the view
+    # unchanged.
     df = DataFrame({"a": [1.5, 2, 3]})
     df_orig = df.copy()
     arr_a = get_array(df, "a")
@@ -241,6 +314,10 @@ def test_masking_inplace(method):
 
 
 def test_replace_empty_list():
+    # [FUNCTION DOC]
+    # Replacing an empty list with an empty list is a no-op: the result shares
+    # memory and the original holds a reference; in-place version keeps the buffer
+    # and references on both frames.
     df = DataFrame({"a": [1, 2]})
 
     df2 = df.replace([], [])
@@ -255,6 +332,9 @@ def test_replace_empty_list():
 
 @pytest.mark.parametrize("value", ["d", None])
 def test_replace_object_list_inplace(value):
+    # [FUNCTION DOC]
+    # Parametrized over replacement value (a string or none). In-place list replace
+    # on an object column keeps the buffer and leaves no references.
     df = DataFrame({"a": ["a", "b", "c"]}, dtype=object)
     arr = get_array(df, "a")
     df.replace(["c"], value, inplace=True)
@@ -263,6 +343,9 @@ def test_replace_object_list_inplace(value):
 
 
 def test_replace_list_multiple_elements_inplace():
+    # [FUNCTION DOC]
+    # In-place replace of two values by a single one keeps the buffer and no
+    # references.
     df = DataFrame({"a": [1, 2, 3]})
     arr = get_array(df, "a")
     df.replace([1, 2], 4, inplace=True)
@@ -271,6 +354,10 @@ def test_replace_list_multiple_elements_inplace():
 
 
 def test_replace_list_none():
+    # [FUNCTION DOC]
+    # Replacing a listed value by none returns a result not sharing memory with the
+    # original (unchanged). Replacing several absent values by none returns an equal
+    # frame that still shares memory (regression test for a GitHub issue).
     df = DataFrame({"a": ["a", "b", "c"]})
 
     df_orig = df.copy()
@@ -287,6 +374,9 @@ def test_replace_list_none():
 
 
 def test_replace_list_none_inplace_refs():
+    # [FUNCTION DOC]
+    # In-place replace by none with a view alive: new buffer, no references on the
+    # frame, view unchanged.
     df = DataFrame({"a": ["a", "b", "c"]})
     arr = get_array(df, "a")
     df_orig = df.copy()
@@ -298,6 +388,9 @@ def test_replace_list_none_inplace_refs():
 
 
 def test_replace_columnwise_no_op_inplace():
+    # [FUNCTION DOC]
+    # In-place mapping replace that matches nothing keeps sharing memory with a view;
+    # writing afterwards copies on write and the view stays unchanged.
     df = DataFrame({"a": [1, 2, 3], "b": [1, 2, 3]})
     view = df[:]
     df_orig = df.copy()
@@ -308,6 +401,9 @@ def test_replace_columnwise_no_op_inplace():
 
 
 def test_replace_columnwise_no_op():
+    # [FUNCTION DOC]
+    # Non-inplace mapping replace that matches nothing returns a result sharing
+    # memory with the original; writing to it leaves the original unchanged.
     df = DataFrame({"a": [1, 2, 3], "b": [1, 2, 3]})
     df_orig = df.copy()
     df2 = df.replace({"a": 10}, 100)
@@ -317,6 +413,10 @@ def test_replace_columnwise_no_op():
 
 
 def test_replace_chained_assignment():
+    # [FUNCTION DOC]
+    # In-place replace through a chained selection (column Series, then
+    # single-column frame) emits the chained assignment warning and leaves the frame
+    # unchanged.
     df = DataFrame({"a": [1, np.nan, 2], "b": 1})
     df_orig = df.copy()
     with tm.raises_chained_assignment_error():
@@ -329,6 +429,10 @@ def test_replace_chained_assignment():
 
 
 def test_replace_listlike():
+    # [FUNCTION DOC]
+    # List-to-list replace: no matches returns a lazy copy sharing memory; a match in
+    # column a copies it.
+    # KNOWN ISSUE: after writing to the result, the check compares the original frame with itself, so it asserts nothing; only the later comparison with the saved copy is meaningful.
     df = DataFrame({"a": [1, 2, 3], "b": [1, 2, 3]})
     df_orig = df.copy()
 
@@ -344,6 +448,10 @@ def test_replace_listlike():
 
 
 def test_replace_listlike_inplace():
+    # [FUNCTION DOC]
+    # In-place list-to-list replace: with a match the buffer is kept (no references).
+    # After taking a view, an in-place replace that matches copies to a new buffer
+    # and the view stays unchanged.
     df = DataFrame({"a": [1, 2, 3], "b": [1, 2, 3]})
     arr = get_array(df, "a")
     df.replace([200, 2], [10, 11], inplace=True)

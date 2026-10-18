@@ -1,3 +1,8 @@
+# [MODULE DOC]
+# Tests of core copy-on-write reference tracking in the block manager:
+# reference removal after reassignment, splitting blocks in setitem, deletion
+# and references that go out of scope.
+
 import numpy as np
 import pytest
 
@@ -7,6 +12,9 @@ from pandas.tests.copy_view.util import get_array
 
 
 def test_assigning_to_same_variable_removes_references():
+    # [FUNCTION DOC]
+    # Reassigning a frame to the result of resetting its index leaves the relevant
+    # block without references, so a subsequent write stays in place (same buffer).
     df = DataFrame({"a": [1, 2, 3]})
     df = df.reset_index()
     assert df._mgr._has_no_reference(1)
@@ -17,6 +25,9 @@ def test_assigning_to_same_variable_removes_references():
 
 
 def test_setitem_dont_track_unnecessary_references():
+    # [FUNCTION DOC]
+    # Setting a column splits the block; the resulting blocks must not reference
+    # each other, so a later write to another column does not copy the buffer.
     df = DataFrame({"a": [1, 2, 3], "b": 1, "c": 1})
 
     df["b"] = 100
@@ -28,6 +39,10 @@ def test_setitem_dont_track_unnecessary_references():
 
 
 def test_setitem_with_view_copies():
+    # [FUNCTION DOC]
+    # With a live view of the frame, setting a column and then writing to another
+    # column must copy on write (buffer no longer shared) and leave the view equal
+    # to the earlier copy.
     df = DataFrame({"a": [1, 2, 3], "b": 1, "c": 1})
     view = df[:]
     expected = df.copy()
@@ -40,6 +55,12 @@ def test_setitem_with_view_copies():
 
 
 def test_setitem_with_view_invalidated_does_not_copy(request):
+    # [FUNCTION DOC]
+    # Takes the pytest request fixture. After the view is dropped, a write into a
+    # column after a setitem-induced block split ought not to copy, but this is
+    # marked as an expected failure because deleting a block does not track
+    # references correctly. The assertion that buffers are shared is the expected
+    # (currently failing) behavior.
     df = DataFrame({"a": [1, 2, 3], "b": 1, "c": 1})
     view = df[:]
 
@@ -59,7 +80,14 @@ def test_setitem_with_view_invalidated_does_not_copy(request):
 
 
 def test_out_of_scope():
+    # [FUNCTION DOC]
+    # HELPER: contains nested function func building a frame and returning a column
+    # subset. After the frame goes out of scope, none of the result's blocks keep
+    # references.
     def func():
+        # [FUNCTION DOC]
+        # HELPER: nested in test_out_of_scope; builds a three-column frame and returns a
+        # two-column subset of it.
         df = DataFrame({"a": [1, 2], "b": 1.5, "c": 1})
         # create some subset
         result = df[["a", "b"]]
@@ -71,6 +99,9 @@ def test_out_of_scope():
 
 
 def test_delete():
+    # [FUNCTION DOC]
+    # Deleting a column from a frame, then selecting a column subset, leaves no
+    # block with a reference.
     df = DataFrame(
         np.random.default_rng(2).standard_normal((4, 3)), columns=["a", "b", "c"]
     )
@@ -83,6 +114,9 @@ def test_delete():
 
 
 def test_delete_reference():
+    # [FUNCTION DOC]
+    # With another object holding a slice of the frame, deleting a column leaves
+    # both frame blocks and the slice block with references.
     df = DataFrame(
         np.random.default_rng(2).standard_normal((4, 3)), columns=["a", "b", "c"]
     )

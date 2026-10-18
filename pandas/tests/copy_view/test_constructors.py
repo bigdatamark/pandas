@@ -1,3 +1,12 @@
+# [MODULE DOC]
+# Copy-on-write tests for the Series and DataFrame constructors: when
+# constructing from another Series, Index, array, extension array, dict of
+# Series or manager, the result must share memory lazily (tracking a reference)
+# unless a copy is explicitly requested or required by a dtype change/reindex,
+# and mutations must never propagate between source and result.
+# Uses the get_array helper from the sibling util module and the fixture for
+# choosing between Index and Series constructors.
+
 import numpy as np
 import pytest
 
@@ -25,6 +34,12 @@ from pandas.tests.copy_view.util import get_array
 
 @pytest.mark.parametrize("dtype", [None, "int64"])
 def test_series_from_series(dtype):
+    # [FUNCTION DOC]
+    # Parametrized over dtype None or int64. Building a Series from a Series is a lazy
+    # shallow copy: shares memory and the block has a reference. Writing to the
+    # result (or to the parent) triggers copy on write and does not propagate.
+    # Explicit copy=False behaves the same; copy=True produces a hard copy up front,
+    # leaving the parent without references.
     # Case: constructing a Series from another Series object follows CoW rules:
     # a new object is returned and thus mutations are not propagated
     ser = Series([1, 2, 3], name="name")
@@ -62,6 +77,11 @@ def test_series_from_series(dtype):
 
 
 def test_series_from_series_with_reindex():
+    # [FUNCTION DOC]
+    # Passing an index equal to the existing one (same object, copy, list, renamed)
+    # still gives a lazy shallow copy; writing to the result does not change the
+    # source. With copy=True a hard copy with no references is made. When the index
+    # forces a real reindex, the result owns its memory and has no references.
     # Case: constructing a Series from another Series with specifying an index
     # that potentially requires a reindex of the values
     ser = Series([1, 2, 3], name="name")
@@ -97,6 +117,11 @@ def test_series_from_series_with_reindex():
     "arr", [np.array([1, 2, 3], dtype="int64"), pd.array([1, 2, 3], dtype="Int64")]
 )
 def test_series_from_array(idx, dtype, arr):
+    # [FUNCTION DOC]
+    # Parametrized over dtype, index (none or range) and input array (numpy int64 or
+    # nullable Int64). By default the Series copies the array, so later changes to the
+    # array do not show in the Series. With copy=False the Series is a true view
+    # that is not protected by copy on write.
     ser = Series(arr, dtype=dtype, index=idx)
     ser_orig = ser.copy()
     data = getattr(arr, "_data", arr)
@@ -115,6 +140,9 @@ def test_series_from_array(idx, dtype, arr):
 
 @pytest.mark.parametrize("copy", [True, False, None])
 def test_series_from_array_different_dtype(copy):
+    # [FUNCTION DOC]
+    # Parametrized over copy (True, False, None). Requesting a different dtype than
+    # the numpy array's forces a conversion, so the result never shares memory.
     arr = np.array([1, 2, 3], dtype="int64")
     ser = Series(arr, dtype="int32", copy=copy)
     assert not np.shares_memory(get_array(ser), arr)
@@ -131,6 +159,11 @@ def test_series_from_array_different_dtype(copy):
     ],
 )
 def test_series_from_index(idx):
+    # [FUNCTION DOC]
+    # Parametrized over several Index types (integer, range, datetime, period,
+    # timedelta). A Series built from an Index shares memory and holds a reference;
+    # writing to the Series leaves the Index and its data unchanged. Same with
+    # explicit copy=False; copy=True gives an unshared, reference-free copy.
     ser = Series(idx)
     expected = idx.copy(deep=True)
     assert np.shares_memory(get_array(ser), get_array(idx))
@@ -155,6 +188,10 @@ def test_series_from_index(idx):
 
 @pytest.mark.parametrize("copy", [True, False, None])
 def test_series_from_index_different_dtypes(copy):
+    # [FUNCTION DOC]
+    # Parametrized over the copy argument used to build the Index. Converting an
+    # int64 Index to int32 when building a Series produces unshared data with no
+    # references.
     idx = Index([1, 2, 3], dtype="int64", copy=copy)
     ser = Series(idx, dtype="int32")
     assert not np.shares_memory(get_array(ser), get_array(idx))
@@ -162,6 +199,10 @@ def test_series_from_index_different_dtypes(copy):
 
 
 def test_series_from_block_manager_different_dtype():
+    # [FUNCTION DOC]
+    # Constructing a Series from an internal single-block manager with a different
+    # dtype emits a DeprecationWarning about passing a manager and yields data that
+    # is not shared and has no references.
     ser = Series([1, 2, 3], dtype="int64")
     msg = "Passing a SingleBlockManager to Series"
     with tm.assert_produces_warning(DeprecationWarning, match=msg):
@@ -173,6 +214,11 @@ def test_series_from_block_manager_different_dtype():
 @pytest.mark.parametrize("use_mgr", [True, False])
 @pytest.mark.parametrize("columns", [None, ["a"]])
 def test_dataframe_constructor_mgr_or_df(columns, use_mgr):
+    # [FUNCTION DOC]
+    # Parametrized over whether the input is the frame's internal manager (which warns
+    # with a DeprecationWarning about passing a manager) or the frame itself, and
+    # over columns None or a subset. The new frame shares memory with the original;
+    # writing to the new frame copies on write and leaves the original unchanged.
     df = DataFrame({"a": [1, 2, 3]})
     df_orig = df.copy()
 
@@ -197,6 +243,11 @@ def test_dataframe_constructor_mgr_or_df(columns, use_mgr):
 @pytest.mark.parametrize("index", [None, [0, 1, 2]])
 @pytest.mark.parametrize("columns", [None, ["a", "b"], ["a", "b", "c"]])
 def test_dataframe_from_dict_of_series(columns, index, dtype):
+    # [FUNCTION DOC]
+    # Parametrized over columns, index and dtype. With copy=False a frame built from
+    # a dict of Series is a lazy view of the Series: memory is shared until the frame
+    # or a parent Series is written to, after which the other side is unaffected and
+    # the frame equals the expected frame built from plain lists.
     # Case: constructing a DataFrame from Series objects with copy=False
     # has to do a lazy following CoW rules
     # (the default for DataFrame(dict) is still to copy to ensure consolidation)
@@ -232,6 +283,10 @@ def test_dataframe_from_dict_of_series(columns, index, dtype):
 
 @pytest.mark.parametrize("dtype", [None, "int64"])
 def test_dataframe_from_dict_of_series_with_reindex(dtype):
+    # [FUNCTION DOC]
+    # Parametrized over dtype. With copy=False and an index that forces a real
+    # reindex, the frame owns its data: it does not share memory with the Series and
+    # writing to it does not trigger a copy (the buffer is unchanged).
     # Case: constructing a DataFrame from Series objects with copy=False
     # and passing an index that requires an actual (no-view) reindex -> need
     # to ensure the result doesn't have refs set up to unnecessarily trigger
@@ -273,6 +328,15 @@ def test_dataframe_from_dict_of_series_with_reindex(dtype):
     ids=["int", "int-ea", "str", "object", "datetime64tz"],
 )
 def test_dataframe_from_series_or_index(data, dtype, index_or_series):
+    # [FUNCTION DOC]
+    # Parametrized over (data, dtype) pairs: integer, nullable integer, string
+    # (xfail when the string dtype option is off), object and tz-aware datetime;
+    # fixture index_or_series chooses the container type.
+    # DataFrame from the object (default, and with an identical dtype) shares memory
+    # and keeps a reference; writes to the frame do not alter the source. With
+    # copy=True the memory is not shared and no reference is kept, except for
+    # pyarrow-backed string dtype where the check is skipped because deep copy still
+    # points to the same data.
     obj = index_or_series(data, dtype=dtype)
     obj_orig = obj.copy(deep=True)  # deep=True needed for Index
 
@@ -304,6 +368,9 @@ def test_dataframe_from_series_or_index(data, dtype, index_or_series):
 
 
 def test_dataframe_from_series_or_index_different_dtype(index_or_series):
+    # [FUNCTION DOC]
+    # Fixture index_or_series gives the container type. Building a frame with a
+    # different dtype (int32 from int64) copies: no sharing and no references.
     obj = index_or_series([1, 2], dtype="int64")
     df = DataFrame(obj, dtype="int32")
     assert not np.shares_memory(get_array(obj), get_array(df, 0))
@@ -311,6 +378,9 @@ def test_dataframe_from_series_or_index_different_dtype(index_or_series):
 
 
 def test_dataframe_from_series_dont_infer_datetime():
+    # [FUNCTION DOC]
+    # A Series of Timestamp objects with object dtype must stay object dtype when
+    # wrapped in a frame, still sharing memory and holding a reference.
     ser = Series([Timestamp("2019-12-31"), Timestamp("2020-12-31")], dtype=object)
     df = DataFrame(ser)
     assert df.dtypes.iloc[0] == np.dtype(object)
@@ -320,6 +390,10 @@ def test_dataframe_from_series_dont_infer_datetime():
 
 @pytest.mark.parametrize("index", [None, [0, 1, 2]])
 def test_dataframe_from_dict_of_series_with_dtype(index):
+    # [FUNCTION DOC]
+    # Parametrized over index (none or explicit). With copy=False and a dtype that
+    # causes a conversion to int64, the frame owns its data: not shared with the
+    # source Series and mutation does not reallocate.
     # Variant of above, but now passing a dtype that causes a copy
     # -> need to ensure the result doesn't have refs set up to unnecessarily
     # trigger a copy on write
@@ -337,6 +411,10 @@ def test_dataframe_from_dict_of_series_with_dtype(index):
 
 @pytest.mark.parametrize("copy", [False, None, True])
 def test_dataframe_from_numpy_array(copy):
+    # [FUNCTION DOC]
+    # Parametrized over copy (False, None, True). Checks whether the frame shares
+    # memory with the source numpy array.
+    # KNOWN ISSUE: the condition is redundant (the second operand is implied by the first), so the shared-memory branch is only taken for copy=False; copy=None is treated as copy=True.
     arr = np.array([[1, 2], [3, 4]])
     df = DataFrame(arr, copy=copy)
 
@@ -361,6 +439,11 @@ def test_dataframe_from_numpy_array(copy):
 )
 @pytest.mark.parametrize("copy", [False, None, True])
 def test_dataframe_from_extension_array(copy, data, dtype):
+    # [FUNCTION DOC]
+    # Parametrized over copy and over nullable integer or tz-aware datetime arrays.
+    # For copy None or True the frame must not share memory with the array; for False
+    # it must. The nullable integer array is replaced by its backing numpy array
+    # first so the memory-sharing helper works.
     arr = pd.array(data, dtype=dtype)
     df = DataFrame(arr, copy=copy)
 
@@ -376,6 +459,9 @@ def test_dataframe_from_extension_array(copy, data, dtype):
 
 
 def test_frame_from_dict_of_index():
+    # [FUNCTION DOC]
+    # Frame built from a dict containing an Index with copy=False shares the Index's
+    # values and holds a reference; writing to the frame leaves the Index unchanged.
     idx = Index([1, 2, 3])
     expected = idx.copy(deep=True)
     df = DataFrame({"a": idx}, copy=False)
@@ -387,6 +473,11 @@ def test_frame_from_dict_of_index():
 
 
 def test_rangeindex_cached_data():
+    # [FUNCTION DOC]
+    # Regression test for a GitHub issue: a Series built from a RangeIndex shares the
+    # index's lazily materialized cached data. After renaming the index (a view that
+    # shares the cache) and deleting the original, writing to the Series must not
+    # corrupt the cached data of the renamed index.
     # https://github.com/pandas-dev/pandas/issues/67055
     # creating a Series from a RangeIndex should still track a reference because
     # the RangeIndex caches the materialized _data used by the Series

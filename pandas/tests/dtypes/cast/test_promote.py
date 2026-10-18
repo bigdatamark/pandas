@@ -2,6 +2,14 @@
 These test the method maybe_promote from core/dtypes/cast.py
 """
 
+# [MODULE DOC]
+# Tests of the maybe-promote function in the dtype cast module, which, given a
+# dtype and a fill value, returns the dtype needed to hold the value and the
+# value cast to that dtype. Covers integer, float, complex, bool, bytes, string,
+# object, datetime and timedelta numpy dtypes crossed with scalars of many
+# types, timezone-aware datetimes and missing-value sentinels. Contains two
+# private helpers (the combined checker and the matcher) used by all tests.
+
 import datetime
 from decimal import Decimal
 
@@ -19,6 +27,13 @@ import pandas as pd
 
 
 def _check_promote(dtype, fill_value, expected_dtype, exp_val_for_scalar=None):
+    # [FUNCTION DOC]
+    # HELPER: shared checker for the promotion tests. Parameters: dtype (dtype given to
+    # maybe-promote), fill_value (a scalar, asserted to be a scalar), expected_dtype
+    # (dtype that must be returned), exp_val_for_scalar (expected, possibly cast,
+    # fill value). Calls maybe-promote and asserts the returned dtype equals the
+    # expected dtype and the returned value matches via the matcher helper. Returns nothing.
+    # KNOWN ISSUE: the docstring speaks of testing both scalar and array fill values, but only the scalar case is exercised.
     """
     Auxiliary function to unify testing of scalar/array promotion.
 
@@ -50,6 +65,13 @@ def _check_promote(dtype, fill_value, expected_dtype, exp_val_for_scalar=None):
 
 
 def _assert_match(result_fill_value, expected_fill_value):
+    # [FUNCTION DOC]
+    # HELPER: used by the promotion checker. Asserts the returned fill value
+    # equals the expected one with the same type. For numpy scalars the kind and
+    # item size of dtypes must agree (robust to platform aliases); otherwise type
+    # objects or their names must match. Equality is accepted, or both values being
+    # missing (NA comparison counts as not equal; NaN and NaT are not equal to
+    # themselves, hence the missing check).
     # GH#23982/25425 require the same type in addition to equality/NA-ness
     res_type = type(result_fill_value)
     ex_type = type(expected_fill_value)
@@ -184,6 +206,14 @@ def _assert_match(result_fill_value, expected_fill_value):
     ],
 )
 def test_maybe_promote_int_with_int(dtype, fill_value, expected_dtype):
+    # [FUNCTION DOC]
+    # Parametrized over (integer dtype, python integer fill value, expected dtype)
+    # for all signed and unsigned widths, with values just outside each width's
+    # range, in both directions. Expected: the smallest wider integer type that can
+    # hold the value, keeping signedness while possible (unsigned stays unsigned for
+    # large positive, switches to signed for negatives); values beyond 64-bit, and
+    # negatives for 64-bit unsigned, give object. The expected value is the fill value
+    # cast to the expected dtype.
     dtype = np.dtype(dtype)
     expected_dtype = np.dtype(expected_dtype)
 
@@ -194,6 +224,10 @@ def test_maybe_promote_int_with_int(dtype, fill_value, expected_dtype):
 
 
 def test_maybe_promote_int_with_float(any_int_numpy_dtype, float_numpy_dtype):
+    # [FUNCTION DOC]
+    # Fixtures any_int_numpy_dtype and float_numpy_dtype. An integer dtype filled
+    # with a numpy float scalar of any float width always promotes to float64, and the
+    # value is converted to a float64 scalar.
     dtype = np.dtype(any_int_numpy_dtype)
     fill_dtype = np.dtype(float_numpy_dtype)
 
@@ -209,6 +243,10 @@ def test_maybe_promote_int_with_float(any_int_numpy_dtype, float_numpy_dtype):
 
 
 def test_maybe_promote_float_with_int(float_numpy_dtype, any_int_numpy_dtype):
+    # [FUNCTION DOC]
+    # Fixtures float_numpy_dtype and any_int_numpy_dtype. A float dtype filled with a
+    # numpy integer scalar keeps its float dtype (every integer fits the range of
+    # float), and the value is cast to that float dtype.
     dtype = np.dtype(float_numpy_dtype)
     fill_dtype = np.dtype(any_int_numpy_dtype)
 
@@ -250,6 +288,13 @@ def test_maybe_promote_float_with_int(float_numpy_dtype, any_int_numpy_dtype):
     ],
 )
 def test_maybe_promote_float_with_float(dtype, fill_value, expected_dtype):
+    # [FUNCTION DOC]
+    # Parametrized over (dtype, fill value, expected dtype) for float and complex
+    # dtypes filled with python floats and complex numbers, with values that do and
+    # do not fit float32 range. Expected: the same dtype when the value fits,
+    # otherwise a wider one (float64 or complex128); complex fills promote float to
+    # complex of matching precision. The expected value is the fill cast to the
+    # expected dtype.
     dtype = np.dtype(dtype)
     expected_dtype = np.dtype(expected_dtype)
 
@@ -260,6 +305,10 @@ def test_maybe_promote_float_with_float(dtype, fill_value, expected_dtype):
 
 
 def test_maybe_promote_bool_with_any(any_numpy_dtype):
+    # [FUNCTION DOC]
+    # Fixture any_numpy_dtype. A boolean dtype filled with a one of any numpy dtype
+    # keeps bool only if the fill is itself bool, otherwise gives object with the
+    # unchanged value.
     dtype = np.dtype(bool)
     fill_dtype = np.dtype(any_numpy_dtype)
 
@@ -274,6 +323,10 @@ def test_maybe_promote_bool_with_any(any_numpy_dtype):
 
 
 def test_maybe_promote_any_with_bool(any_numpy_dtype):
+    # [FUNCTION DOC]
+    # Fixture any_numpy_dtype. Any dtype filled with the boolean true promotes to
+    # object unless the dtype is bool; the expected value is true cast to the
+    # expected dtype.
     dtype = np.dtype(any_numpy_dtype)
     fill_value = True
 
@@ -286,6 +339,9 @@ def test_maybe_promote_any_with_bool(any_numpy_dtype):
 
 
 def test_maybe_promote_bytes_with_any(bytes_dtype, any_numpy_dtype):
+    # [FUNCTION DOC]
+    # Fixtures bytes_dtype and any_numpy_dtype. A fixed-width bytes dtype filled with
+    # a numpy scalar of any dtype always promotes to object with unchanged value.
     dtype = np.dtype(bytes_dtype)
     fill_dtype = np.dtype(any_numpy_dtype)
 
@@ -300,6 +356,9 @@ def test_maybe_promote_bytes_with_any(bytes_dtype, any_numpy_dtype):
 
 
 def test_maybe_promote_any_with_bytes(any_numpy_dtype):
+    # [FUNCTION DOC]
+    # Fixture any_numpy_dtype. Any dtype filled with a bytes value promotes to object
+    # (bytes are never used as a dtype), the value cast to object.
     dtype = np.dtype(any_numpy_dtype)
 
     # create array of given dtype
@@ -314,6 +373,11 @@ def test_maybe_promote_any_with_bytes(any_numpy_dtype):
 
 
 def test_maybe_promote_datetime64_with_any(datetime64_dtype, any_numpy_dtype):
+    # [FUNCTION DOC]
+    # Fixtures datetime64_dtype and any_numpy_dtype. A datetime64 dtype stays the same
+    # only if the fill is a numpy datetime scalar (then the value becomes the
+    # datetime64 form of the equivalent Timestamp); with any other dtype it
+    # promotes to object with unchanged value.
     dtype = np.dtype(datetime64_dtype)
     fill_dtype = np.dtype(any_numpy_dtype)
 
@@ -343,6 +407,12 @@ def test_maybe_promote_datetime64_with_any(datetime64_dtype, any_numpy_dtype):
     ids=["pd.Timestamp", "np.datetime64", "datetime.datetime", "datetime.date"],
 )
 def test_maybe_promote_any_with_datetime64(any_numpy_dtype, fill_value):
+    # [FUNCTION DOC]
+    # Parametrized over four datetime-like fill values (Timestamp, numpy datetime64,
+    # datetime, date); fixture any_numpy_dtype. For non-datetime dtypes the result
+    # is object with the unchanged value. For datetime dtypes the result keeps the
+    # dtype with a converted value, except a plain date, which now promotes to object
+    # (casting dates to datetime64 was removed).
     dtype = np.dtype(any_numpy_dtype)
 
     # filling datetime with anything but datetime casts to object
@@ -375,6 +445,11 @@ def test_maybe_promote_any_with_datetime64(any_numpy_dtype, fill_value):
 def test_maybe_promote_any_numpy_dtype_with_datetimetz(
     any_numpy_dtype, tz_aware_fixture, fill_value
 ):
+    # [FUNCTION DOC]
+    # Parametrized over a Timestamp, numpy datetime64, datetime and date fill value;
+    # fixtures any_numpy_dtype and tz_aware_fixture. The fill is first turned into a
+    # tz-aware element via a Series. Any numpy dtype filled with a tz-aware datetime
+    # promotes to object with the unchanged element.
     dtype = np.dtype(any_numpy_dtype)
     fill_dtype = DatetimeTZDtype(tz=tz_aware_fixture)
 
@@ -388,6 +463,10 @@ def test_maybe_promote_any_numpy_dtype_with_datetimetz(
 
 
 def test_maybe_promote_timedelta64_with_any(timedelta64_dtype, any_numpy_dtype):
+    # [FUNCTION DOC]
+    # Fixtures timedelta64_dtype and any_numpy_dtype. A timedelta64 dtype is kept only
+    # if the fill is a numpy timedelta scalar (value converted to the timedelta64 form
+    # of the equivalent Timedelta); otherwise promotes to object with the unchanged value.
     dtype = np.dtype(timedelta64_dtype)
     fill_dtype = np.dtype(any_numpy_dtype)
 
@@ -412,6 +491,11 @@ def test_maybe_promote_timedelta64_with_any(timedelta64_dtype, any_numpy_dtype):
     ids=["pd.Timedelta", "np.timedelta64", "datetime.timedelta"],
 )
 def test_maybe_promote_any_with_timedelta64(any_numpy_dtype, fill_value):
+    # [FUNCTION DOC]
+    # Parametrized over Timedelta, numpy timedelta64 and python timedelta fill values;
+    # fixture any_numpy_dtype. Non-timedelta dtypes promote to object with the
+    # unchanged value; timedelta dtypes are kept with the value converted to
+    # timedelta64.
     dtype = np.dtype(any_numpy_dtype)
 
     # filling anything but timedelta with timedelta casts to object
@@ -427,6 +511,9 @@ def test_maybe_promote_any_with_timedelta64(any_numpy_dtype, fill_value):
 
 
 def test_maybe_promote_string_with_any(string_dtype, any_numpy_dtype):
+    # [FUNCTION DOC]
+    # Fixtures string_dtype and any_numpy_dtype. A fixed-width string dtype filled
+    # with any numpy scalar promotes to object with the unchanged value.
     dtype = np.dtype(string_dtype)
     fill_dtype = np.dtype(any_numpy_dtype)
 
@@ -441,6 +528,9 @@ def test_maybe_promote_string_with_any(string_dtype, any_numpy_dtype):
 
 
 def test_maybe_promote_any_with_string(any_numpy_dtype):
+    # [FUNCTION DOC]
+    # Fixture any_numpy_dtype. Any dtype filled with a string promotes to object
+    # with the string unchanged.
     dtype = np.dtype(any_numpy_dtype)
 
     # create array of given dtype
@@ -454,6 +544,9 @@ def test_maybe_promote_any_with_string(any_numpy_dtype):
 
 
 def test_maybe_promote_object_with_any(object_dtype, any_numpy_dtype):
+    # [FUNCTION DOC]
+    # Fixtures object_dtype and any_numpy_dtype. Object dtype filled with any numpy
+    # scalar stays object with unchanged value.
     dtype = np.dtype(object_dtype)
     fill_dtype = np.dtype(any_numpy_dtype)
 
@@ -468,6 +561,9 @@ def test_maybe_promote_object_with_any(object_dtype, any_numpy_dtype):
 
 
 def test_maybe_promote_any_with_object(any_numpy_dtype):
+    # [FUNCTION DOC]
+    # Fixture any_numpy_dtype. Any dtype filled with a date offset object (a scalar
+    # that cannot be cast to numeric types) promotes to object, value unchanged.
     dtype = np.dtype(any_numpy_dtype)
 
     # create array of object dtype from a scalar value (i.e. passing
@@ -482,6 +578,14 @@ def test_maybe_promote_any_with_object(any_numpy_dtype):
 
 
 def test_maybe_promote_any_numpy_dtype_with_na(any_numpy_dtype, nulls_fixture):
+    # [FUNCTION DOC]
+    # Fixtures any_numpy_dtype and nulls_fixture (various missing sentinels). Expected
+    # result depends on the combination: for a decimal NaN, numeric kinds become
+    # float64 (integers) or keep their dtype with NaN, others object; integer dtypes
+    # with a non-NaT missing value become float64 with NaN; object with NaT stays
+    # object holding NaT; datetime/timedelta dtypes keep dtype and use a typed NaT;
+    # NaT with any other dtype promotes to object; float/complex keep dtype with NaN;
+    # everything else becomes object with NaN, except the NA singleton, which is kept.
     fill_value = nulls_fixture
     dtype = np.dtype(any_numpy_dtype)
 

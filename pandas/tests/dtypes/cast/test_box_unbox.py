@@ -1,3 +1,9 @@
+# [MODULE DOC]
+# Tests for the scalar boxing helpers in the dtype cast module: converting numpy
+# and datetime scalars to their native or pandas equivalents (box native) and
+# converting numpy scalars to python or pandas scalars depending on a global
+# option (unbox numpy scalar).
+
 from datetime import (
     datetime,
     timedelta,
@@ -41,6 +47,12 @@ from pandas import (
     ],
 )
 def test_maybe_box_native(obj, expected_dtype):
+    # [FUNCTION DOC]
+    # Parametrized over (object, expected type) pairs covering bytes, python and numpy
+    # integers, floats and bool, datetime objects, numpy datetime/timedelta scalars,
+    # Timestamp, Timedelta, Interval and Period. The type of the boxed result must be
+    # exactly the expected type (numpy scalars become python scalars; numpy
+    # datetime-like scalars become pandas scalars; others unchanged).
     boxed_obj = maybe_box_native(obj)
     result_dtype = type(boxed_obj)
     assert result_dtype is expected_dtype
@@ -48,6 +60,15 @@ def test_maybe_box_native(obj, expected_dtype):
 
 @pytest.mark.parametrize("typecode", np.typecodes["All"])
 def test_maybe_unbox_numpy_scalar(typecode, using_python_scalars):
+    # [FUNCTION DOC]
+    # Regression test for a GitHub pull request. Parametrized over every numpy type
+    # code; fixture using_python_scalars selects the option state. A python value
+    # suited to the code (boolean, integer, float, complex, bytes, string, datetime
+    # or timedelta) is stored in a one-element array of that type and the element
+    # extracted. With python scalars enabled the unboxed result must have exactly the
+    # mapped python/pandas type (integers, floats, complex, bytes, string, Timestamp,
+    # Timedelta; the object code maps to integer); otherwise the very same numpy
+    # scalar object is returned. An unrecognized type code raises a value error.
     # https://github.com/pandas-dev/pandas/pull/63016
     if typecode == "?":
         scalar = False
@@ -87,6 +108,11 @@ def test_maybe_unbox_numpy_scalar(typecode, using_python_scalars):
 
 
 def test_maybe_unbox_numpy_scalar_timestamp(unit, using_python_scalars):
+    # [FUNCTION DOC]
+    # Fixture unit gives a datetime resolution; fixture using_python_scalars the
+    # option. A numpy datetime scalar unboxes to an equal Timestamp of the same
+    # resolution when python scalars are enabled, otherwise it stays the numpy scalar;
+    # the result type must match the expectation.
     # https://github.com/pandas-dev/pandas/pull/63016
     value = np.datetime64(1, unit)
     expected = Timestamp(1, unit=unit) if using_python_scalars else value
@@ -96,6 +122,10 @@ def test_maybe_unbox_numpy_scalar_timestamp(unit, using_python_scalars):
 
 
 def test_maybe_unbox_numpy_scalar_datetime(unit, using_python_scalars):
+    # [FUNCTION DOC]
+    # Same as the previous test but for a numpy timedelta scalar: with python scalars
+    # enabled the result is an equal Timedelta, otherwise the numpy scalar is kept.
+    # KNOWN ISSUE: the name says datetime but the test exercises timedelta scalars, and the previous test with timestamp in its name covers datetimes.
     # https://github.com/pandas-dev/pandas/pull/63016
     value = np.timedelta64(1, unit)
     expected = Timedelta(1, unit=unit) if using_python_scalars else value

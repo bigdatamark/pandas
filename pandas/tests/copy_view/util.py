@@ -1,3 +1,8 @@
+# [MODULE DOC]
+# HELPER: test-support module for the copy_view tests. Provides get_array, which
+# extracts the underlying array of a Series, Index or DataFrame column without
+# going through ordinary getitem (so no reference tracking is triggered).
+
 from pandas import (
     Categorical,
     Index,
@@ -7,6 +12,17 @@ from pandas.core.arrays import BaseMaskedArray
 
 
 def get_array(obj, col=None):
+    # [FUNCTION DOC]
+    # HELPER: used throughout the copy_view tests to compare memory sharing.
+    # Takes obj (an Index, a Series, or a DataFrame) and col (default none; the
+    # column label, required for a DataFrame, optional for a Series whose name must
+    # equal it if given). Returns the raw array: for an Index or Series its stored
+    # values, for a frame the column array obtained by position. Masked arrays
+    # return their data buffer, categoricals are returned as is, otherwise the
+    # numpy array of an extension array if present, else the array itself.
+    # Raises an assertion error if col is missing for a frame or the column location is
+    # not a single integer (duplicate or missing labels). The existing docstring
+    # says it is equivalent to getting the values of a column, which matches.
     """
     Helper method to get array for a DataFrame column or a Series.
 

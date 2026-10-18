@@ -1,3 +1,17 @@
+# [MODULE DOC]
+# Copy-on-write tests for DataFrame and Series methods. For each method the
+# tests check whether the returned object lazily shares memory with the source
+# (a shallow copy that holds references), whether the result has new index and
+# columns objects, that writing to the result triggers copy on write for just the
+# touched column/block and never alters the source, and (for in-place variants)
+# that a live view forces a copy. Methods covered include copy, reset_index,
+# rename, reindex, drop, filter, shift, pop, align, to_frame, set_index, prefix
+# and suffix helpers, dropna, head/tail, infer_objects, truncate, take, sorting,
+# round, level reordering, set_axis, tz conversion, putmask style assignment,
+# where/mask, isetitem, xs, update, in-place arithmetic, transpose, transform,
+# insert, eval, apply and reductions. Uses the get_array helper from the sibling
+# util module and fixtures from the wider test suite.
+
 import numpy as np
 import pytest
 
@@ -20,6 +34,10 @@ from pandas.util.version import Version
 
 
 def test_copy():
+    # [FUNCTION DOC]
+    # Deep copy of a frame: new index and columns objects that are identical (same
+    # underlying object) to the originals, no memory sharing, no references on the
+    # copy's blocks, and writing to the copy leaves the original unchanged.
     df = DataFrame({"a": [1, 2, 3], "b": [4, 5, 6], "c": [0.1, 0.2, 0.3]})
     df_copy = df.copy()
 
@@ -43,6 +61,10 @@ def test_copy():
 
 
 def test_copy_shallow():
+    # [FUNCTION DOC]
+    # Shallow copy: new index and columns objects (identical underlying), shared
+    # memory and references on the blocks. Writing to the copy leaves the original
+    # unchanged and detaches only the written column; other columns still share.
     df = DataFrame({"a": [1, 2, 3], "b": [4, 5, 6], "c": [0.1, 0.2, 0.3]})
     df_copy = df.copy(deep=False)
 
@@ -108,6 +130,15 @@ def test_copy_shallow():
     ],
 )
 def test_methods_copy_keyword(request, method, copy):
+    # [FUNCTION DOC]
+    # Parametrized over the copy keyword (true, none, false) and a set of frame
+    # methods (rename, reindex, reindex_like, align, set_axis, rename_axis on both
+    # axes, astype, truncate, infer_objects, to_timestamp, to_period, tz_localize,
+    # tz_convert, set_flags), each given as a function of the frame and copy value.
+    # Deprecation warnings are ignored. The test id from the request selects a
+    # suitable index (period, datetime or tz-aware datetime) for the methods that
+    # need one. For every combination the result must share memory with the source,
+    # i.e. the copy keyword is ignored.
     index = None
     if "to_timestamp" in request.node.callspec.id:
         index = period_range("2012-01-01", freq="D", periods=3)
@@ -165,6 +196,13 @@ def test_methods_copy_keyword(request, method, copy):
     ],
 )
 def test_methods_series_copy_keyword(request, method, copy):
+    # [FUNCTION DOC]
+    # Series counterpart of the previous test, over the copy keyword and a set of
+    # Series methods (rename with mapping and with none, reindex, reindex_like,
+    # align, set_axis, rename_axis, astype, swaplevel, truncate, infer_objects,
+    # to_timestamp, to_period, tz_localize, tz_convert, set_flags). The index is
+    # chosen from the test id like in the frame variant (adding a two-level index for
+    # swaplevel). The result must always share memory with the source.
     index = None
     if "to_timestamp" in request.node.callspec.id:
         index = period_range("2012-01-01", freq="D", periods=3)
@@ -187,6 +225,10 @@ def test_methods_series_copy_keyword(request, method, copy):
 
 
 def test_reset_index():
+    # [FUNCTION DOC]
+    # reset_index adds a column and returns a shallow copy: the old columns still
+    # share memory, manager integrity holds, writing to one column copies only that
+    # one and the original is unchanged.
     # Case: resetting the index (i.e. adding a new column) + mutating the
     # resulting dataframe
     df = DataFrame(
@@ -208,6 +250,10 @@ def test_reset_index():
 
 @pytest.mark.parametrize("index", [pd.RangeIndex(0, 2), Index([1, 2])])
 def test_reset_index_series_drop(index):
+    # [FUNCTION DOC]
+    # Parametrized over a range index and a plain integer index. Dropping the index
+    # gives a Series sharing memory while the source keeps a reference; writing to
+    # the result leaves the source unchanged.
     ser = Series([1, 2], index=index)
     ser_orig = ser.copy()
     ser2 = ser.reset_index(drop=True)
@@ -219,6 +265,10 @@ def test_reset_index_series_drop(index):
 
 
 def test_groupby_column_index_in_references():
+    # [FUNCTION DOC]
+    # Grouping a frame (indexed by a column) with one of its own columns as the key,
+    # fetched as a Series, with observed set, gives the same sums as grouping by
+    # the column name.
     df = DataFrame(
         {"A": ["a", "b", "c", "d"], "B": [1, 2, 3, 4], "C": ["a", "a", "b", "b"]}
     )
@@ -230,6 +280,10 @@ def test_groupby_column_index_in_references():
 
 
 def test_groupby_modify_series():
+    # [FUNCTION DOC]
+    # Regression test for a GitHub issue: a groupby built with a Series key is
+    # unaffected by later modification of that Series; summing afterwards uses the
+    # original key values.
     # https://github.com/pandas-dev/pandas/issues/63219
     # Modifying a Series after using it to groupby should not impact
     # the groupby operation.
@@ -243,6 +297,10 @@ def test_groupby_modify_series():
 
 
 def test_rename_columns():
+    # [FUNCTION DOC]
+    # Renaming columns with a function returns a frame sharing memory; writing to a
+    # column detaches just that column; result equals the expected renamed frame and
+    # the original is unchanged.
     # Case: renaming columns returns a new dataframe
     # + afterwards modifying the result
     df = DataFrame({"a": [1, 2, 3], "b": [4, 5, 6], "c": [0.1, 0.2, 0.3]})
@@ -259,6 +317,9 @@ def test_rename_columns():
 
 
 def test_rename_columns_modify_parent():
+    # [FUNCTION DOC]
+    # After renaming columns, modifying the parent detaches the touched column in the
+    # renamed frame (which keeps its old values) while untouched columns still share.
     # Case: renaming columns returns a new dataframe
     # + afterwards modifying the original (parent) dataframe
     df = DataFrame({"a": [1, 2, 3], "b": [4, 5, 6], "c": [0.1, 0.2, 0.3]})
@@ -275,10 +336,17 @@ def test_rename_columns_modify_parent():
 
 
 def test_pipe():
+    # [FUNCTION DOC]
+    # pipe with an identity function returns a frame sharing memory (the function
+    # receives a shallow copy); writing to the result detaches only the written
+    # column and leaves the original unchanged.
     df = DataFrame({"a": [1, 2, 3], "b": 1.5})
     df_orig = df.copy()
 
     def testfunc(df):
+        # [FUNCTION DOC]
+        # HELPER: nested identity function passed to the pipe method in the test; returns
+        # its argument unchanged.
         return df
 
     df2 = df.pipe(testfunc)
@@ -293,10 +361,17 @@ def test_pipe():
 
 
 def test_pipe_modify_df():
+    # [FUNCTION DOC]
+    # pipe with a function that modifies its argument in place: since the function
+    # receives a shallow copy, the original is unchanged and the written column no
+    # longer shares memory with the result while the other column does.
     df = DataFrame({"a": [1, 2, 3], "b": 1.5})
     df_orig = df.copy()
 
     def testfunc(df):
+        # [FUNCTION DOC]
+        # HELPER: nested function passed to the pipe method in the test; sets the first cell of
+        # its argument to a new value and returns the argument.
         df.iloc[0, 0] = 100
         return df
 
@@ -310,6 +385,9 @@ def test_pipe_modify_df():
 
 
 def test_reindex_columns():
+    # [FUNCTION DOC]
+    # Reindexing columns to a subset returns a shallow copy sharing memory; writing
+    # detaches the touched column only; original unchanged.
     # Case: reindexing the column returns a new dataframe
     # + afterwards modifying the result
     df = DataFrame({"a": [1, 2, 3], "b": [4, 5, 6], "c": [0.1, 0.2, 0.3]})
@@ -336,6 +414,11 @@ def test_reindex_columns():
     ids=["identical", "view", "copy", "values"],
 )
 def test_reindex_rows(index):
+    # [FUNCTION DOC]
+    # Parametrized over four ways to supply the same row index (identical object,
+    # view, copy, plain list; given as lambdas). Reindexing rows with an equal index
+    # returns a shallow copy sharing memory; writing detaches only the touched column;
+    # original unchanged.
     # Case: reindexing the rows with an index that matches the current index
     # can use a shallow copy
     df = DataFrame({"a": [1, 2, 3], "b": [4, 5, 6], "c": [0.1, 0.2, 0.3]})
@@ -352,6 +435,9 @@ def test_reindex_rows(index):
 
 
 def test_drop_on_column():
+    # [FUNCTION DOC]
+    # Dropping a column keeps manager integrity and shares the remaining columns;
+    # writing detaches only the touched column; original unchanged.
     df = DataFrame({"a": [1, 2, 3], "b": [4, 5, 6], "c": [0.1, 0.2, 0.3]})
     df_orig = df.copy()
     df2 = df.drop(columns="a")
@@ -366,6 +452,9 @@ def test_drop_on_column():
 
 
 def test_select_dtypes():
+    # [FUNCTION DOC]
+    # Selecting integer columns returns a frame sharing memory with valid manager
+    # integrity; writing detaches it; original unchanged.
     # Case: selecting columns using `select_dtypes()` returns a new dataframe
     # + afterwards modifying the result
     df = DataFrame({"a": [1, 2, 3], "b": [4, 5, 6], "c": [0.1, 0.2, 0.3]})
@@ -384,6 +473,9 @@ def test_select_dtypes():
     "filter_kwargs", [{"items": ["a"]}, {"like": "a"}, {"regex": "a"}]
 )
 def test_filter(filter_kwargs):
+    # [FUNCTION DOC]
+    # Parametrized over items, like and regex arguments. The filtered frame shares
+    # memory; writing detaches it; the original is unchanged.
     # Case: selecting columns using `filter()` returns a new dataframe
     # + afterwards modifying the result
     df = DataFrame({"a": [1, 2, 3], "b": [4, 5, 6], "c": [0.1, 0.2, 0.3]})
@@ -398,6 +490,10 @@ def test_filter(filter_kwargs):
 
 
 def test_shift_no_op():
+    # [FUNCTION DOC]
+    # Shifting by zero periods returns a lazy copy: shares memory, new index and
+    # columns objects. Modifying the original detaches only the touched column and
+    # the result keeps the original values.
     df = DataFrame(
         [[1, 2], [3, 4], [5, 6]],
         index=date_range("2020-01-01", "2020-01-03"),
@@ -416,6 +512,9 @@ def test_shift_no_op():
 
 
 def test_shift_index():
+    # [FUNCTION DOC]
+    # A real row shift computes new data: no sharing, with new index and columns
+    # objects.
     df = DataFrame(
         [[1, 2], [3, 4], [5, 6]],
         index=date_range("2020-01-01", "2020-01-03"),
@@ -429,6 +528,10 @@ def test_shift_index():
 
 
 def test_shift_rows_freq():
+    # [FUNCTION DOC]
+    # Shifting rows with a frequency only moves the index: the data is shared with
+    # the source until the source is modified, after which the result keeps the old
+    # values with the shifted index.
     df = DataFrame(
         [[1, 2], [3, 4], [5, 6]],
         index=date_range("2020-01-01", "2020-01-03"),
@@ -445,6 +548,10 @@ def test_shift_rows_freq():
 
 
 def test_shift_columns():
+    # [FUNCTION DOC]
+    # Shifting along columns by one period shares the data of the first column with
+    # the shifted label; modifying the source detaches it. Result equals the expected frame
+    # whose first column is all missing.
     df = DataFrame(
         [[1, 2], [3, 4], [5, 6]], columns=date_range("2020-01-01", "2020-01-02")
     )
@@ -463,6 +570,10 @@ def test_shift_columns():
 
 
 def test_pop():
+    # [FUNCTION DOC]
+    # Popping a column returns a Series sharing memory with a prior view; the
+    # remaining column also still shares with it. Writing to the popped Series or to the
+    # frame detaches them; the earlier view equals the original.
     df = DataFrame({"a": [1, 2, 3], "b": [4, 5, 6], "c": [0.1, 0.2, 0.3]})
     df_orig = df.copy()
     view_original = df[:]
@@ -487,6 +598,11 @@ def test_pop():
     ],
 )
 def test_align_frame(func):
+    # [FUNCTION DOC]
+    # Parametrized over three align call forms (align with a frame, with a column
+    # Series on axis zero, with a sliced Series on axis one; given as lambdas). The
+    # aligned frame shares memory with the source; writing detaches; the original is
+    # unchanged.
     df = DataFrame({"a": [1, 2, 3], "b": "a"})
     df_orig = df.copy()
     df_changed = df[["b", "a"]].copy()
@@ -499,6 +615,10 @@ def test_align_frame(func):
 
 
 def test_align_series():
+    # [FUNCTION DOC]
+    # Aligning a Series with a copy of itself returns two Series sharing memory with
+    # their respective sources; writing to each detaches that one; both sources
+    # equal the original.
     ser = Series([1, 2])
     ser_orig = ser.copy()
     ser_other = ser.copy()
@@ -515,6 +635,9 @@ def test_align_series():
 
 
 def test_align_copy_false():
+    # [FUNCTION DOC]
+    # Aligning a frame with itself returns frames sharing memory with the source;
+    # writing to either result leaves the original unchanged.
     df = DataFrame({"a": [1, 2, 3], "b": [4, 5, 6]})
     df_orig = df.copy()
     df2, df3 = df.align(df)
@@ -530,6 +653,9 @@ def test_align_copy_false():
 
 
 def test_align_with_series_copy_false():
+    # [FUNCTION DOC]
+    # Aligning a frame with a Series along axis zero returns a frame and a Series
+    # that share memory with their sources; writing to either leaves the originals unchanged.
     df = DataFrame({"a": [1, 2, 3], "b": [4, 5, 6]})
     ser = Series([1, 2, 3], name="x")
     ser_orig = ser.copy()
@@ -548,6 +674,10 @@ def test_align_with_series_copy_false():
 
 
 def test_to_frame():
+    # [FUNCTION DOC]
+    # Converting a Series slice to a frame currently always shares memory; writing to
+    # the frame detaches and leaves the Series unchanged; modifying the Series does
+    # not change an earlier frame; the frame from a plain Series has a new index.
     # Case: converting a Series to a DataFrame with to_frame
     ser = Series([1, 2, 3])
     ser_orig = ser.copy()
@@ -584,6 +714,12 @@ def test_to_frame():
     ids=["shallow-copy", "reset_index", "rename", "select_dtypes"],
 )
 def test_chained_methods(method, idx):
+    # [FUNCTION DOC]
+    # Parametrized over four chains of methods (double shallow copy, double
+    # reset_index, rename then rename back, shallow copy then select_dtypes) with
+    # a column offset idx. Modifying the chained result never modifies the
+    # original, and modifying the original never changes a re-created result
+    # (compared from offset idx onward).
     df = DataFrame({"a": [1, 2, 3], "b": [4, 5, 6], "c": [0.1, 0.2, 0.3]})
     df_orig = df.copy()
 
@@ -600,6 +736,10 @@ def test_chained_methods(method, idx):
 
 @pytest.mark.parametrize("obj", [Series([1, 2], name="a"), DataFrame({"a": [1, 2]})])
 def test_to_timestamp(obj):
+    # [FUNCTION DOC]
+    # Parametrized over a Series and a frame, both given a period index. Converting
+    # the index to timestamps shares data; writing to the result detaches it; the
+    # original is unchanged.
     obj.index = Index([Period("2012-1-1", freq="D"), Period("2012-1-2", freq="D")])
 
     obj_orig = obj.copy()
@@ -615,6 +755,10 @@ def test_to_timestamp(obj):
 
 @pytest.mark.parametrize("obj", [Series([1, 2], name="a"), DataFrame({"a": [1, 2]})])
 def test_to_period(obj):
+    # [FUNCTION DOC]
+    # Parametrized over a Series and a frame with a timestamp index. Converting the
+    # index to periods (yearly) shares the data; writing detaches; original
+    # unchanged.
     obj.index = Index([Timestamp("2019-12-31"), Timestamp("2020-12-31")])
 
     obj_orig = obj.copy()
@@ -629,6 +773,10 @@ def test_to_period(obj):
 
 
 def test_set_index():
+    # [FUNCTION DOC]
+    # Regression test for a GitHub issue. Making a column the index returns a frame
+    # sharing the remaining columns; writing to the result detaches the written
+    # column; the original is unchanged.
     # GH 49473
     df = DataFrame({"a": [1, 2, 3], "b": [4, 5, 6], "c": [0.1, 0.2, 0.3]})
     df_orig = df.copy()
@@ -643,6 +791,9 @@ def test_set_index():
 
 
 def test_set_index_mutating_parent_does_not_mutate_index():
+    # [FUNCTION DOC]
+    # After setting a column as the index, modifying that column in the parent does
+    # not change the result.
     df = DataFrame({"a": [1, 2, 3], "b": 1})
     result = df.set_index("a")
     expected = result.copy()
@@ -652,6 +803,10 @@ def test_set_index_mutating_parent_does_not_mutate_index():
 
 
 def test_add_prefix():
+    # [FUNCTION DOC]
+    # Regression test for a GitHub issue. Adding a prefix to labels shares memory;
+    # writing detaches the touched column; the result equals the expected prefixed
+    # frame and the original is unchanged.
     # GH 49473
     df = DataFrame({"a": [1, 2, 3], "b": [4, 5, 6], "c": [0.1, 0.2, 0.3]})
     df_orig = df.copy()
@@ -671,6 +826,9 @@ def test_add_prefix():
 
 
 def test_add_suffix():
+    # [FUNCTION DOC]
+    # Same as the prefix test but with a suffix: shares memory, writing detaches only
+    # the touched column, result as expected, original unchanged.
     # GH 49473
     df = DataFrame({"a": [1, 2, 3], "b": [4, 5, 6], "c": [0.1, 0.2, 0.3]})
     df_orig = df.copy()
@@ -688,6 +846,10 @@ def test_add_suffix():
 
 @pytest.mark.parametrize("axis, val", [(0, 5.5), (1, np.nan)])
 def test_dropna(axis, val):
+    # [FUNCTION DOC]
+    # Parametrized over axis and a value placed in the data (row-wise drop with a
+    # regular value, column-wise drop with a missing value). The result shares
+    # memory with the source; writing detaches; the original is unchanged.
     df = DataFrame({"a": [1, 2, 3], "b": [4, val, 6], "c": "d"})
     df_orig = df.copy()
     df2 = df.dropna(axis=axis)
@@ -701,6 +863,9 @@ def test_dropna(axis, val):
 
 @pytest.mark.parametrize("val", [5, 5.5])
 def test_dropna_series(val):
+    # [FUNCTION DOC]
+    # Parametrized over an integer or float middle value. Series dropna returns a
+    # Series sharing memory; writing detaches; the source is unchanged.
     ser = Series([1, val, 4])
     ser_orig = ser.copy()
     ser2 = ser.dropna()
@@ -721,6 +886,10 @@ def test_dropna_series(val):
     ],
 )
 def test_head_tail(method):
+    # [FUNCTION DOC]
+    # Parametrized over head/tail calls with default and explicit row counts (given as
+    # lambdas). By design these make an eager copy: no memory sharing; manager
+    # integrity holds; writes affect only the result; original unchanged.
     df = DataFrame({"a": [1, 2, 3], "b": [0.1, 0.2, 0.3]})
     df_orig = df.copy()
     df2 = method(df)
@@ -739,6 +908,11 @@ def test_head_tail(method):
 
 
 def test_infer_objects(using_infer_string):
+    # [FUNCTION DOC]
+    # Fixture using_infer_string selects the string behavior. infer_objects keeps
+    # the integer column shared; the object column shares memory unless strings are
+    # inferred to a pyarrow-backed dtype (when pyarrow is available), in which case
+    # it is copied. Writing to both columns detaches them; original unchanged.
     df = DataFrame(
         {"a": [1, 2], "b": Series(["x", "y"], dtype=object), "c": 1, "d": "x"}
     )
@@ -759,6 +933,13 @@ def test_infer_objects(using_infer_string):
 
 
 def test_infer_objects_no_reference(using_infer_string):
+    # [FUNCTION DOC]
+    # Fixture using_infer_string. After infer_objects on a frame with integer, object
+    # string, object datetime and another object column, the result has no
+    # references, so writes to the integer and datetime-object columns do not copy
+    # (buffers stay shared). The string column is copied, unless it is
+    # pyarrow-backed strings, whose array is updated in place and still appears to share
+    # memory.
     df = DataFrame(
         {
             "a": [1, 2],
@@ -792,6 +973,10 @@ def test_infer_objects_no_reference(using_infer_string):
 
 
 def test_infer_objects_reference():
+    # [FUNCTION DOC]
+    # Same frame as the previous test but with a view alive before inference.
+    # Writing to the integer and string columns copies them (no shared buffer), while
+    # the datetime-object column still shares memory.
     df = DataFrame(
         {
             "a": [1, 2],
@@ -825,6 +1010,9 @@ def test_infer_objects_reference():
     ],
 )
 def test_truncate(kwargs):
+    # [FUNCTION DOC]
+    # Parametrized over truncating columns or rows. The result shares memory;
+    # manager integrity holds; writing detaches; original unchanged.
     df = DataFrame({"a": [1, 2, 3], "b": 1, "c": 2})
     df_orig = df.copy()
     df2 = df.truncate(**kwargs)
@@ -839,6 +1027,9 @@ def test_truncate(kwargs):
 
 @pytest.mark.parametrize("method", ["assign", "drop_duplicates"])
 def test_assign_drop_duplicates(method):
+    # [FUNCTION DOC]
+    # Parametrized over assign and drop_duplicates with no arguments. The result
+    # shares memory; manager integrity holds; writing detaches; original unchanged.
     df = DataFrame({"a": [1, 2, 3]})
     df_orig = df.copy()
     df2 = getattr(df, method)()
@@ -853,6 +1044,9 @@ def test_assign_drop_duplicates(method):
 
 @pytest.mark.parametrize("obj", [Series([1, 2]), DataFrame({"a": [1, 2]})])
 def test_take(obj):
+    # [FUNCTION DOC]
+    # Parametrized over a Series and a frame. Taking all rows in original order does
+    # not copy; writing detaches; the source is unchanged.
     # Check that no copy is made when we take all rows in original order
     obj_orig = obj.copy()
     obj2 = obj.take([0, 1])
@@ -865,6 +1059,10 @@ def test_take(obj):
 
 @pytest.mark.parametrize("obj", [Series([1, 2]), DataFrame({"a": [1, 2]})])
 def test_between_time(obj):
+    # [FUNCTION DOC]
+    # Parametrized over a Series and a frame with a datetime index. A time-of-day
+    # selection that keeps all rows shares memory; writing detaches; the source is
+    # unchanged.
     obj.index = date_range("2018-04-09", periods=2, freq="1D20min")
     obj_orig = obj.copy()
     obj2 = obj.between_time("0:00", "1:00")
@@ -876,6 +1074,9 @@ def test_between_time(obj):
 
 
 def test_reindex_like():
+    # [FUNCTION DOC]
+    # Reindexing a frame like another with the same columns in a different order
+    # shares memory; writing detaches; original unchanged.
     df = DataFrame({"a": [1, 2], "b": "a"})
     other = DataFrame({"b": "a", "a": [1, 2]})
 
@@ -889,6 +1090,9 @@ def test_reindex_like():
 
 
 def test_sort_index():
+    # [FUNCTION DOC]
+    # Regression test for a GitHub issue. Sorting an already sorted Series by index
+    # shares memory; writing detaches; source unchanged.
     # GH 49473
     ser = Series([1, 2, 3])
     ser_orig = ser.copy()
@@ -906,6 +1110,9 @@ def test_sort_index():
     [(Series([1, 2, 3], name="a"), {}), (DataFrame({"a": [1, 2, 3]}), {"by": "a"})],
 )
 def test_sort_values(obj, kwargs):
+    # [FUNCTION DOC]
+    # Parametrized over a Series and a frame sorted by a column. An already sorted
+    # input shares memory with the result; writing detaches; source unchanged.
     obj_orig = obj.copy()
     obj2 = obj.sort_values(**kwargs)
     assert np.shares_memory(get_array(obj2, "a"), get_array(obj, "a"))
@@ -921,6 +1128,10 @@ def test_sort_values(obj, kwargs):
     [(Series([1, 2, 3], name="a"), {}), (DataFrame({"a": [1, 2, 3]}), {"by": "a"})],
 )
 def test_sort_values_inplace(obj, kwargs):
+    # [FUNCTION DOC]
+    # Parametrized over a Series and a frame. In-place sort of already sorted data
+    # keeps sharing memory with a view; writing then detaches and the view stays
+    # equal to the original.
     obj_orig = obj.copy()
     view = obj[:]
     obj.sort_values(inplace=True, **kwargs)
@@ -935,6 +1146,12 @@ def test_sort_values_inplace(obj, kwargs):
 
 @pytest.mark.parametrize("decimals", [-1, 0, 1])
 def test_round(decimals):
+    # [FUNCTION DOC]
+    # Parametrized over decimals (negative, zero, positive). The non-numeric column
+    # always shares memory; the numeric column shares memory only for a
+    # non-negative decimals value on older numpy versions (a no-op round returns a view
+    # there) and otherwise is copied. Result has new index and columns; writes
+    # detach; original unchanged.
     df = DataFrame({"a": [1, 2], "b": "c"})
     df_orig = df.copy()
     df2 = df.round(decimals=decimals)
@@ -958,6 +1175,9 @@ def test_round(decimals):
 
 
 def test_reorder_levels():
+    # [FUNCTION DOC]
+    # Reordering index levels of a frame shares data; writing detaches; original
+    # unchanged.
     index = MultiIndex.from_tuples(
         [(1, 1), (1, 2), (2, 1), (2, 2)], names=["one", "two"]
     )
@@ -972,6 +1192,9 @@ def test_reorder_levels():
 
 
 def test_series_reorder_levels():
+    # [FUNCTION DOC]
+    # Series version of reorder_levels: shares memory; writing detaches; source
+    # unchanged.
     index = MultiIndex.from_tuples(
         [(1, 1), (1, 2), (2, 1), (2, 2)], names=["one", "two"]
     )
@@ -987,6 +1210,9 @@ def test_series_reorder_levels():
 
 @pytest.mark.parametrize("obj", [Series([1, 2, 3]), DataFrame({"a": [1, 2, 3]})])
 def test_swaplevel(obj):
+    # [FUNCTION DOC]
+    # Parametrized over a Series and a frame given a two-level index. Swapping
+    # levels shares memory; writing detaches; original unchanged.
     index = MultiIndex.from_tuples([(1, 1), (1, 2), (2, 1)], names=["one", "two"])
     obj.index = index
     obj_orig = obj.copy()
@@ -999,6 +1225,9 @@ def test_swaplevel(obj):
 
 
 def test_frame_set_axis():
+    # [FUNCTION DOC]
+    # Regression test for a GitHub issue. Setting new row labels on a frame shares
+    # memory; writing detaches; original unchanged.
     # GH 49473
     df = DataFrame({"a": [1, 2, 3], "b": [4, 5, 6], "c": [0.1, 0.2, 0.3]})
     df_orig = df.copy()
@@ -1013,6 +1242,9 @@ def test_frame_set_axis():
 
 
 def test_series_set_axis():
+    # [FUNCTION DOC]
+    # Regression test for a GitHub issue. Setting new labels on a Series shares memory
+    # (checked on the objects directly); writing detaches; source unchanged.
     # GH 49473
     ser = Series([1, 2, 3])
     ser_orig = ser.copy()
@@ -1026,6 +1258,8 @@ def test_series_set_axis():
 
 
 def test_set_flags():
+    # [FUNCTION DOC]
+    # Setting flags on a Series shares memory; writing detaches; source unchanged.
     ser = Series([1, 2, 3])
     ser_orig = ser.copy()
     ser2 = ser.set_flags(allows_duplicate_labels=False)
@@ -1040,6 +1274,9 @@ def test_set_flags():
 
 @pytest.mark.parametrize("kwargs", [{"mapper": "test"}, {"index": "test"}])
 def test_rename_axis(kwargs):
+    # [FUNCTION DOC]
+    # Parametrized over the mapper and index keyword forms. Renaming the axis shares
+    # memory; writing detaches; original unchanged.
     df = DataFrame({"a": [1, 2, 3, 4]}, index=Index([1, 2, 3, 4], name="a"))
     df_orig = df.copy()
     df2 = df.rename_axis(**kwargs)
@@ -1054,6 +1291,9 @@ def test_rename_axis(kwargs):
     "func, tz", [("tz_convert", "Europe/Berlin"), ("tz_localize", None)]
 )
 def test_tz_convert_localize(func, tz):
+    # [FUNCTION DOC]
+    # Parametrized over tz_convert (on a tz-aware index) and tz_localize (naive
+    # index). The Series result shares memory; writing detaches; source unchanged.
     # GH 49473
     ser = Series(
         [1, 2], index=date_range(start="2014-08-01 09:00", freq="h", periods=2, tz=tz)
@@ -1069,6 +1309,9 @@ def test_tz_convert_localize(func, tz):
 
 
 def test_droplevel():
+    # [FUNCTION DOC]
+    # Regression test for a GitHub issue. Dropping an index level shares the data
+    # columns; writing to one detaches only that column; original unchanged.
     # GH 49473
     index = MultiIndex.from_tuples([(1, 1), (1, 2), (2, 1)], names=["one", "two"])
     df = DataFrame({"a": [1, 2, 3], "b": [4, 5, 6], "c": [7, 8, 9]}, index=index)
@@ -1088,6 +1331,9 @@ def test_droplevel():
 
 
 def test_squeeze():
+    # [FUNCTION DOC]
+    # Squeezing a single-column frame to a Series shares memory (it is just a
+    # positional selection); writing detaches; frame unchanged.
     df = DataFrame({"a": [1, 2, 3]})
     df_orig = df.copy()
     series = df.squeeze()
@@ -1102,6 +1348,10 @@ def test_squeeze():
 
 
 def test_items():
+    # [FUNCTION DOC]
+    # Iterates the columns of a frame twice (the second pass exercises any cache).
+    # Each yielded Series shares memory with its column; writing to it detaches it
+    # and leaves the frame unchanged.
     df = DataFrame({"a": [1, 2, 3], "b": [4, 5, 6], "c": [7, 8, 9]})
     df_orig = df.copy()
 
@@ -1120,6 +1370,10 @@ def test_items():
 
 @pytest.mark.parametrize("dtype", ["int64", "Int64"])
 def test_putmask(dtype):
+    # [FUNCTION DOC]
+    # Parametrized over int64 and nullable Int64. With a view alive, setting all
+    # cells via a full boolean frame mask copies the data (no sharing with the view);
+    # the view is unchanged.
     df = DataFrame({"a": [1, 2], "b": 1, "c": 2}, dtype=dtype)
     view = df[:]
     df_orig = df.copy()
@@ -1131,6 +1385,9 @@ def test_putmask(dtype):
 
 @pytest.mark.parametrize("dtype", ["int64", "Int64"])
 def test_putmask_no_reference(dtype):
+    # [FUNCTION DOC]
+    # Parametrized over int64 and Int64. The same full-mask assignment without any
+    # other reference modifies in place: the buffer is kept.
     df = DataFrame({"a": [1, 2], "b": 1, "c": 2}, dtype=dtype)
     arr_a = get_array(df, "a")
     df[df == df] = 5
@@ -1139,6 +1396,10 @@ def test_putmask_no_reference(dtype):
 
 @pytest.mark.parametrize("dtype", ["float64", "Float64"])
 def test_putmask_aligns_rhs_no_reference(dtype):
+    # [FUNCTION DOC]
+    # Parametrized over float64 and Float64. Masked assignment of an aligned frame
+    # (only some columns present) without other references keeps the buffer of the
+    # modified column.
     df = DataFrame({"a": [1.5, 2], "b": 1.5}, dtype=dtype)
     arr_a = get_array(df, "a")
     df[df == df] = DataFrame({"a": [5.5, 5]})
@@ -1147,6 +1408,13 @@ def test_putmask_aligns_rhs_no_reference(dtype):
 
 @pytest.mark.parametrize("val, exp, raises", [(5.5, True, True), (5, False, False)])
 def test_putmask_dont_copy_some_blocks(val, exp, raises: bool):
+    # [FUNCTION DOC]
+    # Parametrized over (value, expected-shared flag, raises flag): a float value
+    # raises a type error (invalid value for the integer column); an integer
+    # value succeeds. In the success case, with a view alive, the modified integer column
+    # does not share memory, the same-block integer column shares exactly as the flag
+    # says (block is copied as a whole; a TODO notes splitting could avoid that), the
+    # float column still shares and has references, and the view is unchanged.
     df = DataFrame({"a": [1, 2], "b": 1, "c": 1.5})
     view = df[:]
     df_orig = df.copy()
@@ -1176,6 +1444,10 @@ def test_putmask_dont_copy_some_blocks(val, exp, raises: bool):
     ],
 )
 def test_where_mask_noop(dtype, func):
+    # [FUNCTION DOC]
+    # Parametrized over int64 and Int64 and where/mask forms (lambdas) that change
+    # nothing. Result shares memory and has a new index; writing detaches; source
+    # unchanged.
     ser = Series([1, 2, 3], dtype=dtype)
     ser_orig = ser.copy()
 
@@ -1197,6 +1469,9 @@ def test_where_mask_noop(dtype, func):
     ],
 )
 def test_where_mask(dtype, func):
+    # [FUNCTION DOC]
+    # Parametrized over dtype and where/mask forms that do replace values. The result
+    # does not share memory, has a new index, and the source is unchanged.
     ser = Series([1, 2, 3], dtype=dtype)
     ser_orig = ser.copy()
 
@@ -1216,6 +1491,10 @@ def test_where_mask(dtype, func):
     ],
 )
 def test_where_mask_noop_on_single_column(dtype, val, func):
+    # [FUNCTION DOC]
+    # Parametrized over (dtype, replacement value) and where/mask forms on a
+    # frame. The column not touched by the condition shares memory while the
+    # touched column does not; writing detaches the shared one; original unchanged.
     df = DataFrame({"a": [1, 2, 3], "b": [-4, -5, -6]}, dtype=dtype)
     df_orig = df.copy()
 
@@ -1230,6 +1509,10 @@ def test_where_mask_noop_on_single_column(dtype, val, func):
 
 @pytest.mark.parametrize("func", ["mask", "where"])
 def test_chained_where_mask(func):
+    # [FUNCTION DOC]
+    # Parametrized over mask and where. In-place use through a chained selection
+    # (Series, then single-column frame) emits the chained assignment warning and
+    # leaves the frame unchanged.
     df = DataFrame({"a": [1, 4, 2], "b": 1})
     df_orig = df.copy()
     with tm.raises_chained_assignment_error():
@@ -1242,6 +1525,9 @@ def test_chained_where_mask(func):
 
 
 def test_asfreq_noop():
+    # [FUNCTION DOC]
+    # asfreq with the already existing frequency shares memory; writing detaches;
+    # original unchanged.
     df = DataFrame(
         {"a": [0.0, None, 2.0, 3.0]},
         index=date_range("1/1/2000", periods=4, freq="min"),
@@ -1258,6 +1544,8 @@ def test_asfreq_noop():
 
 
 def test_iterrows():
+    # [FUNCTION DOC]
+    # Writing to each row Series yielded by row iteration does not modify the frame.
     df = DataFrame({"a": 0, "b": 1}, index=[1, 2, 3])
     df_orig = df.copy()
 
@@ -1267,6 +1555,9 @@ def test_iterrows():
 
 
 def test_interpolate_creates_copy():
+    # [FUNCTION DOC]
+    # Regression test for a GitHub issue. After an in-place forward fill (which fills
+    # a gap) with a view alive, writing to the frame leaves the view unchanged.
     # GH#51126
     df = DataFrame({"a": [1.5, np.nan, 3]})
     view = df[:]
@@ -1278,6 +1569,10 @@ def test_interpolate_creates_copy():
 
 
 def test_isetitem():
+    # [FUNCTION DOC]
+    # Setting a column by position on a shallow copy (works in place) leaves the
+    # unrelated columns shared with the original; later writes to the copy do not
+    # change the original and the untouched column keeps sharing.
     df = DataFrame({"a": [1, 2, 3], "b": [4, 5, 6], "c": [7, 8, 9]})
     df_orig = df.copy()
     df2 = df.copy(deep=False)  # Trigger a CoW
@@ -1294,6 +1589,11 @@ def test_isetitem():
     "dtype", ["int64", "float64"], ids=["single-block", "mixed-block"]
 )
 def test_isetitem_series(dtype):
+    # [FUNCTION DOC]
+    # Parametrized over single-block and mixed-block layouts. Setting a column by
+    # position from a Series shares memory and leaves a reference; writing to the
+    # frame does not change the Series, and modifying the Series does not change a
+    # frame built the same way.
     df = DataFrame({"a": [1, 2, 3], "b": np.array([4, 5, 6], dtype=dtype)})
     ser = Series([7, 8, 9])
     ser_orig = ser.copy()
@@ -1317,6 +1617,10 @@ def test_isetitem_series(dtype):
 
 
 def test_isetitem_frame():
+    # [FUNCTION DOC]
+    # Setting two columns by position from a frame shares memory with both columns
+    # and keeps references; later writes to the right-hand frame do not change the
+    # target.
     df = DataFrame({"a": [1, 2, 3], "b": 1, "c": 2})
     rhs = DataFrame({"a": [4, 5, 6], "b": 2})
     df.isetitem([0, 1], rhs)
@@ -1331,6 +1635,9 @@ def test_isetitem_frame():
 
 @pytest.mark.parametrize("key", ["a", ["a"]])
 def test_get(key):
+    # [FUNCTION DOC]
+    # Parametrized over a scalar key and a list key. get returns an object sharing
+    # memory; writing detaches; frame unchanged.
     df = DataFrame({"a": [1, 2, 3], "b": [4, 5, 6]})
     df_orig = df.copy()
 
@@ -1347,6 +1654,11 @@ def test_get(key):
     "dtype", ["int64", "float64"], ids=["single-block", "mixed-block"]
 )
 def test_xs(axis, key, dtype):
+    # [FUNCTION DOC]
+    # Parametrized over (axis, key) and dtype layout. Cross-section: along columns
+    # or for single-block data the result shares memory; for a mixed-block row the
+    # result owns its data (no references). The result index is a different object
+    # from the corresponding axis labels; writing never changes the source.
     single_block = dtype == "int64"
     df = DataFrame(
         {"a": [1, 2, 3], "b": [4, 5, 6], "c": np.array([7, 8, 9], dtype=dtype)}
@@ -1371,6 +1683,11 @@ def test_xs(axis, key, dtype):
 @pytest.mark.parametrize("axis", [0, 1])
 @pytest.mark.parametrize("key, level", [("l1", 0), (2, 1)])
 def test_xs_multiindex(key, level, axis):
+    # [FUNCTION DOC]
+    # Parametrized over axis and (key, level). Cross-section on a multi-index (frame
+    # transposed first for axis one): for the outer level the first column shares
+    # memory; the result has new index and columns objects; writing leaves the source
+    # unchanged.
     arr = np.arange(18).reshape(6, 3)
     index = MultiIndex.from_product([["l1", "l2"], [1, 2, 3]], names=["lev1", "lev2"])
     df = DataFrame(arr, index=index, columns=list("abc"))
@@ -1392,6 +1709,10 @@ def test_xs_multiindex(key, level, axis):
 
 
 def test_update_frame():
+    # [FUNCTION DOC]
+    # In-place update of a frame from a frame with a view alive: the frame has the
+    # expected updated values; the view keeps the old values, still sharing the
+    # untouched column but not the updated one.
     df1 = DataFrame({"a": [1.0, 2.0, 3.0], "b": [4.0, 5.0, 6.0]})
     df2 = DataFrame({"b": [100.0]}, index=[1])
     df1_orig = df1.copy()
@@ -1407,6 +1728,9 @@ def test_update_frame():
 
 
 def test_update_series():
+    # [FUNCTION DOC]
+    # Series update with a view alive: the Series has the updated values and the view
+    # stays at the original values.
     ser1 = Series([1.0, 2.0, 3.0])
     ser2 = Series([100.0], index=[1])
     ser1_orig = ser1.copy()
@@ -1421,6 +1745,9 @@ def test_update_series():
 
 
 def test_update_chained_assignment():
+    # [FUNCTION DOC]
+    # update through a chained selection (column Series, then single-column frame)
+    # emits the chained assignment warning and leaves the frame unchanged.
     df = DataFrame({"a": [1, 2, 3]})
     ser2 = Series([100.0], index=[1])
     df_orig = df.copy()
@@ -1434,6 +1761,10 @@ def test_update_chained_assignment():
 
 
 def test_inplace_arithmetic_series():
+    # [FUNCTION DOC]
+    # In-place multiplication of a Series no longer updates the buffer in place (a
+    # GitHub pull request changed this): the new data is a different buffer and the
+    # old buffer is unchanged.
     ser = Series([1, 2, 3])
     ser_orig = ser.copy()
     data = get_array(ser)
@@ -1448,6 +1779,9 @@ def test_inplace_arithmetic_series():
 
 
 def test_inplace_arithmetic_series_with_reference():
+    # [FUNCTION DOC]
+    # In-place multiplication with a view alive does not share memory with the view,
+    # and the view equals the original.
     ser = Series([1, 2, 3])
     ser_orig = ser.copy()
     view = ser[:]
@@ -1457,6 +1791,9 @@ def test_inplace_arithmetic_series_with_reference():
 
 
 def test_transpose():
+    # [FUNCTION DOC]
+    # Transposing a single-dtype frame shares memory; writing to the result leaves the
+    # original unchanged.
     df = DataFrame({"a": [1, 2, 3], "b": 1})
     df_orig = df.copy()
     result = df.transpose()
@@ -1467,6 +1804,9 @@ def test_transpose():
 
 
 def test_transpose_different_dtypes():
+    # [FUNCTION DOC]
+    # Transposing mixed dtypes cannot share memory; writing to the result leaves
+    # the original unchanged.
     df = DataFrame({"a": [1, 2, 3], "b": 1.5})
     df_orig = df.copy()
     result = df.T
@@ -1477,6 +1817,8 @@ def test_transpose_different_dtypes():
 
 
 def test_transpose_ea_single_column():
+    # [FUNCTION DOC]
+    # Transposing a nullable single-column frame does not share memory.
     df = DataFrame({"a": [1, 2, 3]}, dtype="Int64")
     result = df.T
 
@@ -1484,10 +1826,16 @@ def test_transpose_ea_single_column():
 
 
 def test_transform_frame():
+    # [FUNCTION DOC]
+    # transform with a function that writes into the Series it is given must not
+    # modify the original frame.
     df = DataFrame({"a": [1, 2, 3], "b": 1})
     df_orig = df.copy()
 
     def func(ser):
+        # [FUNCTION DOC]
+        # HELPER: nested function passed to transform; sets the first cell of the given
+        # Series to a new value and returns it.
         ser.iloc[0] = 100
         return ser
 
@@ -1496,10 +1844,16 @@ def test_transform_frame():
 
 
 def test_transform_series():
+    # [FUNCTION DOC]
+    # Series transform with a function that writes into its argument must not modify
+    # the original Series.
     ser = Series([1, 2, 3])
     ser_orig = ser.copy()
 
     def func(ser):
+        # [FUNCTION DOC]
+        # HELPER: nested function passed to transform; sets the first cell of the given
+        # Series to a new value and returns it.
         ser.iloc[0] = 100
         return ser
 
@@ -1508,6 +1862,9 @@ def test_transform_series():
 
 
 def test_count_read_only_array():
+    # [FUNCTION DOC]
+    # The result of counting non-missing values per column must be writable: setting
+    # a cell in it works and gives the expected Series.
     df = DataFrame({"a": [1, 2], "b": 3})
     result = df.count()
     result.iloc[0] = 100
@@ -1516,6 +1873,9 @@ def test_count_read_only_array():
 
 
 def test_insert_series():
+    # [FUNCTION DOC]
+    # Inserting a Series as a column at a position shares memory and keeps a
+    # reference; writing to the frame leaves the Series unchanged.
     df = DataFrame({"a": [1, 2, 3]})
     ser = Series([1, 2, 3])
     ser_orig = ser.copy()
@@ -1528,6 +1888,9 @@ def test_insert_series():
 
 
 def test_eval():
+    # [FUNCTION DOC]
+    # Evaluating an assignment expression returns a frame sharing the existing
+    # columns; writing to the result leaves the original unchanged.
     df = DataFrame({"a": [1, 2, 3], "b": 1})
     df_orig = df.copy()
 
@@ -1539,6 +1902,9 @@ def test_eval():
 
 
 def test_eval_inplace():
+    # [FUNCTION DOC]
+    # In-place evaluation of an assignment expression with a view alive keeps the
+    # existing column shared; writing to the frame leaves the view unchanged.
     df = DataFrame({"a": [1, 2, 3], "b": 1})
     df_orig = df.copy()
     df_view = df[:]
@@ -1551,12 +1917,19 @@ def test_eval_inplace():
 
 
 def test_apply_modify_row():
+    # [FUNCTION DOC]
+    # Row-wise apply with a function that writes into each row must not modify the
+    # original frame. With mixed dtypes (rows as copies) no warning is raised and the
+    # frame is still unchanged.
     # Case: applying a function on each row as a Series object, where the
     # function mutates the row object (which needs to trigger CoW if row is a view)
     df = DataFrame({"A": [1, 2], "B": [3, 4]})
     df_orig = df.copy()
 
     def transform(row):
+        # [FUNCTION DOC]
+        # HELPER: nested function applied to each row; sets one entry of the row to a
+        # fixed value and returns the row.
         row["B"] = 100
         return row
 
@@ -1575,6 +1948,9 @@ def test_apply_modify_row():
 
 
 def test_reduce():
+    # [FUNCTION DOC]
+    # Results of reductions (sum, grouped sum, scalar and list quantile) have index or
+    # columns objects that are not the same objects as the source's labels.
     df = DataFrame({"a": [1, 2, 3], "b": 1.5})
 
     result = df.sum()
@@ -1590,6 +1966,9 @@ def test_reduce():
 
 
 def test_diff():
+    # [FUNCTION DOC]
+    # The difference result for a frame and for a Series has new index (and columns)
+    # objects distinct from the source's.
     df = DataFrame({"a": [1, 2, 3], "b": 1.5})
 
     result = df.diff()

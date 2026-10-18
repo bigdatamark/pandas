@@ -1,3 +1,8 @@
+# [MODULE DOC]
+# Copy-on-write tests of block manager internals: consolidation with
+# references, setting columns by position while splitting blocks, and the
+# exponential backoff used for purging dead references.
+
 import numpy as np
 import pytest
 
@@ -10,6 +15,12 @@ from pandas.tests.copy_view.util import get_array
 
 
 def test_consolidate():
+    # [FUNCTION DOC]
+    # Builds an unconsolidated frame and a viewing subset, then consolidates the subset
+    # in place. Checks which blocks keep references: the float block stays
+    # referenced, the newly consolidated integer block has none, the parent's blocks
+    # are referenced only for the float column, and writing to the subset does not
+    # modify the parent.
     # create unconsolidated DataFrame
     df = DataFrame({"a": [1, 2, 3], "b": [0.1, 0.2, 0.3]})
     df["c"] = [4, 5, 6]
@@ -58,6 +69,13 @@ def test_consolidate():
     ],
 )
 def test_iset_splits_blocks_inplace(locs, arr, dtype):
+    # [FUNCTION DOC]
+    # Parametrized over index dtype (platform integer, int8) and over combinations of
+    # column locations with replacement arrays (1-D for single locations,
+    # 2-D for several, including a location beyond the existing column count).
+    # Setting columns by position in place on a shallow copy of a six-column frame
+    # must not modify the original frame, and every column not being replaced must
+    # still share memory between original and copy.
     # Nothing currently calls iset with
     # more than 1 loc with inplace=True (only happens with inplace=False)
     # but ensure that it works
@@ -83,6 +101,12 @@ def test_iset_splits_blocks_inplace(locs, arr, dtype):
 
 
 def test_exponential_backoff():
+    # [FUNCTION DOC]
+    # Regression test for a GitHub issue about reference list cleanup.
+    # Creating many shallow copies grows the list of referenced blocks (491, then
+    # 531 entries) and the cleanup counter reaches 1000. While more than 500 objects
+    # remain alive the counter stays at 1000; after most are released, a further
+    # batch of copies lowers it to 500.
     # GH#55518
     df = DataFrame({"a": [1, 2, 3]})
     for i in range(490):
