@@ -1,3 +1,11 @@
+# [MODULE DOC]
+# Tests for Google Cloud Storage URL support using mocked file systems (no network):
+# many readers/writers through gs URLs, compression plus encoding for CSV, parquet to a
+# new file, and the missing-gcsfs error. Requires the gcsfs and fsspec packages in most
+# tests. A module-wide mark ignores a block-manager deprecation warning. The gcs_buffer
+# fixture registers a mock implementation for the gs protocol in the global fsspec
+# registry.
+
 from io import BytesIO
 import os
 import pathlib
@@ -28,6 +36,14 @@ pytestmark = pytest.mark.filterwarnings(
 
 @pytest.fixture
 def gcs_buffer():
+    # [FUNCTION DOC]
+    # HELPER: fixture emulating GCS with a binary buffer.
+    # Skips if gcsfs or fsspec are missing. Creates an in-memory bytes buffer whose
+    # close method is replaced to do nothing, defines a mock file system whose open
+    # method rewinds and returns that buffer and whose listing method returns a single
+    # file entry for the path (needed by pyarrow), and registers it for the gs protocol,
+    # replacing the default implementation. Returns the buffer. Side effect: the
+    # registration is global and is not undone.
     """Emulate GCS using a binary buffer."""
     pytest.importorskip("gcsfs")
     fsspec = pytest.importorskip("fsspec")
@@ -36,12 +52,21 @@ def gcs_buffer():
     gcs_buffer.close = lambda: True
 
     class MockGCSFileSystem(fsspec.AbstractFileSystem):
+        # [CLASS DOC]
+        # HELPER: mock fsspec file system backed by the shared buffer from the
+        # gcs_buffer fixture; any path opens the same buffer.
         @staticmethod
         def open(*args, **kwargs):
+            # [FUNCTION DOC]
+            # HELPER: static method of the mock file system; ignores all arguments,
+            # rewinds the shared buffer and returns it.
             gcs_buffer.seek(0)
             return gcs_buffer
 
         def ls(self, path, **kwargs):
+            # [FUNCTION DOC]
+            # HELPER: mock listing method; takes the path and extra keywords and returns
+            # a one-element list describing the path as a file (required by pyarrow).
             # needed for pyarrow
             return [{"name": path, "type": "file"}]
 
@@ -55,6 +80,16 @@ def gcs_buffer():
 @pytest.mark.single_cpu
 @pytest.mark.parametrize("format", ["csv", "json", "parquet", "excel", "markdown"])
 def test_to_read_gcs(gcs_buffer, format, monkeypatch, capsys, request):
+    # [FUNCTION DOC]
+    # Single-cpu, GH 33987. Parametrized over csv, json, parquet, excel and markdown.
+    # Writes a small frame (int, float with NaN, string, nanosecond datetimes) to a gs
+    # URL and reads it back with the matching reader (markdown only writes; the
+    # comparison uses the original). For parquet, patches the pyarrow file system class
+    # with a mock that prints a message and returns a local file system, expects the
+    # message printed exactly twice (once for write, once for read), and marks the test
+    # as an expected TypeError failure on pyarrow 17 or newer. For csv, excel and json
+    # the expected frame has its datetimes converted to microsecond unit before
+    # comparison.
     """
     Test that many to/read functions support GCS.
 
@@ -87,8 +122,16 @@ def test_to_read_gcs(gcs_buffer, format, monkeypatch, capsys, request):
         pa_fs = pytest.importorskip("pyarrow.fs")
 
         class MockFileSystem(pa_fs.FileSystem):
+            # [CLASS DOC]
+            # HELPER: mock of the pyarrow file system class used in the parquet branch
+            # of test_to_read_gcs; only provides a static constructor-from-URI
+            # replacement.
             @staticmethod
             def from_uri(path):
+                # [FUNCTION DOC]
+                # HELPER: static replacement for pyarrow's file-system-from-URI: prints
+                # a marker line to standard output, strips the gs prefix from the path
+                # and returns a local file system created from that path's URI.
                 print("Using pyarrow filesystem")
                 to_local = pathlib.Path(path.replace("gs://", "")).absolute().as_uri()
                 return pa_fs.LocalFileSystem(to_local)
@@ -119,6 +162,16 @@ def test_to_read_gcs(gcs_buffer, format, monkeypatch, capsys, request):
 
 
 def assert_equal_zip_safe(result: bytes, expected: bytes, compression: str):
+    # [FUNCTION DOC]
+    # HELPER: compares compressed output bytes in a way robust to timestamps.
+    # Takes result bytes, expected bytes and the compression name. For zip it compares
+    # only the per-member CRC-32 checksums (the last-modified time may be off by one on
+    # CI). For tar it compares the contents of corresponding members (both must be
+    # present or absent). For other compressions it asserts the bytes are identical.
+    # Raises an assertion error on mismatch.
+    # KNOWN ISSUE: the zip and tar branches bind the result bytes to names prefixed exp
+    # and the expected bytes to names prefixed res, the reverse of the arguments; since
+    # the comparison is symmetric this is harmless but misleading.
     """
     For zip compression, only compare the CRC-32 checksum of the file contents
     to avoid checking the time-dependent last-modified timestamp which
@@ -155,6 +208,12 @@ def assert_equal_zip_safe(result: bytes, expected: bytes, compression: str):
 def test_to_csv_compression_encoding_gcs(
     gcs_buffer, compression_only, encoding, compression_to_extension
 ):
+    # [FUNCTION DOC]
+    # GH 35677, 26124, 32392. Parametrized over utf-8 and cp1251 encoding and
+    # compression_only methods. Builds a reference compressed and encoded buffer (gzip
+    # uses a fixed mtime for reproducibility), writes the same frame to a gs URL with
+    # explicit compression and compares bytes with the zip-safe helper, reads it back
+    # and compares frames; then repeats with a file extension and inferred compression.
     """
     Compression and encoding should with GCS.
 
@@ -201,6 +260,12 @@ def test_to_csv_compression_encoding_gcs(
 
 
 def test_to_parquet_gcs_new_file(monkeypatch, tmpdir):
+    # [FUNCTION DOC]
+    # Regression test for writing to a not-yet-existent GCS parquet file. Requires
+    # fastparquet and gcsfs. Patches the gcsfs class with a mock whose open method
+    # refuses reading and writes to a local temp file; writes a frame to a gs URL with
+    # the fastparquet engine and no compression. There is no assertion: it passes if no
+    # error occurs.
     """Regression test for writing to a not-yet-existent GCS Parquet file."""
     pytest.importorskip("fastparquet")
     pytest.importorskip("gcsfs")
@@ -216,7 +281,14 @@ def test_to_parquet_gcs_new_file(monkeypatch, tmpdir):
     )
 
     class MockGCSFileSystem(AbstractFileSystem):
+        # [CLASS DOC]
+        # HELPER: mock file system for test_to_parquet_gcs_new_file; opens only for
+        # writing, redirecting to a temporary-directory parquet file.
         def open(self, path, mode="r", *args):
+            # [FUNCTION DOC]
+            # HELPER: raises file-not-found if the mode lacks a write flag; otherwise
+            # opens a local file in the temp directory in the given mode with utf-8
+            # encoding and returns it.
             if "w" not in mode:
                 raise FileNotFoundError
             return open(os.path.join(tmpdir, "test.parquet"), mode, encoding="utf-8")
@@ -229,5 +301,8 @@ def test_to_parquet_gcs_new_file(monkeypatch, tmpdir):
 
 @td.skip_if_installed("gcsfs")
 def test_gcs_not_present_exception():
+    # [FUNCTION DOC]
+    # Runs only when gcsfs is not installed. Reading a gs URL must raise an import error
+    # from the external library.
     with tm.external_error_raised(ImportError):
         read_csv("gs://test/test.csv")

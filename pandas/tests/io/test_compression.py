@@ -1,3 +1,10 @@
+# [MODULE DOC]
+# Tests for compression support across the writers and readers (csv, json, pickle) and
+# the handle helper: size reduction, inference from file extension, level options,
+# reproducibility, archive (zip/tar) edge cases. Uses the compression_only,
+# compression_to_extension and temp_file fixtures. Some tests spawn a child interpreter
+# to simulate a missing lzma module.
+
 import gzip
 import io
 import os
@@ -30,6 +37,11 @@ import pandas.io.common as icom
 )
 @pytest.mark.parametrize("method", ["to_pickle", "to_json", "to_csv"])
 def test_compression_size(obj, method, compression_only, temp_file):
+    # [FUNCTION DOC]
+    # Parametrized over a frame and a series with repeated numeric content, and over the
+    # pickle, json and csv writers; compression_only supplies each compression method
+    # (tar is turned into a gzip-mode tar option dict). Writes compressed then
+    # uncompressed to the same path; the uncompressed file must be larger.
     if compression_only == "tar":
         compression_only = {"method": "tar", "mode": "w:gz"}
 
@@ -53,6 +65,12 @@ def test_compression_size(obj, method, compression_only, temp_file):
 )
 @pytest.mark.parametrize("method", ["to_csv", "to_json"])
 def test_compression_size_fh(obj, method, compression_only, temp_file):
+    # [FUNCTION DOC]
+    # Parametrized as above over frame/series and csv/json writers. Obtains a writable
+    # handle via get_handle with the compression (tar uses gzip write mode), writes
+    # through it, asserts the handle is still open after writing, and records file size.
+    # Then writes uncompressed through a second handle to a sibling file and asserts the
+    # uncompressed size is greater.
     path = temp_file
     with icom.get_handle(
         path,
@@ -89,6 +107,11 @@ def test_dataframe_compression_defaults_to_infer(
     compression_to_extension,
     temp_file,
 ):
+    # [FUNCTION DOC]
+    # GH 22004. Parametrized over csv/json/pickle writer-reader pairs. Writes a small
+    # frame to a file whose extension matches the compression method (no compression
+    # argument given, so it is inferred), then reads back with the compression stated
+    # explicitly; frames must be equal.
     # GH22004
     input = pd.DataFrame([[1.0, 0, -4], [3.4, 5, 2]], columns=["X", "Y", "Z"])
     extension = compression_to_extension[compression_only]
@@ -115,6 +138,11 @@ def test_series_compression_defaults_to_infer(
     compression_to_extension,
     temp_file,
 ):
+    # [FUNCTION DOC]
+    # GH 22004. Same idea for a series with csv (with header, read back as a frame and
+    # squeezed to a series), json (series type) and pickle. Writes with inferred
+    # compression, reads with explicit compression and asserts series equality ignoring
+    # names.
     # GH22004
     input = pd.Series([0, 5, -2, 10], name="X")
     extension = compression_to_extension[compression_only]
@@ -132,6 +160,10 @@ def test_series_compression_defaults_to_infer(
 
 
 def test_compression_warning(compression_only, temp_file):
+    # [FUNCTION DOC]
+    # GH 21227. Passing an already-open compressed handle to the csv writer while also
+    # naming a compression method must produce a runtime warning that the compression
+    # has no effect.
     # Assert that passing a file object to to_csv while explicitly specifying a
     # compression protocol triggers a RuntimeWarning, as per GH21227.
     df = pd.DataFrame(
@@ -145,6 +177,11 @@ def test_compression_warning(compression_only, temp_file):
 
 
 def test_compression_binary(compression_only, temp_file):
+    # [FUNCTION DOC]
+    # GH 22555. Binary file handles support compression. Writes a frame to an open
+    # binary file and to an in-memory bytes buffer in binary mode with each compression
+    # method (neither handle may be closed by the writer), then reads each back with the
+    # same compression and compares to the original.
     """
     Binary file handles support compression.
 
@@ -175,6 +212,9 @@ def test_compression_binary(compression_only, temp_file):
 
 
 def test_gzip_reproducibility_file_name(temp_file):
+    # [FUNCTION DOC]
+    # GH 28103. Writing twice with gzip and a fixed modification time to the same path
+    # must yield identical bytes. Archives with different file names would still differ.
     """
     Gzip should create reproducible archives with mtime.
 
@@ -198,6 +238,9 @@ def test_gzip_reproducibility_file_name(temp_file):
 
 
 def test_gzip_reproducibility_file_object():
+    # [FUNCTION DOC]
+    # GH 28103. Same as the file-name variant but writing to two separate in-memory
+    # binary buffers; the bytes must be identical.
     """
     Gzip should create reproducible archives with mtime.
 
@@ -221,6 +264,10 @@ def test_gzip_reproducibility_file_object():
 
 @pytest.mark.single_cpu
 def test_with_missing_lzma():
+    # [FUNCTION DOC]
+    # Single-cpu. Runs a fresh interpreter with the lzma module blocked and imports
+    # pandas; passes if the process exits successfully (pandas must import without
+    # lzma).
     """Tests if import pandas works when lzma is not present."""
     # https://github.com/pandas-dev/pandas/issues/27575
     code = textwrap.dedent(
@@ -235,6 +282,11 @@ def test_with_missing_lzma():
 
 @pytest.mark.single_cpu
 def test_with_missing_lzma_runtime():
+    # [FUNCTION DOC]
+    # Single-cpu. Runs a fresh interpreter with the lzma module blocked, imports pandas,
+    # and asserts that writing a CSV with xz compression raises a module-not-found error
+    # mentioning the lzma import; the child exits successfully only if that error
+    # occurred.
     """Tests if ModuleNotFoundError is hit when calling lzma without
     having the module available.
     """
@@ -264,6 +316,9 @@ def test_with_missing_lzma_runtime():
 )
 @pytest.mark.parametrize("method", ["to_pickle", "to_json", "to_csv"])
 def test_gzip_compression_level(obj, method, temp_file):
+    # [FUNCTION DOC]
+    # GH 33196. Parametrized over frame/series and pickle/json/csv. Writing with gzip at
+    # the lowest compression level must give a larger file than the default level.
     # GH33196
     path = temp_file
     getattr(obj, method)(path, compression="gzip")
@@ -285,6 +340,10 @@ def test_gzip_compression_level(obj, method, temp_file):
 )
 @pytest.mark.parametrize("method", ["to_pickle", "to_json", "to_csv"])
 def test_xz_compression_level_read(obj, method, temp_file):
+    # [FUNCTION DOC]
+    # Parametrized over frame/series and pickle/json/csv. Asserts the default xz output
+    # is smaller than preset 1 output; for csv also reads the xz file back to confirm it
+    # is readable.
     path = temp_file
     getattr(obj, method)(path, compression="xz")
     compressed_size_default = os.path.getsize(path)
@@ -307,6 +366,10 @@ def test_xz_compression_level_read(obj, method, temp_file):
 )
 @pytest.mark.parametrize("method", ["to_pickle", "to_json", "to_csv"])
 def test_bzip_compression_level(obj, method, temp_file):
+    # [FUNCTION DOC]
+    # GH 33196. bz2 needs more than 100 kB to show size differences between levels, so
+    # this only checks that passing bz2 with a compression level as an options dict is
+    # accepted by the pickle, json and csv writers; there is no assertion.
     """GH33196 bzip needs file size > 100k to show a size difference between
     compression levels, so here we just check if the call works when
     compression is passed as a dict.
@@ -323,6 +386,10 @@ def test_bzip_compression_level(obj, method, temp_file):
     ],
 )
 def test_empty_archive_zip(suffix, archive, temp_file):
+    # [FUNCTION DOC]
+    # Parametrized over zip and tar. Creates an empty archive and reading it as CSV must
+    # raise a value error saying zero files were found. (The name mentions only zip but
+    # tar is also covered.)
     path = temp_file.parent / f"archive{suffix}"
     with archive(path, "w"):
         pass
@@ -331,6 +398,9 @@ def test_empty_archive_zip(suffix, archive, temp_file):
 
 
 def test_ambiguous_archive_zip(temp_file):
+    # [FUNCTION DOC]
+    # A zip containing two CSV members read as CSV must raise a value error stating
+    # multiple files were found in the ZIP file.
     path = temp_file.parent / "archive.zip"
     with zipfile.ZipFile(path, "w") as file:
         file.writestr("a.csv", "foo,bar")
@@ -340,6 +410,9 @@ def test_ambiguous_archive_zip(temp_file):
 
 
 def test_ambiguous_archive_tar(tmp_path):
+    # [FUNCTION DOC]
+    # Creates a tar archive with two CSV members; reading it as CSV must raise a value
+    # error saying multiple files were found in the TAR archive.
     csvAPath = tmp_path / "a.csv"
     with open(csvAPath, "w", encoding="utf-8") as a:
         a.write("foo,bar\n")
@@ -357,6 +430,11 @@ def test_ambiguous_archive_tar(tmp_path):
 
 
 def test_tar_gz_to_different_filename(temp_file):
+    # [FUNCTION DOC]
+    # Writing a CSV with tar compression in gzip write mode to a file with an unrelated
+    # extension; the file is a gzip stream containing a tar with exactly one member
+    # whose content is the expected CSV text (line terminator depends on Windows or
+    # not).
     file = temp_file.parent / "archive.foo"
     pd.DataFrame(
         [["1", "2"]],
@@ -377,6 +455,9 @@ def test_tar_gz_to_different_filename(temp_file):
 
 
 def test_tar_no_error_on_close():
+    # [FUNCTION DOC]
+    # Opening and immediately closing the internal in-memory tar wrapper class on a
+    # bytes buffer in write mode must not raise.
     with io.BytesIO() as buffer:
         with icom._BytesTarFile(fileobj=buffer, mode="w"):
             pass

@@ -1,3 +1,9 @@
+# [MODULE DOC]
+# Tests of fsspec-backed remote/in-memory file system support in the I/O functions:
+# reading and writing via URLs for memory and a custom test protocol, passing storage
+# options through, and error handling for missing protocols. S3 tests use mock-server
+# fixtures. A module-wide mark ignores a block-manager deprecation warning.
+
 import io
 
 import numpy as np
@@ -31,16 +37,31 @@ pytestmark = pytest.mark.filterwarnings(
 
 @pytest.fixture
 def fsspectest():
+    # [FUNCTION DOC]
+    # HELPER: fixture registering a custom in-memory file system.
+    # Skips if fsspec is missing. Defines a memory file system subclass with protocol
+    # name testmem that records the test storage option into a class-level one-element
+    # list when constructed, registers it (replacing any existing registration), and
+    # yields an instance. On teardown removes the registry entry, resets the recorded
+    # option and clears the shared store.
     pytest.importorskip("fsspec")
     from fsspec import register_implementation
     from fsspec.implementations.memory import MemoryFileSystem
     from fsspec.registry import _registry as registry
 
     class TestMemoryFS(MemoryFileSystem):
+        # [CLASS DOC]
+        # HELPER: in-memory file system subclass used by the fsspectest fixture. Class
+        # attributes: protocol testmem and a one-element list recording the last test
+        # storage option seen.
         protocol = "testmem"
         test = [None]
 
         def __init__(self, **kwargs) -> None:
+            # [FUNCTION DOC]
+            # HELPER: constructor of the test file system: pops the test keyword
+            # argument (default none) into the class-level record, then delegates the
+            # rest to the parent constructor.
             self.test[0] = kwargs.pop("test", None)
             super().__init__(**kwargs)
 
@@ -53,6 +74,9 @@ def fsspectest():
 
 @pytest.fixture
 def df1():
+    # [FUNCTION DOC]
+    # HELPER: fixture returning a small frame with integer, float (with NaN), string and
+    # two-day datetime columns.
     return DataFrame(
         {
             "int": [1, 3],
@@ -65,6 +89,9 @@ def df1():
 
 @pytest.fixture
 def cleared_fs():
+    # [FUNCTION DOC]
+    # HELPER: fixture that skips without fsspec, yields the shared memory file system
+    # and clears its store afterwards.
     fsspec = pytest.importorskip("fsspec")
 
     memfs = fsspec.filesystem("memory")
@@ -73,6 +100,10 @@ def cleared_fs():
 
 
 def test_read_csv(cleared_fs, df1):
+    # [FUNCTION DOC]
+    # Writes CSV bytes of the sample frame to the memory file system and reads it by URL
+    # with the datetime column parsed; expected equals the frame with the datetime
+    # column in microsecond resolution.
     text = str(df1.to_csv(index=False)).encode()
     with cleared_fs.open("test/test.csv", "wb") as w:
         w.write(text)
@@ -84,6 +115,11 @@ def test_read_csv(cleared_fs, df1):
 
 
 def test_reasonable_error(monkeypatch, cleared_fs):
+    # [FUNCTION DOC]
+    # Reading from an unknown protocol must raise a value error naming the protocol. For
+    # a protocol known to fsspec but whose implementation cannot be imported (registered
+    # via monkeypatch with a custom error text), reading must raise an import error
+    # carrying that text.
     from fsspec.registry import known_implementations
 
     with pytest.raises(ValueError, match="nosuchprotocol"):
@@ -99,6 +135,9 @@ def test_reasonable_error(monkeypatch, cleared_fs):
 
 
 def test_to_csv(cleared_fs, df1):
+    # [FUNCTION DOC]
+    # Writes the frame as CSV to a memory URL with index, reads back with parsed dates
+    # and first column as index; equals the frame with microsecond datetimes.
     df1.to_csv("memory://test/test.csv", index=True)
 
     df2 = read_csv("memory://test/test.csv", parse_dates=["dt"], index_col=0)
@@ -109,6 +148,9 @@ def test_to_csv(cleared_fs, df1):
 
 
 def test_to_excel(cleared_fs, df1):
+    # [FUNCTION DOC]
+    # Requires openpyxl. Writes an xlsx to a memory URL and reads back with parsed dates
+    # and index; equals the frame with microsecond datetimes.
     pytest.importorskip("openpyxl")
     ext = "xlsx"
     path = f"memory://test/test.{ext}"
@@ -123,6 +165,11 @@ def test_to_excel(cleared_fs, df1):
 
 @pytest.mark.parametrize("binary_mode", [False, True])
 def test_to_csv_fsspec_object(cleared_fs, binary_mode, df1):
+    # [FUNCTION DOC]
+    # Parametrized over binary and text mode. Writes CSV into an already-open fsspec
+    # file object (must remain open), then reads from an fsspec object opened for
+    # reading (must remain open); the result equals the frame with microsecond
+    # datetimes.
     fsspec = pytest.importorskip("fsspec")
 
     path = "memory://test/test.csv"
@@ -146,6 +193,10 @@ def test_to_csv_fsspec_object(cleared_fs, binary_mode, df1):
 
 
 def test_csv_options(fsspectest):
+    # [FUNCTION DOC]
+    # Storage options are passed to the file system: after writing a CSV to the custom
+    # protocol, the recorded option equals the write value; after reading, it equals the
+    # read value.
     df = DataFrame({"a": [0]})
     df.to_csv(
         "testmem://test/test.csv", storage_options={"test": "csv_write"}, index=False
@@ -156,6 +207,8 @@ def test_csv_options(fsspectest):
 
 
 def test_read_table_options(fsspectest):
+    # [FUNCTION DOC]
+    # GH 39167. Same as the CSV options test but for read_table.
     # GH #39167
     df = DataFrame({"a": [0]})
     df.to_csv(
@@ -167,6 +220,9 @@ def test_read_table_options(fsspectest):
 
 
 def test_excel_options(fsspectest):
+    # [FUNCTION DOC]
+    # Requires openpyxl. Storage options are forwarded when writing and reading an Excel
+    # file on the custom protocol.
     pytest.importorskip("openpyxl")
     extension = "xlsx"
 
@@ -181,6 +237,13 @@ def test_excel_options(fsspectest):
 
 
 def test_to_parquet_new_file(cleared_fs, df1, request):
+    # [FUNCTION DOC]
+    # Requires fastparquet. Expected to fail when the infer-string mode, pyarrow of at
+    # least version 14 and a fastparquet version up to 2025.12.0 coincide. Writes a
+    # frame to a memory URL with the fastparquet engine and no compression; only checks
+    # that no error occurs.
+    # KNOWN ISSUE: the docstring mentions writing to a not-yet-existent GCS Parquet
+    # file, but the test writes to the in-memory file system with a csv-style name.
     """Regression test for writing to a not-yet-existent GCS Parquet file."""
     fp = pytest.importorskip("fastparquet")
 
@@ -200,6 +263,11 @@ def test_to_parquet_new_file(cleared_fs, df1, request):
 
 
 def test_arrowparquet_options(fsspectest):
+    # [FUNCTION DOC]
+    # Requires pyarrow. Storage options are forwarded on parquet write and read with the
+    # pyarrow engine on the custom protocol.
+    # KNOWN ISSUE: the docstring mentions GCS regression, but the test uses the custom
+    # in-memory test protocol and tests options passing.
     """Regression test for writing to a not-yet-existent GCS Parquet file."""
     pytest.importorskip("pyarrow")
     df = DataFrame({"a": [0]})
@@ -219,6 +287,10 @@ def test_arrowparquet_options(fsspectest):
 
 
 def test_fastparquet_options(fsspectest):
+    # [FUNCTION DOC]
+    # Requires fastparquet. Same as the pyarrow variant but with the fastparquet engine.
+    # KNOWN ISSUE: the docstring mentions a GCS regression, but the test uses the custom
+    # in-memory test protocol and tests options passing.
     """Regression test for writing to a not-yet-existent GCS Parquet file."""
     pytest.importorskip("fastparquet")
 
@@ -241,6 +313,10 @@ def test_fastparquet_options(fsspectest):
 @pytest.mark.single_cpu
 @pytest.mark.parametrize("compression_suffix", ["", ".gz", ".bz2"])
 def test_from_s3_csv(s3_bucket_public_with_data, s3so, tips_file, compression_suffix):
+    # [FUNCTION DOC]
+    # Single-cpu. Parametrized over no, gz, and bz2 suffixes. Requires s3fs. Reads
+    # tips.csv (possibly compressed) from the mocked public S3 bucket with the s3
+    # storage options; the result equals reading the local file.
     pytest.importorskip("s3fs")
     df_from_s3 = read_csv(
         f"s3://{s3_bucket_public_with_data.name}/tips.csv{compression_suffix}",
@@ -253,6 +329,9 @@ def test_from_s3_csv(s3_bucket_public_with_data, s3so, tips_file, compression_su
 @pytest.mark.single_cpu
 @pytest.mark.parametrize("protocol", ["s3", "s3a", "s3n"])
 def test_s3_protocols(s3_bucket_public_with_data, s3so, tips_file, protocol):
+    # [FUNCTION DOC]
+    # Single-cpu. Parametrized over s3, s3a and s3n URL schemes. Requires s3fs. Reading
+    # tips.csv from the mock bucket under each scheme equals the local read.
     pytest.importorskip("s3fs")
     df_from_s3 = read_csv(
         f"{protocol}://{s3_bucket_public_with_data.name}/tips.csv",
@@ -265,6 +344,10 @@ def test_s3_protocols(s3_bucket_public_with_data, s3so, tips_file, protocol):
 @pytest.mark.xfail(using_string_dtype(), reason="TODO(infer_string) fastparquet")
 @pytest.mark.single_cpu
 def test_s3_parquet(s3_bucket_public, s3so, df1):
+    # [FUNCTION DOC]
+    # Single-cpu. Expected to fail when the infer-string mode is on (fastparquet).
+    # Requires fastparquet and s3fs. Writes the frame to the mock S3 bucket as parquet
+    # without index or compression and reads it back; must be equal.
     pytest.importorskip("fastparquet")
     pytest.importorskip("s3fs")
 
@@ -278,12 +361,18 @@ def test_s3_parquet(s3_bucket_public, s3so, df1):
 
 @td.skip_if_installed("fsspec")
 def test_not_present_exception():
+    # [FUNCTION DOC]
+    # Runs only when fsspec is not installed. Reading a memory URL must raise an import
+    # error whose message says that importing fsspec failed and to install the package.
     msg = "`Import fsspec` failed.  Use pip or conda to install the fsspec package."
     with pytest.raises(ImportError, match=msg):
         read_csv("memory://test/test.csv")
 
 
 def test_feather_options(fsspectest):
+    # [FUNCTION DOC]
+    # Requires pyarrow. Storage options are forwarded when writing and reading Feather
+    # on the custom protocol; the round trip is equal.
     pytest.importorskip("pyarrow")
     df = DataFrame({"a": [0]})
     df.to_feather("testmem://mockfile", storage_options={"test": "feather_write"})
@@ -294,6 +383,9 @@ def test_feather_options(fsspectest):
 
 
 def test_pickle_options(fsspectest):
+    # [FUNCTION DOC]
+    # Storage options are forwarded when writing and reading a pickle on the custom
+    # protocol; round trip is equal.
     df = DataFrame({"a": [0]})
     df.to_pickle("testmem://mockfile", storage_options={"test": "pickle_write"})
     assert fsspectest.test[0] == "pickle_write"
@@ -303,6 +395,9 @@ def test_pickle_options(fsspectest):
 
 
 def test_json_options(fsspectest, compression):
+    # [FUNCTION DOC]
+    # Parametrized by compression fixture. Storage options are forwarded when writing
+    # and reading JSON on the custom protocol; round trip is equal.
     df = DataFrame({"a": [0]})
     df.to_json(
         "testmem://mockfile",
@@ -320,6 +415,9 @@ def test_json_options(fsspectest, compression):
 
 
 def test_stata_options(fsspectest):
+    # [FUNCTION DOC]
+    # Storage options are forwarded when writing (without index) and reading Stata on
+    # the custom protocol; the result cast to int64 equals the frame.
     df = DataFrame({"a": [0]})
     df.to_stata(
         "testmem://mockfile", storage_options={"test": "stata_write"}, write_index=False
@@ -331,6 +429,9 @@ def test_stata_options(fsspectest):
 
 
 def test_markdown_options(fsspectest):
+    # [FUNCTION DOC]
+    # Requires tabulate. Writing markdown to the custom protocol forwards the storage
+    # options and the file content is non-empty.
     pytest.importorskip("tabulate")
     df = DataFrame({"a": [0]})
     df.to_markdown("testmem://mockfile", storage_options={"test": "md_write"})
@@ -339,6 +440,10 @@ def test_markdown_options(fsspectest):
 
 
 def test_non_fsspec_options():
+    # [FUNCTION DOC]
+    # Requires pyarrow. Passing storage options with a local path or an in-memory bytes
+    # buffer to the CSV reader, a local path to the parquet reader, or a local path to
+    # the parquet writer, must raise a value error mentioning storage_options.
     pytest.importorskip("pyarrow")
     with pytest.raises(ValueError, match="storage_options"):
         read_csv("localfile", storage_options={"a": True})

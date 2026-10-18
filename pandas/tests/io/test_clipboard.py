@@ -1,3 +1,10 @@
+# [MODULE DOC]
+# Tests for the clipboard I/O layer: writing frames to the clipboard, reading them back,
+# and the vendored clipboard helper utilities (checked system call wrapper, text
+# stringification). Most behavior tests use a Qt-backed clipboard and are marked as
+# single-cpu and clipboard tests. Imports the clipboard module internals (the checked
+# call class, the text stringify helper, the Qt clipboard initializer).
+
 from textwrap import dedent
 
 import numpy as np
@@ -26,6 +33,11 @@ from pandas.io.clipboard import (
 
 
 def build_kwargs(sep, excel):
+    # [FUNCTION DOC]
+    # HELPER: builds keyword arguments for the clipboard writer in tests.
+    # Takes sep and excel values; the literal string default means the argument is
+    # omitted. Returns a dictionary containing the excel key when excel is not default
+    # and the sep key when sep is not default.
     kwargs = {}
     if excel != "default":
         kwargs["excel"] = excel
@@ -49,6 +61,14 @@ def build_kwargs(sep, excel):
     ]
 )
 def df(request):
+    # [FUNCTION DOC]
+    # HELPER: parametrized fixture supplying varied frames for the round-trip tests.
+    # Parametrized over ten data kinds: delimiter-laden strings, utf-8 non-ascii text,
+    # utf-16 (astral) characters, plain strings, a long frame with one row more than the
+    # maximum displayed rows, non-ascii language text, strings wider than the maximum
+    # column width, mixed float/int/string columns, random floats and random ints.
+    # Returns the corresponding frame; raises a value error for an unknown kind
+    # (unreachable with the declared params).
     data_type = request.param
 
     if data_type == "delims":
@@ -96,11 +116,19 @@ def df(request):
 
 @pytest.fixture
 def mock_ctypes(monkeypatch):
+    # [FUNCTION DOC]
+    # HELPER: fixture for the checked-call tests.
+    # Temporarily replaces the Windows error constructor in the ctypes module (created
+    # if missing, since it does not exist on non-Windows platforms) with a function that
+    # returns the text Window Error, and restores it afterwards.
     """
     Mocks WinError to help with testing the clipboard.
     """
 
     def _mock_win_error():
+        # [FUNCTION DOC]
+        # HELPER: replacement for the Windows error constructor used by the mock_ctypes
+        # fixture. Takes no arguments and returns the fixed string Window Error.
         return "Window Error"
 
     # Set raising to False because WinError won't exist on non-windows platforms
@@ -111,12 +139,22 @@ def mock_ctypes(monkeypatch):
 
 @pytest.mark.usefixtures("mock_ctypes")
 def test_checked_call_with_bad_call(monkeypatch):
+    # [FUNCTION DOC]
+    # Gives the checked-call wrapper a function returning a falsey value and patches the
+    # errno getter so an exception is raised.
+    # KNOWN ISSUE: the docstring says the errno getter is mocked to return false, but
+    # the code patches it to return a true value.
+    # Expected: calling the wrapper raises the Pyperclip Windows exception with a
+    # message naming the wrapped function and the mocked error text.
     """
     Give CheckCall a function that returns a falsey value and
     mock get_errno so it returns false so an exception is raised.
     """
 
     def _return_false():
+        # [FUNCTION DOC]
+        # HELPER: stand-in wrapped function for test_checked_call_with_bad_call. Takes
+        # no arguments, returns False.
         return False
 
     monkeypatch.setattr("pandas.io.clipboard.get_errno", lambda: True)
@@ -128,6 +166,13 @@ def test_checked_call_with_bad_call(monkeypatch):
 
 @pytest.mark.usefixtures("mock_ctypes")
 def test_checked_call_with_valid_call(monkeypatch):
+    # [FUNCTION DOC]
+    # Gives the checked-call wrapper a function returning a truthy value with the errno
+    # getter patched.
+    # KNOWN ISSUE: the docstring says the errno getter is mocked to return true, but the
+    # code patches it to return a false value.
+    # Expected: no exception, and the call returns exactly the wrapped function's True
+    # result.
     """
     Give CheckCall a function that returns a truthy value and
     mock get_errno so it returns true so an exception is not raised.
@@ -135,6 +180,9 @@ def test_checked_call_with_valid_call(monkeypatch):
     """
 
     def _return_true():
+        # [FUNCTION DOC]
+        # HELPER: stand-in wrapped function for test_checked_call_with_valid_call. Takes
+        # no arguments, returns True.
         return True
 
     monkeypatch.setattr("pandas.io.clipboard.get_errno", lambda: False)
@@ -155,6 +203,12 @@ def test_checked_call_with_valid_call(monkeypatch):
     ],
 )
 def test_stringify_text(text):
+    # [FUNCTION DOC]
+    # Parametrized over a string, bool, int, float and a complex number. For str, int,
+    # float and bool the stringify helper must return the string form of the input. For
+    # other types (the complex value) it must raise the Pyperclip exception with a
+    # message that only str, int, float and bool values can be copied, naming the
+    # offending type.
     valid_types = (str, int, float, bool)
 
     if isinstance(text, valid_types):
@@ -171,6 +225,11 @@ def test_stringify_text(text):
 
 @pytest.fixture
 def set_pyqt_clipboard(monkeypatch):
+    # [FUNCTION DOC]
+    # HELPER: fixture that swaps the clipboard backend for Qt.
+    # Creates the Qt copy/paste functions via the Qt initializer, patches the clipboard
+    # module's set and get functions with them for the duration of the test (restored
+    # afterwards), and yields.
     qt_cut, qt_paste = init_qt_clipboard()
     with monkeypatch.context() as m:
         m.setattr(pd.io.clipboard, "clipboard_set", qt_cut)
@@ -180,6 +239,10 @@ def set_pyqt_clipboard(monkeypatch):
 
 @pytest.fixture
 def clipboard(qapp):
+    # [FUNCTION DOC]
+    # HELPER: fixture wrapping the Qt application clipboard.
+    # Takes the qapp fixture, yields the clipboard object, and clears the clipboard
+    # contents after the test.
     clip = qapp.clipboard()
     yield clip
     clip.clear()
@@ -190,17 +253,31 @@ def clipboard(qapp):
 @pytest.mark.usefixtures("set_pyqt_clipboard")
 @pytest.mark.usefixtures("clipboard")
 class TestClipboard:
+    # [CLASS DOC]
+    # Behavior tests of frame-to-clipboard and clipboard-to-frame round trips using the
+    # Qt clipboard. The class is marked single-cpu and clipboard, and uses the
+    # set_pyqt_clipboard and clipboard fixtures for every test.
     # Test that default arguments copy as tab delimited
     # Test that explicit delimiters are respected
     @pytest.mark.parametrize("sep", [None, "\t", ",", "|"])
     @pytest.mark.parametrize("encoding", [None, "UTF-8", "utf-8", "utf8"])
     def test_round_trip_frame_sep(self, df, sep, encoding):
+        # [FUNCTION DOC]
+        # Parametrized over separators (none, tab, comma, pipe) and utf-8 encoding
+        # spellings. Writes the frame with excel mode off-by-none and the given
+        # separator and encoding, reads it back using the same separator (tab when
+        # none), first column as index; the result must equal the original frame.
+        # Default writes are tab-delimited.
         df.to_clipboard(excel=None, sep=sep, encoding=encoding)
         result = read_clipboard(sep=sep or "\t", index_col=0, encoding=encoding)
         tm.assert_frame_equal(df, result)
 
     # Test white space separator
     def test_round_trip_frame_string(self, df):
+        # [FUNCTION DOC]
+        # Writes with excel disabled and no separator (whitespace-aligned table), reads
+        # with default arguments; asserts the string rendering and the shape of the
+        # result equal those of the original.
         df.to_clipboard(excel=False, sep=None)
         result = read_clipboard()
         assert df.to_string() == result.to_string()
@@ -209,6 +286,9 @@ class TestClipboard:
     # Two character separator is not supported in to_clipboard
     # Test that multi-character separators are not silently passed
     def test_excel_sep_warning(self, df):
+        # [FUNCTION DOC]
+        # A multi-character separator in excel mode must produce a user warning that a
+        # single-character separator is required (stack level not checked).
         with tm.assert_produces_warning(
             UserWarning,
             match="to_clipboard in excel mode requires a single character separator.",
@@ -218,6 +298,9 @@ class TestClipboard:
 
     # Separator is ignored when excel=False and should produce a warning
     def test_copy_delim_warning(self, df):
+        # [FUNCTION DOC]
+        # Passing a separator while excel is disabled must produce a user warning that
+        # the separator is ignored.
         with tm.assert_produces_warning(UserWarning, match="ignores the sep argument"):
             df.to_clipboard(excel=False, sep="\t")
 
@@ -226,6 +309,10 @@ class TestClipboard:
     @pytest.mark.parametrize("sep", ["\t", None, "default"])
     @pytest.mark.parametrize("excel", [True, None, "default"])
     def test_clipboard_copy_tabs_default(self, sep, excel, df, clipboard):
+        # [FUNCTION DOC]
+        # Parametrized over sep in tab, none, default and excel in true, none, default
+        # (default means argument omitted). The clipboard text after writing must equal
+        # the tab-separated CSV rendering of the frame.
         kwargs = build_kwargs(sep, excel)
         df.to_clipboard(**kwargs)
         assert clipboard.text() == df.to_csv(sep="\t")
@@ -233,6 +320,10 @@ class TestClipboard:
     # Tests reading of white space separated tables
     @pytest.mark.parametrize("sep", [None, "default"])
     def test_clipboard_copy_strings(self, sep, df):
+        # [FUNCTION DOC]
+        # Parametrized over sep none or omitted. Writes with excel disabled, reads using
+        # a whitespace separator, and compares the string rendering and shape with the
+        # original.
         kwargs = build_kwargs(sep, False)
         df.to_clipboard(**kwargs)
         result = read_clipboard(sep=r"\s+")
@@ -240,6 +331,11 @@ class TestClipboard:
         assert df.shape == result.shape
 
     def test_read_clipboard_infer_excel(self, clipboard):
+        # [FUNCTION DOC]
+        # GH 19010. Uses the python engine to avoid warnings. Case 1: tab-separated
+        # Excel-style text is parsed so that a cell holds the expected name. Case 2:
+        # text with differing tab counts must not be treated as Excel data; parsing it
+        # must equal parsing the equivalent text with plain whitespace separation.
         # gh-19010: avoid warnings
         clip_kwargs = {"engine": "python"}
 
@@ -280,6 +376,9 @@ class TestClipboard:
         tm.assert_frame_equal(res, exp)
 
     def test_infer_excel_with_nulls(self, clipboard):
+        # [FUNCTION DOC]
+        # GH 41108. Tab-separated text with an empty cell is read; expected frame has an
+        # integer-valued column with a missing entry (as floats) and a string column.
         # GH41108
         text = "col1\tcol2\n1\tred\n\tblue\n2\tgreen"
 
@@ -315,6 +414,11 @@ class TestClipboard:
         ],
     )
     def test_infer_excel_with_multiindex(self, clipboard, multiindex):
+        # [FUNCTION DOC]
+        # GH 41108. Parametrized with two tab-separated texts whose leading columns form
+        # a three-level or two-level row index (leading tabs in the header), with the
+        # expected index levels. Reads the clipboard and compares with the expected
+        # frame with that index.
         # GH41108
 
         clipboard.setText(multiindex[0])
@@ -328,6 +432,10 @@ class TestClipboard:
         tm.assert_frame_equal(df, df_expected)
 
     def test_invalid_encoding(self, df):
+        # [FUNCTION DOC]
+        # Writing with a non-utf-8 encoding must raise a value error and reading with it
+        # must raise a not-implemented error; both messages say the clipboard only
+        # supports utf-8.
         msg = "clipboard only supports utf-8 encoding"
         # test case for testing invalid encoding
         with pytest.raises(ValueError, match=msg):
@@ -337,6 +445,9 @@ class TestClipboard:
 
     @pytest.mark.parametrize("data", ["\U0001f44d...", "Ωœ∑`...", "abcd..."])
     def test_raw_roundtrip(self, data):
+        # [FUNCTION DOC]
+        # PR 25040. Parametrized over a wide unicode, a non-ascii and an ascii string;
+        # writes a one-cell frame to the clipboard and reads it back; must be equal.
         # PR #25040 wide unicode wasn't copied correctly on PY3 on windows
         df = DataFrame({"data": [data]})
         df.to_clipboard()
@@ -347,6 +458,15 @@ class TestClipboard:
     def test_read_clipboard_dtype_backend(
         self, clipboard, string_storage, dtype_backend, engine, using_infer_string
     ):
+        # [FUNCTION DOC]
+        # GH 50502. Parametrized over engine c and python, plus fixtures for string
+        # storage and dtype backend. Sets clipboard CSV text with several columns
+        # containing missing values, reads with the given dtype backend and engine under
+        # the string storage option, and compares to an expected frame of nullable (or
+        # pyarrow-backed) dtypes; with pyarrow backend the expected frame is converted
+        # to Arrow extension arrays with the all-missing column as null type; when the
+        # infer-string mode is active, expected column labels are cast to the string
+        # dtype.
         # GH#50502
         if dtype_backend == "pyarrow":
             pa = pytest.importorskip("pyarrow")
@@ -394,6 +514,9 @@ y,2,5.0,,,,,False,"""
         tm.assert_frame_equal(result, expected)
 
     def test_invalid_dtype_backend(self):
+        # [FUNCTION DOC]
+        # Reading with an invalid dtype backend name must raise a value error stating
+        # only the nullable-numpy and pyarrow backends are allowed.
         msg = (
             "dtype_backend numpy is invalid, only 'numpy_nullable' and "
             "'pyarrow' are allowed."

@@ -1,5 +1,11 @@
 """test orc compat"""
 
+# [MODULE DOC]
+# Tests for ORC format reading and writing through the ORC reader function and the frame
+# ORC writer method. Skipped entirely unless the pyarrow ORC module is available. A
+# module-wide mark ignores a block-manager deprecation warning. Sample files live in the
+# io data orc directory.
+
 import datetime
 from decimal import Decimal
 from io import BytesIO
@@ -23,10 +29,18 @@ pytestmark = pytest.mark.filterwarnings(
 
 @pytest.fixture
 def dirpath(datapath):
+    # [FUNCTION DOC]
+    # HELPER: fixture returning the directory of the ORC sample files.
     return datapath("io", "data", "orc")
 
 
 def test_orc_reader_empty(dirpath, using_infer_string):
+    # [FUNCTION DOC]
+    # Reads an empty ORC file selecting nine named columns. Expected is a frame with
+    # zero rows and a range index whose columns carry the dtypes bool, int8, int16,
+    # int32, int64, float32, float64, object and either the string dtype (when infer-
+    # string mode is on) or object for the last string column; column labels are cast to
+    # the string label type. Asserts equality.
     columns = [
         "boolean1",
         "byte1",
@@ -61,6 +75,10 @@ def test_orc_reader_empty(dirpath, using_infer_string):
 
 
 def test_orc_reader_basic(dirpath):
+    # [FUNCTION DOC]
+    # Reads TestOrcFile.test1 selecting nine columns; the two-row expected frame has
+    # bool, int8, int16, int32, int64, float32, float64, bytes (object) and string
+    # (object) columns.
     data = {
         "boolean1": np.array([False, True], dtype="bool"),
         "byte1": np.array([1, 100], dtype="int8"),
@@ -81,6 +99,9 @@ def test_orc_reader_basic(dirpath):
 
 
 def test_orc_reader_decimal(dirpath):
+    # [FUNCTION DOC]
+    # Reads the decimal sample file; its first 10 rows must equal a column of decimal
+    # values stored as object dtype.
     # Only testing the first 10 rows of data
     data = {
         "_col0": np.array(
@@ -108,6 +129,10 @@ def test_orc_reader_decimal(dirpath):
 
 
 def test_orc_reader_date_low(dirpath):
+    # [FUNCTION DOC]
+    # Reads the 1900 date sample; the first 10 rows have a nanosecond datetime column
+    # with microsecond increments and a date column of object dtype holding the same
+    # date.
     data = {
         "time": np.array(
             [
@@ -149,6 +174,8 @@ def test_orc_reader_date_low(dirpath):
 
 
 def test_orc_reader_date_high(dirpath):
+    # [FUNCTION DOC]
+    # Same as the low-date test but for the year-2038 sample.
     data = {
         "time": np.array(
             [
@@ -190,6 +217,9 @@ def test_orc_reader_date_high(dirpath):
 
 
 def test_orc_reader_snappy_compressed(dirpath):
+    # [FUNCTION DOC]
+    # Reads a snappy-compressed sample; first 10 rows equal an int32 column and a string
+    # (object) column of expected values.
     data = {
         "int1": np.array(
             [
@@ -231,6 +261,9 @@ def test_orc_reader_snappy_compressed(dirpath):
 
 
 def test_orc_roundtrip_file(dirpath, temp_file):
+    # [FUNCTION DOC]
+    # GH 44554. Writes a two-row multi-dtype frame to a file and reads it back; must be
+    # equal. Requires pyarrow. The dirpath fixture argument is not used.
     # GH44554
     # PyArrow gained ORC write support with the current argument order
     pytest.importorskip("pyarrow")
@@ -255,6 +288,9 @@ def test_orc_roundtrip_file(dirpath, temp_file):
 
 
 def test_orc_roundtrip_bytesio():
+    # [FUNCTION DOC]
+    # GH 44554. Writes the frame to ORC bytes (no path given, so the writer returns
+    # bytes) and reads them from an in-memory buffer; must be equal.
     # GH44554
     # PyArrow gained ORC write support with the current argument order
     pytest.importorskip("pyarrow")
@@ -288,6 +324,10 @@ def test_orc_roundtrip_bytesio():
     ],
 )
 def test_orc_writer_dtypes_not_supported(orc_writer_dtypes_not_supported):
+    # [FUNCTION DOC]
+    # GH 44554. Parametrized over unsigned 64-bit ints, categorical, interval and period
+    # data. Writing a frame with such a column must raise a not-implemented error
+    # stating that the dtype of one or more columns is not supported yet.
     # GH44554
     # PyArrow gained ORC write support with the current argument order
     pytest.importorskip("pyarrow")
@@ -299,6 +339,16 @@ def test_orc_writer_dtypes_not_supported(orc_writer_dtypes_not_supported):
 
 
 def test_orc_dtype_backend_pyarrow(using_infer_string):
+    # [FUNCTION DOC]
+    # Writes a frame with strings (with NaN and None), bytes, ints, floats, bools (with
+    # missing) and datetimes (with NaT cast to nanosecond unit as a workaround), reads
+    # with the pyarrow dtype backend and compares with a frame whose columns are Arrow
+    # arrays built from the original. With infer-string mode on, the expected string
+    # columns are cast to the Arrow small-string type because ORC does not distinguish
+    # string from large string.
+    # KNOWN ISSUE: a FIXME notes that without casting the NaT datetime column to
+    # nanosecond unit the round trip does not work; the cast is a workaround that hides
+    # that behavior.
     pytest.importorskip("pyarrow")
     df = pd.DataFrame(
         {
@@ -343,6 +393,10 @@ def test_orc_dtype_backend_pyarrow(using_infer_string):
 
 
 def test_orc_dtype_backend_numpy_nullable():
+    # [FUNCTION DOC]
+    # GH 50503. Writes a frame including nullable int and all-missing int columns; reads
+    # with the nullable numpy backend and expects nullable string, Int64, Float64 and
+    # boolean dtypes with missing values as NA.
     # GH#50503
     pytest.importorskip("pyarrow")
     df = pd.DataFrame(
@@ -382,6 +436,9 @@ def test_orc_dtype_backend_numpy_nullable():
 
 
 def test_orc_uri_path(temp_file):
+    # [FUNCTION DOC]
+    # Writes ORC to a temp file and reads it using the file URI form of the path; the
+    # result equals the frame.
     expected = pd.DataFrame({"int": list(range(1, 4))})
     expected.to_orc(temp_file)
     uri = temp_file.as_uri()
@@ -398,6 +455,11 @@ def test_orc_uri_path(temp_file):
     ],
 )
 def test_to_orc_non_default_index(index):
+    # [FUNCTION DOC]
+    # Parametrized over a range index with a nonzero start, a named range index, and an
+    # integer index. Writing a frame with a non-default index must raise a value error
+    # saying ORC does not support serializing a non-default index (or does not serialize
+    # index meta-data).
     df = pd.DataFrame({"a": [1, 2, 3]}, index=index)
     msg = (
         "orc does not support serializing a non-default index|"
@@ -408,6 +470,9 @@ def test_to_orc_non_default_index(index):
 
 
 def test_invalid_dtype_backend(temp_file):
+    # [FUNCTION DOC]
+    # Reading with an invalid dtype backend name must raise a value error stating only
+    # the nullable-numpy and pyarrow backends are allowed.
     msg = (
         "dtype_backend numpy is invalid, only 'numpy_nullable' and "
         "'pyarrow' are allowed."
@@ -419,6 +484,10 @@ def test_invalid_dtype_backend(temp_file):
 
 
 def test_string_inference(temp_file):
+    # [FUNCTION DOC]
+    # GH 54431. Reads a string column with the future infer-string option on; the result
+    # column has the NaN-variant string dtype and the column labels have the same string
+    # dtype.
     # GH#54431
     df = pd.DataFrame(data={"a": ["x", "y"]})
     df.to_orc(temp_file)

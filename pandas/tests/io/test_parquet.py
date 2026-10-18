@@ -1,5 +1,14 @@
 """test parquet compat"""
 
+# [MODULE DOC]
+# Tests for Parquet I/O through the generic read and write functions with the pyarrow
+# and fastparquet engines, engine selection, round trips for many dtypes and index
+# shapes, partitioning, storage/filesystem arguments, S3 and URL access, and cross-
+# engine compatibility. Import-time side effects: tries to import pyarrow and
+# fastparquet, setting module flags for their availability and, for fastparquet,
+# version-comparison flags used by expected-failure marks. Module-wide marks ignore two
+# deprecation warnings (data attribute, block manager).
+
 import datetime
 from decimal import Decimal
 from io import BytesIO
@@ -84,11 +93,19 @@ pytestmark = [
     ]
 )
 def engine(request):
+    # [FUNCTION DOC]
+    # HELPER: parametrized fixture over the engine names fastparquet and pyarrow. Each
+    # param is skipped when its library is missing; fastparquet is marked as a non-
+    # strict expected failure under the future string dtype mode. Returns the engine
+    # name.
     return request.param
 
 
 @pytest.fixture
 def pa():
+    # [FUNCTION DOC]
+    # HELPER: fixture returning the string pyarrow; skips the test when pyarrow is not
+    # installed.
     if not _HAVE_PYARROW:
         pytest.skip("pyarrow is not installed")
     return "pyarrow"
@@ -96,6 +113,10 @@ def pa():
 
 @pytest.fixture
 def fp(request):
+    # [FUNCTION DOC]
+    # HELPER: fixture returning the string fastparquet; skips when fastparquet is
+    # missing and, under the future string dtype mode, applies a non-strict expected-
+    # failure mark to the requesting test.
     if not _HAVE_FASTPARQUET:
         pytest.skip("fastparquet is not installed")
     if using_string_dtype():
@@ -107,11 +128,18 @@ def fp(request):
 
 @pytest.fixture
 def df_compat():
+    # [FUNCTION DOC]
+    # HELPER: fixture returning a small frame: integer column A with 1,2,3 and string
+    # column B filled with foo, with a plain index for column labels.
     return pd.DataFrame({"A": [1, 2, 3], "B": "foo"}, columns=pd.Index(["A", "B"]))
 
 
 @pytest.fixture
 def df_cross_compat():
+    # [FUNCTION DOC]
+    # HELPER: fixture returning a frame with string, integer, float, bool and daily
+    # datetime columns; types that fail across engines (unsigned small ints, tz-aware
+    # and nanosecond-frequency datetimes) are left commented out.
     df = pd.DataFrame(
         {
             "a": list("abc"),
@@ -130,6 +158,10 @@ def df_cross_compat():
 
 @pytest.fixture
 def df_full():
+    # [FUNCTION DOC]
+    # HELPER: fixture returning a frame covering many dtypes: strings (also with NaN and
+    # None), bytes, unicode strings, ints, small unsigned ints, floats (also with NaN),
+    # bools, nanosecond datetimes and datetimes with NaT.
     return pd.DataFrame(
         {
             "string": list("abc"),
@@ -164,6 +196,11 @@ def df_full():
     ]
 )
 def timezone_aware_date_list(request):
+    # [FUNCTION DOC]
+    # HELPER: parametrized fixture of seven timezone-aware datetime values: now in UTC,
+    # now with the minimum and maximum timezone offsets, and four fixed dates with
+    # offsets of plus/minus 2:00 and 2:15. Returns one value. Evaluated at import so the
+    # now-based values are fixed at collection.
     return request.param
 
 
@@ -180,6 +217,24 @@ def check_round_trip(
     check_dtype=True,
     repeat=2,
 ):
+    # [FUNCTION DOC]
+    # HELPER: writes a frame to Parquet and reads it back, asserting equality.
+    # Takes the frame, a pathlib path (temp_file; raises a value error if it is not a
+    # path object), optional engine name, optional explicit path (default is the temp
+    # path), optional write and read keyword dictionaries (writing defaults to no
+    # compression), an optional expected frame (defaults to the input), the check_names,
+    # check_like and check_dtype flags forwarded to the frame comparison, and repeat
+    # (number of write/read cycles, default 2).
+    # When an engine is given it is injected into both keyword dictionaries (mutating
+    # the caller's dictionaries). Each cycle writes, reads, sets the string_with_nan
+    # entry of the expected frame's second row to None when that column exists (mutating
+    # the expected frame), and asserts frame equality.
+    # KNOWN ISSUE: the docstring describes check_names as a closed set of column names,
+    # but it is a boolean flag passed to the equality assertion; the docstring also
+    # omits temp_file and check_dtype and does not give the default of repeat.
+    # KNOWN ISSUE: both branches of the final path check call the comparison
+    # identically, differing only in whether the path is first defaulted to the temp
+    # file.
     """Verify parquet serializer and deserializer produce the same results.
 
     Performs a pandas to disk and disk to pandas round trip,
@@ -215,6 +270,11 @@ def check_round_trip(
         read_kwargs["engine"] = engine
 
     def compare(repeat):
+        # [FUNCTION DOC]
+        # HELPER: inner function of check_round_trip that, repeat times, writes the
+        # frame to the path with the write keywords, reads with the read keywords,
+        # patches the expected frame for the NaN string column, and asserts frame
+        # equality using the enclosing flags. Takes the repeat count; returns nothing.
         for _ in range(repeat):
             df.to_parquet(path, **write_kwargs)
             actual = read_parquet(path, **read_kwargs)
@@ -237,6 +297,10 @@ def check_round_trip(
 
 
 def check_partition_names(path, expected):
+    # [FUNCTION DOC]
+    # HELPER: asserts the partition column names of a dataset on disk. Takes the dataset
+    # path and the expected list of names; opens it as a hive-partitioned pyarrow
+    # dataset and asserts the partitioning schema names equal the expected list.
     """Check partitions of a parquet file are as expected.
 
     Parameters
@@ -253,12 +317,19 @@ def check_partition_names(path, expected):
 
 
 def test_invalid_engine(df_compat, temp_file):
+    # [FUNCTION DOC]
+    # Calling the round-trip helper with an unknown engine name must raise a value error
+    # stating the engine must be one of pyarrow or fastparquet.
     msg = "engine must be one of 'pyarrow', 'fastparquet'"
     with pytest.raises(ValueError, match=msg):
         check_round_trip(df_compat, temp_file, "foo", "bar")
 
 
 def test_options_py(df_compat, pa, using_infer_string, temp_file):
+    # [FUNCTION DOC]
+    # Setting the default parquet engine option to pyarrow makes a round trip without an
+    # explicit engine work; when the infer-string mode is on (and pyarrow is new enough)
+    # the column labels are converted to the string dtype first.
     # use the set option
     if using_infer_string and not pa_version_under19p0:
         df_compat.columns = df_compat.columns.astype("str")
@@ -268,6 +339,8 @@ def test_options_py(df_compat, pa, using_infer_string, temp_file):
 
 
 def test_options_fp(df_compat, fp, temp_file):
+    # [FUNCTION DOC]
+    # Same as above with the default engine option set to fastparquet.
     # use the set option
 
     with pd.option_context("io.parquet.engine", "fastparquet"):
@@ -275,6 +348,8 @@ def test_options_fp(df_compat, fp, temp_file):
 
 
 def test_options_auto(df_compat, fp, pa, temp_file):
+    # [FUNCTION DOC]
+    # With both engines installed, the engine option auto allows a round trip.
     # use the set option
 
     with pd.option_context("io.parquet.engine", "auto"):
@@ -282,6 +357,11 @@ def test_options_auto(df_compat, fp, pa, temp_file):
 
 
 def test_options_get_engine(fp, pa):
+    # [FUNCTION DOC]
+    # With both engines installed, asking for the engine implementation returns the
+    # pyarrow implementation class or the fastparquet implementation class for explicit
+    # names regardless of the option, and for auto returns pyarrow unless the option is
+    # fastparquet, in which case it returns fastparquet.
     assert isinstance(get_engine("pyarrow"), PyArrowImpl)
     assert isinstance(get_engine("fastparquet"), FastParquetImpl)
 
@@ -302,6 +382,13 @@ def test_options_get_engine(fp, pa):
 
 
 def test_get_engine_auto_error_message():
+    # [FUNCTION DOC]
+    # Determines whether pyarrow and fastparquet are installed and whether their
+    # versions meet the minimum. Only if neither engine is usable it checks that asking
+    # for the auto engine raises an import error: with a message about the required
+    # minimum version if that library is installed too old, otherwise the unable-to-
+    # find-engine message for pyarrow; and then the same for fastparquet (version
+    # message or an install hint). Otherwise the test does nothing.
     # Expect different error messages from get_engine(engine="auto")
     # if engines aren't installed vs. are installed but bad version
     from pandas.compat._optional import VERSIONS
@@ -345,6 +432,9 @@ def test_get_engine_auto_error_message():
 
 
 def test_cross_engine_pa_fp(df_cross_compat, pa, fp, temp_file):
+    # [FUNCTION DOC]
+    # Writes with pyarrow and reads with fastparquet, fully and with a column subset;
+    # both equal the expected frame.
     # cross-compat with differing reading/writing engines
 
     df = df_cross_compat
@@ -365,6 +455,11 @@ def test_cross_engine_pa_fp(df_cross_compat, pa, fp, temp_file):
     reason="fastparquet >= 2025.12.0, < 2026.5.0 can't write ArrowStringArray",
 )
 def test_cross_engine_fp_pa(df_cross_compat, pa, fp, temp_file):
+    # [FUNCTION DOC]
+    # Expected to fail when the infer-string mode is on, pyarrow is present, and
+    # fastparquet is in the range from 2025.12.0 up to (not including) 2026.5.0 (cannot
+    # write the Arrow string array). Writes with fastparquet and reads with pyarrow,
+    # fully and with a column subset.
     # cross-compat with differing reading/writing engines
     df = df_cross_compat
 
@@ -378,19 +473,35 @@ def test_cross_engine_fp_pa(df_cross_compat, pa, fp, temp_file):
 
 
 class Base:
+    # [CLASS DOC]
+    # HELPER: base class for engine-specific test classes providing the error-assertion
+    # helpers below.
     def check_error_on_write(self, df, engine, exc, err_msg, temp_file_path):
+        # [FUNCTION DOC]
+        # HELPER: asserts that writing a frame with the given engine to the given path
+        # (no compression) raises the given exception with a message matching the regex.
         # check that we are raising the exception on writing
         with pytest.raises(exc, match=err_msg):
             to_parquet(df, temp_file_path, engine, compression=None)
 
     def check_external_error_on_write(self, df, engine, exc, temp_file_path):
+        # [FUNCTION DOC]
+        # HELPER: asserts that writing the frame with the given engine to the path
+        # raises an exception from an external library of the given class.
         # check that an external library is raising the exception on writing
         with tm.external_error_raised(exc):
             to_parquet(df, temp_file_path, engine, compression=None)
 
 
 class TestBasic(Base):
+    # [CLASS DOC]
+    # Engine-parametrized tests of common parquet behaviors: non-frame errors, columns,
+    # compression, filters, index handling, multi-level columns, dtype backend and
+    # reading from URL.
     def test_error(self, engine, temp_file):
+        # [FUNCTION DOC]
+        # Writing a series, int, string, timestamp or array must raise a value error
+        # stating that parquet writing only supports data frames.
         for obj in [
             pd.Series([1, 2, 3]),
             1,
@@ -402,6 +513,8 @@ class TestBasic(Base):
             self.check_error_on_write(obj, engine, ValueError, msg, temp_file)
 
     def test_columns_dtypes(self, engine, temp_file):
+        # [FUNCTION DOC]
+        # A frame with string column labels round-trips.
         df = pd.DataFrame({"string": list("abc"), "int": list(range(1, 4))})
 
         # unicode
@@ -410,12 +523,17 @@ class TestBasic(Base):
 
     @pytest.mark.parametrize("compression", [None, "gzip", "snappy", "brotli"])
     def test_compression(self, engine, compression, temp_file):
+        # [FUNCTION DOC]
+        # Parametrized over no compression, gzip, snappy, brotli. Round trip with that
+        # compression.
         df = pd.DataFrame({"A": [1, 2, 3]})
         check_round_trip(
             df, temp_file, engine, write_kwargs={"compression": compression}
         )
 
     def test_read_columns(self, engine, temp_file):
+        # [FUNCTION DOC]
+        # GH 18154. Reading with a column subset returns just that column.
         # GH18154
         df = pd.DataFrame({"string": list("abc"), "int": list(range(1, 4))})
 
@@ -429,6 +547,10 @@ class TestBasic(Base):
         )
 
     def test_read_filters(self, engine, tmp_path):
+        # [FUNCTION DOC]
+        # Writes a frame partitioned by the part column into a directory, then reads
+        # with a filter selecting partition a and only column int; result is the two
+        # matching rows. A single cycle only.
         df = pd.DataFrame(
             {
                 "int": list(range(4)),
@@ -448,6 +570,10 @@ class TestBasic(Base):
         )
 
     def test_write_index(self, temp_file):
+        # [FUNCTION DOC]
+        # Needs pyarrow. Round-trips with the default index, then non-default indexes
+        # (ints, datetimes with frequency removed, strings, other ints), then a named
+        # index.
         pytest.importorskip("pyarrow")
         df = pd.DataFrame({"A": [1, 2, 3]})
         check_round_trip(df, temp_file, "pyarrow")
@@ -471,6 +597,9 @@ class TestBasic(Base):
         check_round_trip(df, temp_file, "pyarrow")
 
     def test_write_multiindex(self, pa, temp_file):
+        # [FUNCTION DOC]
+        # Needs pyarrow (the comment says fastparquet does not support it). A row multi-
+        # index round-trips.
         # Not supported in fastparquet as of 0.1.3 or older pyarrow version
         engine = pa
 
@@ -480,6 +609,9 @@ class TestBasic(Base):
         check_round_trip(df, temp_file, engine)
 
     def test_multiindex_with_columns(self, pa, temp_file):
+        # [FUNCTION DOC]
+        # Needs pyarrow. Frame with a two-level index (with and without level names)
+        # round-trips, also with a column subset read.
         engine = pa
         dates = pd.date_range("01-Jan-2018", "01-Dec-2018", freq="MS", unit="ns")
         df = pd.DataFrame(
@@ -503,6 +635,10 @@ class TestBasic(Base):
             )
 
     def test_write_ignoring_index(self, engine, temp_file):
+        # [FUNCTION DOC]
+        # ENH 20768. Writing with the index flag off omits the index in the file:
+        # reading gives a default integer index, for a default index, a custom string
+        # index and a multi-index.
         # ENH 20768
         # Ensure index=False omits the index from the written Parquet file.
         df = pd.DataFrame({"a": [1, 2, 3], "b": ["q", "r", "s"]})
@@ -541,6 +677,9 @@ class TestBasic(Base):
         )
 
     def test_write_column_multiindex(self, engine, temp_file):
+        # [FUNCTION DOC]
+        # Multi-level columns with non-string labels: fastparquet raises a type error
+        # that column names must be strings; pyarrow round-trips.
         # Not able to write column multi-indexes with non-string column names.
         mi_columns = pd.MultiIndex.from_tuples([("a", 1), ("a", 2), ("b", 1)])
         df = pd.DataFrame(
@@ -555,6 +694,9 @@ class TestBasic(Base):
             check_round_trip(df, temp_file, engine)
 
     def test_write_column_multiindex_nonstring(self, engine, temp_file):
+        # [FUNCTION DOC]
+        # GH 34777. Multi-level columns with an integer level: fastparquet raises a
+        # value error about the column name; pyarrow round-trips.
         # GH #34777
 
         # Not able to write column multi-indexes with non-string column names
@@ -572,6 +714,9 @@ class TestBasic(Base):
             check_round_trip(df, temp_file, engine)
 
     def test_write_column_multiindex_string(self, pa, temp_file):
+        # [FUNCTION DOC]
+        # GH 34777. Needs pyarrow. Multi-level string columns with named levels round-
+        # trip.
         # GH #34777
         # Not supported in fastparquet as of 0.1.3
         engine = pa
@@ -589,6 +734,8 @@ class TestBasic(Base):
         check_round_trip(df, temp_file, engine)
 
     def test_write_column_index_string(self, pa, temp_file):
+        # [FUNCTION DOC]
+        # GH 34777. Needs pyarrow. A named string column index round-trips.
         # GH #34777
         # Not supported in fastparquet as of 0.1.3
         engine = pa
@@ -603,6 +750,9 @@ class TestBasic(Base):
         check_round_trip(df, temp_file, engine)
 
     def test_write_column_index_nonstring(self, engine, temp_file):
+        # [FUNCTION DOC]
+        # GH 34777. Integer column labels with a named columns index: fastparquet raises
+        # a type error about column names; pyarrow round-trips.
         # GH #34777
 
         # Write column indexes with string column names
@@ -619,6 +769,12 @@ class TestBasic(Base):
             check_round_trip(df, temp_file, engine)
 
     def test_dtype_backend(self, engine, request, temp_file):
+        # [FUNCTION DOC]
+        # Writes a table via pyarrow with nulls and several types, reads with the
+        # default and the nullable-numpy backends; the default read turns the nullable
+        # int column into float64; the nullable read equals a frame of nullable dtypes
+        # (Int64, UInt8, string, boolean, Float32, Float64). For fastparquet the test is
+        # an expected failure and the string column is dropped from the comparison.
         pq = pytest.importorskip("pyarrow.parquet")
 
         if engine == "fastparquet":
@@ -681,6 +837,10 @@ class TestBasic(Base):
         ],
     )
     def test_read_empty_array(self, pa, dtype, temp_file):
+        # [FUNCTION DOC]
+        # GH 41241. Parametrized over nine dtype names. Writes an empty column of that
+        # dtype with pyarrow and reads with the nullable backend; the plain float case
+        # is expected to come back as Float64, others equal the input.
         # GH #41241
         df = pd.DataFrame(
             {
@@ -707,6 +867,12 @@ class TestBasic(Base):
     @pytest.mark.network
     @pytest.mark.single_cpu
     def test_parquet_read_from_url(self, httpserver, datapath, df_compat, engine):
+        # [FUNCTION DOC]
+        # Network, single-cpu. Serves a simple.parquet sample file from a local server
+        # and reads it by URL; equals the compat frame, with column labels as object
+        # when pyarrow is old.
+        # KNOWN ISSUE: the skip condition compares the engine to auto, but the fixture
+        # only ever supplies fastparquet or pyarrow, so the condition is always true.
         if engine != "auto":
             pytest.importorskip(engine)
         with open(datapath("io", "data", "parquet", "simple.parquet"), mode="rb") as f:
@@ -720,7 +886,13 @@ class TestBasic(Base):
 
 
 class TestParquetPyArrow(Base):
+    # [CLASS DOC]
+    # Tests specific to the pyarrow engine (fixtures request pa). Inherits the base
+    # error helpers.
     def test_basic(self, pa, df_full, temp_file):
+        # [FUNCTION DOC]
+        # Adds a tz-aware datetime column and a bool column with None to the full frame
+        # and round-trips with pyarrow.
         df = df_full
         pytest.importorskip("pyarrow", "11.0.0")
 
@@ -733,6 +905,8 @@ class TestParquetPyArrow(Base):
         check_round_trip(df, temp_file, pa)
 
     def test_basic_subset_columns(self, pa, df_full, temp_file):
+        # [FUNCTION DOC]
+        # GH 18628. Round trip reading only two columns.
         # GH18628
 
         df = df_full
@@ -748,6 +922,10 @@ class TestParquetPyArrow(Base):
         )
 
     def test_to_bytes_without_path_or_buf_provided(self, pa, df_full):
+        # [FUNCTION DOC]
+        # GH 37105. Writing without a destination returns a bytes object; reading it
+        # from a buffer gives the frame with the NaN-string patched to None and the NaT
+        # datetime column in microsecond unit.
         # GH 37105
         buf_bytes = df_full.to_parquet(engine=pa)
         assert isinstance(buf_bytes, bytes)
@@ -761,6 +939,9 @@ class TestParquetPyArrow(Base):
         tm.assert_frame_equal(res, expected)
 
     def test_duplicate_columns(self, pa, temp_file):
+        # [FUNCTION DOC]
+        # Writing a frame with duplicate column labels must raise a value error saying
+        # duplicate column names were found.
         # not currently able to handle duplicate columns
         df = pd.DataFrame(np.arange(12).reshape(4, 3), columns=list("aaa")).copy()
         self.check_error_on_write(
@@ -768,10 +949,14 @@ class TestParquetPyArrow(Base):
         )
 
     def test_timedelta(self, pa, temp_file):
+        # [FUNCTION DOC]
+        # Timedelta column round-trips.
         df = pd.DataFrame({"a": pd.timedelta_range("1 day", periods=3)})
         check_round_trip(df, temp_file, pa)
 
     def test_unsupported(self, pa, temp_file):
+        # [FUNCTION DOC]
+        # Mixed object column cannot be written: expects a pyarrow exception.
         # mixed python objects
         df = pd.DataFrame({"a": ["a", 1, 2.0]})
         # pyarrow 0.11 raises ArrowTypeError
@@ -779,6 +964,9 @@ class TestParquetPyArrow(Base):
         self.check_external_error_on_write(df, pa, pyarrow.ArrowException, temp_file)
 
     def test_unsupported_float16(self, pa, temp_file):
+        # [FUNCTION DOC]
+        # GH 44847, 44914. For pyarrow older than 15 writing float16 raises a pyarrow
+        # exception; newer versions round trip.
         # #44847, #44914
         # Not able to write float 16 column using pyarrow.
         data = np.arange(2, 10, dtype=np.float16)
@@ -800,6 +988,10 @@ class TestParquetPyArrow(Base):
     @pytest.mark.skipif(not pa_version_under15p0, reason="float16 works on 15")
     @pytest.mark.parametrize("path_type", [str, pathlib.Path])
     def test_unsupported_float16_cleanup(self, pa, path_type, temp_file):
+        # [FUNCTION DOC]
+        # GH 44847, 44914. Expected failure on Windows; runs only for pyarrow older than
+        # 15. Parametrized over string and path object paths. Writing a float16 column
+        # raises a pyarrow error and the partial file must be removed.
         # #44847, #44914
         # Not able to write float 16 column using pyarrow.
         # Tests cleanup by pyarrow in case of an error
@@ -812,6 +1004,9 @@ class TestParquetPyArrow(Base):
         assert not os.path.isfile(path)
 
     def test_categorical(self, pa, temp_file):
+        # [FUNCTION DOC]
+        # Categorical columns (with nulls, an unobserved category and an ordered one)
+        # round-trip.
         # supported in >= 0.7.0
         df = pd.DataFrame(
             {
@@ -836,6 +1031,9 @@ class TestParquetPyArrow(Base):
     def test_s3_roundtrip_explicit_fs(
         self, df_compat, s3_bucket_public, s3so, pa, temp_file
     ):
+        # [FUNCTION DOC]
+        # Single-cpu. Needs s3fs. Round trip to a mock S3 bucket passing an explicit
+        # file-system object for both write and read.
         s3fs = pytest.importorskip("s3fs")
         s3 = s3fs.S3FileSystem(**s3so)
         kw = {"filesystem": s3}
@@ -850,6 +1048,9 @@ class TestParquetPyArrow(Base):
 
     @pytest.mark.single_cpu
     def test_s3_roundtrip(self, df_compat, s3_bucket_public, s3so, pa, temp_file):
+        # [FUNCTION DOC]
+        # Single-cpu. GH 19134. Round trip to the mock bucket using an s3 URL with
+        # storage options.
         # GH #19134
         s3so = {"storage_options": s3so}
         check_round_trip(
@@ -866,6 +1067,11 @@ class TestParquetPyArrow(Base):
     def test_s3_roundtrip_for_dir(
         self, df_compat, s3_bucket_public, pa, partition_col, s3so, temp_file
     ):
+        # [FUNCTION DOC]
+        # Single-cpu. Parametrized over partition columns [A] or none. GH 26388, 35791.
+        # Writes a partitioned dataset directory to the mock bucket and reads it back;
+        # when partitioned the expected column A becomes categorical of 32-bit ints.
+        # Column order ignored; a single cycle.
         pytest.importorskip("s3fs")
         # GH #26388
         expected_df = df_compat.copy()
@@ -896,6 +1102,9 @@ class TestParquetPyArrow(Base):
         )
 
     def test_read_file_like_obj_support(self, df_compat, using_infer_string):
+        # [FUNCTION DOC]
+        # Writes to an in-memory buffer and reads from the same buffer; frame equal
+        # (with string column labels when infer-string mode is on and pyarrow is new).
         pytest.importorskip("pyarrow")
         buffer = BytesIO()
         df_compat.to_parquet(buffer)
@@ -905,6 +1114,10 @@ class TestParquetPyArrow(Base):
         tm.assert_frame_equal(df_compat, df_from_buf)
 
     def test_expand_user(self, df_compat, monkeypatch):
+        # [FUNCTION DOC]
+        # With the home environment variables pointed at a fake user, reading and
+        # writing a path starting with a tilde raise an OS error whose message contains
+        # the fake user name, proving home expansion.
         pytest.importorskip("pyarrow")
         monkeypatch.setenv("HOME", "TestingUser")
         monkeypatch.setenv("USERPROFILE", "TestingUser")
@@ -914,6 +1127,10 @@ class TestParquetPyArrow(Base):
             df_compat.to_parquet("~/file.parquet")
 
     def test_partition_cols_supported(self, tmp_path, pa, df_full):
+        # [FUNCTION DOC]
+        # GH 23283. Writing partitioned by the bool and int columns creates a hive
+        # dataset with those partition names; reading the directory gives the same
+        # shape.
         # GH #23283
         partition_cols = ["bool", "int"]
         df = df_full
@@ -922,6 +1139,9 @@ class TestParquetPyArrow(Base):
         assert read_parquet(tmp_path).shape == df.shape
 
     def test_partition_cols_string(self, tmp_path, pa, df_full):
+        # [FUNCTION DOC]
+        # GH 27117. Passing a single string as partition_cols works like a one-element
+        # list.
         # GH #27117
         partition_cols = "bool"
         partition_cols_list = [partition_cols]
@@ -934,6 +1154,9 @@ class TestParquetPyArrow(Base):
         "path_type", [str, lambda x: x], ids=["string", "pathlib.Path"]
     )
     def test_partition_cols_pathlib(self, tmp_path, pa, df_compat, path_type):
+        # [FUNCTION DOC]
+        # GH 35902. Parametrized over a string path and a path object. Writing a
+        # partitioned dataset and reading gives the same shape.
         # GH 35902
 
         partition_cols = "B"
@@ -945,11 +1168,16 @@ class TestParquetPyArrow(Base):
         assert read_parquet(path).shape == df.shape
 
     def test_empty_dataframe(self, pa, temp_file):
+        # [FUNCTION DOC]
+        # GH 27339. An empty frame round-trips.
         # GH #27339
         df = pd.DataFrame(index=[], columns=[])
         check_round_trip(df, temp_file, pa)
 
     def test_write_with_schema(self, pa, temp_file):
+        # [FUNCTION DOC]
+        # Passing an explicit schema that declares the column as boolean converts the
+        # data on write; the read equals the data cast to bool.
         import pyarrow
 
         df = pd.DataFrame({"x": [0, 1]})
@@ -960,6 +1188,10 @@ class TestParquetPyArrow(Base):
         )
 
     def test_additional_extension_arrays(self, pa, using_infer_string, temp_file):
+        # [FUNCTION DOC]
+        # Nullable Int64 and UInt32 and string-dtype columns round-trip through the
+        # Arrow array protocol (string column becomes plain string when infer-string and
+        # old pyarrow); a second frame with missing nullable ints also round-trips.
         # test additional ExtensionArrays that are supported through the
         # __arrow_array__ protocol
         pytest.importorskip("pyarrow")
@@ -981,6 +1213,10 @@ class TestParquetPyArrow(Base):
     def test_pyarrow_backed_string_array(
         self, pa, string_storage, using_infer_string, temp_file
     ):
+        # [FUNCTION DOC]
+        # A string column of pyarrow-backed string dtype round-trips; the expected dtype
+        # follows the string storage option and infer-string mode (with string column
+        # labels in that mode).
         # test ArrowStringArray supported through the __arrow_array__ protocol
         pytest.importorskip("pyarrow")
         df = pd.DataFrame({"a": pd.Series(["a", None, "c"], dtype="string[pyarrow]")})
@@ -996,6 +1232,9 @@ class TestParquetPyArrow(Base):
             check_round_trip(df, temp_file, pa, expected=expected)
 
     def test_additional_extension_types(self, pa, temp_file):
+        # [FUNCTION DOC]
+        # Interval, period and datetime-interval columns round-trip (GH 45881 for the
+        # datetime interval subtype).
         # test additional ExtensionArrays that are supported through the
         # __arrow_array__ protocol + by defining a custom ExtensionType
         pytest.importorskip("pyarrow")
@@ -1012,6 +1251,9 @@ class TestParquetPyArrow(Base):
         check_round_trip(df, temp_file, pa)
 
     def test_timestamp_nanoseconds(self, pa, temp_file):
+        # [FUNCTION DOC]
+        # Writing nanosecond timestamps with format version 2.6 works without error and
+        # round-trips.
         # with version 2.6, pyarrow defaults to writing the nanoseconds, so
         # this should work without error, even for pyarrow < 13
         ver = "2.6"
@@ -1019,11 +1261,16 @@ class TestParquetPyArrow(Base):
         check_round_trip(df, temp_file, pa, write_kwargs={"version": ver})
 
     def test_timezone_aware_index(self, pa, timezone_aware_date_list, temp_file):
+        # [FUNCTION DOC]
+        # Parametrized over the seven tz-aware values. A frame with tz-aware index and a
+        # column of those values round-trips, ignoring dtype differences.
         idx = 5 * [timezone_aware_date_list]
         df = pd.DataFrame(index=idx, data={"index_as_col": idx})
         check_round_trip(df, temp_file, pa, check_dtype=False)
 
     def test_filter_row_groups(self, pa, temp_file):
+        # [FUNCTION DOC]
+        # Reading with a row filter on column a equal to zero returns one row.
         # https://github.com/pandas-dev/pandas/issues/26551
         pytest.importorskip("pyarrow")
         df = pd.DataFrame({"a": list(range(3))})
@@ -1033,6 +1280,11 @@ class TestParquetPyArrow(Base):
 
     @pytest.mark.filterwarnings("ignore:make_block is deprecated:DeprecationWarning")
     def test_read_dtype_backend_pyarrow_config(self, pa, df_full, temp_file):
+        # [FUNCTION DOC]
+        # Round-trips the full frame plus tz-aware and boolean-with-None columns reading
+        # with the pyarrow dtype backend; the expected frame is the Arrow table
+        # converted with Arrow dtypes, with the NaT datetime column cast to microsecond
+        # timestamp.
         import pyarrow
 
         df = df_full
@@ -1058,6 +1310,9 @@ class TestParquetPyArrow(Base):
         )
 
     def test_read_dtype_backend_pyarrow_config_index(self, pa, temp_file):
+        # [FUNCTION DOC]
+        # A frame with Arrow int64 dtype and named index reads back with an Arrow int
+        # index under the pyarrow backend.
         df = pd.DataFrame(
             {"a": [1, 2]}, index=pd.Index([3, 4], name="test"), dtype="int64[pyarrow]"
         )
@@ -1097,17 +1352,25 @@ class TestParquetPyArrow(Base):
         ],
     )
     def test_columns_dtypes_not_invalid(self, pa, columns, temp_file):
+        # [FUNCTION DOC]
+        # Parametrized over integer labels, byte-string labels (expected failure for
+        # pyarrow older than 20) and datetime labels (expected failure for pyarrow older
+        # than 17). Non-string column labels round-trip with pyarrow.
         df = pd.DataFrame({"string": list("abc"), "int": list(range(1, 4))})
 
         df.columns = columns
         check_round_trip(df, temp_file, pa)
 
     def test_empty_columns(self, pa, temp_file):
+        # [FUNCTION DOC]
+        # GH 52034. A frame with no columns but a named string index round-trips.
         # GH 52034
         df = pd.DataFrame(index=pd.Index(["a", "b", "c"], name="custom name"))
         check_round_trip(df, temp_file, pa)
 
     def test_df_attrs_persistence(self, temp_file, pa):
+        # [FUNCTION DOC]
+        # Frame attrs dictionary persists across write and read.
         df = pd.DataFrame(data={1: [1]})
         df.attrs = {"test_attribute": 1}
         df.to_parquet(temp_file, engine=pa)
@@ -1115,6 +1378,10 @@ class TestParquetPyArrow(Base):
         assert new_df.attrs == df.attrs
 
     def test_string_inference(self, temp_file, pa, using_infer_string):
+        # [FUNCTION DOC]
+        # GH 54431. Reads with the future infer-string option on; values, index and
+        # column labels get the NaN-variant string dtype (column labels may be object
+        # for old pyarrow when the global option is off).
         # GH#54431
         df = pd.DataFrame(data={"a": ["x", "y"]}, index=["a", "b"])
         df.to_parquet(temp_file, engine=pa)
@@ -1135,6 +1402,12 @@ class TestParquetPyArrow(Base):
         tm.assert_frame_equal(result, expected)
 
     def test_roundtrip_decimal(self, temp_file, pa):
+        # [FUNCTION DOC]
+        # GH 54768. Writes a string-dtype column holding a decimal value with an
+        # explicit decimal128 schema; reading gives a string "123" for old pyarrow or an
+        # object column holding the decimal for new pyarrow.
+        # KNOWN ISSUE: the local pyarrow import shadows the pa fixture argument with the
+        # module object, so the fixture value is discarded.
         # GH#54768
         import pyarrow as pa
 
@@ -1148,6 +1421,11 @@ class TestParquetPyArrow(Base):
         tm.assert_frame_equal(result, expected)
 
     def test_infer_string_large_string_type(self, temp_file, pa):
+        # [FUNCTION DOC]
+        # GH 54798. A large-string column written with pyarrow is read under infer-
+        # string mode as the NaN-variant string dtype.
+        # KNOWN ISSUE: the local pyarrow import shadows the pa fixture argument with the
+        # module object.
         # GH#54798
         import pyarrow as pa
         import pyarrow.parquet as pq
@@ -1178,6 +1456,9 @@ class TestParquetPyArrow(Base):
     # FIXME: don't leave commented-out
 
     def test_non_nanosecond_timestamps(self, temp_file):
+        # [FUNCTION DOC]
+        # GH 49236. Needs pyarrow 13. A microsecond timestamp from the year 1600 reads
+        # back as microsecond datetime values.
         # GH#49236
         pa = pytest.importorskip("pyarrow", "13.0.0")
         pq = pytest.importorskip("pyarrow.parquet")
@@ -1193,6 +1474,9 @@ class TestParquetPyArrow(Base):
         tm.assert_frame_equal(result, expected)
 
     def test_maps_as_pydicts(self, pa, temp_file):
+        # [FUNCTION DOC]
+        # Needs pyarrow 13. A map column written with an explicit schema and read with
+        # the strict maps-as-dicts option round-trips as dictionaries.
         pyarrow = pytest.importorskip("pyarrow", "13.0.0")
 
         schema = pyarrow.schema(
@@ -1209,7 +1493,13 @@ class TestParquetPyArrow(Base):
 
 
 class TestParquetFastParquet(Base):
+    # [CLASS DOC]
+    # Tests specific to the fastparquet engine (and some engine-agnostic file-
+    # handle/filesystem tests placed here). Inherits the base error helpers.
     def test_basic(self, fp, df_full, request, temp_file):
+        # [FUNCTION DOC]
+        # Needs pytz. Full frame plus tz-aware (Eastern) datetimes and timedeltas round-
+        # trip with fastparquet. The request argument is unused.
         pytz = pytest.importorskip("pytz")
 
         tz = pytz.timezone("US/Eastern")
@@ -1222,6 +1512,9 @@ class TestParquetFastParquet(Base):
         check_round_trip(df, temp_file, fp)
 
     def test_columns_dtypes_invalid(self, fp, temp_file):
+        # [FUNCTION DOC]
+        # Non-string column labels (numbers, bytes, datetimes) must make fastparquet
+        # raise a type error saying column names must be strings.
         df = pd.DataFrame({"string": list("abc"), "int": list(range(1, 4))})
 
         err = TypeError
@@ -1243,12 +1536,19 @@ class TestParquetFastParquet(Base):
         self.check_error_on_write(df, fp, err, msg, temp_file)
 
     def test_duplicate_columns(self, fp, temp_file):
+        # [FUNCTION DOC]
+        # Duplicate column labels must raise a value error saying a dataset with
+        # duplicate column names cannot be created.
         # not currently able to handle duplicate columns
         df = pd.DataFrame(np.arange(12).reshape(4, 3), columns=list("aaa")).copy()
         msg = "Cannot create parquet dataset with duplicate column names"
         self.check_error_on_write(df, fp, ValueError, msg, temp_file)
 
     def test_bool_with_none(self, fp, request, temp_file):
+        # [FUNCTION DOC]
+        # Bool column with None round-trips as float (comparison ignores dtype because
+        # fastparquet 0.7.1 produces float64 rather than float16). The request argument
+        # is unused.
         df = pd.DataFrame({"a": [True, None, False]})
         expected = pd.DataFrame({"a": [1.0, np.nan, 0.0]}, dtype="float16")
         # Fastparquet bug in 0.7.1 makes it so that this dtype becomes
@@ -1256,6 +1556,10 @@ class TestParquetFastParquet(Base):
         check_round_trip(df, temp_file, fp, expected=expected, check_dtype=False)
 
     def test_unsupported(self, fp, temp_file):
+        # [FUNCTION DOC]
+        # Period dtype raises a value error from fastparquet (message unchecked); a
+        # mixed-type object column raises a value error saying it cannot infer the
+        # object conversion type.
         # period
         df = pd.DataFrame({"a": pd.period_range("2013", freq="M", periods=3)})
         # error from fastparquet -> don't check exact error message
@@ -1274,10 +1578,16 @@ class TestParquetFastParquet(Base):
         reason="fastparquet >= 2025.12.0, < 2026.5.0 can't write ArrowStringArray",
     )
     def test_categorical(self, fp, temp_file):
+        # [FUNCTION DOC]
+        # Expected failure in the same fastparquet-version/infer-string condition as the
+        # cross-engine test. A categorical column round-trips with fastparquet.
         df = pd.DataFrame({"a": pd.Categorical(list("abc"))})
         check_round_trip(df, temp_file, fp)
 
     def test_filter_row_groups(self, fp, temp_file):
+        # [FUNCTION DOC]
+        # Writes with one row per group and reads with a filter on column a equal to
+        # zero; one row returned.
         d = {"a": list(range(3))}
         df = pd.DataFrame(d)
         df.to_parquet(temp_file, engine=fp, compression=None, row_group_offsets=1)
@@ -1286,6 +1596,9 @@ class TestParquetFastParquet(Base):
 
     @pytest.mark.single_cpu
     def test_s3_roundtrip(self, df_compat, s3_bucket_public, s3so, fp, temp_file):
+        # [FUNCTION DOC]
+        # Single-cpu. GH 19134. Round trip to the mock bucket with storage options using
+        # fastparquet.
         # GH #19134
         check_round_trip(
             df_compat,
@@ -1304,6 +1617,10 @@ class TestParquetFastParquet(Base):
         reason="fastparquet >= 2025.12.0, < 2026.5.0 can't write ArrowStringArray",
     )
     def test_partition_cols_supported(self, tmp_path, fp, df_full):
+        # [FUNCTION DOC]
+        # Expected failure under the fastparquet-version/infer-string condition. GH
+        # 23283. Writes partitioned by two columns; the directory exists and fastparquet
+        # sees two categorical partition columns.
         # GH #23283
         partition_cols = ["bool", "int"]
         df = df_full
@@ -1327,6 +1644,9 @@ class TestParquetFastParquet(Base):
         reason="fastparquet >= 2025.12.0, < 2026.5.0 can't write ArrowStringArray",
     )
     def test_partition_cols_string(self, tmp_path, fp, df_full):
+        # [FUNCTION DOC]
+        # Same expected-failure condition. GH 27117. A single string partition_cols
+        # value gives one partition column.
         # GH #27117
         partition_cols = "bool"
         df = df_full
@@ -1350,6 +1670,9 @@ class TestParquetFastParquet(Base):
         reason="fastparquet >= 2025.12.0, < 2026.5.0 can't write ArrowStringArray",
     )
     def test_partition_on_supported(self, tmp_path, fp, df_full):
+        # [FUNCTION DOC]
+        # Same expected-failure condition. GH 23283. The fastparquet-specific
+        # partition_on argument gives two partition columns.
         # GH #23283
         partition_cols = ["bool", "int"]
         df = df_full
@@ -1368,6 +1691,9 @@ class TestParquetFastParquet(Base):
     def test_error_on_using_partition_cols_and_partition_on(
         self, tmp_path, fp, df_full
     ):
+        # [FUNCTION DOC]
+        # GH 23283. Supplying both partition_on and partition_cols must raise a value
+        # error telling to use partition_cols.
         # GH #23283
         partition_cols = ["bool", "int"]
         df = df_full
@@ -1385,6 +1711,8 @@ class TestParquetFastParquet(Base):
             )
 
     def test_empty_dataframe(self, fp, temp_file):
+        # [FUNCTION DOC]
+        # GH 27339. A completely empty frame round-trips with fastparquet.
         # GH #27339
         df = pd.DataFrame()
         expected = df.copy()
@@ -1393,6 +1721,9 @@ class TestParquetFastParquet(Base):
     def test_timezone_aware_index(
         self, fp, timezone_aware_date_list, request, temp_file
     ):
+        # [FUNCTION DOC]
+        # Parametrized over the seven tz-aware values. Round trip with fastparquet where
+        # the expected frame's index name becomes index.
         idx = 5 * [timezone_aware_date_list]
 
         df = pd.DataFrame(index=idx, data={"index_as_col": idx})
@@ -1402,6 +1733,10 @@ class TestParquetFastParquet(Base):
         check_round_trip(df, temp_file, fp, expected=expected)
 
     def test_close_file_handle_on_read_error(self, temp_file):
+        # [FUNCTION DOC]
+        # Writes garbage bytes to a file; reading with fastparquet raises an external
+        # error; then the file must be deletable (on Windows deletion fails if the
+        # handle leaked).
         pathlib.Path(temp_file).write_bytes(b"breakit")
         with tm.external_error_raised(Exception):  # Not important which exception
             read_parquet(temp_file, engine="fastparquet")
@@ -1409,6 +1744,9 @@ class TestParquetFastParquet(Base):
         pathlib.Path(temp_file).unlink(missing_ok=False)
 
     def test_bytes_file_name(self, engine, temp_file):
+        # [FUNCTION DOC]
+        # GH 48944. Parametrized over both engines. Writing to an open binary file
+        # object and reading back by file name yields the same frame.
         # GH#48944
         df = pd.DataFrame(data={"A": [0, 1], "B": [1, 0]})
         with open(temp_file, "wb") as f:
@@ -1418,6 +1756,10 @@ class TestParquetFastParquet(Base):
         tm.assert_frame_equal(result, df)
 
     def test_filesystem_notimplemented(self, temp_file):
+        # [FUNCTION DOC]
+        # Needs fastparquet. Passing a filesystem argument for write or read with the
+        # fastparquet engine must raise a not-implemented error that the filesystem is
+        # not implemented.
         pytest.importorskip("fastparquet")
         df = pd.DataFrame(data={"A": [0, 1], "B": [1, 0]})
         with pytest.raises(NotImplementedError, match="filesystem is not implemented"):
@@ -1428,6 +1770,9 @@ class TestParquetFastParquet(Base):
             read_parquet(temp_file, engine="fastparquet", filesystem="foo")
 
     def test_invalid_filesystem(self, temp_file):
+        # [FUNCTION DOC]
+        # Needs pyarrow. A non-filesystem value for filesystem must raise a value error
+        # saying it must be a pyarrow or fsspec file system, for write and read.
         pytest.importorskip("pyarrow")
         df = pd.DataFrame(data={"A": [0, 1], "B": [1, 0]})
 
@@ -1443,6 +1788,9 @@ class TestParquetFastParquet(Base):
             read_parquet(temp_file, engine="pyarrow", filesystem="foo")
 
     def test_unsupported_pa_filesystem_storage_options(self, temp_file):
+        # [FUNCTION DOC]
+        # Needs pyarrow filesystem module. Providing both a pyarrow file system and
+        # storage options must raise a not-implemented error for write and read.
         pa_fs = pytest.importorskip("pyarrow.fs")
         df = pd.DataFrame(data={"A": [0, 1], "B": [1, 0]})
 
@@ -1470,6 +1818,13 @@ class TestParquetFastParquet(Base):
             )
 
     def test_invalid_dtype_backend(self, engine, temp_file):
+        # [FUNCTION DOC]
+        # Parametrized by the engine fixture. Reading with an invalid dtype backend must
+        # raise a value error stating only the nullable-numpy and pyarrow backends are
+        # allowed.
+        # KNOWN ISSUE: the engine fixture parameter is accepted but never used; the
+        # write and read calls use the default engine, so the parametrization only
+        # repeats the same test.
         msg = (
             "dtype_backend numpy is invalid, only 'numpy_nullable' and "
             "'pyarrow' are allowed."

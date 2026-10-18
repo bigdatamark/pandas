@@ -1,3 +1,12 @@
+# [MODULE DOC]
+# Tests for the HTML table reader, covering the two parsing flavors (lxml, and bs4 with
+# html5lib), table selection by text match and attributes, header/index/skiprows
+# handling, rowspan and colspan expansion, encodings, link extraction, dtype backends,
+# and error handling. Sample HTML files come from the io data html and html_encoding
+# directories; network tests use a local HTTP server fixture. Also includes two tests of
+# the HTML writer. Most tests run against both flavors through the flavor_read_html
+# fixture, skipping flavors whose libraries are not installed.
+
 from collections.abc import Iterator
 from functools import partial
 from io import (
@@ -42,11 +51,21 @@ from pandas.io.common import file_path_to_url
     ]
 )
 def html_encoding_file(request, datapath):
+    # [FUNCTION DOC]
+    # HELPER: parametrized fixture over four encoding test files (Chinese in utf-16,
+    # utf-32 and utf-8, and Latin-1 Luxembourgish). Returns the path of the file
+    # resolved with datapath.
     """Parametrized fixture for HTML encoding test filenames."""
     return datapath("io", "data", "html_encoding", request.param)
 
 
 def assert_framelist_equal(list1, list2, *args, **kwargs):
+    # [FUNCTION DOC]
+    # HELPER: asserts two lists of frames are equal.
+    # Takes two lists and extra positional and keyword arguments forwarded to the frame
+    # equality assertion. Asserts equal lengths, that every element in both lists is a
+    # frame, then compares each pair and asserts none of the frames is empty (so
+    # equality is not trivial). Raises assertion errors otherwise.
     assert len(list1) == len(list2), (
         "lists are not of equal size "
         f"len(list1) == {len(list1)}, "
@@ -67,6 +86,10 @@ def assert_framelist_equal(list1, list2, *args, **kwargs):
 
 
 def test_bs4_version_fails(monkeypatch, datapath):
+    # [FUNCTION DOC]
+    # Needs bs4 and html5lib. With the bs4 version attribute patched to an old value,
+    # reading with the bs4 flavor must raise an import error saying a newer version is
+    # required.
     bs4 = pytest.importorskip("bs4")
     pytest.importorskip("html5lib")
 
@@ -76,6 +99,9 @@ def test_bs4_version_fails(monkeypatch, datapath):
 
 
 def test_invalid_flavor():
+    # [FUNCTION DOC]
+    # Reading with an unknown flavor name must raise a value error saying the flavor set
+    # is not valid.
     url = "google.com"
     flavor = "invalid flavor"
     msg = r"\{" + flavor + r"\} is not a valid set of flavors"
@@ -85,6 +111,9 @@ def test_invalid_flavor():
 
 
 def test_same_ordering(datapath):
+    # [FUNCTION DOC]
+    # Needs bs4, lxml and html5lib. Reading valid markup with each of the two flavors,
+    # index from first column, gives equal lists of frames.
     pytest.importorskip("bs4")
     pytest.importorskip("lxml")
     pytest.importorskip("html5lib")
@@ -102,11 +131,25 @@ def test_same_ordering(datapath):
     ],
 )
 def flavor_read_html(request):
+    # [FUNCTION DOC]
+    # HELPER: parametrized fixture with two params (bs4, requiring bs4 and html5lib;
+    # lxml, requiring lxml). Returns the HTML reader function with the flavor argument
+    # pre-bound.
     return partial(read_html, flavor=request.param)
 
 
 class TestReadHtml:
+    # [CLASS DOC]
+    # Tests of the HTML reader for both flavors. Includes fixtures for the spam and
+    # banklist sample files and a fixture with an inline HTML page of Python
+    # documentation tables.
     def test_literal_html_deprecation(self, flavor_read_html):
+        # [FUNCTION DOC]
+        # GH 53785. Passing literal HTML text (instead of a file-like or path) is no
+        # longer treated as HTML: the reader tries to open it as a path and must raise a
+        # file-not-found error.
+        # KNOWN ISSUE: the test name mentions deprecation, but the test checks the post-
+        # removal behavior of raising an error.
         # GH 53785
         msg = r"\[Errno 2\] No such file or director"
 
@@ -136,13 +179,21 @@ class TestReadHtml:
 
     @pytest.fixture
     def spam_data(self, datapath):
+        # [FUNCTION DOC]
+        # HELPER: fixture returning the path of the spam.html sample file.
         return datapath("io", "data", "html", "spam.html")
 
     @pytest.fixture
     def banklist_data(self, datapath):
+        # [FUNCTION DOC]
+        # HELPER: fixture returning the path of the banklist.html sample file.
         return datapath("io", "data", "html", "banklist.html")
 
     def test_to_html_compat(self, flavor_read_html):
+        # [FUNCTION DOC]
+        # Writes a random 4 by 3 frame (values rounded to 3 decimals) with the HTML
+        # writer and reads the output (selecting the table by its class attribute, first
+        # column as index); the result equals the frame.
         df = (
             DataFrame(
                 np.random.default_rng(2).random((4, 3)),
@@ -158,6 +209,12 @@ class TestReadHtml:
         tm.assert_frame_equal(res, df)
 
     def test_dtype_backend(self, string_storage, dtype_backend, flavor_read_html):
+        # [FUNCTION DOC]
+        # GH 50286. Parametrized by string storage and dtype backend fixtures. Writes a
+        # frame of nullable ints/floats, bools and strings (with missing values) to HTML
+        # without index, reads it with the dtype backend under the string storage option
+        # and compares to the expected nullable (or Arrow-backed) frame, ignoring column
+        # index type since the storage affects it.
         # GH#50286
         df = DataFrame(
             {
@@ -214,6 +271,9 @@ class TestReadHtml:
     @pytest.mark.network
     @pytest.mark.single_cpu
     def test_banklist_url(self, httpserver, banklist_data, flavor_read_html):
+        # [FUNCTION DOC]
+        # Network, single-cpu. Serves the banklist file from a local server; two reads
+        # using different match strings must produce equal lists of frames.
         with open(banklist_data, encoding="utf-8") as f:
             httpserver.serve_content(content=f.read())
             df1 = flavor_read_html(
@@ -232,6 +292,9 @@ class TestReadHtml:
     @pytest.mark.network
     @pytest.mark.single_cpu
     def test_spam_url(self, httpserver, spam_data, flavor_read_html):
+        # [FUNCTION DOC]
+        # Network, single-cpu. Serves spam.html from a local server; reads with regex
+        # match for Water and with match Unit; the lists must be equal.
         with open(spam_data, encoding="utf-8") as f:
             httpserver.serve_content(content=f.read())
             df1 = flavor_read_html(httpserver.url, match=".*Water.*")
@@ -241,6 +304,9 @@ class TestReadHtml:
 
     @pytest.mark.slow
     def test_banklist(self, banklist_data, flavor_read_html):
+        # [FUNCTION DOC]
+        # Slow. Reads banklist with two match strings and a table id attribute;
+        # resulting lists equal.
         df1 = flavor_read_html(
             banklist_data, match=".*Florida.*", attrs={"id": "table"}
         )
@@ -251,6 +317,9 @@ class TestReadHtml:
         assert_framelist_equal(df1, df2)
 
     def test_spam(self, spam_data, flavor_read_html):
+        # [FUNCTION DOC]
+        # Reads spam.html with two match strings (equal results); the first frame has
+        # Proximates at the first cell and Nutrient as first column label.
         df1 = flavor_read_html(spam_data, match=".*Water.*")
         df2 = flavor_read_html(spam_data, match="Unit")
         assert_framelist_equal(df1, df2)
@@ -259,94 +328,139 @@ class TestReadHtml:
         assert df1[0].columns[0] == "Nutrient"
 
     def test_spam_no_match(self, spam_data, flavor_read_html):
+        # [FUNCTION DOC]
+        # Reading without match returns a list of frames (every element is a frame).
         dfs = flavor_read_html(spam_data)
         for df in dfs:
             assert isinstance(df, DataFrame)
 
     def test_banklist_no_match(self, banklist_data, flavor_read_html):
+        # [FUNCTION DOC]
+        # Reading banklist by table id only returns frames only.
         dfs = flavor_read_html(banklist_data, attrs={"id": "table"})
         for df in dfs:
             assert isinstance(df, DataFrame)
 
     def test_spam_header(self, spam_data, flavor_read_html):
+        # [FUNCTION DOC]
+        # Using header row 2 makes the first column label Proximates and the frame non-
+        # empty.
         df = flavor_read_html(spam_data, match=".*Water.*", header=2)[0]
         assert df.columns[0] == "Proximates"
         assert not df.empty
 
     def test_skiprows_int(self, spam_data, flavor_read_html):
+        # [FUNCTION DOC]
+        # An integer skiprows yields equal results for the two match strings.
         df1 = flavor_read_html(spam_data, match=".*Water.*", skiprows=1)
         df2 = flavor_read_html(spam_data, match="Unit", skiprows=1)
 
         assert_framelist_equal(df1, df2)
 
     def test_skiprows_range(self, spam_data, flavor_read_html):
+        # [FUNCTION DOC]
+        # A range skiprows yields equal results for both matches.
         df1 = flavor_read_html(spam_data, match=".*Water.*", skiprows=range(2))
         df2 = flavor_read_html(spam_data, match="Unit", skiprows=range(2))
 
         assert_framelist_equal(df1, df2)
 
     def test_skiprows_list(self, spam_data, flavor_read_html):
+        # [FUNCTION DOC]
+        # List skiprows in different orders gives equal results.
         df1 = flavor_read_html(spam_data, match=".*Water.*", skiprows=[1, 2])
         df2 = flavor_read_html(spam_data, match="Unit", skiprows=[2, 1])
 
         assert_framelist_equal(df1, df2)
 
     def test_skiprows_set(self, spam_data, flavor_read_html):
+        # [FUNCTION DOC]
+        # Set skiprows (same members) gives equal results.
         df1 = flavor_read_html(spam_data, match=".*Water.*", skiprows={1, 2})
         df2 = flavor_read_html(spam_data, match="Unit", skiprows={2, 1})
 
         assert_framelist_equal(df1, df2)
 
     def test_skiprows_slice(self, spam_data, flavor_read_html):
+        # [FUNCTION DOC]
+        # KNOWN ISSUE: despite the name this test passes an integer for skiprows, not a
+        # slice, so it duplicates the integer test.
+        # Reads with skiprows of 1 using the two match strings; results must be equal.
         df1 = flavor_read_html(spam_data, match=".*Water.*", skiprows=1)
         df2 = flavor_read_html(spam_data, match="Unit", skiprows=1)
 
         assert_framelist_equal(df1, df2)
 
     def test_skiprows_slice_short(self, spam_data, flavor_read_html):
+        # [FUNCTION DOC]
+        # A slice skiprows from start to 2 gives equal results for both match strings.
         df1 = flavor_read_html(spam_data, match=".*Water.*", skiprows=slice(2))
         df2 = flavor_read_html(spam_data, match="Unit", skiprows=slice(2))
 
         assert_framelist_equal(df1, df2)
 
     def test_skiprows_slice_long(self, spam_data, flavor_read_html):
+        # [FUNCTION DOC]
+        # Slice 2 to 5 for one read and a reversed slice from 4 down to 1 for the other
+        # produce the same rows; lists equal.
         df1 = flavor_read_html(spam_data, match=".*Water.*", skiprows=slice(2, 5))
         df2 = flavor_read_html(spam_data, match="Unit", skiprows=slice(4, 1, -1))
 
         assert_framelist_equal(df1, df2)
 
     def test_skiprows_ndarray(self, spam_data, flavor_read_html):
+        # [FUNCTION DOC]
+        # An array of 0 and 1 as skiprows gives equal results for both matches.
         df1 = flavor_read_html(spam_data, match=".*Water.*", skiprows=np.arange(2))
         df2 = flavor_read_html(spam_data, match="Unit", skiprows=np.arange(2))
 
         assert_framelist_equal(df1, df2)
 
     def test_skiprows_invalid(self, spam_data, flavor_read_html):
+        # [FUNCTION DOC]
+        # A string skiprows must raise a type error saying it is not a valid type for
+        # skipping rows.
         with pytest.raises(TypeError, match=("is not a valid type for skipping rows")):
             flavor_read_html(spam_data, match=".*Water.*", skiprows="asdf")
 
     def test_index(self, spam_data, flavor_read_html):
+        # [FUNCTION DOC]
+        # Using the first column as index for two matches gives equal results.
         df1 = flavor_read_html(spam_data, match=".*Water.*", index_col=0)
         df2 = flavor_read_html(spam_data, match="Unit", index_col=0)
         assert_framelist_equal(df1, df2)
 
     def test_header_and_index_no_types(self, spam_data, flavor_read_html):
+        # [FUNCTION DOC]
+        # Header row 1 with first column as index: results for the two match strings are
+        # equal.
         df1 = flavor_read_html(spam_data, match=".*Water.*", header=1, index_col=0)
         df2 = flavor_read_html(spam_data, match="Unit", header=1, index_col=0)
         assert_framelist_equal(df1, df2)
 
     def test_header_and_index_with_types(self, spam_data, flavor_read_html):
+        # [FUNCTION DOC]
+        # KNOWN ISSUE: the body is identical to the no-types variant; nothing relating
+        # to types is tested.
+        # Header row 1 with first column as index: results for the two match strings are
+        # equal.
         df1 = flavor_read_html(spam_data, match=".*Water.*", header=1, index_col=0)
         df2 = flavor_read_html(spam_data, match="Unit", header=1, index_col=0)
         assert_framelist_equal(df1, df2)
 
     def test_infer_types(self, spam_data, flavor_read_html):
+        # [FUNCTION DOC]
+        # Comment says type inference was removed (issue 10892). Reads with first column
+        # index for two matches and checks equal results.
         # 10892 infer_types removed
         df1 = flavor_read_html(spam_data, match=".*Water.*", index_col=0)
         df2 = flavor_read_html(spam_data, match="Unit", index_col=0)
         assert_framelist_equal(df1, df2)
 
     def test_string_io(self, spam_data, flavor_read_html):
+        # [FUNCTION DOC]
+        # Reads spam.html content from two separate in-memory text buffers with
+        # different matches; results equal.
         with open(spam_data, encoding="UTF-8") as f:
             data1 = StringIO(f.read())
 
@@ -358,6 +472,9 @@ class TestReadHtml:
         assert_framelist_equal(df1, df2)
 
     def test_string(self, spam_data, flavor_read_html):
+        # [FUNCTION DOC]
+        # Reads the spam content text wrapped in text buffers with two matches; results
+        # equal.
         with open(spam_data, encoding="UTF-8") as f:
             data = f.read()
 
@@ -367,6 +484,8 @@ class TestReadHtml:
         assert_framelist_equal(df1, df2)
 
     def test_file_like(self, spam_data, flavor_read_html):
+        # [FUNCTION DOC]
+        # Reads from two separately opened file objects with two matches; results equal.
         with open(spam_data, encoding="UTF-8") as f:
             df1 = flavor_read_html(f, match=".*Water.*")
 
@@ -378,6 +497,9 @@ class TestReadHtml:
     @pytest.mark.network
     @pytest.mark.single_cpu
     def test_bad_url_protocol(self, httpserver, flavor_read_html):
+        # [FUNCTION DOC]
+        # Network, single-cpu. Reading from a URL with an unsupported scheme must raise
+        # a URL error with message unknown url type.
         httpserver.serve_content("urlopen error unknown url type: git", code=404)
         with pytest.raises(URLError, match="urlopen error unknown url type: git"):
             flavor_read_html("git://github.com", match=".*Water.*")
@@ -386,6 +508,10 @@ class TestReadHtml:
     @pytest.mark.network
     @pytest.mark.single_cpu
     def test_invalid_url(self, httpserver, flavor_read_html):
+        # [FUNCTION DOC]
+        # Slow, network, single-cpu. Server returns 404; reading must raise a URL error
+        # or value error mentioning the HTTP 404 error. The error's response handle is
+        # closed afterwards when it is a URL error.
         httpserver.serve_content("Name or service not known", code=404)
         try:
             with pytest.raises(
@@ -400,6 +526,9 @@ class TestReadHtml:
 
     @pytest.mark.slow
     def test_file_url(self, banklist_data, flavor_read_html):
+        # [FUNCTION DOC]
+        # Slow. Reads banklist through a file URL with a match and table id; returns a
+        # list of frames.
         url = banklist_data
         dfs = flavor_read_html(
             file_path_to_url(os.path.abspath(url)), match="First", attrs={"id": "table"}
@@ -410,6 +539,9 @@ class TestReadHtml:
 
     @pytest.mark.slow
     def test_invalid_table_attrs(self, banklist_data, flavor_read_html):
+        # [FUNCTION DOC]
+        # Slow. A non-existent table id attribute must raise a value error saying no
+        # tables were found.
         url = banklist_data
         with pytest.raises(ValueError, match="No tables found"):
             flavor_read_html(
@@ -418,6 +550,8 @@ class TestReadHtml:
 
     @pytest.mark.slow
     def test_multiindex_header(self, banklist_data, flavor_read_html):
+        # [FUNCTION DOC]
+        # Slow. Header rows 0 and 1 produce multi-level columns.
         df = flavor_read_html(
             banklist_data, match="Metcalf", attrs={"id": "table"}, header=[0, 1]
         )[0]
@@ -425,6 +559,8 @@ class TestReadHtml:
 
     @pytest.mark.slow
     def test_multiindex_index(self, banklist_data, flavor_read_html):
+        # [FUNCTION DOC]
+        # Slow. Index columns 0 and 1 produce a multi-level index.
         df = flavor_read_html(
             banklist_data, match="Metcalf", attrs={"id": "table"}, index_col=[0, 1]
         )[0]
@@ -432,6 +568,9 @@ class TestReadHtml:
 
     @pytest.mark.slow
     def test_multiindex_header_index(self, banklist_data, flavor_read_html):
+        # [FUNCTION DOC]
+        # Slow. Combining two header rows and two index columns gives multi-level
+        # columns and index.
         df = flavor_read_html(
             banklist_data,
             match="Metcalf",
@@ -444,6 +583,10 @@ class TestReadHtml:
 
     @pytest.mark.slow
     def test_multiindex_header_skiprows_tuples(self, banklist_data, flavor_read_html):
+        # [FUNCTION DOC]
+        # KNOWN ISSUE: the name mentions tuples, but the body is identical to
+        # test_multiindex_header_skiprows (an integer skiprows is used).
+        # Slow. Two header rows plus skiprows of 1 give multi-level columns.
         df = flavor_read_html(
             banklist_data,
             match="Metcalf",
@@ -455,6 +598,8 @@ class TestReadHtml:
 
     @pytest.mark.slow
     def test_multiindex_header_skiprows(self, banklist_data, flavor_read_html):
+        # [FUNCTION DOC]
+        # Slow. Two header rows plus skiprows of 1 give multi-level columns.
         df = flavor_read_html(
             banklist_data,
             match="Metcalf",
@@ -466,6 +611,9 @@ class TestReadHtml:
 
     @pytest.mark.slow
     def test_multiindex_header_index_skiprows(self, banklist_data, flavor_read_html):
+        # [FUNCTION DOC]
+        # Slow. Two header rows, two index columns and skiprows of 1 give multi-level
+        # index and columns.
         df = flavor_read_html(
             banklist_data,
             match="Metcalf",
@@ -479,6 +627,9 @@ class TestReadHtml:
 
     @pytest.mark.slow
     def test_regex_idempotency(self, banklist_data, flavor_read_html):
+        # [FUNCTION DOC]
+        # Slow. A match given as a compiled regular expression wrapped in another
+        # compile call is accepted; reading via a file URL returns a list of frames.
         url = banklist_data
         dfs = flavor_read_html(
             file_path_to_url(os.path.abspath(url)),
@@ -490,12 +641,18 @@ class TestReadHtml:
             assert isinstance(df, DataFrame)
 
     def test_negative_skiprows(self, spam_data, flavor_read_html):
+        # [FUNCTION DOC]
+        # A negative skiprows value must raise a value error saying a negative value was
+        # passed.
         msg = r"\(you passed a negative value\)"
         with pytest.raises(ValueError, match=msg):
             flavor_read_html(spam_data, match="Water", skiprows=-1)
 
     @pytest.fixture
     def python_docs(self):
+        # [FUNCTION DOC]
+        # HELPER: fixture returning an HTML string of two tables of links (Python
+        # documentation front page) used by the multiple-match tests.
         return """
           <table class="contentstable" align="center"><tr>
             <td width="50%">
@@ -546,6 +703,9 @@ class TestReadHtml:
     @pytest.mark.network
     @pytest.mark.single_cpu
     def test_multiple_matches(self, python_docs, httpserver, flavor_read_html):
+        # [FUNCTION DOC]
+        # Network, single-cpu. Serving the python docs page, matching Python yields more
+        # than one table.
         httpserver.serve_content(content=python_docs)
         dfs = flavor_read_html(httpserver.url, match="Python")
         assert len(dfs) > 1
@@ -553,12 +713,18 @@ class TestReadHtml:
     @pytest.mark.network
     @pytest.mark.single_cpu
     def test_python_docs_table(self, python_docs, httpserver, flavor_read_html):
+        # [FUNCTION DOC]
+        # Network, single-cpu. The first four characters of the first cell of each
+        # matched table, sorted, equal Pyth and What.
         httpserver.serve_content(content=python_docs)
         dfs = flavor_read_html(httpserver.url, match="Python")
         zz = [df.iloc[0, 0][0:4] for df in dfs]
         assert sorted(zz) == ["Pyth", "What"]
 
     def test_empty_tables(self, flavor_read_html):
+        # [FUNCTION DOC]
+        # Docstring: read_html ignores empty tables. A page with a normal table and a
+        # table with an empty body yields exactly one frame.
         """
         Make sure that read_html ignores empty tables.
         """
@@ -586,6 +752,9 @@ class TestReadHtml:
         assert len(result) == 1
 
     def test_multiple_tbody(self, flavor_read_html):
+        # [FUNCTION DOC]
+        # GH 20690. All body sections in a single table are read: two tbody blocks yield
+        # a two-row frame.
         # GH-20690
         # Read all tbody tags within a single table.
         result = flavor_read_html(
@@ -618,6 +787,9 @@ class TestReadHtml:
         tm.assert_frame_equal(result, expected)
 
     def test_header_and_one_column(self, flavor_read_html):
+        # [FUNCTION DOC]
+        # Issue 9178. A table with a header and a single column does not fail with bs4;
+        # result is a one-cell frame.
         """
         Don't fail with bs4 when there is a header and only one column
         as described in issue #9178
@@ -644,6 +816,10 @@ class TestReadHtml:
         tm.assert_frame_equal(result, expected)
 
     def test_thead_without_tr(self, flavor_read_html):
+        # [FUNCTION DOC]
+        # The parser handles a header followed by a body where a header cell appears
+        # among data cells; the result is a one-row frame with all three values (numeric
+        # year parsed as integer).
         """
         Ensure parser adds <tr> within <thead> on malformed HTML.
         """
@@ -676,6 +852,9 @@ class TestReadHtml:
         tm.assert_frame_equal(result, expected)
 
     def test_tfoot_read(self, flavor_read_html):
+        # [FUNCTION DOC]
+        # Footer rows (containing td or th cells) are read as extra rows, and an empty
+        # footer is ignored; two inputs produce a one-row and a two-row frame.
         """
         Make sure that read_html reads tfoot, containing td or th.
         Ignores empty tfoot
@@ -714,6 +893,9 @@ class TestReadHtml:
         tm.assert_frame_equal(result2, expected2)
 
     def test_parse_header_of_non_string_column(self, flavor_read_html):
+        # [FUNCTION DOC]
+        # GH 5048. With header given explicitly, an integer column is parsed as integer
+        # while its header stays a string.
         # GH5048: if header is specified explicitly, an int column should be
         # parsed as int while its header is parsed as str
         result = flavor_read_html(
@@ -740,9 +922,18 @@ class TestReadHtml:
 
     @pytest.mark.slow
     def test_banklist_header(self, banklist_data, datapath, flavor_read_html):
+        # [FUNCTION DOC]
+        # Slow. Reads the banklist table and compares with the reference CSV after
+        # cleaning: whitespace removal helper, replacing long bank names by short ones,
+        # converting date columns, and restricting the reference to banks present. The
+        # HTML is a truncated banklist, so only the rows present are compared.
         from pandas.io.html import _remove_whitespace
 
         def try_remove_ws(x):
+            # [FUNCTION DOC]
+            # HELPER: applies the private whitespace-removal function to a value and
+            # returns it; if the value is not a string (attribute error) returns it
+            # unchanged.
             try:
                 return _remove_whitespace(x)
             except AttributeError:
@@ -792,6 +983,9 @@ class TestReadHtml:
 
     @pytest.mark.slow
     def test_heartland_bank(self, banklist_data, flavor_read_html):
+        # [FUNCTION DOC]
+        # Slow. The text Heartland Bank occurs in the raw file; reading with that match
+        # returns a first table whose string rendering contains it.
         gc = "Heartland Bank"
         with open(banklist_data, encoding="utf-8") as f:
             raw_text = f.read()
@@ -801,6 +995,9 @@ class TestReadHtml:
         assert gc in df.to_string()
 
     def test_different_number_of_cols(self, flavor_read_html):
+        # [FUNCTION DOC]
+        # A table whose body row has fewer cells than the header (missing cells) is read
+        # like the same table with explicit nan cells; frames equal.
         expected = flavor_read_html(
             StringIO(
                 """<table>
@@ -873,6 +1070,9 @@ class TestReadHtml:
         tm.assert_frame_equal(result, expected)
 
     def test_colspan_rowspan_1(self, flavor_read_html):
+        # [FUNCTION DOC]
+        # GH 17054. Colspan and rowspan of 1 behave as no span: one-row frame with
+        # columns A, B, C.
         # GH17054
         result = flavor_read_html(
             StringIO(
@@ -898,6 +1098,10 @@ class TestReadHtml:
         tm.assert_frame_equal(result, expected)
 
     def test_colspan_rowspan_copy_values(self, flavor_read_html):
+        # [FUNCTION DOC]
+        # GH 17054. Colspan and rowspan values are copied into the spanned cells;
+        # duplicate header labels are suffixed (X, X.1). Expected one row holding A, B,
+        # B, Z, C.
         # GH17054
 
         # In ASCII, with lowercase letters being copies:
@@ -933,6 +1137,9 @@ class TestReadHtml:
         tm.assert_frame_equal(result, expected)
 
     def test_colspan_rowspan_both_not_1(self, flavor_read_html):
+        # [FUNCTION DOC]
+        # GH 17054. A cell with both rowspan and colspan above 1 is copied across and
+        # down; header labels B, B.1, B.2.
         # GH17054
 
         # In ASCII, with lowercase letters being copies:
@@ -965,6 +1172,9 @@ class TestReadHtml:
         tm.assert_frame_equal(result, expected)
 
     def test_rowspan_at_end_of_row(self, flavor_read_html):
+        # [FUNCTION DOC]
+        # GH 17054. A rowspan in the last column is carried to the next row; result one
+        # row with C and B.
         # GH17054
 
         # In ASCII, with lowercase letters being copies:
@@ -994,6 +1204,9 @@ class TestReadHtml:
         tm.assert_frame_equal(result, expected)
 
     def test_rowspan_only_rows(self, flavor_read_html):
+        # [FUNCTION DOC]
+        # GH 17054. Cells spanning three rows with no other rows produce two data rows
+        # duplicating the spanned values.
         # GH17054
 
         result = flavor_read_html(
@@ -1015,6 +1228,9 @@ class TestReadHtml:
         tm.assert_frame_equal(result, expected)
 
     def test_rowspan_in_header_overflowing_to_body(self, flavor_read_html):
+        # [FUNCTION DOC]
+        # GH 60210. A header cell with rowspan 2 overflowing into the body is handled;
+        # result has two rows with values A, 1 and C, 2 and columns A, B.
         # GH60210
 
         result = flavor_read_html(
@@ -1042,6 +1258,9 @@ class TestReadHtml:
         tm.assert_frame_equal(result, expected)
 
     def test_header_inferred_from_rows_with_only_th(self, flavor_read_html):
+        # [FUNCTION DOC]
+        # GH 17054. Leading rows consisting only of header cells become a two-level
+        # column header; one data row remains.
         # GH17054
         result = flavor_read_html(
             StringIO(
@@ -1070,6 +1289,10 @@ class TestReadHtml:
         tm.assert_frame_equal(result, expected)
 
     def test_parse_dates_list(self, flavor_read_html):
+        # [FUNCTION DOC]
+        # Writes a frame with a date column to HTML and reads it parsing dates by
+        # position and by name; both equal the original with datetimes in microsecond
+        # unit.
         df = DataFrame({"date": date_range("1/1/2001", periods=10)})
 
         expected = df[:]
@@ -1082,6 +1305,10 @@ class TestReadHtml:
         tm.assert_frame_equal(expected, res[0])
 
     def test_wikipedia_states_table(self, datapath, flavor_read_html):
+        # [FUNCTION DOC]
+        # Reads the Wikipedia states sample (match Arizona, header row 1): asserts the
+        # file exists and is non-empty, shape 60 by 12, last column name containing
+        # Unnamed, a float column and an expected numeric value.
         data = datapath("io", "data", "html", "wikipedia_states.html")
         assert os.path.isfile(data), f"{data!r} is not a file"
         assert os.path.getsize(data), f"{data!r} is an empty file"
@@ -1092,6 +1319,10 @@ class TestReadHtml:
         assert np.allclose(result.loc[0, "sq mi"], 665384.04)
 
     def test_wikipedia_states_multiindex(self, datapath, flavor_read_html):
+        # [FUNCTION DOC]
+        # Same sample without header argument: shape 60 by 11, two-level columns with
+        # unnamed last label, and a numeric value located by index label and column
+        # tuple.
         data = datapath("io", "data", "html", "wikipedia_states.html")
         result = flavor_read_html(data, match="Arizona", index_col=0)[0]
         assert result.shape == (60, 11)
@@ -1100,6 +1331,9 @@ class TestReadHtml:
         assert np.allclose(result.loc["Alaska", ("Total area[2]", "sq mi")], 665384.04)
 
     def test_parser_error_on_empty_header_row(self, flavor_read_html):
+        # [FUNCTION DOC]
+        # An empty first header row with a second header row yields a two-level column
+        # header with unnamed level-zero labels; one data row.
         result = flavor_read_html(
             StringIO(
                 """
@@ -1125,6 +1359,9 @@ class TestReadHtml:
         tm.assert_frame_equal(result[0], expected)
 
     def test_decimal_rows(self, flavor_read_html):
+        # [FUNCTION DOC]
+        # GH 12907. With the decimal character set to pound sign, 1100#101 is parsed as
+        # a float 1100.101.
         # GH 12907
         result = flavor_read_html(
             StringIO(
@@ -1155,6 +1392,9 @@ class TestReadHtml:
 
     @pytest.mark.parametrize("arg", [True, False])
     def test_bool_header_arg(self, spam_data, arg, flavor_read_html):
+        # [FUNCTION DOC]
+        # GH 6114. Parametrized over True and False. A boolean header argument must
+        # raise a type error explaining that a bool is invalid for header.
         # GH 6114
         msg = re.escape(
             "Passing a bool to header is invalid. Use header=None for no header or "
@@ -1165,6 +1405,8 @@ class TestReadHtml:
             flavor_read_html(spam_data, header=arg)
 
     def test_converters(self, flavor_read_html):
+        # [FUNCTION DOC]
+        # GH 13461. A converter turning column a into strings yields string values.
         # GH 13461
         result = flavor_read_html(
             StringIO(
@@ -1192,6 +1434,9 @@ class TestReadHtml:
         tm.assert_frame_equal(result, expected)
 
     def test_na_values(self, flavor_read_html):
+        # [FUNCTION DOC]
+        # GH 13461. Setting na_values to a float marks that value missing; the second
+        # row becomes NaN.
         # GH 13461
         result = flavor_read_html(
             StringIO(
@@ -1219,6 +1464,8 @@ class TestReadHtml:
         tm.assert_frame_equal(result, expected)
 
     def test_keep_default_na(self, flavor_read_html):
+        # [FUNCTION DOC]
+        # Without default NA strings, N/A and NA remain strings; with them they are NaN.
         html_data = """<table>
                         <thead>
                             <tr>
@@ -1244,6 +1491,8 @@ class TestReadHtml:
         tm.assert_frame_equal(expected_df, html_df)
 
     def test_preserve_empty_rows(self, flavor_read_html):
+        # [FUNCTION DOC]
+        # An empty data row is kept as a row of NaNs.
         result = flavor_read_html(
             StringIO(
                 """
@@ -1270,6 +1519,9 @@ class TestReadHtml:
         tm.assert_frame_equal(result, expected)
 
     def test_ignore_empty_rows_when_inferring_header(self, flavor_read_html):
+        # [FUNCTION DOC]
+        # An empty first header row is ignored when inferring the multi-level header
+        # from the following header rows.
         result = flavor_read_html(
             StringIO(
                 """
@@ -1293,6 +1545,9 @@ class TestReadHtml:
         tm.assert_frame_equal(result, expected)
 
     def test_multiple_header_rows(self, flavor_read_html):
+        # [FUNCTION DOC]
+        # Issue 13434. A frame with a two-level column header written to HTML (no index)
+        # is read back equal, with unnamed levels labeled.
         # Issue #13434
         expected_df = DataFrame(
             data=[("Hillary", 68, "D"), ("Bernie", 74, "D"), ("Donald", 69, "R")]
@@ -1306,6 +1561,9 @@ class TestReadHtml:
         tm.assert_frame_equal(expected_df, html_df)
 
     def test_works_on_valid_markup(self, datapath, flavor_read_html):
+        # [FUNCTION DOC]
+        # Reading valid markup with first column index returns a list whose first item
+        # is a frame.
         filename = datapath("io", "data", "html", "valid_markup.html")
         dfs = flavor_read_html(filename, index_col=0)
         assert isinstance(dfs, list)
@@ -1313,11 +1571,17 @@ class TestReadHtml:
 
     @pytest.mark.slow
     def test_fallback_success(self, datapath, flavor_read_html):
+        # [FUNCTION DOC]
+        # Slow. Given a flavor list of lxml then html5lib, reading the banklist with a
+        # match succeeds (no assertion beyond not raising).
         banklist_data = datapath("io", "data", "html", "banklist.html")
 
         flavor_read_html(banklist_data, match=".*Water.*", flavor=["lxml", "html5lib"])
 
     def test_to_html_timestamp(self):
+        # [FUNCTION DOC]
+        # Writer test: a frame with date index written to HTML contains the date text of
+        # the first index entry.
         rng = date_range("2000-01-01", periods=10)
         df = DataFrame(np.random.default_rng(2).standard_normal((10, 4)), index=rng)
 
@@ -1325,6 +1589,10 @@ class TestReadHtml:
         assert "2000-01-01" in result
 
     def test_to_html_borderless(self):
+        # [FUNCTION DOC]
+        # Writer test of the border argument: default and True produce a table border of
+        # 1, 1 explicit equals default, 2 differs and shows border 2, 0 and False both
+        # omit the border attribute and are equal.
         df = DataFrame([{"A": 1, "B": 2}])
         out_border_default = df.to_html()
         out_border_true = df.to_html(border=True)
@@ -1351,6 +1619,11 @@ class TestReadHtml:
         ],
     )
     def test_displayed_only(self, displayed_only, exp0, exp1, flavor_read_html):
+        # [FUNCTION DOC]
+        # GH 20027. Parametrized: with displayed_only true, hidden spans and hidden
+        # tables are ignored (a single table with the text foo is returned); with false
+        # all text is included (combined text in the first table and a second table
+        # found).
         # GH 20027
         data = """<html>
           <body>
@@ -1383,6 +1656,10 @@ class TestReadHtml:
 
     @pytest.mark.parametrize("displayed_only", [True, False])
     def test_displayed_only_with_many_elements(self, displayed_only, flavor_read_html):
+        # [FUNCTION DOC]
+        # Parametrized over displayed_only true or false. A table with an empty hidden
+        # element in a cell is read the same either way: two rows with values 1,2 and
+        # 4,5.
         html_table = """
         <table>
             <tr>
@@ -1410,6 +1687,12 @@ class TestReadHtml:
         "from_encoding.*:UserWarning"
     )
     def test_encode(self, html_encoding_file, flavor_read_html):
+        # [FUNCTION DOC]
+        # Marked to ignore a unicode-markup user warning. Parametrized by encoding file.
+        # The encoding is parsed from the file name; reads via bytes buffer twice and
+        # via filename with that encoding and asserts all three frames equal. On Windows
+        # a failure for utf-16 or utf-32 is converted to a skip, other failures re-
+        # raised.
         base_path = os.path.basename(html_encoding_file)
         root = os.path.splitext(base_path)[0]
         _, encoding = root.split("_")
@@ -1438,13 +1721,21 @@ class TestReadHtml:
             raise
 
     def test_parse_failure_unseekable(self, flavor_read_html):
+        # [FUNCTION DOC]
+        # Issue 17975. Skipped for lxml. A text buffer reporting not seekable containing
+        # malformed markup is parsed once successfully with the fallback parser; reading
+        # it a second time must raise a value error about a non-rewindable file object.
         # Issue #17975
 
         if flavor_read_html.keywords.get("flavor") == "lxml":
             pytest.skip("Not applicable for lxml")
 
         class UnseekableStringIO(StringIO):
+            # [CLASS DOC]
+            # HELPER: text buffer subclass that reports it is not seekable.
             def seekable(self):
+                # [FUNCTION DOC]
+                # HELPER: override that always returns false.
                 return False
 
         bad = UnseekableStringIO(
@@ -1458,27 +1749,51 @@ class TestReadHtml:
             flavor_read_html(bad)
 
     def test_parse_failure_rewinds(self, flavor_read_html):
+        # [FUNCTION DOC]
+        # Issue 17975. Uses a mock file-like object, seekable and rewindable, containing
+        # good and malformed markup; both must parse with a result.
         # Issue #17975
 
         class MockFile:
+            # [CLASS DOC]
+            # HELPER: file-like test double holding a string. Read returns the data once
+            # then an empty string until a seek resets it; supports seekable and
+            # iteration protocol (iteration support makes the file-like check succeed).
             def __init__(self, data) -> None:
+                # [FUNCTION DOC]
+                # HELPER: stores the data string and sets the at-end flag to false.
                 self.data = data
                 self.at_end = False
 
             def read(self, size=None):
+                # [FUNCTION DOC]
+                # HELPER: returns the data on first call after creation or seek (size is
+                # ignored), and an empty string afterwards; sets the at-end flag.
                 data = "" if self.at_end else self.data
                 self.at_end = True
                 return data
 
             def seek(self, offset):
+                # [FUNCTION DOC]
+                # HELPER: takes an offset (ignored) and clears the at-end flag so the
+                # data can be read again.
                 self.at_end = False
 
             def seekable(self):
+                # [FUNCTION DOC]
+                # HELPER: returns true.
                 return True
 
-            def __next__(self): ...
+            def __next__(self):
+                # [FUNCTION DOC]
+                # HELPER: placeholder iterator method with an empty body; exists only so
+                # that the object is recognized as file-like.
+                ...
 
             def __iter__(self) -> Iterator:
+                # [FUNCTION DOC]
+                # HELPER: returns the object itself; its presence is what the file-like
+                # check relies on.
                 # `is_file_like` depends on the presence of
                 # the __iter__ attribute.
                 return self
@@ -1492,10 +1807,19 @@ class TestReadHtml:
     @pytest.mark.slow
     @pytest.mark.single_cpu
     def test_importcheck_thread_safety(self, datapath, flavor_read_html):
+        # [FUNCTION DOC]
+        # Slow, single-cpu. gh-16928. Two threads concurrently read a valid markup file;
+        # after both finish neither recorded an error.
         # see gh-16928
 
         class ErrorThread(threading.Thread):
+            # [CLASS DOC]
+            # HELPER: thread subclass that stores any exception raised by its target in
+            # an err attribute (or none on success).
             def run(self):
+                # [FUNCTION DOC]
+                # HELPER: runs the thread target, storing the raised exception (or none)
+                # in the err attribute.
                 try:
                     super().run()
                 except Exception as err:
@@ -1515,6 +1839,8 @@ class TestReadHtml:
         assert None is helper_thread1.err is helper_thread2.err
 
     def test_parse_path_object(self, datapath, flavor_read_html):
+        # [FUNCTION DOC]
+        # GH 37705. Reading from a string path and a path object gives equal frames.
         # GH 37705
         file_path_string = datapath("io", "data", "html", "spam.html")
         file_path = Path(file_path_string)
@@ -1523,6 +1849,9 @@ class TestReadHtml:
         tm.assert_frame_equal(df1, df2)
 
     def test_parse_br_as_space(self, flavor_read_html):
+        # [FUNCTION DOC]
+        # GH 29528. A line-break tag within a cell is converted to a space: the cell
+        # reads word1 word2.
         # GH 29528: pd.read_html() convert <br> to space
         result = flavor_read_html(
             StringIO(
@@ -1545,6 +1874,12 @@ class TestReadHtml:
 
     @pytest.mark.parametrize("arg", ["all", "body", "header", "footer"])
     def test_extract_links(self, arg, flavor_read_html):
+        # [FUNCTION DOC]
+        # Parametrized over all, body, header, footer. Reads a table with links in
+        # header, body and footer cells with the extract_links option; cells with a link
+        # become pairs of text and first link target (none when no link), only for the
+        # requested parts; others stay as text. The footer row's missing cell is
+        # None/NaN. Compares with the expected frame built from the matching variants.
         gh_13141_data = """
           <table>
             <tr>
@@ -1613,6 +1948,9 @@ class TestReadHtml:
         tm.assert_frame_equal(result, expected)
 
     def test_extract_links_bad(self, spam_data):
+        # [FUNCTION DOC]
+        # An invalid extract_links value must raise a value error listing the allowed
+        # values.
         msg = (
             "`extract_links` must be one of "
             '{None, "header", "footer", "body", "all"}, got "incorrect"'
@@ -1621,6 +1959,9 @@ class TestReadHtml:
             read_html(spam_data, extract_links="incorrect")
 
     def test_extract_links_all_no_header(self, flavor_read_html):
+        # [FUNCTION DOC]
+        # GH 48316. With a table lacking a header and extraction of all links, the
+        # single cell is a pair of text and target.
         # GH 48316
         data = """
         <table>
@@ -1636,6 +1977,9 @@ class TestReadHtml:
         tm.assert_frame_equal(result, expected)
 
     def test_invalid_dtype_backend(self):
+        # [FUNCTION DOC]
+        # An invalid dtype backend must raise a value error stating only the nullable-
+        # numpy and pyarrow backends are allowed.
         msg = (
             "dtype_backend numpy is invalid, only 'numpy_nullable' and "
             "'pyarrow' are allowed."
@@ -1644,6 +1988,9 @@ class TestReadHtml:
             read_html("test", dtype_backend="numpy")
 
     def test_style_tag(self, flavor_read_html):
+        # [FUNCTION DOC]
+        # GH 48316. Style tags inside header cells are ignored: columns A and B and two
+        # data rows.
         # GH 48316
         data = """
         <table>

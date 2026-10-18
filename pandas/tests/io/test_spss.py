@@ -1,3 +1,9 @@
+# [MODULE DOC]
+# Tests for reading SPSS (.sav) files with the SPSS reader. Requires pyreadstat (module
+# skipped otherwise). Sample files come from the Haven project and live in the io data
+# spss directory. Many tests ignore a chained-assignment warning (a TODO about detection
+# in compiled code).
+
 from pathlib import Path
 
 import numpy as np
@@ -14,6 +20,10 @@ pyreadstat = pytest.importorskip("pyreadstat")
 @pytest.mark.filterwarnings("ignore::pandas.errors.ChainedAssignmentError")
 @pytest.mark.parametrize("path_klass", [lambda p: p, Path])
 def test_spss_labelled_num(path_klass, datapath):
+    # [FUNCTION DOC]
+    # Parametrized over passing the path as a string or a path object. Reads a file with
+    # a labelled numeric variable: with categorical conversion the single column becomes
+    # a categorical holding the label text; without it, the numeric value 1.0.
     # test file from the Haven project (https://haven.tidyverse.org/)
     # Licence at LICENSES/HAVEN_LICENSE, LICENSES/HAVEN_MIT
     fname = path_klass(datapath("io", "data", "spss", "labelled-num.sav"))
@@ -30,6 +40,9 @@ def test_spss_labelled_num(path_klass, datapath):
 
 @pytest.mark.filterwarnings("ignore::pandas.errors.ChainedAssignmentError")
 def test_spss_labelled_num_na(datapath):
+    # [FUNCTION DOC]
+    # Same with a missing value: categorical conversion gives the label and a missing
+    # entry; without conversion gives 1.0 and NaN.
     # test file from the Haven project (https://haven.tidyverse.org/)
     # Licence at LICENSES/HAVEN_LICENSE, LICENSES/HAVEN_MIT
     fname = datapath("io", "data", "spss", "labelled-num-na.sav")
@@ -46,6 +59,9 @@ def test_spss_labelled_num_na(datapath):
 
 @pytest.mark.filterwarnings("ignore::pandas.errors.ChainedAssignmentError")
 def test_spss_labelled_str(datapath):
+    # [FUNCTION DOC]
+    # Reads a labelled string variable: with categorical conversion the labels Male and
+    # Female form a categorical; without conversion the raw codes M and F are returned.
     # test file from the Haven project (https://haven.tidyverse.org/)
     # Licence at LICENSES/HAVEN_LICENSE, LICENSES/HAVEN_MIT
     fname = datapath("io", "data", "spss", "labelled-str.sav")
@@ -62,6 +78,10 @@ def test_spss_labelled_str(datapath):
 
 @pytest.mark.filterwarnings("ignore::pandas.errors.ChainedAssignmentError")
 def test_spss_kwargs(datapath):
+    # [FUNCTION DOC]
+    # Extra keyword arguments pass through to the underlying reader: a row limit of one
+    # returns only the first row as a categorical, and a row offset of one (without
+    # conversion) returns only the second row.
     # test file from the Haven project (https://haven.tidyverse.org/)
     # Licence at LICENSES/HAVEN_LICENSE, LICENSES/HAVEN_MIT
     fname = datapath("io", "data", "spss", "labelled-str.sav")
@@ -77,6 +97,9 @@ def test_spss_kwargs(datapath):
 
 @pytest.mark.filterwarnings("ignore::pandas.errors.ChainedAssignmentError")
 def test_spss_umlauts(datapath):
+    # [FUNCTION DOC]
+    # A file with non-ascii labels reads correctly: categorical conversion gives the
+    # label texts containing umlauts; without conversion gives numeric codes 1, 2, 1, 3.
     # test file from the Haven project (https://haven.tidyverse.org/)
     # Licence at LICENSES/HAVEN_LICENSE, LICENSES/HAVEN_MIT
     fname = datapath("io", "data", "spss", "umlauts.sav")
@@ -94,6 +117,9 @@ def test_spss_umlauts(datapath):
 
 
 def test_spss_usecols(datapath):
+    # [FUNCTION DOC]
+    # Passing a string rather than a list-like for the usecols argument must raise a
+    # type error saying usecols must be list-like.
     # usecols must be list-like
     fname = datapath("io", "data", "spss", "labelled-num.sav")
 
@@ -102,6 +128,10 @@ def test_spss_usecols(datapath):
 
 
 def test_spss_umlauts_dtype_backend(datapath, dtype_backend):
+    # [FUNCTION DOC]
+    # Parametrized by dtype_backend fixture. Reads without categorical conversion using
+    # the backend; expected is the nullable Int64 frame (or Arrow-backed arrays for the
+    # pyarrow backend).
     # test file from the Haven project (https://haven.tidyverse.org/)
     # Licence at LICENSES/HAVEN_LICENSE, LICENSES/HAVEN_MIT
     fname = datapath("io", "data", "spss", "umlauts.sav")
@@ -125,6 +155,10 @@ def test_spss_umlauts_dtype_backend(datapath, dtype_backend):
 
 
 def test_invalid_dtype_backend():
+    # [FUNCTION DOC]
+    # An invalid dtype backend name must raise a value error stating only the nullable-
+    # numpy and pyarrow backends are allowed (raised before the nonexistent file is
+    # touched).
     msg = (
         "dtype_backend numpy is invalid, only 'numpy_nullable' and "
         "'pyarrow' are allowed."
@@ -135,6 +169,9 @@ def test_invalid_dtype_backend():
 
 @pytest.mark.filterwarnings("ignore::pandas.errors.ChainedAssignmentError")
 def test_spss_metadata(datapath):
+    # [FUNCTION DOC]
+    # GH 54264. The attrs of the returned frame must equal the metadata dictionary
+    # produced by calling the pyreadstat reader directly on the same file.
     # GH 54264
     fname = datapath("io", "data", "spss", "labelled-num.sav")
 
