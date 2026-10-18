@@ -1,3 +1,18 @@
+# [MODULE DOC]
+# Script that runs the mypy stub tester over all type stub files under the pandas source
+# tree, to check them against the runtime modules. Entirely top-level code with no
+# functions. Import-time side effects (before the main block): imports mypy's stub tester
+# and pandas; if pandas has no version attribute it warns and exits the process with status
+# one in a continuous integration environment, otherwise zero; if the version is not a
+# development version it warns that the test may fail. Defines a list of fully qualified
+# names that stubtest should ignore (an allowlist that is meant to be empty; entries are
+# grouped by reason such as abstract methods implemented in children, enum differences
+# between compiled code and stubs, and type aliases). When run as a script: finds stub files
+# beneath the current working directory pandas folder, converts their paths to dotted module
+# names, writes the allowlist to a temporary file, runs stubtest with missing stubs ignored,
+# concise output and the project's configuration file, and exits with its return status.
+# KNOWN ISSUE: the allowlist entry for the business-hour rollforward method contains a
+# trailing space inside the string, so it can never match that name.
 import os
 from pathlib import Path
 import sys

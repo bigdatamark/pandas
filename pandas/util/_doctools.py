@@ -1,3 +1,10 @@
+# [MODULE DOC]
+# Documentation helper for drawing table-style figures that illustrate data
+# frame operations (for example merge and concatenation pictures used in the user
+# guide). Public content: the TablePlotter class and a demonstration entry
+# function. Depends on numpy, the top-level pandas package, and (lazily, at
+# plotting time) matplotlib. Importing has no side effects; running as a script
+# executes the demonstration, which opens interactive figure windows.
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
@@ -13,6 +20,13 @@ if TYPE_CHECKING:
 
 
 class TablePlotter:
+    # [CLASS DOC]
+    # Lays out several input data frames and one result data frame as tables in a
+    # single matplotlib figure, vertically stacked or side by side. State: cell_width,
+    # cell_height and font_size, the sizing parameters set at construction and used
+    # to derive figure size and text size. Key methods: plot (public, builds the
+    # figure), plus private helpers for shape computation, size computation, data
+    # conversion, index insertion and per-axis table drawing.
     """
     Layout some DataFrames in vertical/horizontal layout for explanation.
     Used in merging.rst
@@ -24,11 +38,19 @@ class TablePlotter:
         cell_height: float = 0.25,
         font_size: float = 7.5,
     ) -> None:
+        # [FUNCTION DOC]
+        # Stores sizing parameters. Inputs: cell_width, default 0.37 (inches per table
+        # column); cell_height, default 0.25 (inches per table row); font_size, default
+        # 7.5 (points). No validation.
         self.cell_width = cell_width
         self.cell_height = cell_height
         self.font_size = font_size
 
     def _shape(self, df: pd.DataFrame) -> tuple[int, int]:
+        # [FUNCTION DOC]
+        # HELPER: computes the displayed grid size of a data frame. Input: df. Returns a
+        # pair (rows, columns) equal to the frame shape plus the number of column index
+        # levels added to the rows and the number of row index levels added to the columns.
         """
         Calculate table shape considering index levels.
         """
@@ -36,6 +58,14 @@ class TablePlotter:
         return row + df.columns.nlevels, col + df.index.nlevels
 
     def _get_cells(self, left, right, vertical) -> tuple[int, int]:
+        # [FUNCTION DOC]
+        # HELPER: computes the figure size in table cells. Inputs: left, a list of frames;
+        # right, the result frame; vertical, whether the left frames are stacked. Returns
+        # a pair (horizontal cells, vertical cells). Vertical layout: vertical cells are
+        # the larger of the summed heights of left frames and the right frame height,
+        # horizontal cells are the widest left frame plus the right frame width.
+        # Horizontal layout: vertical cells are the maximum height and horizontal cells
+        # the sum of all widths.
         """
         Calculate appropriate figure size based on left and right data.
         """
@@ -51,6 +81,19 @@ class TablePlotter:
     def plot(
         self, left, right, labels: Iterable[str] = (), vertical: bool = True
     ) -> Figure:
+        # [FUNCTION DOC]
+        # Draws the left frames and the result frame into a new matplotlib figure and
+        # returns it. Inputs: left, one frame or a list of frames shown before the
+        # operation; right, the operation result (frame or named series); labels, titles
+        # for the left frames, default empty; vertical, default true, stacks the left
+        # frames in a column with the result on the right, otherwise places everything
+        # in one row. Inputs are converted by the conversion helper first (series become
+        # frames, missing values are shown as text). The result table is titled "Result".
+        # Raises a value error (strict pairing) when the number of labels differs from
+        # the number of left frames, which includes the default empty labels. Requires
+        # matplotlib; creates a figure as a side effect.
+        # KNOWN ISSUE: both branches of the figure-size computation are identical, so the
+        # "include margin for titles" comment for the horizontal case is not reflected.
         """
         Plot left / right DataFrames in specified layout.
 
@@ -110,6 +153,11 @@ class TablePlotter:
         return fig
 
     def _conv(self, data):
+        # [FUNCTION DOC]
+        # HELPER: normalizes an input for table drawing. A series is turned into a
+        # one-column frame (empty column name if the series is unnamed); then missing
+        # values are replaced by the text "NaN". Returns the converted object (a new one;
+        # input not modified).
         """
         Convert each input to appropriate for table outplot.
         """
@@ -122,6 +170,13 @@ class TablePlotter:
         return data
 
     def _insert_index(self, data):
+        # [FUNCTION DOC]
+        # HELPER: prepares a frame for rendering with its index and column levels shown as
+        # ordinary cells. Works on a copy. The index is inserted as leading column(s)
+        # named "Index" (single level) or "Index" plus the level number (several levels).
+        # For multi-level columns, the upper column levels other than the first are
+        # turned into extra leading rows via concatenation and the first level becomes
+        # the column labels. Returns the new frame.
         # insert is destructive
         data = data.copy()
         idx_nlevels = data.index.nlevels
@@ -144,6 +199,15 @@ class TablePlotter:
         return data
 
     def _make_table(self, ax, df, title: str, height: float | None = None) -> None:
+        # [FUNCTION DOC]
+        # HELPER: draws one frame as a table on a given axis. Inputs: ax, the matplotlib
+        # axis; df, the frame, or none (the axis is then hidden and nothing is drawn);
+        # title, text for the axis title; height, row height as a fraction of the axis,
+        # default none meaning one over the number of rows plus one. Inserts the index
+        # via the index helper, creates the table at the top centre position, sets font
+        # size, hides cells in the index-corner area and the dummy column, shades header
+        # and index cells grey, sets all cell heights, titles the axis, and turns the
+        # axis lines off. Returns nothing.
         if df is None:
             ax.set_visible(False)
             return
@@ -175,6 +239,11 @@ class TablePlotter:
 
 
 def main() -> None:
+    # [FUNCTION DOC]
+    # Demonstration entry point (run when the module is executed as a script).
+    # Builds sample frames, including a multi-level index/columns example, and shows
+    # three figures with a plotter using default sizing, vertically and horizontally.
+    # Blocks on interactive figure windows; requires matplotlib.
     import matplotlib.pyplot as plt
 
     p = TablePlotter()

@@ -1,3 +1,16 @@
+# [MODULE DOC]
+# Holiday and holiday-calendar definitions for business-day computations. Public
+# contents (exported list): re-exports of the dateutil weekday constants; observance
+# functions that move a holiday date to a nearby workday according to a rule; the
+# Holiday class describing one rule-based holiday; a registry of calendar classes
+# with registration and lookup functions; an abstract calendar base class
+# (with a metaclass registering every subclass by name); a US federal calendar
+# class; a factory merging two calendars into a new class; and module-level
+# Holiday instances for common US holidays, Good Friday and Easter Monday.
+# Depends on the top-level pandas package (index, series, timestamp, concatenation,
+# date range, DateOffset) and on the tseries offsets module. Import-time side
+# effects: the metaclass registers the abstract calendar and the US federal
+# calendar into the module-level registry dictionary when they are defined.
 from __future__ import annotations
 
 from datetime import (
@@ -44,6 +57,9 @@ if TYPE_CHECKING:
 
 
 def next_monday(dt: datetime) -> datetime:
+    # [FUNCTION DOC]
+    # Observance rule. Input: dt, a date. Saturday moves forward two days and Sunday
+    # forward one day, both to Monday; other days are returned unchanged. Returns a date.
     """
     If holiday falls on Saturday, use following Monday instead;
     if holiday falls on Sunday, use Monday instead
@@ -56,6 +72,10 @@ def next_monday(dt: datetime) -> datetime:
 
 
 def next_monday_or_tuesday(dt: datetime) -> datetime:
+    # [FUNCTION DOC]
+    # Observance rule for the second of two adjacent holidays. Input: dt, a date.
+    # Saturday or Sunday moves forward two days (to Monday or Tuesday respectively),
+    # Monday moves forward one day to Tuesday, other days unchanged.
     """
     For second holiday of two adjacent ones!
     If holiday falls on Saturday, use following Monday instead;
@@ -71,6 +91,9 @@ def next_monday_or_tuesday(dt: datetime) -> datetime:
 
 
 def previous_friday(dt: datetime) -> datetime:
+    # [FUNCTION DOC]
+    # Observance rule. Input: dt, a date. Saturday moves back one day and Sunday back
+    # two days, both to Friday; other days unchanged.
     """
     If holiday falls on Saturday or Sunday, use previous Friday instead.
     """
@@ -82,6 +105,9 @@ def previous_friday(dt: datetime) -> datetime:
 
 
 def sunday_to_monday(dt: datetime) -> datetime:
+    # [FUNCTION DOC]
+    # Observance rule. Input: dt, a date. Sunday moves forward one day to Monday; all
+    # other days unchanged.
     """
     If holiday falls on Sunday, use day thereafter (Monday) instead.
     """
@@ -91,6 +117,9 @@ def sunday_to_monday(dt: datetime) -> datetime:
 
 
 def weekend_to_monday(dt: datetime) -> datetime:
+    # [FUNCTION DOC]
+    # Observance rule. Input: dt, a date. Sunday moves forward one day and Saturday
+    # forward two days, both to Monday; other days unchanged.
     """
     If holiday falls on Sunday or Saturday,
     use day thereafter (Monday) instead.
@@ -104,6 +133,9 @@ def weekend_to_monday(dt: datetime) -> datetime:
 
 
 def nearest_workday(dt: datetime) -> datetime:
+    # [FUNCTION DOC]
+    # Observance rule. Input: dt, a date. Saturday moves back one day to Friday,
+    # Sunday moves forward one day to Monday; other days unchanged.
     """
     If holiday falls on Saturday, use day before (Friday) instead;
     if holiday falls on Sunday, use day thereafter (Monday) instead.
@@ -116,6 +148,9 @@ def nearest_workday(dt: datetime) -> datetime:
 
 
 def next_workday(dt: datetime) -> datetime:
+    # [FUNCTION DOC]
+    # Returns the next Monday-to-Friday day strictly after dt (a date), skipping
+    # weekends. Always advances at least one day. Does not know about holidays.
     """
     returns next workday used for observances
     """
@@ -127,6 +162,9 @@ def next_workday(dt: datetime) -> datetime:
 
 
 def previous_workday(dt: datetime) -> datetime:
+    # [FUNCTION DOC]
+    # Returns the closest Monday-to-Friday day strictly before dt (a date), skipping
+    # weekends. Always moves back at least one day. Does not know about holidays.
     """
     returns previous workday used for observances
     """
@@ -138,6 +176,9 @@ def previous_workday(dt: datetime) -> datetime:
 
 
 def before_nearest_workday(dt: datetime) -> datetime:
+    # [FUNCTION DOC]
+    # Applies the nearest-workday rule, then returns the previous workday before that
+    # result.
     """
     returns previous workday before nearest workday
     """
@@ -145,6 +186,9 @@ def before_nearest_workday(dt: datetime) -> datetime:
 
 
 def after_nearest_workday(dt: datetime) -> datetime:
+    # [FUNCTION DOC]
+    # Applies the nearest-workday rule, then returns the next workday after that result
+    # (used for days such as Boxing Day, or for series of consecutive holidays).
     """
     returns next workday after nearest workday
     needed for Boxing day or multiple holidays in a series
@@ -153,6 +197,14 @@ def after_nearest_workday(dt: datetime) -> datetime:
 
 
 class Holiday:
+    # [CLASS DOC]
+    # A single holiday rule: name, a month and day (and optionally a year for a
+    # one-off holiday), an optional offset or list of offsets applied to the anchor date
+    # or an observance function (the two are mutually exclusive), optional validity
+    # start and end dates, optional restriction to certain weekdays, and optional
+    # dates to exclude. State: all constructor arguments as attributes (start and end
+    # are stored as timestamps). Main method: dates, returning the holiday dates in a
+    # range; private helpers build the yearly anchor dates and apply the rule.
     """
     Class that defines a holiday with start/end dates and rules
     for observance.
@@ -175,6 +227,18 @@ class Holiday:
         days_of_week: tuple | None = None,
         exclude_dates: DatetimeIndex | None = None,
     ) -> None:
+        # [FUNCTION DOC]
+        # Validates and stores the rule. Inputs: name, holiday name; year, month, day,
+        # the anchor (year default none means recurring yearly); offset, one offset or a flat
+        # list of offsets, default none; observance, callable mapping a date to a date,
+        # default none; start_date and end_date, optional first and last date (converted to
+        # timestamps); days_of_week, optional tuple of weekday numbers (Monday zero) to keep;
+        # exclude_dates, optional date index of dates to drop. Raises not-implemented error
+        # if both offset and observance are given, a value error if the offset is not an
+        # offset or flat list of offsets, a value error if days_of_week is not none or a
+        # tuple, and a value error if exclude_dates is not none or a date index.
+        # KNOWN ISSUE: the docstring says the name defaults to the class name, but it is a
+        # required argument with no default.
         """
         Parameters
         ----------
@@ -271,6 +335,10 @@ class Holiday:
         self.exclude_dates = exclude_dates
 
     def __repr__(self) -> str:
+        # [FUNCTION DOC]
+        # Text form: the holiday name followed by parenthesized details: the year if
+        # given, month and day, then the offset and/or the observance if present.
+        # Offset and observance texts are appended without separators.
         info = ""
         if self.year is not None:
             info += f"year={self.year}, "
@@ -287,18 +355,34 @@ class Holiday:
 
     @overload
     def dates(self, start_date, end_date, return_name: Literal[True]) -> Series: ...
+        # [FUNCTION DOC]
+        # Type-checking overload: with the name flag true, returns a series. Implementation below.
 
     @overload
     def dates(
         self, start_date, end_date, return_name: Literal[False]
     ) -> DatetimeIndex: ...
+        # [FUNCTION DOC]
+        # Type-checking overload: with the name flag false, returns a date index. Implementation below.
 
     @overload
     def dates(self, start_date, end_date) -> DatetimeIndex: ...
+        # [FUNCTION DOC]
+        # Type-checking overload: without the name flag, returns a date index. Implementation below.
 
     def dates(
         self, start_date, end_date, return_name: bool = False
     ) -> Series | DatetimeIndex:
+        # [FUNCTION DOC]
+        # Computes the dates on which the holiday is observed within a range. Inputs:
+        # start_date, end_date, datetime-like bounds (inclusive); return_name, default
+        # false. Returns a date index, or a series indexed by the dates whose values are
+        # the holiday name when return_name is true. A rule with a fixed year ignores the
+        # range and the other filters and returns just that single date. Otherwise: yearly
+        # anchor dates spanning the range plus a year on each side are produced, the
+        # offset or observance is applied, dates are filtered by weekday if requested,
+        # the range is narrowed by the rule's own start and end dates (localized to the
+        # range's time zone), and excluded dates are removed.
         """
         Calculate holidays observed between start date and end date
 
@@ -361,6 +445,12 @@ class Holiday:
     def _reference_dates(
         self, start_date: Timestamp, end_date: Timestamp
     ) -> DatetimeIndex:
+        # [FUNCTION DOC]
+        # HELPER: for the dates method. Inputs: start_date, end_date, timestamps. Returns a
+        # date index of yearly anchor dates (this holiday's month and day) from the year
+        # before the start through the year after the end, in the start's time zone. If the
+        # rule has its own start or end date, it replaces the corresponding bound (localized
+        # to the start's zone). Raises an error if month or day is none.
         """
         Get reference dates for the holiday.
 
@@ -394,6 +484,12 @@ class Holiday:
         return dates
 
     def _apply_rule(self, dates: DatetimeIndex) -> DatetimeIndex:
+        # [FUNCTION DOC]
+        # HELPER: for the dates method. Input: dates, a date index of anchors. Returns a
+        # copy for an empty input; applies the observance function elementwise (through
+        # an inline anonymous function) if set; otherwise adds each offset in turn
+        # (a single offset is treated as a list of one), suppressing performance warnings
+        # from non-vectorized offsets; with neither returns the input.
         """
         Apply the given offset/observance to a DatetimeIndex of dates.
 
@@ -430,6 +526,10 @@ holiday_calendars: dict[str, type[AbstractHolidayCalendar]] = {}
 
 
 def register(cls) -> None:
+    # [FUNCTION DOC]
+    # Registers a calendar class in the module-level registry. Input: cls, a calendar
+    # class. The key is its name attribute if it has one, otherwise the class name. A
+    # later registration under the same key replaces the earlier one. Returns nothing.
     try:
         name = cls.name
     except AttributeError:
@@ -438,6 +538,9 @@ def register(cls) -> None:
 
 
 def get_calendar(name: str) -> AbstractHolidayCalendar:
+    # [FUNCTION DOC]
+    # Returns a new instance of the calendar registered under a name. Input: name,
+    # string. Raises a key error if no calendar was registered under that name.
     """
     Return an instance of a calendar based on its name.
 
@@ -450,13 +553,27 @@ def get_calendar(name: str) -> AbstractHolidayCalendar:
 
 
 class HolidayCalendarMetaClass(type):
+    # [CLASS DOC]
+    # Metaclass for calendar classes: every class created with it is automatically
+    # registered in the module registry under its name. Applies to the abstract
+    # calendar and all subclasses, including the base itself.
     def __new__(cls, clsname: str, bases, attrs):
+        # [FUNCTION DOC]
+        # Creates the class normally, registers it, and returns it. Inputs: the class name,
+        # the base classes and the attribute mapping.
         calendar_class = super().__new__(cls, clsname, bases, attrs)
         register(calendar_class)
         return calendar_class
 
 
 class AbstractHolidayCalendar(metaclass=HolidayCalendarMetaClass):
+    # [CLASS DOC]
+    # Base class for holiday calendars. Class state: rules, list of Holiday objects
+    # (shared mutable default empty list); default start (1970-01-01) and end
+    # (2200-12-31) timestamps; and a private cache of the last computed range and its
+    # holiday series. Instances have a name (default class name) and may override rules.
+    # Methods: find a rule by name, compute holidays over a range, and merge rule sets
+    # (static class-level merge and instance merge). Uses the registering metaclass.
     """
     Abstract interface to create holidays following certain rules.
     """
@@ -467,6 +584,9 @@ class AbstractHolidayCalendar(metaclass=HolidayCalendarMetaClass):
     _cache: tuple[Timestamp, Timestamp, Series] | None = None
 
     def __init__(self, name: str = "", rules=None) -> None:
+        # [FUNCTION DOC]
+        # Initializes the calendar. Inputs: name, default empty string meaning use the
+        # class name; rules, optional list of Holiday objects replacing the class's rules.
         """
         Initializes holiday object with a given set a rules.  Normally
         classes just have the rules defined within them.
@@ -487,6 +607,8 @@ class AbstractHolidayCalendar(metaclass=HolidayCalendarMetaClass):
             self.rules = rules
 
     def rule_from_name(self, name: str) -> Holiday | None:
+        # [FUNCTION DOC]
+        # Returns the first rule whose name equals the given name, or none if there is none.
         for rule in self.rules:
             if rule.name == name:
                 return rule
@@ -496,6 +618,18 @@ class AbstractHolidayCalendar(metaclass=HolidayCalendarMetaClass):
     def holidays(
         self, start=None, end=None, return_name: bool = False
     ) -> DatetimeIndex | Series:
+        # [FUNCTION DOC]
+        # Computes holiday dates over a range using all rules. Inputs: start, end,
+        # datetime-like or none (defaults to the abstract base class's default bounds);
+        # return_name, default false. Returns a series (dates mapped to holiday names) when
+        # true, otherwise the index of dates. Uses a per-instance cache of the last result:
+        # the rules are recomputed only when the requested range extends outside the cached
+        # range; the cached series is sorted by date, then sliced to the range. With no rules
+        # returns an empty object-valued series. Raises a general exception if rules is none.
+        # KNOWN ISSUE: the default bounds are taken from the abstract base class rather than
+        # from the class of this calendar, so a subclass that overrides its default start or end
+        # date is ignored. The cache is also not invalidated when the rules change.
+        # KNOWN ISSUE: the docstring's returns section does not mention the series variant.
         """
         Returns a curve with holidays between start_date and end_date
 
@@ -548,6 +682,11 @@ class AbstractHolidayCalendar(metaclass=HolidayCalendarMetaClass):
 
     @staticmethod
     def merge_class(base, other):
+        # [FUNCTION DOC]
+        # Static method merging two rule collections by holiday name. Inputs: base and
+        # other, each a calendar instance or class (its rules are used), a single Holiday, or a
+        # list of holidays. Returns a list of holidays in which entries from base override
+        # entries of other with the same name.
         """
         Merge holiday calendars together. The base calendar
         will take precedence to other. The merge will be done
@@ -582,6 +721,11 @@ class AbstractHolidayCalendar(metaclass=HolidayCalendarMetaClass):
         return list(other_holidays.values())
 
     def merge(self, other, inplace: bool = False):
+        # [FUNCTION DOC]
+        # Merges another calendar's (or rule list's) rules with this calendar's, with this
+        # calendar's rules taking precedence by name. Inputs: other; inplace, default false.
+        # When true the calendar's rules are replaced and nothing is returned; otherwise
+        # returns the merged list of holidays.
         """
         Merge holiday calendars together.  The caller's class
         rules take precedence.  The merge will be done
@@ -626,6 +770,12 @@ EasterMonday = Holiday("Easter Monday", month=1, day=1, offset=[Easter(), Day(1)
 
 
 class USFederalHolidayCalendar(AbstractHolidayCalendar):
+    # [CLASS DOC]
+    # Calendar of US federal holidays: new year, Martin Luther King day, Presidents day,
+    # Memorial day, Juneteenth (from 2021), Independence day, Labor day, Columbus day,
+    # Veterans day, Thanksgiving and Christmas. Fixed-date holidays use the nearest
+    # workday observance; the others use the module-level rules with weekday offsets.
+    # Defines rules only.
     """
     US Federal Government Holiday Calendar based on rules specified by:
     https://www.opm.gov/policy-data-oversight/pay-leave/federal-holidays/
@@ -653,6 +803,12 @@ class USFederalHolidayCalendar(AbstractHolidayCalendar):
 
 
 def HolidayCalendarFactory(name: str, base, other, base_class=AbstractHolidayCalendar):
+    # [FUNCTION DOC]
+    # Builds a new calendar class by merging the rules of two calendars. Inputs: name,
+    # the new class name (also its name attribute); base and other, calendar classes,
+    # instances, or rule lists to merge (base takes precedence); base_class, the parent of
+    # the new class, default the abstract calendar. Returns the new class (not an
+    # instance), which the metaclass registers under the name.
     rules = AbstractHolidayCalendar.merge_class(base, other)
     calendar_class = type(name, (base_class,), {"rules": rules, "name": name})
     return calendar_class

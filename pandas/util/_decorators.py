@@ -1,3 +1,18 @@
+# [MODULE DOC]
+# Docstring-manipulation and deprecation decorators used across pandas.
+# Public contents (exported list): a function that wraps a callable so that
+# calling it emits a deprecation warning, a decorator factory deprecating a
+# keyword argument (optionally renaming it and mapping values), a decorator
+# factory deprecating positional use of arguments, a helper producing the
+# version-dependent beginning of such messages, a decorator concatenating and
+# formatting docstring templates, two docstring decorator classes (one
+# performing percent-style substitution, one appending text), and the cached
+# read-only property descriptor re-exported from the compiled properties module.
+# Also contains a private-purpose decorator that overrides the module
+# attribute of a function or class (not in the exported list) and a small text
+# indentation helper. Relies on the stack-level finder in the exceptions
+# utility module. The Substitution and Appender classes derive from matplotlib's
+# docstring module. No import-time side effects.
 from __future__ import annotations
 
 from functools import wraps
@@ -35,6 +50,28 @@ def deprecate(
     stacklevel: int = 2,
     msg: str | None = None,
 ) -> Callable[[F], F]:
+    # [FUNCTION DOC]
+    # Builds and returns a wrapper around the callable alternative that emits a
+    # warning and then delegates. Inputs: klass, the warning category; name, the
+    # name of the deprecated function used in the message; alternative, the
+    # callable to delegate to and whose name and docstring are copied; version, the
+    # pandas version in which deprecation began (used in the docstring directive);
+    # alt_name, optional replacement name for messages (defaults to the name of
+    # alternative); stacklevel, default 2, passed to the warning call; msg, optional
+    # custom warning text.
+    # KNOWN ISSUE: the docstring claims the default message ends with a period and
+    # says "Use ... instead", but the actual default message is lowercase "use",
+    # joined by a comma, ending with a period: "<name> is deprecated, use <alt> instead."
+    # When the alternative has a docstring, the wrapper's docstring is rebuilt from
+    # the first summary line, followed by a deprecated directive naming the version
+    # and a note (the custom message or a default pointing at the alternative), then
+    # the remainder of the original docstring. Raises an assertion error when the
+    # alternative docstring has fewer than three line breaks, starts text on the
+    # first line, or lacks a blank line after a non-empty summary. Empty docstrings
+    # are allowed (optimized interpreter mode). The wrapper's declared return type
+    # is misleading; it actually returns whatever the alternative returns, and the
+    # factory's return is not a decorator despite the declared type (type checking
+    # is suppressed).
     """
     Return a new function that emits a deprecation warning on use.
 
@@ -66,6 +103,10 @@ def deprecate(
 
     @wraps(alternative)
     def wrapper(*args, **kwargs) -> Callable[..., Any]:
+        # [FUNCTION DOC]
+        # HELPER: inner wrapper of the deprecation function. Accepts any positional
+        # and keyword arguments, emits the precomputed warning with the configured
+        # category and stack level, then returns the result of calling the alternative.
         warnings.warn(warning_msg, klass, stacklevel=stacklevel)
         return alternative(*args, **kwargs)
 
@@ -108,6 +149,21 @@ def deprecate_kwarg(
     mapping: Mapping[Any, Any] | Callable[[Any], Any] | None = None,
     stacklevel: int = 2,
 ) -> Callable[[F], F]:
+    # [FUNCTION DOC]
+    # Decorator factory deprecating a keyword argument. Inputs: klass, warning
+    # category; old_arg_name, the deprecated keyword; new_arg_name, the replacement
+    # keyword or none (meaning the keyword is deprecated with no replacement);
+    # mapping, optional dictionary-like object or callable translating old values to
+    # new values (values missing from a dictionary pass unchanged); stacklevel,
+    # default 2. Returns the decorator. Raises a type error immediately at decoration
+    # setup if mapping is neither dictionary-like nor callable. The decorated
+    # function, when called, behaves as follows: the old keyword is removed from the
+    # call arguments; if it was supplied with a value other than none, a warning is
+    # issued; with no replacement the old keyword is put back and the function is
+    # called; otherwise the (possibly mapped) value is passed under the new keyword,
+    # and a type error is raised if the new keyword was also supplied with a value
+    # other than none. Note that an old keyword explicitly passed as none is silently
+    # dropped and never forwarded or warned about.
     """
     Decorator to deprecate a keyword argument of a function.
 
@@ -175,8 +231,18 @@ def deprecate_kwarg(
         )
 
     def _deprecate_kwarg(func: F) -> F:
+        # [FUNCTION DOC]
+        # HELPER: the actual decorator produced by the keyword deprecation factory.
+        # Takes the function to decorate and returns a metadata-preserving wrapper
+        # (cast to the same callable type) implementing the behavior described on the
+        # factory.
         @wraps(func)
         def wrapper(*args, **kwargs) -> Callable[..., Any]:
+            # [FUNCTION DOC]
+            # HELPER: wrapper applying the keyword deprecation logic to one call. Takes
+            # arbitrary positional and keyword arguments, returns the wrapped function's
+            # result. Hides itself from pytest tracebacks. Emits a warning of the configured
+            # category and may raise a type error when both old and new keywords are given.
             __tracebackhide__ = True
 
             old_arg_value = kwargs.pop(old_arg_name, None)
@@ -225,6 +291,18 @@ def deprecate_kwarg(
 
 
 def _format_argument_list(allow_args: list[str]) -> str:
+    # [FUNCTION DOC]
+    # HELPER: formats the list of allowed positional argument names for the
+    # non-keyword deprecation message. Input: allow_args, list of names. Returns an
+    # empty string for an empty list (after dropping the instance-reference name),
+    # a phrase beginning with a space and "except for the argument" followed by the
+    # single quoted name for one entry, or "except for the arguments" followed by
+    # comma-separated quoted names joined with "and" before the last for several.
+    # Side effect: removes the instance-reference name from the passed list in place.
+    # KNOWN ISSUE: the docstring examples and parameter name (allowed_args, and
+    # described as possibly a tuple or integer) do not match the code, which takes a
+    # list named allow_args; the example output also omits the leading space and
+    # uses the plural for one name.
     """
     Convert the allow_args argument (either string or integer) of
     `deprecate_nonkeyword_arguments` function to a string describing
@@ -263,6 +341,10 @@ def _format_argument_list(allow_args: list[str]) -> str:
 
 
 def future_version_msg(version: str | None) -> str:
+    # [FUNCTION DOC]
+    # Returns the leading phrase of a future-change warning. Input: version, a
+    # version string or none. Returns "In a future version of pandas" when none,
+    # otherwise "Starting with pandas version" followed by the version.
     """Specify which version of pandas the deprecation will take place in."""
     if version is None:
         return "In a future version of pandas"
@@ -275,6 +357,19 @@ def deprecate_nonkeyword_arguments(
     allowed_args: list[str] | None = None,
     name: str | None = None,
 ) -> Callable[[F], F]:
+    # [FUNCTION DOC]
+    # Decorator factory warning when arguments are passed positionally beyond an
+    # allowed set. Inputs: klass, a pandas warning category that must provide a
+    # version query method (used for the message's lead phrase); allowed_args,
+    # optional list of leading parameter names that may stay positional (when none,
+    # all positional parameters without default values are allowed); name, optional
+    # display name used in the message (default: the qualified name of the function).
+    # Returns the decorator. The decorated function's reported signature is
+    # rewritten so that all other positional parameters become keyword-only
+    # (re-sorted by kind), while the function itself is unchanged. At call time, if
+    # more positional arguments are passed than the number of allowed names, a
+    # warning of category klass is emitted with the stack level found by the
+    # exceptions helper, then the function is called normally.
     """
     Decorator to deprecate a use of non-keyword arguments of a function.
 
@@ -295,6 +390,10 @@ def deprecate_nonkeyword_arguments(
     """
 
     def decorate(func):
+        # [FUNCTION DOC]
+        # HELPER: decorator built by the non-keyword deprecation factory. Takes the
+        # function, computes the allowed names, the new keyword-only signature and the
+        # message template, and returns a wrapper with the replaced signature attribute.
         old_sig = inspect.signature(func)
 
         if allowed_args is not None:
@@ -327,6 +426,10 @@ def deprecate_nonkeyword_arguments(
 
         @wraps(func)
         def wrapper(*args, **kwargs):
+            # [FUNCTION DOC]
+            # HELPER: wrapper checking the count of positional arguments against the
+            # allowed count, issuing the formatted warning when exceeded, then delegating
+            # to the wrapped function and returning its result.
             if len(args) > num_allow_args:
                 warnings.warn(
                     msg.format(arguments=_format_argument_list(allow_args)),
@@ -344,6 +447,20 @@ def deprecate_nonkeyword_arguments(
 
 
 def doc(*docstrings: None | str | Callable, **params: object) -> Callable[[F], F]:
+    # [FUNCTION DOC]
+    # Decorator factory that builds a docstring from templates. Inputs:
+    # docstrings, any number of items each being none (skipped), a string template,
+    # or a callable (or object) carrying a docstring; params, keyword values used to
+    # format string templates. The decorated object's own dedented docstring comes
+    # first, then each item in order; items that already carry a stored list of
+    # components contribute those components instead; a non-string item is kept only
+    # if it has a docstring. When params are given, string components are formatted
+    # with them (so literal braces in templates must be doubled). Non-string
+    # components are dedented docstring text. The pieces are joined without a
+    # separator and assigned as the decorated object's docstring. A private
+    # attribute holding the component list is attached to the object for later
+    # reuse. Returns the object itself. Raises a key or index error from formatting
+    # if a template field is missing.
     """
     A decorator to take docstring templates, concatenate them and perform string
     substitution on them.
@@ -364,6 +481,10 @@ def doc(*docstrings: None | str | Callable, **params: object) -> Callable[[F], F
     """
 
     def decorator(decorated: F) -> F:
+        # [FUNCTION DOC]
+        # HELPER: decorator produced by the docstring-template factory; takes the
+        # decorated object, assembles and applies the combined docstring, stores the
+        # component list, and returns the same object.
         # collecting docstring and docstring templates
         docstring_components: list[str | Callable] = []
         if decorated.__doc__:
@@ -409,6 +530,12 @@ def doc(*docstrings: None | str | Callable, **params: object) -> Callable[[F], F
 
 
 class Substitution:
+    # [CLASS DOC]
+    # Callable decorator object performing percent-style substitution on the
+    # docstring of the function it decorates. State: params, either the tuple of
+    # positional arguments or the dictionary of keyword arguments given at
+    # construction (mutually exclusive). Safe when docstrings are stripped (none
+    # stays none). Derived from matplotlib's docstring helper.
     """
     A decorator to take a function's docstring and perform string
     substitution on it.
@@ -438,16 +565,27 @@ class Substitution:
     """
 
     def __init__(self, *args, **kwargs) -> None:
+        # [FUNCTION DOC]
+        # Stores the substitution values. Accepts positional or keyword values, never
+        # both; raises an assertion error if both are given. With neither, params is an
+        # empty dictionary.
         if args and kwargs:
             raise AssertionError("Only positional or keyword args are allowed")
 
         self.params = args or kwargs
 
     def __call__(self, func: F) -> F:
+        # [FUNCTION DOC]
+        # Applies the substitution to the docstring of func in place (leaving none or
+        # empty docstrings untouched) and returns func. Raises the usual formatting
+        # errors if the docstring has missing or mismatched fields.
         func.__doc__ = func.__doc__ and func.__doc__ % self.params
         return func
 
     def update(self, *args, **kwargs) -> None:
+        # [FUNCTION DOC]
+        # Merges more values into params using dictionary update semantics (same
+        # arguments as the dictionary update). Does nothing when params is positional.
         """
         Update self.params with supplied args.
         """
@@ -456,6 +594,11 @@ class Substitution:
 
 
 class Appender:
+    # [CLASS DOC]
+    # Callable decorator object appending text to the docstring of the function it
+    # decorates. State: addendum, the text to append (or none), and join, the
+    # separator placed between the existing docstring and the addendum. Derived from
+    # matplotlib's docstring helper. Tolerates missing docstrings.
     """
     A function decorator that will append an addendum to the docstring
     of the target function.
@@ -478,6 +621,10 @@ class Appender:
     addendum: str | None
 
     def __init__(self, addendum: str | None, join: str = "", indents: int = 0) -> None:
+        # [FUNCTION DOC]
+        # Stores the addendum and separator. Inputs: addendum, text or none; join,
+        # default empty string; indents, default 0; when positive the addendum is passed
+        # through the text indentation helper with that many levels.
         if indents > 0:
             self.addendum = indent(addendum, indents=indents)
         else:
@@ -485,6 +632,11 @@ class Appender:
         self.join = join
 
     def __call__(self, func: T) -> T:
+        # [FUNCTION DOC]
+        # Appends the addendum to the docstring of func in place and returns func. The
+        # existing docstring (or empty text) and the addendum are joined with the join
+        # separator and then dedented. Side effect: replaces a none addendum on the
+        # decorator itself with an empty string.
         func.__doc__ = func.__doc__ if func.__doc__ else ""
         self.addendum = self.addendum if self.addendum else ""
         docitems = [func.__doc__, self.addendum]
@@ -493,6 +645,11 @@ class Appender:
 
 
 def indent(text: str | None, indents: int = 1) -> str:
+    # [FUNCTION DOC]
+    # Indents continuation lines of a text. Inputs: text, a string or none; indents,
+    # default 1, number of four-space levels. Returns an empty string for none,
+    # empty or non-string input; otherwise returns the text with every line break
+    # followed by the requested indentation (the first line is not indented).
     if not text or not isinstance(text, str):
         return ""
     jointext = "".join(["\n"] + ["    "] * indents)
@@ -512,6 +669,10 @@ __all__ = [
 
 
 def set_module(module) -> Callable[[F], F]:
+    # [FUNCTION DOC]
+    # Private decorator factory overriding the module attribute of the decorated
+    # function or class. Input: module, the module name to assign (none means no
+    # change). Returns the decorator.
     """Private decorator for overriding __module__ on a function or class.
 
     Example usage::
@@ -525,6 +686,11 @@ def set_module(module) -> Callable[[F], F]:
     """
 
     def decorator(func: F) -> F:
+        # [FUNCTION DOC]
+        # HELPER: decorator returned by the module-override factory. For classes it first
+        # records the original module in a private attribute (ignoring failures to set
+        # it) so documentation link resolution can find the source, then assigns the new
+        # module name and returns the object unchanged otherwise.
         if module is not None:
             if isinstance(func, type):
                 # Store the original module for classes to ensure linkcode_resolve

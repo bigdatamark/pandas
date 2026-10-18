@@ -9,6 +9,16 @@ NOTE: if this finds a false positive, you can add the comment `# not a test` to 
 class or function definition. Though hopefully that shouldn't be necessary.
 """
 
+# [MODULE DOC]
+# Pre-commit script verifying that, in test files, top-level functions start with
+# the test prefix and top-level classes start with the capitalized test prefix, and
+# that the methods of non-test classes do too unless they are used by name elsewhere.
+# Objects can be exempted by a trailing pragma comment on the definition line. Public
+# contents: the pragma constant, name-collection and decorator-detection helpers,
+# two predicates for misnamed functions and classes, a per-file checker, and a command
+# line block run when executed as a script (it only looks at files whose base name starts
+# with test and ends with the Python extension). Exit status is non-zero if any problem
+# was printed. No import-time side effects.
 from __future__ import annotations
 
 import argparse
@@ -28,6 +38,9 @@ PRAGMA = "# not a test"
 
 
 def _find_names(node: ast.Module) -> Iterator[str]:
+    # [FUNCTION DOC]
+    # HELPER: yields every identifier used in a syntax tree: names of plain-name nodes and
+    # attribute names, from a full walk of the tree.
     for _node in ast.walk(node):
         if isinstance(_node, ast.Name):
             yield _node.id
@@ -36,6 +49,9 @@ def _find_names(node: ast.Module) -> Iterator[str]:
 
 
 def _is_fixture(node: ast.expr) -> bool:
+    # [FUNCTION DOC]
+    # HELPER: tells whether a decorator expression denotes a pytest fixture, either bare or as
+    # a call with arguments, by checking for an attribute named fixture on the name pytest.
     if isinstance(node, ast.Call):
         node = node.func
     return (
@@ -47,12 +63,22 @@ def _is_fixture(node: ast.expr) -> bool:
 
 
 def _is_register_dtype(node):
+    # [FUNCTION DOC]
+    # HELPER: tells whether a decorator expression is the plain name used to register an
+    # extension dtype class. Returns a bool.
     return isinstance(node, ast.Name) and node.id == "register_extension_dtype"
 
 
 def is_misnamed_test_func(
     node: ast.expr | ast.stmt, names: Sequence[str], line: str
 ) -> bool:
+    # [FUNCTION DOC]
+    # Tells whether a syntax node is a plain function definition that should have been named
+    # as a test but is not. Inputs: node; names, all identifiers seen in the module; line,
+    # the source text of the definition line. True when the node is a function whose name does
+    # not start with the test prefix, does not appear among the identifiers, is not a fixture, has
+    # no pragma comment on its line, and is not a setup or teardown method name (method or class
+    # variants).
     return (
         isinstance(node, ast.FunctionDef)
         and not node.name.startswith("test")
@@ -67,6 +93,11 @@ def is_misnamed_test_func(
 def is_misnamed_test_class(
     node: ast.expr | ast.stmt, names: Sequence[str], line: str
 ) -> bool:
+    # [FUNCTION DOC]
+    # Tells whether a syntax node is a class definition that should have been named as a test
+    # class but is not. Inputs as for the function version. True when the class name does not
+    # start with the capitalized test prefix, does not appear among identifiers, is not decorated
+    # with the dtype registration decorator, and has no pragma comment on its line.
     return (
         isinstance(node, ast.ClassDef)
         and not node.name.startswith("Test")
@@ -77,6 +108,15 @@ def is_misnamed_test_class(
 
 
 def main(content: str, file: str) -> int:
+    # [FUNCTION DOC]
+    # Checks one module's source. Inputs: content, source text; file, path for messages. Returns
+    # zero when clean, otherwise one. For each top-level node, prints a message with file, line
+    # and column for a misnamed function or class. For top-level classes that are themselves
+    # eligible (not used by name, not registration-decorated, no pragma), also checks each
+    # direct method: a misnamed method is reported unless some file under the pandas tests
+    # directory (searched relative to the current working directory) contains a self-attribute
+    # access with that method name, since a parent class may call it. Side effects: reads
+    # many files, prints to standard output.
     lines = content.splitlines()
     tree = ast.parse(content)
     names = list(_find_names(tree))

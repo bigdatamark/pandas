@@ -24,6 +24,14 @@ def test_foo():
 For more information, refer to the ``pytest`` documentation on ``skipif``.
 """
 
+# [MODULE DOC]
+# Test-skipping helpers for the pandas test suite. Public contents: two functions
+# returning skip marks (skip if a package is installed; skip if a package is not
+# importable or too old), several ready-made skip marks (32-bit platform, Windows,
+# non-US locale, WebAssembly, non-thread-safe warnings), and a decorator that
+# formats a fixture docstring. Imports pytest and the compat package. Import-time
+# side effects: the locale and interpreter flags are queried when the module is
+# imported to build the marks.
 from __future__ import annotations
 
 import locale
@@ -45,6 +53,11 @@ from pandas.compat._optional import import_optional_dependency
 
 
 def skip_if_installed(package: str) -> pytest.MarkDecorator:
+    # [FUNCTION DOC]
+    # Returns a skip-if mark that skips when the named package can be imported. Input:
+    # package, import name. Probing imports the package (errors ignored) at call
+    # time; skip reason mentions the package. Usable as decorator or parametrization
+    # mark.
     """
     Skip a test if a package is installed.
 
@@ -66,6 +79,12 @@ def skip_if_installed(package: str) -> pytest.MarkDecorator:
 
 
 def skip_if_no(package: str, min_version: str | None = None) -> pytest.MarkDecorator:
+    # [FUNCTION DOC]
+    # Returns a skip-if mark that skips when the package is missing or too old. Inputs:
+    # package, import name; min_version, optional minimum version string, default none.
+    # The import and version check (via the optional dependency importer with errors
+    # ignored) happens at call time, so at collection. The skip reason names the
+    # package and, if given, the minimum version.
     """
     Generic function to help skip tests when required packages are not
     present on the testing system.
@@ -126,6 +145,14 @@ skip_if_thread_unsafe_warnings = pytest.mark.skipif(
 
 
 def parametrize_fixture_doc(*args) -> Callable[[F], F]:
+    # [FUNCTION DOC]
+    # Decorator factory for parametrized fixtures that formats the docstring. Input:
+    # args, positional values substituted for numbered placeholders in the fixture
+    # docstring. Returns a decorator that rewrites the fixture's docstring in place and
+    # returns the same fixture.
+    # KNOWN ISSUE: the docstring says the decorated function is wrapped in a pytest
+    # mark, but the code only formats the docstring and adds no mark. Also fails with
+    # an attribute error when the fixture has no docstring (optimized mode).
     """
     Intended for use as a decorator for parametrized fixture,
     this function will wrap the decorated function with a pytest
@@ -146,6 +173,9 @@ def parametrize_fixture_doc(*args) -> Callable[[F], F]:
     """
 
     def documented_fixture(fixture):
+        # [FUNCTION DOC]
+        # HELPER: the decorator returned by the docstring-formatting factory; formats the
+        # fixture's docstring with the captured values and returns the fixture.
         fixture.__doc__ = fixture.__doc__.format(*args)
         return fixture
 

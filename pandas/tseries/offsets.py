@@ -1,3 +1,12 @@
+# [MODULE DOC]
+# Public namespace for date offset classes. Pure re-export module: every
+# offset class (base class, the DateOffset class, tick-like fixed-duration
+# offsets such as Hour, Minute, Second, Milli, Micro, Nano and Day, calendar
+# offsets for weeks, months, quarters, half years and years, business and
+# custom business variants, semi-monthly, Easter and the 52-53 week fiscal year
+# offsets) is implemented in the compiled tslibs offsets module and is
+# imported from there. The public name list matches the imported names.
+# No import-time side effects other than those imports.
 from __future__ import annotations
 
 from pandas._libs.tslibs.offsets import (

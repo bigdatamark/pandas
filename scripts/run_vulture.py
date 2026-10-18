@@ -1,5 +1,12 @@
 """Look for unreachable code."""
 
+# [MODULE DOC]
+# Command line script (runs only as main; no functions). Takes zero or more
+# file paths as positional arguments, scans them with the vulture dead-code
+# finder, and prints a report line for each finding of type unreachable code
+# at the highest confidence level (other finding types are ignored). Exit
+# status is 1 if any unreachable code was reported, else 0. Requires the
+# vulture package. Intended for pre-commit use.
 import argparse
 import sys
 

@@ -1,3 +1,9 @@
+# [MODULE DOC]
+# Implements the public function that reports environment and dependency
+# versions for bug reports, along with private helpers gathering the git commit
+# hash, system details and the version of each known dependency. Uses the optional
+# dependency registry from the compat package. No import-time side effects
+# other than imports.
 from __future__ import annotations
 
 import json
@@ -21,6 +27,11 @@ from pandas.compat._optional import (
 
 
 def _get_commit_hash() -> str | None:
+    # [FUNCTION DOC]
+    # HELPER: for the version report. Returns the git commit identifier of the
+    # build: first tries the generated build-system version module; if that cannot be
+    # imported, falls back to the vendored versioneer module and returns its full
+    # revision identifier. Returns a string or none.
     """
     Use vendored versioneer code to get git hash, which handles
     git worktree correctly.
@@ -39,6 +50,12 @@ def _get_commit_hash() -> str | None:
 
 
 def _get_sys_info() -> dict[str, JSONSerializable]:
+    # [FUNCTION DOC]
+    # HELPER: for the version report. Returns a dictionary of system facts: commit
+    # hash, Python version, pointer width in bits, operating system name, release,
+    # version, machine and processor, byte order, the LC_ALL and LANG environment
+    # values (none if unset), and a nested dictionary with the current locale's
+    # language code and encoding.
     """
     Returns system information as a JSON serializable dictionary.
     """
@@ -61,6 +78,13 @@ def _get_sys_info() -> dict[str, JSONSerializable]:
 
 
 def _get_dependency_info() -> dict[str, JSONSerializable]:
+    # [FUNCTION DOC]
+    # HELPER: for the version report. Returns a dictionary mapping each dependency
+    # name to its version string. The checked names are pandas, numpy, dateutil, pip,
+    # Cython, sphinx, IPython and every optional dependency known to the registry.
+    # Value is none if the package is not installed and "N/A" if importing it raised
+    # any exception (for example from dependency conflicts). Imports each installed
+    # package as a side effect.
     """
     Returns dependency information as a JSON serializable dictionary.
     """
@@ -94,6 +118,14 @@ def _get_dependency_info() -> dict[str, JSONSerializable]:
 
 @set_module("pandas")
 def show_versions(as_json: str | bool = False) -> None:
+    # [FUNCTION DOC]
+    # Prints or saves the version report. Input: as_json, default false; false prints
+    # a human readable table to standard output; true prints the report as indented
+    # JSON to standard output; a string is treated as a file path and the JSON is
+    # written there (UTF-8, overwritten). The JSON has two keys, system and
+    # dependencies. In text mode the locale entry is shown as language code, dot,
+    # encoding, and names are padded to the longest dependency name. Returns nothing.
+    # Raises file-system errors when the path cannot be written.
     """
     Provide useful information, important for bug reports.
 

@@ -10,6 +10,16 @@ is that some of the test cases are more complex/impossible to validate via regex
 So this file is somewhat an extensions to `ci/code_checks.sh`
 """
 
+# [MODULE DOC]
+# Command line checker implementing source-code pattern checks that are too complex for regular
+# expressions, complementing the shell-based code checks. Each check is a function taking an open text
+# file and yielding pairs (line number, message). Public contents: a pattern matching deprecation-type warning
+# class names; a set of private names exempt from the private-import check; a set of allowed private function
+# calls; a helper measuring string literal prefixes; five check functions (private function use across
+# modules, private import across modules, string concatenations with misplaced leading whitespace, misuse of the
+# no-default sentinel type outside annotations, and use of built-in deprecation warnings instead of pandas ones); and
+# main. As a script, it takes file paths, an output format template (default: path, line, message) and a required check name,
+# runs that check over each file, prints violations and exits with status one if any were found. No import-time side effects.
 import argparse
 import ast
 from collections.abc import (
@@ -66,6 +76,9 @@ PRIVATE_IMPORTS_TO_IGNORE: set[str] = {
 
 
 def _get_literal_string_prefix_len(token_string: str) -> int:
+    # [FUNCTION DOC]
+    # HELPER: returns the number of characters before the first quote character of a string token text, i.e. the length of
+    # the literal prefix such as raw or format markers. Input: token_string. Returns zero if the text contains no quote.
     """
     Getting the length of the literal string prefix.
 
@@ -102,6 +115,13 @@ PRIVATE_FUNCTIONS_ALLOWED = {"sys._getframe"}  # no known alternative
 
 
 def private_function_across_module(file_obj: IO[str]) -> Iterable[tuple[int, str]]:
+    # [FUNCTION DOC]
+    # Check: private function called through an imported module. Input: file_obj, readable text file. Parses the whole
+    # file; collects imported module names (the alias if given, otherwise the full name; the imported names of from-imports
+    # also count); for each call of the form name.attribute, ignores names starting with an uppercase letter (class
+    # case), dunder attributes and the allowed private calls, and yields the call's line number and a message naming the
+    # function when the name was imported and the attribute starts with an underscore. Raises a syntax error for
+    # unparseable files.
     """
     Checking that a private function is not used across modules.
     Parameters
@@ -151,6 +171,10 @@ def private_function_across_module(file_obj: IO[str]) -> Iterable[tuple[int, str
 
 
 def private_import_across_module(file_obj: IO[str]) -> Iterable[tuple[int, str]]:
+    # [FUNCTION DOC]
+    # Check: import of a private name. Input: file_obj, readable text file. Parses the file; for each import statement
+    # and each imported name, takes the last dot-separated component; skips names in the exemption set; yields the
+    # statement's line number and a message naming the internal function when the component starts with an underscore.
     """
     Checking that a private function is not imported across modules.
     Parameters
@@ -183,6 +207,15 @@ def private_import_across_module(file_obj: IO[str]) -> Iterable[tuple[int, str]]
 def strings_with_wrong_placed_whitespace(
     file_obj: IO[str],
 ) -> Iterable[tuple[int, str]]:
+    # [FUNCTION DOC]
+    # Check: implicitly concatenated string literals where the following piece starts with a space rather than the
+    # previous piece ending with one. Input: file_obj, readable text file. Tokenizes the file and looks at every
+    # triple of consecutive tokens made of a string, a non-logical newline and a string. Quotes and prefix are
+    # stripped from both strings, and the pair is flagged when the first piece does not end with a newline escape
+    # or a space, neither piece has two leading or trailing spaces, and the second piece begins with a single space.
+    # Yields the second string's line number and a fixed message.
+    # KNOWN ISSUE: the docstring's illustrative bad and good examples are textually identical, so they do not show
+    # the difference they describe.
     """
     Test case for leading spaces in concated strings.
 
@@ -208,6 +241,11 @@ def strings_with_wrong_placed_whitespace(
     """
 
     def has_wrong_whitespace(first_line: str, second_line: str) -> bool:
+        # [FUNCTION DOC]
+        # HELPER: decides whether a pair of adjacent string pieces violates the whitespace convention. Inputs:
+        # first_line, second_line, the unquoted text of the pieces. Returns false if the first ends with a newline escape,
+        # or either piece starts or ends with two spaces; true if the first does not end with a space and the second
+        # starts with one; false otherwise.
         """
         Checking if the two lines are mattching the unwanted pattern.
 
@@ -296,6 +334,10 @@ def strings_with_wrong_placed_whitespace(
 
 
 def nodefault_used_not_only_for_typing(file_obj: IO[str]) -> Iterable[tuple[int, str]]:
+    # [FUNCTION DOC]
+    # Check: the no-default sentinel type name used outside type annotations. Input: file_obj, readable text file. Parses the file
+    # and walks the syntax tree iteratively with a flag for whether the current node lies within a variable annotation or return
+    # annotation. Any plain name or attribute access named NoDefault outside annotations yields its line number and a fixed message.
     """Test case where pandas._libs.lib.NoDefault is not used for typing.
 
     Parameters
@@ -348,6 +390,14 @@ def nodefault_used_not_only_for_typing(file_obj: IO[str]) -> Iterable[tuple[int,
 
 
 def doesnt_use_pandas_warnings(file_obj: IO[str]) -> Iterable[tuple[int, str]]:
+    # [FUNCTION DOC]
+    # Check: use of built-in deprecation or future warning classes. Input: file_obj, readable text file. Parses the file and
+    # inspects calls to warn (either through the warnings module or imported directly). Calls whose source lines, from the call start
+    # through the line after its end, contain an ignore marker comment are skipped. For other calls, collects every positional
+    # argument that is a plain name, and the value of the category keyword if it is a plain name, and yields (line number,
+    # message) for each whose name starts with a pending-deprecation, deprecation or future warning name, telling the user to use a pandas-specific warning.
+    # KNOWN ISSUE: calls whose function is an attribute of something other than a plain name, or any other expression kind, are not
+    # skipped by the filtering, so they are examined as if they were warn calls.
     """
     Checking that pandas-specific warnings are used for deprecations.
 
@@ -404,6 +454,13 @@ def main(
     source_path: str,
     output_format: str,
 ) -> bool:
+    # [FUNCTION DOC]
+    # Runs one check over a list of files and prints violations. Inputs: function, the check to run; source_path, the list of
+    # file paths (despite the docstring calling it a single path); output_format, a template string with fields for the path,
+    # line number and message. Each file is read as UTF-8; each violation is printed with the template. Returns true if any
+    # violation was found.
+    # KNOWN ISSUE: the docstring lists two parameters (file extensions and excluded paths) that the function does not
+    # accept, describes the source path as a string naming a file or directory, and documents a value error that is never raised.
     """
     Main entry point of the script.
 

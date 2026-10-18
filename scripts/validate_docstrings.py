@@ -14,6 +14,21 @@ Usage::
     $ ./validate_docstrings.py pandas.DataFrame.head
 """
 
+# [MODULE DOC]
+# Command line tool and library that validates the docstrings of the pandas public API using
+# numpydoc plus extra pandas-specific rules. Without arguments it validates every public API
+# item found by parsing the reference documentation pages and returns the results (exit status
+# is the number of unexpected failures, or JSON output); with a dotted object name it validates
+# just that object and prints a human readable report to standard error. Public contents:
+# dictionaries and sets of ignored names, private class names, custom error messages and the
+# union of all known error codes; a helper building custom error tuples; a generator reading API
+# reference pages; a validator subclass with pandas rules; whole-API and single-object validation
+# and reporting functions; an ignore-list parser; and main. Import-time side effects: imports
+# matplotlib and switches it to a non-drawing backend, and an assertion fails at import if any custom
+# error code duplicates a numpydoc one. Needs numpydoc, flake8 (run in a subprocess) and
+# matplotlib. Not used as an importable library by the package itself.
+# KNOWN ISSUE: in the command line block, the help text of the format option is a plain
+# string containing a placeholder that was meant to be formatted, so the help shows it literally.
 from __future__ import annotations
 
 import argparse
@@ -77,6 +92,11 @@ assert not duplicated_errors, (
 
 
 def pandas_error(code, **kwargs):
+    # [FUNCTION DOC]
+    # Builds an error tuple for a custom error code. Inputs: code, key into the custom message table;
+    # keyword arguments used to format that message. Returns the pair (code, formatted message). Needed
+    # because numpydoc's own table cannot be extended. Raises a key error for unknown codes or missing
+    # format fields.
     """
     Copy of the numpydoc error function, since ERROR_MSGS can't be updated
     with our custom errors yet.
@@ -85,6 +105,15 @@ def pandas_error(code, **kwargs):
 
 
 def get_api_items(api_doc_fd):
+    # [FUNCTION DOC]
+    # Generator over the public API listed in documentation pages. Input: api_doc_fd, an iterable of
+    # lines (an open file). Tracks the current module (set by the module directive, default pandas),
+    # current section (heading underlined with dashes) and subsection (underlined with tildes). After an
+    # autosummary directive and the blank line following it, every non-blank line until the next blank line
+    # is an object path (skipped if in the ignore table); the object is imported from the current module
+    # and resolved attribute by attribute. Yields tuples (fully qualified name, the object, section name,
+    # subsection name). Side effects: imports modules; raises import or attribute errors for names that
+    # cannot be resolved.
     """
     Yield information about all public API items.
 
@@ -158,7 +187,15 @@ def get_api_items(api_doc_fd):
 
 
 class PandasDocstring(Validator):
+    # [CLASS DOC]
+    # Subclass of the numpydoc validator that adds pandas-specific checks and utilities. State: func_name,
+    # the dotted name of the validated object, plus the base class state built from the parsed
+    # documentation object. Adds properties for the name, mentioned private classes and example source
+    # code, a generator running flake8 on the examples, and a check for the underscored array-like spelling.
     def __init__(self, func_name: str, doc_obj=None) -> None:
+        # [FUNCTION DOC]
+        # Initializes with a dotted name. Inputs: func_name; doc_obj, optional parsed documentation object (when
+        # none, the object is loaded from the name and parsed). Stores the name and initializes the base validator.
         self.func_name = func_name
         if doc_obj is None:
             doc_obj = get_doc_object(Validator._load_obj(func_name))
@@ -166,18 +203,34 @@ class PandasDocstring(Validator):
 
     @property
     def name(self):
+        # [FUNCTION DOC]
+        # Property returning the dotted name of the object, overriding the base class value.
         return self.func_name
 
     @property
     def mentioned_private_classes(self):
+        # [FUNCTION DOC]
+        # Property returning the list of private class names (from the module constant) that appear anywhere
+        # in the raw docstring text.
         return [klass for klass in PRIVATE_CLASSES if klass in self.raw_doc]
 
     @property
     def examples_source_code(self):
+        # [FUNCTION DOC]
+        # Property returning the list of source code strings of all interactive examples in the raw docstring,
+        # as extracted by the doctest parser.
         lines = doctest.DocTestParser().get_examples(self.raw_doc)
         return [line.source for line in lines]
 
     def validate_pep8(self):
+        # [FUNCTION DOC]
+        # Generator running flake8 over the docstring examples. Yields nothing and stops if there are no
+        # examples. Otherwise writes a temporary file with imports of numpy and pandas (lint-exempt) followed by the
+        # example source, runs flake8 in a subprocess with a line length of 88 and a fixed ignore list,
+        # collects non-empty lines from standard output and standard error (with the temporary file name removed),
+        # deletes the file even on errors, and yields for each message a tuple (error code, message text, line
+        # number adjusted by minus two for the two prepended import lines, column number). Assumes each
+        # message has four tab-separated fields; error output that is not in that form would raise a value error.
         if not self.examples:
             return
 
@@ -227,10 +280,24 @@ class PandasDocstring(Validator):
             yield error_code, message, int(line_number) - 2, int(col_number)
 
     def non_hyphenated_array_like(self):
+        # [FUNCTION DOC]
+        # Returns true if the raw docstring contains the underscored spelling of array-like.
         return "array_like" in self.raw_doc
 
 
 def pandas_validate(func_name: str):
+    # [FUNCTION DOC]
+    # Validates one object's docstring. Input: func_name, dotted name. Loads the object, parses its
+    # docstring, runs the numpydoc validation (or, if the object has no docstring, builds a result with an
+    # empty docstring, no file information and one missing-docstring error), then appends the pandas
+    # rules: mentioned private classes, see-also references that carry the redundant pandas prefix,
+    # flake8 errors from the examples, redundant numpy or pandas imports in examples, and underscored
+    # array-like. Sets the key for example errors to an empty string and closes all matplotlib figures.
+    # Returns the result dictionary with docstring text, file, line, errors (list of (code, message)),
+    # and other numpydoc fields.
+    # KNOWN ISSUE: the result for an undocumented object lacks the deprecated flag that other result
+    # entries have, so callers that read it (the whole-API validation when ignoring deprecated objects)
+    # would fail with a key error for such an object.
     """
     Call the numpydoc validation, and add the errors specific to pandas.
 
@@ -301,6 +368,12 @@ def pandas_validate(func_name: str):
 
 
 def validate_all(prefix, ignore_deprecated=False):
+    # [FUNCTION DOC]
+    # Validates all public API docstrings. Inputs: prefix, optional string; only names starting with it
+    # are validated (none or empty means all); ignore_deprecated, default false, skips deprecated
+    # objects. Returns a dictionary from name to the validation result of that object, with added
+    # keys: in-API flag (true), section, subsection, and the name of the previously seen object that
+    # shares the same file and line (empty if none), which detects aliases of the same code.
     """
     Execute the validation of all docstrings, and return a dict with the
     results.
@@ -347,6 +420,11 @@ def validate_all(prefix, ignore_deprecated=False):
 
 
 def get_all_api_items():
+    # [FUNCTION DOC]
+    # Generator yielding the API items of every reference page. Takes no input. Finds the reference
+    # documentation folder relative to this script (two levels up, then the documentation source
+    # reference folder) and yields from parsing each reference page found by file pattern. File order is
+    # the file system order.
     base_path = pathlib.Path(__file__).parent.parent
     api_doc_fnames = pathlib.Path(base_path, "doc", "source", "reference")
     for api_doc_fname in api_doc_fnames.glob("*.rst"):
@@ -360,6 +438,15 @@ def print_validate_all_results(
     ignore_deprecated: bool,
     ignore_errors: dict[str, set[str]],
 ):
+    # [FUNCTION DOC]
+    # Validates the whole API and reports. Inputs: output_format, one of default, json, actions (a value
+    # error is raised otherwise); prefix, optional name prefix filter; ignore_deprecated, bool; ignore_errors,
+    # mapping from object name (or none for a global entry) to a set of error codes expected or ignored
+    # (none is treated as empty). For json, writes the full result as JSON to standard output and returns
+    # zero. Otherwise, for each object, writes one line per error not ignored (file, line, code, name,
+    # message; prefixed with a continuous-integration error marker for the actions format) and one line
+    # for each error that was listed for that specific object but did not occur ("expected to fail but not
+    # failing"). Returns the number of lines written, used as the exit status.
     if output_format not in ("default", "json", "actions"):
         raise ValueError(f'Unknown output_format "{output_format}"')
     if ignore_errors is None:
@@ -399,7 +486,20 @@ def print_validate_all_results(
 def print_validate_one_results(
     func_name: str, ignore_errors: dict[str, set[str]]
 ) -> int:
+    # [FUNCTION DOC]
+    # Validates one object and prints a report to standard error. Inputs: func_name, dotted name;
+    # ignore_errors, mapping whose none entry holds error codes to drop. Prints a header block with the
+    # docstring, a validation section listing the remaining errors with codes (or a success message),
+    # and a doctest section when there are example errors. Returns the count of remaining errors plus the
+    # length of the example errors text.
+    # KNOWN ISSUE: the example errors entry is a string, so adding its length to the error count mixes a
+    # character count with an error count; since it is always the empty string set by the validator, the
+    # sum currently equals the error count.
     def header(title, width=80, char="#") -> str:
+        # [FUNCTION DOC]
+        # HELPER: builds a banner block. Inputs: title; width, default 80; char, default hash sign. Returns text
+        # with a full line of the character, a line with the title centered between runs of the character
+        # (one extra space when the title length is odd), another full line, surrounded by blank lines.
         full_line = char * width
         side_len = (width - len(title) - 2) // 2
         adj = "" if len(title) % 2 == 0 else " "
@@ -434,6 +534,17 @@ def print_validate_one_results(
 
 
 def _format_ignore_errors(raw_ignore_errors):
+    # [FUNCTION DOC]
+    # HELPER: parses the repeated ignore-errors option. Input: raw_ignore_errors, none or a list of
+    # strings; each item is a comma-separated list of codes for all objects, or an object name, one space,
+    # and a comma-separated list of codes for that object. Returns a mapping from object name or none to a
+    # set of codes (default empty set per key). Raises a value error if an object appears in more than one
+    # item, or if a per-object item has an unknown code. A string with more than one space raises a
+    # value error on unpacking.
+    # KNOWN ISSUE: the check for unknown global codes looks at the entry keyed by an asterisk, but global
+    # codes are stored under the none key, so unknown global error codes are never detected (and an empty
+    # entry is created). The message of that check also lacks the formatting prefix, so the list of
+    # known errors is printed as a literal placeholder.
     ignore_errors = collections.defaultdict(set)
     if raw_ignore_errors:
         for error_codes in raw_ignore_errors:
@@ -473,6 +584,10 @@ def _format_ignore_errors(raw_ignore_errors):
 
 
 def main(func_name, output_format, prefix, ignore_deprecated, ignore_errors):
+    # [FUNCTION DOC]
+    # Main entry point. Inputs: func_name, dotted name or none; output_format; prefix; ignore_deprecated;
+    # ignore_errors (parsed mapping). With no name, validates and reports the whole API; otherwise one
+    # object. Returns the integer exit status of the chosen reporter.
     """
     Main entry point. Call the validation for one or for all docstrings.
     """

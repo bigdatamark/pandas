@@ -1,3 +1,10 @@
+# [MODULE DOC]
+# Tests for the docstring validation script. Contents: a sample class whose methods each have a
+# deliberately bad docstring (test data, not real documentation); tests of the single-object
+# validator against it; tests of whole-API validation and result reporting with the validator
+# monkeypatched; tests of the API-page parser on an in-memory documentation sample; a test that the
+# flake8 helper yields nothing for two real string-method docstrings; and tests of the main
+# entry point's exit statuses with mocked validators.
 import io
 import textwrap
 
@@ -8,14 +15,24 @@ from scripts import validate_docstrings
 
 # fmt: off
 class BadDocstrings:
+    # [CLASS DOC]
+    # HELPER: test data. A class whose methods are named after the specific docstring problem each one
+    # demonstrates (private class mentioned, redundant pandas prefix in see-also, redundant imports in
+    # examples, unused import, missing whitespace around operator, wrong indentation, missing
+    # whitespace after comma, underscored array-like, example that leaves files behind). The method
+    # bodies are empty; only the docstrings matter, and they must not be fixed.
     """Everything here has a bad docstring"""
 
     def private_classes(self) -> None:
+        # [FUNCTION DOC]
+        # HELPER: test data. Docstring mentions a private base class name.
         """
         This mentions NDFrame, which is not correct.
         """
 
     def prefix_pandas(self) -> None:
+        # [FUNCTION DOC]
+        # HELPER: test data. Docstring has a see-also entry with a redundant pandas prefix.
         """
         Have `pandas` prefix in See Also section.
 
@@ -26,6 +43,8 @@ class BadDocstrings:
         """
 
     def redundant_import(self, paramx=None, paramy=None) -> None:
+        # [FUNCTION DOC]
+        # HELPER: test data. Docstring examples import numpy and pandas explicitly, which is redundant.
         """
         A sample DataFrame method.
 
@@ -47,6 +66,9 @@ class BadDocstrings:
         """
 
     def unused_import(self) -> None:
+        # [FUNCTION DOC]
+        # HELPER: test data. Example imports pandas under another name that is never used, and uses
+        # undefined short names.
         """
         Examples
         --------
@@ -55,6 +77,8 @@ class BadDocstrings:
         """
 
     def missing_whitespace_around_arithmetic_operator(self) -> None:
+        # [FUNCTION DOC]
+        # HELPER: test data. Example has an arithmetic expression without surrounding whitespace.
         """
         Examples
         --------
@@ -63,6 +87,8 @@ class BadDocstrings:
         """
 
     def indentation_is_not_a_multiple_of_four(self) -> None:
+        # [FUNCTION DOC]
+        # HELPER: test data. Example has a continuation line indented by two spaces.
         """
         Examples
         --------
@@ -71,6 +97,8 @@ class BadDocstrings:
         """
 
     def missing_whitespace_after_comma(self) -> None:
+        # [FUNCTION DOC]
+        # HELPER: test data. Example has missing whitespace after commas.
         """
         Examples
         --------
@@ -78,11 +106,15 @@ class BadDocstrings:
         """
 
     def write_array_like_with_hyphen_not_underscore(self) -> None:
+        # [FUNCTION DOC]
+        # HELPER: test data. Docstring uses the underscored spelling of array-like.
         """
         In docstrings, use array-like over array_like
         """
 
     def leftover_files(self) -> None:
+        # [FUNCTION DOC]
+        # HELPER: test data. Example creates a file in the working directory and never removes it.
         """
         Examples
         --------
@@ -93,7 +125,14 @@ class BadDocstrings:
 
 
 class TestValidator:
+    # [CLASS DOC]
+    # Test class for the single-object validation function and the whole-API validation and printing
+    # functions. Has one private helper to build dotted import paths into this module.
     def _import_path(self, klass=None, func=None):
+        # [FUNCTION DOC]
+        # HELPER: builds the dotted path of an object defined in this module. Inputs: klass, optional class
+        # name; func, optional function name. Returns the module path with the class and function names
+        # appended when given.
         """
         Build the required import path for tests in this module.
 
@@ -120,6 +159,8 @@ class TestValidator:
         return base_path
 
     def test_bad_class(self, capsys) -> None:
+        # [FUNCTION DOC]
+        # Verifies that validating the whole sample bad class yields a non-empty list of errors.
         errors = validate_docstrings.pandas_validate(
             self._import_path(klass="BadDocstrings")
         )["errors"]
@@ -195,6 +236,11 @@ class TestValidator:
         ],
     )
     def test_bad_docstrings(self, capsys, klass, func, msgs) -> None:
+        # [FUNCTION DOC]
+        # Verifies, for each sample method, that the validation result contains the expected message text
+        # among the joined error messages: private class, pandas prefix, redundant numpy and pandas imports,
+        # unused import, spacing and indentation style errors from the example linter (with line and column),
+        # and underscored array-like. Parametrized over class, method and expected message fragments.
         result = validate_docstrings.pandas_validate(
             self._import_path(klass=klass, func=func)
         )
@@ -202,6 +248,9 @@ class TestValidator:
             assert msg in " ".join([err[1] for err in result["errors"]])
 
     def test_validate_all_ignore_deprecated(self, monkeypatch) -> None:
+        # [FUNCTION DOC]
+        # Verifies that when the single-object validator is replaced by a stub returning a deprecated
+        # object, whole-API validation with the ignore-deprecated option returns an empty result.
         monkeypatch.setattr(
             validate_docstrings,
             "pandas_validate",
@@ -221,6 +270,11 @@ class TestValidator:
         assert len(result) == 0
 
     def test_validate_all_ignore_errors(self, monkeypatch):
+        # [FUNCTION DOC]
+        # Verifies error-ignoring in the whole-API printer with stubs for the validator and the API listing
+        # (two objects, three errors each). With a global ignore of one code the returned count is two objects
+        # times two remaining errors; adding an object-specific ignore of another code removes one more, and an
+        # ignore entry for an error not raised on that object has no effect on the count.
         monkeypatch.setattr(
             validate_docstrings,
             "pandas_validate",
@@ -282,8 +336,15 @@ class TestValidator:
 
 
 class TestApiItems:
+    # [CLASS DOC]
+    # Tests for the API documentation page parser, using an in-memory page with two modules, sections
+    # and subsections. Provides the sample page as a property.
     @property
     def api_doc(self):
+        # [FUNCTION DOC]
+        # HELPER: property returning a fresh in-memory text stream over the sample documentation page
+        # (itertools cycle and count under one subsection, chain under another; random seed and randint
+        # under a second section).
         return io.StringIO(
             textwrap.dedent(
                 """
@@ -334,6 +395,9 @@ class TestApiItems:
         ],
     )
     def test_item_name(self, idx, name) -> None:
+        # [FUNCTION DOC]
+        # Verifies the first element of each yielded item is the module-qualified name, in order.
+        # Parametrized over index and expected name.
         result = list(validate_docstrings.get_api_items(self.api_doc))
         assert result[idx][0] == name
 
@@ -342,6 +406,9 @@ class TestApiItems:
         [(0, "cycle"), (1, "count"), (2, "chain"), (3, "seed"), (4, "randint")],
     )
     def test_item_function(self, idx, func) -> None:
+        # [FUNCTION DOC]
+        # Verifies the second element of each yielded item is the callable with the expected name.
+        # Parametrized over index and expected function name.
         result = list(validate_docstrings.get_api_items(self.api_doc))
         assert callable(result[idx][1])
         assert result[idx][1].__name__ == func
@@ -357,6 +424,8 @@ class TestApiItems:
         ],
     )
     def test_item_section(self, idx, section) -> None:
+        # [FUNCTION DOC]
+        # Verifies the third element is the expected section name for each item.
         result = list(validate_docstrings.get_api_items(self.api_doc))
         assert result[idx][2] == section
 
@@ -365,15 +434,22 @@ class TestApiItems:
         [(0, "Infinite"), (1, "Infinite"), (2, "Finite"), (3, "All"), (4, "All")],
     )
     def test_item_subsection(self, idx, subsection) -> None:
+        # [FUNCTION DOC]
+        # Verifies the fourth element is the expected subsection name for each item.
         result = list(validate_docstrings.get_api_items(self.api_doc))
         assert result[idx][3] == subsection
 
 
 class TestPandasDocstringClass:
+    # [CLASS DOC]
+    # Tests for the validator subclass.
     @pytest.mark.parametrize(
         "name", ["pandas.Series.str.isdecimal", "pandas.Series.str.islower"]
     )
     def test_encode_content_write_to_file(self, name) -> None:
+        # [FUNCTION DOC]
+        # Regression test (issue 25466): running the example linter for two real string-method
+        # docstrings yields no style errors. Parametrized over the two dotted names.
         # GH25466
         docstr = validate_docstrings.PandasDocstring(name).validate_pep8()
         # the list of pep8 errors should be empty
@@ -381,7 +457,12 @@ class TestPandasDocstringClass:
 
 
 class TestMainFunction:
+    # [CLASS DOC]
+    # Tests for the main entry point's exit statuses, with the underlying validators replaced by
+    # stubs through monkeypatching.
     def test_exit_status_for_main(self, monkeypatch) -> None:
+        # [FUNCTION DOC]
+        # Verifies that for a single object with three stubbed errors, main returns three.
         monkeypatch.setattr(
             validate_docstrings,
             "pandas_validate",
@@ -405,6 +486,9 @@ class TestMainFunction:
         assert exit_status == 3
 
     def test_exit_status_errors_for_validate_all(self, monkeypatch) -> None:
+        # [FUNCTION DOC]
+        # Verifies that for the whole API with stubbed results (three and two errors) in default output
+        # format, main returns five.
         monkeypatch.setattr(
             validate_docstrings,
             "validate_all",
@@ -435,6 +519,8 @@ class TestMainFunction:
         assert exit_status == 5
 
     def test_no_exit_status_noerrors_for_validate_all(self, monkeypatch) -> None:
+        # [FUNCTION DOC]
+        # Verifies that when the whole-API stub has no errors (only a warning), main returns zero.
         monkeypatch.setattr(
             validate_docstrings,
             "validate_all",
@@ -453,6 +539,9 @@ class TestMainFunction:
         assert exit_status == 0
 
     def test_exit_status_for_validate_all_json(self, monkeypatch) -> None:
+        # [FUNCTION DOC]
+        # Verifies that in JSON output format main returns zero even though the stubbed results contain
+        # errors.
         monkeypatch.setattr(
             validate_docstrings,
             "validate_all",
@@ -477,6 +566,10 @@ class TestMainFunction:
         assert exit_status == 0
 
     def test_errors_param_filters_errors(self, monkeypatch) -> None:
+        # [FUNCTION DOC]
+        # Verifies error filtering through the ignore mapping: with the global ignore of two codes, the
+        # stub's errors reduce to three remaining (one per object); ignoring two other codes leaves one.
+        # Replaces the error message table with three entries.
         monkeypatch.setattr(
             validate_docstrings,
             "validate_all",

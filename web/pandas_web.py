@@ -24,6 +24,19 @@ main:
 The rest of the items in the file will be added directly to the context.
 """
 
+# [MODULE DOC]
+# Simple static site generator for the pandas website. Reads a source directory containing a configuration file
+# (YAML) that supplies the template rendering context, runs configured context preprocessors that enrich the
+# context, then copies every non-ignored file to a target directory; markdown and HTML files are rendered with
+# Jinja2 using the context (markdown is converted to HTML first, with a table of contents and bootstrap table classes,
+# and wrapped in the configured base template). Public contents: a Preprocessors class of built-in context
+# enrichers (current year, navigation bar info, blog posts from files and feeds, maintainers info from the
+# GitHub API, release list, enhancement proposal lists), helpers to resolve a callable from a dotted string, load
+# the context, list source files and wrap documents in the base template, and the main function used by the
+# command line (source path, optional target path defaulting to a build folder).
+# Import-time side effects: imports third-party packages (feedparser, jinja2, markdown, packaging, requests,
+# yaml) and reads the GitHub token environment variable to build a module-level authorization header dictionary
+# (empty when no token).
 import argparse
 import collections
 import datetime
@@ -55,6 +68,11 @@ else:
 
 
 class Preprocessors:
+    # [CLASS DOC]
+    # Namespace (never instantiated) of static methods that act as built-in context preprocessors: each takes the context
+    # dictionary and returns it enriched. The names of these methods are referenced from the configuration file. Several
+    # methods call the GitHub API with a short timeout and, on quota exhaustion (forbidden status), fall back to JSON
+    # snapshots saved with the production website, and save fresh data into the target folder for future fallback.
     """
     Built-in context preprocessors.
 
@@ -67,6 +85,8 @@ class Preprocessors:
 
     @staticmethod
     def current_year(context):
+        # [FUNCTION DOC]
+        # Static. Adds the current year as an integer under the current-year key. Returns the context.
         """
         Add the current year to the context, so it can be used for the copyright
         note, or other places where it is needed.
@@ -76,6 +96,10 @@ class Preprocessors:
 
     @staticmethod
     def navbar_add_info(context):
+        # [FUNCTION DOC]
+        # Static. For each navigation bar item, replaces it with a copy extended by a flag telling whether its target is a list
+        # (a dropdown with subitems) and a slug (name with spaces replaced by hyphens, lowercased) to use as a style identifier.
+        # Returns the context.
         """
         Items in the main navigation bar can be direct links, or dropdowns with
         subitems. This context preprocessor adds a boolean field
@@ -92,6 +116,12 @@ class Preprocessors:
 
     @staticmethod
     def blog_add_posts(context):
+        # [FUNCTION DOC]
+        # Static. Builds the list of blog posts. Reads markdown files from the configured posts folder (if set), skipping index files; each
+        # is converted with the configured markdown extensions, its metadata title and date are read, and a summary of
+        # about 30 words following the title is extracted from the tag-stripped text (a value error is raised if the title text is
+        # not found in the body). Then reads every configured feed address, collecting entries. Posts are sorted newest first, truncated to
+        # the configured number, and stored under the posts key of the blog section. Returns the context. Requires network access for feeds.
         """
         Given the blog feed defined in the configuration yaml, this context
         preprocessor fetches the posts in the feeds, and returns the relevant
@@ -159,6 +189,11 @@ class Preprocessors:
 
     @staticmethod
     def maintainers_add_info(context):
+        # [FUNCTION DOC]
+        # Static. Fetches GitHub user information for all active, inactive and stub maintainers. Raises a value error if a
+        # person is listed as both active and inactive. A forbidden response triggers use of the saved snapshot from the
+        # production site (and stops fetching); other HTTP errors raise. Stores the result under the github info key of the
+        # maintainers section and writes it to a JSON file in the target folder. Returns the context.
         """
         Given the active maintainers defined in the yaml file, it fetches
         the GitHub user information for them.
@@ -211,6 +246,15 @@ class Preprocessors:
 
     @staticmethod
     def home_add_releases(context):
+        # [FUNCTION DOC]
+        # Static, no docstring. Builds the list of released versions. Fetches the repository releases from GitHub (with snapshot
+        # fallback on a forbidden status), saves them as JSON in the target folder, skips prereleases, and records for each release a name
+        # (tag without a leading v), parsed version, tag, publication time and first asset download address (empty if none).
+        # Then groups consecutive releases by major and minor version, keeps one per group, and sorts the final list from newest
+        # to oldest. Stores it under the releases key. Returns the context.
+        # KNOWN ISSUE: the grouping assumes the releases arrive sorted by version (consecutive groups), and the selection inside each
+        # group uses the minor number, which is identical within a group, so in effect the first entry of each group (the newest, if the
+        # service lists newest first) is kept rather than the highest patch release.
         context["releases"] = []
 
         github_repo_url = context["main"]["github_repo_url"]
@@ -271,6 +315,13 @@ class Preprocessors:
 
     @staticmethod
     def roadmap_pdeps(context):
+        # [FUNCTION DOC]
+        # Static. Builds the lists of enhancement proposals by status. Reads proposal markdown files in the configured folder
+        # (sorted by name): the title is the first line without its heading marker, and the status is read from the line starting with
+        # the status marker; an unknown or missing status raises a runtime error. Proposals are stored in a dictionary keyed by status with
+        # title and page address. Then queries GitHub for open, non-draft pull requests labelled as proposals (with snapshot fallback
+        # on a forbidden status), saves the answer to a JSON file in the target folder, and appends them, sorted by the number parsed from
+        # their title, to the under-discussion list (a value error if a title lacks the proposal number prefix). Returns the context.
         """
         PDEP's (pandas enhancement proposals) are not part of the bar
         navigation. They are included as lists in the "Roadmap" page
@@ -341,6 +392,9 @@ class Preprocessors:
         compiled_pattern = re.compile(r"^PDEP-(\d+)")
 
         def sort_pdep(pdep: dict) -> int:
+            # [FUNCTION DOC]
+            # HELPER: sort key for pull request items. Input: pdep, an item with a title. Returns the integer after the leading
+            # proposal prefix in the title; raises a value error with a hint about the expected title format if absent.
             title = pdep["title"]
             match = compiled_pattern.match(title)
             if not match:
@@ -359,6 +413,11 @@ class Preprocessors:
 
 
 def get_callable(obj_as_str: str) -> object:
+    # [FUNCTION DOC]
+    # Resolves a dotted string to a Python object. Input: obj_as_str. Repeatedly tries to import the longest dotted prefix as a module,
+    # peeling trailing components off as attribute names, then resolves those attributes in order. Returns the object.
+    # KNOWN ISSUE: if no prefix can be imported as a module the loop ends without the module variable being assigned, so the
+    # following emptiness check raises an unbound variable error instead of the intended import error.
     """
     Get a Python object from its string representation.
 
@@ -385,6 +444,11 @@ def get_callable(obj_as_str: str) -> object:
 
 
 def get_context(config_fname: pathlib.Path, **kwargs):
+    # [FUNCTION DOC]
+    # Builds the template context. Inputs: config_fname, path of the YAML configuration; keyword arguments merged into the context
+    # (for example the target path). Loads the configuration, adds the source directory path, applies the keyword arguments, then applies each
+    # preprocessor named in the main section in order; each must return the context (assertion error naming the preprocessor if not).
+    # Returns the context.
     """
     Load the config yaml as the base context, and enrich it with the
     information added by the context preprocessors defined in the file.
@@ -408,6 +472,9 @@ def get_context(config_fname: pathlib.Path, **kwargs):
 
 
 def get_source_files(source_path: pathlib.Path) -> typing.Generator[str, None, None]:
+    # [FUNCTION DOC]
+    # Generator over all regular files below a directory, yielding each path relative to the directory.
+    # KNOWN ISSUE: the declared yield type is text, but the yielded values are path objects.
     """
     Generate the list of files present in the source directory.
     """
@@ -417,6 +484,9 @@ def get_source_files(source_path: pathlib.Path) -> typing.Generator[str, None, N
 
 
 def extend_base_template(content: str, base_template: str) -> str:
+    # [FUNCTION DOC]
+    # Wraps document content in a Jinja2 template inheritance statement. Inputs: content, document text; base_template, template
+    # file name. Returns text that extends the base template and places the content in its body block.
     """
     Wrap document to extend the base template, before it is rendered with
     Jinja2.
@@ -432,6 +502,15 @@ def main(
     source_path: pathlib.Path,
     target_path: pathlib.Path,
 ) -> int:
+    # [FUNCTION DOC]
+    # Generates the site. Inputs: source_path and target_path, directories. First checks that the versions JSON file in the source is
+    # valid JSON (runtime error otherwise). Deletes the target directory (ignoring errors) and recreates it. Builds the context, creates a
+    # Jinja2 environment over the configured templates folder. For each source file not in the ignore list (compared as a posix path):
+    # creates the target subfolder; for markdown or HTML files, reads the file, converts markdown to HTML with the configured
+    # extensions plus a table of contents and adds bootstrap table classes and the base template, sets the base address as a relative
+    # path with one parent step per directory level, renders with Jinja2 and writes a file with the HTML suffix; any other file is copied
+    # unchanged. Progress is printed to standard error.
+    # KNOWN ISSUE: the declared return type is integer, but nothing is returned, so the exit status given to the system exit call is always zero.
     """
     Copy every file in the source directory to the target directory.
 

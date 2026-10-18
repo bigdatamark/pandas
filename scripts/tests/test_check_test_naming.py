@@ -1,3 +1,6 @@
+# [MODULE DOC]
+# Tests for the test-naming checker script. One parametrized test runs the checker's main
+# function on small source snippets and compares what it prints and its return value.
 import pytest
 
 from scripts.check_test_naming import main
@@ -34,6 +37,13 @@ from scripts.check_test_naming import main
     ],
 )
 def test_main(capsys, src, expected_out, expected_ret):
+    # [FUNCTION DOC]
+    # Verifies the checker on snippets: a top-level function not named as a test, and a test-less
+    # named class, are reported with file, line and column and give a failing status; correctly
+    # named functions and classes, helpers used by a test function, objects with the exemption
+    # comment, fixtures (bare or called) and classes decorated for dtype registration are accepted
+    # with empty output and a zero status. Parametrized over source text, expected output and
+    # expected return value; uses output capture.
     ret = main(src, "t.py")
     out, _ = capsys.readouterr()
     assert out == expected_out

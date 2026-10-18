@@ -1,3 +1,11 @@
+# [MODULE DOC]
+# Tests for rolling windows with a weighting window type (the win_type option)
+# on series and data frames. Covers constructor validation, unsupported aggregations,
+# errors raised by scipy, and numerical results of weighted mean, sum, variance and
+# standard deviation for many window shapes, with and without missing data, centering
+# and step. Most tests skip when scipy is not installed. Fixtures defined here
+# supply the window type names; shared fixtures (frame-or-series, step, center)
+# come from the wider test configuration.
 import numpy as np
 import pytest
 
@@ -25,15 +33,25 @@ from pandas.api.indexers import BaseIndexer
     ]
 )
 def win_types(request):
+    # [FUNCTION DOC]
+    # HELPER: fixture parametrized over eight scipy window names that need no
+    # extra parameters; yields the current name.
     return request.param
 
 
 @pytest.fixture(params=["kaiser", "gaussian", "general_gaussian", "exponential"])
 def win_types_special(request):
+    # [FUNCTION DOC]
+    # HELPER: fixture parametrized over four window names that need extra shape
+    # parameters (kaiser, gaussian, general gaussian, exponential); yields the current name.
     return request.param
 
 
 def test_constructor(frame_or_series):
+    # [FUNCTION DOC]
+    # Verifies that building a rolling object with the boxcar window type and various
+    # window, minimum periods and centering options is accepted (no assertions beyond
+    # not raising). Runs for both series and frame.
     # GH 12669
     pytest.importorskip("scipy")
     c = frame_or_series(range(5)).rolling
@@ -46,6 +64,10 @@ def test_constructor(frame_or_series):
 
 @pytest.mark.parametrize("w", [2.0, "foo", np.array([2])])
 def test_invalid_constructor(frame_or_series, w):
+    # [FUNCTION DOC]
+    # Verifies that an invalid minimum periods value (float, string, array) raises a value
+    # error saying it must be an integer, and an invalid centering value raises a value
+    # error saying it must be a boolean. Parametrized over the bad value and series/frame.
     # not valid
     pytest.importorskip("scipy")
     c = frame_or_series(range(5)).rolling
@@ -57,6 +79,9 @@ def test_invalid_constructor(frame_or_series, w):
 
 @pytest.mark.parametrize("wt", ["foobar", 1])
 def test_invalid_constructor_wintype(frame_or_series, wt):
+    # [FUNCTION DOC]
+    # Verifies that an unknown window type name or non-string window type raises a value
+    # error mentioning an invalid window type.
     pytest.importorskip("scipy")
     c = frame_or_series(range(5)).rolling
     with pytest.raises(ValueError, match="Invalid win_type"):
@@ -64,6 +89,9 @@ def test_invalid_constructor_wintype(frame_or_series, wt):
 
 
 def test_constructor_with_win_type(frame_or_series, win_types):
+    # [FUNCTION DOC]
+    # Verifies that each supported window type name is accepted by the rolling
+    # constructor without error.
     # GH 12669
     pytest.importorskip("scipy")
     c = frame_or_series(range(5)).rolling
@@ -72,6 +100,10 @@ def test_constructor_with_win_type(frame_or_series, win_types):
 
 @pytest.mark.parametrize("arg", ["median", "kurt", "skew"])
 def test_agg_function_support(arg):
+    # [FUNCTION DOC]
+    # Verifies that aggregating a weighted-window rolling object with median, kurtosis or
+    # skewness (by name, in a list, or in a dict by column) raises an attribute error saying
+    # the function is not valid for the window object.
     pytest.importorskip("scipy")
     df = DataFrame({"A": np.arange(5)})
     roll = df.rolling(2, win_type="triang")
@@ -88,6 +120,9 @@ def test_agg_function_support(arg):
 
 
 def test_invalid_scipy_arg():
+    # [FUNCTION DOC]
+    # Verifies that passing an unknown keyword to the mean of a boxcar-weighted rolling
+    # object raises a type error (originating in scipy) about an unexpected argument.
     # This error is raised by scipy
     pytest.importorskip("scipy")
     msg = r"boxcar\(\) got an unexpected"
@@ -96,6 +131,9 @@ def test_invalid_scipy_arg():
 
 
 def test_constructor_with_win_type_invalid(frame_or_series):
+    # [FUNCTION DOC]
+    # Verifies that a negative window size with a window type raises a value error saying
+    # the window must be an integer zero or greater.
     # GH 13383
     pytest.importorskip("scipy")
     c = frame_or_series(range(5)).rolling
@@ -107,6 +145,12 @@ def test_constructor_with_win_type_invalid(frame_or_series):
 
 
 def test_window_with_args(step):
+    # [FUNCTION DOC]
+    # Verifies that aggregating a gaussian-weighted rolling object with function arguments
+    # works: aggregation with two anonymous functions yields columns named by the anonymous
+    # function default name and values equal to calling mean with each standard deviation;
+    # the same with two named nested functions yields columns named after the functions.
+    # Parametrized over the step fixture.
     # make sure that we are aggregating window functions correctly with arg
     pytest.importorskip("scipy")
     r = Series(np.random.default_rng(2).standard_normal(100)).rolling(
@@ -118,9 +162,13 @@ def test_window_with_args(step):
     tm.assert_frame_equal(result, expected)
 
     def a(x):
+        # [FUNCTION DOC]
+        # HELPER: aggregation function returning the mean with standard deviation ten.
         return x.mean(std=10)
 
     def b(x):
+        # [FUNCTION DOC]
+        # HELPER: aggregation function returning the mean with standard deviation 0.01.
         return x.mean(std=0.01)
 
     expected = concat([r.mean(std=10), r.mean(std=0.01)], axis=1)
@@ -130,6 +178,9 @@ def test_window_with_args(step):
 
 
 def test_win_type_with_method_invalid():
+    # [FUNCTION DOC]
+    # Verifies that requesting the table computation method with a weighted window type raises
+    # a not-implemented error stating that only the single method is supported.
     pytest.importorskip("scipy")
     with pytest.raises(
         NotImplementedError, match="'single' is the only supported method type."
@@ -139,6 +190,9 @@ def test_win_type_with_method_invalid():
 
 @pytest.mark.parametrize("arg", [2000000000, "2s", Timedelta("2s")])
 def test_consistent_win_type_freq(arg):
+    # [FUNCTION DOC]
+    # Verifies that using the frequency window type with an integer, string or timedelta
+    # window raises a value error about an invalid frequency window type.
     # GH 15969
     pytest.importorskip("scipy")
     s = Series(range(1))
@@ -147,16 +201,28 @@ def test_consistent_win_type_freq(arg):
 
 
 def test_win_type_freq_return_none():
+    # [FUNCTION DOC]
+    # Verifies that a rolling object built from a time-based (offset string) window on a date
+    # indexed series reports no window type (none).
     # GH 48838
     freq_roll = Series(range(2), index=date_range("2020", periods=2)).rolling("2s")
     assert freq_roll.win_type is None
 
 
 def test_win_type_not_implemented():
+    # [FUNCTION DOC]
+    # Verifies that using a custom indexer subclass together with a window type raises a
+    # not-implemented error stating that indexer subclasses are not supported.
     pytest.importorskip("scipy")
 
     class CustomIndexer(BaseIndexer):
+        # [CLASS DOC]
+        # HELPER: minimal custom window indexer for the test; always returns fixed window starts
+        # of zero and one and ends of one and two.
         def get_window_bounds(self, num_values, min_periods, center, closed, step):
+            # [FUNCTION DOC]
+            # HELPER: returns the two fixed bounds arrays (starts zero and one, ends one and two),
+            # ignoring all inputs.
             return np.array([0, 1]), np.array([1, 2])
 
     df = DataFrame({"values": range(2)})
@@ -166,6 +232,9 @@ def test_win_type_not_implemented():
 
 
 def test_cmov_mean(step):
+    # [FUNCTION DOC]
+    # Verifies a centered rolling mean (no window type) over ten known values with window
+    # five equals the expected values (two missing at each end), also under the step fixture.
     # GH 8238
     pytest.importorskip("scipy")
     vals = np.array([6.95, 15.21, 4.72, 9.12, 13.81, 13.49, 16.68, 9.48, 10.63, 14.48])
@@ -187,6 +256,9 @@ def test_cmov_mean(step):
 
 
 def test_cmov_window(step):
+    # [FUNCTION DOC]
+    # Verifies a centered boxcar-weighted rolling mean over ten known values equals the same
+    # expected values as the unweighted mean; parametrized over step.
     # GH 8238
     pytest.importorskip("scipy")
     vals = np.array([6.95, 15.21, 4.72, 9.12, 13.81, 13.49, 16.68, 9.48, 10.63, 14.48])
@@ -208,6 +280,10 @@ def test_cmov_window(step):
 
 
 def test_cmov_window_corner(step):
+    # [FUNCTION DOC]
+    # Verifies corner cases of a centered boxcar-weighted mean: all-missing input gives
+    # all missing; empty input gives empty output; a series shorter than the window gives all
+    # missing with length reduced by the step.
     # GH 8238
     # all nan
     pytest.importorskip("scipy")
@@ -293,6 +369,10 @@ def test_cmov_window_corner(step):
     ],
 )
 def test_cmov_window_frame(f, xp, step):
+    # [FUNCTION DOC]
+    # Verifies boxcar-weighted centered rolling mean, standard deviation, variance and sum on a
+    # two-column frame against hard-coded expected frames. Parametrized over the method name,
+    # expected values and step.
     # Gh 8238
     pytest.importorskip("scipy")
     df = DataFrame(
@@ -321,6 +401,10 @@ def test_cmov_window_frame(f, xp, step):
 
 @pytest.mark.parametrize("min_periods", [0, 1, 2, 3, 4, 5])
 def test_cmov_window_na_min_periods(step, min_periods):
+    # [FUNCTION DOC]
+    # Verifies that a boxcar-weighted rolling mean on random data with missing values equals
+    # the unweighted rolling mean for each minimum periods value from zero to five (centered,
+    # parametrized step).
     pytest.importorskip("scipy")
     vals = Series(np.random.default_rng(2).standard_normal(10))
     vals[4] = np.nan
@@ -334,6 +418,9 @@ def test_cmov_window_na_min_periods(step, min_periods):
 
 
 def test_cmov_window_regular(win_types, step):
+    # [FUNCTION DOC]
+    # Verifies the centered weighted mean for each window type fixture against a table of
+    # expected values for ten known inputs; parametrized over window type and step.
     # GH 8238
     pytest.importorskip("scipy")
     vals = np.array([6.95, 15.21, 4.72, 9.12, 13.81, 13.49, 16.68, 9.48, 10.63, 14.48])
@@ -442,6 +529,9 @@ def test_cmov_window_regular(win_types, step):
 
 
 def test_cmov_window_regular_linear_range(win_types, step):
+    # [FUNCTION DOC]
+    # Verifies that for each window type a centered weighted mean of a linear sequence returns
+    # the sequence itself (symmetric weights), with two missing values at each end.
     # GH 8238
     pytest.importorskip("scipy")
     vals = np.array(range(10), dtype=float)
@@ -455,6 +545,10 @@ def test_cmov_window_regular_linear_range(win_types, step):
 
 
 def test_cmov_window_regular_missing_data(win_types, step):
+    # [FUNCTION DOC]
+    # Verifies the weighted mean for each window type on input containing one missing value,
+    # using a minimum of three periods, against tables of expected values; parametrized over
+    # window type and step.
     # GH 8238
     pytest.importorskip("scipy")
     vals = np.array(
@@ -565,6 +659,9 @@ def test_cmov_window_regular_missing_data(win_types, step):
 
 
 def test_cmov_window_special(win_types_special, step):
+    # [FUNCTION DOC]
+    # Verifies the centered weighted mean for each window type needing extra parameters
+    # (passed to mean) against a table of expected values; parametrized over window type and step.
     # GH 8238
     pytest.importorskip("scipy")
     kwds = {
@@ -637,6 +734,13 @@ def test_cmov_window_special(win_types_special, step):
 
 
 def test_cmov_window_special_linear_range(win_types_special, step):
+    # [FUNCTION DOC]
+    # Verifies that for each parameterized window type, a centered weighted mean of a linear
+    # sequence returns the sequence itself with two missing at each end, with the shape
+    # parameters passed to mean.
+    # KNOWN ISSUE: the parameter table contains an entry for a slepian window with a width
+    # parameter, but that window name is not among the parametrized fixture values, so the
+    # entry is never used.
     # GH 8238
     pytest.importorskip("scipy")
     kwds = {
@@ -661,6 +765,10 @@ def test_cmov_window_special_linear_range(win_types_special, step):
 
 
 def test_weighted_var_big_window_no_segfault(win_types, center):
+    # [FUNCTION DOC]
+    # Regression test (large window must not crash): a weighted rolling variance with a
+    # window of sixteen on a single-element series, for each window type and centering
+    # option, returns a missing value without a segmentation fault.
     # GitHub Issue #46772
     pytest.importorskip("scipy")
     x = Series(0)

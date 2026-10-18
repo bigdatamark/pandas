@@ -19,6 +19,14 @@ As a pre-commit hook:
     pre-commit run validate-errors-locations --all-files
 """
 
+# [MODULE DOC]
+# Pre-commit script that flags exception and warning classes defined outside the pandas errors
+# module and not documented in the testing reference page. Public contents: the path of the testing
+# reference page (resolved relative to the working directory at import), the error message template,
+# a function reading the documented names from that page, a syntax tree visitor collecting class names
+# whose bases look like exceptions or warnings, a validation function and a command line main. When run
+# as a script it processes each given file and exits with status one at the first file with offenders.
+# No other import-time side effects.
 from __future__ import annotations
 
 import argparse
@@ -40,6 +48,10 @@ ERROR_MESSAGE = (
 
 
 def get_warnings_and_exceptions_from_api_path() -> set[str]:
+    # [FUNCTION DOC]
+    # Reads the testing reference page and returns the set of documented exception and warning names: for
+    # each line containing the word errors, the second dot-separated component, trimmed. Raises a file error
+    # if the page is missing, and an index error for such a line containing no dot.
     with open(API_PATH, encoding="utf-8") as f:
         doc_errors = {
             line.split(".")[1].strip() for line in f.readlines() if "errors" in line
@@ -48,13 +60,25 @@ def get_warnings_and_exceptions_from_api_path() -> set[str]:
 
 
 class Visitor(ast.NodeVisitor):
+    # [CLASS DOC]
+    # HELPER: syntax tree visitor collecting candidate exception classes. State: path and exception_set
+    # as given (stored but not otherwise used), and found_exceptions, the set of names of classes with at
+    # least one exception-like base. Does not descend into class bodies, so nested classes are not seen.
     def __init__(self, path: str, exception_set: set[str]) -> None:
+        # [FUNCTION DOC]
+        # HELPER: stores the file path and the documented-name set and starts with an empty set of found classes.
         self.path = path
         self.exception_set = exception_set
         self.found_exceptions = set()
 
     def visit_ClassDef(self, node) -> None:
+        # [FUNCTION DOC]
+        # HELPER: visitor hook for class definitions. A class is recorded if any base is a plain name equal to
+        # the general exception name or ending in the words Warning or Error (a naming heuristic, not real
+        # inheritance analysis; attribute-style bases are ignored).
         def is_an_exception_subclass(base_id: str) -> bool:
+            # [FUNCTION DOC]
+            # HELPER: tells whether a base class name is the general exception name or ends in Warning or Error.
             return base_id == "Exception" or base_id.endswith(("Warning", "Error"))
 
         exception_classes = []
@@ -73,6 +97,11 @@ class Visitor(ast.NodeVisitor):
 def validate_exception_and_warning_placement(
     file_path: str, file_content: str, errors: set[str]
 ) -> None:
+    # [FUNCTION DOC]
+    # Checks one module's source. Inputs: file_path, name used by the visitor; file_content, source text; errors,
+    # set of documented names. Parses the source, finds exception-like classes, and takes those not in the
+    # documented set. If any, writes the error message listing them (joined by commas, in no defined order) to
+    # standard output and exits the process with status one. Otherwise returns nothing.
     tree = ast.parse(file_content)
     visitor = Visitor(file_path, errors)
     visitor.visit(tree)
@@ -89,6 +118,9 @@ def validate_exception_and_warning_placement(
 
 
 def main(argv: Sequence[str] | None = None) -> None:
+    # [FUNCTION DOC]
+    # Command line entry point. Input: argv, optional list of arguments with file paths. Loads the documented
+    # names once, then validates each file in order (the first offending file ends the process with status one).
     parser = argparse.ArgumentParser()
     parser.add_argument("paths", nargs="*")
     args = parser.parse_args(argv)

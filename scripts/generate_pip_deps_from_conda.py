@@ -13,6 +13,16 @@ Usage:
     $ python scripts/generate_pip_deps_from_conda.py --compare
 """
 
+# [MODULE DOC]
+# Script that converts the conda environment file of the repository into the pip
+# requirements file for development, or verifies that the existing pip file is up to date
+# (used in continuous integration). Public contents: constants listing conda packages to
+# exclude, a version override table, and a conda-to-pip name table; a function converting one
+# conda requirement to pip form; a function generating or comparing the pip file; and a
+# command line block (run as script) using the files environment.yml and
+# requirements-dev.txt in the repository root, one level above this scripts directory.
+# Requires the yaml package and the standard TOML reader. The process exit status is one
+# if the comparison found a difference, else zero; a message goes to standard error.
 import argparse
 import pathlib
 import re
@@ -36,6 +46,19 @@ CONDA_TO_PIP = {
 
 
 def conda_package_to_pip(package: str):
+    # [FUNCTION DOC]
+    # Converts one conda requirement string to a pip requirement string. Input: package, the
+    # conda spec. A single equals sign is turned into a double equals sign (comparison operators
+    # are left alone) and whitespace is trimmed. For specs with a lower-or-equal, greater-or-equal
+    # or equality comparison, the name is checked: excluded packages return nothing; packages with a
+    # pinned override version are returned with the comparison operator and the override version
+    # (ignoring the original version); renamed packages return the pip name, the operator and the
+    # original version. Specs without these operators are checked against the exclusion and rename
+    # tables by exact name; otherwise the cleaned spec is returned. Returns text, or none when excluded.
+    # KNOWN ISSUE: only the first matching operator that triggers a branch returns; a spec such as a
+    # name with a strict less-than or greater-than operator is never renamed or excluded and falls
+    # through unchanged, so the rename tables apply only to unversioned names and to the three listed
+    # operators.
     """
     Convert a conda package to its pip equivalent.
 
@@ -69,6 +92,15 @@ def conda_package_to_pip(package: str):
 def generate_pip_from_conda(
     conda_path: pathlib.Path, pip_path: pathlib.Path, compare: bool = False
 ) -> bool:
+    # [FUNCTION DOC]
+    # Generates or checks the pip requirements file. Inputs: conda_path, path to the conda file;
+    # pip_path, path of the pip file; compare, default false. Reads the dependency list from the conda
+    # file: each string entry is converted (excluded ones dropped), a single-key pip section dictionary is
+    # appended as is, and any other entry raises a value error. Builds file content: a generated-file
+    # header, one requirement per line, then every setuptools requirement from the build-system section
+    # of the pyproject file located next to the conda file. In compare mode returns true when the
+    # existing pip file differs from the generated content and writes nothing; otherwise overwrites the
+    # pip file and returns false. Raises file-system and parsing errors if inputs are missing or invalid.
     """
     Generate the pip dependencies file from the conda file, or compare that
     they are synchronized (``compare=True``).

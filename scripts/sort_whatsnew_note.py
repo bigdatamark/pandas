@@ -24,6 +24,12 @@ You can run this manually with
     pre-commit run sort-whatsnew-items --all-files
 """
 
+# [MODULE DOC]
+# Pre-commit script that sorts blocks of consecutive release-note bullet lines (those
+# starting with a dash and a space and ending with an issue reference, optionally followed by
+# a full stop) in whatsnew documentation files, to reduce merge conflicts. Public contents:
+# the line-matching pattern, the sorting function and the command line main function. Runs
+# main when executed as a script and exits with its status. No other import-time side effects.
 from __future__ import annotations
 
 import argparse
@@ -41,6 +47,15 @@ pattern = re.compile(r"-.*\(:issue:`(\d+)`\)\.?$")
 
 
 def sort_whatsnew_note(content: str) -> int:
+    # [FUNCTION DOC]
+    # Sorts matching bullet lines within each contiguous block, leaving all other lines in place.
+    # Input: content, the file text. A block is flushed (sorted lexicographically, as text) when a
+    # non-matching line is reached. Returns the new text (not an integer). Raises an assertion
+    # error if the multiset of lines changed, as a safety check.
+    # KNOWN ISSUE: the return annotation says integer, but the function returns text.
+    # KNOWN ISSUE: a block of matching lines at the very end of the input, with no following
+    # non-matching line, is never flushed, so those lines are dropped and the safety check raises
+    # the assertion error.
     new_lines = []
     block: list[str] = []
     lines = content.splitlines(keepends=True)
@@ -63,6 +78,10 @@ def sort_whatsnew_note(content: str) -> int:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
+    # [FUNCTION DOC]
+    # Command line entry point. Input: argv, optional argument list with file paths. For each file,
+    # reads UTF-8 text, sorts it, and rewrites the file if the content changed. Returns one if any
+    # file changed, else zero.
     parser = argparse.ArgumentParser()
     parser.add_argument("paths", nargs="*")
     args = parser.parse_args(argv)

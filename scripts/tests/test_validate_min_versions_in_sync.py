@@ -1,3 +1,7 @@
+# [MODULE DOC]
+# Test for the script that pins minimum dependency versions in the conda environment file to
+# match the project configuration file. Uses fixture data files in a data folder two levels up
+# from this directory named by path constant.
 import pathlib
 import tomllib
 
@@ -44,6 +48,11 @@ DATA_PATH = pathlib.Path(__file__).parents[2] / "scripts/tests/data/"
     ],
 )
 def test_pin_min_versions_to_yaml_file(src_toml, src_yaml, expected_yaml) -> None:
+    # [FUNCTION DOC]
+    # Verifies, for five scenarios (random, same version, duplicate package, no version, version
+    # range), that reading a minimum-versions configuration file and an unmodified environment
+    # file, mapping both, and pinning the environment text produces text exactly equal to the
+    # expected environment file. Parametrized over the three file paths per scenario.
     with open(src_toml, "rb") as toml_f:
         toml_map = tomllib.load(toml_f)
     with open(src_yaml, encoding="utf-8") as yaml_f:

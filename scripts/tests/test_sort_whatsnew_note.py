@@ -1,7 +1,12 @@
+# [MODULE DOC]
+# Test of the whatsnew note sorting script on a small document.
 from scripts.sort_whatsnew_note import sort_whatsnew_note
 
 
 def test_sort_whatsnew_note() -> None:
+    # [FUNCTION DOC]
+    # Verifies that two adjacent bullet entries ending in issue references are swapped into
+    # ascending issue number order while the headings and blank lines stay in place.
     content = (
         ".. _whatsnew_200:\n"
         "\n"

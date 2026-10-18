@@ -6,6 +6,27 @@ Parts of this file were taken from the pyzmq project
 BSD license. Parts are from lxml (https://github.com/lxml/lxml)
 """
 
+# [MODULE DOC]
+# Build script (setuptools) for compiling pandas' Cython and C extension modules. Run as a script it calls
+# the setup function with the version from the versioneer helper, the list of extension modules (conditionally
+# passed through Cython compilation) and custom command classes. Contents, in file order: helper predicates
+# for the Windows and macOS platforms; detection of an installed Cython satisfying a minimum version (if
+# Cython is missing the compile helper is replaced by an anonymous pass-through function, which cannot carry a
+# block comment); the table of template include files that each module depends on; a build-extension subclass that renders
+# the template include files with Cython's template engine; a custom clean command; a source-distribution command
+# subclass that verifies generated C sources exist; a build-extension subclass giving clearer errors; a
+# no-op Cython command; a dummy replacement for numpy's source build command; the command table; compiler flag
+# preparation; the Cython-compile wrapper function; a path helper; the table of extension modules (with
+# dependencies, language and extra sources); and the construction of the extension objects, including the
+# vendored JSON, datetime and parser extensions.
+# Import-time side effects (this file is executed, not imported): imports numpy and the versioneer helper; removes the
+# custom flags for debugging symbols and Cython coverage from the process arguments; may set the macOS deployment target
+# environment variable; reads environment variables for continuous integration (warnings treated as errors),
+# and Cython coverage; builds the extension list.
+# KNOWN ISSUE: the module relies on the deprecated pkg_resources version parser.
+# KNOWN ISSUE: the compatibility branch for Python 3.8 is dead code on supported Python versions.
+# KNOWN ISSUE: the declared build dependency path of the datetime extension (a header under the tslibs folder) does not exist; the header lives in the include folder.
+# KNOWN ISSUE: the source-distribution subclass is defined but never installed in the command table, so it is unused.
 import argparse
 import multiprocessing
 import os
@@ -29,10 +50,14 @@ cmdclass = versioneer.get_cmdclass()
 
 
 def is_platform_windows():
+    # [FUNCTION DOC]
+    # Returns true when the running platform string is Windows or Cygwin.
     return sys.platform in ("win32", "cygwin")
 
 
 def is_platform_mac():
+    # [FUNCTION DOC]
+    # Returns true when the running platform string is macOS (darwin).
     return sys.platform == "darwin"
 
 
@@ -74,8 +99,17 @@ for module, files in _pxi_dep_template.items():
 
 
 class build_ext(_build_ext):
+    # [CLASS DOC]
+    # Extension build command that, when Cython is available, first renders template include files (the files whose
+    # names end with the template suffix) into plain include files, then performs the normal build. Subclass of the
+    # setuptools build-extension command.
     @classmethod
     def render_templates(cls, pxifiles) -> None:
+        # [FUNCTION DOC]
+        # Class method rendering template include files. Input: pxifiles, list of paths that must each end with the
+        # template extension (an assertion error otherwise). For each, the output path drops the template suffix; if the
+        # output exists and is newer than the template, it is skipped; otherwise the template is read as UTF-8, expanded by the
+        # template engine, and written to the output path. Side effect: writes files.
         for pxifile in pxifiles:
             # build pxifiles first, template extension must be .pxi.in
             assert pxifile.endswith(".pxi.in")
@@ -96,6 +130,9 @@ class build_ext(_build_ext):
                 f.write(pyxcontent)
 
     def build_extensions(self) -> None:
+        # [FUNCTION DOC]
+        # Renders all templates when Cython is installed (when building from generated C sources it is unnecessary), then runs the
+        # standard extension build.
         # if building from c files, don't need to
         # generate template output
         if _CYTHON_INSTALLED:
@@ -105,11 +142,24 @@ class build_ext(_build_ext):
 
 
 class CleanCommand(Command):
+    # [CLASS DOC]
+    # Custom clean command deleting build artifacts. State: option flag all (defaults true, otherwise unused), the list of files to
+    # delete, the list of directory trees to delete, and an exclusion list of C source files that are part of the repository and must not
+    # be removed. Scans the pandas tree for compiled and temporary files (bytecode, shared objects, object files,
+    # generated C and C++, original-merge leftovers), generated include files, and the build and distribution folders.
     """Custom command to clean the .so and .pyc files."""
 
     user_options = [("all", "a", "")]
 
     def initialize_options(self) -> None:
+        # [FUNCTION DOC]
+        # Builds the deletion lists by walking the pandas source tree: files with artifact extensions that are not excluded are
+        # queued, the generated include files are queued, and directory trees named for bytecode caches and the build and dist
+        # folders are queued.
+        # KNOWN ISSUE: the directory trees are appended as lazy generators (one per directory visited, one for the build and
+        # distribution folders) rather than as individual paths, so the removal step passes a generator object to the tree removal
+        # function, which does not raise the operating-system error it catches; the trees are therefore not cleaned and a type error may
+        # occur.
         self.all = True
         self._clean_me = []
         self._clean_trees = []
@@ -162,9 +212,13 @@ class CleanCommand(Command):
         self._clean_trees.append(d for d in ("build", "dist") if os.path.exists(d))
 
     def finalize_options(self) -> None:
+        # [FUNCTION DOC]
+        # Required by the command interface; does nothing.
         pass
 
     def run(self) -> None:
+        # [FUNCTION DOC]
+        # Deletes each queued file, ignoring operating-system errors, then removes each queued tree, ignoring operating-system errors.
         for clean_me in self._clean_me:
             try:
                 os.unlink(clean_me)
@@ -183,6 +237,10 @@ sdist_class = cmdclass["sdist"]
 
 
 class CheckSDist(sdist_class):
+    # [CLASS DOC]
+    # Source distribution command subclass, derived from the versioneer-provided one. Class state: the list of Cython sources
+    # expected to have generated C files and the list expected to have generated C++ files. Its run method either triggers the
+    # Cython command (if registered) or asserts that every generated source exists, then performs the normal sdist.
     """Custom sdist that ensures Cython has compiled all pyx files to c."""
 
     _pyxfiles = [
@@ -228,9 +286,15 @@ class CheckSDist(sdist_class):
     ]
 
     def initialize_options(self) -> None:
+        # [FUNCTION DOC]
+        # Delegates to the parent class's option initialization.
         sdist_class.initialize_options(self)
 
     def run(self) -> None:
+        # [FUNCTION DOC]
+        # If the Cython command is registered, runs it. Otherwise asserts (assertion error with a message telling the
+        # user to run the Cython command) that the generated C or C++ file exists for every listed Cython source. Then runs the
+        # parent's source distribution.
         if "cython" in cmdclass:
             self.run_command("cython")
         else:
@@ -250,11 +314,17 @@ class CheckSDist(sdist_class):
 
 
 class CheckingBuildExt(build_ext):
+    # [CLASS DOC]
+    # Extension build command that, before building, verifies that every source file of every extension exists,
+    # to give a clear error if Cython-generated files are missing.
     """
     Subclass build_ext to get clearer report if Cython is necessary.
     """
 
     def check_cython_extensions(self, extensions) -> None:
+        # [FUNCTION DOC]
+        # Checks each source of each extension; for a missing file prints the extension name and its sources and raises a general
+        # exception explaining that Cython is required to build from a development branch.
         for ext in extensions:
             for src in ext.sources:
                 if not os.path.exists(src):
@@ -267,11 +337,16 @@ class CheckingBuildExt(build_ext):
                     )
 
     def build_extensions(self) -> None:
+        # [FUNCTION DOC]
+        # Runs the source check, then the parent's extension build.
         self.check_cython_extensions(self.extensions)
         build_ext.build_extensions(self)
 
 
 class CythonCommand(build_ext):
+    # [CLASS DOC]
+    # Command used to translate Cython sources to C and stop: it is a build-extension command whose per-extension compile
+    # step does nothing.
     """
     Custom command subclassed from Cython.Distutils.build_ext
     to compile pyx->c, and stop there. All this does is override the
@@ -279,21 +354,32 @@ class CythonCommand(build_ext):
     """
 
     def build_extension(self, ext) -> None:
+        # [FUNCTION DOC]
+        # Overrides the compile step with a no-op. Input: ext, the extension (ignored).
         pass
 
 
 class DummyBuildSrc(Command):
+    # [CLASS DOC]
+    # Placeholder command registered in place of numpy's source-building command, which interferes with Cython's build.
+    # Does nothing.
     """numpy's build_src command interferes with Cython's build_ext."""
 
     user_options = []
 
     def initialize_options(self) -> None:
+        # [FUNCTION DOC]
+        # Sets an empty module dictionary attribute expected by the packaging machinery.
         self.py_modules_dict = {}
 
     def finalize_options(self) -> None:
+        # [FUNCTION DOC]
+        # Required by the command interface; does nothing.
         pass
 
     def run(self) -> None:
+        # [FUNCTION DOC]
+        # Required by the command interface; does nothing.
         pass
 
 
@@ -392,6 +478,12 @@ macros.append(("NPY_NO_DEPRECATED_API", "0"))
 # TODO(cython#4518): Need to check to see if e.g. `linetrace` has changed and
 #  possibly re-compile.
 def maybe_cythonize(extensions, *args, **kwargs):
+    # [FUNCTION DOC]
+    # Wrapper converting extension definitions with Cython. Inputs: extensions, list; extra positional and keyword
+    # arguments forwarded to the Cython compile function. For clean or source distribution invocations (detected from process
+    # arguments) returns the extensions unchanged. If Cython is not installed or too old, raises a runtime error with a matching
+    # message. Otherwise reads an optional parallel jobs argument from the process arguments (default one), passes it as the thread
+    # count, renders all templates, enables debugger support if debugging symbols were requested, and returns the Cython compile result.
     """
     Render tempita templates before calling cythonize. This is skipped for
 
@@ -425,6 +517,9 @@ def maybe_cythonize(extensions, *args, **kwargs):
 
 
 def srcpath(name=None, suffix=".pyx", subdir="src"):
+    # [FUNCTION DOC]
+    # Builds a path under the pandas folder. Inputs: name, file base name (required, despite the default none, which would fail);
+    # suffix, default ".pyx"; subdir, default "src". Returns the joined path pandas, subdir, name plus suffix.
     return pjoin("pandas", subdir, name + suffix)
 
 

@@ -1,3 +1,6 @@
+# [MODULE DOC]
+# Test of the website generator's release-list preprocessor. Provides a fake HTTP response class, fixtures for a minimal context and
+# for replacing the HTTP get function with one returning a parametrized fake response, a sample list of releases and one test.
 from unittest.mock import (  # noqa: TID251
     mock_open,
     patch,
@@ -10,20 +13,31 @@ from web.pandas_web import Preprocessors
 
 
 class MockResponse:
+    # [CLASS DOC]
+    # HELPER: fake HTTP response. State: status_code and the stored response payload. Provides json() returning the payload and a static
+    # raise_for_status doing nothing.
     def __init__(self, status_code: int, response: dict) -> None:
+        # [FUNCTION DOC]
+        # HELPER: stores the status code and response payload.
         self.status_code = status_code
         self._resp = response
 
     def json(self):
+        # [FUNCTION DOC]
+        # HELPER: returns the stored payload.
         return self._resp
 
     @staticmethod
     def raise_for_status() -> None:
+        # [FUNCTION DOC]
+        # HELPER: static; pretends the response was successful (does nothing).
         return
 
 
 @pytest.fixture
 def context() -> dict:
+    # [FUNCTION DOC]
+    # HELPER: fixture returning a minimal context dictionary with the repository name and a target path.
     return {
         "main": {"github_repo_url": "pandas-dev/pandas"},
         "target_path": "test_target_path",
@@ -32,7 +46,12 @@ def context() -> dict:
 
 @pytest.fixture
 def mock_response(monkeypatch, request) -> None:
+    # [FUNCTION DOC]
+    # HELPER: fixture that replaces the HTTP get function of the requests library (via monkeypatch) with a function returning a fake
+    # response built from the fixture's parameter (a status code and payload pair). Parametrized indirectly by the test.
     def mocked_resp(*args, **kwargs):
+        # [FUNCTION DOC]
+        # HELPER: replacement for the HTTP get function; ignores its arguments and returns the fake response.
         status_code, response = request.param
         return MockResponse(status_code, response)
 
@@ -81,6 +100,11 @@ _releases_list = [
 
 @pytest.mark.parametrize("mock_response", [(200, _releases_list)], indirect=True)
 def test_web_preprocessor_creates_releases(mock_response, context) -> None:
+    # [FUNCTION DOC]
+    # Verifies that the release preprocessor, given a successful fake response listing six releases (including a prerelease and
+    # a far-future one) and with file opening mocked out, produces release names for only the latest patch per minor series, sorted
+    # from newest to oldest: ten point zero point one, two point one point three, two point zero point zero, one point five point six. The older 2.1.0
+    # and the prerelease are excluded.
     m = mock_open()
     with patch("builtins.open", m):
         context = Preprocessors.home_add_releases(context)

@@ -1,3 +1,9 @@
+# [MODULE DOC]
+# Exception and warning helpers used internally. Contents: a context manager
+# that rewrites the first argument text of exceptions raised inside it, a function
+# computing the stack level to report in warnings so they point at user code
+# rather than library internals, and a context manager that rewrites matching
+# warnings raised inside it. No import-time side effects.
 from __future__ import annotations
 
 import contextlib
@@ -17,6 +23,13 @@ if TYPE_CHECKING:
 
 @contextlib.contextmanager
 def rewrite_exception(old_name: str, new_name: str) -> Generator[None]:
+    # [FUNCTION DOC]
+    # Context manager rewriting exception text. Inputs: old_name and new_name,
+    # strings; every occurrence of the old name in the first argument of any exception
+    # raised in the managed block is replaced by the new name (the first argument is
+    # converted to text first; remaining arguments are preserved) and the exception is
+    # re-raised with the same type. Exceptions without arguments are re-raised
+    # untouched. Only ordinary exceptions are intercepted. Yields nothing.
     """
     Rewrite the message of an exception.
     """
@@ -35,6 +48,14 @@ def rewrite_exception(old_name: str, new_name: str) -> Generator[None]:
 
 
 def find_stack_level() -> int:
+    # [FUNCTION DOC]
+    # Computes the number of stack frames, counting from this function's own frame,
+    # that belong to the pandas package directory excluding its tests directory. The
+    # walk stops at the first frame outside the package or inside the tests, so the
+    # result is suitable as the stack level argument of a warning call so the
+    # warning is attributed to the first caller outside pandas. Takes no input.
+    # Imports the top-level package lazily to learn its directory. Deletes the frame
+    # reference at the end to avoid reference cycles.
     """
     Find the first place in the stack that is not inside pandas
     (tests notwithstanding).
@@ -70,6 +91,15 @@ def rewrite_warning(
     new_message: str,
     new_category: type[Warning] | None = None,
 ) -> Generator[None]:
+    # [FUNCTION DOC]
+    # Context manager that replaces matching warnings raised inside its block.
+    # Inputs: target_message, a regular expression searched in warning text;
+    # target_category, warning class that must match exactly (not subclasses);
+    # new_message, replacement text; new_category, replacement class, default none
+    # meaning reuse target_category. All warnings raised in the block are captured
+    # (and so not shown immediately); on exit, each is re-emitted with its original
+    # file name and line number, replaced by the new message and category if it
+    # matched, otherwise unchanged. Yields nothing.
     """
     Rewrite the message of a warning.
 
