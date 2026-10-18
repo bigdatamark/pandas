@@ -1,3 +1,8 @@
+# [MODULE DOC]
+# Implementation of the DataFrame conversion to a dictionary-like structure, in all supported orientations.
+# Public contents: the conversion function (with typed overloads for static checkers) and a private-style helper generator that builds row data for the split orientation.
+# Relationships: called by the frame method of the same purpose; uses the generic mapping standardization utility and the helper that converts numpy scalars into native Python objects. Emits a user warning for non-unique columns. No import-time side effects.
+
 from __future__ import annotations
 
 from typing import (
@@ -34,6 +39,10 @@ if TYPE_CHECKING:
 def create_data_for_split(
     df: DataFrame, are_all_object_dtype_cols: bool, object_dtype_indices: list[int]
 ) -> Generator[list]:
+    # [FUNCTION DOC]
+    # HELPER: generator used by the split orientation of the dictionary conversion to produce the data rows.
+    # Parameters: df is the frame; are_all_object_dtype_cols says whether every column is object or extension typed; object_dtype_indices is the list of positional column indexes that are object or extension typed.
+    # Yields one list per row (excluding the index). When all columns are object/extension typed every value is converted to a native Python object; otherwise only values in the listed positions are converted, after the row is turned into a list, for performance. No side effects.
     """
     Simple helper method to create data for to ``to_dict(orient="split")``
     to create the main output data
@@ -59,7 +68,10 @@ def to_dict(
     *,
     into: type[MutableMappingT] | MutableMappingT,
     index: bool = ...,
-) -> MutableMappingT: ...
+) -> MutableMappingT:
+    # [FUNCTION DOC]
+    # Typed overload stub for the case with a mapping type or instance given for into and any orientation except records: returns a mapping of that type. The behavior is defined in the implementation below.
+    ...
 
 
 @overload
@@ -69,7 +81,10 @@ def to_dict(
     *,
     into: type[MutableMappingT] | MutableMappingT,
     index: bool = ...,
-) -> list[MutableMappingT]: ...
+) -> list[MutableMappingT]:
+    # [FUNCTION DOC]
+    # Typed overload stub for the records orientation with a mapping type or instance given for into: returns a list of mappings of that type. The behavior is defined in the implementation below.
+    ...
 
 
 @overload
@@ -79,7 +94,10 @@ def to_dict(
     *,
     into: type[dict] = ...,
     index: bool = ...,
-) -> dict: ...
+) -> dict:
+    # [FUNCTION DOC]
+    # Typed overload stub for the default mapping type with any orientation except records: returns a plain dict. The behavior is defined in the implementation below.
+    ...
 
 
 @overload
@@ -89,7 +107,10 @@ def to_dict(
     *,
     into: type[dict] = ...,
     index: bool = ...,
-) -> list[dict]: ...
+) -> list[dict]:
+    # [FUNCTION DOC]
+    # Typed overload stub for the records orientation with the default mapping type: returns a list of plain dicts. The behavior is defined in the implementation below.
+    ...
 
 
 # error: Incompatible default for argument "into" (default has type "type[dict
@@ -103,6 +124,13 @@ def to_dict(
     into: type[MutableMappingT] | MutableMappingT = dict,  # type: ignore[assignment]
     index: bool = True,
 ) -> MutableMappingT | list[MutableMappingT]:
+    # [FUNCTION DOC]
+    # Implementation: convert a DataFrame to a mapping (or a list of mappings for records).
+    # Parameters: df is the frame; orient selects the layout (dict, list, series, split, tight, records, index; case-insensitive after validation of the index flag), default dict; into is the mapping class or an empty instance (default dict; a defaultdict must be passed initialized); index (default True) controls whether index entries are included and may only be False for split and tight orientations.
+    # Behavior: warns (user warning) if columns are not unique and orient is not tight, since duplicated columns are dropped by key. Standardizes into to a factory. Raises a value error if index is False with another orientation, if orient is index and the frame index is not unique, or if orient is not recognized.
+    # Layouts: series maps column to its Series (returned immediately); dict maps column to a mapping of index to value, using the Series conversion; list maps column to a list of native values; split gives index, columns and data lists; tight adds index names and column names; records gives one mapping per row; index maps each index label to a mapping of column to value. Object and extension typed columns have values converted to native Python objects; masked dtypes use the NA marker when producing list values.
+    # KNOWN ISSUE: the non-unique-columns warning compares the orientation before it is lowercased, so an upper-case tight orientation would still trigger the warning.
+    # Returns a mapping of the requested type, or a list of mappings for records.
     """
     Convert the DataFrame to a dictionary.
 

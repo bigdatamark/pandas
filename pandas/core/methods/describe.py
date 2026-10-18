@@ -4,6 +4,11 @@ Module responsible for execution of NDFrame.describe() method.
 Method NDFrame.describe() delegates actual execution to function describe_ndframe().
 """
 
+# [MODULE DOC]
+# Implementation of the describe summary-statistics method shared by Series and DataFrame.
+# Public entry point is the top-level describe function (called by the generic frame describe method). The module defines an abstract describer base class with Series and DataFrame subclasses, per-dtype 1D describing functions (numeric, categorical, timestamp), a selector that picks the right 1D function for a Series, and helpers to order result rows and normalize percentiles.
+# Depends on the frame concatenation routine, percentile validation and formatting utilities, and dtype predicates. No import-time side effects.
+
 from __future__ import annotations
 
 from abc import (
@@ -59,6 +64,11 @@ def describe_ndframe(
     exclude: str | Sequence[str] | None,
     percentiles: Sequence[float] | np.ndarray | None,
 ) -> NDFrameT:
+    # [FUNCTION DOC]
+    # Entry point: compute the describe summary for a Series or a DataFrame.
+    # Parameters (keyword only): obj is the object to describe; include and exclude are dtype selections (or the string "all" for include) that apply only to frames and are ignored for Series; percentiles is a list-like of numbers in the unit interval, or None for the default quartiles.
+    # Normalizes the percentiles (validated, deduplicated, sorted), then builds a Series describer for one-dimensional input or a frame describer otherwise, and returns its result: a Series of statistics for a Series, a DataFrame of statistics (one column per described column) for a frame.
+    # Raises a value error (via helpers) for invalid or duplicate percentiles, for a frame without columns, or for invalid include/exclude combinations.
     """Describe series or dataframe.
 
     Called from pandas.core.generic.NDFrame.describe()
@@ -99,6 +109,9 @@ def describe_ndframe(
 
 
 class NDFrameDescriberAbstract(ABC):
+    # [CLASS DOC]
+    # Abstract base for objects that describe a Series or DataFrame.
+    # State: the attribute obj holds the object being described. Subclasses must implement the describe method, which takes normalized percentiles and returns the summary object.
     """Abstract class for describing dataframe or series.
 
     Parameters
@@ -108,10 +121,14 @@ class NDFrameDescriberAbstract(ABC):
     """
 
     def __init__(self, obj: DataFrame | Series) -> None:
+        # [FUNCTION DOC]
+        # Stores the object to describe in the attribute obj. No validation.
         self.obj = obj
 
     @abstractmethod
     def describe(self, percentiles: Sequence[float] | np.ndarray) -> DataFrame | Series:
+        # [FUNCTION DOC]
+        # Abstract method: subclasses return the description (a Series or DataFrame) of the stored object for the given percentiles (list-like of numbers in the unit interval). The base implementation has no behavior.
         """Do describe either series or dataframe.
 
         Parameters
@@ -122,11 +139,15 @@ class NDFrameDescriberAbstract(ABC):
 
 
 class SeriesDescriber(NDFrameDescriberAbstract):
+    # [CLASS DOC]
+    # Describer for a Series; inherits the abstract describer and uses the inherited initializer unchanged. Delegates to the per-dtype function chosen for the Series dtype.
     """Class responsible for creating series description."""
 
     obj: Series
 
     def describe(self, percentiles: Sequence[float] | np.ndarray) -> Series:
+        # [FUNCTION DOC]
+        # Describe the stored Series: select the 1D describing function matching its dtype and return its result, a Series of summary statistics indexed by statistic name. The percentiles are passed through.
         describe_func = select_describe_func(
             self.obj,
         )
@@ -134,6 +155,9 @@ class SeriesDescriber(NDFrameDescriberAbstract):
 
 
 class DataFrameDescriber(NDFrameDescriberAbstract):
+    # [CLASS DOC]
+    # Describer for a DataFrame; inherits the abstract describer.
+    # State: obj (the frame), include and exclude (dtype selections, possibly None; include may be the string "all"). Describes each selected column separately and concatenates the results.
     """Class responsible for creating dataobj description.
 
     Parameters
@@ -155,6 +179,9 @@ class DataFrameDescriber(NDFrameDescriberAbstract):
         include: str | Sequence[str] | None,
         exclude: str | Sequence[str] | None,
     ) -> None:
+        # [FUNCTION DOC]
+        # Store include and exclude and the frame. Keyword-only include and exclude are dtype selections or None.
+        # Raises a value error if the frame has no columns (checked before delegating to the base initializer).
         self.include = include
         self.exclude = exclude
 
@@ -164,6 +191,9 @@ class DataFrameDescriber(NDFrameDescriberAbstract):
         super().__init__(obj)
 
     def describe(self, percentiles: Sequence[float] | np.ndarray) -> DataFrame:
+        # [FUNCTION DOC]
+        # Describe the frame: select the columns via the selection helper, describe each column with the function matching its dtype, then concatenate the per-column results side by side (reindexed to a common, display-friendly row order from the ordering helper, without sorting). The result columns are set to a copy of the selected columns.
+        # Returns a DataFrame with one column per described column. Percentiles are passed through to each 1D function.
         data = self._select_data()
 
         ldesc: list[Series] = []
@@ -182,6 +212,10 @@ class DataFrameDescriber(NDFrameDescriberAbstract):
         return d
 
     def _select_data(self) -> DataFrame:
+        # [FUNCTION DOC]
+        # HELPER: for describing a frame. Chooses the columns to describe.
+        # With neither include nor exclude given: keeps only numeric and datetime columns, falling back to all columns if none match. With include equal to "all": uses all columns, and raises a value error if exclude is also given. Otherwise: selects columns by dtype using both include and exclude, and raises a value error if no columns match.
+        # Returns the selected sub-frame.
         """Select columns to be described."""
         if (self.include is None) and (self.exclude is None):
             # when some numerics are found, keep only numerics
@@ -206,6 +240,10 @@ class DataFrameDescriber(NDFrameDescriberAbstract):
 
 
 def reorder_columns(ldesc: Sequence[Series]) -> list[Hashable]:
+    # [FUNCTION DOC]
+    # Compute a display-friendly row order for combining per-column descriptions.
+    # Parameter: ldesc is a sequence of Series (each indexed by statistic names). The series indexes are visited from shortest to longest (stable for ties) and each statistic name is appended the first time it is seen.
+    # Returns the ordered list of unique names.
     """Set a convenient order for rows for display."""
     names: list[Hashable] = []
     seen_names: set[Hashable] = set()
@@ -219,6 +257,10 @@ def reorder_columns(ldesc: Sequence[Series]) -> list[Hashable]:
 
 
 def describe_numeric_1d(series: Series, percentiles: Sequence[float]) -> Series:
+    # [FUNCTION DOC]
+    # Describe a numeric (or timedelta) Series.
+    # Parameters: series is the data; percentiles is a list-like of numbers in the unit interval, possibly empty.
+    # Returns a Series named after the input, indexed by count, mean, std, min, the formatted percentile labels, and max, in that order; quantiles are skipped when no percentiles are given. The result dtype is float64 for numeric non-complex data (nullable Float64 for masked extension dtypes, Arrow float64 for Arrow-backed numeric dtypes), and is inferred (object-like) for complex data, timedeltas and Arrow timedeltas.
     """Describe series containing numerical data.
 
     Parameters
@@ -271,6 +313,9 @@ def describe_categorical_1d(
     data: Series,
     percentiles_ignored: Sequence[float],
 ) -> Series:
+    # [FUNCTION DOC]
+    # Describe categorical-like (also object, string and boolean) data. The percentiles_ignored argument is unused and exists only to unify the interface.
+    # Returns a Series named after the input, indexed by count, unique, top and freq: non-null count, number of distinct values with nonzero frequency, the most frequent value and its frequency. When there are no values, top and freq are missing values and the result dtype is object.
     """Describe series containing categorical data.
 
     Parameters
@@ -300,6 +345,10 @@ def describe_categorical_1d(
 
 
 def describe_timestamp_1d(data: Series, percentiles: Sequence[float]) -> Series:
+    # [FUNCTION DOC]
+    # Describe datetime-like data (naive or timezone-aware datetimes).
+    # Parameters: data is the Series; percentiles is a list-like of numbers in the unit interval.
+    # Returns a Series named after the input, indexed by count, mean, min, the formatted percentile labels, and max (no standard deviation), with inferred dtype.
     """Describe series containing datetime64 dtype.
 
     Parameters
@@ -328,6 +377,10 @@ def describe_timestamp_1d(data: Series, percentiles: Sequence[float]) -> Series:
 def select_describe_func(
     data: Series,
 ) -> Callable:
+    # [FUNCTION DOC]
+    # Choose the 1D describing function for a Series based on its dtype.
+    # Boolean dtype: categorical describer. Numeric dtype: numeric describer. Datetime64 or timezone-aware datetime: timestamp describer. Timedelta: numeric describer. Anything else: categorical describer.
+    # Returns the selected callable; the order of checks matters because boolean is checked before numeric.
     """Select proper function for describing series based on data type.
 
     Parameters
@@ -350,6 +403,12 @@ def select_describe_func(
 def _refine_percentiles(
     percentiles: Sequence[float] | np.ndarray | None,
 ) -> npt.NDArray[np.float64]:
+    # [FUNCTION DOC]
+    # HELPER: for the top-level describe function. Normalizes percentiles.
+    # Parameter: percentiles is a list-like of numbers or None. None yields the default of quarter, half and three quarters.
+    # Otherwise converts to an array, validates every value lies in the unit interval (raising a value error if not), sorts and deduplicates, and raises a value error if duplicates were present.
+    # Returns a sorted float array.
+    # KNOWN ISSUE: the assertion that percentiles is not None is redundant (the None case has already returned), so it can never fail.
     """
     Ensure that percentiles are unique and sorted.
 

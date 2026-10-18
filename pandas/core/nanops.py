@@ -1,3 +1,9 @@
+# [MODULE DOC]
+# NaN-aware reduction kernels operating on plain numpy arrays: any, all, sum, mean, median, std, var, sem, min, max, argmin, argmax, skew, kurtosis, product, correlation, covariance, and a cumulative-function helper. These are the numpy-level engines behind Series, DataFrame and array reductions.
+# Conventions shared by the kernels: values is an ndarray; axis is an integer or none (reduce everything); skipna says whether missing values are ignored; mask is an optional precomputed boolean array marking missing entries (required for datetime-like and masked inputs to be interpreted correctly); keyword-only arguments throughout. Results are scalars or arrays; datetime-like inputs are converted to integer views, processed, and converted back.
+# Machinery: a decorator that rejects given dtypes, a decorator that dispatches to the optional bottleneck library when allowed, a datetime-like compatibility decorator, and a decorator that processes very wide two-dimensional arrays row by row. The helper functions compute masks, fill values, counts, null-out handling for minimum-count rules, and numeric coercion.
+# Import-time side effects: tries to import the optional bottleneck library (warning if it is present but unusable), records whether it is installed, and sets the module-level switch for using it from the compute.use_bottleneck configuration option. Built-in reductions nanmin and nanmax are created at import time by a factory.
+
 from __future__ import annotations
 
 import functools
@@ -57,6 +63,9 @@ _USE_BOTTLENECK = False
 
 
 def set_use_bottleneck(v: bool = True) -> None:
+    # [FUNCTION DOC]
+    # Turn the use of the optional bottleneck library on or off by setting a module-level flag.
+    # Parameter: v (default True) is the new setting. The flag is only changed if bottleneck is installed; otherwise nothing happens. Called once at import time with the configuration option value and again by the configuration callback when the option changes. Returns nothing; mutates global state.
     # set/unset to use bottleneck
     global _USE_BOTTLENECK
     if _BOTTLENECK_INSTALLED:
@@ -67,16 +76,27 @@ set_use_bottleneck(get_option("compute.use_bottleneck"))
 
 
 class disallow:
+    # [CLASS DOC]
+    # Decorator class that forbids the wrapped reduction for certain dtypes.
+    # State: dtypes, a tuple of numpy scalar types derived from the dtype specifications given at construction. Calling an instance on a function returns a wrapper function.
     def __init__(self, *dtypes: Dtype) -> None:
+        # [FUNCTION DOC]
+        # Takes any number of dtype specifications, converts each to a pandas dtype and stores its scalar type in the attribute dtypes.
         super().__init__()
         self.dtypes = tuple(pandas_dtype(dtype).type for dtype in dtypes)
 
     def check(self, obj) -> bool:
+        # [FUNCTION DOC]
+        # Returns True if obj has a dtype attribute whose scalar type is a subclass of any of the disallowed types, otherwise False.
         return hasattr(obj, "dtype") and issubclass(obj.dtype.type, self.dtypes)
 
     def __call__(self, f: F) -> F:
+        # [FUNCTION DOC]
+        # Wrap the function f (the decorated reduction) and return the wrapper, preserving its metadata.
         @functools.wraps(f)
         def _f(*args, **kwargs):
+            # [FUNCTION DOC]
+            # HELPER: the wrapper created by the decorator. Takes any positional and keyword arguments. If any argument (positional or keyword value) has a disallowed dtype, raises a type error saying the reduction (name of f with the nan prefix removed) is not allowed for this dtype. Otherwise calls f; if f raises a value error and the first positional argument has object dtype, the value error is re-raised as a type error; other value errors propagate. Returns f's result.
             obj_iter = itertools.chain(args, kwargs.values())
             if any(self.check(obj) for obj in obj_iter):
                 f_name = f.__name__.replace("nan", "")
@@ -98,11 +118,18 @@ class disallow:
 
 
 class bottleneck_switch:
+    # [CLASS DOC]
+    # Decorator class that routes a reduction to the bottleneck library when conditions allow, else to the wrapped pure-numpy implementation.
+    # State: name (bottleneck function name, default is the wrapped function name) and kwargs (default keyword arguments, such as a degrees-of-freedom value, merged into each call unless the caller gave them).
     def __init__(self, name=None, **kwargs) -> None:
+        # [FUNCTION DOC]
+        # Store the optional bottleneck function name and any default keyword arguments.
         self.name = name
         self.kwargs = kwargs
 
     def __call__(self, alt: F) -> F:
+        # [FUNCTION DOC]
+        # Wrap the alternative implementation alt and return the wrapper. Looks up the bottleneck function by name (absent if bottleneck is missing or lacks it, in which case it is None and never used because the flag is off or the dtype check fails).
         bn_name = self.name or alt.__name__
 
         try:
@@ -118,6 +145,10 @@ class bottleneck_switch:
             skipna: bool = True,
             **kwds,
         ):
+            # [FUNCTION DOC]
+            # HELPER: the wrapper produced by the decorator.
+            # Parameters: values (ndarray), axis (default none), skipna (default True), extra keyword arguments passed to the underlying function. Defaults stored on the decorator are added for keywords not supplied.
+            # If the array is empty and no minimum count was specified, returns the missing value for the dtype (shaped per the axis). If bottleneck usage is enabled, skipna is true and the dtype is suitable, and no mask was supplied (any mask keyword is dropped since bottleneck does not understand it), calls bottleneck; if the result contains infinities, recomputes with the alternative so infinities are treated as missing. In all other cases calls the alternative. Returns the result.
             if len(self.kwargs) > 0:
                 for k, v in self.kwargs.items():
                     if k not in kwds:
@@ -154,6 +185,8 @@ class bottleneck_switch:
 
 
 def _bn_ok_dtype(dtype: DtypeObj, name: str) -> bool:
+    # [FUNCTION DOC]
+    # HELPER: decides whether bottleneck may be used for a dtype and function name. Returns False for object dtype and for datetime-like (needing integer conversion) dtypes. Otherwise returns True unless the name is the sum, product or mean reduction, which bottleneck handles with insufficient precision, overflow risk, or wrong all-missing results.
     # Bottleneck chokes on datetime64, PeriodDtype (or and EA)
     if dtype != object and not needs_i8_conversion(dtype):
         # GH 42878
@@ -174,6 +207,8 @@ def _bn_ok_dtype(dtype: DtypeObj, name: str) -> bool:
 
 
 def _has_infs(result) -> bool:
+    # [FUNCTION DOC]
+    # HELPER: returns whether a result contains positive or negative infinity. Float32 and float64 arrays use a fast compiled check on a flattened view; anything else uses the generic infinity test, and types that cannot hold infinities (type or not-implemented errors) return False.
     if isinstance(result, np.ndarray):
         if result.dtype in ("f8", "f4"):
             # Note: outside of a nanops-specific test, we always have
@@ -189,6 +224,10 @@ def _has_infs(result) -> bool:
 def _get_fill_value(
     dtype: DtypeObj, fill_value: Scalar | None = None, fill_value_typ=None
 ):
+    # [FUNCTION DOC]
+    # HELPER: choose the value used to replace missing entries before a reduction.
+    # Parameters: dtype of the data; fill_value, returned unchanged if not None; fill_value_typ, one of none, a positive-infinity marker or other (treated as negative infinity).
+    # For dtypes that can hold NaN (not integer-like or datetime-like): NaN, positive infinity or negative infinity according to the marker. For others: the largest 64-bit integer if the marker is positive infinity, else the integer sentinel for NaT (as 64-bit integers so that array selection promotes dtype instead of overflowing).
     """return the correct fill value for the dtype of the values"""
     if fill_value is not None:
         return fill_value
@@ -212,6 +251,11 @@ def _get_fill_value(
 def _maybe_get_mask(
     values: np.ndarray, skipna: bool, mask: npt.NDArray[np.bool_] | None
 ) -> npt.NDArray[np.bool_] | None:
+    # [FUNCTION DOC]
+    # HELPER: compute a missing-value mask only when needed.
+    # Parameters: values (ndarray), skipna (bool), mask (optional precomputed mask).
+    # If a mask is given it is returned. Otherwise returns none for boolean/integer dtypes (cannot hold missing values); computes a missing-value mask when skipna is true or the dtype is datetime-like; otherwise returns none.
+    # KNOWN ISSUE: the docstring mentions an invert option selecting the not-missing test, but the function has no such parameter.
     """
     Compute a mask if and only if necessary.
 
@@ -260,6 +304,11 @@ def _get_values(
     fill_value_typ: str | None = None,
     mask: npt.NDArray[np.bool_] | None = None,
 ) -> tuple[np.ndarray, npt.NDArray[np.bool_] | None]:
+    # [FUNCTION DOC]
+    # HELPER: prepare values and mask for a reduction.
+    # Parameters: values (ndarray), skipna, fill_value (scalar used to replace missing entries), fill_value_typ (infinity marker used to derive the fill value), mask (optional precomputed).
+    # Computes the mask via the mask helper; datetime-like values are viewed as 64-bit integers after the mask is found. If skipna is true and a mask exists, determines the fill value and, if any entries are masked, replaces them: in place on a copy for datetime-like or NaN-capable dtypes, otherwise through a conditional select that promotes dtype. Returns a tuple of (values, mask). Does not mutate the input; copies only when replacement is needed.
+    # KNOWN ISSUE: the docstring summary says it returns dtype, maximum dtype and fill value too, but only values and mask are returned.
     """
     Utility to get the values view, mask, dtype, dtype_max, and fill_value.
 
@@ -325,6 +374,8 @@ def _get_values(
 
 
 def _get_dtype_max(dtype: np.dtype) -> np.dtype:
+    # [FUNCTION DOC]
+    # HELPER: platform-independent accumulation dtype. Boolean and signed integer dtypes map to 64-bit signed; unsigned to 64-bit unsigned; floating to 64-bit float; others are returned unchanged.
     # return a platform independent precision dtype
     dtype_max = dtype
     if dtype.kind in "bi":
@@ -337,12 +388,18 @@ def _get_dtype_max(dtype: np.dtype) -> np.dtype:
 
 
 def _na_ok_dtype(dtype: DtypeObj) -> bool:
+    # [FUNCTION DOC]
+    # HELPER: returns True if the dtype can store NaN: False for datetime-like dtypes needing integer conversion and for integer scalar types, True otherwise.
     if needs_i8_conversion(dtype):
         return False
     return not issubclass(dtype.type, np.integer)
 
 
 def _wrap_results(result, dtype: np.dtype, fill_value=None):
+    # [FUNCTION DOC]
+    # HELPER: convert a reduction result back to the original datetime-like dtype.
+    # Parameters: result (scalar or array), dtype (original dtype), fill_value (sentinel indicating missing, default none meaning the integer NaT sentinel for datetimes).
+    # NaT passes through. Datetime64 scalars: sentinel or NaN becomes NaT, else reinterpreted as integer nanosecond-count then cast to the dtype retaining unit (asserts the fill value is not missing); arrays are cast to the dtype. Timedelta64 scalars: sentinel or NaN becomes NaT in the dtype's unit; magnitude above the 64-bit integer maximum raises a value error about overflow; else cast to the dtype; arrays are cast through nanosecond timedeltas then viewed as the dtype. Other dtypes return the result unchanged.
     """wrap our results if needed"""
     if result is NaT:
         pass
@@ -385,6 +442,9 @@ def _wrap_results(result, dtype: np.dtype, fill_value=None):
 
 
 def _datetimelike_compat(func: F) -> F:
+    # [FUNCTION DOC]
+    # HELPER: decorator that makes a reduction work for datetime64 and timedelta64 inputs.
+    # For datetime-like input, a mask is computed if absent, the wrapped function is called with the mask, the result is converted back to the original dtype, and, if skipna is false, positions where any masked values occurred are set to NaT. Other dtypes pass straight through. Returns the wrapper.
     """
     If we have datetime64 or timedelta64 values, ensure we have a correct
     mask before calling the wrapped function, then cast back afterwards.
@@ -399,6 +459,8 @@ def _datetimelike_compat(func: F) -> F:
         mask: npt.NDArray[np.bool_] | None = None,
         **kwargs,
     ):
+        # [FUNCTION DOC]
+        # HELPER: the wrapper built by the compat decorator. Parameters: values, axis (default none), skipna (default True), mask (default none), extra keywords forwarded to the wrapped function. Returns the converted result.
         orig_values = values
 
         datetimelike = values.dtype.kind in "mM"
@@ -419,6 +481,11 @@ def _datetimelike_compat(func: F) -> F:
 
 
 def _na_for_min_count(values: np.ndarray, axis: AxisInt | None) -> Scalar | np.ndarray:
+    # [FUNCTION DOC]
+    # HELPER: the missing value that a reduction of values should return.
+    # Parameters: values (ndarray); axis (int or none; needed to compute the output shape for multi-dimensional input, though none is accepted and gives a scalar).
+    # Numeric and boolean data are treated as float64. For one-dimensional data or axis none, returns the scalar missing value for the dtype (NaN or NaT). Otherwise returns an array of that missing value with the shape of the input without the reduced axis.
+    # KNOWN ISSUE: the docstring says axis is required for multi-dimensional input, but the code accepts none and returns a scalar.
     """
     Return the missing value for `values`.
 
@@ -450,6 +517,9 @@ def _na_for_min_count(values: np.ndarray, axis: AxisInt | None) -> Scalar | np.n
 
 
 def maybe_operate_rowwise(func: F) -> F:
+    # [FUNCTION DOC]
+    # Decorator that processes very wide C-contiguous two-dimensional arrays row by row when reducing along axis 1 (numpy is slow in that case).
+    # The row-wise path is used only when axis is 1, the array is two-dimensional C-contiguous, the number of columns divided by one thousand exceeds the number of rows, and the dtype is neither object nor boolean. It calls the function on each row (slicing the mask per row if given) and returns an array of results. Otherwise it calls the function unchanged. Returns the wrapper.
     """
     NumPy operations on C-contiguous ndarrays with axis=1 can be
     very slow if axis 1 >> axis 0.
@@ -458,6 +528,8 @@ def maybe_operate_rowwise(func: F) -> F:
 
     @functools.wraps(func)
     def newfunc(values: np.ndarray, *, axis: AxisInt | None = None, **kwargs):
+        # [FUNCTION DOC]
+        # HELPER: the wrapper created by the row-wise decorator. Parameters: values, axis (default none), extra keywords (including an optional mask). Returns the array of per-row results or the plain function result.
         if (
             axis == 1
             and values.ndim == 2
@@ -489,6 +561,10 @@ def nanany(
     skipna: bool = True,
     mask: npt.NDArray[np.bool_] | None = None,
 ) -> bool:
+    # [FUNCTION DOC]
+    # Whether any element along the axis is true, ignoring missing values if skipna.
+    # Parameters: values (ndarray), axis (default none), skipna (default True), mask (optional).
+    # Integer and boolean data without a mask use the plain numpy any. Datetime64 raises a type error. Otherwise missing entries are replaced with false, object data are cast to bool, and numpy any is applied. Returns a boolean scalar or array.
     """
     Check if any elements along an axis evaluate to True.
 
@@ -545,6 +621,9 @@ def nanall(
     skipna: bool = True,
     mask: npt.NDArray[np.bool_] | None = None,
 ) -> bool:
+    # [FUNCTION DOC]
+    # Whether all elements along the axis are true, ignoring missing values if skipna.
+    # Same parameters and structure as the any kernel, but missing entries are replaced with true, and datetime64 raises a type error. Returns a boolean scalar or array.
     """
     Check if all elements along an axis evaluate to True.
 
@@ -605,6 +684,10 @@ def nansum(
     min_count: int = 0,
     mask: npt.NDArray[np.bool_] | None = None,
 ) -> npt.NDArray[np.floating] | float | NaTType:
+    # [FUNCTION DOC]
+    # Sum along an axis, skipping missing values if skipna.
+    # Parameters: values (ndarray), axis, skipna, min_count (default 0; if fewer non-missing values than this, the result is missing), mask. Decorated to reject datetime64, to handle timedelta, and to go row-wise on wide arrays.
+    # Missing entries are replaced with zero; the accumulator dtype is the platform 64-bit type for the kind (the same float dtype for floats, float64 for timedeltas). Applies the minimum-count rule to the sum. Returns a scalar or array.
     """
     Sum the elements along an axis ignoring NaNs
 
@@ -648,6 +731,9 @@ def _mask_datetimelike_result(
     mask: npt.NDArray[np.bool_],
     orig_values: np.ndarray,
 ) -> np.ndarray | np.datetime64 | np.timedelta64 | NaTType:
+    # [FUNCTION DOC]
+    # HELPER: after a reduction on datetime-like data with skipna false, sets the result to NaT where any input along the reduced axis was missing.
+    # Parameters: result (array or scalar), axis, mask, orig_values (original array supplying the dtype). For array results: converts to integer, views as the original dtype and sets NaT in positions where the mask has any true along the axis (mutates that new array). For scalar results: returns NaT of the original dtype if any mask entry is true. Otherwise returns the result unchanged.
     if isinstance(result, np.ndarray):
         # we need to apply the mask
         result = result.astype("i8").view(orig_values.dtype)
@@ -667,6 +753,10 @@ def nanmean(
     skipna: bool = True,
     mask: npt.NDArray[np.bool_] | None = None,
 ) -> float:
+    # [FUNCTION DOC]
+    # Mean along an axis, skipping missing values if skipna. Decorated for bottleneck dispatch and datetime-like conversion.
+    # Parameters: values, axis, skipna, mask. For large object arrays without a mask, first runs the reduction on a leading slice of one thousand elements and discards the result, purely to fail fast on non-numeric data.
+    # Fills missing with zero, sums with a float64 accumulator (the input dtype for floats; counts use the same dtype), divides by the count of non-missing entries; zero counts give NaN. Returns a float scalar or array (float input precision preserved).
     """
     Compute the mean of the element along an axis ignoring NaNs
 
@@ -731,6 +821,10 @@ def nanmean(
 def nanmedian(
     values: np.ndarray, *, axis: AxisInt | None = None, skipna: bool = True, mask=None
 ) -> float | np.ndarray:
+    # [FUNCTION DOC]
+    # Median along an axis (ignoring missing values if skipna). Decorated for bottleneck dispatch.
+    # Parameters: values, axis, skipna, mask.
+    # Raises a type error for object arrays inferred as strings or mixed, and for values that cannot be converted to float. Non-float data are converted to float64 and masked entries set to NaN (copying if read-only). Multi-dimensional input with an axis: empty arrays give an all-NaN array of the reduced shape; skipna false applies the scalar median along the axis; skipna true uses numpy nanmedian, with a faster path for single-row/column inputs. Otherwise a scalar median (NaN if empty). The result is converted back to the original dtype for datetime-like input. Suppresses numpy all-NaN and empty-slice warnings.
     """
     Parameters
     ----------
@@ -763,6 +857,8 @@ def nanmedian(
     using_nan_sentinel = values.dtype.kind == "f" and mask is None
 
     def get_median(x: np.ndarray, _mask=None):
+        # [FUNCTION DOC]
+        # HELPER: nested scalar median for a one-dimensional array. Parameters: x, and an optional mask of missing entries (otherwise computed from the array). If skipna is false and anything is missing, returns NaN; otherwise returns the numpy nan-median of the non-missing entries with warnings suppressed. Uses skipna from the enclosing function.
         if _mask is None:
             _mask = notna(x)
         else:
@@ -839,6 +935,8 @@ def _get_empty_reduction_result(
     shape: Shape,
     axis: AxisInt,
 ) -> np.ndarray:
+    # [FUNCTION DOC]
+    # HELPER: the result of a reduction over an empty array. Parameters: shape (tuple of ints) and axis. Returns a float64 array of NaN with the shape of the input with the given axis removed.
     """
     The result from a reduction on an empty ndarray.
 
@@ -865,6 +963,9 @@ def _get_counts_nanvar(
     ddof: int,
     dtype: np.dtype = np.dtype(np.float64),
 ) -> tuple[float | np.ndarray, float | np.ndarray]:
+    # [FUNCTION DOC]
+    # HELPER: count of non-missing values along an axis and the divisor (count minus the degrees of freedom) for variance.
+    # Parameters: values_shape, mask (optional), axis, ddof, dtype (count dtype, default float64). Where the count is not above ddof, both count and divisor are NaN (never infinity). Returns a tuple of (count, divisor), as scalars or arrays; modifies freshly computed arrays in place.
     """
     Get the count of non-null values along an axis, accounting
     for degrees of freedom.
@@ -917,6 +1018,9 @@ def nanstd(
     ddof: int = 1,
     mask=None,
 ):
+    # [FUNCTION DOC]
+    # Standard deviation along an axis, skipping missing values if skipna. Decorated for bottleneck dispatch with ddof default one.
+    # Parameters: values, axis, skipna, ddof (default 1; divisor is count minus ddof), mask. Datetime64 is viewed as timedelta; the mask and fill are computed, then the square root of the variance kernel is returned, converted back to the original datetime-like dtype if needed.
     """
     Compute the standard deviation along given axis while ignoring NaNs
 
@@ -965,6 +1069,9 @@ def nanvar(
     ddof: int = 1,
     mask=None,
 ):
+    # [FUNCTION DOC]
+    # Variance along an axis, skipping missing values if skipna. Decorated to reject datetime64 and timedelta64 and for bottleneck dispatch (ddof default one).
+    # Parameters: values, axis, skipna, ddof (default 1), mask. Integers become float64 with masked entries NaN. Complex data return the sum of the variances of the real and imaginary parts. Uses a two-pass algorithm: mean first, then summed squared deviations (masked entries zero) divided by the count minus ddof. Float results keep the input precision; others are float64.
     """
     Compute the variance along given axis while ignoring NaNs
 
@@ -1047,6 +1154,9 @@ def nansem(
     ddof: int = 1,
     mask: npt.NDArray[np.bool_] | None = None,
 ) -> float:
+    # [FUNCTION DOC]
+    # Standard error of the mean along an axis. Rejects datetime64 and timedelta64.
+    # Parameters: values, axis, skipna, ddof (default 1), mask. First calls the variance kernel for validation of the dtype (discarding the result). Converts non-float, non-complex data to float64; with skipna false and any missing value, returns NaN. Returns the square root of the variance divided by the square root of the count (count already NaN when not above ddof).
     """
     Compute the standard error in the mean along given axis while ignoring NaNs
 
@@ -1096,6 +1206,8 @@ def nansem(
 
 
 def _nanminmax(meth, fill_value_typ):
+    # [FUNCTION DOC]
+    # Factory building the minimum or maximum kernel. Parameters: meth is the numpy method name ("min" or "max") and fill_value_typ the infinity marker used to fill missing values (positive for min, negative for max). Returns the decorated reduction function.
     @bottleneck_switch(name=f"nan{meth}")
     @_datetimelike_compat
     def reduction(
@@ -1105,6 +1217,9 @@ def _nanminmax(meth, fill_value_typ):
         skipna: bool = True,
         mask: npt.NDArray[np.bool_] | None = None,
     ):
+        # [FUNCTION DOC]
+        # HELPER: the reduction produced by the factory, decorated for bottleneck dispatch (under the matching bottleneck name) and datetime-like conversion.
+        # Parameters: values, axis (default none), skipna (default True), mask (default none). Empty input returns the missing value for the dtype. Otherwise fills missing entries with the infinity marker so they do not win, applies the numpy method along the axis, and nulls out positions that were entirely missing. Returns scalar or array.
         if values.size == 0:
             return _na_for_min_count(values, axis)
 
@@ -1132,6 +1247,10 @@ def nanargmax(
     skipna: bool = True,
     mask: npt.NDArray[np.bool_] | None = None,
 ) -> int | np.ndarray:
+    # [FUNCTION DOC]
+    # Position of the maximum along an axis (or of the flattened array when axis is none).
+    # Parameters: values, axis, skipna (default True), mask. Missing entries are always filled with negative infinity so they never win, then argmax is taken. Then, if a mask exists, raises a value error when every element along the axis is missing (skipna true) or any element is missing (skipna false).
+    # KNOWN ISSUE: the docstring says -1 is returned in the missing case, but the code raises a value error instead.
     """
     Parameters
     ----------
@@ -1178,6 +1297,10 @@ def nanargmin(
     skipna: bool = True,
     mask: npt.NDArray[np.bool_] | None = None,
 ) -> int | np.ndarray:
+    # [FUNCTION DOC]
+    # Position of the minimum along an axis (or of the flattened array when axis is none).
+    # Same parameters and behavior as the argmax kernel, with positive infinity as the fill so missing entries never win. Raises a value error if all values (skipna true) or any value (skipna false) along the axis are missing.
+    # KNOWN ISSUE: the docstring says -1 is returned in the missing case, but the code raises a value error instead.
     """
     Parameters
     ----------
@@ -1226,6 +1349,9 @@ def nanskew(
     skipna: bool = True,
     mask: npt.NDArray[np.bool_] | None = None,
 ) -> float:
+    # [FUNCTION DOC]
+    # Sample skewness (adjusted Fisher-Pearson G1) along an axis. Rejects datetime64 and timedelta64; row-wise for wide arrays.
+    # Parameters: values, axis, skipna, mask. Non-float data become float64. With skipna false and any missing value returns NaN. Computes mean, then second and third central moment sums with masked entries zeroed; near-constant data are detected using a tolerance based on machine epsilon, the largest absolute value and count, and moments below it are zeroed. Result: the scaled ratio of the third moment to the second moment to the three-halves power; zero when the second moment is zero; NaN when fewer than three observations. Float input keeps its precision. Returns scalar or array.
     """
     Compute the sample skewness.
 
@@ -1315,6 +1441,9 @@ def nankurt(
     skipna: bool = True,
     mask: npt.NDArray[np.bool_] | None = None,
 ) -> float:
+    # [FUNCTION DOC]
+    # Sample excess kurtosis (adjusted Fisher-Pearson G2) along an axis. Rejects datetime64 and timedelta64; row-wise for wide arrays.
+    # Parameters and setup as for skewness, using second and fourth central moments with the same near-constant tolerance logic (described in the comment inside). Scalar case: NaN with fewer than four observations; zero when the denominator is zero. Array case: zero where the denominator is zero and NaN where the count is below four. Float input keeps its precision.
     """
     Compute the sample excess kurtosis
 
@@ -1435,6 +1564,9 @@ def nanprod(
     min_count: int = 0,
     mask: npt.NDArray[np.bool_] | None = None,
 ) -> float:
+    # [FUNCTION DOC]
+    # Product along an axis, with missing values treated as one when skipna is true. Rejects datetime64 and timedelta64; row-wise for wide arrays.
+    # Parameters: values, axis, skipna, min_count (default 0), mask. Copies and replaces masked entries with one, takes the numpy product, then applies the minimum-count null-out rule. Returns scalar or array.
     """
     Parameters
     ----------
@@ -1476,6 +1608,8 @@ def _maybe_arg_null_out(
     mask: npt.NDArray[np.bool_] | None,
     skipna: bool,
 ) -> np.ndarray | int:
+    # [FUNCTION DOC]
+    # HELPER: post-check for the argument-position kernels. Parameters: result (positions), axis, mask, skipna. Returns the result unchanged if no mask; otherwise raises a value error stating all values are missing (when skipna is true and everything along the axis is missing) or that a missing value was found (when skipna is false and anything is missing).
     # helper function for nanargmin/nanargmax
     if mask is None:
         return result
@@ -1498,6 +1632,9 @@ def _get_counts(
     axis: AxisInt | None,
     dtype: np.dtype[np.floating] = np.dtype(np.float64),
 ) -> np.floating | npt.NDArray[np.floating]:
+    # [FUNCTION DOC]
+    # HELPER: count of non-missing values.
+    # Parameters: values_shape, mask (optional), axis (none counts all), dtype (floating type for the count, default float64). Without a mask the count is based on the shape. Returns a scalar of the given type, or an array of counts converted to that type when axis is given and a mask is present.
     """
     Get the count of non-null values along an axis
 
@@ -1541,6 +1678,11 @@ def _maybe_null_out(
     min_count: int = 1,
     datetimelike: bool = False,
 ) -> np.ndarray | float | NaTType:
+    # [FUNCTION DOC]
+    # HELPER: replace results with missing where fewer than the required number of non-missing values were present.
+    # Parameters: result (array, scalar or NaT), axis, mask (optional), shape (of the original values), min_count (default 1), datetimelike (default False, use the integer NaT sentinel instead of casting to float).
+    # Short-circuits when there is no mask and min_count is zero. For array results with an axis: finds positions with too few valid values; numeric results are cast to float (or complex) if needed and set to NaN, datetime-like set to the sentinel, other kinds set to none. For scalar results: replaced by NaN (typed like the result if floating) when the total valid count is below min_count; NaT stays. Array results are modified in place.
+    # KNOWN ISSUE: the docstring is copied from the product kernel (it describes a product with NaNs as one) and does not describe this function.
     """
     Returns
     -------
@@ -1588,6 +1730,9 @@ def _maybe_null_out(
 def check_below_min_count(
     shape: tuple[int, ...], mask: npt.NDArray[np.bool_] | None, min_count: int
 ) -> bool:
+    # [FUNCTION DOC]
+    # HELPER: whether the number of valid values is below the minimum count.
+    # Parameters: shape (of the values), mask (optional), min_count. Returns False when min_count is not positive. Otherwise counts non-missing as the shape product (no mask) or the mask size minus its true count, and returns True if that count is below min_count.
     """
     Check for the `min_count` keyword. Returns True if below `min_count` (when
     missing value should be returned from the reduction).
@@ -1617,6 +1762,8 @@ def check_below_min_count(
 
 
 def _zero_out_fperr(arg, tol: float | np.ndarray):
+    # [FUNCTION DOC]
+    # HELPER: zero out values within floating point error of zero. Parameters: arg (array or scalar), tol (scalar or array tolerance). Returns arg with entries whose absolute value is below tol replaced by zero (new array for arrays; zero of the same type for scalars). Used by skewness and kurtosis for near-constant data.
     # #18044 reference this behavior to fix rolling skew/kurt issue
     if isinstance(arg, np.ndarray):
         return np.where(np.abs(arg) < tol, 0, arg)
@@ -1632,6 +1779,10 @@ def nancorr(
     method: CorrelationMethod = "pearson",
     min_periods: int | None = None,
 ) -> float:
+    # [FUNCTION DOC]
+    # Correlation of two one-dimensional arrays, ignoring pairs where either is missing. Rejects datetime64 and timedelta64.
+    # Parameters: a and b (ndarrays), method (pearson default, kendall, spearman, or a callable of two arrays), min_periods (default none meaning one).
+    # Raises an assertion error if the lengths differ. Drops pairs with a missing value; returns NaN if fewer than min_periods pairs remain; coerces both to numeric; applies the chosen correlation function. Returns a float.
     """
     a, b: ndarrays
     """
@@ -1659,10 +1810,15 @@ def nancorr(
 def get_corr_func(
     method: CorrelationMethod,
 ) -> Callable[[np.ndarray, np.ndarray], float]:
+    # [FUNCTION DOC]
+    # Return the correlation function for a method name.
+    # Parameter: method is kendall, spearman, pearson, or a callable. Kendall and spearman import the optional scientific library lazily and return the first element of its result; pearson returns the off-diagonal entry of numpy's correlation matrix. A callable is returned unchanged. Raises a value error for unknown names.
     if method == "kendall":
         from scipy.stats import kendalltau
 
         def func(a, b):
+            # [FUNCTION DOC]
+            # HELPER: nested correlation function: Kendall tau of two arrays, returning the statistic only.
             return kendalltau(a, b)[0]
 
         return func
@@ -1670,12 +1826,16 @@ def get_corr_func(
         from scipy.stats import spearmanr
 
         def func(a, b):
+            # [FUNCTION DOC]
+            # HELPER: nested correlation function: Spearman rank correlation of two arrays, returning the coefficient only.
             return spearmanr(a, b)[0]
 
         return func
     elif method == "pearson":
 
         def func(a, b):
+            # [FUNCTION DOC]
+            # HELPER: nested correlation function: Pearson correlation coefficient of two arrays from numpy's correlation matrix.
             return np.corrcoef(a, b)[0, 1]
 
         return func
@@ -1696,6 +1856,9 @@ def nancov(
     min_periods: int | None = None,
     ddof: int | None = 1,
 ) -> float:
+    # [FUNCTION DOC]
+    # Covariance of two one-dimensional arrays, ignoring pairs where either is missing. Rejects datetime64 and timedelta64.
+    # Parameters: a and b (ndarrays), min_periods (default none meaning one), ddof (default 1). Raises an assertion error if the lengths differ. Drops incomplete pairs; returns NaN if fewer than min_periods remain; coerces to numeric; returns the off-diagonal entry of numpy's covariance matrix with the given ddof.
     if len(a) != len(b):
         raise AssertionError("Operands to nancov must have same size")
 
@@ -1717,6 +1880,9 @@ def nancov(
 
 
 def _ensure_numeric(x):
+    # [FUNCTION DOC]
+    # HELPER: coerce a value to a numeric type.
+    # Arrays: boolean and integers become float64; object arrays inferred as string or mixed raise a type error; other object arrays are cast to complex (and reduced to real if the imaginary part is entirely zero) or, failing that, float64, raising a type error if neither works. Scalars that are not already float, integer or complex: strings raise a type error; others are converted to float, then complex, raising a type error if neither works. Returns the coerced value.
     if isinstance(x, np.ndarray):
         if x.dtype.kind in "biu":
             x = x.astype(np.float64)
@@ -1753,6 +1919,10 @@ def _ensure_numeric(x):
 
 
 def na_accum_func(values: ArrayLike, accum_func, *, skipna: bool) -> ArrayLike:
+    # [FUNCTION DOC]
+    # Cumulative function with missing-value support.
+    # Parameters: values (ndarray or extension array; datetime-like asserted absent), accum_func (one of cumulative product, cumulative sum, running maximum or running minimum numpy functions, looked up in a table that gives the neutral fill value; an unlisted function raises a key error), skipna (keyword only).
+    # If skipna is true and the dtype can hold missing values, copies the data, replaces missing entries with the neutral element, accumulates along axis zero, and restores NaN at the originally missing positions. Otherwise accumulates directly. Returns the accumulated array.
     """
     Cumulative function with skipna support.
 

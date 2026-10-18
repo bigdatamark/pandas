@@ -1,3 +1,9 @@
+# [MODULE DOC]
+# Block managers: the internal storage layer behind DataFrame and Series. A manager owns a sequence of axes (label indexes) and a tuple of blocks, where each block holds the values of one dtype for a set of positions along the items axis.
+# Public contents: BaseBlockManager (shared logic), BlockManager (two-dimensional: items are columns, second axis is the row index), SingleBlockManager (one-dimensional, backs Series), constructor helpers that build managers from blocks or from per-column arrays, an error-raising helper for shape mismatches, a function that creates missing-value arrays, plus private helpers for consolidation and block formation.
+# Key concepts: the placement of each block (positions of its items in the manager), the lookup arrays mapping each item to its block number and to its position within that block, consolidation (merging blocks of equal dtype), and copy-on-write reference tracking between blocks sharing memory. Most mutating methods change the manager in place and keep these lookup arrays consistent.
+# Relationships: depends on the block classes and block-pair operations module (imported here), and on a compiled base class for the two-dimensional manager. Emits a performance warning when many non-extension blocks accumulate after insertion. No import-time side effects.
+
 from __future__ import annotations
 
 from collections.abc import (
@@ -109,6 +115,9 @@ if TYPE_CHECKING:
 
 
 def interleaved_dtype(dtypes: list[DtypeObj]) -> DtypeObj | None:
+    # [FUNCTION DOC]
+    # Find the common dtype for a list of block dtypes. Parameter: dtypes is a list of dtype objects. Returns none when the list is empty, otherwise the common dtype determined by the dtype promotion rules.
+    # KNOWN ISSUE: the docstring names the parameter blocks, but the actual parameter is named dtypes.
     """
     Find the common dtype for `blocks`.
 
@@ -128,6 +137,8 @@ def interleaved_dtype(dtypes: list[DtypeObj]) -> DtypeObj | None:
 
 
 def ensure_np_dtype(dtype: DtypeObj) -> np.dtype:
+    # [FUNCTION DOC]
+    # Convert a dtype to a numpy dtype suitable for a plain array. Sparse dtypes map to their subtype; other extension dtypes map to object; the fixed-width string dtype maps to object; numpy dtypes pass through. Returns the numpy dtype.
     # TODO: https://github.com/pandas-dev/pandas/issues/22791
     # Give EAs some input on what happens here. Sparse needs this.
     if isinstance(dtype, SparseDtype):
@@ -141,6 +152,11 @@ def ensure_np_dtype(dtype: DtypeObj) -> np.dtype:
 
 
 class BaseBlockManager(PandasObject):
+    # [CLASS DOC]
+    # Abstract base for block managers (not public API). Subclasses are the two-dimensional BlockManager and the one-dimensional SingleBlockManager. It declares the shared attributes: the tuple of blocks, the list of axes, and the lookup arrays of block numbers and in-block positions, plus consolidation flags. Slots are empty because subclasses hold the state.
+    # Provides the shared operations: applying a block-level method to every block, element-wise helpers (fill, where, mask assignment, round, replace, interpolate, shift, astype and so on), copying, subsetting, reindexing, taking, consolidation hooks and equality.
+    # Invariants: the union of block placements covers every item exactly once; block shapes beyond the items axis match the other axes; copy-on-write references are tracked on blocks.
+    # KNOWN ISSUE: the docstring lists a method signature set (for example reindex_axis, delete, insert and set by label) that does not exactly match the methods defined here; delete and set by label do not exist on this class.
     """
     Core internal data structure to implement DataFrame, Series, etc.
 
@@ -200,28 +216,40 @@ class BaseBlockManager(PandasObject):
 
     @property
     def ndim(self) -> int:
+        # [FUNCTION DOC]
+        # Abstract property: the number of dimensions. Subclasses supply it (two for BlockManager, one for SingleBlockManager); the base raises a not-implemented error.
         raise NotImplementedError
 
     _known_consolidated: bool
     _is_consolidated: bool
 
     def __init__(self, blocks, axes, verify_integrity: bool = True) -> None:
+        # [FUNCTION DOC]
+        # Abstract constructor: subclasses implement construction from blocks, axes and an integrity flag; the base raises a not-implemented error.
         raise NotImplementedError
 
     @final
     def __len__(self) -> int:
+        # [FUNCTION DOC]
+        # Number of items: the length of the first axis.
         return len(self.items)
 
     @property
     def shape(self) -> Shape:
+        # [FUNCTION DOC]
+        # The shape as a tuple of the lengths of all axes.
         return tuple(len(ax) for ax in self.axes)
 
     @classmethod
     def from_blocks(cls, blocks: list[Block], axes: list[Index]) -> Self:
+        # [FUNCTION DOC]
+        # Abstract class constructor: build a manager of this class from a list of blocks and a list of axes without verifying integrity. Subclasses implement it; the base raises a not-implemented error.
         raise NotImplementedError
 
     @property
     def blknos(self) -> npt.NDArray[np.intp]:
+        # [FUNCTION DOC]
+        # Lookup array giving, for each item, the number of the block that holds it. Built lazily: if not yet computed, triggers a rebuild of both lookup arrays. Values are positions in the block tuple; the in-block position is given by the companion property. The arrays may be altered by other manager methods.
         """
         Suppose we want to find the array corresponding to our i'th column.
 
@@ -238,6 +266,8 @@ class BaseBlockManager(PandasObject):
 
     @property
     def blklocs(self) -> npt.NDArray[np.intp]:
+        # [FUNCTION DOC]
+        # Lookup array giving, for each item, its position within the block identified by the block number array. Built lazily together with the block number array.
         """
         See blknos.__doc__
         """
@@ -248,6 +278,9 @@ class BaseBlockManager(PandasObject):
         return self._blklocs
 
     def make_empty(self, axes=None) -> Self:
+        # [FUNCTION DOC]
+        # Return an empty manager of the same class with the items axis of length zero.
+        # Parameter: axes is an optional list of axes; by default a zero-length default index followed by the remaining existing axes. For one-dimensional managers, the single block is kept with its values truncated to zero length (preserving dtype); for two-dimensional managers, there are no blocks. Returns the new manager built from blocks and axes.
         """return an empty BlockManager with the items axis of len 0"""
         if axes is None:
             # TODO shallow copy remaining axis?
@@ -266,15 +299,21 @@ class BaseBlockManager(PandasObject):
         return type(self).from_blocks(blocks, axes)
 
     def __bool__(self) -> bool:
+        # [FUNCTION DOC]
+        # A manager is always truthy, regardless of length.
         return True
 
     def set_axis(self, axis: AxisInt, new_labels: Index) -> None:
+        # [FUNCTION DOC]
+        # Replace the axis at the given position with new labels. Parameters: axis (position) and new_labels (must already be an index object; not coerced). Validates the length through the validation helper and then assigns in place; raises a value error on length mismatch (except when setting the second axis of a manager that has no items).
         # Caller is responsible for ensuring we have an Index object.
         self._validate_set_axis(axis, new_labels)
         self.axes[axis] = new_labels
 
     @final
     def _validate_set_axis(self, axis: AxisInt, new_labels: Index) -> None:
+        # [FUNCTION DOC]
+        # HELPER: for axis replacement. Compares the new label count with the current axis length and raises a value error describing the mismatch, except that changing the row axis is allowed when there are no items.
         # Caller is responsible for ensuring we have an Index object.
         old_len = len(self.axes[axis])
         new_len = len(new_labels)
@@ -292,14 +331,20 @@ class BaseBlockManager(PandasObject):
 
     @property
     def is_single_block(self) -> bool:
+        # [FUNCTION DOC]
+        # True when there is exactly one block. Assumes a two-dimensional manager; the one-dimensional subclass overrides it with a constant.
         # Assumes we are 2D; overridden by SingleBlockManager
         return len(self.blocks) == 1
 
     @property
     def items(self) -> Index:
+        # [FUNCTION DOC]
+        # The first axis (the items axis: columns for a two-dimensional manager).
         return self.axes[0]
 
     def _has_no_reference(self, i: int) -> bool:
+        # [FUNCTION DOC]
+        # HELPER: for copy-on-write. Whether the item at position i has no references, meaning its block neither references another array nor is referenced by one. Looks up the block number and delegates to the block-level check. Returns a boolean.
         """
         Check for column `i` if it has references.
         (whether it references another array or is itself being referenced)
@@ -309,6 +354,8 @@ class BaseBlockManager(PandasObject):
         return self._has_no_reference_block(blkno)
 
     def _has_no_reference_block(self, blkno: int) -> bool:
+        # [FUNCTION DOC]
+        # HELPER: whether the block at the given block number has no references (neither a view of nor viewed by another array). Returns a boolean.
         """
         Check for block `i` if it has references.
         (whether it references another array or is itself being referenced)
@@ -317,6 +364,8 @@ class BaseBlockManager(PandasObject):
         return not self.blocks[blkno].refs.has_reference()
 
     def add_references(self, mgr: BaseBlockManager) -> None:
+        # [FUNCTION DOC]
+        # Copy-on-write support: adopt the reference trackers of another manager. Parameter: mgr, a manager assumed to have the same block structure. If the number of blocks differs (meaning a copy was made) nothing happens; otherwise each block here takes the reference object of the block at the same position there and registers itself with it. Mutates blocks in place; returns nothing.
         """
         Adds the references from one manager to another. We assume that both
         managers have the same block structure.
@@ -329,6 +378,8 @@ class BaseBlockManager(PandasObject):
             blk.refs.add_reference(blk)
 
     def references_same_values(self, mgr: BaseBlockManager, blkno: int) -> bool:
+        # [FUNCTION DOC]
+        # Whether the block at the given block number in this manager shares underlying values with the block at the same number in another manager. Parameters: mgr (other manager) and blkno. Returns True if this block is among the blocks referenced by the other block's tracker.
         """
         Checks if two blocks from two different block managers reference the
         same underlying values.
@@ -337,14 +388,20 @@ class BaseBlockManager(PandasObject):
         return any(blk is ref() for ref in mgr.blocks[blkno].refs.referenced_blocks)
 
     def get_unique_dtypes(self) -> npt.NDArray[np.object_]:
+        # [FUNCTION DOC]
+        # Return an array of the unique dtypes among the blocks (object array, order of first appearance).
         return algos.unique(np.array([blk.dtype for blk in self.blocks], dtype=object))
 
     def get_dtypes(self) -> npt.NDArray[np.object_]:
+        # [FUNCTION DOC]
+        # Return an object array with one dtype per item, ordered by item position (the block dtypes expanded with the block-number lookup).
         dtypes = np.array([blk.dtype for blk in self.blocks], dtype=object)
         return dtypes.take(self.blknos)
 
     @property
     def arrays(self) -> list[ArrayLike]:
+        # [FUNCTION DOC]
+        # Property giving the list of the raw value arrays of the blocks, for testing and for external consumers. Warns in its documentation that it does not honor copy-on-write and should be used read-only. Returns a list with one array per block (not per item).
         """
         Quick access to the backing arrays of the Blocks.
 
@@ -360,6 +417,8 @@ class BaseBlockManager(PandasObject):
         return [blk.values for blk in self.blocks]
 
     def __repr__(self) -> str:
+        # [FUNCTION DOC]
+        # Text representation: the class name, one line for the items axis, one line for each further axis, then one line per block.
         output = type(self).__name__
         for i, ax in enumerate(self.axes):
             if i == 0:
@@ -372,6 +431,8 @@ class BaseBlockManager(PandasObject):
         return output
 
     def _equal_values(self, other: Self) -> bool:
+        # [FUNCTION DOC]
+        # Abstract hook: subclasses compare the values of two managers whose shapes and axes were already checked and return a boolean. The base raises an abstract-method error.
         """
         To be implemented by the subclasses. Only check the column values
         assuming shape and indexes have already been checked.
@@ -380,6 +441,8 @@ class BaseBlockManager(PandasObject):
 
     @final
     def equals(self, other: object) -> bool:
+        # [FUNCTION DOC]
+        # Equality used by the frame equality method (final). Returns False when other is not an instance of this manager's class, when the number of axes differs, or when any pair of axes is not equal; otherwise defers to the subclass value comparison. Returns a boolean.
         """
         Implementation for DataFrame.equals
         """
@@ -402,6 +465,10 @@ class BaseBlockManager(PandasObject):
         align_keys: list[str] | None = None,
         **kwargs,
     ) -> Self:
+        # [FUNCTION DOC]
+        # Apply an operation to every block and build a new manager from the results.
+        # Parameters: f is either the name of a block method or a callable (applied with the block-level apply helper); align_keys is an optional list of keyword names whose values (Series, DataFrame or ndarray) are sliced to each block's item positions before each call; extra keywords are forwarded to the block method. A keyword named filter is not allowed (assertion).
+        # Results of each block may be one or several blocks and are flattened. The new manager has the same class and views of the axes. Returns the new manager.
         """
         Iterate over the blocks, collect and create a new BlockManager.
 
@@ -450,10 +517,14 @@ class BaseBlockManager(PandasObject):
 
     @final
     def isna(self, func) -> Self:
+        # [FUNCTION DOC]
+        # Apply a function blockwise through the block-level apply method (the argument func is passed on). Despite its name it does not check for missing values itself; the callable decides. Returns a new manager.
         return self.apply("apply", func=func)
 
     @final
     def fillna(self, value, limit: int | None, inplace: bool) -> Self:
+        # [FUNCTION DOC]
+        # Fill missing values blockwise. Parameters: value (fill value), limit (maximum number of fills or none; validated up front even if no block needs filling), inplace flag. Returns the new manager from the block-level fill method.
         if limit is not None:
             # Do this validation even if we go through one of the no-op paths
             limit = libalgos.validate_limit(None, limit=limit)
@@ -467,6 +538,8 @@ class BaseBlockManager(PandasObject):
 
     @final
     def where(self, other, cond, align: bool) -> Self:
+        # [FUNCTION DOC]
+        # Conditional replacement blockwise. Parameters: other (replacement values), cond (boolean condition), align (whether other should be sliced per block together with cond; if false, other is unwrapped to a raw array first and only cond is sliced). Returns a new manager.
         if align:
             align_keys = ["other", "cond"]
         else:
@@ -482,6 +555,8 @@ class BaseBlockManager(PandasObject):
 
     @final
     def putmask(self, mask, new, align: bool = True) -> Self:
+        # [FUNCTION DOC]
+        # Mask assignment blockwise. Parameters: mask (boolean positions to overwrite), new (new values), align (default True: slice both mask and new per block; if false, new is unwrapped to a raw array and only mask is sliced). Returns a new manager.
         if align:
             align_keys = ["new", "mask"]
         else:
@@ -497,10 +572,14 @@ class BaseBlockManager(PandasObject):
 
     @final
     def round(self, decimals: int) -> Self:
+        # [FUNCTION DOC]
+        # Round values blockwise to the given number of decimals. Returns a new manager.
         return self.apply("round", decimals=decimals)
 
     @final
     def replace(self, to_replace, value, inplace: bool) -> Self:
+        # [FUNCTION DOC]
+        # Replace a scalar with another scalar blockwise. Parameters: to_replace and value (both asserted non-list-like; the caller is responsible), inplace (validated as a boolean). Returns a new manager.
         inplace = validate_bool_kwarg(inplace, "inplace")
         # NDFrame.replace ensures the not-is_list_likes here
         assert not lib.is_list_like(to_replace)
@@ -514,6 +593,8 @@ class BaseBlockManager(PandasObject):
 
     @final
     def replace_regex(self, **kwargs) -> Self:
+        # [FUNCTION DOC]
+        # Regex replacement blockwise: forwards all keywords to the block-level regex replacement and returns a new manager.
         return self.apply("_replace_regex", **kwargs)
 
     @final
@@ -524,6 +605,8 @@ class BaseBlockManager(PandasObject):
         inplace: bool = False,
         regex: bool = False,
     ) -> Self:
+        # [FUNCTION DOC]
+        # Replace many values at once blockwise. Parameters: src_list (values to replace), dest_list (replacements, same length), inplace (default False, validated as boolean), regex (default False). After applying, consolidates the new manager in place because replacement can fragment blocks. Returns the new manager.
         """do a list replace"""
         inplace = validate_bool_kwarg(inplace, "inplace")
 
@@ -538,18 +621,27 @@ class BaseBlockManager(PandasObject):
         return bm
 
     def interpolate(self, inplace: bool, **kwargs) -> Self:
+        # [FUNCTION DOC]
+        # Interpolate blockwise. Parameters: inplace plus keywords forwarded to the block interpolation. Returns a new manager.
         return self.apply("interpolate", inplace=inplace, **kwargs)
 
     def pad_or_backfill(self, inplace: bool, **kwargs) -> Self:
+        # [FUNCTION DOC]
+        # Forward or backward fill blockwise: inplace flag plus keywords forwarded to the block method. Returns a new manager.
         return self.apply("pad_or_backfill", inplace=inplace, **kwargs)
 
     def shift(self, periods: int, fill_value) -> Self:
+        # [FUNCTION DOC]
+        # Shift values along the rows blockwise. Parameters: periods, fill_value (the no-default sentinel is converted to none). Returns a new manager.
         if fill_value is lib.no_default:
             fill_value = None
 
         return self.apply("shift", periods=periods, fill_value=fill_value)
 
     def setitem(self, indexer, value) -> Self:
+        # [FUNCTION DOC]
+        # Assign values at an indexer, returning the resulting manager (possibly a new one). For a Series this backs item assignment.
+        # Parameters: indexer (positional indexer; an array with more dimensions than the manager raises a value error) and value. Copy-on-write: if the single block has references, then for a two-dimensional manager with a tuple indexer only the affected columns are split off into a new block (copy of just those columns), the indexer is rewritten against that block (handling duplicate or reordered columns and two-dimensional row indexers), and the value is set in place on the first block; an empty column selection returns a shallow copy and an empty row selection returns self unchanged. Otherwise the manager is deeply copied first. Without references, the block-level setitem is applied via apply. Returns the manager.
         """
         Set values with indexer.
 
@@ -620,21 +712,32 @@ class BaseBlockManager(PandasObject):
         return self.apply("setitem", indexer=indexer, value=value)
 
     def diff(self, n: int) -> Self:
+        # [FUNCTION DOC]
+        # Difference between rows n periods apart, blockwise. Only reached for two-dimensional data. Returns a new manager.
         # only reached with self.ndim == 2
         return self.apply("diff", n=n)
 
     def astype(self, dtype, errors: str = "raise") -> Self:
+        # [FUNCTION DOC]
+        # Cast blockwise. Parameters: dtype and errors (default raise; forwarded). Returns a new manager.
         return self.apply("astype", dtype=dtype, errors=errors)
 
     def convert(self) -> Self:
+        # [FUNCTION DOC]
+        # Run dtype inference conversion blockwise. Returns a new manager.
         return self.apply("convert")
 
     def convert_dtypes(self, **kwargs):
+        # [FUNCTION DOC]
+        # Convert to nullable and best-possible dtypes blockwise; keywords are forwarded to the block method. Returns a new manager.
         return self.apply("convert_dtypes", **kwargs)
 
     def get_values_for_csv(
         self, *, float_format, date_format, decimal, na_rep: str = "nan", quoting=None
     ) -> Self:
+        # [FUNCTION DOC]
+        # Convert values to native objects for display or CSV output, blockwise (keyword only parameters).
+        # Parameters: float_format, date_format, decimal (formatting options), na_rep (default the string nan), quoting (optional). Returns a new manager.
         """
         Convert values to native types (strings / python objects) that are used
         in formatting (repr / csv).
@@ -650,11 +753,15 @@ class BaseBlockManager(PandasObject):
 
     @property
     def any_extension_types(self) -> bool:
+        # [FUNCTION DOC]
+        # Property: True if any block is an extension block.
         """Whether any of the blocks in this manager are extension blocks"""
         return any(block.is_extension for block in self.blocks)
 
     @property
     def is_view(self) -> bool:
+        # [FUNCTION DOC]
+        # Property: True when there is exactly one block and that block is a view; False otherwise (even if some blocks of a multi-block manager are views).
         """return a boolean if we are a single block and are a view"""
         if len(self.blocks) == 1:
             return self.blocks[0].is_view
@@ -669,15 +776,21 @@ class BaseBlockManager(PandasObject):
         return False
 
     def _get_data_subset(self, predicate: Callable) -> Self:
+        # [FUNCTION DOC]
+        # HELPER: new manager containing only the blocks whose values satisfy the predicate. Parameter: predicate, a callable taking a block's values and returning a boolean. Returns the combined manager.
         blocks = [blk for blk in self.blocks if predicate(blk.values)]
         return self._combine(blocks)
 
     def _get_data_subset_indices(self, predicate: Callable) -> np.ndarray:
+        # [FUNCTION DOC]
+        # HELPER: sorted array of the item positions of the blocks whose values satisfy the predicate. Parameter: predicate as above. Returns an integer array. Note it raises an error from concatenation if no block matches.
         blocks = [blk for blk in self.blocks if predicate(blk.values)]
         indexer = np.sort(np.concatenate([b.mgr_locs.as_array for b in blocks]))
         return indexer
 
     def get_bool_data(self) -> Self:
+        # [FUNCTION DOC]
+        # Select boolean data: keeps boolean-dtype blocks, and, for object-dtype blocks, splits them into columns and keeps those that are all boolean. Returns a manager built from the selected blocks.
         """
         Select blocks that are bool-dtype and columns from object-dtype blocks
         that are all-bool.
@@ -695,6 +808,8 @@ class BaseBlockManager(PandasObject):
         return self._combine(new_blocks)
 
     def get_numeric_data(self) -> Self:
+        # [FUNCTION DOC]
+        # Select numeric blocks. If every block is numeric, returns self unchanged (avoiding a combine); otherwise returns a manager of the numeric blocks.
         numeric_blocks = [blk for blk in self.blocks if blk.is_numeric]
         if len(numeric_blocks) == len(self.blocks):
             # Avoid somewhat expensive _combine
@@ -703,6 +818,9 @@ class BaseBlockManager(PandasObject):
         return self._combine(numeric_blocks)
 
     def _combine(self, blocks: list[Block], index: Index | None = None) -> Self:
+        # [FUNCTION DOC]
+        # HELPER: build a new manager from a subset of this manager's blocks.
+        # Parameters: blocks (list of blocks of this manager); index (optional replacement for the last axis). With no blocks, returns an empty manager (keeping the dtype of the items axis; for two-dimensional data using the given index if provided). Otherwise the items of the selected blocks are sorted by position and renumbered contiguously; each block is shallow copied with its placement remapped; the items axis is taken at those positions. Returns the new manager.
         """return a new manager with the blocks"""
         if len(blocks) == 0:
             if self.ndim == 2:
@@ -734,9 +852,14 @@ class BaseBlockManager(PandasObject):
 
     @property
     def nblocks(self) -> int:
+        # [FUNCTION DOC]
+        # Number of blocks.
         return len(self.blocks)
 
     def copy(self, *, deep: bool) -> Self:
+        # [FUNCTION DOC]
+        # Copy the manager (keyword-only deep flag). Axes are replaced by views; block data is copied (deep) or shared (shallow) through block-level copy. For two-dimensional managers the lookup arrays are copied if already built. A deep copy also consolidates the result in place. Returns the new manager.
+        # KNOWN ISSUE: the docstring says deep may be a string or none and has a default of True, but it is a required keyword-only boolean.
         """
         Make deep or shallow copy of BlockManager
 
@@ -767,9 +890,13 @@ class BaseBlockManager(PandasObject):
         return res
 
     def is_consolidated(self) -> bool:
+        # [FUNCTION DOC]
+        # Whether the manager is consolidated. The base implementation always returns True.
         return True
 
     def consolidate(self) -> Self:
+        # [FUNCTION DOC]
+        # Return a manager in which blocks of equal dtype are merged. If already consolidated returns self; otherwise builds a new manager of the same class over the same blocks and axes without verification, marks it not consolidated and consolidates it in place.
         """
         Join together blocks having same dtype
 
@@ -787,6 +914,8 @@ class BaseBlockManager(PandasObject):
         return bm
 
     def _consolidate_inplace(self) -> None:
+        # [FUNCTION DOC]
+        # Hook to consolidate in place. The base implementation does nothing; the two-dimensional manager overrides it.
         return
 
     @final
@@ -797,6 +926,8 @@ class BaseBlockManager(PandasObject):
         fill_value=None,
         only_slice: bool = False,
     ) -> Self:
+        # [FUNCTION DOC]
+        # Conform the manager to a new label set along an axis (final). Parameters: new_index (labels to conform to), axis, fill_value (value for new positions), only_slice (take views, not copies, along the items axis). Computes the indexer by reindexing the current axis, then delegates to the indexer-based version. Returns a new manager.
         """
         Conform data manager to new index.
         """
@@ -821,6 +952,10 @@ class BaseBlockManager(PandasObject):
         *,
         use_na_proxy: bool = False,
     ) -> Self:
+        # [FUNCTION DOC]
+        # Reindex using a precomputed positional indexer; -1 entries mean missing.
+        # Parameters: new_axis (labels), indexer (integer array or none), axis, fill_value (default none), allow_dups (default False; otherwise the existing axis checks that reindexing is allowed), only_slice (views not copies along columns), use_na_proxy (keyword only; use a void-typed placeholder array for new columns).
+        # With no indexer: returns self if the axis is identical, else a shallow copy with the axis replaced. Otherwise raises an index error if the axis is out of range. For axis zero, the blocks are sliced or taken along the items axis (new items get missing blocks). For other axes, every block is reindexed along that axis, with a void-typed placeholder block reproduced as a void block of the new length. The other axes are replaced with views. When reindexing the second axis the lookup arrays are copied from this manager. Returns a new manager.
         """
         Parameters
         ----------
@@ -906,6 +1041,10 @@ class BaseBlockManager(PandasObject):
         use_na_proxy: bool = False,
         ref_inplace_op: bool = False,
     ) -> Generator[Block]:
+        # [FUNCTION DOC]
+        # Generator yielding the blocks resulting from slicing or taking along the items axis (overridden-like behavior for single-block managers is handled inline).
+        # Parameters: slice_or_indexer (a slice, or an integer array in which -1 entries mean fill when filling is enabled); fill_value (default the no-default sentinel meaning no filling is allowed); only_slice (always yield views, never copies; used by blockwise operations); use_na_proxy (keyword only; use void placeholder for new columns); ref_inplace_op (keyword only; skip reference tracking because the operation is in place).
+        # Single-block fast paths: a slice yields one sliced block (nothing when empty); a non-filling or one-dimensional take yields either per-item views (if only_slice) or one taken block. General path: looks up the block numbers and in-block positions for the requested items, groups them into runs, and for each run yields missing-value blocks (for -1, one per column when the dtype is one-dimensional-only extension and several items) or slices/takes of the existing blocks (a block that cannot be consolidated and has no extra dimension is copied per item).
         """
         Slice/take blocks along axis=0.
 
@@ -1040,6 +1179,8 @@ class BaseBlockManager(PandasObject):
     def _make_na_block(
         self, placement: BlockPlacement, fill_value=None, use_na_proxy: bool = False
     ) -> Block:
+        # [FUNCTION DOC]
+        # HELPER: build a block of missing values for the given placement. Only used for two-dimensional managers. Parameters: placement; fill_value (default none); use_na_proxy (void placeholder; requires fill_value to be none, asserted). When the fill is none or NaN, NaN is used, typed like the common float dtype of the blocks if that is floating, to avoid needless upcasting. Infers the dtype from the fill scalar and creates the array through the missing-array function. Returns the new block with the given placement.
         # Note: we only get here with self.ndim == 2
 
         if use_na_proxy:
@@ -1068,6 +1209,8 @@ class BaseBlockManager(PandasObject):
         axis: AxisInt = 1,
         verify: bool = True,
     ) -> Self:
+        # [FUNCTION DOC]
+        # Take items along any axis by position. Parameters: indexer (integer array), axis (default 1, the row axis), verify (default True; check that all entries lie within bounds, may be skipped if the caller already validated). Negative entries are converted by the index conversion helper. The labels are taken on that axis and the work is delegated to the reindex routine allowing duplicates. Returns a new manager.
         """
         Take items along any axis.
 
@@ -1096,6 +1239,9 @@ class BaseBlockManager(PandasObject):
 
 
 class BlockManager(libinternals.BlockManager, BaseBlockManager):
+    # [CLASS DOC]
+    # Two-dimensional block manager. Inherits the shared logic from the base manager and the compiled base class that stores the blocks, axes and lookup arrays. Class attribute ndim is two. The first axis holds the columns (items), the second the rows. Blocks are two-dimensional with items along the first dimension.
+    # Adds constructors, positional indexing (single row or column), setting and inserting columns, deleting columns, reductions, quantiles, unstacking, dictionary-of-dtype iteration, conversion to a single array, consolidation and horizontal concatenation.
     """
     BaseBlockManager that holds 2D blocks.
     """
@@ -1111,6 +1257,8 @@ class BlockManager(libinternals.BlockManager, BaseBlockManager):
         axes: Sequence[Index],
         verify_integrity: bool = True,
     ) -> None:
+        # [FUNCTION DOC]
+        # Construct a manager from blocks and axes. Parameters: blocks and axes (sequences); verify_integrity (default True). Storage is handled by the compiled base class; this initializer only validates when asked. With verification: every block must have the same number of dimensions as the manager (assertion error otherwise) and the integrity check runs.
         if verify_integrity:
             # Assertion disabled for performance
             # assert all(isinstance(x, Index) for x in axes)
@@ -1128,6 +1276,8 @@ class BlockManager(libinternals.BlockManager, BaseBlockManager):
             self._verify_integrity()
 
     def _verify_integrity(self) -> None:
+        # [FUNCTION DOC]
+        # HELPER: validate structure. Raises a construction error if any block's trailing shape differs from the manager's trailing shape, and an assertion error if the number of manager items differs from the total of block placements.
         mgr_shape = self.shape
         tot_items = sum(len(x.mgr_locs) for x in self.blocks)
         for block in self.blocks:
@@ -1142,6 +1292,8 @@ class BlockManager(libinternals.BlockManager, BaseBlockManager):
 
     @classmethod
     def from_blocks(cls, blocks: list[Block], axes: list[Index]) -> Self:
+        # [FUNCTION DOC]
+        # Class constructor with the same signature as the one-dimensional manager's: builds a manager from blocks and axes without verification.
         """
         Constructor for BlockManager and SingleBlockManager with same signature.
         """
@@ -1151,6 +1303,10 @@ class BlockManager(libinternals.BlockManager, BaseBlockManager):
     # Indexing
 
     def fast_xs(self, loc: int) -> SingleBlockManager:
+        # [FUNCTION DOC]
+        # Return the row at the given position as a one-dimensional manager (cross-section).
+        # Parameter: loc, the integer row position. With a single block, takes the row from that block and shares references with it (a view). Otherwise finds the common dtype of the blocks; for extension dtypes an object array is filled first and converted to the extension array at the end; for other dtypes a plain (datetime-wrapped) array is filled item by item, with a special case that upcasts to float or object when a categorical column yields NaN into an integer or boolean result. Returns a single-block manager over the items axis.
+        # KNOWN ISSUE: the docstring says it returns an array, but the code returns a one-dimensional block manager.
         """
         Return the array corresponding to `frame.iloc[loc]`.
 
@@ -1224,6 +1380,8 @@ class BlockManager(libinternals.BlockManager, BaseBlockManager):
         return SingleBlockManager(block, self.axes[0].view())
 
     def iget(self, i: int, track_ref: bool = True) -> SingleBlockManager:
+        # [FUNCTION DOC]
+        # Return the column at the given item position as a one-dimensional manager. Parameters: i (item position), track_ref (default True; when false the new block does not register as a view of the original, used for temporary managers that mutate in place). The returned manager uses the row axis as its index.
         """
         Return the data as a SingleBlockManager.
         """
@@ -1238,6 +1396,8 @@ class BlockManager(libinternals.BlockManager, BaseBlockManager):
         return SingleBlockManager(nb, self.axes[1].view())
 
     def iget_values(self, i: int) -> ArrayLike:
+        # [FUNCTION DOC]
+        # Return the raw values of the column at the given position (an array that is a view). Does not honor copy-on-write; use with caution.
         """
         Return the data for column i as the values (ndarray or ExtensionArray).
 
@@ -1251,6 +1411,9 @@ class BlockManager(libinternals.BlockManager, BaseBlockManager):
 
     @property
     def column_arrays(self) -> list[np.ndarray]:
+        # [FUNCTION DOC]
+        # Property for the JSON writer: list with one array per item (in item order), obtained from each block's array values converted for JSON. Does not honor copy-on-write.
+        # KNOWN ISSUE: the docstring's second sentence is cut off mid-sentence ("by converting each"), so it does not finish the description.
         """
         Used in the JSON C code to access column arrays.
         This optimizes compared to using `iget_values` by converting each
@@ -1284,6 +1447,10 @@ class BlockManager(libinternals.BlockManager, BaseBlockManager):
         inplace: bool = False,
         refs: BlockValuesRefs | None = None,
     ) -> None:
+        # [FUNCTION DOC]
+        # Set a new value for one or more items, in place, without consolidating; adds a block if the items are not covered.
+        # Parameters: loc (integer, slice or array of item positions), value (array; two-dimensional values are transposed and one-dimensional ones reshaped to a single row, unless the dtype is a one-dimensional-only extension type), inplace (default False: when True and the target block can store the value, overwrite its data), refs (reference tracker for the new values). Raises an assertion error if the trailing shape is incompatible.
+        # For a single integer location in a single-item block, uses a fast path that swaps the block. Otherwise processes each affected block: storable in place values are written (splitting the block first if it has references, for copy-on-write); others mark their positions as needing a new block and the old block is split or scheduled for removal when entirely replaced. Removed blocks update the block-number lookup; new blocks are appended (one per item for extension values, a single block otherwise) with lookup arrays updated; consolidation status is marked unknown.
         """
         Set new item in-place. Does not consolidate. Adds new Block if not
         contained in the current set of items
@@ -1335,11 +1502,15 @@ class BlockManager(libinternals.BlockManager, BaseBlockManager):
         if value_is_extension_type:
 
             def value_getitem(placement):
+                # [FUNCTION DOC]
+                # HELPER: nested accessor used when the value is a one-dimensional-only extension array: ignores the placement and returns the whole value.
                 return value
 
         else:
 
             def value_getitem(placement):
+                # [FUNCTION DOC]
+                # HELPER: nested accessor for array values: returns the rows of the value selected by the placement indexer.
                 return value[placement.indexer]
 
         # Accessing public blknos ensures the public versions are initialized
@@ -1434,6 +1605,9 @@ class BlockManager(libinternals.BlockManager, BaseBlockManager):
         value: ArrayLike | None = None,
         refs: BlockValuesRefs | None = None,
     ) -> None:
+        # [FUNCTION DOC]
+        # HELPER: remove columns from a block by splitting it, updating the block tuple and lookup arrays.
+        # Parameters: blkno_l (block number), blk_locs (positions within the block to remove), value (optional replacement values to place at those items), refs (reference tracker for the new values). The block delete yields the remaining pieces. If a value is given, a new block with it replaces the removed positions at the original block number; otherwise the first remaining piece takes its place. Any further pieces are appended. Lookup arrays are rebuilt first if absent and then updated for the new pieces, unless no split happened. Mutates the manager; returns nothing.
         """Removes columns from a block by splitting the block.
 
         Avoids copying the whole block through slicing and updates the manager
@@ -1488,6 +1662,8 @@ class BlockManager(libinternals.BlockManager, BaseBlockManager):
         blk: Block,
         refs: BlockValuesRefs | None = None,
     ) -> None:
+        # [FUNCTION DOC]
+        # HELPER: fast path of the set-item routine for a single position held by a single-column block. Parameters: loc, value, inplace, blkno, blk, refs. If in place and the block can store the value, overwrites the data (copying first when the block has references); otherwise swaps the whole block for a new block with the same placement. Lookup arrays remain valid. The caller must have checked the value shape. Returns nothing.
         """
         Fastpath for iset when we are only setting a single position and
         the Block currently in that position is itself single-column.
@@ -1512,6 +1688,9 @@ class BlockManager(libinternals.BlockManager, BaseBlockManager):
     def column_setitem(
         self, loc: int, idx: int | slice | np.ndarray, value, inplace_only: bool = False
     ) -> None:
+        # [FUNCTION DOC]
+        # Set values at an index within a single column, without assigning the whole column.
+        # Parameters: loc (item position), idx (row indexer: integer, slice or array), value, inplace_only (default False). If the column's block has references, first splits that column out with a copy of its data. Then gets a temporary single-column manager without reference tracking. With inplace_only the values are written in place (dtype never changes); otherwise the set-item logic runs (possibly changing dtype) and the result is stored back in place into the column. Returns nothing. Avoids creating an intermediate Series.
         """
         Set values ("setitem") into a single column (not setting the full column).
 
@@ -1542,6 +1721,8 @@ class BlockManager(libinternals.BlockManager, BaseBlockManager):
             self.iset(loc, new_mgr._block.values, inplace=True)
 
     def insert(self, loc: int, item: Hashable, value: ArrayLike, refs=None) -> None:
+        # [FUNCTION DOC]
+        # Insert a new column at a position. Parameters: loc (position), item (new label), value (array; a two-dimensional value is transposed and must have a single row, else a value error; one-dimensional is reshaped), refs (reference tracker). Creates a one-column block, updates the placements of blocks above and the lookup arrays (fast path when there are no blocks), inserts the label into the items axis, appends the block and marks consolidation unknown. Emits a performance warning (when the option is on) if more than one hundred non-extension blocks exist. Mutates in place; returns nothing.
         """
         Insert item at selected position.
 
@@ -1593,6 +1774,8 @@ class BlockManager(libinternals.BlockManager, BaseBlockManager):
             )
 
     def _insert_update_mgr_locs(self, loc) -> None:
+        # [FUNCTION DOC]
+        # HELPER: when a column is inserted at a position, increments the placements of all blocks holding items at or above that position by one.
         """
         When inserting a new Block at location 'loc', we increment
         all of the mgr_locs of blocks above that by one.
@@ -1605,6 +1788,8 @@ class BlockManager(libinternals.BlockManager, BaseBlockManager):
             blk._mgr_locs = blk._mgr_locs.increment_above(loc)
 
     def _insert_update_blklocs_and_blknos(self, loc) -> None:
+        # [FUNCTION DOC]
+        # HELPER: update the lookup arrays after inserting an item at a position: the new item maps to the newest block and in-block position zero. Uses an append when inserting at the end, a prepend when at the start, and the compiled helper for the middle.
         """
         When inserting a new Block at location 'loc', we update our
         _blklocs and _blknos.
@@ -1627,6 +1812,8 @@ class BlockManager(libinternals.BlockManager, BaseBlockManager):
             self._blknos = new_blknos
 
     def idelete(self, indexer) -> BlockManager:
+        # [FUNCTION DOC]
+        # Delete items at the given positions and return a new manager (the original is not changed). Parameter: indexer (positions). Builds the complement of the deleted positions, takes those items as views without tracking references (in-place operation), takes the labels from the items axis and keeps the second axis. Built without verification.
         """
         Delete selected locations, returning a new BlockManager.
         """
@@ -1643,6 +1830,9 @@ class BlockManager(libinternals.BlockManager, BaseBlockManager):
     # Block-wise Operation
 
     def grouped_reduce(self, func: Callable) -> Self:
+        # [FUNCTION DOC]
+        # Apply a grouped reduction function to each block and return a new manager.
+        # Parameter: func, a callable applied to each block (through the block-level apply). Object-dtype blocks are split into columns first because some columns may fail while others succeed. The row axis of the result is a default range index whose length is that of the first result block (zero if none). Returns a new manager with views of the items axis.
         """
         Apply grouped reduction function blockwise, returning a new BlockManager.
 
@@ -1677,6 +1867,8 @@ class BlockManager(libinternals.BlockManager, BaseBlockManager):
         return type(self).from_blocks(result_blocks, [self.axes[0].view(), index])
 
     def reduce(self, func: Callable) -> Self:
+        # [FUNCTION DOC]
+        # Apply a reduction function to each block and return a manager with a single placeholder row (default index of length one). Parameter: func, the reduction callable. Asserts the manager is two-dimensional. The items axis is reused without copy. Returns a new manager.
         """
         Apply reduction function blockwise, returning a single-row BlockManager.
 
@@ -1698,12 +1890,16 @@ class BlockManager(libinternals.BlockManager, BaseBlockManager):
         return new_mgr
 
     def operate_blockwise(self, other: BlockManager, array_op) -> BlockManager:
+        # [FUNCTION DOC]
+        # Apply an elementwise array operation with another aligned manager, block by block, delegating to the module-level blockwise operation function. Parameters: other (manager) and array_op (callable). Returns a new manager.
         """
         Apply array_op blockwise with another (aligned) BlockManager.
         """
         return operate_blockwise(self, other, array_op)
 
     def _equal_values(self: BlockManager, other: BlockManager) -> bool:
+        # [FUNCTION DOC]
+        # Value comparison used by the equality method: compares block pairs with the array equality function through the blockwise-all helper, assuming shape and axes have been checked. Returns a boolean.
         """
         Used in .equals defined in base class. Only check the column values
         assuming shape and indexes have already been checked.
@@ -1716,6 +1912,8 @@ class BlockManager(libinternals.BlockManager, BaseBlockManager):
         qs: Index,  # with dtype float 64
         interpolation: QuantileInterpolation = "linear",
     ) -> Self:
+        # [FUNCTION DOC]
+        # Compute quantiles of each block. Keyword-only parameters: qs (index of float64 quantile locations; asserted list-like and the manager asserted at least two-dimensional), interpolation (default linear). The result has the items axis (view) and a new axis of the quantiles. Each block computes its quantile (with type inference on the result) and a new manager is built with integrity verification. Returns the new manager.
         """
         Iterate over blocks applying quantile reduction.
         This routine is intended for reduction type operations and
@@ -1746,6 +1944,9 @@ class BlockManager(libinternals.BlockManager, BaseBlockManager):
     # ----------------------------------------------------------------
 
     def unstack(self, unstacker, fill_value) -> BlockManager:
+        # [FUNCTION DOC]
+        # Return a manager with all blocks unstacked (used for reshape).
+        # Parameters: unstacker (the reshape helper object providing new columns, new index, masks and shape), fill_value (value for newly introduced missing entries). Computes whether filling/masking is needed per output column, the replication factor of the columns (asserts the new column count is an integer multiple of the old count), unstacks each block with its tiled placement, concatenates the new blocks and column masks (asserts the mask count equals the number of produced items), filters the new columns by the mask. Returns a new two-dimensional manager built without verification.
         """
         Return a BlockManager with all blocks unstacked.
 
@@ -1807,6 +2008,9 @@ class BlockManager(libinternals.BlockManager, BaseBlockManager):
         return bm
 
     def to_iter_dict(self) -> Generator[tuple[str, Self]]:
+        # [FUNCTION DOC]
+        # Generator yielding pairs of (string name of the dtype, manager) grouping the blocks by dtype name. Blocks are sorted by that name, grouped, and each group is combined into a manager.
+        # KNOWN ISSUE: the docstring Returns section describes a single tuple, but this is a generator that yields many tuples.
         """
         Yield a tuple of (str(dtype), BlockManager)
 
@@ -1825,6 +2029,9 @@ class BlockManager(libinternals.BlockManager, BaseBlockManager):
         copy: bool = False,
         na_value: object = lib.no_default,
     ) -> np.ndarray:
+        # [FUNCTION DOC]
+        # Convert the data to a numpy array with items as columns (transposed result).
+        # Parameters: dtype (optional numpy dtype), copy (default False: no guarantee data is not copied, but a read-only view is returned when no copy is made), na_value (value to use for missing entries; the no-default sentinel leaves them as is). With no blocks returns an empty float array of the transposed shape. With a single block: forces a copy when a non-NaN missing value is given and the block is not already numpy float; extension blocks use their conversion method; datetime-like blocks have missing entries set when NaN was passed. Multi-block data are interleaved into one array (which copies). Finally missing entries are replaced with na_value unless that is the default or a NaN for a float result. Returns the transposed array.
         """
         Convert the blockmanager data into a numpy array.
 
@@ -1900,6 +2107,8 @@ class BlockManager(libinternals.BlockManager, BaseBlockManager):
         dtype: np.dtype | None = None,
         na_value: object = lib.no_default,
     ) -> np.ndarray:
+        # [FUNCTION DOC]
+        # HELPER: build one array from all blocks. Parameters: dtype (optional numpy dtype; defaults to the common dtype of the blocks, converted to a numpy dtype) and na_value. For object dtype without a na_value, blocks are copied in directly. Otherwise each block's values are converted (extension blocks via their conversion method with the dtype and na_value; others via their get-values with the dtype) and placed at the block positions, setting missing datetime-like entries if a na_value is given. Raises an assertion error if some items were not covered by blocks. Returns an array of the manager's shape.
         """
         Return ndarray from blocks with specified item order
         Items must be contained in the blocks
@@ -1955,6 +2164,9 @@ class BlockManager(libinternals.BlockManager, BaseBlockManager):
     # Consolidation
 
     def is_consolidated(self) -> bool:
+        # [FUNCTION DOC]
+        # Whether the blocks are consolidated: using the cached known state, or computing it first. Returns the cached flag.
+        # KNOWN ISSUE: the docstring says it returns True if there is more than one block with the same dtype, which is the opposite of the meaning; it returns True when no two consolidatable blocks share a dtype.
         """
         Return True if more than one block with the same dtype
         """
@@ -1963,6 +2175,8 @@ class BlockManager(libinternals.BlockManager, BaseBlockManager):
         return self._is_consolidated
 
     def _consolidate_check(self) -> None:
+        # [FUNCTION DOC]
+        # HELPER: compute and cache whether the manager is consolidated: a single block is consolidated; otherwise compares the number of consolidatable blocks to the number of distinct dtypes. Sets both the flag and the known flag.
         if len(self.blocks) == 1:
             # fastpath
             self._is_consolidated = True
@@ -1973,6 +2187,8 @@ class BlockManager(libinternals.BlockManager, BaseBlockManager):
         self._known_consolidated = True
 
     def _consolidate_inplace(self) -> None:
+        # [FUNCTION DOC]
+        # Consolidate in place: if not consolidated, merges blocks of the same dtype (leaving non-consolidatable blocks alone), sets the consolidated flags and rebuilds the lookup arrays.
         if not self.is_consolidated():
             self.blocks = _consolidate(self.blocks)
             self._is_consolidated = True
@@ -1984,6 +2200,8 @@ class BlockManager(libinternals.BlockManager, BaseBlockManager):
 
     @classmethod
     def concat_horizontal(cls, mgrs: list[Self], axes: list[Index]) -> Self:
+        # [FUNCTION DOC]
+        # Class method: concatenate managers with identical row axes side by side. Parameters: mgrs (list of managers) and axes (the axes of the result). Each block is column-sliced (so original placements are not altered) and its placement shifted by the cumulative item count of the preceding managers. Returns a new manager of this class with verification.
         """
         Concatenate uniformly-indexed BlockManagers horizontally.
         """
@@ -2006,6 +2224,8 @@ class BlockManager(libinternals.BlockManager, BaseBlockManager):
 
     @classmethod
     def concat_vertical(cls, mgrs: list[Self], axes: list[Index]) -> Self:
+        # [FUNCTION DOC]
+        # Class method placeholder for vertical concatenation: always raises a not-implemented error, because that logic lives in the concatenation module of the internals package.
         """
         Concatenate uniformly-indexed BlockManagers vertically.
         """
@@ -2013,10 +2233,15 @@ class BlockManager(libinternals.BlockManager, BaseBlockManager):
 
 
 class SingleBlockManager(BaseBlockManager):
+    # [CLASS DOC]
+    # One-dimensional block manager holding exactly one block, backing Series. Inherits the shared base logic. Class attributes: the consolidation flags are fixed to true, the single-block flag is true, and slots are empty. State: the axes list has one index (the series index) and blocks is a one-tuple. The lookup arrays are always none.
+    # KNOWN ISSUE: the class docstring is truncated ("manage a single block with") and does not complete the sentence.
     """manage a single block with"""
 
     @property
     def ndim(self) -> Literal[1]:
+        # [FUNCTION DOC]
+        # The number of dimensions, always one.
         return 1
 
     _is_consolidated = True
@@ -2030,6 +2255,8 @@ class SingleBlockManager(BaseBlockManager):
         axis: Index,
         verify_integrity: bool = False,
     ) -> None:
+        # [FUNCTION DOC]
+        # Create a manager from a block and an index. Parameters: block, axis (the index) and verify_integrity (ignored; present for signature compatibility). Stores a list with the axis and a one-tuple with the block; no validation.
         # Assertions disabled for performance
         # assert isinstance(block, Block), type(block)
         # assert isinstance(axis, Index), type(axis)
@@ -2043,6 +2270,8 @@ class SingleBlockManager(BaseBlockManager):
         blocks: list[Block],
         axes: list[Index],
     ) -> Self:
+        # [FUNCTION DOC]
+        # Class constructor with the same signature as the two-dimensional manager's. Asserts that exactly one block and one axis are given and builds the manager from them.
         """
         Constructor for BlockManager and SingleBlockManager with same signature.
         """
@@ -2054,6 +2283,8 @@ class SingleBlockManager(BaseBlockManager):
     def from_array(
         cls, array: ArrayLike, index: Index, refs: BlockValuesRefs | None = None
     ) -> SingleBlockManager:
+        # [FUNCTION DOC]
+        # Create a manager from a bare array. Parameters: array (numpy or extension array; coerced by the value-coercion helper), index, refs (optional reference tracker). Wraps the array in a one-dimensional block spanning the index length. Returns a single-block manager.
         """
         Constructor for if we have an array that is not yet a Block.
         """
@@ -2063,6 +2294,8 @@ class SingleBlockManager(BaseBlockManager):
         return cls(block, index)
 
     def to_2d_mgr(self, columns: Index) -> BlockManager:
+        # [FUNCTION DOC]
+        # Manager analogue of converting a Series to a frame. Parameter: columns (the new items axis). Reshapes the values to two dimensions, creates a block of the same type with placement at the first position sharing the reference tracker, and returns a two-dimensional manager with the columns and a view of the index, built without verification.
         """
         Manager analogue of Series.to_frame
         """
@@ -2074,6 +2307,8 @@ class SingleBlockManager(BaseBlockManager):
         return BlockManager([new_blk], axes=axes, verify_integrity=False)
 
     def _has_no_reference(self, i: int = 0) -> bool:
+        # [FUNCTION DOC]
+        # Whether the single block has no references; the argument is ignored (default zero). Returns a boolean.
         """
         Check for column `i` if it has references.
         (whether it references another array or is itself being referenced)
@@ -2082,6 +2317,8 @@ class SingleBlockManager(BaseBlockManager):
         return not self.blocks[0].refs.has_reference()
 
     def __getstate__(self):
+        # [FUNCTION DOC]
+        # Pickle support. Returns a four-tuple: the axes list, the list of block values, the list of item labels per block (these first three keep compatibility with an old format), and a dictionary under the old-format version key holding the axes and, per block, its values and placement indexer.
         block_values = [b.values for b in self.blocks]
         block_items = [self.items[b.mgr_locs.indexer] for b in self.blocks]
         axes_array = list(self.axes)
@@ -2101,7 +2338,11 @@ class SingleBlockManager(BaseBlockManager):
         return axes_array, block_values, block_items, extra_state
 
     def __setstate__(self, state) -> None:
+        # [FUNCTION DOC]
+        # Restore state when unpickling. Accepts only the tuple format of version 0.14.1 (a tuple of at least four with that key in the fourth element), rebuilding axes (coerced to indexes) and blocks; any other state raises a not-implemented error saying older pickles are unsupported. Afterwards calls the post-restore hook.
         def unpickle_block(values, mgr_locs, ndim: int) -> Block:
+            # [FUNCTION DOC]
+            # HELPER: nested in the state restoration. Builds a block from stored values, a placement and a number of dimensions: unwraps index-like values to raw arrays, converts the placement to a placement object if necessary, coerces the values and creates the block.
             # TODO(EA2D): ndim would be unnecessary with 2D EAs
             # older pickles may store e.g. DatetimeIndex instead of DatetimeArray
             values = extract_array(values, extract_numpy=True)
@@ -2125,15 +2366,21 @@ class SingleBlockManager(BaseBlockManager):
         self._post_setstate()
 
     def _post_setstate(self) -> None:
+        # [FUNCTION DOC]
+        # Hook called at the end of state restoration; does nothing here (subclasses may extend).
         pass
 
     @cache_readonly
     def _block(self) -> Block:
+        # [FUNCTION DOC]
+        # Cached property: the only block.
         return self.blocks[0]
 
     @final
     @property
     def array(self) -> ArrayLike:
+        # [FUNCTION DOC]
+        # Property (final): the array backing the single block.
         """
         Quick access to the backing array of the Block.
         """
@@ -2142,16 +2389,22 @@ class SingleBlockManager(BaseBlockManager):
     # error: Cannot override writeable attribute with read-only property
     @property
     def _blknos(self) -> None:  # type: ignore[override]
+        # [FUNCTION DOC]
+        # Compatibility property: always none, since a one-dimensional manager has no lookup arrays.
         """compat with BlockManager"""
         return None
 
     # error: Cannot override writeable attribute with read-only property
     @property
     def _blklocs(self) -> None:  # type: ignore[override]
+        # [FUNCTION DOC]
+        # Compatibility property: always none.
         """compat with BlockManager"""
         return None
 
     def get_rows_with_mask(self, indexer: npt.NDArray[np.bool_]) -> Self:
+        # [FUNCTION DOC]
+        # Select rows by an indexer, not restricted to slices. Parameter: indexer (boolean array or other positional indexer). If it is a non-empty all-true array, returns a manager over a shallow copy of the block and the same index. Otherwise indexes the values; the new block shares the reference tracker unless the indexer is a boolean array (which always copies in numpy). The index is selected the same way. Returns a new manager.
         # similar to get_slice, but not restricted to slice indexer
         blk = self._block
         if len(indexer) > 0 and indexer.all():
@@ -2172,6 +2425,8 @@ class SingleBlockManager(BaseBlockManager):
         return type(self)(block, new_idx)
 
     def get_slice(self, slobj: slice, axis: AxisInt = 0) -> SingleBlockManager:
+        # [FUNCTION DOC]
+        # Slice rows. Parameters: slobj (a slice; not asserted) and axis (default zero; an axis at or above the number of dimensions raises an index error). The new block holds a view of the sliced values and shares the reference tracker. The index is sliced. Returns a new single-block manager.
         # Assertion disabled for performance
         # assert isinstance(slobj, slice), type(slobj)
         if axis >= self.ndim:
@@ -2188,37 +2443,56 @@ class SingleBlockManager(BaseBlockManager):
 
     @property
     def index(self) -> Index:
+        # [FUNCTION DOC]
+        # The index: the only axis.
         return self.axes[0]
 
     @property
     def dtype(self) -> DtypeObj:
+        # [FUNCTION DOC]
+        # The dtype of the single block.
         return self._block.dtype
 
     def get_dtypes(self) -> npt.NDArray[np.object_]:
+        # [FUNCTION DOC]
+        # Return an object array containing the single dtype.
         return np.array([self._block.dtype], dtype=object)
 
     def external_values(self):
+        # [FUNCTION DOC]
+        # The array that the user-facing values attribute of a Series returns (from the block).
         """The array that Series.values returns"""
         return self._block.external_values()
 
     def internal_values(self):
+        # [FUNCTION DOC]
+        # The block values (the internal array that the underscore values attribute returns).
         """The array that Series._values returns"""
         return self._block.values
 
     def array_values(self) -> ExtensionArray:
+        # [FUNCTION DOC]
+        # The extension array wrapping the block values (what the array attribute of a Series returns), taken from the block. Defined as a method, not a property.
         """The array that Series.array returns"""
         return self._block.array_values
 
     def get_numeric_data(self) -> Self:
+        # [FUNCTION DOC]
+        # Return numeric data: a shallow copy if the block is numeric, otherwise an empty manager.
         if self._block.is_numeric:
             return self.copy(deep=False)
         return self.make_empty()
 
     @property
     def _can_hold_na(self) -> bool:
+        # [FUNCTION DOC]
+        # Property: whether the block's dtype can hold missing values.
         return self._block._can_hold_na
 
     def setitem_inplace(self, indexer, value) -> None:
+        # [FUNCTION DOC]
+        # Assign values at an indexer in place, never changing the dtype and never returning a new manager (backs item assignment on a Series).
+        # Parameters: indexer, value. If the block has references, first replaces the block by a deep copy and resets the cache. For numpy arrays, the value is checked to be holdable by the dtype (may raise); extension arrays validate on their own. A one-element one-dimensional array value is reduced to a scalar-like. Then writes the value at the indexer. Mutates the array.
         """
         Set values with indexer.
 
@@ -2247,6 +2521,8 @@ class SingleBlockManager(BaseBlockManager):
         arr[indexer] = value
 
     def idelete(self, indexer) -> SingleBlockManager:
+        # [FUNCTION DOC]
+        # Delete a position from the single block and from the index, in place. Parameter: indexer. Replaces the block with the first block of the block-level delete result (so the block never becomes empty list-wise), deletes from the index, resets the cached block property, and returns self.
         """
         Delete single location from SingleBlockManager.
 
@@ -2259,6 +2535,8 @@ class SingleBlockManager(BaseBlockManager):
         return self
 
     def fast_xs(self, loc):
+        # [FUNCTION DOC]
+        # Not supported for one-dimensional managers: always raises a not-implemented error directing callers to index the values directly.
         """
         fast path for getting a cross-section
         return a view of the data
@@ -2266,6 +2544,9 @@ class SingleBlockManager(BaseBlockManager):
         raise NotImplementedError("Use series._values[loc] instead")
 
     def set_values(self, values: ArrayLike) -> None:
+        # [FUNCTION DOC]
+        # Replace the single block's values in place and reset its placement to span the new length.
+        # Parameter: values (array). No validation of length or dtype and no reference tracking; for internal use where the caller handles copy-on-write.
         """
         Set the values of the single block in place.
 
@@ -2279,6 +2560,8 @@ class SingleBlockManager(BaseBlockManager):
         self.blocks[0]._mgr_locs = BlockPlacement(slice(len(values)))
 
     def _equal_values(self, other: Self) -> bool:
+        # [FUNCTION DOC]
+        # Value comparison used by the equality method. Returns False if the other manager is not one-dimensional; otherwise compares the two arrays with the array equality function. Shape and axes are assumed already checked.
         """
         Used in .equals defined in base class. Only check the column values
         assuming shape and indexes have already been checked.
@@ -2291,6 +2574,8 @@ class SingleBlockManager(BaseBlockManager):
         return array_equals(left, right)
 
     def grouped_reduce(self, func):
+        # [FUNCTION DOC]
+        # Apply a reduction function to the array of the single block. Parameter: func (callable taking the array and returning an array-like of results). The result gets a default range index of its own length; returns a new single-block manager from the result array.
         arr = self.array
         res = func(arr)
         index = default_index(len(res))
@@ -2309,6 +2594,8 @@ def create_block_manager_from_blocks(
     consolidate: bool = True,
     verify_integrity: bool = True,
 ) -> BlockManager:
+    # [FUNCTION DOC]
+    # Build a two-dimensional manager from blocks and axes. Parameters: blocks, axes, consolidate (default True: merge same-dtype blocks in place afterwards), verify_integrity (default True; if false the caller promises the block shapes and placements are consistent with the axes). A value error from construction is translated into a user-friendly shape error (using the first block's trailing shape and the total item count). Returns the manager.
     # If verify_integrity=False, then caller is responsible for checking
     #  all(x.shape[-1] == len(axes[1]) for x in blocks)
     #  sum(x.shape[0] for x in blocks) == len(axes[0])
@@ -2335,6 +2622,8 @@ def create_block_manager_from_column_arrays(
     consolidate: bool,
     refs: list,
 ) -> BlockManager:
+    # [FUNCTION DOC]
+    # Build a two-dimensional manager from a list of one-dimensional column arrays. Parameters: arrays (one per column), axes, consolidate (whether to merge same-dtype columns into shared blocks), refs (one reference tracker per array). Caller guarantees validity; the manager is built without verification. A value error while forming blocks is converted into a shape error message. Consolidates in place if requested. Returns the manager.
     # Assertions disabled for performance (caller is responsible for verifying)
     # assert isinstance(axes, list)
     # assert all(isinstance(x, Index) for x in axes)
@@ -2362,6 +2651,10 @@ def raise_construction_error(
     axes: list[Index],
     e: ValueError | None = None,
 ) -> NoReturn:
+    # [FUNCTION DOC]
+    # Raise a helpful error about a shape mismatch during construction. Never returns.
+    # Parameters: tot_items (total items given), block_shape (the shape of one block beyond the items axis), axes (the manager axes), e (optional original error). Builds the passed shape and the implied shape from the axes, reversing them when they have at most two dimensions to match user-facing order. If they are equal and an original error exists, that error is re-raised. If the first block dimension is zero, raises a value error saying empty data was passed with indices specified. Otherwise raises a value error stating both shapes.
+    # KNOWN ISSUE: a comment says the exception object is returned instead of being raised, but the function raises it directly.
     """raise a helpful message about our construction"""
     passed = tuple(map(int, [tot_items, *block_shape]))
     # Correcting the user facing error message during dataframe construction
@@ -2386,6 +2679,8 @@ def raise_construction_error(
 
 
 def _grouping_func(tup: tuple[int, ArrayLike]) -> tuple[int, DtypeObj]:
+    # [FUNCTION DOC]
+    # HELPER: grouping key for the block formation step. Parameter: tup is a pair of position and array. The key is a pair of a separator and the array dtype: for one-dimensional-only extension dtypes the separator is the object identity of the dtype, so equal dtypes are not merged (and comparisons avoided); otherwise zero. Returns the key.
     dtype = tup[1].dtype
 
     if is_1d_only_ea_dtype(dtype):
@@ -2399,6 +2694,8 @@ def _grouping_func(tup: tuple[int, ArrayLike]) -> tuple[int, DtypeObj]:
 
 
 def _form_blocks(arrays: list[ArrayLike], consolidate: bool, refs: list) -> list[Block]:
+    # [FUNCTION DOC]
+    # HELPER: build blocks from a list of column arrays. Parameters: arrays, consolidate, refs. Without consolidation each array becomes its own block (reference trackers preserved). With consolidation (reference trackers ignored since stacking copies or the extension arrays were already copied): consecutive arrays are grouped by the grouping key; numpy dtypes are stacked into one block per group (string and bytes dtypes become object; datetime-like arrays are wrapped); one-dimensional-only extension dtypes become one block each; other extension dtypes become one block each with a reshaped array. Returns the list of blocks.
     tuples = enumerate(arrays)
 
     if not consolidate:
@@ -2445,6 +2742,8 @@ def _form_blocks(arrays: list[ArrayLike], consolidate: bool, refs: list) -> list
 
 
 def _tuples_to_blocks_no_consolidate(tuples, refs) -> list[Block]:
+    # [FUNCTION DOC]
+    # HELPER: build one block per column array without consolidation. Parameters: tuples (iterable of position and array pairs, as produced by enumeration) and refs (one tracker per array, zipped strictly). Each array is reshaped to two dimensions and placed at its position. Returns the list of blocks.
     # tuples produced within _form_blocks are of the form (placement, array)
     return [
         new_block_2d(
@@ -2455,6 +2754,8 @@ def _tuples_to_blocks_no_consolidate(tuples, refs) -> list[Block]:
 
 
 def _stack_arrays(tuples, dtype: np.dtype):
+    # [FUNCTION DOC]
+    # HELPER: stack column arrays of one dtype into a single two-dimensional array. Parameters: tuples (iterable of position and array pairs) and dtype. Returns the pair of the stacked array (one row per input array) and the tuple of positions; arrays are copied into a fresh array of the given dtype.
     placement, arrays = zip(*tuples, strict=True)
 
     first = arrays[0]
@@ -2468,6 +2769,8 @@ def _stack_arrays(tuples, dtype: np.dtype):
 
 
 def _consolidate(blocks: tuple[Block, ...]) -> tuple[Block, ...]:
+    # [FUNCTION DOC]
+    # HELPER: merge blocks of the same dtype. Parameter: blocks (tuple). Sorts and groups blocks by their consolidation key (whether they can consolidate, and dtype); each group is merged by the merge helper (non-consolidatable groups are left alone). Returns the new tuple of blocks.
     """
     Merge blocks having same dtype, exclude non-consolidating blocks
     """
@@ -2487,6 +2790,9 @@ def _consolidate(blocks: tuple[Block, ...]) -> tuple[Block, ...]:
 def _merge_blocks(
     blocks: list[Block], dtype: DtypeObj, can_consolidate: bool
 ) -> tuple[list[Block], bool]:
+    # [FUNCTION DOC]
+    # HELPER: merge a list of blocks of one dtype into a single block.
+    # Parameters: blocks, dtype (unused here), can_consolidate. Returns a pair: the resulting list of blocks and a flag that is True only if merging occurred. A single block, or blocks that cannot consolidate, are returned unchanged with False. Otherwise the placements are concatenated, the values stacked (numpy stack or extension array concatenation along the first axis), both are reordered by sorted placement, and one new block is returned.
     if len(blocks) == 1:
         return blocks, False
 
@@ -2522,6 +2828,8 @@ def _merge_blocks(
 def _preprocess_slice_or_indexer(
     slice_or_indexer: slice | np.ndarray, length: int, allow_fill: bool
 ):
+    # [FUNCTION DOC]
+    # HELPER: classify and normalize a slice or an indexer. Parameters: slice_or_indexer (slice or integer ndarray), length (size of the axis), allow_fill (whether -1 entries are meaningful). A slice returns the tag "slice", the slice and its resolved length. An array must be an integer ndarray (otherwise a type error is raised with the type and dtype); it is converted to the platform integer, and, if filling is not allowed, negative entries are converted (bounds checked); returns the tag "fancy", the indexer and its length.
     if isinstance(slice_or_indexer, slice):
         return (
             "slice",
@@ -2543,6 +2851,8 @@ def _preprocess_slice_or_indexer(
 
 
 def make_na_array(dtype: DtypeObj, shape: Shape, fill_value) -> ArrayLike:
+    # [FUNCTION DOC]
+    # Create an array of missing values for a block. Parameters: dtype, shape (number of columns, number of rows) and fill_value. Timezone-aware datetime: array of the fill timestamp in the dtype's unit. One-dimensional-only extension dtypes: shape must have one column (asserted); builds an empty array and takes -1 positions with fill to produce missing entries. Other extension dtypes: an empty array of the shape filled with the value. Numpy dtypes: filled array, wrapped if datetime-like. Returns the array. Must not be called with integer or boolean numpy dtypes (the fill would produce nonsense).
     if isinstance(dtype, DatetimeTZDtype):
         # NB: exclude e.g. pyarrow[dt64tz] dtypes
         ts = Timestamp(fill_value).as_unit(dtype.unit)

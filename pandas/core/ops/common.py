@@ -2,6 +2,10 @@
 Boilerplate functions used in defining binary operations.
 """
 
+# [MODULE DOC]
+# Boilerplate used when defining binary operator methods on pandas objects: a decorator that unpacks zero-dimensional inputs and defers to higher-priority classes, and helpers that pick the name attached to an operation result.
+# Public contents: the decorator factory and the result-name function. Uses construction helpers to wrap list operands for extension arrays. No import-time side effects.
+
 from __future__ import annotations
 
 from functools import wraps
@@ -28,6 +32,8 @@ if TYPE_CHECKING:
 
 
 def unpack_zerodim_and_defer(name: str) -> Callable[[F], F]:
+    # [FUNCTION DOC]
+    # Decorator factory. Parameter name is the operator method name (for example an or-style or arithmetic name). Returns a decorator that wraps a binary method with the standard pandas pre-processing by delegating to the private implementation function.
     """
     Boilerplate for pandas conventions in arithmetic and comparison methods.
 
@@ -41,12 +47,18 @@ def unpack_zerodim_and_defer(name: str) -> Callable[[F], F]:
     """
 
     def wrapper(method: F) -> F:
+        # [FUNCTION DOC]
+        # HELPER: the decorator returned by the factory. Takes a binary method and returns it wrapped for the stored operator name.
         return _unpack_zerodim_and_defer(method, name)
 
     return wrapper
 
 
 def _unpack_zerodim_and_defer(method: F, name: str) -> F:
+    # [FUNCTION DOC]
+    # HELPER: wraps a binary operator method with pandas conventions.
+    # Parameters: method is the binary method to wrap; name is the operator name, used to detect logical operators (and, or, xor and their reversed forms).
+    # The wrapper preserves the method metadata. Returns the wrapped method.
     """
     Boilerplate for pandas conventions in arithmetic and comparison methods.
 
@@ -66,6 +78,9 @@ def _unpack_zerodim_and_defer(method: F, name: str) -> F:
 
     @wraps(method)
     def new_method(self, other):
+        # [FUNCTION DOC]
+        # HELPER: the wrapper body created by the private decorator.
+        # Takes self and other. If other advertises a priority attribute that exceeds the priority of self, returns the not-implemented sentinel so the other operand handles the operation. Otherwise unpacks a zero-dimensional operand into a scalar. If self is an extension array, other is a plain list and the operation is not logical, other is converted to an array (via the sanitization routine) and datetime-like arrays are wrapped. Finally calls the original method and returns its result.
         prio = getattr(other, "__pandas_priority__", None)
         if prio is not None:
             if prio > self.__pandas_priority__:
@@ -90,6 +105,9 @@ def _unpack_zerodim_and_defer(method: F, name: str) -> F:
 
 
 def get_op_result_name(left, right):
+    # [FUNCTION DOC]
+    # Choose the name to give the result of an operation between left and right.
+    # Parameters: left is a Series or Index; right is any object. If right is a Series or Index, the name is determined by the matching helper (a shared name, or none); otherwise the name of left is used. Returns the name (usually a string, possibly none).
     """
     Find the appropriate name to pin to an operation result.  This result
     should always be either an Index or a Series.
@@ -112,6 +130,9 @@ def get_op_result_name(left, right):
 
 
 def _maybe_match_name(a, b):
+    # [FUNCTION DOC]
+    # HELPER: for the result-name function. Picks a name for the result of an operation between two objects.
+    # If only one has a name attribute, its name is used. If both do: equal names win; matching missing-value names win; otherwise none. A type error during comparison (for example a missing-value marker) falls back to the missing-value match test; a value error (for example array-like names) yields none. Neither having a name yields none.
     """
     Try to find a name to attach to the result of an operation between
     a and b.  If only one of these has a `name` attribute, return that

@@ -2,10 +2,20 @@
 Templating for ops docstrings
 """
 
+# [MODULE DOC]
+# Templating for the docstrings of the flexible binary methods (add, subtract, comparison methods and their reversed variants) generated for Series and DataFrame.
+# Public contents: make_flex_doc, which picks and fills a template. Module-level private data: example snippets per operator for Series, a table of operator descriptions (symbol, description, reverse name, examples, return text), the Series and DataFrame flexible-method templates (with doubled braces so that formatting leaves literal braces), a See Also fragment for reverse operators, and a DataFrame comparison template.
+# Import-time side effect: after building the description table, a loop adds an entry for each reverse operator (a copy of the forward entry with the reverse link swapped) and attaches See Also description text to both directions. The table is mutated only at import time.
+
 from __future__ import annotations
 
 
 def make_flex_doc(op_name: str, typ: str) -> str:
+    # [FUNCTION DOC]
+    # Build the docstring for a generated flexible binary method.
+    # Parameters: op_name is the method name, possibly with double underscores around it (the underscores are removed); typ is the object kind, either series or dataframe (lowercase).
+    # Looks up the description for the operator (a key error for unknown names). The equivalent-expression text is: other operator object for reversed names (names starting with r), a function-call form for divmod, otherwise object operator other. For series, the series template is formatted with the description, name, equivalent expression and return text; when a reverse exists a See Also section is appended first; examples are appended if available. For dataframe, comparison operators use the comparison template (name and description only); others use the arithmetic template (description, name, equivalent expression and reverse name). Any other typ raises an assertion error.
+    # Returns the docstring text. No state is mutated (string concatenation creates new strings).
     """
     Make the appropriate substitutions for the given operation and class-typ
     into either _flex_doc_SERIES or _flex_doc_FRAME to return the docstring

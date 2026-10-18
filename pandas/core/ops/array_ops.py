@@ -3,6 +3,11 @@ Functions for arithmetic and comparison operations on NumPy arrays and
 ExtensionArrays.
 """
 
+# [MODULE DOC]
+# Array-level implementations of arithmetic, comparison and logical binary operations for numpy arrays and extension arrays, with the pandas-specific fallbacks for missing values, object dtype, datetime-like scalars and boolean restrictions.
+# Public contents: fill_binop (fill missing values in one operand), comp_method_OBJECT_ARRAY (object-dtype comparison), arithmetic_op, comparison_op, logical_op, na_logical_op (numpy-level logical op with object fallback), get_array_op (choose the right operation by operator), maybe_prepare_scalar_for_op (normalize scalars), and private helpers for masked arithmetic and boolean checks.
+# Operands are assumed to be already unwrapped from Series and Index by callers, which are also responsible for suppressing numpy floating-point warnings. Relies on the expression evaluation engine, the zero-division fix-ups, the invalid comparison helper and the reversed operator functions. No import-time side effects other than defining a module constant set of operators disallowed for booleans.
+
 from __future__ import annotations
 
 import datetime
@@ -72,6 +77,11 @@ if TYPE_CHECKING:
 
 
 def fill_binop(left, right, fill_value):
+    # [FUNCTION DOC]
+    # Optionally fill missing entries before a flexible binary operation.
+    # Parameters: left and right are array-likes; fill_value is the replacement value, or None to skip filling.
+    # If fill_value is not None, missing entries in each operand are replaced with fill_value, but only at positions where exactly one operand is missing (positions missing in both stay missing). Operands are copied only if they contain missing values, so the inputs are not mutated.
+    # Returns a tuple of the possibly replaced left and right.
     """
     If a non-None fill_value is given, replace null entries in left and right
     with this value, but only in positions where _one_ of left/right is null,
@@ -113,6 +123,11 @@ def fill_binop(left, right, fill_value):
 
 
 def comp_method_OBJECT_ARRAY(op, x, y):
+    # [FUNCTION DOC]
+    # Elementwise comparison for object-dtype data.
+    # Parameters: op is the comparison operator function; x is an object ndarray; y is a scalar, list, ndarray, Series or Index. A list is converted to a one-dimensional object array; array-likes are converted to object dtype and unwrapped to raw values.
+    # Array-like y must have the same shape as x, otherwise a value error is raised. The comparison is done in the compiled library on flattened data (vector against vector, or vector against scalar) and the result is reshaped to the shape of x.
+    # Returns a boolean ndarray with the shape of x.
     if isinstance(y, list):
         # e.g. test_tuple_categories
         y = construct_1d_object_array_from_listlike(y)
@@ -133,6 +148,12 @@ def comp_method_OBJECT_ARRAY(op, x, y):
 
 
 def _masked_arith_op(x: np.ndarray, y, op) -> np.ndarray:
+    # [FUNCTION DOC]
+    # HELPER: for the numpy arithmetic fallback. Retries an arithmetic operation on only the non-missing elements.
+    # Parameters: x is an ndarray; y is an ndarray or a scalar; op is the binary operator.
+    # For an ndarray y the output dtype is the common type of both; lengths must match (value error otherwise) and the op is applied where both are non-missing. For a scalar y the output dtype is that of x and the op is applied where x is non-missing, except that positions where a power operation would involve a base or exponent of one are left unmasked so that one raised to anything stays one. A non-scalar, non-ndarray y raises a type error. Unprocessed positions are set to NaN, and the result is reshaped to the shape of x.
+    # KNOWN ISSUE: the power checks compare against the builtin power function, not the operator module function, so the unmask treatment for power may never apply for the operator module version (only the reversed-power case compares against the reversed operator function).
+    # Returns the result array.
     """
     If the given arithmetic operation fails, attempt it again on
     only the non-null elements of the input array(s).
@@ -189,6 +210,10 @@ def _masked_arith_op(x: np.ndarray, y, op) -> np.ndarray:
 
 
 def _na_arithmetic_op(left: np.ndarray, right, op, is_cmp: bool = False):
+    # [FUNCTION DOC]
+    # HELPER: evaluates an operation on numpy data with the pandas fallbacks.
+    # Parameters: left is an ndarray; right is an ndarray or scalar (no pandas containers or extension arrays); op is the operator; is_cmp (default False) marks a comparison.
+    # Evaluates through the expression engine (plain operator for string right operands). On a type error: for non-comparisons where either operand has object dtype, retries with the masked fallback; otherwise re-raises. For comparisons where numpy returned a scalar or the not-implemented sentinel, returns the invalid-comparison result instead (all false / all true, or a type error). Otherwise applies the division-by-zero fix-ups for the operator and returns the result (a pair for divmod).
     """
     Return the result of evaluating op on the passed in values.
 
@@ -240,6 +265,11 @@ def _na_arithmetic_op(left: np.ndarray, right, op, is_cmp: bool = False):
 
 
 def arithmetic_op(left: ArrayLike, right: Any, op):
+    # [FUNCTION DOC]
+    # Evaluate an arithmetic operation (add, subtract, multiply, divide, floor divide, modulo, power, divmod and reversed variants) on an array and a right operand.
+    # Parameters: left is an ndarray or extension array; right is any object except a DataFrame or Index; op is the operator function (or a reversed variant). Callers must already have unwrapped containers, wrapped datetime-like data, applied scalar preparation, and suppressed numpy warnings.
+    # A list right is converted to an array; datetime-like data is wrapped. If either side is an extension array, or right is a timedelta, offset, timestamp or NaT, the operator is invoked directly on the operands. Otherwise the boolean-restriction check is run and the numpy evaluation path is used.
+    # Returns an array (or a pair for divmod). May raise a not-implemented error for disallowed boolean operations and type errors from the numpy path.
     """
     Evaluate an arithmetic operation `+`, `-`, `*`, `/`, `//`, `%`, `**`, ...
 
@@ -292,6 +322,11 @@ def arithmetic_op(left: ArrayLike, right: Any, op):
 
 
 def comparison_op(left: ArrayLike, right: Any, op) -> ArrayLike:
+    # [FUNCTION DOC]
+    # Evaluate a comparison (equal, not equal, greater or equal, greater, less or equal, less) of an array against another operand.
+    # Parameters: left is an ndarray or extension array; right is any object except a DataFrame, Series or Index; op is the comparison operator function. Containers are assumed already unwrapped; callers suppress numpy warnings.
+    # Behavior: wraps datetime-like data, unpacks zero-dimensional values (with special treatment for zero-dimensional array subclasses), converts a list into an array, and raises a value error if the right operand is a sized array with a different length than left. Then chooses: extension dispatch (or datetime-like scalars against non-object left) calls the operator directly; a missing scalar gives all-true for not-equal and all-false otherwise; numeric versus string-like gives the invalid-comparison result; object left or string right uses the object comparison; otherwise the numpy path in comparison mode.
+    # Returns a boolean array (or extension array).
     """
     Evaluate a comparison operation `=`, `!=`, `>=`, `>`, `<=`, or `<`.
 
@@ -362,6 +397,11 @@ def comparison_op(left: ArrayLike, right: Any, op) -> ArrayLike:
 
 
 def na_logical_op(x: np.ndarray, y, op):
+    # [FUNCTION DOC]
+    # Apply a logical operator to numpy data, falling back to object-dtype handling.
+    # Parameters: x is an ndarray; y is an ndarray or scalar; op is the logical operator function (and, or, xor or reversed).
+    # First tries the operator directly. On a type error: for array y (asserted not both boolean) both are converted to object and combined through the compiled vector helper; for scalar y (asserted scalar) a non-missing value is converted to bool and combined through the compiled scalar helper, and if that fails with a type, value, attribute, overflow or not-implemented error a type error is raised naming the operator, array dtype and scalar type.
+    # Returns the result reshaped to the shape of x.
     try:
         # For exposition, write:
         #  yarr = isinstance(y, np.ndarray)
@@ -403,6 +443,11 @@ def na_logical_op(x: np.ndarray, y, op):
 
 
 def logical_op(left: ArrayLike, right: Any, op) -> ArrayLike:
+    # [FUNCTION DOC]
+    # Evaluate a logical operation (and, or, xor and reversed variants) on an array and another operand.
+    # Parameters: left is an ndarray or extension array; right is any object except DataFrame, Series or Index; op is the operator function.
+    # Raises a type error if right is list-like but has no dtype (list or tuple), since such operands are no longer supported. Unpacks zero-dimensional right. If either side is an extension array, calls the operator directly. Otherwise, array right operands that are not integer have missing values replaced by false and are cast to bool (when left is boolean or unspecified), the numpy-level helper runs, and the result is cast to bool unless both sides are integers, in which case the bitwise integer result is kept.
+    # Returns an array.
     """
     Evaluate a logical operation `|`, `&`, or `^`.
 
@@ -420,6 +465,9 @@ def logical_op(left: ArrayLike, right: Any, op) -> ArrayLike:
     """
 
     def fill_bool(x, left=None):
+        # [FUNCTION DOC]
+        # HELPER: nested in the logical operation. Prepares an array for boolean logic.
+        # Parameters: x is an ndarray; left (default none) is the array it will be combined with. For complex, float or object dtype, missing entries are replaced by false (via object dtype). The array is then cast to bool unless a left array was given whose dtype is not boolean. Returns the (possibly new) array.
         # if `left` is specifically not-boolean, we do not cast to bool
         if x.dtype.kind in "cfO":
             # dtypes that can hold NA
@@ -472,6 +520,11 @@ def logical_op(left: ArrayLike, right: Any, op) -> ArrayLike:
 
 
 def get_array_op(op):
+    # [FUNCTION DOC]
+    # Return the array-level binary operation function that matches the operator.
+    # Parameter: op is a binary operator function from the operator module or the reversed-operator module, or an already-bound partial (returned unchanged) or a flexible-method wrapper named for an arithmetic helper (returned unchanged).
+    # The name is normalized by stripping underscores and a leading r. Comparison names yield a partial of the comparison function with op bound; logical names yield a partial of the logical function; arithmetic names yield a partial of the arithmetic function. Raises a not-implemented error for any other name.
+    # KNOWN ISSUE: the logical-name set lists reversed names that start with r, but the name normalization strips a leading r, so those entries can never match.
     """
     Return a binary array operation corresponding to the given operator op.
 
@@ -515,6 +568,11 @@ def get_array_op(op):
 
 
 def maybe_prepare_scalar_for_op(obj, shape: Shape):
+    # [FUNCTION DOC]
+    # Convert scalars to pandas types so that arithmetic and comparison behave uniformly.
+    # Parameters: obj is any object; shape is the shape of the other operand, used to broadcast missing datetime-like numpy scalars.
+    # Conversions: standard-library timedelta to Timedelta; standard-library datetime to Timestamp; numpy datetime64 to Timestamp, except missing ones, which become a datetime array of the given shape (unitless resolution becomes seconds; unsupported resolution becomes the nearest supported one); numpy timedelta64 likewise to Timedelta or, if missing, a timedelta array; numpy integer to a Python int; numpy floating to a Python float. Anything else is returned unchanged.
+    # Should be called after the result name has been determined. No mutation.
     """
     Cast non-pandas objects to pandas types to unify behavior of arithmetic
     and comparison operations.
@@ -608,6 +666,9 @@ _BOOL_OP_NOT_ALLOWED = {
 
 
 def _bool_arith_check(op, a: np.ndarray, b) -> None:
+    # [FUNCTION DOC]
+    # HELPER: guard for the numpy arithmetic path. Parameters: op is the operator; a is an ndarray; b is the other operand.
+    # Raises a not-implemented error if op is one of the disallowed operators (true division, floor division, power, divmod and their reversed forms) and both operands are boolean. Otherwise returns nothing.
     """
     In contrast to numpy, pandas raises an error for certain operations
     with booleans.

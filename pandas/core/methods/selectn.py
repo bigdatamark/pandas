@@ -2,6 +2,11 @@
 Implementation of nlargest and nsmallest.
 """
 
+# [MODULE DOC]
+# Implementation of the n-largest and n-smallest selection used by the Series and DataFrame methods of those names.
+# Contents: a generic base class holding the shared arguments, a Series implementation (partial selection using a k-th smallest kernel on a transformed array), and a DataFrame implementation (successive per-column selection with tie handling, then a final stable sort).
+# Imports the compiled algorithms library and index helpers. Outside type checking, the generic frame and series type names are replaced by a plain type variable to avoid circular imports; no other import-time side effects.
+
 from __future__ import annotations
 
 from collections.abc import (
@@ -55,9 +60,15 @@ else:
 
 
 class SelectN(Generic[NDFrameT]):
+    # [CLASS DOC]
+    # Generic base class for n-largest/n-smallest selectors, parameterized by the pandas object type.
+    # State: obj (the object to select from), n (number of rows to select), keep (one of first, last or all, which decides tie handling).
+    # Subclasses implement the compute method; the two public methods delegate to it with the method name.
     def __init__(
         self, obj: NDFrameT, n: int, keep: Literal["first", "last", "all"]
     ) -> None:
+        # [FUNCTION DOC]
+        # Store obj, n and keep. Raises a value error if keep is not one of first, last or all (validation occurs after assignment).
         self.obj = obj
         self.n = n
         self.keep = keep
@@ -66,19 +77,28 @@ class SelectN(Generic[NDFrameT]):
             raise ValueError('keep must be either "first", "last" or "all"')
 
     def compute(self, method: str) -> NDFrameT:
+        # [FUNCTION DOC]
+        # Abstract hook: subclasses compute the result for the given method name (largest or smallest variant). The base class raises a not-implemented error.
         raise NotImplementedError
 
     @final
     def nlargest(self) -> NDFrameT:
+        # [FUNCTION DOC]
+        # Final method: return the n largest items by delegating to the compute method with the largest-selection name.
         return self.compute("nlargest")
 
     @final
     def nsmallest(self) -> NDFrameT:
+        # [FUNCTION DOC]
+        # Final method: return the n smallest items by delegating to the compute method with the smallest-selection name.
         return self.compute("nsmallest")
 
     @final
     @staticmethod
     def is_valid_dtype_n_method(dtype: DtypeObj) -> bool:
+        # [FUNCTION DOC]
+        # HELPER: static final check used by the compute implementations.
+        # Returns True if the dtype supports n-largest/n-smallest: any numeric dtype except complex, or any dtype needing integer-based conversion (datetime-like). Otherwise False. No side effects.
         """
         Helper function to determine if dtype is valid for
         nsmallest/nlargest methods
@@ -89,6 +109,10 @@ class SelectN(Generic[NDFrameT]):
 
 
 class SelectNSeries(SelectN[Series]):
+    # [CLASS DOC]
+    # Selector for a Series. Inherits the base selector (same state and constructor).
+    # The compute method returns a Series holding the n largest or smallest values with their original index labels.
+    # KNOWN ISSUE: the docstring lists only first and last for keep, but the constructor and compute logic also accept all, which keeps ties beyond n.
     """
     Implement n largest/smallest for Series
 
@@ -104,6 +128,11 @@ class SelectNSeries(SelectN[Series]):
     """
 
     def compute(self, method: str) -> Series:
+        # [FUNCTION DOC]
+        # Compute the selection for a Series; method is the largest or smallest name.
+        # Raises a type error if the dtype is not valid (complex, or non-numeric non-datetime). If n is zero or negative, returns an empty selection.
+        # The index is reset to a default one to avoid cost from duplicate labels, and restored on the result by taking from the original index. If n covers the whole length, performs a stable sort in the appropriate direction and takes the head. Otherwise: drops missing values, converts data to a plain numeric array (integer view for datetime-like, raw data for masked, unsigned view for boolean), negates it for the largest case (adjusting integers by one so boundaries order correctly, and mapping booleans so false orders before true), reverses it when keep is last, finds the k-th smallest value on a contiguous copy, selects positions at or below it, orders them stably, and trims according to keep (all keeps all ties; missing values are appended afterwards only if needed to reach n). For keep last, positions are mapped back to the original orientation. Result is the chosen rows concatenated with the missing-value rows, truncated to the computed length.
+        # The local variable named default_index shadows the imported index helper within this method (harmless, since the helper is not used here).
         from pandas.core.reshape.concat import concat
 
         n = self.n
@@ -191,6 +220,9 @@ class SelectNSeries(SelectN[Series]):
 
 
 class SelectNFrame(SelectN[DataFrame]):
+    # [CLASS DOC]
+    # Selector for a DataFrame. Inherits the base selector and adds a list of column labels to rank by. The compute method returns a DataFrame with the n largest or smallest rows ordered by those columns.
+    # KNOWN ISSUE: the docstring lists only first and last for keep, but all is also accepted.
     """
     Implement n largest/smallest for DataFrame
 
@@ -213,6 +245,8 @@ class SelectNFrame(SelectN[DataFrame]):
         keep: Literal["first", "last", "all"],
         columns: IndexLabel,
     ) -> None:
+        # [FUNCTION DOC]
+        # Store arguments via the base constructor (so keep is validated), plus columns: a non-list-like value or a tuple is treated as a single column label; the result is stored as a list under the attribute columns.
         super().__init__(obj, n, keep)
         if not is_list_like(columns) or isinstance(columns, tuple):
             columns = [columns]
@@ -222,6 +256,9 @@ class SelectNFrame(SelectN[DataFrame]):
         self.columns = columns
 
     def compute(self, method: str) -> DataFrame:
+        # [FUNCTION DOC]
+        # Compute the selection for a DataFrame; method is the largest or smallest name.
+        # Raises a type error naming the first column whose dtype is invalid for the method. The frame index is reset (restored at the end) to cope with duplicates. For each column in order, the matching Series method is applied with the remaining count (keep all unless it is the last column). If it is the last column or the result is not larger than the remaining count, its labels are added to the collected row indexer and the loop ends. Otherwise rows strictly better than the border value are added as safe, and only rows tied at the border are examined on the next column with a reduced count. Finally takes the collected rows, restores the original labels, and, with multiple columns, stably sorts by all columns in the direction of the method. Returns the new frame.
         n = self.n
         frame = self.obj
         columns = self.columns
@@ -235,6 +272,8 @@ class SelectNFrame(SelectN[DataFrame]):
                 )
 
         def get_indexer(current_indexer: Index, other_indexer: Index) -> Index:
+            # [FUNCTION DOC]
+            # HELPER: nested function for compute. Concatenates two index objects: for the smallest method, the current indexer followed by the other; otherwise the other followed by the current. Returns the combined index; no mutation.
             """
             Helper function to concat `current_indexer` and `other_indexer`
             depending on `method`

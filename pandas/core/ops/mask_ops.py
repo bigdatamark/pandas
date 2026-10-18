@@ -2,6 +2,10 @@
 Ops for masked arrays.
 """
 
+# [MODULE DOC]
+# Three-valued (Kleene) logical operations on boolean data with separate missing-value masks, used by masked boolean arrays.
+# Public contents: kleene_or, kleene_xor, kleene_and, plus a small helper that rejects floating NaN operands. Operands may be arrays or scalars; at least one must be an array with a mask. No import-time side effects.
+
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
@@ -23,6 +27,11 @@ def kleene_or(
     left_mask: np.ndarray | None,
     right_mask: np.ndarray | None,
 ) -> tuple[npt.NDArray[np.bool_], npt.NDArray[np.bool_]]:
+    # [FUNCTION DOC]
+    # Elementwise logical or under Kleene logic: the result is missing only where both are missing or one is missing and the other false; a missing value or'ed with true is true.
+    # Parameters: left and right are boolean arrays, booleans, or the NA marker; left_mask and right_mask are boolean arrays flagging missing entries, or None when the corresponding operand is a scalar (at most one may be None).
+    # If left_mask is None the operands are swapped (or is symmetric) so that left is always an array. Raises a type error if left is then not an array, and a value error if right is a floating NaN. Handles right being the NA marker, true, false, or an array with a mask.
+    # Returns a tuple of the result values and the new mask. Inputs are not mutated.
     """
     Boolean ``or`` using Kleene logic.
 
@@ -84,6 +93,10 @@ def kleene_xor(
     left_mask: np.ndarray | None,
     right_mask: np.ndarray | None,
 ) -> tuple[npt.NDArray[np.bool_], npt.NDArray[np.bool_]]:
+    # [FUNCTION DOC]
+    # Elementwise logical exclusive-or under Kleene logic: like the or version except that the result is missing whenever either side is missing (true with true gives false).
+    # Parameters and exceptions as for the or version (operands swapped if left_mask is None; type error if left is not an array; value error for floating NaN right operand).
+    # Returns a tuple of result values and mask. For an NA scalar, the values are all false and the mask is all true; otherwise the mask is the union of the masks (or a copy of the left mask for a scalar).
     """
     Boolean ``xor`` using Kleene logic.
 
@@ -137,6 +150,11 @@ def kleene_and(
     left_mask: np.ndarray | None,
     right_mask: np.ndarray | None,
 ) -> tuple[npt.NDArray[np.bool_], npt.NDArray[np.bool_]]:
+    # [FUNCTION DOC]
+    # Elementwise logical and under Kleene logic: the result is missing for missing and missing, or true and missing; a missing value and'ed with false is false.
+    # Parameters and exceptions as for the or version (operands swapped if left_mask is None; type error if left is not an array; value error for floating NaN right operand).
+    # Returns a tuple of result values and mask. A false scalar unmasks everything; an NA scalar yields masked entries wherever left is true or already masked; for array operands entries are unmasked where either side is definitely false.
+    # KNOWN ISSUE: the docstring's Returns section says the result is of the logical xor, but this function computes and.
     """
     Boolean ``and`` using Kleene logic.
 
@@ -190,5 +208,7 @@ def kleene_and(
 
 
 def raise_for_nan(value: object, method: str) -> None:
+    # [FUNCTION DOC]
+    # HELPER: validation for the Kleene operations. Parameters: value is an operand; method is the logical operator name used in the message. Raises a value error if the value is a floating-point NaN; otherwise returns nothing.
     if lib.is_float(value) and np.isnan(value):
         raise ValueError(f"Cannot perform logical '{method}' with floating NaN")

@@ -2,6 +2,11 @@
 Routines for filling missing data.
 """
 
+# [MODULE DOC]
+# Routines for filling and interpolating missing data on numpy arrays: forward and backward fill with limits and area restrictions, interpolation along an axis (numpy or scipy based), mask construction for replace, and validation helpers for the related keyword arguments.
+# Public contents: fill-size and mask helpers, fill-method and interpolate-method cleaners, argument validators, the in-place two-dimensional interpolation entry point, in-place pad/backfill entry point, the fill-function selector, and the module lists of numpy-backed and scipy-backed interpolation method names. Private helpers implement the one-dimensional interpolation, scipy dispatch and the limit bookkeeping.
+# Used by Block-level and array-level fill and interpolate operations. Interpolation methods other than the numpy ones require the optional scientific library, imported lazily. Most fill functions mutate their inputs in place. Import-time side effects: builds a module-level table mapping fill method names to the one-dimensional fill functions.
+
 from __future__ import annotations
 
 from functools import wraps
@@ -60,6 +65,10 @@ if TYPE_CHECKING:
 
 
 def check_value_size(value, mask: npt.NDArray[np.bool_], length: int):
+    # [FUNCTION DOC]
+    # Validate the value passed to an extension array fill.
+    # Parameters: value (scalar or array-like), mask (boolean array of positions to fill), length (expected length of an array-like value).
+    # If value is array-like and its length differs from length, raises a value error. An array-like value is reduced to the entries at masked positions; scalars are returned unchanged.
     """
     Validate the size of the values passed to ExtensionArray.fillna.
     """
@@ -75,6 +84,11 @@ def check_value_size(value, mask: npt.NDArray[np.bool_], length: int):
 
 
 def mask_missing(arr: ArrayLike, value) -> npt.NDArray[np.bool_]:
+    # [FUNCTION DOC]
+    # Build a boolean mask of the entries of arr that equal value (used by replace).
+    # Parameters: arr (array or extension array); value (a scalar already checked by the caller to be non-list-like and holdable by arr).
+    # Behavior: for masked or Arrow floating dtypes with a NaN value (when NaN is not treated as missing), the mask is the positions holding actual NaN data that are not missing; for such integer dtypes the mask is all false. A missing value matches missing entries. Otherwise starts with all false and leaves it all false for incompatible pairs (numeric non-boolean array with a boolean value, boolean array with a non-boolean numeric value, numeric array with a string); object arrays compare only the non-missing entries; other arrays compare equal and, if the result is an extension boolean array, convert it to a numpy mask with missing treated as false.
+    # Returns a boolean ndarray with the shape of arr.
     """
     Return a masking array of same size/shape as arr
     with entries equaling value set to True.
@@ -158,7 +172,10 @@ def clean_fill_method(
     method: Literal["ffill", "pad", "bfill", "backfill"],
     *,
     allow_nearest: Literal[False] = ...,
-) -> Literal["pad", "backfill"]: ...
+) -> Literal["pad", "backfill"]:
+    # [FUNCTION DOC]
+    # Typed overload stub (no nearest allowed): accepts forward/backward fill names and returns the normalized pad or backfill name. Behavior is in the implementation below.
+    ...
 
 
 @overload
@@ -166,7 +183,10 @@ def clean_fill_method(
     method: Literal["ffill", "pad", "bfill", "backfill", "nearest"],
     *,
     allow_nearest: Literal[True],
-) -> Literal["pad", "backfill", "nearest"]: ...
+) -> Literal["pad", "backfill", "nearest"]:
+    # [FUNCTION DOC]
+    # Typed overload stub (nearest allowed): accepts the fill names plus nearest and returns the normalized name. Behavior is in the implementation below.
+    ...
 
 
 def clean_fill_method(
@@ -174,6 +194,10 @@ def clean_fill_method(
     *,
     allow_nearest: bool = False,
 ) -> Literal["pad", "backfill", "nearest"]:
+    # [FUNCTION DOC]
+    # Implementation: normalize a fill method name.
+    # Parameters: method (string, case-insensitive; the aliases ffill and bfill map to pad and backfill), allow_nearest (keyword, default False; permits the nearest method).
+    # Raises a value error stating the expected names if the method is not valid. Returns the normalized name. Non-string inputs are not normalized and fail the validity check.
     if isinstance(method, str):
         # error: Incompatible types in assignment (expression has type "str", variable
         # has type "Literal['ffill', 'pad', 'bfill', 'backfill', 'nearest']")
@@ -218,6 +242,10 @@ SP_METHODS = [
 
 
 def clean_interp_method(method: str, index: Index, **kwargs) -> str:
+    # [FUNCTION DOC]
+    # Validate an interpolation method name.
+    # Parameters: method (string); index (the index whose monotonicity is checked for some methods); keyword options, of which only the order is read.
+    # Raises a value error if spline or polynomial lacks an order, if the method is not among the numpy and scipy methods, or if krogh, piecewise polynomial or pchip is requested with a non-monotonic-increasing index. Returns the method unchanged.
     order = kwargs.get("order")
 
     if method in ("spline", "polynomial") and order is None:
@@ -237,6 +265,9 @@ def clean_interp_method(method: str, index: Index, **kwargs) -> str:
 
 
 def find_valid_index(how: str, is_valid: npt.NDArray[np.bool_]) -> int | None:
+    # [FUNCTION DOC]
+    # Position of the first or last valid entry.
+    # Parameters: how ("first" or "last", asserted), is_valid (boolean array; two-dimensional input is first reduced with any across columns). Returns none for an empty array or if there is no valid entry, else the integer position.
     """
     Retrieves the positional index of the first valid value.
 
@@ -278,6 +309,8 @@ def find_valid_index(how: str, is_valid: npt.NDArray[np.bool_]) -> int | None:
 def validate_limit_direction(
     limit_direction: str,
 ) -> Literal["forward", "backward", "both"]:
+    # [FUNCTION DOC]
+    # Validate a limit-direction string (case-insensitive). Returns it lower-cased; raises a value error naming the accepted values (forward, backward, both) otherwise.
     valid_limit_directions = ["forward", "backward", "both"]
     limit_direction = limit_direction.lower()
     if limit_direction not in valid_limit_directions:
@@ -291,6 +324,8 @@ def validate_limit_direction(
 
 
 def validate_limit_area(limit_area: str | None) -> Literal["inside", "outside"] | None:
+    # [FUNCTION DOC]
+    # Validate a limit-area value. None is returned unchanged; a string is lower-cased and must be inside or outside, otherwise a value error is raised. Returns the lower-cased string or none.
     if limit_area is not None:
         valid_limit_areas = ["inside", "outside"]
         limit_area = limit_area.lower()
@@ -307,6 +342,9 @@ def validate_limit_area(limit_area: str | None) -> Literal["inside", "outside"] 
 def infer_limit_direction(
     limit_direction: Literal["backward", "forward", "both"] | None, method: str
 ) -> Literal["backward", "forward", "both"]:
+    # [FUNCTION DOC]
+    # Resolve the limit direction for an interpolation method.
+    # Parameters: limit_direction (forward, backward, both or none), method (fill or interpolation method name). When none: backward for the backward-fill names, forward otherwise. When given: raises a value error if the forward-fill names are used with a non-forward direction or the backward-fill names with a non-backward direction. Returns the direction.
     # Set `limit_direction` depending on `method`
     if limit_direction is None:
         if method in ("backfill", "bfill"):
@@ -326,6 +364,9 @@ def infer_limit_direction(
 
 
 def get_interp_index(method, index: Index) -> Index:
+    # [FUNCTION DOC]
+    # Compute the index used as the x-coordinates for interpolation.
+    # Parameters: method (name), index. For linear, a default integer range of the same length replaces the index. Otherwise a known method is required (value error for unknown names, "Can not interpolate"), and methods other than index, values, nearest and time need a numeric or datetime index (value error otherwise). In all cases a missing value in the resulting index raises a not-implemented error. Returns the index.
     # create/use the index
     if method == "linear":
         # prior default
@@ -372,6 +413,10 @@ def interpolate_2d_inplace(
     mask=None,
     **kwargs,
 ) -> None:
+    # [FUNCTION DOC]
+    # Interpolate each one-dimensional slice of a floating two-dimensional array along an axis, modifying the data in place.
+    # Parameters: data (floating ndarray, mutated); index (the axis labels used as x-coordinates); axis; method (default linear); limit (maximum consecutive fills, none for unlimited); limit_direction (default forward); limit_area (inside, outside or none); fill_value (value for out-of-bounds in scipy methods; a missing-like value becomes the dtype's missing value); mask (optional boolean array updated in place by the slice routine); extra keywords forwarded to the scipy routines.
+    # Validates the method, converts time-weighted interpolation to the values method (raising a value error if the index is not datetime-like), validates direction and area, validates the limit, converts the index to numeric coordinates once, and applies the one-dimensional routine along the axis. Returns nothing. The signature carries only what block-level interpolation needs.
     """
     Column-wise application of _interpolate_1d.
 
@@ -406,6 +451,8 @@ def interpolate_2d_inplace(
     indices = _index_to_interp_indices(index, method)
 
     def func(yvalues: np.ndarray) -> None:
+        # [FUNCTION DOC]
+        # HELPER: nested function applied to each one-dimensional slice; calls the one-dimensional interpolation with the settings captured from the enclosing function (bounds error disabled), mutating the slice. Returns nothing.
         # process 1-d slices in the axis direction
 
         _interpolate_1d(
@@ -425,6 +472,8 @@ def interpolate_2d_inplace(
 
 
 def _index_to_interp_indices(index: Index, method: str) -> np.ndarray:
+    # [FUNCTION DOC]
+    # HELPER: convert an index to a numeric array of x-coordinates for numpy or scipy. Datetime-like data are viewed as 64-bit integers; for the linear method the values are used as is; otherwise converted to a plain array, and for the values and index methods an object array is converted to a numeric array when possible.
     """
     Convert Index to ndarray of indices to pass to NumPy/SciPy.
     """
@@ -459,6 +508,12 @@ def _interpolate_1d(
     mask=None,
     **kwargs,
 ) -> None:
+    # [FUNCTION DOC]
+    # HELPER: the one-dimensional interpolation, filling yvalues in place.
+    # Parameters: indices (x-coordinates) and yvalues (same length); method; limit; limit_direction; limit_area; fill_value; bounds_error (only passed to the scipy routines); order; mask (optional; if given, it is used instead of detecting missing values and is overwritten at the end); extra keywords.
+    # Does nothing if there are no valid values or no invalid values. Determines the leading and trailing missing runs and the set of positions to keep missing according to the limit, direction and area. Numpy methods use linear interpolation on sorted valid points; others call the scipy wrapper. Datetime-like data are viewed as integers. Finally positions to preserve are restored: with a mask, the mask is cleared and set true at those positions; otherwise they are set to NaT or NaN.
+    # KNOWN ISSUE: the checks for a none first or last valid index can never trigger, because the function has already returned when no valid values exist.
+    # KNOWN ISSUE: the docstring says bounds_error is hardcoded to false, but it is an ordinary parameter (the only caller passes false).
     """
     Logic for the 1-d interpolation.  The input
     indices and yvalues will each be 1-d arrays of the same length.
@@ -568,6 +623,10 @@ def _interpolate_scipy_wrapper(
     order=None,
     **kwargs,
 ):
+    # [FUNCTION DOC]
+    # HELPER: dispatch to scipy interpolation.
+    # Parameters: x, y (known points), new_x (points to evaluate), method, fill_value, bounds_error, order, extra keywords. Requires the optional scientific library (error message names the method). Methods nearest, zero, slinear, quadratic, cubic and polynomial (using order as degree) go through the standard one-dimensional interpolator; spline uses a univariate spline (value error unless order is a positive number); the remaining names use a table of functions (barycentric, krogh, derivatives, piecewise polynomial, cubic spline, akima, pchip), after making read-only inputs writable copies and dropping a downcast keyword; unknown names raise a value error. Returns the interpolated array.
+    # KNOWN ISSUE: the docstring refers to a function named for cleaning interpolation methods with a leading underscore, but the real function has no leading underscore.
     """
     Passed off to scipy.interpolate.interp1d. method is scipy's kind.
     Returns an array interpolated at new_x.  Add any new methods to
@@ -643,6 +702,10 @@ def _from_derivatives(
     der: int | list[int] | None = 0,
     extrapolate: bool = False,
 ):
+    # [FUNCTION DOC]
+    # HELPER: convenience wrapper for the piecewise polynomial constructed from known values and derivatives (Bernstein basis).
+    # Parameters: xi (sorted x-coordinates), yi (values, reshaped to a column), x (evaluation points), order (local polynomial degree, default none), der (unused), extrapolate (default False). Returns the polynomial evaluated at x.
+    # KNOWN ISSUE: the docstring states extrapolate defaults to True, but the signature defaults it to False; the der argument is accepted but never used.
     """
     Convenience function for interpolate.BPoly.from_derivatives.
 
@@ -692,6 +755,8 @@ def _akima_interpolate(
     der: int = 0,
     axis: AxisInt = 0,
 ):
+    # [FUNCTION DOC]
+    # HELPER: convenience wrapper for Akima interpolation. Parameters: xi (sorted x-coordinates), yi (values), x (evaluation points), der (derivative order, default 0), axis (default 0). Builds the interpolator and evaluates it at x with the derivative order. Returns the values.
     """
     Convenience function for akima interpolation.
     xi and yi are arrays of values used to approximate some function f,
@@ -740,6 +805,8 @@ def _cubicspline_interpolate(
     bc_type: _CubicBC | tuple[Any, Any] = "not-a-knot",
     extrapolate: Literal["periodic"] | bool | None = None,
 ) -> np.ndarray:
+    # [FUNCTION DOC]
+    # HELPER: convenience wrapper for cubic spline interpolation. Parameters: xi (strictly increasing x-coordinates), yi (values), x (evaluation points), axis (default 0), bc_type (boundary condition: not-a-knot default, clamped, natural, periodic, or a pair), extrapolate (boolean, periodic or none for the library default). Builds the spline and returns it evaluated at x.
     """
     Convenience function for cubic spline data interpolator.
 
@@ -825,6 +892,11 @@ def pad_or_backfill_inplace(
     limit: int | None = None,
     limit_area: Literal["inside", "outside"] | None = None,
 ) -> None:
+    # [FUNCTION DOC]
+    # Forward or backward fill a numpy array in place.
+    # Parameters: values (ndarray, one or two dimensional, mutated); method (pad default, or backfill; aliases accepted); axis (0 or 1; must be 0 for one-dimensional data, else an assertion error is raised); limit (maximum consecutive fills); limit_area (inside, outside or none). One-dimensional input is treated as a single row; axis 1 works on a transposed view. Uses the two-dimensional fill kernel. Returns nothing.
+    # KNOWN ISSUE: the docstring says the result is returned, but nothing is returned; the function only modifies the array in place.
+    # The two small anonymous transposition helpers inside this function are lambdas and carry no separate documentation: one returns its argument and the other returns the transpose.
     """
     Perform an actual interpolation of values, values will be make 2-d if
     needed fills inplace, returns the result.
@@ -865,6 +937,8 @@ def pad_or_backfill_inplace(
 def _fillna_prep(
     values, mask: npt.NDArray[np.bool_] | None = None
 ) -> npt.NDArray[np.bool_]:
+    # [FUNCTION DOC]
+    # HELPER: shared preamble of the fill kernels. Returns the given mask, or computes the missing-value mask of values if none was given.
     # boilerplate for _pad_1d, _backfill_1d, _pad_2d, _backfill_2d
 
     if mask is None:
@@ -874,6 +948,8 @@ def _fillna_prep(
 
 
 def _datetimelike_compat(func: F) -> F:
+    # [FUNCTION DOC]
+    # HELPER: decorator for the fill kernels that handles datetime64 and timedelta64 data. For such data it computes the mask first, runs the wrapped kernel on a 64-bit integer view, and returns the result viewed in the original dtype along with the mask; other data pass straight through. Returns the wrapper.
     """
     Wrapper to handle datetime64 and timedelta64 dtypes.
     """
@@ -885,6 +961,8 @@ def _datetimelike_compat(func: F) -> F:
         limit_area: Literal["inside", "outside"] | None = None,
         mask=None,
     ):
+        # [FUNCTION DOC]
+        # HELPER: wrapper created by the datetime-like decorator. Parameters: values, limit (default none), limit_area (default none), mask (default none). Returns the tuple of filled values and mask.
         if needs_i8_conversion(values.dtype):
             if mask is None:
                 # This needs to occur before casting to int64
@@ -907,6 +985,8 @@ def _pad_1d(
     limit_area: Literal["inside", "outside"] | None = None,
     mask: npt.NDArray[np.bool_] | None = None,
 ) -> tuple[np.ndarray, npt.NDArray[np.bool_]]:
+    # [FUNCTION DOC]
+    # HELPER: forward fill a one-dimensional array in place (decorated for datetime-like data). Parameters: values, limit, limit_area, mask. Computes the mask if absent; if limit_area is given and not everything is missing, modifies the mask so only the allowed area is filled; runs the compiled forward fill. Returns the tuple of values and mask (the mask may no longer reflect missingness).
     mask = _fillna_prep(values, mask)
     if limit_area is not None and not mask.all():
         _fill_limit_area_1d(mask, limit_area)
@@ -921,6 +1001,8 @@ def _backfill_1d(
     limit_area: Literal["inside", "outside"] | None = None,
     mask: npt.NDArray[np.bool_] | None = None,
 ) -> tuple[np.ndarray, npt.NDArray[np.bool_]]:
+    # [FUNCTION DOC]
+    # HELPER: backward fill a one-dimensional array in place; same parameters, preparation and return as the forward fill version, using the compiled backward fill.
     mask = _fillna_prep(values, mask)
     if limit_area is not None and not mask.all():
         _fill_limit_area_1d(mask, limit_area)
@@ -935,6 +1017,8 @@ def _pad_2d(
     limit_area: Literal["inside", "outside"] | None = None,
     mask: npt.NDArray[np.bool_] | None = None,
 ) -> tuple[np.ndarray, npt.NDArray[np.bool_]]:
+    # [FUNCTION DOC]
+    # HELPER: forward fill a two-dimensional array in place (rows are series). Same parameters and return as the one-dimensional version; applies the two-dimensional area restriction when limit_area is given and only runs the kernel when the array is nonempty.
     mask = _fillna_prep(values, mask)
     if limit_area is not None:
         _fill_limit_area_2d(mask, limit_area)
@@ -951,6 +1035,8 @@ def _backfill_2d(
     limit_area: Literal["inside", "outside"] | None = None,
     mask: npt.NDArray[np.bool_] | None = None,
 ):
+    # [FUNCTION DOC]
+    # HELPER: backward fill a two-dimensional array in place; same behavior as the two-dimensional forward fill with the backward kernel (nothing is done for empty arrays). Returns the tuple of values and mask.
     mask = _fillna_prep(values, mask)
     if limit_area is not None:
         _fill_limit_area_2d(mask, limit_area)
@@ -966,6 +1052,9 @@ def _backfill_2d(
 def _fill_limit_area_1d(
     mask: npt.NDArray[np.bool_], limit_area: Literal["outside", "inside"]
 ) -> None:
+    # [FUNCTION DOC]
+    # HELPER: adjust a one-dimensional missing-value mask so filling honors limit_area, modifying the mask in place.
+    # Parameters: mask (true where missing), limit_area (inside: only fill between the first and last valid values; outside: only fill outside them). The caller must ensure at least one entry is not missing. Afterwards the mask no longer represents missingness.
     """Prepare 1d mask for ffill/bfill with limit_area.
 
     Caller is responsible for checking at least one value of mask is False.
@@ -992,6 +1081,9 @@ def _fill_limit_area_1d(
 def _fill_limit_area_2d(
     mask: npt.NDArray[np.bool_], limit_area: Literal["outside", "inside"]
 ) -> None:
+    # [FUNCTION DOC]
+    # HELPER: two-dimensional version of the limit-area mask adjustment, working per column of the transposed mask using running maxima from both ends to find the region between the first and last valid values; modifies the mask in place. For outside, the inside region is cleared; for inside, the outside region is cleared.
+    # KNOWN ISSUE: the docstring declares the mask as one-dimensional, but this routine operates on a two-dimensional mask.
     """Prepare 2d mask for ffill/bfill with limit_area.
 
     When called, mask will no longer faithfully represent when
@@ -1024,6 +1116,8 @@ _fill_methods = {"pad": _pad_1d, "backfill": _backfill_1d}
 
 
 def get_fill_func(method, ndim: int = 1):
+    # [FUNCTION DOC]
+    # Select the fill kernel. Parameters: method (normalized with the fill method cleaner; value error if invalid), ndim (default 1). Returns the one-dimensional pad or backfill kernel for one dimension, otherwise the two-dimensional kernel.
     method = clean_fill_method(method)
     if ndim == 1:
         return _fill_methods[method]
@@ -1031,6 +1125,8 @@ def get_fill_func(method, ndim: int = 1):
 
 
 def clean_reindex_fill_method(method) -> ReindexMethod | None:
+    # [FUNCTION DOC]
+    # Normalize a method for reindexing: none passes through; otherwise the fill method cleaner is applied with nearest allowed. Returns the normalized name or none.
     if method is None:
         return None
     return clean_fill_method(method, allow_nearest=True)
@@ -1039,6 +1135,11 @@ def clean_reindex_fill_method(method) -> ReindexMethod | None:
 def _interp_limit(
     invalid: npt.NDArray[np.bool_], fw_limit: int | None, bw_limit: int | None
 ) -> np.ndarray:
+    # [FUNCTION DOC]
+    # HELPER: positions that must stay missing because they lie beyond the fill limits.
+    # Parameters: invalid (boolean array, true where missing); fw_limit and bw_limit (forward and backward limits, none meaning no limit in that direction, zero meaning no fill in that direction). Computes, for the forward direction, positions not within the limit of a preceding valid value (and leading positions before any valid value), similarly backward on the reversed array, and combines them by intersection. A zero backward limit returns the forward result; a zero forward limit with a backward limit returns the backward result.
+    # Returns an integer array of positions (sorted for the combined case).
+    # KNOWN ISSUE: the docstring says it returns a set of indexers, but it returns an integer array.
     """
     Get indexers of values that won't be filled
     because they exceed the limits.
@@ -1075,6 +1176,8 @@ def _interp_limit(
     assume_unique = True
 
     def inner(invalid, limit: int):
+        # [FUNCTION DOC]
+        # HELPER: nested in the limit computation. Parameters: invalid (boolean array, possibly reversed), limit (int, capped to length minus one). Finds runs of missing values longer than the limit using a sliding window and returns the sorted positions that exceed it, together with the leading positions before the first valid value. Returns an integer array.
         limit = min(limit, N - 1)
         windowed = np.lib.stride_tricks.sliding_window_view(invalid, limit + 1).all(1)
         idx = np.union1d(

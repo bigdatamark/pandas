@@ -1,3 +1,8 @@
+# [MODULE DOC]
+# Internal helpers for applying an elementwise array operation block-by-block across two block managers (used by DataFrame arithmetic and comparison when both operands are frames).
+# Contents: a named tuple describing one aligned pair of blocks, a generator that yields such pairs, the blockwise operation driver, a blockwise "all" reduction, and two small private helpers.
+# Depends on the block manager and block classes (only imported for type checking) and on the dtype helper that identifies 1D-only extension dtypes. No import-time side effects.
+
 from __future__ import annotations
 
 from typing import (
@@ -18,6 +23,9 @@ if TYPE_CHECKING:
 
 
 class BlockPairInfo(NamedTuple):
+    # [CLASS DOC]
+    # Named tuple holding one aligned pair of block values produced by the block-pair iterator.
+    # Fields: lvals and rvals are the left and right arrays (already reshaped to be compatible), locs is the placement of the left block within the left manager, left_ea and right_ea are flags telling whether each side is a 1D-only extension array, and rblk is the right-hand block that the values came from.
     lvals: ArrayLike
     rvals: ArrayLike
     locs: BlockPlacement
@@ -29,6 +37,11 @@ class BlockPairInfo(NamedTuple):
 def _iter_block_pairs(
     left: BlockManager, right: BlockManager
 ) -> Iterator[BlockPairInfo]:
+    # [FUNCTION DOC]
+    # HELPER: generator behind the blockwise operations in this module.
+    # Parameters: left and right are block managers whose parent frames are assumed already aligned (not checked here).
+    # For each block of the left manager, slices the right manager along the items axis to the matching locations (views only), then for each resulting right block yields a pair-info tuple with same-shape values. The left_ea flag is true when the left block values are one-dimensional.
+    # No side effects; assertions that would validate shapes are intentionally disabled for performance.
     # At this point we have already checked the parent DataFrames for
     #  assert rframe._indexed_same(lframe)
 
@@ -57,6 +70,12 @@ def _iter_block_pairs(
 def operate_blockwise(
     left: BlockManager, right: BlockManager, array_op
 ) -> BlockManager:
+    # [FUNCTION DOC]
+    # Apply a binary array operation to every aligned pair of blocks of two managers and assemble the results into a new manager.
+    # Parameters: left and right are block managers (already aligned); array_op is a callable taking left values and right values and returning the result values.
+    # Behavior: for each pair, applies array_op; if the left side was a 1D extension array, the right was not, and the result is a reshapeable array that is not a 1D-only extension dtype, the result is reshaped to a single row. The result is split into blocks using the right block's splitting logic, their placements are reset to the original frame positions, and all are collected.
+    # Returns a new manager of the same type as right, with the right manager's axes, built without integrity verification.
+    # KNOWN ISSUE: a TODO notes that the axes are reused rather than shallow-copied, so the result shares axis objects with the right manager.
     # At this point we have already checked the parent DataFrames for
     #  assert rframe._indexed_same(lframe)
 
@@ -95,6 +114,9 @@ def operate_blockwise(
 
 
 def _reset_block_mgr_locs(nbs: list[Block], locs) -> None:
+    # [FUNCTION DOC]
+    # HELPER: for operate_blockwise. Rewrites the placement of each block in the given list, in place, so that it refers to positions in the original frame.
+    # Parameters: nbs is a list of result blocks whose placements are relative to the sliced left block; locs is the placement of the original left block. Each block's placement becomes the original locations selected by its relative indexer. Returns nothing; mutates the blocks.
     """
     Reset mgr_locs to correspond to our original DataFrame.
     """
@@ -109,6 +131,11 @@ def _reset_block_mgr_locs(nbs: list[Block], locs) -> None:
 def _get_same_shape_values(
     lblk: Block, rblk: Block, left_ea: bool, right_ea: bool
 ) -> tuple[ArrayLike, ArrayLike]:
+    # [FUNCTION DOC]
+    # HELPER: for the block-pair iterator. Returns the left and right block values with matching shapes.
+    # Parameters: lblk and rblk are the left and right blocks; left_ea and right_ea flag whether each block holds a 1D extension array.
+    # The left values are sliced to the rows covered by the right block's placement (requires that placement to be slice-like, asserted). Both 2D: left sliced, shapes asserted equal. Both 1D: shapes asserted equal. Only right 1D: left sliced then squeezed to its single row. Only left 1D: right squeezed to its single row.
+    # Returns a tuple of (left values, right values). Raises an assertion error if shapes mismatch or the placement is not slice-like.
     """
     Slice lblk.values to align with rblk.  Squeeze if we have EAs.
     """
@@ -145,6 +172,10 @@ def _get_same_shape_values(
 
 
 def blockwise_all(left: BlockManager, right: BlockManager, op) -> bool:
+    # [FUNCTION DOC]
+    # Blockwise "all" reduction over two aligned managers.
+    # Parameters: left and right are block managers; op is a callable taking left and right values and returning a truthy or falsy result.
+    # Iterates over aligned block pairs and returns False as soon as op yields a falsy result for any pair, otherwise True. No mutation.
     """
     Blockwise `all` reduction.
     """

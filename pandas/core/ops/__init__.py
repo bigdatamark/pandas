@@ -4,6 +4,11 @@ Arithmetic operations for PandasObjects
 This is not a public API.
 """
 
+# [PACKAGE DOC]
+# Private package implementing the arithmetic, comparison and logical machinery shared by Series, DataFrame, Index and arrays (not a public API).
+# Submodules: array_ops (array-level arithmetic, comparison and logical operations), common (decorators and result-name helpers), dispatch (extension array dispatch test), docstrings (templates for generated flex-method docs), invalid (invalid comparison and invalid operator helpers), mask_ops (three-valued logic for masked arrays), missing (division by zero conventions).
+# Re-exports: the public functions of those submodules, the reversed operator functions from the reversed-operator module, and defines a set of arithmetic binary operator names as a module constant. The all-list enumerates these re-exports. No import-time side effects beyond the imports.
+
 from __future__ import annotations
 
 from pandas.core.ops.array_ops import (

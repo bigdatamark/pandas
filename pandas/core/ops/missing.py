@@ -21,6 +21,10 @@ from numpy in the following ways:
     3) divmod behavior consistent with 1) and 2).
 """
 
+# [MODULE DOC]
+# Missing-data handling for arithmetic: enforces pandas conventions for division and modulo by zero on plain numpy results (documented above), which differ from numpy for integer dtypes.
+# Contents: a private zero-fill function for modulo, a function that converts division by zero into signed infinity or NaN, and a dispatcher selecting the right treatment per operator, including divmod variants and reversed operators. No import-time side effects.
+
 from __future__ import annotations
 
 import operator
@@ -31,6 +35,12 @@ from pandas.core import roperator
 
 
 def _fill_zeros(result: np.ndarray, x, y) -> np.ndarray:
+    # [FUNCTION DOC]
+    # HELPER: for the dispatcher. Replaces entries with NaN for integer-divisor zeros in a non-float result (used for modulo).
+    # Parameters: result is the array computed by numpy; x and y are the operands (y is the divisor).
+    # Float results are returned unchanged. A non-array divisor is turned into an array. If the divisor has an integer or unsigned dtype and contains zeros, the result is converted to float64 (no copy if already) and positions where the divisor is zero and the result is not already NaN are set to NaN in place. Returns the (possibly new) result.
+    # KNOWN ISSUE: the docstring mentions flipping x and y for reversed ops and masking NaN from x, but neither happens here; x is unused and flipping is done by the caller.
+    # KNOWN ISSUE: the early return for a divisor that has no dtype and is also not an array can never trigger, because every array has a dtype; the branch is dead.
     """
     If this is a reversed op, then flip x,y
 
@@ -69,6 +79,12 @@ def _fill_zeros(result: np.ndarray, x, y) -> np.ndarray:
 
 
 def mask_zero_div_zero(x, y, result: np.ndarray) -> np.ndarray:
+    # [FUNCTION DOC]
+    # Apply pandas division-by-zero conventions to the result of an integer-style floor division.
+    # Parameters: x is the numerator and y the denominator (arrays or scalars; non-array inputs are converted); result is the raw numpy result.
+    # If any denominator is zero: positions with zero numerator become NaN, positive numerators over positive zero (or negative over negative zero) become positive infinity, and the opposite signs become negative infinity; the sign of negative zero is respected. If any such position exists the result is converted to float64 and filled in place.
+    # Returns the filled result (unchanged if no zeros).
+    # KNOWN ISSUE: the docstring summary only mentions setting zero over zero to NaN, but the function also fills signed infinities.
     """
     Set results of  0 // 0 to np.nan, regardless of the dtypes
     of the numerator or the denominator.
@@ -129,6 +145,11 @@ def mask_zero_div_zero(x, y, result: np.ndarray) -> np.ndarray:
 
 
 def dispatch_fill_zeros(op, left, right, result):
+    # [FUNCTION DOC]
+    # Select and apply the correct zero-division fix-up for an operator.
+    # Parameters: op is the operator function; left and right are the operands (extension arrays already excluded; for reversed operators the roles are swapped); result is the numpy result (a pair of arrays for divmod operators).
+    # Divmod and its reversed form fix the quotient with the zero-division masking and the remainder with the zero-fill, with operands swapped for the reversed form. Floor division and reversed floor division use the masking. Modulo and reversed modulo use the zero-fill. True division needs nothing because numpy already behaves as desired. Other operators are returned unchanged.
+    # Returns the adjusted result (a pair for divmod operators).
     """
     Call _fill_zeros with the appropriate fill value depending on the operation,
     with special logic for divmod and rdivmod.
