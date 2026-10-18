@@ -1,3 +1,7 @@
+# [MODULE DOC]
+# Tests for the cross-tabulation function (frequency tables, or aggregated tables, of factors).
+# Covers single and multiple row/column factors, array and list inputs, alignment, margins and margin names, dropping of nulls, normalization options, tuple and duplicate names, categorical and nullable inputs, and argument validation errors.
+# Provides one shared frame fixture; the tests live in one class plus one module-level parametrized test. No import-time side effects.
 import numpy as np
 import pytest
 
@@ -16,6 +20,8 @@ import pandas._testing as tm
 
 @pytest.fixture
 def df():
+    # [FUNCTION DOC]
+    # HELPER: fixture returning a frame with string columns A, B, C and random normal columns D, E, F (11 rows each from seeded generators), concatenated with itself with a fresh index to give 22 rows.
     df = DataFrame(
         {
             "A": [
@@ -67,12 +73,18 @@ def df():
 
 
 class TestCrosstab:
+    # [CLASS DOC]
+    # Tests of the cross-tabulation function, often compared against equivalent group-by, unstack or pivot-table computations.
     def test_crosstab_single(self, df):
+        # [FUNCTION DOC]
+        # Cross tabulating two columns equals counting group sizes and unstacking, with missing combinations filled with zero as 64-bit integers.
         result = crosstab(df["A"], df["C"])
         expected = df.groupby(["A", "C"]).size().unstack()
         tm.assert_frame_equal(result, expected.fillna(0).astype(np.int64))
 
     def test_crosstab_multiple(self, df):
+        # [FUNCTION DOC]
+        # Multiple column factors (list of two series) and multiple row factors give the same counts as a grouped size unstacked on the corresponding levels, zero filled.
         result = crosstab(df["A"], [df["B"], df["C"]])
         expected = df.groupby(["A", "B", "C"]).size()
         expected = expected.unstack("B").unstack("C").fillna(0).astype(np.int64)
@@ -86,6 +98,8 @@ class TestCrosstab:
     @pytest.mark.parametrize("box", [np.array, list, tuple])
     def test_crosstab_ndarray(self, box):
         # GH 44076
+        # [FUNCTION DOC]
+        # GH 44076. Arrays, lists and tuples as inputs, with explicit row and column names, give the same result as using equivalent frame columns; with no names the axes are named row_0 and col_0.
         a = box(np.random.default_rng(2).integers(0, 5, size=100))
         b = box(np.random.default_rng(2).integers(0, 3, size=100))
         c = box(np.random.default_rng(2).integers(0, 10, size=100))
@@ -109,6 +123,8 @@ class TestCrosstab:
 
     def test_crosstab_non_aligned(self):
         # GH 17005
+        # [FUNCTION DOC]
+        # GH 17005. Series with differing indexes are intersected on index labels, and a plain array is matched by position to the first series; both give the same small count table.
         a = Series([0, 1, 1], index=["a", "b", "c"])
         b = Series([3, 4, 3, 4, 3], index=["a", "b", "c", "d", "f"])
         c = np.array([3, 4, 3], dtype=np.int64)
@@ -126,6 +142,8 @@ class TestCrosstab:
         tm.assert_frame_equal(result, expected)
 
     def test_crosstab_margins(self):
+        # [FUNCTION DOC]
+        # With margins enabled the result gains an All row and All column holding totals; checks the index and column names and that the margin column and margin row equal the expected group size counts plus the total.
         a = np.random.default_rng(2).integers(0, 7, size=100)
         b = np.random.default_rng(2).integers(0, 3, size=100)
         c = np.random.default_rng(2).integers(0, 5, size=100)
@@ -157,6 +175,8 @@ class TestCrosstab:
 
     def test_crosstab_margins_set_margin_name(self):
         # GH 15972
+        # [FUNCTION DOC]
+        # GH 15972. Same as the margins test but with a custom margins_name; additionally, a margins name that is an integer, None or a list raises a value error saying it must be a string.
         a = np.random.default_rng(2).integers(0, 7, size=100)
         b = np.random.default_rng(2).integers(0, 3, size=100)
         c = np.random.default_rng(2).integers(0, 5, size=100)
@@ -206,6 +226,8 @@ class TestCrosstab:
                 )
 
     def test_crosstab_pass_values(self):
+        # [FUNCTION DOC]
+        # Passing values with a sum aggregation, named rows and columns, equals a pivot table of the same values, index and columns.
         a = np.random.default_rng(2).integers(0, 7, size=100)
         b = np.random.default_rng(2).integers(0, 3, size=100)
         c = np.random.default_rng(2).integers(0, 5, size=100)
@@ -224,6 +246,8 @@ class TestCrosstab:
 
     def test_crosstab_dropna(self):
         # GH 3820
+        # [FUNCTION DOC]
+        # GH 3820. With dropna disabled, the column multi-index contains all four observed combinations of the two column factors.
         a = np.array(["foo", "foo", "foo", "bar", "bar", "foo", "foo"], dtype=object)
         b = np.array(["one", "one", "two", "one", "two", "two", "two"], dtype=object)
         c = np.array(
@@ -239,6 +263,8 @@ class TestCrosstab:
     def test_crosstab_no_overlap(self):
         # GS 10291
 
+        # [FUNCTION DOC]
+        # GS 10291. Two series with no shared index labels give an empty frame with empty integer indexes named row_0 and col_0.
         s1 = Series([1, 2, 3], index=[1, 2, 3])
         s2 = Series([4, 5, 6], index=[4, 5, 6])
 
@@ -255,6 +281,8 @@ class TestCrosstab:
         # pivot_table counts null into margin ('All')
         # when margins=true and dropna=true
 
+        # [FUNCTION DOC]
+        # GH 12577. With margins and dropna enabled a null in the row factor is excluded from counts and totals.
         df = DataFrame({"a": [1, 2, 2, 2, 2, np.nan], "b": [3, 3, 4, 4, 4, 4]})
         actual = crosstab(df.a, df.b, margins=True, dropna=True)
         expected = DataFrame([[1, 0, 1], [1, 3, 4], [2, 3, 5]])
@@ -263,6 +291,8 @@ class TestCrosstab:
         tm.assert_frame_equal(actual, expected)
 
     def test_margin_dropna2(self):
+        # [FUNCTION DOC]
+        # Nulls in both factors at different positions are dropped; each row with a null in either factor is excluded.
         df = DataFrame(
             {"a": [1, np.nan, np.nan, np.nan, 2, np.nan], "b": [3, np.nan, 4, 4, 4, 4]}
         )
@@ -273,6 +303,8 @@ class TestCrosstab:
         tm.assert_frame_equal(actual, expected)
 
     def test_margin_dropna3(self):
+        # [FUNCTION DOC]
+        # Null row factors with non-null column factors are excluded from the counts and totals.
         df = DataFrame(
             {"a": [1, np.nan, np.nan, np.nan, np.nan, 2], "b": [3, 3, 4, 4, 4, 4]}
         )
@@ -287,6 +319,8 @@ class TestCrosstab:
         # _add_margins raises KeyError: Level None not found
         # when margins=True and dropna=False
         # GH: 10772: Keep np.nan in result with dropna=False
+        # [FUNCTION DOC]
+        # GH 12642 and GH 10772. With margins and dropna disabled the null row label is kept as its own row and counted in totals (previously raised a key error).
         df = DataFrame({"a": [1, 2, 2, 2, 2, np.nan], "b": [3, 3, 4, 4, 4, 4]})
         actual = crosstab(df.a, df.b, margins=True, dropna=False)
         expected = DataFrame([[1, 0, 1], [1, 3, 4], [0, 1, 1], [2, 4, 6]])
@@ -296,6 +330,8 @@ class TestCrosstab:
 
     def test_margin_dropna5(self):
         # GH: 10772: Keep np.nan in result with dropna=False
+        # [FUNCTION DOC]
+        # GH 10772. Both factors contain nulls with dropna disabled: null row and null column are kept; dtype is not checked.
         df = DataFrame(
             {"a": [1, np.nan, np.nan, np.nan, 2, np.nan], "b": [3, np.nan, 4, 4, 4, 4]}
         )
@@ -309,6 +345,8 @@ class TestCrosstab:
 
     def test_margin_dropna6(self):
         # GH: 10772: Keep np.nan in result with dropna=False
+        # [FUNCTION DOC]
+        # GH 10772. Object arrays with a null in the middle factor, margins on and dropna off: the null is kept as a column (or row) label in a multi-index with the All margin; the final case with dropna on drops rows containing the null.
         a = np.array(["foo", "foo", "foo", "bar", "bar", "foo", "foo"], dtype=object)
         b = np.array(["one", "one", "two", "one", "two", np.nan, "two"], dtype=object)
         c = np.array(
@@ -372,6 +410,8 @@ class TestCrosstab:
 
     def test_crosstab_normalize(self):
         # Issue 12578
+        # [FUNCTION DOC]
+        # Issue 12578. Normalization by all (true or the string), index, columns and the integer aliases zero and one give the expected proportion tables; with margins on, the margin row or column holds the normalized totals.
         df = DataFrame(
             {"a": [1, 2, 2, 2, 2], "b": [3, 3, 4, 4, 4], "c": [1, 1, np.nan, 1, 1]}
         )
@@ -423,6 +463,8 @@ class TestCrosstab:
 
     def test_crosstab_normalize_arrays(self):
         # GH#12578
+        # [FUNCTION DOC]
+        # GH#12578. Array inputs work without error; normalizing a count or sum aggregation of values over everything with margins gives the expected proportions, null values ignored.
         df = DataFrame(
             {"a": [1, 2, 2, 2, 2], "b": [3, 3, 4, 4, 4], "c": [1, 1, np.nan, 1, 1]}
         )
@@ -459,6 +501,8 @@ class TestCrosstab:
 
     def test_crosstab_with_empties(self):
         # Check handling of empties
+        # [FUNCTION DOC]
+        # Values that are all null with a count aggregation: normalizing (true, index, columns) gives all-zero float tables, while without normalization the table has a null cell where nothing was counted.
         df = DataFrame(
             {
                 "a": [1, 2, 2, 2, 2],
@@ -489,6 +533,8 @@ class TestCrosstab:
     def test_crosstab_errors(self):
         # Issue 12578
 
+        # [FUNCTION DOC]
+        # Issue 12578. Value errors: values without an aggregation, aggregation without values, an invalid normalize argument (string or integer), and a non-boolean margins argument with normalization.
         df = DataFrame(
             {"a": [1, 2, 2, 2, 2], "b": [3, 3, 4, 4, 4], "c": [1, 1, np.nan, 1, 1]}
         )
@@ -514,6 +560,8 @@ class TestCrosstab:
 
     def test_crosstab_with_categorial_columns(self):
         # GH 8860
+        # [FUNCTION DOC]
+        # GH 8860. A categorical column factor keeps its full category set (including categories with zero count) as an unordered categorical column index in the result.
         df = DataFrame(
             {
                 "MAKE": ["Honda", "Acura", "Tesla", "Honda", "Honda", "Acura"],
@@ -536,6 +584,8 @@ class TestCrosstab:
 
     def test_crosstab_with_numpy_size(self):
         # GH 4003
+        # [FUNCTION DOC]
+        # GH 4003. Using the numpy size function as aggregation of values with margins and two row factors yields float cells with nulls for empty combinations, and an integer All column; the row multi-index ends with the All entry.
         df = DataFrame(
             {
                 "A": ["one", "one", "two", "three"] * 6,
@@ -582,6 +632,8 @@ class TestCrosstab:
     def test_crosstab_duplicate_names(self):
         # GH 13279 / 22529
 
+        # [FUNCTION DOC]
+        # GH 13279 and GH 22529. Row and/or column factors sharing the same name still produce a table identical to one built with unique names and then relabelled, for duplicate row, duplicate column and mixed cases.
         s1 = Series(range(3), name="foo")
         s2_foo = Series(range(1, 4), name="foo")
         s2_bar = Series(range(1, 4), name="bar")
@@ -609,6 +661,8 @@ class TestCrosstab:
 
     @pytest.mark.parametrize("names", [["a", ("b", "c")], [("a", "b"), "c"]])
     def test_crosstab_tuple_name(self, names):
+        # [FUNCTION DOC]
+        # Series named by a tuple in either position produce a table whose axis names are those tuples; compared with a unstacked series of ones filled with zero.
         s1 = Series(range(3), name=names[0])
         s2 = Series(range(1, 4), name=names[1])
 
@@ -620,6 +674,8 @@ class TestCrosstab:
 
     def test_crosstab_both_tuple_names(self):
         # GH 18321
+        # [FUNCTION DOC]
+        # GH 18321. Both series named by tuples give an identity count table with tuple-named index and columns.
         s1 = Series(range(3), name=("a", "b"))
         s2 = Series(range(3), name=("c", "d"))
 
@@ -632,6 +688,8 @@ class TestCrosstab:
         tm.assert_frame_equal(result, expected)
 
     def test_crosstab_unsorted_order(self):
+        # [FUNCTION DOC]
+        # Row labels from an unsorted index and a two-level column factor come out sorted, with the row axis named row_0.
         df = DataFrame({"b": [3, 1, 2], "a": [5, 4, 6]}, index=["C", "A", "B"])
         result = crosstab(df.index, [df.b, df.a])
         e_idx = Index(["A", "B", "C"], name="row_0")
@@ -643,6 +701,8 @@ class TestCrosstab:
 
     def test_crosstab_normalize_multiple_columns(self):
         # GH 15150
+        # [FUNCTION DOC]
+        # GH 15150. Two row factors, sum aggregation of an all-zero values column, normalize over all with margins: every cell is zero except the grand total, which is one.
         df = DataFrame(
             {
                 "A": ["one", "one", "two", "three"] * 6,
@@ -684,6 +744,8 @@ class TestCrosstab:
 
     def test_margin_normalize(self):
         # GH 27500
+        # [FUNCTION DOC]
+        # GH 27500. Two row factors with a custom margin name and normalization by index, by columns and by everything; checks the expected proportions and the margin row or column placement (approximate float comparison).
         df = DataFrame(
             {
                 "A": ["foo", "foo", "foo", "foo", "foo", "bar", "bar", "bar", "bar"],
@@ -762,6 +824,8 @@ class TestCrosstab:
     def test_margin_normalize_multiple_columns(self):
         # GH 35144
         # use multiple columns with margins and normalization
+        # [FUNCTION DOC]
+        # GH 35144. Two column factors with margins named margin and normalization over everything: expected proportions table with a margin row and margin column.
         df = DataFrame(
             {
                 "A": ["foo", "foo", "foo", "foo", "foo", "bar", "bar", "bar", "bar"],
@@ -807,6 +871,8 @@ class TestCrosstab:
     def test_margin_support_Float(self):
         # GH 50313
         # use Float64 formats and function aggfunc with margins
+        # [FUNCTION DOC]
+        # GH 50313. Nullable Float64 data with a sum aggregation and margins: result keeps the nullable dtype with missing cells as the missing marker and correct totals.
         df = DataFrame(
             {"A": [1, 2, 2, 1], "B": [3, 3, 4, 5], "C": [-1.0, 10.0, 1.0, 10.0]},
             dtype="Float64",
@@ -832,6 +898,8 @@ class TestCrosstab:
 
     def test_margin_with_ordered_categorical_column(self):
         # GH 25278
+        # [FUNCTION DOC]
+        # GH 25278. A row factor that is an ordered categorical with a custom category order keeps that order, with the All margin row last.
         df = DataFrame(
             {
                 "First": ["B", "B", "C", "A", "B", "C"],
@@ -856,6 +924,9 @@ class TestCrosstab:
 @pytest.mark.parametrize("b_dtype", ["category", "int64"])
 def test_categoricals(a_dtype, b_dtype):
     # https://github.com/pandas-dev/pandas/issues/37465
+    # [FUNCTION DOC]
+    # Issue 37465. Parametrized over category or integer dtype for each factor: with margins and dropna disabled the counts match the expected table (index labels zero, one, two plus All).
+    # Then one category value is removed from the first factor (values of one set to two): a categorical keeps a zero row for it, while integers drop that row (expected restricted accordingly, All column cast to 64-bit integer).
     g = np.random.default_rng(2)
     a = Series(g.integers(0, 3, size=100)).astype(a_dtype)
     b = Series(g.integers(0, 2, size=100)).astype(b_dtype)

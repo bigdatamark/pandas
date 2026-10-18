@@ -1,3 +1,7 @@
+# [MODULE DOC]
+# Tests for the ordered merge function and a few sequence-concatenation edge cases.
+# Provides small left and right fixtures keyed on a string column and a test class exercising basic ordering, forward fill, grouped merges, list-valued group arguments and argument validation.
+# No import-time side effects.
 import re
 
 import numpy as np
@@ -13,16 +17,24 @@ import pandas._testing as tm
 
 @pytest.fixture
 def left():
+    # [FUNCTION DOC]
+    # HELPER: fixture returning a frame with string key column (a, c, e) and a numeric lvalue column.
     return DataFrame({"key": ["a", "c", "e"], "lvalue": [1, 2.0, 3]})
 
 
 @pytest.fixture
 def right():
+    # [FUNCTION DOC]
+    # HELPER: fixture returning a frame with string key column (b, c, d, f) and a numeric rvalue column.
     return DataFrame({"key": ["b", "c", "d", "f"], "rvalue": [1, 2, 3.0, 4]})
 
 
 class TestMergeOrdered:
+    # [CLASS DOC]
+    # Groups tests for the ordered merge function and related behaviors (subclass propagation, empty concatenation).
     def test_basic(self, left, right):
+        # [FUNCTION DOC]
+        # Ordered outer merge on key yields the sorted union of keys with missing values where a side lacks a key.
         result = merge_ordered(left, right, on="key")
         expected = DataFrame(
             {
@@ -35,6 +47,8 @@ class TestMergeOrdered:
         tm.assert_frame_equal(result, expected)
 
     def test_ffill(self, left, right):
+        # [FUNCTION DOC]
+        # With forward fill, missing values on each side are filled from the previous row; leading missing values remain missing.
         result = merge_ordered(left, right, on="key", fill_method="ffill")
         expected = DataFrame(
             {
@@ -46,6 +60,9 @@ class TestMergeOrdered:
         tm.assert_frame_equal(result, expected)
 
     def test_multigroup(self, left, right):
+        # [FUNCTION DOC]
+        # Left frame is duplicated and given a group column; merging with left_by and forward fill gives the single-group result repeated per group.
+        # Swapping inputs with right_by gives the same result (column order aside). Without fill, the group column has no missing values.
         left = pd.concat([left, left], ignore_index=True)
 
         left["group"] = ["a"] * 3 + ["b"] * 3
@@ -76,9 +93,16 @@ class TestMergeOrdered:
         "ignore:Passing a BlockManager|Passing a SingleBlockManager:DeprecationWarning"
     )
     def test_merge_type(self, left, right):
+        # [FUNCTION DOC]
+        # Verifies that the frame merge method on a DataFrame subclass returns an instance of that subclass.
+        # Runs with the deprecation warning about block managers ignored.
         class NotADataFrame(DataFrame):
             @property
+            # [CLASS DOC]
+            # HELPER: DataFrame subclass used to check that merge preserves the subclass via the constructor hook.
             def _constructor(self):
+                # [FUNCTION DOC]
+                # HELPER: property returning the subclass itself so pandas operations build the same subclass.
                 return NotADataFrame
 
         nad = NotADataFrame(left)
@@ -98,6 +122,8 @@ class TestMergeOrdered:
     )
     def test_empty_sequence_concat(self, df_seq, pattern):
         # GH 9157
+        # [FUNCTION DOC]
+        # GH 9157. Concatenating an empty tuple, list or dict, or a sequence containing only None, raises a value error whose message matches the parametrized pattern (no objects to concatenate, or all objects are None).
         with pytest.raises(ValueError, match=pattern):
             pd.concat(df_seq)
 
@@ -105,9 +131,13 @@ class TestMergeOrdered:
         "arg", [[DataFrame()], [None, DataFrame()], [DataFrame(), None]]
     )
     def test_empty_sequence_concat_ok(self, arg):
+        # [FUNCTION DOC]
+        # Concatenating sequences that contain an empty frame (alone or with None) does not raise. No result is checked.
         pd.concat(arg)
 
     def test_doc_example(self):
+        # [FUNCTION DOC]
+        # Reproduces the documentation example: ordered merge with forward fill and left_by on a group column; checks the expected grouped, filled output.
         left = DataFrame(
             {
                 "group": list("aaabbb"),
@@ -177,6 +207,9 @@ class TestMergeOrdered:
     )
     def test_list_type_by(self, left, right, on, left_by, right_by, expected):
         # GH 35269
+        # [FUNCTION DOC]
+        # GH 35269. Parametrized over dict inputs, on as list or string, and left_by or right_by given as lists of two columns.
+        # The merge must work with list-valued group arguments and produce a frame sorted on the key per group with missing values for absent rows.
         left = DataFrame(left)
         right = DataFrame(right)
         result = merge_ordered(
@@ -192,6 +225,8 @@ class TestMergeOrdered:
 
     def test_left_by_length_equals_to_right_shape0(self):
         # GH 38166
+        # [FUNCTION DOC]
+        # GH 38166. Left_by with two columns when the right frame has a single row; the result must contain the combined keys with missing values in the right-only column.
         left = DataFrame([["g", "h", 1], ["g", "h", 3]], columns=list("GHE"))
         right = DataFrame([[2, 1]], columns=list("ET"))
         result = merge_ordered(left, right, on="E", left_by=["G", "H"])
@@ -203,6 +238,8 @@ class TestMergeOrdered:
 
     def test_elements_not_in_by_but_in_df(self):
         # GH 38167
+        # [FUNCTION DOC]
+        # GH 38167. A left_by entry that is not a column of the left frame raises a key error naming the missing column.
         left = DataFrame([["g", "h", 1], ["g", "h", 3]], columns=list("GHE"))
         right = DataFrame([[2, 1]], columns=list("ET"))
         msg = r"\{'h'\} not found in left columns"
@@ -212,6 +249,8 @@ class TestMergeOrdered:
     @pytest.mark.parametrize("invalid_method", ["linear", "carrot"])
     def test_ffill_validate_fill_method(self, left, right, invalid_method):
         # GH 55884
+        # [FUNCTION DOC]
+        # GH 55884. Any fill_method other than forward fill or None (linear, carrot) raises a value error saying it must be ffill or None.
         with pytest.raises(
             ValueError, match=re.escape("fill_method must be 'ffill' or None")
         ):
@@ -219,6 +258,8 @@ class TestMergeOrdered:
 
     def test_ffill_left_merge(self):
         # GH 57010
+        # [FUNCTION DOC]
+        # GH 57010. A left-type ordered merge with forward fill and left_by keeps only left keys per group and fills right values forward within each group.
         df1 = DataFrame(
             {
                 "key": ["a", "c", "e", "a", "c", "e"],

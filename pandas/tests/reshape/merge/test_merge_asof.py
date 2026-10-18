@@ -1,3 +1,7 @@
+# [MODULE DOC]
+# Tests for the as-of merge function, which performs an ordered left join matching each left row to the nearest preceding (or following, or nearest) right row on a sorted key, optionally within groups (by keys), with tolerance and exact-match control.
+# Contents: one large test class built on trade and quote fixtures (small stock tick data frames and the precomputed expected as-of results), plus module-level tests for dtype validation, index and column key handling, extension dtypes and miscellaneous regressions.
+# Uses the merge error class from the reshape merge module, the shared unit, numeric dtype and infer-string fixtures, and optional pyarrow. No import-time side effects.
 import datetime
 
 import numpy as np
@@ -18,7 +22,12 @@ from pandas.core.reshape.merge import MergeError
 
 
 class TestAsOfMerge:
+    # [CLASS DOC]
+    # Groups the as-of merge tests: documentation examples, basic joins with by keys and indexes, validation errors, tolerance, exact-match handling, directions (backward, forward, nearest), key dtype specializations, timezone and categorical by keys.
+    # Fixtures defined here supply the shared trades, quotes, expected as-of result and expected tolerance result frames.
     def prep_data(self, df, dedupe=False):
+        # [FUNCTION DOC]
+        # HELPER: normalizes a test frame. Parameters: the frame, and dedupe (default false). When dedupe is true, rows with duplicate (time, ticker) pairs are dropped keeping the last and the index is reset. In all cases the time column is converted in place to datetimes (the input frame is mutated) and the frame is returned.
         if dedupe:
             df = df.drop_duplicates(["time", "ticker"], keep="last").reset_index(
                 drop=True
@@ -28,6 +37,8 @@ class TestAsOfMerge:
 
     @pytest.fixture
     def trades(self):
+        # [FUNCTION DOC]
+        # HELPER: fixture building the trades frame of 27 rows (time as text converted to datetime, ticker, price as float, quantity as 64-bit integer, market center) from literal data via the prep helper.
         df = pd.DataFrame(
             [
                 ["20160525 13:30:00.023", "MSFT", "51.9500", "75", "NASDAQ"],
@@ -66,6 +77,8 @@ class TestAsOfMerge:
 
     @pytest.fixture
     def quotes(self):
+        # [FUNCTION DOC]
+        # HELPER: fixture building the quotes frame (time, ticker, bid and ask as floats) from literal data, with duplicate (time, ticker) rows removed keeping the last.
         df = pd.DataFrame(
             [
                 ["20160525 13:30:00.023", "GOOG", "720.50", "720.93"],
@@ -93,6 +106,8 @@ class TestAsOfMerge:
 
     @pytest.fixture
     def asof(self):
+        # [FUNCTION DOC]
+        # HELPER: fixture holding the expected result of the backward as-of merge of trades and quotes on time by ticker: all trade columns plus bid and ask, with null bid and ask where no earlier quote exists.
         df = pd.DataFrame(
             [
                 [
@@ -349,6 +364,8 @@ class TestAsOfMerge:
 
     @pytest.fixture
     def tolerance(self):
+        # [FUNCTION DOC]
+        # HELPER: fixture holding the expected result of the as-of merge of trades and quotes by ticker with a one day tolerance; same layout as the asof fixture but with quotes older than the tolerance replaced by nulls.
         df = pd.DataFrame(
             [
                 [
@@ -604,6 +621,8 @@ class TestAsOfMerge:
         return self.prep_data(df)
 
     def test_examples1(self):
+        # [FUNCTION DOC]
+        # Documentation example: backward as-of merge of two small integer-keyed frames on key a picks the last right row at or before each left key.
         """doc-string examples"""
         left = pd.DataFrame({"a": [1, 5, 10], "left_val": ["a", "b", "c"]})
         right = pd.DataFrame({"a": [1, 2, 3, 6, 7], "right_val": [1, 2, 3, 6, 7]})
@@ -616,6 +635,8 @@ class TestAsOfMerge:
         tm.assert_frame_equal(result, expected)
 
     def test_examples2(self, unit):
+        # [FUNCTION DOC]
+        # Documentation example with trades and quotes at the parametrized time unit (skipped for second resolution because it would round the times). Runs the by-ticker merge, then a version with a two millisecond tolerance (results discarded), then asserts the result with a ten millisecond tolerance and exact matches disallowed has bid and ask only for the second trade.
         """doc-string examples"""
         if unit == "s":
             pytest.skip(
@@ -705,6 +726,8 @@ class TestAsOfMerge:
         tm.assert_frame_equal(result, expected)
 
     def test_examples3(self):
+        # [FUNCTION DOC]
+        # GH14887. Documentation example for the forward direction: each left key takes the first right row at or after it; a key beyond all right keys gets null.
         """doc-string examples"""
         # GH14887
 
@@ -719,6 +742,8 @@ class TestAsOfMerge:
         tm.assert_frame_equal(result, expected)
 
     def test_examples4(self):
+        # [FUNCTION DOC]
+        # GH14887. Documentation example for the nearest direction: each left key takes the closest right row.
         """doc-string examples"""
         # GH14887
 
@@ -733,12 +758,16 @@ class TestAsOfMerge:
         tm.assert_frame_equal(result, expected)
 
     def test_basic(self, trades, asof, quotes):
+        # [FUNCTION DOC]
+        # As-of merge of trades and quotes on time by ticker equals the expected asof fixture.
         expected = asof
 
         result = merge_asof(trades, quotes, on="time", by="ticker")
         tm.assert_frame_equal(result, expected)
 
     def test_basic_categorical(self, trades, asof, quotes):
+        # [FUNCTION DOC]
+        # Same as the basic test but with the ticker column converted to categorical on trades, quotes and expected; result must match.
         expected = asof
         trades.ticker = trades.ticker.astype("category")
         quotes.ticker = quotes.ticker.astype("category")
@@ -749,6 +778,8 @@ class TestAsOfMerge:
 
     def test_basic_left_index(self, trades, asof, quotes):
         # GH14253
+        # [FUNCTION DOC]
+        # GH14253. Left frame keyed through its index (time) with right key given as a column. The result takes the right frame index (a quirk the test acknowledges), so the expected index and column order are adapted from the result before comparing.
         expected = asof
         trades = trades.set_index("time")
 
@@ -762,6 +793,8 @@ class TestAsOfMerge:
         tm.assert_frame_equal(result, expected)
 
     def test_basic_right_index(self, trades, asof, quotes):
+        # [FUNCTION DOC]
+        # Left key given as a column and right key as the right frame index; result equals the expected asof fixture.
         expected = asof
         quotes = quotes.set_index("time")
 
@@ -771,6 +804,8 @@ class TestAsOfMerge:
         tm.assert_frame_equal(result, expected)
 
     def test_basic_left_index_right_index(self, trades, asof, quotes):
+        # [FUNCTION DOC]
+        # Both keys supplied through the indexes; result equals the expected frame indexed by time.
         expected = asof.set_index("time")
         trades = trades.set_index("time")
         quotes = quotes.set_index("time")
@@ -782,6 +817,8 @@ class TestAsOfMerge:
 
     def test_multi_index_left(self, trades, quotes):
         # MultiIndex is prohibited
+        # [FUNCTION DOC]
+        # A multi-level left index used as the key raises the merge error stating the left can only have one index.
         trades = trades.set_index(["time", "price"])
         quotes = quotes.set_index("time")
         with pytest.raises(MergeError, match="left can only have one index"):
@@ -789,6 +826,8 @@ class TestAsOfMerge:
 
     def test_multi_index_right(self, trades, quotes):
         # MultiIndex is prohibited
+        # [FUNCTION DOC]
+        # A multi-level right index used as the key raises the merge error stating the right can only have one index.
         trades = trades.set_index("time")
         quotes = quotes.set_index(["time", "bid"])
         with pytest.raises(MergeError, match="right can only have one index"):
@@ -796,6 +835,8 @@ class TestAsOfMerge:
 
     def test_on_and_index_left_on(self, trades, quotes):
         # "on" parameter and index together is prohibited
+        # [FUNCTION DOC]
+        # Passing both a left key column and the left index flag raises the merge error saying only one of the two may be passed.
         trades = trades.set_index("time")
         quotes = quotes.set_index("time")
         msg = 'Can only pass argument "left_on" OR "left_index" not both.'
@@ -805,6 +846,8 @@ class TestAsOfMerge:
             )
 
     def test_on_and_index_right_on(self, trades, quotes):
+        # [FUNCTION DOC]
+        # Passing both a right key column and the right index flag raises the merge error saying only one of the two may be passed.
         trades = trades.set_index("time")
         quotes = quotes.set_index("time")
         msg = 'Can only pass argument "right_on" OR "right_index" not both.'
@@ -815,6 +858,8 @@ class TestAsOfMerge:
 
     def test_basic_left_by_right_by(self, trades, asof, quotes):
         # GH14253
+        # [FUNCTION DOC]
+        # GH14253. Using separate left and right by arguments naming the same column gives the expected asof fixture.
         expected = asof
 
         result = merge_asof(
@@ -823,6 +868,8 @@ class TestAsOfMerge:
         tm.assert_frame_equal(result, expected)
 
     def test_missing_right_by(self, trades, asof, quotes):
+        # [FUNCTION DOC]
+        # If the right frame lacks all rows for one ticker, left rows of that ticker get null bid and ask; other rows are unchanged.
         expected = asof
 
         q = quotes[quotes.ticker != "MSFT"]
@@ -832,6 +879,8 @@ class TestAsOfMerge:
 
     def test_multiby(self):
         # GH13936
+        # [FUNCTION DOC]
+        # GH13936. Grouping by two columns (ticker and exchange): a right row matches only when both group values agree; unmatched rows get null bid and ask.
         trades = pd.DataFrame(
             {
                 "time": to_datetime(
@@ -898,6 +947,8 @@ class TestAsOfMerge:
     @pytest.mark.parametrize("dtype", ["object", "string"])
     def test_multiby_heterogeneous_types(self, dtype):
         # GH13936
+        # [FUNCTION DOC]
+        # GH13936. Same as the multi-by test but with group columns of mixed content (integers as tickers) cast to object or string dtype on both sides; results (cast likewise) must match.
         trades = pd.DataFrame(
             {
                 "time": to_datetime(
@@ -966,6 +1017,8 @@ class TestAsOfMerge:
 
     def test_mismatched_index_dtype(self):
         # similar to test_multiby_indexed, but we change the dtype on left.index
+        # [FUNCTION DOC]
+        # Left index converted to a different (timedelta) dtype than the right datetime index while merging on both indexes with by keys raises the merge error about incompatible merge keys.
         left = pd.DataFrame(
             [
                 [to_datetime("20160602"), 1, "a"],
@@ -994,6 +1047,9 @@ class TestAsOfMerge:
 
     def test_multiby_indexed(self):
         # GH15676
+        # [FUNCTION DOC]
+        # GH15676. Merging two frames on their datetime indexes with two by columns matches each left row to the right row of the same group.
+        # Giving left_by and right_by of different lengths raises the merge error stating they must be the same length.
         left = pd.DataFrame(
             [
                 [to_datetime("20160602"), 1, "a"],
@@ -1043,6 +1099,9 @@ class TestAsOfMerge:
             )
 
     def test_basic2(self, datapath):
+        # [FUNCTION DOC]
+        # Larger scenario with many rows of literal expected, trades and quotes data (all constructed inline, the trades and quotes preparation deduplicating quotes). Merging on time by ticker must equal the expected frame.
+        # KNOWN ISSUE: the datapath fixture parameter is accepted but never used.
         expected = pd.DataFrame(
             [
                 [
@@ -1902,6 +1961,8 @@ class TestAsOfMerge:
         tm.assert_frame_equal(result, expected)
 
     def test_basic_no_by(self, trades, asof, quotes):
+        # [FUNCTION DOC]
+        # Restricting trades, quotes and the expected frame to a single ticker (dropping the ticker column, resetting the index) and merging with no by argument gives the expected frame.
         f = lambda x: (
             x[x.ticker == "MSFT"].drop("ticker", axis=1).reset_index(drop=True)
         )
@@ -1915,6 +1976,8 @@ class TestAsOfMerge:
         tm.assert_frame_equal(result, expected)
 
     def test_valid_join_keys(self, trades, quotes):
+        # [FUNCTION DOC]
+        # Invalid key choices raise the merge error: left and right keys of incompatible types (time against bid); more than one on key; and no key at all (only by given).
         msg = r"incompatible merge keys \[1\] .* must be the same type"
 
         with pytest.raises(MergeError, match=msg):
@@ -1927,6 +1990,9 @@ class TestAsOfMerge:
             merge_asof(trades, quotes, by="ticker")
 
     def test_with_duplicates(self, datapath, trades, quotes, asof):
+        # [FUNCTION DOC]
+        # Duplicating every quote row (sorted by time and ticker) does not change the result relative to the expected asof fixture.
+        # KNOWN ISSUE: the datapath fixture parameter is accepted but never used.
         q = (
             pd.concat([quotes, quotes])
             .sort_values(["time", "ticker"])
@@ -1937,6 +2003,8 @@ class TestAsOfMerge:
         tm.assert_frame_equal(result, expected)
 
     def test_with_duplicates_no_on(self):
+        # [FUNCTION DOC]
+        # With duplicate keys on both sides and no by argument, each left row matches the last right row at or before its key.
         df1 = pd.DataFrame({"key": [1, 1, 3], "left_val": [1, 2, 3]})
         df2 = pd.DataFrame({"key": [1, 2, 2], "right_val": [1, 2, 3]})
         result = merge_asof(df1, df2, on="key")
@@ -1946,6 +2014,8 @@ class TestAsOfMerge:
         tm.assert_frame_equal(result, expected)
 
     def test_valid_allow_exact_matches(self, trades, quotes):
+        # [FUNCTION DOC]
+        # A non-boolean allow_exact_matches value raises the merge error saying it must be boolean.
         msg = "allow_exact_matches must be boolean, passed foo"
 
         with pytest.raises(MergeError, match=msg):
@@ -1955,6 +2025,8 @@ class TestAsOfMerge:
 
     def test_valid_tolerance(self, trades, quotes):
         # dti
+        # [FUNCTION DOC]
+        # Tolerance validation: a time delta works on a datetime key and an integer works on an integer key; an integer on a datetime key or a float on an integer key raises the merge error about incompatible tolerance; negative tolerances raise the merge error saying tolerance must be positive.
         merge_asof(trades, quotes, on="time", by="ticker", tolerance=Timedelta("1s"))
 
         # integer
@@ -2000,6 +2072,8 @@ class TestAsOfMerge:
             )
 
     def test_non_sorted(self, trades, quotes):
+        # [FUNCTION DOC]
+        # Keys must be sorted: unsorted left keys raise a value error saying left keys must be sorted; sorted left with unsorted right raises the same for right keys; once both are sorted (duplicates allowed) the merge succeeds.
         trades = trades.sort_values("time", ascending=False)
         quotes = quotes.sort_values("time", ascending=False)
 
@@ -2028,6 +2102,8 @@ class TestAsOfMerge:
         ids=["Timedelta", "datetime.timedelta"],
     )
     def test_tolerance(self, tolerance_ts, trades, quotes, tolerance):
+        # [FUNCTION DOC]
+        # Parametrized on a pandas timedelta and a standard library timedelta of one day: as-of merge by ticker with that tolerance equals the tolerance fixture.
         result = merge_asof(
             trades, quotes, on="time", by="ticker", tolerance=tolerance_ts
         )
@@ -2037,6 +2113,8 @@ class TestAsOfMerge:
     def test_tolerance_forward(self):
         # GH14887
 
+        # [FUNCTION DOC]
+        # GH14887. Forward direction with integer tolerance one: matches farther than one are null.
         left = pd.DataFrame({"a": [1, 5, 10], "left_val": ["a", "b", "c"]})
         right = pd.DataFrame({"a": [1, 2, 3, 7, 11], "right_val": [1, 2, 3, 7, 11]})
 
@@ -2050,6 +2128,8 @@ class TestAsOfMerge:
     def test_tolerance_nearest(self):
         # GH14887
 
+        # [FUNCTION DOC]
+        # GH14887. Nearest direction with integer tolerance one: matches farther than one are null.
         left = pd.DataFrame({"a": [1, 5, 10], "left_val": ["a", "b", "c"]})
         right = pd.DataFrame({"a": [1, 2, 3, 7, 11], "right_val": [1, 2, 3, 7, 11]})
 
@@ -2062,6 +2142,8 @@ class TestAsOfMerge:
 
     def test_tolerance_tz(self, unit):
         # GH 14844
+        # [FUNCTION DOC]
+        # GH 14844. Timezone-aware (UTC) date keys at the given unit with a one day tolerance: each left date matches the right date one day earlier, the last right row repeating.
         left = pd.DataFrame(
             {
                 "date": pd.date_range(
@@ -2105,6 +2187,8 @@ class TestAsOfMerge:
 
     def test_tolerance_float(self):
         # GH22981
+        # [FUNCTION DOC]
+        # GH22981. Float keys, nearest direction, tolerance 0.5: matches within tolerance, null otherwise.
         left = pd.DataFrame({"a": [1.1, 3.5, 10.9], "left_val": ["a", "b", "c"]})
         right = pd.DataFrame(
             {"a": [1.0, 2.5, 3.3, 7.5, 11.5], "right_val": [1.0, 2.5, 3.3, 7.5, 11.5]}
@@ -2123,6 +2207,8 @@ class TestAsOfMerge:
 
     def test_index_tolerance(self, trades, quotes, tolerance):
         # GH 15135
+        # [FUNCTION DOC]
+        # GH 15135. Both keys given via indexes, by ticker, one day tolerance; result equals the tolerance fixture indexed by time.
         expected = tolerance.set_index("time")
         trades = trades.set_index("time")
         quotes = quotes.set_index("time")
@@ -2138,6 +2224,8 @@ class TestAsOfMerge:
         tm.assert_frame_equal(result, expected)
 
     def test_allow_exact_matches(self, trades, quotes):
+        # [FUNCTION DOC]
+        # With exact matches disallowed, equal-time quotes are skipped and only strictly earlier quotes match; compared with an inline expected frame (large literal data).
         result = merge_asof(
             trades, quotes, on="time", by="ticker", allow_exact_matches=False
         )
@@ -2383,6 +2471,8 @@ class TestAsOfMerge:
     def test_allow_exact_matches_forward(self):
         # GH14887
 
+        # [FUNCTION DOC]
+        # GH14887. Forward direction with exact matches disallowed takes the first strictly later right row.
         left = pd.DataFrame({"a": [1, 5, 10], "left_val": ["a", "b", "c"]})
         right = pd.DataFrame({"a": [1, 2, 3, 7, 11], "right_val": [1, 2, 3, 7, 11]})
 
@@ -2398,6 +2488,8 @@ class TestAsOfMerge:
     def test_allow_exact_matches_nearest(self):
         # GH14887
 
+        # [FUNCTION DOC]
+        # GH14887. Nearest direction with exact matches disallowed ignores equal keys and picks the nearest other row.
         left = pd.DataFrame({"a": [1, 5, 10], "left_val": ["a", "b", "c"]})
         right = pd.DataFrame({"a": [1, 2, 3, 7, 11], "right_val": [1, 2, 3, 7, 11]})
 
@@ -2411,6 +2503,8 @@ class TestAsOfMerge:
         tm.assert_frame_equal(result, expected)
 
     def test_allow_exact_matches_and_tolerance(self, trades, quotes):
+        # [FUNCTION DOC]
+        # Exact matches disallowed plus a 100 millisecond tolerance, by ticker, compared with an inline expected frame (large literal data).
         result = merge_asof(
             trades,
             quotes,
@@ -2660,6 +2754,8 @@ class TestAsOfMerge:
 
     def test_allow_exact_matches_and_tolerance2(self):
         # GH 13695
+        # [FUNCTION DOC]
+        # GH 13695. Single-row example: default merge matches the equal-time right row; disallowing exact matches takes the earlier row; adding a ten millisecond tolerance makes the match null.
         df1 = pd.DataFrame(
             {"time": to_datetime(["2016-07-15 13:30:00.030"]), "username": ["bob"]}
         )
@@ -2710,6 +2806,8 @@ class TestAsOfMerge:
 
     def test_allow_exact_matches_and_tolerance3(self):
         # GH 13709
+        # [FUNCTION DOC]
+        # GH 13709. Two left rows at the same time with exact matches disallowed and tolerance ten milliseconds both get null.
         df1 = pd.DataFrame(
             {
                 "time": to_datetime(
@@ -2748,6 +2846,8 @@ class TestAsOfMerge:
     def test_allow_exact_matches_and_tolerance_forward(self):
         # GH14887
 
+        # [FUNCTION DOC]
+        # GH14887. Forward direction, exact matches disallowed, tolerance one: only matches strictly later and within one are kept.
         left = pd.DataFrame({"a": [1, 5, 10], "left_val": ["a", "b", "c"]})
         right = pd.DataFrame({"a": [1, 3, 4, 6, 11], "right_val": [1, 3, 4, 6, 11]})
 
@@ -2768,6 +2868,8 @@ class TestAsOfMerge:
     def test_allow_exact_matches_and_tolerance_nearest(self):
         # GH14887
 
+        # [FUNCTION DOC]
+        # GH14887. Nearest direction, exact matches disallowed, tolerance one.
         left = pd.DataFrame({"a": [1, 5, 10], "left_val": ["a", "b", "c"]})
         right = pd.DataFrame({"a": [1, 3, 4, 6, 11], "right_val": [1, 3, 4, 7, 11]})
 
@@ -2788,6 +2890,8 @@ class TestAsOfMerge:
     def test_forward_by(self):
         # GH14887
 
+        # [FUNCTION DOC]
+        # GH14887. Forward direction combined with a by column: matches are looked up only within the same group.
         left = pd.DataFrame(
             {
                 "a": [1, 5, 10, 12, 15],
@@ -2818,6 +2922,8 @@ class TestAsOfMerge:
     def test_nearest_by(self):
         # GH14887
 
+        # [FUNCTION DOC]
+        # GH14887. Nearest direction combined with a by column.
         left = pd.DataFrame(
             {
                 "a": [1, 5, 10, 12, 15],
@@ -2847,6 +2953,8 @@ class TestAsOfMerge:
 
     def test_by_int(self):
         # we specialize by type, so test that this is correct
+        # [FUNCTION DOC]
+        # Integer by key (the implementation specializes on key type): groups are matched backward in time within each integer group.
         df1 = pd.DataFrame(
             {
                 "time": to_datetime(
@@ -2908,6 +3016,8 @@ class TestAsOfMerge:
 
     def test_on_float(self):
         # mimics how to determine the minimum-price variation
+        # [FUNCTION DOC]
+        # Float on key (minimum price variation example): each price takes the value of the largest right price not exceeding it.
         df1 = pd.DataFrame(
             {
                 "price": [5.01, 0.0023, 25.13, 340.05, 30.78, 1040.90, 0.0078],
@@ -2938,6 +3048,8 @@ class TestAsOfMerge:
 
     def test_on_specialized_type(self, any_real_numpy_dtype):
         # see gh-13936
+        # [FUNCTION DOC]
+        # gh-13936. Runs over real numeric numpy dtypes: both on columns cast to the dtype, expected value column cast likewise.
         dtype = np.dtype(any_real_numpy_dtype).type
 
         df1 = pd.DataFrame(
@@ -2969,6 +3081,8 @@ class TestAsOfMerge:
 
     def test_on_specialized_type_by_int(self, any_real_numpy_dtype):
         # see gh-13936
+        # [FUNCTION DOC]
+        # gh-13936. Same as above with an integer by column; rows without a same-group earlier match get null.
         dtype = np.dtype(any_real_numpy_dtype).type
 
         df1 = pd.DataFrame(
@@ -3005,6 +3119,8 @@ class TestAsOfMerge:
 
     def test_on_float_by_int(self):
         # type specialize both "by" and "on" parameters
+        # [FUNCTION DOC]
+        # Specialization of both a float on key and an integer by key (price tick-size lookup per exchange).
         df1 = pd.DataFrame(
             {
                 "symbol": list("AAABBBCCC"),
@@ -3061,6 +3177,8 @@ class TestAsOfMerge:
         tm.assert_frame_equal(result, expected)
 
     def test_merge_datatype_error_raises(self):
+        # [FUNCTION DOC]
+        # Merging with a string key on the left and numeric key on the right raises the merge error about incompatible numeric dtype.
         msg = r"Incompatible merge dtype, .*, both sides must have numeric dtype"
 
         left = pd.DataFrame({"left_val": [1, 5, 10], "a": ["a", "b", "c"]})
@@ -3070,6 +3188,8 @@ class TestAsOfMerge:
             merge_asof(left, right, on="a")
 
     def test_merge_datatype_categorical_error_raises(self):
+        # [FUNCTION DOC]
+        # Categorical keys with differing category sets on the two sides raise the merge error about categories not being equal.
         msg = (
             r"incompatible merge keys \[0\] .* both sides category, "
             "but not equal ones"
@@ -3090,6 +3210,8 @@ class TestAsOfMerge:
 
     def test_merge_groupby_multiple_column_with_categorical_column(self):
         # GH 16454
+        # [FUNCTION DOC]
+        # GH 16454. A by list containing a categorical column works; single-row result equals the input.
         df = pd.DataFrame({"x": [0], "y": [0], "z": pd.Categorical([0])})
         result = merge_asof(df, df, on="x", by=["y", "z"])
         expected = pd.DataFrame({"x": [0], "y": [0], "z": pd.Categorical([0])})
@@ -3101,6 +3223,8 @@ class TestAsOfMerge:
     @pytest.mark.parametrize("side", ["left", "right"])
     def test_merge_on_nans(self, func, side):
         # GH 23189
+        # [FUNCTION DOC]
+        # GH 23189. Parametrized over numeric or datetime keys and the side holding a null key: null keys raise a value error saying merge keys contain null values on that side.
         msg = f"Merge keys contain null values on {side} side"
         nulls = func([1.0, 5.0, np.nan])
         non_nulls = func([1.0, 5.0, 10.0])
@@ -3119,6 +3243,9 @@ class TestAsOfMerge:
         #  have NO IDEA what the expected behavior is.
         # TODO(GH#32306): may be relevant to the expected behavior here.
 
+        # [FUNCTION DOC]
+        # Nullable extension numeric by column (null, zero, the maximum representable value) together with a string by column; right on keys differ so no row matches, giving null suffix-y values (string typed when string inference is on).
+        # The inline comments in the test admit the intended semantics are unclear and reference an open issue.
         arr = pd.array([pd.NA, 0, 1], dtype=any_numeric_ea_dtype)
         if arr.dtype.kind in ["i", "u"]:
             max_val = np.iinfo(arr.dtype.numpy_dtype).max
@@ -3161,6 +3288,8 @@ class TestAsOfMerge:
 
     def test_merge_by_col_tz_aware(self):
         # GH 21184
+        # [FUNCTION DOC]
+        # GH 21184. A timezone-aware by column merges correctly; overlapping columns get default suffixes.
         left = pd.DataFrame(
             {
                 "by_col": pd.DatetimeIndex(["2018-01-01"]).tz_localize("UTC"),
@@ -3184,6 +3313,8 @@ class TestAsOfMerge:
 
     def test_by_mixed_tz_aware(self, using_infer_string):
         # GH 26649
+        # [FUNCTION DOC]
+        # GH 26649. By list of a timezone-aware and a string column; the string differs so the right value is null (string dtype when inference is on).
         left = pd.DataFrame(
             {
                 "by_col1": pd.DatetimeIndex(["2018-01-01"]).tz_localize("UTC"),
@@ -3213,6 +3344,8 @@ class TestAsOfMerge:
     @pytest.mark.parametrize("dtype", ["float64", "int16", "m8[ns]", "M8[us]"])
     def test_by_dtype(self, dtype):
         # GH 55453, GH 22794
+        # [FUNCTION DOC]
+        # GH 55453 and GH 22794. By columns of float, 16-bit integer, timedelta and microsecond datetime dtypes keep their dtype and match.
         left = pd.DataFrame(
             {
                 "by_col": np.array([1], dtype=dtype),
@@ -3240,6 +3373,8 @@ class TestAsOfMerge:
 
     def test_timedelta_tolerance_nearest(self, unit):
         # GH 27642
+        # [FUNCTION DOC]
+        # GH 27642. Timedelta keys at the unit, nearest direction, one millisecond tolerance (skipped for second unit).
         if unit == "s":
             pytest.skip(
                 "This test is invalid with unit='s' because that would "
@@ -3283,6 +3418,8 @@ class TestAsOfMerge:
     def test_int_type_tolerance(self, any_int_dtype):
         # GH #28870
 
+        # [FUNCTION DOC]
+        # GH #28870. Key columns of every integer dtype with integer tolerance ten; the key dtype is preserved in the result.
         left = pd.DataFrame({"a": [0, 10, 20], "left_val": [1, 2, 3]})
         right = pd.DataFrame({"a": [5, 15, 25], "right_val": [1, 2, 3]})
         left["a"] = left["a"].astype(any_int_dtype)
@@ -3298,6 +3435,8 @@ class TestAsOfMerge:
 
     def test_merge_index_column_tz(self):
         # GH 29864
+        # [FUNCTION DOC]
+        # GH 29864. Left index key against a timezone-aware right column key, and the mirrored case with the right index; checks result index and values.
         index = pd.date_range("2019-10-01", freq="30min", periods=5, tz="UTC")
         left = pd.DataFrame([0.9, 0.8, 0.7, 0.6], columns=["xyz"], index=index[1:])
         right = pd.DataFrame({"from_date": index, "abc": [2.46] * 4 + [2.19]})
@@ -3331,6 +3470,8 @@ class TestAsOfMerge:
 
     def test_left_index_right_index_tolerance(self, unit):
         # https://github.com/pandas-dev/pandas/issues/35558
+        # [FUNCTION DOC]
+        # GitHub issue 35558. Both datetime indexes with sub-second offsets and a half-second tolerance (skipped for second unit): every left row matches.
         if unit == "s":
             pytest.skip(
                 "This test is invalid with unit='s' because that would round dr1"
@@ -3369,6 +3510,8 @@ class TestAsOfMerge:
 )
 def test_merge_asof_non_numerical_dtype(kwargs, data, infer_string):
     # GH#29130
+    # [FUNCTION DOC]
+    # GH#29130. Parametrized on string inference, on-versus-index keys and data (all-date strings or mixed): non-numeric keys raise the merge error about numeric dtype.
     with option_context("future.infer_string", infer_string):
         left = pd.DataFrame({"x": data}, index=data)
         right = pd.DataFrame({"x": data}, index=data)
@@ -3381,6 +3524,8 @@ def test_merge_asof_non_numerical_dtype(kwargs, data, infer_string):
 
 def test_merge_asof_non_numerical_dtype_object():
     # GH#29130
+    # [FUNCTION DOC]
+    # GH#29130. Object-dtype string keys together with by columns raise the merge error about numeric dtype.
     left = pd.DataFrame({"a": ["12", "13", "15"], "left_val1": ["a", "b", "c"]})
     right = pd.DataFrame({"a": ["a", "b", "c"], "left_val": ["d", "e", "f"]})
     with pytest.raises(
@@ -3407,6 +3552,8 @@ def test_merge_asof_non_numerical_dtype_object():
 )
 def test_merge_asof_index_behavior(kwargs):
     # GH 33463
+    # [FUNCTION DOC]
+    # GH 33463. For three key combinations (both indexes; left column and right index; left index and right column) the result keeps the left index and its name.
     index = Index([1, 5, 10], name="test")
     left = pd.DataFrame({"left": ["a", "b", "c"], "left_time": [1, 4, 10]}, index=index)
     right = pd.DataFrame({"right": [1, 2, 3, 6, 7]}, index=[1, 2, 3, 6, 7])
@@ -3421,6 +3568,8 @@ def test_merge_asof_index_behavior(kwargs):
 
 def test_merge_asof_numeric_column_in_index():
     # GH#34488
+    # [FUNCTION DOC]
+    # GH#34488. A key naming an index level on both sides is accepted when numeric; result has the level as a column.
     left = pd.DataFrame({"b": [10, 11, 12]}, index=Index([1, 2, 3], name="a"))
     right = pd.DataFrame({"c": [20, 21, 22]}, index=Index([0, 2, 3], name="a"))
 
@@ -3431,6 +3580,8 @@ def test_merge_asof_numeric_column_in_index():
 
 def test_merge_asof_numeric_column_in_multiindex():
     # GH#34488
+    # [FUNCTION DOC]
+    # GH#34488. Same with multi-level indexes where only one level is shared.
     left = pd.DataFrame(
         {"b": [10, 11, 12]},
         index=pd.MultiIndex.from_arrays([[1, 2, 3], ["a", "b", "c"]], names=["a", "z"]),
@@ -3447,6 +3598,8 @@ def test_merge_asof_numeric_column_in_multiindex():
 
 def test_merge_asof_numeri_column_in_index_object_dtype():
     # GH#34488
+    # [FUNCTION DOC]
+    # GH#34488. Object-dtype index-level keys (single and multi-level) raise the merge error about numeric dtype. The name has a typo (numeri).
     left = pd.DataFrame({"b": [10, 11, 12]}, index=Index(["1", "2", "3"], name="a"))
     right = pd.DataFrame({"c": [20, 21, 22]}, index=Index(["m", "n", "o"], name="a"))
 
@@ -3468,6 +3621,8 @@ def test_merge_asof_numeri_column_in_index_object_dtype():
 
 def test_merge_asof_array_as_on(unit):
     # GH#42844
+    # [FUNCTION DOC]
+    # GH#42844. A date range array passed as left key (or right key) in place of a column name, with exact matches disallowed, backward direction; checks both orientations.
     dti = pd.DatetimeIndex(
         ["2021/01/01 00:37", "2021/01/01 01:40"], dtype=f"M8[{unit}]"
     )
@@ -3512,6 +3667,8 @@ def test_merge_asof_array_as_on(unit):
 
 def test_merge_asof_raise_for_duplicate_columns():
     # GH#50102
+    # [FUNCTION DOC]
+    # GH#50102. Frames with duplicate column labels raise a value error mentioning the label when it is used as a key on either side.
     left = pd.DataFrame([[1, 2, "a"]], columns=["a", "a", "left_val"])
     right = pd.DataFrame([[1, 1, 1]], columns=["a", "a", "right_val"])
 
@@ -3535,6 +3692,8 @@ def test_merge_asof_raise_for_duplicate_columns():
 )
 def test_merge_asof_extension_dtype(dtype):
     # GH 52904
+    # [FUNCTION DOC]
+    # GH 52904. Parametrized on a nullable integer and two pyarrow dtypes (pyarrow ones skipped without it): key dtype preserved.
     left = pd.DataFrame(
         {
             "join_col": [1, 3, 5],
@@ -3564,6 +3723,8 @@ def test_merge_asof_extension_dtype(dtype):
 @td.skip_if_no("pyarrow")
 def test_merge_asof_pyarrow_td_tolerance():
     # GH 56486
+    # [FUNCTION DOC]
+    # GH 56486. Requires pyarrow. Pyarrow timestamp column with timezone and a one second timedelta tolerance merges with itself.
     ser = pd.Series(
         [datetime.datetime(2023, 1, 1)], dtype="timestamp[us, UTC][pyarrow]"
     )
@@ -3586,6 +3747,8 @@ def test_merge_asof_pyarrow_td_tolerance():
 
 def test_merge_asof_read_only_ndarray():
     # GH 53513
+    # [FUNCTION DOC]
+    # GH 53513. Series whose index arrays are made read-only can still be merged on their indexes; result is a frame of both values.
     left = pd.Series([2], index=[2], name="left")
     right = pd.Series([1], index=[1], name="right")
     # set to read-only
@@ -3598,6 +3761,8 @@ def test_merge_asof_read_only_ndarray():
 
 def test_merge_asof_multiby_with_categorical():
     # GH 43541
+    # [FUNCTION DOC]
+    # GH 43541. Categorical by column with differing category order on each side plus a string by column, forward direction and custom suffixes: only the matching group gets right values.
     left = pd.DataFrame(
         {
             "c1": pd.Categorical(["a", "a", "b", "b"], categories=["a", "b"]),

@@ -1,3 +1,7 @@
+# [MODULE DOC]
+# Tests for the binning function that discretizes values into intervals (with some shared checks against the quantile-based variant).
+# Covers integer and explicit bins, closedness, labels (lists, categoricals, unordered, non-unique), precision, nulls and infinities, datetime/timedelta/timezone bins, nullable inputs, duplicate edges and error messages. Also tests the private rounding helper of the tile module.
+# All tests are module-level functions; no import-time side effects.
 import numpy as np
 import pytest
 
@@ -26,6 +30,8 @@ import pandas.core.reshape.tile as tmod
 
 
 def test_simple():
+    # [FUNCTION DOC]
+    # Cutting an all-equal integer array into four bins with labels disabled returns integer bin codes, all one.
     data = np.ones(5, dtype="int64")
     result = cut(data, 4, labels=False)
 
@@ -35,6 +41,8 @@ def test_simple():
 
 @pytest.mark.parametrize("func", [list, np.array])
 def test_bins(func):
+    # [FUNCTION DOC]
+    # Parametrized on list or array input. Three equal-width bins over float data give an ordered categorical of right-closed intervals (edges rounded to three decimals), and the returned bin edges match the expected values.
     data = func([0.2, 1.4, 2.5, 6.2, 9.7, 2.1])
     result, bins = cut(data, 3, retbins=True)
 
@@ -47,6 +55,8 @@ def test_bins(func):
 
 
 def test_right():
+    # [FUNCTION DOC]
+    # Four bins with right-closed intervals: expected categorical from the returned edges and expected edge values.
     data = np.array([0.2, 1.4, 2.5, 6.2, 9.7, 2.1, 2.575])
     result, bins = cut(data, 4, right=True, retbins=True)
 
@@ -59,6 +69,8 @@ def test_right():
 
 
 def test_no_right():
+    # [FUNCTION DOC]
+    # Four bins with left-closed intervals: expected categorical (edges rounded to three decimals) and the extended edges.
     data = np.array([0.2, 1.4, 2.5, 6.2, 9.7, 2.1, 2.575])
     result, bins = cut(data, 4, right=False, retbins=True)
 
@@ -71,6 +83,8 @@ def test_no_right():
 
 
 def test_bins_from_interval_index():
+    # [FUNCTION DOC]
+    # Passing the categories of an earlier cut as bins reproduces the same categorical; with an extra out-of-range value the extra element is coded missing.
     c = cut(range(5), 3)
     expected = c
     result = cut(range(5), bins=expected.categories)
@@ -85,6 +99,8 @@ def test_bins_from_interval_index():
 
 def test_bins_from_interval_index_doc_example():
     # Make sure we preserve the bins.
+    # [FUNCTION DOC]
+    # Documentation example: an interval index of age bins is preserved as the categories when reused as bins, and codes for new values are as expected (small integer codes).
     ages = np.array([10, 15, 13, 12, 23, 25, 28, 59, 60])
     c = cut(ages, bins=[0, 18, 35, 70])
     expected = IntervalIndex.from_tuples([(0, 18), (18, 35), (35, 70)])
@@ -97,6 +113,8 @@ def test_bins_from_interval_index_doc_example():
 
 def test_bins_not_overlapping_from_interval_index():
     # see gh-23980
+    # [FUNCTION DOC]
+    # see gh-23980. An overlapping interval index as bins raises a value error saying overlapping interval indexes are not accepted.
     msg = "Overlapping IntervalIndex is not accepted"
     ii = IntervalIndex.from_tuples([(0, 10), (2, 12), (4, 14)])
 
@@ -105,6 +123,8 @@ def test_bins_not_overlapping_from_interval_index():
 
 
 def test_bins_not_monotonic():
+    # [FUNCTION DOC]
+    # Non-increasing explicit bins raise a value error saying bins must increase monotonically.
     msg = "bins must increase monotonically"
     data = [0.2, 1.4, 2.5, 6.2, 9.7, 2.1]
 
@@ -164,11 +184,15 @@ def test_bins_not_monotonic():
 )
 def test_bins_monotonic_not_overflowing(x, bins, expected):
     # GH 26045
+    # [FUNCTION DOC]
+    # GH 26045. Bins spanning the whole representable range of datetime, 64-bit integer and timedelta values are accepted without overflow; the resulting categories equal the expected interval index. Parametrized on data, bins and expected intervals.
     result = cut(x, bins)
     tm.assert_index_equal(result.categories, expected)
 
 
 def test_wrong_num_labels():
+    # [FUNCTION DOC]
+    # Giving three labels for two bins raises a value error saying labels must be one fewer than the number of bin edges.
     msg = "Bin labels must be one fewer than the number of bin edges"
     data = [0.2, 1.4, 2.5, 6.2, 9.7, 2.1]
 
@@ -184,6 +208,8 @@ def test_wrong_num_labels():
     ],
 )
 def test_cut_corner(x, bins, msg):
+    # [FUNCTION DOC]
+    # Parametrized: an empty input raises a value error about empty arrays; a non-integer bin count below one raises a value error saying bins should be a positive integer.
     with pytest.raises(ValueError, match=msg):
         cut(x, bins)
 
@@ -191,6 +217,8 @@ def test_cut_corner(x, bins, msg):
 @pytest.mark.parametrize("arg", [2, np.eye(2), DataFrame(np.eye(2))])
 @pytest.mark.parametrize("cut_func", [cut, qcut])
 def test_cut_not_1d_arg(arg, cut_func):
+    # [FUNCTION DOC]
+    # Scalar, 2-D array and frame inputs to both the equal-width and quantile binning functions raise a value error saying the input must be one-dimensional.
     msg = "Input array must be 1 dimensional"
     with pytest.raises(ValueError, match=msg):
         cut_func(arg, 2)
@@ -206,6 +234,8 @@ def test_cut_not_1d_arg(arg, cut_func):
 )
 def test_int_bins_with_inf(data):
     # GH 24314
+    # [FUNCTION DOC]
+    # GH 24314. Integer bin count with data containing positive and/or negative infinity raises a value error saying integer bins cannot be given when data contains infinity.
     msg = "cannot specify integer `bins` when input data contains infinity"
     with pytest.raises(ValueError, match=msg):
         cut(data, bins=3)
@@ -213,6 +243,8 @@ def test_int_bins_with_inf(data):
 
 def test_cut_out_of_range_more():
     # see gh-1511
+    # [FUNCTION DOC]
+    # see gh-1511. Values outside the single bin become null with labels disabled; the series name is preserved.
     name = "x"
 
     ser = Series([0, -1, 0, 1, -3], name=name)
@@ -230,6 +262,8 @@ def test_cut_out_of_range_more():
     ],
 )
 def test_labels(right, breaks, closed):
+    # [FUNCTION DOC]
+    # Parametrized on right closure and expected breaks: for repeated data over 0 to 1, the categories are the expected interval index (outer edge widened by a thousandth on the open side) with the matching closed side.
     arr = np.tile(np.arange(0, 1.01, 0.1), 4)
 
     result, bins = cut(arr, 4, retbins=True, right=right)
@@ -238,6 +272,8 @@ def test_labels(right, breaks, closed):
 
 
 def test_cut_pass_series_name_to_factor():
+    # [FUNCTION DOC]
+    # Cutting a named series gives a result carrying the same name.
     name = "foo"
     ser = Series(np.random.default_rng(2).standard_normal(100), name=name)
 
@@ -246,6 +282,8 @@ def test_cut_pass_series_name_to_factor():
 
 
 def test_label_precision():
+    # [FUNCTION DOC]
+    # With precision two the interval edges are rounded to two significant decimals; categories equal the expected interval index.
     arr = np.arange(0, 0.73, 0.01)
     result = cut(arr, 4, precision=2)
 
@@ -255,6 +293,8 @@ def test_label_precision():
 
 @pytest.mark.parametrize("labels", [None, False])
 def test_na_handling(labels):
+    # [FUNCTION DOC]
+    # Parametrized on labels default or disabled. Input with every third value null gives a result whose entries are null at the same positions.
     arr = np.arange(0, 0.75, 0.01)
     arr[::3] = np.nan
 
@@ -266,6 +306,8 @@ def test_na_handling(labels):
 
 
 def test_inf_handling():
+    # [FUNCTION DOC]
+    # Bins with negative and positive infinity edges: categories match the breaks and the first and last elements (array and series input) fall in the infinite intervals.
     data = np.arange(6)
     data_ser = Series(data, dtype="int64")
 
@@ -283,6 +325,8 @@ def test_inf_handling():
 
 
 def test_cut_out_of_bounds():
+    # [FUNCTION DOC]
+    # Values outside the bin range are null; the null mask equals the out-of-range mask.
     arr = np.random.default_rng(2).standard_normal(100)
     result = cut(arr, [-1, 0, 1])
 
@@ -309,6 +353,8 @@ def test_cut_out_of_bounds():
     ],
 )
 def test_cut_pass_labels(get_labels, get_expected):
+    # [FUNCTION DOC]
+    # Passing labels as a list of strings or as a categorical built from codes gives a categorical with those labels (ordered for lists); the assigned labels match the expected bins.
     bins = [0, 25, 50, 100]
     arr = [50, 5, 10, 15, 20, 30, 70]
     labels = ["Small", "Medium", "Large"]
@@ -319,6 +365,8 @@ def test_cut_pass_labels(get_labels, get_expected):
 
 def test_cut_pass_labels_compat():
     # see gh-16459
+    # [FUNCTION DOC]
+    # see gh-16459. A list of labels and an equivalent ordered categorical of labels give identical results.
     arr = [50, 5, 10, 15, 20, 30, 70]
     labels = ["Good", "Medium", "Bad"]
 
@@ -330,6 +378,8 @@ def test_cut_pass_labels_compat():
 @pytest.mark.parametrize("x", [np.arange(11.0), np.arange(11.0) / 1e10])
 def test_round_frac_just_works(x):
     # It works.
+    # [FUNCTION DOC]
+    # Cutting evenly spaced values of both normal and tiny magnitude into two bins completes without error (rounding fractions works for tiny numbers).
     cut(x, 2)
 
 
@@ -344,11 +394,15 @@ def test_round_frac_just_works(x):
 )
 def test_round_frac(val, precision, expected):
     # see gh-1979
+    # [FUNCTION DOC]
+    # see gh-1979. HELPER-style direct test of the private rounding helper in the tile module: given a value and precision, rounding keeps enough digits to preserve significance. Cases include values near whole numbers and a small fractional value.
     result = tmod._round_frac(val, precision=precision)
     assert result == expected
 
 
 def test_cut_return_intervals():
+    # [FUNCTION DOC]
+    # Cutting a series into three bins returns a series of ordered categorical right-closed intervals with the lowest edge widened slightly.
     ser = Series([0, 1, 2, 3, 4, 5, 6, 7, 8])
     result = cut(ser, 3)
 
@@ -365,6 +419,8 @@ def test_cut_return_intervals():
 
 def test_series_ret_bins():
     # see gh-8589
+    # [FUNCTION DOC]
+    # see gh-8589. With edges requested for series input the result series (ordered categorical intervals) is as expected.
     ser = Series(np.arange(4))
     result, bins = cut(ser, 2, retbins=True)
 
@@ -385,6 +441,8 @@ def test_series_ret_bins():
 )
 def test_cut_duplicates_bin(kwargs, msg):
     # see gh-20947
+    # [FUNCTION DOC]
+    # see gh-20947. Bins with a duplicated edge: duplicates set to drop works (equals cutting with unique bins); the default or raise raises a value error saying bin edges must be unique; an unknown option raises a value error about an invalid duplicates parameter.
     bins = [0, 2, 4, 6, 10, 10]
     values = Series(np.array([1, 3, 5, 7, 9]), index=["a", "b", "c", "d", "e"])
 
@@ -401,6 +459,8 @@ def test_cut_duplicates_bin(kwargs, msg):
 @pytest.mark.parametrize("length", [1, 2])
 def test_single_bin(data, length):
     # see gh-14652, gh-15428
+    # [FUNCTION DOC]
+    # see gh-14652 and gh-15428. One bin on constant data (single or repeated, positive, negative, zero) with labels disabled gives all zero codes of platform integer dtype.
     ser = Series([data] * length)
     result = cut(ser, 1, labels=False)
 
@@ -418,6 +478,8 @@ def test_single_bin(data, length):
 )
 def test_single_bin_edge_adjustment(values, threshold):
     # gh-58517 - edge adjustment mutation when all values are same
+    # [FUNCTION DOC]
+    # gh-58517. When all values are equal, the returned edges must only be adjusted by a tiny amount (range below the threshold) and the input values not mutated in a harmful way. Parametrized on values and the threshold.
     result, bins = cut(values, 3, retbins=True)
 
     bin_range = bins[-1] - bins[0]
@@ -429,6 +491,8 @@ def test_single_bin_edge_adjustment(values, threshold):
 )
 def test_cut_read_only(array_1_writeable, array_2_writeable):
     # issue 18773
+    # [FUNCTION DOC]
+    # issue 18773. Read-only bin arrays give the same result as writeable ones (various combinations).
     array_1 = np.arange(0, 100, 10)
     array_1.flags.writeable = array_1_writeable
 
@@ -451,6 +515,9 @@ def test_cut_read_only(array_1_writeable, array_2_writeable):
     ],
 )
 def test_datetime_bin(conv):
+    # [FUNCTION DOC]
+    # Datetime bins given as timestamps, converted datetimes, numpy datetimes or standard library datetimes produce an interval series of ordered categorical dtype.
+    # KNOWN ISSUE: the inline comment says the numpy datetime bins have microsecond resolution but the expected dtype is cast to second resolution.
     data = [np.datetime64("2012-12-13"), np.datetime64("2012-12-15")]
     bin_data = ["2012-12-12", "2012-12-14", "2012-12-16"]
 
@@ -479,6 +546,8 @@ def test_datetime_cut(unit, box):
     # see gh-14714
     #
     # Testing time data when it comes in various collection types.
+    # [FUNCTION DOC]
+    # see gh-14714. Datetime data in several containers (series, index, array, list) at the unit fixture, cut into three bins: the intervals have computed left and right edges; second-unit values round the first edge to eight seconds instead of seven.
     data = to_datetime(["2013-01-01", "2013-01-02", "2013-01-03"]).astype(f"M8[{unit}]")
     data = box(data)
     result, _ = cut(data, 3, retbins=True)
@@ -512,6 +581,8 @@ def test_datetime_cut(unit, box):
 @pytest.mark.parametrize("box", [list, np.array, Index, Series])
 def test_datetime_tz_cut_mismatched_tzawareness(box):
     # GH#54964
+    # [FUNCTION DOC]
+    # GH#54964. Timezone-naive bins with timezone-aware data raise a value error saying naive bins cannot be used with aware values (all bin container types).
     bins = box(
         [
             Timestamp("2013-01-01 04:57:07.200000"),
@@ -542,6 +613,8 @@ def test_datetime_tz_cut_mismatched_tzawareness(box):
 @pytest.mark.parametrize("box", [list, np.array, Index, Series])
 def test_datetime_tz_cut(bins, box):
     # see gh-19872
+    # [FUNCTION DOC]
+    # see gh-19872. Timezone-aware data cut with an integer count or with aware bin edges (in several containers) gives aware intervals with the expected edges; the integer case infers nanosecond resolution.
     tz = "US/Eastern"
     ser = Series(date_range("20130101", periods=3, tz=tz, unit="ns"))
 
@@ -573,6 +646,8 @@ def test_datetime_tz_cut(bins, box):
 
 
 def test_datetime_nan_error():
+    # [FUNCTION DOC]
+    # Numeric bins with datetime data raise a value error saying bins must be datetime64 dtype.
     msg = "bins must be of datetime64 dtype"
 
     with pytest.raises(ValueError, match=msg):
@@ -580,6 +655,8 @@ def test_datetime_nan_error():
 
 
 def test_datetime_nan_mask():
+    # [FUNCTION DOC]
+    # Datetime data outside a single datetime bin are null in the result, while the categories contain no null.
     result = cut(
         date_range("20130102", periods=5), bins=date_range("20130101", periods=2)
     )
@@ -594,6 +671,8 @@ def test_datetime_nan_mask():
 @pytest.mark.parametrize("tz", [None, "UTC", "US/Pacific"])
 def test_datetime_cut_roundtrip(tz, unit):
     # see gh-19891
+    # [FUNCTION DOC]
+    # see gh-19891. Cutting a datetime series (naive, UTC or Pacific timezone, at the unit fixture) in two with edges returned, then cutting again with those edges, gives the same result; the edges equal the expected datetime index (first edge rounded for second unit).
     ser = Series(date_range("20180101", periods=3, tz=tz, unit=unit))
     result, result_bins = cut(ser, 2, retbins=True)
 
@@ -625,6 +704,8 @@ def test_datetime_cut_roundtrip(tz, unit):
 
 def test_timedelta_cut_roundtrip():
     # see gh-19891
+    # [FUNCTION DOC]
+    # see gh-19891. Same round trip for timedelta data; checks the expected timedelta edges.
     ser = Series(timedelta_range("1day", periods=3))
     result, result_bins = cut(ser, 2, retbins=True)
 
@@ -648,6 +729,8 @@ def test_timedelta_cut_roundtrip():
 )
 def test_cut_bool_coercion_to_int(bins, box, compare):
     # issue 20303
+    # [FUNCTION DOC]
+    # issue 20303. Boolean data (series, array or list) is treated like the same zero/one integers: cut results match, with duplicates dropped, for bin counts six and seven. Comparison function depends on box.
     data_expected = box([0, 1, 1, 0, 1] * 10)
     data_result = box([False, True, True, False, True] * 10)
     expected = cut(data_expected, bins, duplicates="drop")
@@ -658,6 +741,8 @@ def test_cut_bool_coercion_to_int(bins, box, compare):
 @pytest.mark.parametrize("labels", ["foo", 1, True])
 def test_cut_incorrect_labels(labels):
     # GH 13318
+    # [FUNCTION DOC]
+    # GH 13318. Labels given as a string, integer or true raise a value error saying labels must be false, none or list-like.
     values = range(5)
     msg = "Bin labels must either be False, None or passed in as a list-like argument"
     with pytest.raises(ValueError, match=msg):
@@ -668,6 +753,8 @@ def test_cut_incorrect_labels(labels):
 @pytest.mark.parametrize("right", [True, False])
 @pytest.mark.parametrize("include_lowest", [True, False])
 def test_cut_nullable_integer(bins, right, include_lowest):
+    # [FUNCTION DOC]
+    # Nullable integer array input (with nulls on every other element) gives the same categorical as the float input with nans, for integer or explicit bins and all combinations of right closure and include-lowest.
     a = np.random.default_rng(2).integers(0, 10, size=50).astype(float)
     a[::2] = np.nan
     b = a.astype(object)
@@ -688,6 +775,8 @@ def test_cut_nullable_integer(bins, right, include_lowest):
 )
 def test_cut_non_unique_labels(data, bins, labels, expected_codes, expected_labels):
     # GH 33141
+    # [FUNCTION DOC]
+    # GH 33141. With ordered disabled, repeated labels are allowed and collapse to unique categories; codes follow the label list. Parametrized on data, bins and labels.
     result = cut(data, bins=bins, labels=labels, ordered=False)
     expected = Categorical.from_codes(
         expected_codes, categories=expected_labels, ordered=False
@@ -704,6 +793,8 @@ def test_cut_non_unique_labels(data, bins, labels, expected_codes, expected_labe
 )
 def test_cut_unordered_labels(data, bins, labels, expected_codes, expected_labels):
     # GH 33141
+    # [FUNCTION DOC]
+    # GH 33141. With ordered disabled, label order is preserved as category order (unordered categorical).
     result = cut(data, bins=bins, labels=labels, ordered=False)
     expected = Categorical.from_codes(
         expected_codes, categories=expected_labels, ordered=False
@@ -713,6 +804,8 @@ def test_cut_unordered_labels(data, bins, labels, expected_codes, expected_label
 
 def test_cut_unordered_with_missing_labels_raises_error():
     # GH 33141
+    # [FUNCTION DOC]
+    # GH 33141. Unordered cut without labels raises a value error saying labels must be provided when ordered is disabled.
     msg = "'labels' must be provided if 'ordered = False'"
     with pytest.raises(ValueError, match=msg):
         cut([0.5, 3], bins=[0, 1, 2], ordered=False)
@@ -720,6 +813,8 @@ def test_cut_unordered_with_missing_labels_raises_error():
 
 def test_cut_unordered_with_series_labels():
     # https://github.com/pandas-dev/pandas/issues/36603
+    # [FUNCTION DOC]
+    # issue 36603. Series used for bins and labels with ordered disabled gives a categorical series with the labels.
     ser = Series([1, 2, 3, 4, 5])
     bins = Series([0, 2, 4, 6])
     labels = Series(["a", "b", "c"])
@@ -729,6 +824,8 @@ def test_cut_unordered_with_series_labels():
 
 
 def test_cut_no_warnings():
+    # [FUNCTION DOC]
+    # Adding a binned column to a frame with left-closed bins and string labels emits no warning.
     df = DataFrame({"value": np.random.default_rng(2).integers(0, 100, 20)})
     labels = [f"{i} - {i + 9}" for i in range(0, 100, 10)]
     with tm.assert_produces_warning(False):
@@ -737,6 +834,8 @@ def test_cut_no_warnings():
 
 def test_cut_with_duplicated_index_lowest_included():
     # GH 42185
+    # [FUNCTION DOC]
+    # GH 42185. Series with duplicate index labels and include-lowest: the lowest value is included in the first interval (edge widened) and the index is preserved.
     expected = Series(
         [Interval(-0.001, 2, closed="right")] * 3
         + [Interval(2, 4, closed="right"), Interval(-0.001, 2, closed="right")],
@@ -753,6 +852,8 @@ def test_cut_with_duplicated_index_lowest_included():
 def test_cut_with_nonexact_categorical_indices():
     # GH 42424
 
+    # [FUNCTION DOC]
+    # GH 42424. Value counts of binned data, split into head and tail and combined in a frame, align on the categorical interval index with nulls where absent. Ignores a runtime warning about invalid casts.
     ser = Series(range(100))
     ser1 = cut(ser, 10).value_counts().head(5)
     ser2 = cut(ser, 10).value_counts().tail(5)
@@ -783,6 +884,8 @@ def test_cut_with_nonexact_categorical_indices():
 
 def test_cut_with_timestamp_tuple_labels():
     # GH 40661
+    # [FUNCTION DOC]
+    # GH 40661. Labels that are tuples of timestamps are accepted and used as ordered categories.
     labels = [(Timestamp(10),), (Timestamp(20),), (Timestamp(30),)]
     result = cut([2, 4, 6], bins=[1, 3, 5, 7], labels=labels)
 
@@ -792,6 +895,8 @@ def test_cut_with_timestamp_tuple_labels():
 
 def test_cut_bins_datetime_intervalindex():
     # https://github.com/pandas-dev/pandas/issues/46218
+    # [FUNCTION DOC]
+    # issue 46218. A datetime interval index as bins with series input (needed to trigger the old bug) yields the expected categorical.
     bins = interval_range(Timestamp("2022-02-25"), Timestamp("2022-02-27"), freq="1D")
     # passing Series instead of list is important to trigger bug
     result = cut(Series([Timestamp("2022-02-26")]), bins=bins)
@@ -801,6 +906,8 @@ def test_cut_bins_datetime_intervalindex():
 
 def test_cut_with_nullable_int64():
     # GH 30787
+    # [FUNCTION DOC]
+    # GH 30787. Nullable Int64 series with a missing value: missing entries give missing codes; other values land in the expected ordered intervals.
     series = Series([0, 1, 2, 3, 4, pd.NA, 6, 7], dtype="Int64")
     bins = [0, 2, 4, 6, 8]
     intervals = IntervalIndex.from_breaks(bins)
@@ -816,6 +923,8 @@ def test_cut_with_nullable_int64():
 
 def test_cut_datetime_array_no_attributeerror():
     # GH 55431
+    # [FUNCTION DOC]
+    # GH 55431. Passing the extension array of a timezone-aware datetime series (not a series) works without an attribute error and matches the expected categorical.
     ser = Series(to_datetime(["2023-10-06 12:00:00+0000", "2023-10-07 12:00:00+0000"]))
 
     result = cut(ser.array, bins=2)

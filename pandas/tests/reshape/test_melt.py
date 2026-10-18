@@ -1,3 +1,6 @@
+# [MODULE DOC]
+# Tests for the wide-to-long reshaping functions: melt (unpivot), lreshape (grouped column lists to long form) and wide_to_long (stub-name based reshaping).
+# Provides fixtures for a numeric frame with identifier columns, a multi-level-column frame, and variable/value name strings, plus three test classes (melt, lreshape, wide_to_long) and one module-level test for string column labels. No import-time side effects.
 import re
 
 import numpy as np
@@ -17,6 +20,8 @@ import pandas._testing as tm
 
 @pytest.fixture
 def df():
+    # [FUNCTION DOC]
+    # HELPER: fixture returning a ten-row frame with four random normal columns A to D (seeded generator) on a business-day date index plus integer indicator columns id1 and id2 (one where A or B is positive, else zero).
     res = DataFrame(
         np.random.default_rng(2).standard_normal((10, 4)),
         columns=Index(list("ABCD")),
@@ -29,6 +34,8 @@ def df():
 
 @pytest.fixture
 def df1():
+    # [FUNCTION DOC]
+    # HELPER: fixture returning a three-row float frame whose columns are a two-level multi-index with level names CAP (A, B, C) and low (a, b, c).
     res = DataFrame(
         [
             [1.067683, -1.110463, 0.20867],
@@ -43,20 +50,30 @@ def df1():
 
 @pytest.fixture
 def var_name():
+    # [FUNCTION DOC]
+    # HELPER: fixture returning the custom variable column name var.
     return "var"
 
 
 @pytest.fixture
 def value_name():
+    # [FUNCTION DOC]
+    # HELPER: fixture returning the custom value column name val.
     return "val"
 
 
 class TestMelt:
+    # [CLASS DOC]
+    # Tests of the melt function and the equivalent frame method: default and custom names, identifier/value column selection, multi-level columns, extension and datetime dtypes, index handling and error cases.
     def test_top_level_method(self, df):
+        # [FUNCTION DOC]
+        # The top-level melt function on the numeric frame yields exactly the columns variable and value.
         result = melt(df)
         assert result.columns.tolist() == ["variable", "value"]
 
     def test_method_signatures(self, df, df1, var_name, value_name):
+        # [FUNCTION DOC]
+        # The frame method and the top-level function give equal results for default arguments, id and value columns, custom names, and column level selection on the multi-level frame.
         tm.assert_frame_equal(df.melt(), melt(df))
 
         tm.assert_frame_equal(
@@ -72,6 +89,8 @@ class TestMelt:
         tm.assert_frame_equal(df1.melt(col_level=0), melt(df1, col_level=0))
 
     def test_default_col_names(self, df):
+        # [FUNCTION DOC]
+        # Result columns: identifier columns first, then variable and value; checked for none, one and two identifier columns.
         result = df.melt()
         assert result.columns.tolist() == ["variable", "value"]
 
@@ -82,6 +101,8 @@ class TestMelt:
         assert result2.columns.tolist() == ["id1", "id2", "variable", "value"]
 
     def test_value_vars(self, df):
+        # [FUNCTION DOC]
+        # A single value column given as a scalar string gives one row per original row; two value columns with identifier columns give the stacked expected frame (identifiers repeated, variable labels, concatenated values).
         result3 = df.melt(id_vars=["id1", "id2"], value_vars="A")
         assert len(result3) == 10
 
@@ -100,6 +121,8 @@ class TestMelt:
     @pytest.mark.parametrize("type_", (tuple, list, np.array))
     def test_value_vars_types(self, type_, df):
         # GH 15348
+        # [FUNCTION DOC]
+        # GH 15348. Value columns passed as tuple, list or array give the same expected stacked frame.
         expected = DataFrame(
             {
                 "id1": df["id1"].tolist() * 2,
@@ -113,6 +136,8 @@ class TestMelt:
         tm.assert_frame_equal(result, expected)
 
     def test_vars_work_with_multiindex(self, df1):
+        # [FUNCTION DOC]
+        # Identifier and value columns given as lists of tuples on multi-level columns: the identifier column keeps its tuple label and the variable is split into the level-named columns CAP and low.
         expected = DataFrame(
             {
                 ("A", "a"): df1[("A", "a")],
@@ -154,6 +179,8 @@ class TestMelt:
     def test_single_vars_work_with_multiindex(
         self, id_vars, value_vars, col_level, expected, df1
     ):
+        # [FUNCTION DOC]
+        # Parametrized on column level zero or one: with a column level chosen, plain labels select the columns at that level and the variable column carries that level name.
         result = df1.melt(id_vars, value_vars, col_level=col_level)
         expected = DataFrame(expected)
         tm.assert_frame_equal(result, expected)
@@ -170,11 +197,15 @@ class TestMelt:
         # melt should fail with an informative error message if
         # the columns have a MultiIndex and a tuple is passed
         # for id_vars or value_vars.
+        # [FUNCTION DOC]
+        # With multi-level columns, identifier or value arguments that are tuples (rather than lists of tuples) raise a value error saying they must be a list of tuples.
         msg = r"(id|value)_vars must be a list of tuples when columns are a MultiIndex"
         with pytest.raises(ValueError, match=msg):
             df1.melt(id_vars=id_vars, value_vars=value_vars)
 
     def test_custom_var_name(self, df, var_name):
+        # [FUNCTION DOC]
+        # A custom variable column name replaces the default in the output for combinations of identifier and value arguments; one case compares to a full expected frame.
         result5 = df.melt(var_name=var_name)
         assert result5.columns.tolist() == ["var", "value"]
 
@@ -202,6 +233,8 @@ class TestMelt:
         tm.assert_frame_equal(result9, expected9)
 
     def test_custom_value_name(self, df, value_name):
+        # [FUNCTION DOC]
+        # A custom value column name replaces the default in the output for combinations of arguments; one case compares to a full expected frame.
         result10 = df.melt(value_name=value_name)
         assert result10.columns.tolist() == ["variable", "val"]
 
@@ -231,6 +264,8 @@ class TestMelt:
         tm.assert_frame_equal(result14, expected14)
 
     def test_custom_var_and_value_name(self, df, value_name, var_name):
+        # [FUNCTION DOC]
+        # Both custom names applied together; also, naming the columns axis of the frame makes that name the default variable column name.
         result15 = df.melt(var_name=var_name, value_name=value_name)
         assert result15.columns.tolist() == ["var", "val"]
 
@@ -274,10 +309,14 @@ class TestMelt:
 
     @pytest.mark.parametrize("col_level", [0, "CAP"])
     def test_col_level(self, col_level, df1):
+        # [FUNCTION DOC]
+        # Parametrized on level number zero or name CAP: melting at one level produces columns named after that level and value.
         res = df1.melt(col_level=col_level)
         assert res.columns.tolist() == ["CAP", "value"]
 
     def test_multiindex(self, df1):
+        # [FUNCTION DOC]
+        # Melting multi-level columns without arguments yields a column per level name (CAP, low) plus value.
         res = df1.melt()
         assert res.columns.tolist() == ["CAP", "low", "value"]
 
@@ -291,6 +330,8 @@ class TestMelt:
     )
     def test_pandas_dtypes(self, col):
         # GH 15785
+        # [FUNCTION DOC]
+        # GH 15785. Datetime with timezone, categorical and integer columns used as both identifier and value keep their dtypes in the stacked result.
         col = pd.Series(col)
         df = DataFrame(
             {"klass": range(5), "col": col, "attr1": [1, 0, 0, 0, 0], "attr2": col}
@@ -312,6 +353,8 @@ class TestMelt:
 
     def test_preserve_category(self):
         # GH 15853
+        # [FUNCTION DOC]
+        # GH 15853. A categorical identifier column keeps its categorical dtype after melting.
         data = DataFrame({"A": [1, 2], "B": pd.Categorical(["X", "Y"])})
         result = melt(data, ["B"], ["A"])
         expected = DataFrame(
@@ -326,6 +369,8 @@ class TestMelt:
         # attempted with column names absent from the dataframe
 
         # Generate data
+        # [FUNCTION DOC]
+        # GH-23575. Value or identifier names absent from the frame raise a key error listing missing names; covers missing value, missing identifier, several missing, and multi-level cases (missing tuple, missing label at a chosen level).
         df = DataFrame(
             np.random.default_rng(2).standard_normal((5, 4)), columns=list("abcd")
         )
@@ -356,6 +401,8 @@ class TestMelt:
 
     def test_melt_mixed_int_str_id_vars(self):
         # GH 29718
+        # [FUNCTION DOC]
+        # GH 29718. Mixed integer and string identifier labels work; the variable column keeps object dtype.
         df = DataFrame({0: ["foo"], "a": ["bar"], "b": [1], "d": [2]})
         result = melt(df, id_vars=[0, "a"], value_vars=["b", "d"])
         expected = DataFrame(
@@ -367,6 +414,8 @@ class TestMelt:
 
     def test_melt_mixed_int_str_value_vars(self):
         # GH 29718
+        # [FUNCTION DOC]
+        # GH 29718. Mixed integer and string value labels produce a variable column with those labels.
         df = DataFrame({0: ["foo"], "a": ["bar"]})
         result = melt(df, value_vars=[0, "a"])
         expected = DataFrame({"variable": [0, "a"], "value": ["foo", "bar"]})
@@ -374,6 +423,8 @@ class TestMelt:
 
     def test_ignore_index(self):
         # GH 17440
+        # [FUNCTION DOC]
+        # GH 17440. With ignore_index disabled the original index labels are repeated for each value column.
         df = DataFrame({"foo": [0], "bar": [1]}, index=["first"])
         result = melt(df, ignore_index=False)
         expected = DataFrame(
@@ -383,6 +434,8 @@ class TestMelt:
 
     def test_ignore_multiindex(self):
         # GH 17440
+        # [FUNCTION DOC]
+        # GH 17440. A multi-level row index is preserved and repeated, with its names, when ignore_index is disabled.
         index = pd.MultiIndex.from_tuples(
             [("first", "second"), ("first", "third")], names=["baz", "foobar"]
         )
@@ -401,6 +454,8 @@ class TestMelt:
 
     def test_ignore_index_name_and_type(self):
         # GH 17440
+        # [FUNCTION DOC]
+        # GH 17440. A categorical, named row index is preserved with name and dtype.
         index = Index(["foo", "bar"], dtype="category", name="baz")
         df = DataFrame({"x": [0, 1], "y": [2, 3]}, index=index)
         result = melt(df, ignore_index=False)
@@ -415,6 +470,8 @@ class TestMelt:
 
     def test_melt_with_duplicate_columns(self):
         # GH#41951
+        # [FUNCTION DOC]
+        # GH#41951. Duplicate value column labels both appear in the result, in order.
         df = DataFrame([["id", 2, 3]], columns=["a", "b", "b"])
         result = df.melt(id_vars=["a"], value_vars=["b"])
         expected = DataFrame(
@@ -425,6 +482,8 @@ class TestMelt:
     @pytest.mark.parametrize("dtype", ["Int8", "Int64"])
     def test_melt_ea_dtype(self, dtype):
         # GH#41570
+        # [FUNCTION DOC]
+        # GH#41570. Differing nullable integer dtypes in the value columns are combined into the wider one in the value column.
         df = DataFrame(
             {
                 "a": pd.Series([1, 2], dtype="Int8"),
@@ -442,6 +501,8 @@ class TestMelt:
 
     def test_melt_ea_columns(self):
         # GH 54297
+        # [FUNCTION DOC]
+        # GH 54297. Column labels of the python string extension dtype yield a variable column of that dtype.
         df = DataFrame(
             {
                 "A": {0: "a", 1: "b", 2: "c"},
@@ -461,6 +522,8 @@ class TestMelt:
         tm.assert_frame_equal(result, expected)
 
     def test_melt_preserves_datetime(self):
+        # [FUNCTION DOC]
+        # Timezone-aware datetime value columns keep their timezone; custom names with a slash are accepted.
         df = DataFrame(
             data=[
                 {
@@ -502,6 +565,9 @@ class TestMelt:
         tm.assert_frame_equal(result, expected)
 
     def test_melt_allows_non_scalar_id_vars(self):
+        # [FUNCTION DOC]
+        # Integer var_name and value_name are accepted as result column names alongside a single identifier column.
+        # KNOWN ISSUE: the test name says non-scalar identifier columns but the identifier argument passed is a plain scalar string; the test actually checks non-string result column names, duplicating the next test.
         df = DataFrame(
             data={"a": [1, 2, 3], "b": [4, 5, 6]},
             index=["11", "22", "33"],
@@ -515,6 +581,8 @@ class TestMelt:
         tm.assert_frame_equal(result, expected)
 
     def test_melt_allows_non_string_var_name(self):
+        # [FUNCTION DOC]
+        # Integer var_name and value_name with a list of identifier columns are accepted as result column names.
         df = DataFrame(
             data={"a": [1, 2, 3], "b": [4, 5, 6]},
             index=["11", "22", "33"],
@@ -528,6 +596,8 @@ class TestMelt:
         tm.assert_frame_equal(result, expected)
 
     def test_melt_non_scalar_var_name_raises(self):
+        # [FUNCTION DOC]
+        # A list as var_name for single-level columns raises a value error saying it must be a scalar.
         df = DataFrame(
             data={"a": [1, 2, 3], "b": [4, 5, 6]},
             index=["11", "22", "33"],
@@ -537,6 +607,8 @@ class TestMelt:
 
     def test_melt_multiindex_columns_var_name(self):
         # GH 58033
+        # [FUNCTION DOC]
+        # GH 58033. With two-level columns, var_name may be a list naming the levels (full or just the first), splitting the variable accordingly.
         df = DataFrame({("A", "a"): [1], ("A", "b"): [2]})
 
         expected = DataFrame(
@@ -548,6 +620,8 @@ class TestMelt:
 
     def test_melt_multiindex_columns_var_name_too_many(self):
         # GH 58033
+        # [FUNCTION DOC]
+        # GH 58033. More var_name entries than column levels raise a value error mentioning the two levels.
         df = DataFrame({("A", "a"): [1], ("A", "b"): [2]})
 
         with pytest.raises(
@@ -557,6 +631,8 @@ class TestMelt:
 
     def test_melt_duplicate_column_header_raises(self):
         # GH61475
+        # [FUNCTION DOC]
+        # GH61475. An identifier column label that is duplicated in the frame raises a value error saying identifiers cannot contain duplicate columns.
         df = DataFrame([[1, 2, 3], [3, 4, 5]], columns=["A", "A", "B"])
         msg = "id_vars cannot contain duplicate columns."
 
@@ -565,7 +641,11 @@ class TestMelt:
 
 
 class TestLreshape:
+    # [CLASS DOC]
+    # Tests of lreshape, which reshapes wide to long from a mapping of new names to lists of columns.
     def test_pairs(self):
+        # [FUNCTION DOC]
+        # Birth/visit data with visit date and weight columns: lreshape from a spec with three columns per group gives the long frame with rows dropped where the group values are missing; with dropna disabled all rows remain. Unequal column list lengths raise a value error saying all column lists must be the same length.
         data = {
             "birthdt": [
                 "08jan2009",
@@ -793,7 +873,11 @@ class TestLreshape:
 
 
 class TestWideToLong:
+    # [CLASS DOC]
+    # Tests of wide_to_long: stub name handling, separators, suffix patterns and types, multiple identifiers and error conditions.
     def test_simple(self):
+        # [FUNCTION DOC]
+        # Basic reshape: stubs A and B with year suffixes, one non-stub column; result indexed by id and year with columns X, A, B.
         x = np.random.default_rng(2).standard_normal(3)
         df = DataFrame(
             {
@@ -819,6 +903,8 @@ class TestWideToLong:
 
     def test_stubs(self):
         # GH9204 wide_to_long call should not modify 'stubs' list
+        # [FUNCTION DOC]
+        # GH9204. The stub list argument is not modified.
         df = DataFrame([[0, 1, 2, 3, 8], [4, 5, 6, 7, 9]])
         df.columns = ["id", "inc1", "inc2", "edu1", "edu2"]
         stubs = ["inc", "edu"]
@@ -830,6 +916,8 @@ class TestWideToLong:
     def test_separating_character(self):
         # GH14779
 
+        # [FUNCTION DOC]
+        # GH14779. A dot separator between stub and suffix is supported.
         x = np.random.default_rng(2).standard_normal(3)
         df = DataFrame(
             {
@@ -854,6 +942,8 @@ class TestWideToLong:
         tm.assert_frame_equal(result, expected)
 
     def test_escapable_characters(self):
+        # [FUNCTION DOC]
+        # Stub names containing regular-expression special characters are matched literally.
         x = np.random.default_rng(2).standard_normal(3)
         df = DataFrame(
             {
@@ -881,6 +971,8 @@ class TestWideToLong:
 
     def test_unbalanced(self):
         # test that we can have a varying amount of time variables
+        # [FUNCTION DOC]
+        # Stubs with differing sets of suffixes yield missing values for absent combinations.
         df = DataFrame(
             {
                 "A2010": [1.0, 2.0],
@@ -904,6 +996,8 @@ class TestWideToLong:
 
     def test_character_overlap(self):
         # Test we handle overlapping characters in both id_vars and value_vars
+        # [FUNCTION DOC]
+        # Overlapping stub prefixes (A, B, BB and BBB columns) are disambiguated; extra non-stub columns kept.
         df = DataFrame(
             {
                 "A11": ["a11", "a22", "a33"],
@@ -934,6 +1028,8 @@ class TestWideToLong:
 
     def test_invalid_separator(self):
         # if an invalid separator is supplied an empty data frame is returned
+        # [FUNCTION DOC]
+        # An unmatched separator produces an empty long frame retaining the original columns, with the right index levels. Comparison sorts columns.
         sep = "nope!"
         df = DataFrame(
             {
@@ -965,6 +1061,8 @@ class TestWideToLong:
     def test_num_string_disambiguation(self):
         # Test that we can disambiguate number value_vars from
         # string value_vars
+        # [FUNCTION DOC]
+        # A stub name that is also a prefix of non-stub column names is disambiguated using numeric suffixes.
         df = DataFrame(
             {
                 "A11": ["a11", "a22", "a33"],
@@ -998,6 +1096,8 @@ class TestWideToLong:
     def test_invalid_suffixtype(self):
         # If all stubs names end with a string, but a numeric suffix is
         # assumed,  an empty data frame is returned
+        # [FUNCTION DOC]
+        # With only alphabetic suffixes but the default numeric suffix pattern, no columns match and an empty long frame is returned.
         df = DataFrame(
             {
                 "Aone": [1.0, 2.0],
@@ -1026,6 +1126,8 @@ class TestWideToLong:
 
     def test_multiple_id_columns(self):
         # Taken from http://www.ats.ucla.edu/stat/stata/modules/reshapel.htm
+        # [FUNCTION DOC]
+        # Taken from a Stata reshape tutorial. Two identifier columns and a single stub given as a string produce a three-level index (identifiers and age).
         df = DataFrame(
             {
                 "famid": [1, 1, 1, 2, 2, 2, 3, 3, 3],
@@ -1068,6 +1170,8 @@ class TestWideToLong:
     def test_non_unique_idvars(self):
         # GH16382
         # Raise an error message if non unique id vars (i) are passed
+        # [FUNCTION DOC]
+        # GH16382. Identifier columns that do not uniquely identify rows raise a value error with that message.
         df = DataFrame(
             {"A_A1": [1, 2, 3, 4, 5], "B_B1": [1, 2, 3, 4, 5], "x": [1, 1, 1, 1, 1]}
         )
@@ -1076,6 +1180,8 @@ class TestWideToLong:
             wide_to_long(df, ["A_A", "B_B"], i="x", j="colname")
 
     def test_cast_j_int(self):
+        # [FUNCTION DOC]
+        # Numeric suffixes are cast to integer and stub names containing the separator are handled.
         df = DataFrame(
             {
                 "actor_1": ["CCH Pounder", "Johnny Depp", "Christoph Waltz"],
@@ -1115,6 +1221,8 @@ class TestWideToLong:
         tm.assert_frame_equal(result, expected)
 
     def test_identical_stubnames(self):
+        # [FUNCTION DOC]
+        # A stub name equal to an existing column name raises a value error saying it cannot be identical to a column name.
         df = DataFrame(
             {
                 "A2010": [1.0, 2.0],
@@ -1128,6 +1236,8 @@ class TestWideToLong:
             wide_to_long(df, ["A", "B"], i="A", j="colname")
 
     def test_nonnumeric_suffix(self):
+        # [FUNCTION DOC]
+        # Using a lowercase-letters suffix pattern reshapes alphabetic suffixes; missing combinations become null.
         df = DataFrame(
             {
                 "treatment_placebo": [1.0, 2.0],
@@ -1151,6 +1261,8 @@ class TestWideToLong:
         tm.assert_frame_equal(result, expected)
 
     def test_mixed_type_suffix(self):
+        # [FUNCTION DOC]
+        # Suffix pattern allowing any characters: mixed numeric and text suffixes become string labels.
         df = DataFrame(
             {
                 "A": ["X1", "X2"],
@@ -1174,6 +1286,8 @@ class TestWideToLong:
         tm.assert_frame_equal(result, expected)
 
     def test_float_suffix(self):
+        # [FUNCTION DOC]
+        # Suffix pattern for digits and dots: float-like suffixes are cast to floats in the index.
         df = DataFrame(
             {
                 "treatment_1.1": [1.0, 2.0],
@@ -1201,6 +1315,8 @@ class TestWideToLong:
         # GH22468
         # Don't raise ValueError when a column name is a substring
         # of a stubname that's been passed as a string
+        # [FUNCTION DOC]
+        # GH22468. A column that is a substring of the stub name does not raise; a string stub gives the same result as a one-element list.
         wide_data = {
             "node_id": {0: 0, 1: 1, 2: 2, 3: 3, 4: 4},
             "A": {0: 0.80, 1: 0.0, 2: 0.25, 3: 1.0, 4: 0.81},
@@ -1217,6 +1333,9 @@ class TestWideToLong:
         # GH34731, enforced in 2.0
         # raise a ValueError if the resultant value column name matches
         # a name in the dataframe already (default name is "value")
+        # [FUNCTION DOC]
+        # GH34731, enforced in 2.0. Melting with a value column name that already exists as an identifier column raises a value error saying the value name cannot match an existing column.
+        # KNOWN ISSUE: this test exercises the melt method but is located in the wide-to-long test class.
         df = DataFrame({"col": list("ABC"), "value": range(10, 16, 2)})
 
         with pytest.raises(
@@ -1226,6 +1345,8 @@ class TestWideToLong:
 
     def test_missing_stubname(self, any_string_dtype):
         # GH46044
+        # [FUNCTION DOC]
+        # GH46044. A stub name with no matching columns yields a column of nulls, with an index whose first level is converted to the requested string dtype.
         df = DataFrame({"id": ["1", "2"], "a-1": [100, 200], "a-2": [300, 400]})
         df = df.astype({"id": any_string_dtype})
         result = wide_to_long(
@@ -1252,6 +1373,8 @@ class TestWideToLong:
 
 def test_wide_to_long_string_columns(string_storage):
     # GH 57066
+    # [FUNCTION DOC]
+    # GH 57066. Column labels of a string extension dtype (parametrized storage, missing marker as not-a-number) with a regular-expression suffix keep the string dtype for the new index level.
     string_dtype = pd.StringDtype(string_storage, na_value=np.nan)
     df = DataFrame(
         {

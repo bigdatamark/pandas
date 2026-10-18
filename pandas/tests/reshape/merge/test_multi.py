@@ -1,3 +1,7 @@
+# [MODULE DOC]
+# Tests for merging and joining frames with multi-level indexes (multi-key joins, join on index levels, multi-index to multi-index joins).
+# Defines fixtures for a string-keyed left frame, a multi-indexed right frame, and travel-style multi-indexed frames, then two test classes: one for column/multi-index merges and joins and one for joining two multi-indexed frames.
+# Uses the shared join type, sort and multi-index random data fixtures; no import-time side effects.
 import numpy as np
 import pytest
 
@@ -20,6 +24,8 @@ from pandas.core.reshape.merge import merge
 
 @pytest.fixture
 def left():
+    # [FUNCTION DOC]
+    # HELPER: fixture returning a ten-row frame with two string key columns and a random normal data column (seeded generator) for multi-index join tests.
     """left dataframe (not multi-indexed) for multi-index join tests"""
     # a little relevant example with NAs
     key1 = ["bar", "bar", "bar", "foo", "foo", "baz", "baz", "qux", "qux", "snap"]
@@ -31,6 +37,9 @@ def left():
 
 @pytest.fixture
 def right(multiindex_dataframe_random_data):
+    # [FUNCTION DOC]
+    # HELPER: fixture returning the shared random multi-index frame after naming its index levels key1 and key2 and renaming its three columns to j_one, j_two and j_three.
+    # Mutates the fixture frame it receives (index names and columns).
     """right dataframe (multi-indexed) for multi-index join tests"""
     df = multiindex_dataframe_random_data
     df.index.names = ["key1", "key2"]
@@ -41,6 +50,8 @@ def right(multiindex_dataframe_random_data):
 
 @pytest.fixture
 def left_multi():
+    # [FUNCTION DOC]
+    # HELPER: fixture returning a five-row frame indexed by origin, destination, period and trip purpose with a single trips column.
     return DataFrame(
         {
             "Origin": ["A", "A", "B", "B", "C"],
@@ -55,6 +66,8 @@ def left_multi():
 
 @pytest.fixture
 def right_multi():
+    # [FUNCTION DOC]
+    # HELPER: fixture returning a seven-row frame indexed by origin, destination, period and link type with a single distance column.
     return DataFrame(
         {
             "Origin": ["A", "A", "B", "B", "C", "C", "E"],
@@ -69,11 +82,18 @@ def right_multi():
 
 @pytest.fixture
 def on_cols_multi():
+    # [FUNCTION DOC]
+    # HELPER: fixture returning the three shared level names origin, destination and period used to join the multi-indexed frames.
     return ["Origin", "Destination", "Period"]
 
 
 class TestMergeMulti:
+    # [CLASS DOC]
+    # Tests merges and joins combining a regular frame with a multi-indexed one, including null handling, ordering and the datetime-index key cases.
     def test_merge_on_multikey(self, left, right, join_type):
+        # [FUNCTION DOC]
+        # Joining the left frame onto the multi-indexed right frame via the two key columns must equal a column-based merge with the reset right frame, for the join type fixture, both unsorted and sorted.
+        # The join result has its index reset before comparison.
         on_cols = ["key1", "key2"]
         result = left.join(right, on=on_cols, how=join_type).reset_index(drop=True)
 
@@ -95,15 +115,23 @@ class TestMergeMulti:
         "infer_string", [False, pytest.param(True, marks=td.skip_if_no("pyarrow"))]
     )
     def test_left_join_multi_index(self, sort, infer_string):
+        # [FUNCTION DOC]
+        # Randomized left-join check on a three-column key (letters, floats with nulls). Parametrized on the string-inference option, which is set for the duration of the test (the True case needs pyarrow).
+        # Builds a left frame, a shuffled right frame whose index is the key columns, and derived fourth and fifth columns that encode the key; run twice, the second time after injecting nulls into each key column.
         with option_context("future.infer_string", infer_string):
             icols = ["1st", "2nd", "3rd"]
 
             def bind_cols(df):
+                # [FUNCTION DOC]
+                # HELPER: derives a numeric series from the three key columns of a frame: character code offsets of the first and third columns (nulls map to zero), the third scaled by one hundred, plus ten times the second column with nulls filled as zero. Returns the series.
                 iord = lambda a: 0 if a != a else ord(a)
                 f = lambda ts: ts.map(iord) - ord("a")
                 return f(df["1st"]) + f(df["3rd"]) * 1e2 + df["2nd"].fillna(0) * 10
 
             def run_asserts(left, right, sort):
+                # [FUNCTION DOC]
+                # HELPER: checks a left join of the left and right frames on the key list with the given sort flag.
+                # Asserts: result is not shorter than the left frame; fourth and fifth columns have no nulls; the fourth equals the negated fifth and equals the recomputed key encoding; the result name is unset; when sorted, the result equals itself sorted stably by the keys; and the equivalent column-based merge (with the right index reset), after resetting the join result to a default index, equals the join result.
                 res = left.join(right, on=icols, how="left", sort=sort)
 
                 assert len(left) < len(res) + 1
@@ -156,6 +184,8 @@ class TestMergeMulti:
 
     def test_merge_right_vs_left(self, left, right, sort):
         # compare left vs right merge with multikey
+        # [FUNCTION DOC]
+        # A left merge using left key columns and right index must give the same frame as the mirrored right merge with swapped inputs, once columns are reordered, for each value of the sort fixture.
         on_cols = ["key1", "key2"]
         merged_left_right = left.merge(
             right, left_on=on_cols, right_index=True, how="left", sort=sort
@@ -172,6 +202,8 @@ class TestMergeMulti:
 
     def test_merge_multiple_cols_with_mixed_cols_index(self):
         # GH29522
+        # [FUNCTION DOC]
+        # GH29522. Merging a frame with a reset multi-indexed series on two key columns gives the frame columns plus the series values column.
         s = Series(
             range(6),
             MultiIndex.from_product([["A", "B"], [1, 2, 3]], names=["lev1", "lev2"]),
@@ -191,6 +223,8 @@ class TestMergeMulti:
 
     def test_compress_group_combinations(self):
         # ~ 40000000 possible unique groups
+        # [FUNCTION DOC]
+        # Outer merge on two string key columns of ten thousand distinct values each (roughly forty million possible key pairs) exercising the group-label compression code path. Only checks that it completes without error.
         key1 = [str(i) for i in range(10000)]
         key1 = np.tile(key1, 2)
         key2 = key1[::-1]
@@ -215,6 +249,9 @@ class TestMergeMulti:
         merge(df, df2, how="outer")
 
     def test_left_join_index_preserve_order(self):
+        # [FUNCTION DOC]
+        # Left join of a frame on two key columns onto a two-level multi-indexed frame preserves left row order and fills unmatched rows with nulls; with sort, the result equals the unsorted result stably sorted by the keys.
+        # Repeated with a left frame containing mixed numeric dtypes (multiple blocks).
         on_cols = ["k1", "k2"]
         left = DataFrame(
             {
@@ -269,6 +306,8 @@ class TestMergeMulti:
         tm.assert_frame_equal(result, expected)
 
     def test_left_join_index_multi_match_multiindex(self):
+        # [FUNCTION DOC]
+        # Left join on three columns against a three-level multi-index with duplicated keys: each left row is repeated per match, unmatched rows get null, left order and index labels are kept; with sort it equals the expected result stably sorted by the key columns.
         left = DataFrame(
             [
                 ["X", "Y", "C", "a"],
@@ -338,6 +377,9 @@ class TestMergeMulti:
         tm.assert_frame_equal(result, expected)
 
     def test_left_join_index_multi_match(self):
+        # [FUNCTION DOC]
+        # Left join on a single column against a non-unique index: left rows repeat per match with the original left index labels, unmatched left rows get null; sort gives the stably key-sorted result.
+        # GH7331: the equivalent left merge with the reset right frame keeps left order (result has a default index).
         left = DataFrame(
             [["c", 0], ["b", 1], ["a", 2], ["b", 3]],
             columns=["tag", "val"],
@@ -388,6 +430,8 @@ class TestMergeMulti:
         tm.assert_frame_equal(result, expected)
 
     def test_left_merge_na_buglet(self):
+        # [FUNCTION DOC]
+        # Left merge on an id column where the right frame has null ids and null values: null keys must not match, so the result equals joining the left frame with the right frame minus its id column.
         left = DataFrame(
             {
                 "id": list("abcde"),
@@ -412,6 +456,8 @@ class TestMergeMulti:
         tm.assert_frame_equal(result, expected)
 
     def test_merge_na_keys(self):
+        # [FUNCTION DOC]
+        # Outer merge on all shared columns (year, panel, data) where the data column contains nulls: nulls in key columns must match each other. Expected is computed by filling nulls with a sentinel, merging, then replacing the sentinel with null.
         data = [
             [1950, "A", 1.5],
             [1950, "B", 1.5],
@@ -446,6 +492,9 @@ class TestMergeMulti:
     @pytest.mark.parametrize("klass", [None, np.asarray, Series, Index])
     def test_merge_datetime_index(self, klass):
         # see gh-19038
+        # [FUNCTION DOC]
+        # gh-19038. Merging a frame with itself on a column plus a vector of index years, with the vector passed as raw array, series or index (or unchanged). The result has an extra unnamed key column (named key_1) of 32-bit integer years.
+        # Also merging on a list holding only the year vector yields key_0 plus suffixed columns.
         df = DataFrame(
             [1, 2, 3], ["2016-01-01", "2017-01-01", "2018-01-01"], columns=["a"]
         )
@@ -470,6 +519,8 @@ class TestMergeMulti:
     def test_merge_datetime_multi_index_empty_df(self, merge_type):
         # see gh-36895
 
+        # [FUNCTION DOC]
+        # gh-36895. Parametrized on left or right merge type. Merging a two-row frame indexed by (date, panel) with an empty frame that has the same index names and one column state: the result keeps the two rows with null state. Checks both the merge function on the index names and the join method, which must agree with the expected frame.
         left = DataFrame(
             data={
                 "data": [1.5, 1.5],
@@ -515,6 +566,8 @@ class TestMergeMulti:
 
     @pytest.fixture
     def household(self):
+        # [FUNCTION DOC]
+        # HELPER: fixture returning a three-row frame indexed by household id with male flag and wealth columns.
         household = DataFrame(
             {
                 "household_id": [1, 2, 3],
@@ -527,6 +580,8 @@ class TestMergeMulti:
 
     @pytest.fixture
     def portfolio(self):
+        # [FUNCTION DOC]
+        # HELPER: fixture returning a seven-row frame indexed by (household id, asset id) with name and share columns; the last row has null asset id and name.
         portfolio = DataFrame(
             {
                 "household_id": [1, 2, 2, 3, 3, 3, 4],
@@ -556,6 +611,8 @@ class TestMergeMulti:
 
     @pytest.fixture
     def expected(self):
+        # [FUNCTION DOC]
+        # HELPER: fixture returning the expected inner join of household and portfolio: six rows indexed by (household id, asset id) with columns male, wealth, name and share.
         expected = (
             DataFrame(
                 {
@@ -594,6 +651,8 @@ class TestMergeMulti:
         return expected
 
     def test_join_multi_levels(self, portfolio, household, expected):
+        # [FUNCTION DOC]
+        # GH 3662. Inner joining the single-level household frame with the two-level portfolio frame (on the shared household level) equals the expected fixture. Inputs are copied first.
         portfolio = portfolio.copy()
         household = household.copy()
 
@@ -603,6 +662,8 @@ class TestMergeMulti:
         tm.assert_frame_equal(result, expected)
 
     def test_join_multi_levels_merge_equivalence(self, portfolio, household, expected):
+        # [FUNCTION DOC]
+        # The equivalent column-based inner merge on household id, with the result indexed by household id and asset id, equals the expected fixture.
         portfolio = portfolio.copy()
         household = household.copy()
 
@@ -616,6 +677,8 @@ class TestMergeMulti:
         tm.assert_frame_equal(result, expected)
 
     def test_join_multi_levels_outer(self, portfolio, household, expected):
+        # [FUNCTION DOC]
+        # Outer join adds the unmatched household 4 row (null asset id, share one) to the expected fixture; expected is built by concatenating with sorting and reindexing columns. Index type check is relaxed.
         portfolio = portfolio.copy()
         household = household.copy()
 
@@ -638,6 +701,10 @@ class TestMergeMulti:
         tm.assert_frame_equal(result, expected, check_index_type=False)
 
     def test_join_multi_levels_invalid(self, portfolio, household):
+        # [FUNCTION DOC]
+        # Joining after renaming the household index to a name that overlaps nothing raises a value error saying there are no overlapping index names.
+        # A second case joins the portfolio with a copy of itself and expects a value error about overlapping columns with no suffix.
+        # KNOWN ISSUE: the set-names call on the copied portfolio index returns a new index and its result is discarded, so the intended rename never happens; the second error is raised only because the frames are identical.
         portfolio = portfolio.copy()
         household = household.copy()
 
@@ -658,6 +725,8 @@ class TestMergeMulti:
     def test_join_multi_levels2(self):
         # some more advanced merges
         # GH6360
+        # [FUNCTION DOC]
+        # GH6360. Joins a household frame indexed by (household id, asset id) with a log return frame indexed by (asset id, time). Verifies the inner and outer column-based merges on asset id, indexed by household id, asset id and time, equal explicitly constructed expected frames (outer includes unmatched assets with null time and return).
         household = DataFrame(
             {
                 "household_id": [1, 2, 2, 3, 3, 3, 4],
@@ -813,7 +882,11 @@ class TestMergeMulti:
 
 
 class TestJoinMultiMulti:
+    # [CLASS DOC]
+    # Tests joining two multi-indexed frames on their shared level names.
     def test_join_multi_multi(self, left_multi, right_multi, join_type, on_cols_multi):
+        # [FUNCTION DOC]
+        # Joining the two multi-indexed fixtures for each join type must equal the column-based merge on the shared levels, re-indexed with level order (right levels first for right joins, otherwise left levels first) and sorted by index.
         left_names = left_multi.index.names
         right_names = right_multi.index.names
         if join_type == "right":
@@ -838,6 +911,8 @@ class TestJoinMultiMulti:
     def test_join_multi_empty_frames(
         self, left_multi, right_multi, join_type, on_cols_multi
     ):
+        # [FUNCTION DOC]
+        # Same as the multi-multi join test but with all value columns dropped from both frames, so only the indexes are joined; result must equal the sorted column-based merge.
         left_multi = left_multi.drop(columns=left_multi.columns)
         right_multi = right_multi.drop(columns=right_multi.columns)
 
@@ -865,6 +940,8 @@ class TestJoinMultiMulti:
     @pytest.mark.parametrize("box", [None, np.asarray, Series, Index])
     def test_merge_datetime_index(self, box):
         # see gh-19038
+        # [FUNCTION DOC]
+        # gh-19038. Same scenario as the datetime index test in the other class (the test body is a duplicate; parametrized on how the year vector is boxed: none, array, series, index): merging with the year vector yields a key_1 column, and merging on only the vector yields key_0 and suffixed columns.
         df = DataFrame(
             [1, 2, 3], ["2016-01-01", "2017-01-01", "2018-01-01"], columns=["a"]
         )
@@ -886,6 +963,8 @@ class TestJoinMultiMulti:
         tm.assert_frame_equal(result, expected)
 
     def test_single_common_level(self):
+        # [FUNCTION DOC]
+        # Joining two multi-indexed frames sharing exactly one level name (key) gives an inner-style result indexed by key, the left-only level and the right-only level, equal to the column-based inner merge on key.
         index_left = MultiIndex.from_tuples(
             [("K0", "X0"), ("K0", "X1"), ("K1", "X2")], names=["key", "X"]
         )
@@ -914,6 +993,8 @@ class TestJoinMultiMulti:
         # GH 25760
         # GH 28956
 
+        # [FUNCTION DOC]
+        # GH 25760 and GH 28956. Joining where the right multi-index has the same level names in a different order: levels are matched by name, so the right values align to the left index rows with null where there is no match.
         midx1 = MultiIndex.from_product([[1, 2], [3, 4]], names=["a", "b"])
         midx3 = MultiIndex.from_tuples([(4, 1), (3, 2), (3, 1)], names=["b", "a"])
 

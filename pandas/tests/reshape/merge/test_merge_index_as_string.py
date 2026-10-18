@@ -1,3 +1,7 @@
+# [MODULE DOC]
+# Tests for merging and joining frames where the keys are a mix of column labels and named index levels.
+# Provides fixtures building left and right frames with zero, one or two named index levels, plus a helper that computes the expected result by resetting index levels to columns, merging on columns and restoring the index.
+# Tests compare the frame merge and join methods against that expected result. No import-time side effects.
 import numpy as np
 import pytest
 
@@ -7,6 +11,9 @@ import pandas._testing as tm
 
 @pytest.fixture
 def df1():
+    # [FUNCTION DOC]
+    # HELPER: base left frame fixture for this module.
+    # Returns a frame of eleven rows with integer columns outer and inner (key columns) and a float column v1 evenly spaced from zero to one.
     return DataFrame(
         {
             "outer": [1, 1, 1, 2, 2, 2, 2, 3, 3, 4, 4],
@@ -18,6 +25,9 @@ def df1():
 
 @pytest.fixture
 def df2():
+    # [FUNCTION DOC]
+    # HELPER: base right frame fixture for this module.
+    # Returns a frame of twelve rows with integer columns outer and inner (some key pairs repeated) and a float column v2 evenly spaced from ten to eleven.
     return DataFrame(
         {
             "outer": [1, 1, 1, 1, 1, 1, 2, 2, 3, 3, 3, 3],
@@ -29,6 +39,9 @@ def df2():
 
 @pytest.fixture(params=[[], ["outer"], ["outer", "inner"]])
 def left_df(request, df1):
+    # [FUNCTION DOC]
+    # HELPER: parametrized fixture producing the left test frame.
+    # Parameters are the base left frame fixture and a request carrying a list of level names (empty, outer, or outer and inner). When the list is non-empty those columns are moved into the index; otherwise the frame is returned unchanged.
     """Construct left test DataFrame with specified levels
     (any of 'outer', 'inner', and 'v1')
     """
@@ -41,6 +54,9 @@ def left_df(request, df1):
 
 @pytest.fixture(params=[[], ["outer"], ["outer", "inner"]])
 def right_df(request, df2):
+    # [FUNCTION DOC]
+    # HELPER: parametrized fixture producing the right test frame.
+    # Same as the left fixture but built from the base right frame: the requested levels (none, outer, or outer and inner) are set as the index.
     """Construct right test DataFrame with specified levels
     (any of 'outer', 'inner', and 'v2')
     """
@@ -53,6 +69,11 @@ def right_df(request, df2):
 
 
 def compute_expected(df_left, df_right, on=None, left_on=None, right_on=None, how=None):
+    # [FUNCTION DOC]
+    # HELPER: computes the expected merge result for the tests in this module without relying on index-level merge support.
+    # Inputs: left and right frames (each with zero or more named index levels); on, left_on and right_on as lists of names (on, when given, overrides both side-specific lists); how as the merge type.
+    # Steps: determine named index levels on each side; the output levels are the left key names present as index levels on both sides; drop (discarding) index levels not used as keys; reset the remaining key levels into columns; merge on columns; finally set the output levels as the index when any exist.
+    # Returns the expected merged frame. Does not mutate its inputs.
     """
     Compute the expected merge result for the test case.
 
@@ -132,6 +153,9 @@ def compute_expected(df_left, df_right, on=None, left_on=None, right_on=None, ho
 )
 def test_merge_indexes_and_columns_on(left_df, right_df, on, how):
     # Construct expected result
+    # [FUNCTION DOC]
+    # Verifies the frame merge method with a shared on list, where each key may be a column or an index level on either side, matches the computed expected frame.
+    # Parametrized over key lists and merge types; also over the left and right fixtures. Comparison ignores column order.
     expected = compute_expected(left_df, right_df, on=on, how=how)
 
     # Perform merge
@@ -152,6 +176,8 @@ def test_merge_indexes_and_columns_lefton_righton(
     left_df, right_df, left_on, right_on, how
 ):
     # Construct expected result
+    # [FUNCTION DOC]
+    # Same as the on-based test but passes identical key lists via separate left_on and right_on arguments; result must equal the computed expected frame, ignoring column order.
     expected = compute_expected(
         left_df, right_df, left_on=left_on, right_on=right_on, how=how
     )
@@ -164,6 +190,9 @@ def test_merge_indexes_and_columns_lefton_righton(
 @pytest.mark.parametrize("left_index", ["inner", ["inner", "outer"]])
 def test_join_indexes_and_columns_on(df1, df2, left_index, join_type):
     # Construct left_df
+    # [FUNCTION DOC]
+    # Verifies the frame join method, joining a left frame indexed by one or two named levels onto a right frame indexed by both levels using an on list, for each join type fixture.
+    # Expected is built by resetting the left index, joining, and restoring the index; suffixes are fixed to underscore x and y. Comparison ignores column order.
     left_df = df1.set_index(left_index)
 
     # Construct right_df
