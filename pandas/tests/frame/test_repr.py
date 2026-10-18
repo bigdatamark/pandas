@@ -1,3 +1,11 @@
+# [MODULE DOC]
+# Tests for the text representation (repr and string rendering) of the tabular
+# container: type of the result, unicode, multi-level and null-containing
+# indexes, option-controlled output (dimensions, precision, truncation), special
+# dtypes (datetime, period, interval, categorical, extension, complex), the
+# LaTeX repr, and record-valued cells. Many are smoke tests that only require no
+# exception. Uses fixtures from the test-suite conftest; no import-time side
+# effects (some tests change display options within a scoped context).
 from datetime import (
     datetime,
     timedelta,
@@ -26,7 +34,12 @@ import pandas._testing as tm
 
 
 class TestDataFrameRepr:
+    # [CLASS DOC]
+    # Test group for the frame's repr and string rendering. Stateless.
     def test_repr_should_return_str(self):
+        # [FUNCTION DOC]
+        # The repr of a frame with unicode labels and of one of its columns is an
+        # exact built-in string.
         # https://docs.python.org/3/reference/datamodel.html#object.__repr__
         # "...The return value must be a string object."
 
@@ -42,6 +55,9 @@ class TestDataFrameRepr:
         assert type(ser.__repr__()) is str
 
     def test_repr_bytes_61_lines(self):
+        # [FUNCTION DOC]
+        # GH#12857: smoke test that repr works for a 1000x50 frame of one-character
+        # strings, including truncated 60-row and 61-row slices (once failed at 61).
         # GH#12857
         lets = list("ACDEFGHIJKLMNOP")
         words = np.random.default_rng(2).choice(lets, (1000, 50))
@@ -54,6 +70,9 @@ class TestDataFrameRepr:
         repr(df.iloc[:61, :])
 
     def test_repr_unicode_level_names(self, frame_or_series):
+        # [FUNCTION DOC]
+        # Smoke test, parametrized over frame/Series: repr works with a two-level index
+        # whose first level name is a non-ASCII character.
         index = MultiIndex.from_tuples([(0, 0), (1, 1)], names=["\u0394", "i1"])
 
         obj = DataFrame(np.random.default_rng(2).standard_normal((2, 4)), index=index)
@@ -61,6 +80,10 @@ class TestDataFrameRepr:
         repr(obj)
 
     def test_assign_index_sequences(self):
+        # [FUNCTION DOC]
+        # GH#2200: after setting a two-level index and then replacing the index by a
+        # list of tuples (and then with one entry as a list rather than a tuple, noted
+        # as an improper path), repr still works.
         # GH#2200
         df = DataFrame({"a": [1, 2, 3], "b": [4, 5, 6], "c": [7, 8, 9]}).set_index(
             ["a", "b"]
@@ -76,12 +99,18 @@ class TestDataFrameRepr:
         repr(df)
 
     def test_repr_with_mi_nat(self):
+        # [FUNCTION DOC]
+        # A frame with a two-level index whose first level has a missing timestamp and a
+        # date renders exactly the expected aligned text, showing NaT.
         df = DataFrame({"X": [1, 2]}, index=[[NaT, Timestamp("20130101")], ["a", "b"]])
         result = repr(df)
         expected = "              X\nNaT        a  1\n2013-01-01 b  2"
         assert result == expected
 
     def test_repr_with_different_nulls(self):
+        # [FUNCTION DOC]
+        # GH45263: a row index mixing boolean, None, NaN and NaT renders each label
+        # verbatim as shown in the expected text.
         # GH45263
         df = DataFrame([1, 2, 3, 4], [True, None, np.nan, NaT])
         result = repr(df)
@@ -93,6 +122,9 @@ NaT   4"""
         assert result == expected
 
     def test_repr_with_different_nulls_cols(self):
+        # [FUNCTION DOC]
+        # GH45263: column labels NaN, None, NaT and true render as those labels in the
+        # header in the expected text.
         # GH45263
         d = {np.nan: [1, 2], None: [3, 4], NaT: [6, 7], True: [8, 9]}
         df = DataFrame(data=d)
@@ -103,6 +135,10 @@ NaT   4"""
         assert result == expected
 
     def test_multiindex_na_repr(self):
+        # [FUNCTION DOC]
+        # Only an issue with long column names: a frame with six 30-character column
+        # names and a three-level row index, re-indexed by two of the columns that hold
+        # missing values, can be repr'd without error.
         # only an issue with long columns
         df3 = DataFrame(
             {
@@ -119,6 +155,9 @@ NaT   4"""
         repr(idf)
 
     def test_repr_name_coincide(self):
+        # [FUNCTION DOC]
+        # When index level names coincide with column-like text, the third output line
+        # of a two-row, three-level index frame starts with the first row's level values.
         index = MultiIndex.from_tuples(
             [("a", 0, "foo"), ("b", 1, "bar")], names=["a", "b", "c"]
         )
@@ -133,6 +172,9 @@ NaT   4"""
         multiindex_year_month_day_dataframe_random_data,
         multiindex_dataframe_random_data,
     ):
+        # [FUNCTION DOC]
+        # Smoke test: repr of the multi-level fixture frames and their transposes, and
+        # writing their string forms into one in-memory text buffer, do not raise.
         ymd = multiindex_year_month_day_dataframe_random_data
         frame = multiindex_dataframe_random_data
 
@@ -148,6 +190,9 @@ NaT   4"""
         ymd.T.to_string(buf=buf)
 
     def test_repr_empty(self):
+        # [FUNCTION DOC]
+        # Smoke test: repr works for a frame with no rows or columns and for one with
+        # 1000 index entries and no columns.
         # empty
         repr(DataFrame())
 
@@ -156,11 +201,16 @@ NaT   4"""
         repr(frame)
 
     def test_repr_mixed(self, float_string_frame):
+        # [FUNCTION DOC]
+        # Smoke test: repr works for the mixed float/string fixture.
         # mixed
         repr(float_string_frame)
 
     @pytest.mark.slow
     def test_repr_mixed_big(self):
+        # [FUNCTION DOC]
+        # Marked slow. Smoke test: repr of a 200-row mixed numeric/string frame with the
+        # first rows set to missing.
         # big mixed
         biggie = DataFrame(
             {
@@ -175,6 +225,10 @@ NaT   4"""
         repr(biggie)
 
     def test_repr(self):
+        # [FUNCTION DOC]
+        # A frame with columns but no rows can be repr'd; a frame whose labels and values
+        # contain tab, carriage return and newline characters renders without any tab,
+        # carriage return, or the original leading text plus newline.
         # columns but no index
         no_index = DataFrame(columns=[0, 1, 3])
         repr(no_index)
@@ -185,6 +239,10 @@ NaT   4"""
         assert "a\n" not in repr(df)
 
     def test_repr_dimensions(self):
+        # [FUNCTION DOC]
+        # The dimension footer text (two rows by two columns) appears when the show
+        # dimensions display option is true, and not when it is false or when set to
+        # truncate on a small frame.
         df = DataFrame([[1, 2], [3, 4]])
         with option_context("display.show_dimensions", True):
             assert "2 rows x 2 columns" in repr(df)
@@ -197,11 +255,16 @@ NaT   4"""
 
     @pytest.mark.slow
     def test_repr_big(self):
+        # [FUNCTION DOC]
+        # Marked slow. Smoke test: repr of a 200x4 frame of zeros.
         # big one
         biggie = DataFrame(np.zeros((200, 4)), columns=range(4), index=range(200))
         repr(biggie)
 
     def test_repr_unsortable(self):
+        # [FUNCTION DOC]
+        # Smoke test: repr works for a frame whose column labels (strings and datetimes)
+        # cannot be sorted together.
         # columns are not sortable
 
         unsortable = DataFrame(
@@ -216,6 +279,10 @@ NaT   4"""
         repr(unsortable)
 
     def test_repr_float_frame_options(self, float_frame):
+        # [FUNCTION DOC]
+        # Smoke test: repr of the float fixture works under default settings and under
+        # display options for precision, small maximum rows and columns, and large
+        # maximum rows and columns.
         repr(float_frame)
 
         with option_context("display.precision", 3):
@@ -228,6 +295,10 @@ NaT   4"""
             repr(float_frame)
 
     def test_repr_unicode(self):
+        # [FUNCTION DOC]
+        # A frame with a unicode string column renders a header line whose trailing
+        # whitespace-stripped text is the column name aligned over the wide strings.
+        # KNOWN ISSUE: the second half repeats the same construction and check as the first half; it is redundant.
         uval = "\u03c3\u03c3\u03c3\u03c3"
 
         df = DataFrame({"A": [uval, uval]})
@@ -241,14 +312,23 @@ NaT   4"""
         assert result.split("\n")[0].rstrip() == ex_top
 
     def test_unicode_string_with_unicode(self):
+        # [FUNCTION DOC]
+        # Smoke test: string conversion of a frame with a Hebrew letter value works.
         df = DataFrame({"A": ["\u05d0"]})
         str(df)
 
     def test_repr_unicode_columns(self):
+        # [FUNCTION DOC]
+        # Smoke test: repr of columns containing Hebrew letters does not raise a
+        # decoding error.
         df = DataFrame({"\u05d0": [1, 2, 3], "\u05d1": [4, 5, 6], "c": [7, 8, 9]})
         repr(df.columns)  # should not raise UnicodeDecodeError
 
     def test_str_to_bytes_raises(self):
+        # [FUNCTION DOC]
+        # GH 26447: converting a frame to bytes raises a type error because the frame is
+        # treated as a sequence of integers; the message must match the expected text
+        # exactly.
         # GH 26447
         df = DataFrame({"A": ["abc"]})
         msg = "^'str' object cannot be interpreted as an integer$"
@@ -256,6 +336,9 @@ NaT   4"""
             bytes(df)
 
     def test_very_wide_repr(self):
+        # [FUNCTION DOC]
+        # Smoke test: repr works for a 10x20 frame with twenty identical long column
+        # names (wider than the display).
         df = DataFrame(
             np.random.default_rng(2).standard_normal((10, 20)),
             columns=np.array(["a" * 10] * 20, dtype=object),
@@ -263,6 +346,9 @@ NaT   4"""
         repr(df)
 
     def test_repr_column_name_unicode_truncation_bug(self):
+        # [FUNCTION DOC]
+        # Issue 1906: a column holding a long string with unusual characters is shown
+        # (the column name appears in the repr) when the maximum columns option is 20.
         # #1906
         df = DataFrame(
             {
@@ -284,6 +370,11 @@ NaT   4"""
             assert "StringCol" in repr(df)
 
     def test_latex_repr(self):
+        # [FUNCTION DOC]
+        # Skipped if the template library is unavailable. The LaTeX repr of a frame
+        # with a math-like string, under options for no escaping and the LaTeX render
+        # repr, equals the expected table text; GH 12182: outside of the option context
+        # the LaTeX repr is None.
         pytest.importorskip("jinja2")
         expected = r"""\begin{tabular}{llll}
 \toprule
@@ -305,12 +396,17 @@ NaT   4"""
         assert df._repr_latex_() is None
 
     def test_repr_with_datetimeindex(self):
+        # [FUNCTION DOC]
+        # Repr of a frame with a daily datetime index equals the expected aligned text.
         df = DataFrame({"A": [1, 2, 3]}, index=date_range("2000", periods=3))
         result = repr(df)
         expected = "            A\n2000-01-01  1\n2000-01-02  2\n2000-01-03  3"
         assert result == expected
 
     def test_repr_with_intervalindex(self):
+        # [FUNCTION DOC]
+        # Repr of a frame with an interval index built from breaks equals the expected
+        # text, intervals shown closed on the right.
         # https://github.com/pandas-dev/pandas/pull/24134/files
         df = DataFrame(
             {"A": [1, 2, 3, 4]}, index=IntervalIndex.from_breaks([0, 1, 2, 3, 4])
@@ -320,12 +416,18 @@ NaT   4"""
         assert result == expected
 
     def test_repr_with_categorical_index(self):
+        # [FUNCTION DOC]
+        # Repr of a frame with a categorical index equals the expected aligned text.
         df = DataFrame({"A": [1, 2, 3]}, index=CategoricalIndex(["a", "b", "c"]))
         result = repr(df)
         expected = "   A\na  1\nb  2\nc  3"
         assert result == expected
 
     def test_repr_categorical_dates_periods(self):
+        # [FUNCTION DOC]
+        # A frame with a timezone-aware hourly column and a monthly period column
+        # renders to the expected text, and a frame with the same data as categoricals
+        # renders identically.
         # normal DataFrame
         dt = date_range("2011-01-01 09:00", freq="h", periods=5, tz="US/Eastern")
         p = period_range("2011-01", freq="M", periods=5)
@@ -351,16 +453,26 @@ NaT   4"""
         [[Series, "0    NaT\ndtype: object"], [DataFrame, "     0\n0  NaT"]],
     )
     def test_repr_np_nat_with_object(self, nat, box, expected):
+        # [FUNCTION DOC]
+        # GH 25445: parametrized over a datetime and a timedelta not-a-time value in
+        # nanoseconds, and over Series/frame with expected texts. The repr of an
+        # object-dtype container holding it shows the NaT label and (for Series) object
+        # dtype.
         # GH 25445
         result = repr(box([nat], dtype=object))
         assert result == expected
 
     def test_frame_datetime64_pre1900_repr(self):
+        # [FUNCTION DOC]
+        # Smoke test: repr works for a frame with datetime values from year 1700 at
+        # yearly frequency.
         df = DataFrame({"year": date_range("1/1/1700", periods=50, freq="YE-DEC")})
         # it works!
         repr(df)
 
     def test_frame_to_string_with_periodindex(self):
+        # [FUNCTION DOC]
+        # Smoke test: string rendering works for a frame with a monthly period index.
         index = PeriodIndex(["2011-1", "2011-2", "2011-3"], freq="M")
         frame = DataFrame(np.random.default_rng(2).standard_normal((3, 4)), index=index)
 
@@ -368,6 +480,9 @@ NaT   4"""
         frame.to_string()
 
     def test_to_string_ea_na_in_multiindex(self):
+        # [FUNCTION DOC]
+        # GH#47986: string rendering of a frame with a nullable integer index
+        # containing a missing value shows the missing marker for NA.
         # GH#47986
         df = DataFrame(
             {"a": [1, 2]},
@@ -381,6 +496,10 @@ NaT   4"""
         assert result == expected
 
     def test_datetime64tz_slice_non_truncate(self):
+        # [FUNCTION DOC]
+        # GH 30263: the repr of a timezone-aware datetime frame equals the repr after
+        # selecting the first five columns (which is all of them), i.e. no truncation
+        # difference.
         # GH 30263
         df = DataFrame({"x": date_range("2019", periods=10, tz="UTC")})
         expected = repr(df)
@@ -389,6 +508,10 @@ NaT   4"""
         assert result == expected
 
     def test_to_records_no_typeerror_in_repr(self):
+        # [FUNCTION DOC]
+        # GH 48526: assigning the record-array conversion of two string columns as a new
+        # column does not raise in repr, and the repr shows records as lists of index and
+        # values.
         # GH 48526
         df = DataFrame([["a", "b"], ["c", "d"], ["e", "f"]], columns=["left", "right"])
         df["record"] = df[["left", "right"]].to_records()
@@ -400,6 +523,9 @@ NaT   4"""
         assert result == expected
 
     def test_to_records_with_na_record_value(self):
+        # [FUNCTION DOC]
+        # GH 48526: like the previous record repr test but with a missing value in a
+        # cell, shown as nan inside the record text.
         # GH 48526
         df = DataFrame(
             [["a", np.nan], ["c", "d"], ["e", "f"]], columns=["left", "right"]
@@ -413,6 +539,9 @@ NaT   4"""
         assert result == expected
 
     def test_to_records_with_na_record(self):
+        # [FUNCTION DOC]
+        # GH 48526: record repr when a column label is NaN and a row is entirely missing;
+        # the record text shows nan values.
         # GH 48526
         df = DataFrame(
             [["a", "b"], [np.nan, np.nan], ["e", "f"]], columns=[np.nan, "right"]
@@ -426,6 +555,9 @@ NaT   4"""
         assert result == expected
 
     def test_to_records_with_inf_record(self):
+        # [FUNCTION DOC]
+        # GH 48526: record repr when column labels are NaN and infinity; the expected
+        # text shows infinity and nan in the records.
         # GH 48526
         expected = """   NaN  inf         record
 0  inf    b    [0, inf, b]
@@ -440,6 +572,9 @@ NaT   4"""
         assert result == expected
 
     def test_masked_ea_with_formatter(self):
+        # [FUNCTION DOC]
+        # GH#39336: string rendering of nullable float and integer columns with a
+        # per-column two-decimal formatter gives the expected two-decimal text for both.
         # GH#39336
         df = DataFrame(
             {
@@ -454,6 +589,10 @@ NaT   4"""
         assert result == expected
 
     def test_repr_ea_columns(self, any_string_dtype):
+        # [FUNCTION DOC]
+        # GH#54797: skipped without the Arrow library. For each string dtype fixture,
+        # casting the column labels to that dtype leaves the repr identical to the
+        # expected aligned text.
         # GH#54797
         pytest.importorskip("pyarrow")
         df = DataFrame({"long_column_name": [1, 2, 3], "col2": [4, 5, 6]})
@@ -489,6 +628,13 @@ NaT   4"""
 )
 @pytest.mark.parametrize("as_frame", [True, False])
 def test_repr_with_complex_nans(data, output, as_frame):
+    # [FUNCTION DOC]
+    # GH#53762, GH#53841: module-level test parametrized over complex data with
+    # NaNs (and expected per-element text) and over frame/Series. Repr of a complex
+    # Series is index, padding, formatted element, ending with the dtype line; as a
+    # frame one column named val is right-aligned in a header line followed by
+    # rows. The string form must equal the constructed expected text; the failure
+    # message prints both.
     # GH#53762, GH#53841
     obj = Series(np.array(data))
     if as_frame:
