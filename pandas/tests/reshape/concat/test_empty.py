@@ -1,3 +1,8 @@
+# [MODULE DOC]
+# Tests for concatenating empty objects (empty series and frames) with each other
+# and with non-empty data, focusing on resulting dtypes (numeric, bool,
+# datetime-like, categorical, sparse, extension) and on index/column handling.
+# Uses the sort and using_infer_string fixtures from conftest.
 import numpy as np
 import pytest
 
@@ -13,7 +18,15 @@ import pandas._testing as tm
 
 
 class TestEmptyConcat:
+    # [CLASS DOC]
+    # Test collection for concatenation involving empty inputs. Stateless.
     def test_handle_empty_objects(self, sort, using_infer_string):
+        # [FUNCTION DOC]
+        # Parametrized by sort. Verifies that empty frames in a list are ignored when
+        # concatenating along rows (columns union with the extra string column filled for
+        # the later rows), and that an empty frame placed before or after a large
+        # time-indexed frame, along either axis, returns the non-empty frame unchanged
+        # (GH 3259).
         df = DataFrame(
             np.random.default_rng(2).standard_normal((10, 4)), columns=list("abcd")
         )
@@ -50,6 +63,11 @@ class TestEmptyConcat:
         tm.assert_frame_equal(result, df)
 
     def test_concat_empty_series(self):
+        # [FUNCTION DOC]
+        # Verifies column-wise concatenation of a series with an empty named, or unnamed,
+        # float series gives a frame with a missing-filled column (labelled by name or
+        # position), and that row-wise concatenation gives a float series with the name
+        # dropped (GH 11082).
         # GH 11082
         s1 = Series([1, 2, 3], name="x")
         s2 = Series(name="y", dtype="float64")
@@ -81,6 +99,11 @@ class TestEmptyConcat:
     @pytest.mark.parametrize("tz", [None, "UTC"])
     @pytest.mark.parametrize("values", [[], [1, 2, 3]])
     def test_concat_empty_series_timelike(self, tz, values):
+        # [FUNCTION DOC]
+        # Parametrized over timezone (none or UTC) and values (empty or three integers).
+        # Verifies column-wise concatenation of an empty datetime series with a second
+        # series gives a first column of NaT of the datetime dtype and the second column
+        # as given (GH 18447).
         # GH 18447
 
         first = Series([], dtype="M8[ns]").dt.tz_localize(tz)
@@ -113,6 +136,11 @@ class TestEmptyConcat:
         ],
     )
     def test_concat_empty_series_dtypes(self, left, right, expected):
+        # [FUNCTION DOC]
+        # Parametrized over (left dtype, right dtype, expected dtype). Verifies the result
+        # dtype of concatenating two empty series: mixes of bool, datetime-like and
+        # integer/float give object; two categoricals stay categorical; categorical with
+        # object gives object (GH 39817, GH 45101).
         # GH#39817, GH#45101
         result = concat([Series(dtype=left), Series(dtype=right)])
         assert result.dtype == expected
@@ -121,6 +149,9 @@ class TestEmptyConcat:
         "dtype", ["float64", "int8", "uint8", "bool", "m8[ns]", "M8[ns]"]
     )
     def test_concat_empty_series_dtypes_match_roundtrips(self, dtype):
+        # [FUNCTION DOC]
+        # Parametrized over numpy dtypes. Verifies that concatenating one or two empty
+        # series of the same dtype keeps that dtype.
         dtype = np.dtype(dtype)
 
         result = concat([Series(dtype=dtype)])
@@ -135,11 +166,21 @@ class TestEmptyConcat:
         ["float64", "int8", "uint8", "m8[ns]", "M8[ns]"],
     )
     def test_concat_empty_series_dtypes_roundtrips(self, dtype, dtype2):
+        # [FUNCTION DOC]
+        # Parametrized over pairs of distinct dtypes. Skips equal pairs. Computes the
+        # expected result kind with local helpers (float if mixed floats with ints or
+        # unsigned ints; signed or unsigned integer for integer/bool combos; otherwise
+        # object) and verifies the concatenation of two empty series has that kind.
         # round-tripping with self & like self
         if dtype == dtype2:
             pytest.skip("same dtype is not applicable for test")
 
         def int_result_type(dtype, dtype2):
+            # [FUNCTION DOC]
+            # HELPER: for test_concat_empty_series_dtypes_roundtrips. Given two numpy dtypes,
+            # returns the code for signed integer when all kinds are signed, unsigned or bool
+            # and at least one is signed; unsigned when all are unsigned or bool and at least
+            # one is unsigned; otherwise returns nothing.
             typs = {dtype.kind, dtype2.kind}
             if not len(typs - {"i", "u", "b"}) and (
                 dtype.kind == "i" or dtype2.kind == "i"
@@ -152,6 +193,10 @@ class TestEmptyConcat:
             return None
 
         def float_result_type(dtype, dtype2):
+            # [FUNCTION DOC]
+            # HELPER: for test_concat_empty_series_dtypes_roundtrips. Returns the float kind
+            # code when both dtypes are float, signed or unsigned integer kinds and at least
+            # one is float; otherwise returns nothing.
             typs = {dtype.kind, dtype2.kind}
             if not len(typs - {"f", "i", "u"}) and (
                 dtype.kind == "f" or dtype2.kind == "f"
@@ -160,6 +205,9 @@ class TestEmptyConcat:
             return None
 
         def get_result_type(dtype, dtype2):
+            # [FUNCTION DOC]
+            # HELPER: for test_concat_empty_series_dtypes_roundtrips. Combines the two helpers:
+            # float result if available, else integer result, else the object kind code.
             result = float_result_type(dtype, dtype2)
             if result is not None:
                 return result
@@ -175,6 +223,9 @@ class TestEmptyConcat:
         assert result.kind == expected
 
     def test_concat_empty_series_dtypes_triple(self):
+        # [FUNCTION DOC]
+        # Verifies concatenating empty datetime, bool and integer series gives object
+        # dtype.
         assert (
             concat(
                 [Series(dtype="M8[ns]"), Series(dtype=np.bool_), Series(dtype=np.int64)]
@@ -183,6 +234,9 @@ class TestEmptyConcat:
         )
 
     def test_concat_empty_series_dtype_category_with_array(self):
+        # [FUNCTION DOC]
+        # Verifies an empty categorical series built from an empty array concatenated with
+        # an empty float series gives float64 (GH 18515).
         # GH#18515
         assert (
             concat(
@@ -192,6 +246,10 @@ class TestEmptyConcat:
         )
 
     def test_concat_empty_series_dtypes_sparse(self):
+        # [FUNCTION DOC]
+        # Verifies concatenating empty sparse float series: two sparse give sparse float;
+        # sparse with dense float gives sparse float; sparse float with object gives sparse
+        # object.
         result = concat(
             [
                 Series(dtype="float64").astype("Sparse"),
@@ -213,6 +271,9 @@ class TestEmptyConcat:
         assert result.dtype == expected
 
     def test_concat_empty_df_object_dtype(self):
+        # [FUNCTION DOC]
+        # Verifies concatenating a frame with an empty frame having the same columns
+        # gives all columns as object dtype (GH 9149).
         # GH 9149
         df_1 = DataFrame({"Row": [0, 1, 1], "EmptyCol": np.nan, "NumberCol": [1, 2, 3]})
         df_2 = DataFrame(columns=df_1.columns)
@@ -221,6 +282,10 @@ class TestEmptyConcat:
         tm.assert_frame_equal(result, expected)
 
     def test_concat_empty_dataframe_dtypes(self):
+        # [FUNCTION DOC]
+        # Verifies concatenating empty frames with bool, int32 and float64 columns keeps
+        # dtypes, and with a float-cast copy gives object for the bool column and float64
+        # for the others.
         df = DataFrame(columns=list("abc"))
         df["a"] = df["a"].astype(np.bool_)
         df["b"] = df["b"].astype(np.int32)
@@ -237,6 +302,9 @@ class TestEmptyConcat:
         assert result["c"].dtype == np.float64
 
     def test_concat_inner_join_empty(self):
+        # [FUNCTION DOC]
+        # Verifies column-wise concatenation with an empty frame: inner join yields a
+        # zero-row integer frame, outer join returns the non-empty frame (GH 15328).
         # GH 15328
         df_empty = DataFrame()
         df_a = DataFrame({"a": [1, 2]}, index=[0, 1], dtype="int64")
@@ -249,6 +317,9 @@ class TestEmptyConcat:
         tm.assert_frame_equal(result, df_a)
 
     def test_empty_dtype_coerce(self):
+        # [FUNCTION DOC]
+        # Verifies concatenating frames with a column of integers and one of Nones keeps
+        # the dtypes of the first frame (GH 10571).
         # xref to #12411
         # xref to #12045
         # xref to #11594
@@ -262,6 +333,9 @@ class TestEmptyConcat:
         tm.assert_series_equal(result.dtypes, expected)
 
     def test_concat_empty_dataframe(self):
+        # [FUNCTION DOC]
+        # Verifies concatenating column-only frames unions columns in order of appearance,
+        # and with a subset of columns yields the superset (GH 39037).
         # 39037
         df1 = DataFrame(columns=["a", "b"])
         df2 = DataFrame(columns=["b", "c"])
@@ -276,6 +350,12 @@ class TestEmptyConcat:
         tm.assert_frame_equal(result, expected)
 
     def test_concat_empty_dataframe_different_dtypes(self, using_infer_string):
+        # [FUNCTION DOC]
+        # Verifies concatenating zero-row slices keeps the integer dtype of a shared column
+        # and the object (or str when inferring strings) dtype of the other (GH 39037).
+        # KNOWN ISSUE: the last assertion's conditional expression has the wrong
+        # precedence: when the infer-string mode is active the assertion tests a constant
+        # non-empty string, which is always true, so the string dtype is not verified.
         # 39037
         df1 = DataFrame({"a": [1, 2, 3], "b": ["a", "b", "c"]})
         df2 = DataFrame({"a": [1, 2, 3]})
@@ -285,6 +365,9 @@ class TestEmptyConcat:
         assert result["b"].dtype == np.object_ if not using_infer_string else "str"
 
     def test_concat_to_empty_ea(self):
+        # [FUNCTION DOC]
+        # Verifies concatenating an empty frame having a nullable integer column with a
+        # non-empty one keeps the nullable integer dtype (GH 48510).
         """48510 `concat` to an empty EA should maintain type EA dtype."""
         df_empty = DataFrame({"a": pd.array([], dtype=pd.Int64Dtype())})
         df_new = DataFrame({"a": pd.array([1, 2, 3], dtype=pd.Int64Dtype())})

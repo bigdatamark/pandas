@@ -1,3 +1,12 @@
+# [MODULE DOC]
+# Tests for dtype coercion rules shared by index append, series append (via the
+# internal single-object append helper) and the concatenate function. Defines a
+# parametrized fixture providing (dtype label, three-element value list) pairs
+# for bool, integer, float, categorical, object, datetime (naive and tz-aware),
+# timedelta and period data, and one test class exercising same-dtype and mixed
+# dtype concatenation, datetimelike/period fallbacks to object, and categorical
+# coercion rules. Uses shared fixtures index_or_series, tz_aware_fixture and
+# using_infer_string from conftest.
 import zoneinfo
 
 import numpy as np
@@ -45,21 +54,39 @@ import pandas._testing as tm
     )
 )
 def item(request):
+    # [FUNCTION DOC]
+    # HELPER: parametrized fixture for this module's tests. Parametrized over a
+    # mapping of dtype label to a list of three values (the labels cover bool,
+    # int64, float64, category, object, datetime64 second resolution naive and
+    # US/Eastern, timedelta64 microsecond, and monthly period). Returns the pair
+    # of label and values for the current parameter.
     key, data = request.param
     return key, data
 
 
 @pytest.fixture
 def item2(item):
+    # [FUNCTION DOC]
+    # HELPER: fixture returning the same pair as the item fixture; it exists so a
+    # test can request two independently parametrized items (cross product of
+    # dtypes).
     return item
 
 
 class TestConcatAppendCommon:
+    # [CLASS DOC]
+    # Collects tests of common dtype coercion rules between concatenate and the
+    # append operations on indexes and series. Stateless.
     """
     Test common dtype coercion rules between concat and append.
     """
 
     def test_dtypes(self, item, index_or_series, using_infer_string):
+        # [FUNCTION DOC]
+        # Sanity check that each item fixture value, wrapped in an index or series (per
+        # the index_or_series fixture), has the dtype named by the label; object label
+        # maps to string when the infer-string mode is active, and series of periods are
+        # checked against monthly period dtype.
         # to confirm test case covers intended dtypes
         typ, vals = item
         obj = index_or_series(vals)
@@ -74,6 +101,13 @@ class TestConcatAppendCommon:
                 assert obj.dtype == typ
 
     def test_concatlike_same_dtypes(self, item):
+        # [FUNCTION DOC]
+        # Verifies, for each dtype in the item fixture, that appending or concatenating
+        # objects of the same dtype keeps the dtype: index append with two and three
+        # elements, name handling (names kept only if equal), series append and
+        # concatenate with two or three elements and name handling, and type errors
+        # raised for non-index inputs to index append and for non-series inputs to
+        # concatenate (GH 13660).
         # GH 13660
         typ1, vals1 = item
 
@@ -171,6 +205,15 @@ class TestConcatAppendCommon:
             pd.concat([Series(vals1), Series(vals2), vals3])
 
     def test_concatlike_dtypes_coercion(self, item, item2, request):
+        # [FUNCTION DOC]
+        # Cross product of two item fixture dtypes. Skips same-dtype pairs and any
+        # categorical pair. Verifies index append and series append/concatenate of two
+        # and three elements produce the inferred common dtype, or object for pairs
+        # expected to fall back; bool mixed with numeric is marked as an expected failure
+        # because the series result is expected to be numeric (GH 39187).
+        # KNOWN ISSUE: the object-fallback branch compares against dtype labels with
+        # nanosecond units, but the fixture labels use second and microsecond units, so
+        # that branch can never be taken and the expected dtype stays inferred.
         # GH 13660
         typ1, vals1 = item
         typ2, vals2 = item2
@@ -243,6 +286,11 @@ class TestConcatAppendCommon:
         tm.assert_series_equal(res, exp)
 
     def test_concatlike_common_coerce_to_pandas_object(self):
+        # [FUNCTION DOC]
+        # Verifies that appending a datetime index and a timedelta index (and the series
+        # equivalents, via append helper and concatenate) gives an object result whose
+        # elements are pandas Timestamp and Timedelta instances, not stdlib types
+        # (GH 13626).
         # GH 13626
         # result must be Timestamp/Timedelta, not datetime.datetime/timedelta
         dti = pd.DatetimeIndex(["2011-01-01", "2011-01-02"])
@@ -275,6 +323,9 @@ class TestConcatAppendCommon:
         assert isinstance(res.iloc[-1], pd.Timedelta)
 
     def test_concatlike_datetimetz(self, tz_aware_fixture):
+        # [FUNCTION DOC]
+        # Parametrized by tz_aware_fixture. Verifies that same-timezone datetime indexes
+        # and series append/concatenate to a tz-aware datetime result (GH 7795).
         tz = tz_aware_fixture
         # GH 7795
         dti1 = pd.DatetimeIndex(["2011-01-01", "2011-01-02"], tz=tz)
@@ -297,6 +348,10 @@ class TestConcatAppendCommon:
 
     @pytest.mark.parametrize("tz", ["UTC", "US/Eastern", "Asia/Tokyo", "EST5EDT"])
     def test_concatlike_datetimetz_short(self, tz):
+        # [FUNCTION DOC]
+        # Parametrized over timezone names. Verifies that concatenating two frames with
+        # tz-aware datetime indexes of the same zone keeps the zone and nanosecond unit,
+        # with rows in input order (GH 7795).
         # GH#7795
         ix1 = pd.date_range(
             start="2014-07-15", end="2014-07-17", freq="D", tz=tz, unit="ns"
@@ -314,6 +369,10 @@ class TestConcatAppendCommon:
         tm.assert_frame_equal(pd.concat([df1, df2]), exp)
 
     def test_concatlike_datetimetz_to_object(self, tz_aware_fixture):
+        # [FUNCTION DOC]
+        # Parametrized by tz_aware_fixture. Verifies that appending a tz-aware datetime
+        # index to a naive one, or to one with a different timezone, gives an object
+        # index of Timestamps; same for series append and concatenate (GH 13660).
         tz = tz_aware_fixture
         # GH 13660
 
@@ -368,6 +427,9 @@ class TestConcatAppendCommon:
         tm.assert_series_equal(res, Series(exp, index=[0, 1, 0, 1]))
 
     def test_concatlike_common_period(self):
+        # [FUNCTION DOC]
+        # Verifies that period indexes/series of the same frequency append and
+        # concatenate to a period result (GH 13660).
         # GH 13660
         pi1 = pd.PeriodIndex(["2011-01", "2011-02"], freq="M")
         pi2 = pd.PeriodIndex(["2012-01", "2012-02"], freq="M")
@@ -386,6 +448,9 @@ class TestConcatAppendCommon:
         tm.assert_series_equal(res, Series(exp, index=[0, 1, 0, 1]))
 
     def test_concatlike_common_period_diff_freq_to_object(self):
+        # [FUNCTION DOC]
+        # Verifies that period objects with different frequencies (monthly and daily)
+        # append/concatenate to an object result holding Period elements (GH 13221).
         # GH 13221
         pi1 = pd.PeriodIndex(["2011-01", "2011-02"], freq="M")
         pi2 = pd.PeriodIndex(["2012-01-01", "2012-02-01"], freq="D")
@@ -412,6 +477,9 @@ class TestConcatAppendCommon:
         tm.assert_series_equal(res, Series(exp, index=[0, 1, 0, 1]))
 
     def test_concatlike_common_period_mixed_dt_to_object(self):
+        # [FUNCTION DOC]
+        # Verifies that mixing periods with timedeltas, in both orders, gives an object
+        # result for index append, series append and concatenate (GH 13221).
         # GH 13221
         # different datetimelike
         pi1 = pd.PeriodIndex(["2011-01", "2011-02"], freq="M")
@@ -460,6 +528,11 @@ class TestConcatAppendCommon:
         tm.assert_series_equal(res, Series(exp, index=[0, 1, 0, 1]))
 
     def test_concat_categorical(self):
+        # [FUNCTION DOC]
+        # Verifies categorical concatenation: same categories keep categorical dtype;
+        # partially or fully different categories (same underlying dtype) fall back to
+        # the underlying dtype (integer or float when missing values exist), for both
+        # concatenate and series append (GH 13524).
         # GH 13524
 
         # same categories -> category
@@ -487,6 +560,10 @@ class TestConcatAppendCommon:
         tm.assert_series_equal(s1._append_internal(s2, ignore_index=True), exp)
 
     def test_union_categorical_same_categories_different_order(self):
+        # [FUNCTION DOC]
+        # Verifies that concatenating categorical series having the same categories in a
+        # different order keeps categorical dtype with the first series' category order
+        # (GH 19096).
         # https://github.com/pandas-dev/pandas/issues/19096
         a = Series(Categorical(["a", "b", "c"], categories=["a", "b", "c"]))
         b = Series(Categorical(["a", "b", "c"], categories=["b", "a", "c"]))
@@ -497,6 +574,10 @@ class TestConcatAppendCommon:
         tm.assert_series_equal(result, expected)
 
     def test_concat_categorical_coercion(self):
+        # [FUNCTION DOC]
+        # Verifies that mixing a categorical series with a non-categorical one (numeric,
+        # string, or all-missing) falls back to a non-categorical dtype, regardless of
+        # operand order, for both concatenate and series append (GH 13524).
         # GH 13524
 
         # category + not-category => not-category
@@ -561,6 +642,11 @@ class TestConcatAppendCommon:
         tm.assert_series_equal(s2._append_internal(s1, ignore_index=True), exp)
 
     def test_concat_categorical_3elem_coercion(self):
+        # [FUNCTION DOC]
+        # Verifies the same fallback rules with three inputs in different orders:
+        # categorical, categorical and non-categorical combinations yield non-
+        # categorical results of the expected values/dtype (GH 13524). The last two
+        # sections repeat the same comment text for different data.
         # GH 13524
 
         # mixed dtypes => not-category
@@ -597,6 +683,9 @@ class TestConcatAppendCommon:
         tm.assert_series_equal(pd.concat([s3, s1, s2], ignore_index=True), exp)
 
     def test_concat_categorical_multi_coercion(self):
+        # [FUNCTION DOC]
+        # Verifies concatenating six series (mixed categorical and plain) falls back to
+        # non-categorical values in both forward and reverse order (GH 13524).
         # GH 13524
 
         s1 = Series([1, 3], dtype="category")
@@ -616,6 +705,9 @@ class TestConcatAppendCommon:
         tm.assert_series_equal(res, exp)
 
     def test_concat_categorical_ordered(self):
+        # [FUNCTION DOC]
+        # Verifies that concatenating ordered categoricals with identical categories
+        # keeps ordered categorical dtype, also with three inputs (GH 13524).
         # GH 13524
 
         s1 = Series(Categorical([1, 2, np.nan], ordered=True))
@@ -628,6 +720,10 @@ class TestConcatAppendCommon:
         tm.assert_series_equal(pd.concat([s1, s2, s1], ignore_index=True), exp)
 
     def test_concat_categorical_coercion_nan(self):
+        # [FUNCTION DOC]
+        # Edge cases with all-missing categorical data: mixing with plain series gives a
+        # non-categorical result, while two all-missing categoricals stay categorical
+        # (GH 13524).
         # GH 13524
 
         # some edge cases
@@ -661,6 +757,11 @@ class TestConcatAppendCommon:
         tm.assert_series_equal(pd.concat([s1, s2], ignore_index=True), exp)
 
     def test_concat_categorical_empty(self):
+        # [FUNCTION DOC]
+        # Verifies concatenation of empty categorical series: with a non-empty
+        # categorical the result is converted to object, two empty categoricals stay
+        # categorical, an empty categorical with an empty object series gives object,
+        # and with an all-missing float series gives object (GH 13524).
         # GH 13524
 
         s1 = Series([], dtype="category")
@@ -696,6 +797,10 @@ class TestConcatAppendCommon:
         tm.assert_series_equal(pd.concat([s2, s1], ignore_index=True), exp)
 
     def test_categorical_concat_append(self):
+        # [FUNCTION DOC]
+        # Verifies that concatenating frames with a categorical column keeps the dtype
+        # when categories match and that concatenating with a frame whose categorical
+        # has extra categories yields an object column (GH 13524).
         cat = Categorical(["a", "b"], categories=["a", "b"])
         vals = [1, 2]
         df = DataFrame({"cats": cat, "vals": vals})

@@ -1,3 +1,8 @@
+# [MODULE DOC]
+# Tests for the sort argument of the concatenate function: sorting of column or
+# row labels in the non-concatenation axis for outer and inner joins, aligned
+# frames, mixed-type labels, and validation of the argument. Uses the sort fixture
+# from conftest.
 import numpy as np
 import pytest
 
@@ -7,7 +12,15 @@ import pandas._testing as tm
 
 
 class TestConcatSort:
+    # [CLASS DOC]
+    # Test collection for the sort keyword of concatenation. Stateless.
     def test_concat_sorts_columns(self, sort):
+        # [FUNCTION DOC]
+        # Parametrized by sort. Verifies row-wise concatenation of frames with partly
+        # different columns sorts the union columns when sort is true or unset, keeps
+        # first-appearance order when false, and raises no warning (GH 4588).
+        # KNOWN ISSUE: the comment mentions an unset (None) value, but the sort fixture only supplies
+        # booleans, so the unset case is not exercised here.
         # GH-4588
         df1 = DataFrame({"a": [1, 2], "b": [1, 2]}, columns=["b", "a"])
         df2 = DataFrame({"a": [3, 4], "c": [5, 6]})
@@ -27,6 +40,12 @@ class TestConcatSort:
         tm.assert_frame_equal(result, expected)
 
     def test_concat_sorts_index(self, sort):
+        # [FUNCTION DOC]
+        # Parametrized by sort. Verifies column-wise concatenation sorts the union row
+        # index when sort is true and keeps the appearance order when false, with no
+        # warning.
+        # KNOWN ISSUE: a comment says it warns and sorts by default, but the test
+        # asserts that no warning is produced.
         df1 = DataFrame({"a": [1, 2, 3]}, index=["c", "a", "b"])
         df2 = DataFrame({"b": [1, 2]}, index=["a", "b"])
 
@@ -45,6 +64,10 @@ class TestConcatSort:
         tm.assert_frame_equal(result, expected)
 
     def test_concat_inner_sort(self, sort):
+        # [FUNCTION DOC]
+        # Parametrized by sort. Verifies that inner join concatenation with ignored index
+        # emits no warning for any sort value and returns only common columns, ordered
+        # alphabetically only when sort is true (pull request 20613).
         # https://github.com/pandas-dev/pandas/pull/20613
         df1 = DataFrame(
             {"a": [1, 2], "b": [1, 2], "c": [1, 2]}, columns=["b", "a", "c"]
@@ -62,6 +85,10 @@ class TestConcatSort:
         tm.assert_frame_equal(result, expected)
 
     def test_concat_aligned_sort(self):
+        # [FUNCTION DOC]
+        # Verifies that with sort enabled, frames with identical columns still have columns
+        # sorted, and that inner join with sort keeps only the common columns sorted
+        # (GH 4588).
         # GH-4588
         df = DataFrame({"c": [1, 2], "b": [3, 4], "a": [5, 6]}, columns=["c", "b", "a"])
         result = pd.concat([df, df], sort=True, ignore_index=True)
@@ -78,6 +105,9 @@ class TestConcatSort:
         tm.assert_frame_equal(result, expected)
 
     def test_concat_aligned_sort_does_not_raise(self):
+        # [FUNCTION DOC]
+        # Verifies that sorting columns of mixed integer and string labels does not raise
+        # (the internal type error is swallowed) and leaves the order unchanged (GH 4588).
         # GH-4588
         # We catch TypeErrors from sorting internally and do not re-raise.
         df = DataFrame({1: [1, 2], "a": [3, 4]}, columns=[1, "a"])
@@ -86,6 +116,10 @@ class TestConcatSort:
         tm.assert_frame_equal(result, expected)
 
     def test_concat_frame_with_sort_false(self):
+        # [FUNCTION DOC]
+        # Verifies that sort false keeps first-appearance order of both rows and columns for
+        # a list of one-cell frames and for column-wise concatenation with partly shared
+        # index (GH 43375, GH 37937).
         # GH 43375
         result = pd.concat(
             [DataFrame({i: i}, index=[i]) for i in range(2, 0, -1)], sort=False
@@ -111,6 +145,9 @@ class TestConcatSort:
         tm.assert_frame_equal(result, expected)
 
     def test_concat_sort_none_raises(self):
+        # [FUNCTION DOC]
+        # Verifies a value error saying the sort keyword only accepts boolean values when
+        # None is passed (GH 41518).
         # GH#41518
         df = DataFrame({1: [1, 2], "a": [3, 4]})
         msg = "The 'sort' keyword only accepts boolean values; None was passed."

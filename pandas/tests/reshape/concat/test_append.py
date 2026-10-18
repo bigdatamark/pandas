@@ -1,3 +1,9 @@
+# [MODULE DOC]
+# Tests for appending-style behavior of the concatenate function on frames and
+# series (plus the internal single-row append helper on frames). Covers empty
+# frames, overlapping index verification, new columns, record arrays, column
+# sorting, differing column index types, dtype coercion/upcasting, timezone and
+# timedelta missing-value handling. Uses shared fixtures: sort and float_frame.
 import datetime as dt
 from itertools import combinations
 
@@ -18,7 +24,18 @@ import pandas._testing as tm
 
 
 class TestAppend:
+    # [CLASS DOC]
+    # Groups the append-oriented concatenation tests. Stateless. Also holds a class
+    # attribute listing index objects of many kinds (range, integer, float, string,
+    # categorical, interval, datetime, multi-level) that can be used as column
+    # labels in the parametrized append tests.
     def test_append(self, sort, float_frame):
+        # [FUNCTION DOC]
+        # Verifies that concatenating row slices of a float frame reproduces it, that
+        # dropping a column from one part still yields that column in either order, and
+        # that mixed-type (string column added) frames concatenate correctly; frames
+        # differing only in the extra string column agree on the shared columns.
+        # Parametrized by the sort fixture.
         mixed_frame = float_frame.copy()
         mixed_frame["foo"] = "bar"
 
@@ -53,6 +70,9 @@ class TestAppend:
         )
 
     def test_append_empty(self, float_frame):
+        # [FUNCTION DOC]
+        # Verifies that concatenating a frame with an empty frame (either order)
+        # returns an equal frame and a new object, not the original.
         empty = DataFrame()
 
         appended = concat([float_frame, empty])
@@ -64,11 +84,18 @@ class TestAppend:
         assert appended is not float_frame
 
     def test_append_overlap_raises(self, float_frame):
+        # [FUNCTION DOC]
+        # Verifies that concatenating a frame with itself with integrity verification
+        # enabled raises a value error stating the indexes have overlapping values.
         msg = "Indexes have overlapping values"
         with pytest.raises(ValueError, match=msg):
             concat([float_frame, float_frame], verify_integrity=True)
 
     def test_append_new_columns(self):
+        # [FUNCTION DOC]
+        # Verifies the internal single-row append helper: appending a series whose index
+        # adds a new label yields a new column holding the value only for the new row
+        # (GH 6129).
         # see gh-6129: new columns
         df = DataFrame({"a": {"x": 1, "y": 2}, "b": {"x": 3, "y": 4}})
         row = Series([5, 6, 7], index=["a", "b", "c"], name="z")
@@ -83,6 +110,10 @@ class TestAppend:
         tm.assert_frame_equal(result, expected)
 
     def test_append_length0_frame(self, sort):
+        # [FUNCTION DOC]
+        # Verifies that concatenating a zero-row frame having three columns with a
+        # two-row frame lacking one column gives a two-row frame with all three columns
+        # (all missing), for each sort setting.
         df = DataFrame(columns=["A", "B", "C"])
         df3 = DataFrame(index=[0, 1], columns=["A", "B"])
         df5 = concat([df, df3], sort=sort)
@@ -91,6 +122,9 @@ class TestAppend:
         tm.assert_frame_equal(df5, expected)
 
     def test_append_records(self):
+        # [FUNCTION DOC]
+        # Verifies that frames built from structured numpy arrays concatenate with an
+        # ignored index to the same frame as built from the concatenated array.
         arr1 = np.zeros((2,), dtype=("i4,f4,S10"))
         arr1[:] = [(1, 2.0, "Hello"), (2, 3.0, "World")]
 
@@ -106,6 +140,11 @@ class TestAppend:
 
     # rewrite sort fixture, since we also want to test default of None
     def test_append_sorts(self, sort):
+        # [FUNCTION DOC]
+        # Takes the sort fixture (the comment notes it is meant to also cover the
+        # default). Verifies columns are sorted alphabetically in the result when sort is
+        # true or unset, and keep first-appearance order when sort is false; values are
+        # filled with missing where absent.
         df1 = DataFrame({"a": [1, 2], "b": [1, 2]}, columns=["b", "a"])
         df2 = DataFrame({"a": [1, 2], "c": [3, 4]}, index=[2, 3])
 
@@ -121,6 +160,10 @@ class TestAppend:
         tm.assert_frame_equal(result, expected)
 
     def test_append_different_columns(self, sort):
+        # [FUNCTION DOC]
+        # Verifies that concatenating two frames with only partially shared columns
+        # yields missing values in the columns absent from each part (strings missing in
+        # the first rows, bools missing in the later rows).
         df = DataFrame(
             {
                 "bools": np.random.default_rng(2).standard_normal(10) > 0,
@@ -138,6 +181,9 @@ class TestAppend:
         assert isna(appended["bools"][5:]).all()
 
     def test_append_preserve_index_name(self):
+        # [FUNCTION DOC]
+        # Verifies that concatenating an empty frame and a frame that both use a column
+        # set as the index keeps the index name (GH 980).
         # #980
         df1 = DataFrame(columns=["A", "B", "C"])
         df1 = df1.set_index(["A"])
@@ -169,6 +215,12 @@ class TestAppend:
         "index", indexes_can_append, ids=lambda x: type(x).__name__
     )
     def test_append_same_columns_type(self, index):
+        # [FUNCTION DOC]
+        # Parametrized over the index kinds in the class list. Verifies the internal
+        # append helper in two cases: a series shorter than the frame columns (result
+        # has missing value for absent labels, integer dtype kept for present columns)
+        # and a series longer than the frame columns (frame columns are extended).
+        # Result column labels must equal the original index type (GH 18359).
         # GH18359
 
         # df wider than ser
@@ -204,6 +256,11 @@ class TestAppend:
         ids=lambda x: type(x).__name__,
     )
     def test_append_different_columns_types(self, df_columns, series_index):
+        # [FUNCTION DOC]
+        # Parametrized over all pairs of the index kinds used as frame columns and
+        # series index. Verifies the internal append helper unions the labels:
+        # the result columns equal the frame labels followed by the series-only labels,
+        # with missing values filled in the off-diagonal blocks (GH 18359).
         # GH18359
         # See also test 'test_append_different_columns_types_raises' below
         # for errors raised when appending
@@ -226,6 +283,10 @@ class TestAppend:
         tm.assert_frame_equal(result, expected)
 
     def test_append_dtype_coerce(self, sort):
+        # [FUNCTION DOC]
+        # Verifies that concatenating datetime-valued frames with different columns keeps
+        # datetime dtype and fills missing end times with NaT, with column order sorted
+        # or not depending on the sort fixture (GH 4993).
         # GH 4993
         # appending with datetime will incorrectly convert datetime64
 
@@ -276,6 +337,9 @@ class TestAppend:
         tm.assert_frame_equal(result, expected)
 
     def test_append_missing_column_proper_upcast(self, sort):
+        # [FUNCTION DOC]
+        # Verifies that concatenating frames with disjoint columns upcasts the integer
+        # column to float and the boolean column to object.
         df1 = DataFrame({"A": np.array([1, 2, 3, 4], dtype="i8")})
         df2 = DataFrame({"B": np.array([True, False, True, False], dtype=bool)})
 
@@ -284,6 +348,11 @@ class TestAppend:
         assert appended["B"].dtype == "O"
 
     def test_append_empty_frame_to_series_with_dateutil_tz(self):
+        # [FUNCTION DOC]
+        # Verifies that appending a series containing a tz-aware (dateutil UTC) timestamp
+        # to an empty frame with ignored index yields the expected row, with the empty
+        # frame's columns cast to object, and that appending a second time adds another
+        # row (GH 23682).
         # GH 23682
         date = Timestamp("2018-10-24 07:30:00", tz=dateutil.tz.tzutc())
         ser = Series({"a": 1.0, "b": 2.0, "date": date})
@@ -306,6 +375,13 @@ class TestAppend:
         tm.assert_frame_equal(result_b, expected)
 
     def test_append_empty_tz_frame_with_datetime64ns(self):
+        # [FUNCTION DOC]
+        # Verifies that concatenating an empty tz-aware datetime frame with a frame of
+        # missing values (naive or a different timezone) yields an object column with
+        # NaT.
+        # KNOWN ISSUE: the frame is constructed twice in a row with identical
+        # arguments, so the first construction is dead code and the comment about a typed
+        # value to append is misplaced.
         # https://github.com/pandas-dev/pandas/issues/35460
         df = DataFrame(columns=["a"]).astype("datetime64[ns, UTC]")
 
@@ -327,6 +403,10 @@ class TestAppend:
     )
     @pytest.mark.parametrize("val", [1, "NaT"])
     def test_append_empty_frame_with_timedelta64ns_nat(self, dtype_str, val):
+        # [FUNCTION DOC]
+        # Parametrized over dtype strings and a value (an integer or the NaT string).
+        # Verifies that concatenating an empty frame of the given dtype with a timedelta
+        # frame gives the timedelta frame cast to object.
         # https://github.com/pandas-dev/pandas/issues/35460
         df = DataFrame(columns=["a"]).astype(dtype_str)
 
@@ -341,6 +421,10 @@ class TestAppend:
     )
     @pytest.mark.parametrize("val", [1, "NaT"])
     def test_append_frame_with_timedelta64ns_nat(self, dtype_str, val):
+        # [FUNCTION DOC]
+        # Same parametrization as above but the first frame is non-empty. Verifies the
+        # result with ignored index is an object column holding the first frame value
+        # followed by the timedelta value.
         # https://github.com/pandas-dev/pandas/issues/35460
         df = DataFrame({"a": pd.array([1], dtype=dtype_str)})
 

@@ -1,3 +1,11 @@
+# [MODULE DOC]
+# Tests for how the concatenate function builds and names the resulting index
+# and columns: ignored index, index-name resolution, copying vs sharing of axes,
+# default range indexes, duplicate labels, multi-level indexes with keys and
+# levels, and dtype retention of the column index. Two classes (general index and
+# multi-level index) are defined. Uses fixtures sort, axis, performance_warning,
+# using_infer_string, any_numeric_ea_dtype and multiindex_dataframe_random_data
+# from conftest.
 from copy import deepcopy
 
 import numpy as np
@@ -15,7 +23,14 @@ import pandas._testing as tm
 
 
 class TestIndexConcat:
+    # [CLASS DOC]
+    # Test collection for index handling in concatenation. Stateless.
     def test_concat_ignore_index(self, sort):
+        # [FUNCTION DOC]
+        # Parametrized by sort. Verifies column-wise concatenation with ignored index of
+        # frames with partly overlapping row labels: the row index is the union (sorted
+        # when sort is true, otherwise first-appearance order) while the columns are
+        # renumbered.
         frame1 = DataFrame(
             {"test1": ["a", "b", "c"], "test2": [1, 2, 3], "test3": [4.5, 3.2, 1.2]}
         )
@@ -53,6 +68,11 @@ class TestIndexConcat:
         ],
     )
     def test_concat_same_index_names(self, name_in1, name_in2, name_in3, name_out):
+        # [FUNCTION DOC]
+        # Parametrized over name triples and the expected output name. Verifies that for
+        # column-wise concatenation of three frames with different indexes the union index
+        # keeps a name only when all inputs share the same name; otherwise the name is
+        # unset (GH 13475).
         # GH13475
         indices = [
             Index(["a", "b", "c"], name=name_in1),
@@ -77,6 +97,10 @@ class TestIndexConcat:
         tm.assert_frame_equal(result, expected)
 
     def test_concat_rename_index(self):
+        # [FUNCTION DOC]
+        # Verifies that when keys and two names are given, and the inputs' indexes have
+        # different names, the result gets both level names (the second name replacing the
+        # inner level name).
         a = DataFrame(
             np.random.default_rng(2).random((3, 3)),
             columns=list("ABC"),
@@ -99,6 +123,10 @@ class TestIndexConcat:
         assert result.index.names == exp.index.names
 
     def test_concat_copy_index_series(self, axis):
+        # [FUNCTION DOC]
+        # Takes the axis fixture. Verifies that concatenating a series with itself yields
+        # a new index along rows, but reuses the same index object along columns
+        # (GH 29879).
         # GH 29879
         ser = Series([1, 2])
         comb = concat([ser, ser], axis=axis)
@@ -108,6 +136,9 @@ class TestIndexConcat:
             assert comb.index is ser.index
 
     def test_concat_copy_index_frame(self, axis):
+        # [FUNCTION DOC]
+        # Takes the axis fixture. Verifies for frames that the concatenated axis is a new
+        # index while the other axis is the identical object as the source (GH 29879).
         # GH 29879
         df = DataFrame([[1, 2], [3, 4]], columns=["a", "b"])
         comb = concat([df, df], axis=axis)
@@ -119,6 +150,11 @@ class TestIndexConcat:
             assert not comb.columns.is_(df.columns)
 
     def test_default_index(self):
+        # [FUNCTION DOC]
+        # Verifies that column-wise concatenation of series with ignored index, or all
+        # unnamed, gives a range-index columns, and row/column concatenation of frames
+        # with ignored index gives range-index labels (checked via strict index/column
+        # type checks).
         # is_series and ignore_index
         s1 = Series([1, 2, 3], name="x")
         s2 = Series([4, 5, 6], name="y")
@@ -151,6 +187,9 @@ class TestIndexConcat:
         tm.assert_frame_equal(res, exp, check_index_type=True, check_column_type=True)
 
     def test_dups_index(self):
+        # [FUNCTION DOC]
+        # Verifies concatenation of frames with duplicate column labels along both axes
+        # (single and mixed dtypes) preserves the parts exactly (GH 4771).
         # GH 4771
 
         # single dtypes
@@ -192,7 +231,13 @@ class TestIndexConcat:
 
 
 class TestMultiIndexConcat:
+    # [CLASS DOC]
+    # Test collection for concatenation involving multi-level indexes. Stateless.
     def test_concat_multiindex_with_keys(self, multiindex_dataframe_random_data):
+        # [FUNCTION DOC]
+        # Verifies that keys with a name add an outer level named iteration to a
+        # multi-level index (three levels in total), and each key selects the original
+        # frame.
         frame = multiindex_dataframe_random_data
         index = frame.index
         result = concat([frame, frame], keys=[0, 1], names=["iteration"])
@@ -203,6 +248,9 @@ class TestMultiIndexConcat:
         assert result.index.nlevels == 3
 
     def test_concat_multiindex_with_none_in_index_names(self):
+        # [FUNCTION DOC]
+        # Verifies the result index when an input index level has no name and one name is
+        # supplied for the keys level; also for inputs of different lengths (GH 15787).
         # GH 15787
         index = MultiIndex.from_product([[1], range(5)], names=["level1", None])
         df = DataFrame({"col": range(5)}, index=index, dtype=np.int32)
@@ -224,6 +272,10 @@ class TestMultiIndexConcat:
         tm.assert_frame_equal(result, expected)
 
     def test_concat_multiindex_rangeindex(self):
+        # [FUNCTION DOC]
+        # Verifies row concatenation of selections of a frame whose multi-level index
+        # levels are range indexes, including a length-one part, equals the combined
+        # selection (GH 13542).
         # GH13542
         # when multi-index levels are RangeIndex objects
         # there is a bug in concat with objects of len 1
@@ -239,6 +291,10 @@ class TestMultiIndexConcat:
         tm.assert_frame_equal(res, exp)
 
     def test_concat_multiindex_dfs_with_deepcopy(self):
+        # [FUNCTION DOC]
+        # Verifies that concatenating a dict of frames with multi-level indexes and a name
+        # for the key level gives the expected three-level index, for both the dict and a
+        # deep copy of it (GH 9967).
         # GH 9967
         example_multiindex1 = MultiIndex.from_product([["a"], ["b"]])
         example_dataframe1 = DataFrame([0], index=example_multiindex1)
@@ -279,6 +335,11 @@ class TestMultiIndexConcat:
     def test_concat_with_various_multiindex_dtypes(
         self, mi1_list: list, mi2_list: list
     ):
+        # [FUNCTION DOC]
+        # Parametrized over pairs of descriptions for the product of two level lists
+        # (integers, floats, strings, datetimes). Verifies column-wise concatenation of
+        # frames with multi-level columns of various level dtypes gives the expected union
+        # columns without warnings (GH 23478).
         # GitHub #23478
         mi1 = MultiIndex.from_product(mi1_list)
         mi2 = MultiIndex.from_product(mi2_list)
@@ -308,6 +369,10 @@ class TestMultiIndexConcat:
         tm.assert_frame_equal(expected_df, result_df)
 
     def test_concat_multiindex_(self):
+        # [FUNCTION DOC]
+        # Verifies that concatenating a single frame with a duplicate-labelled index under
+        # one key gives a multi-level index equal to a product of the key and the index
+        # values (GH 44786).
         # GitHub #44786
         df = DataFrame({"col": ["a", "b", "c"]}, index=["1", "2", "2"])
         df = concat([df], keys=["X"])
@@ -325,6 +390,12 @@ class TestMultiIndexConcat:
         tm.assert_frame_equal(result_df, expected_df)
 
     def test_concat_with_key_not_unique(self, performance_warning):
+        # [FUNCTION DOC]
+        # Takes the performance_warning fixture. Verifies concatenation with repeated keys
+        # produces a multi-level index which is not lexsorted; selecting a label emits a
+        # performance warning about indexing past lexsort depth, and the selection equals
+        # that of an equivalent hand-built frame, for single-row and multi-row parts
+        # (GH 46519).
         # GitHub #46519
         df1 = DataFrame({"name": [1]})
         df2 = DataFrame({"name": [2]})
@@ -373,6 +444,9 @@ class TestMultiIndexConcat:
         tm.assert_frame_equal(out_a, out_b)
 
     def test_concat_with_duplicated_levels(self):
+        # [FUNCTION DOC]
+        # Verifies a value error saying level values are not unique when the passed
+        # levels contain duplicates.
         # keyword levels should be unique
         df1 = DataFrame({"A": [1]}, index=["x"])
         df2 = DataFrame({"A": [1]}, index=["y"])
@@ -382,6 +456,9 @@ class TestMultiIndexConcat:
 
     @pytest.mark.parametrize("levels", [[["x", "y"]], [["x", "y", "y"]]])
     def test_concat_with_levels_with_none_keys(self, levels):
+        # [FUNCTION DOC]
+        # Parametrized over two level lists. Verifies a value error saying levels are only
+        # supported when keys is given.
         df1 = DataFrame({"A": [1]}, index=["x"])
         df2 = DataFrame({"A": [1]}, index=["y"])
         msg = "levels supported only when keys is not None"
@@ -389,6 +466,9 @@ class TestMultiIndexConcat:
             concat([df1, df2], levels=levels)
 
     def test_concat_range_index_result(self):
+        # [FUNCTION DOC]
+        # Verifies column-wise concatenation with sorting of frames with default indexes
+        # returns a strictly range-typed index (GH 47501).
         # GH#47501
         df1 = DataFrame({"a": [1, 2]})
         df2 = DataFrame({"b": [1, 2]})
@@ -400,6 +480,9 @@ class TestMultiIndexConcat:
         tm.assert_index_equal(result.index, expected_index, exact=True)
 
     def test_concat_index_keep_dtype(self):
+        # [FUNCTION DOC]
+        # Verifies that outer concatenation with sorting of frames with object-dtype integer
+        # column labels keeps the object column index dtype (GH 47329).
         # GH#47329
         df1 = DataFrame([[0, 1, 1]], columns=Index([1, 2, 3], dtype="object"))
         df2 = DataFrame([[0, 1]], columns=Index([1, 2], dtype="object"))
@@ -410,6 +493,9 @@ class TestMultiIndexConcat:
         tm.assert_frame_equal(result, expected)
 
     def test_concat_index_keep_dtype_ea_numeric(self, any_numeric_ea_dtype):
+        # [FUNCTION DOC]
+        # Same as above but column labels use each numeric extension dtype from the
+        # fixture; the result keeps that dtype (GH 47329).
         # GH#47329
         df1 = DataFrame(
             [[0, 1, 1]], columns=Index([1, 2, 3], dtype=any_numeric_ea_dtype)
@@ -424,6 +510,10 @@ class TestMultiIndexConcat:
 
     @pytest.mark.parametrize("dtype", ["Int8", "Int16", "Int32"])
     def test_concat_index_find_common(self, dtype):
+        # [FUNCTION DOC]
+        # Parametrized over smaller nullable integer dtypes for the first frame's columns.
+        # Verifies the result's column index takes the common dtype with the 32-bit
+        # nullable integer dtype (GH 47329).
         # GH#47329
         df1 = DataFrame([[0, 1, 1]], columns=Index([1, 2, 3], dtype=dtype))
         df2 = DataFrame([[0, 1]], columns=Index([1, 2], dtype="Int32"))
@@ -434,6 +524,10 @@ class TestMultiIndexConcat:
         tm.assert_frame_equal(result, expected)
 
     def test_concat_axis_1_sort_false_rangeindex(self, using_infer_string):
+        # [FUNCTION DOC]
+        # Verifies column-wise outer concatenation without sorting of four string series
+        # (including an empty one) gives a range-index result of the expected string/object
+        # dtype with missing fill (GH 46675).
         # GH 46675
         s1 = Series(["a", "b", "c"])
         s2 = Series(["a", "b"])

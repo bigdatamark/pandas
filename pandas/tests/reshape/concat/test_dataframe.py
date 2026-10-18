@@ -1,3 +1,8 @@
+# [MODULE DOC]
+# Tests for the concatenate function specific to frames: multi-level index
+# construction from keys (including tuples and named indexes), axis argument
+# spelling, dtype preservation, duplicate columns/indexes and column sorting with
+# outer and inner joins. Uses the sort fixture from conftest.
 import numpy as np
 import pytest
 
@@ -12,8 +17,17 @@ import pandas._testing as tm
 
 
 class TestDataFrameConcat:
+    # [CLASS DOC]
+    # Test collection for frame concatenation behavior. Stateless.
     @pytest.mark.xfail(reason="GH#62888 the `mi[2][1] is 1` check fails")
     def test_concat_multiindex_level_bool_and_numeric(self):
+        # [FUNCTION DOC]
+        # Marked as an expected failure (GH 62888). Intends to verify that concatenating
+        # a frame indexed by booleans with one indexed by integers, using dict keys, gives
+        # a multi-level index whose inner level keeps booleans as booleans and integers as
+        # integers (object level) (GH 21108, GH 45101). The expected failure comes from
+        # the sanity assertion on the integer element type of the hand-built expected
+        # index, which fails before the comparison.
         # GH#21108, GH#45101
         left = DataFrame([123, 456], columns=["data"], index=[True, False])
         right = DataFrame(
@@ -35,6 +49,9 @@ class TestDataFrameConcat:
         tm.assert_frame_equal(result, expected)
 
     def test_concat_multiple_frames_dtypes(self):
+        # [FUNCTION DOC]
+        # Verifies column-wise concatenation of float64 and float32 frames keeps each
+        # column's dtype (GH 2759).
         # GH#2759
         df1 = DataFrame(data=np.ones((10, 2)), columns=["foo", "bar"], dtype=np.float64)
         df2 = DataFrame(data=np.ones((10, 2)), dtype=np.float32)
@@ -46,6 +63,9 @@ class TestDataFrameConcat:
         tm.assert_series_equal(results, expected)
 
     def test_concat_tuple_keys(self):
+        # [FUNCTION DOC]
+        # Verifies that tuple keys produce a three-level row index (two key levels plus the
+        # original index) (GH 14438).
         # GH#14438
         df1 = DataFrame(np.ones((2, 2)), columns=list("AB"))
         df2 = DataFrame(np.ones((3, 2)) * 2, columns=list("AB"))
@@ -71,6 +91,10 @@ class TestDataFrameConcat:
         tm.assert_frame_equal(results, expected)
 
     def test_concat_named_keys(self):
+        # [FUNCTION DOC]
+        # Verifies that a named index passed as keys names the outer level, that names can
+        # come from the names argument when the keys index is unnamed, and that otherwise
+        # the level names are unset (GH 14252).
         # GH#14252
         df = DataFrame({"foo": [1, 2], "bar": [0.1, 0.2]})
         index = Index(["a", "b"], name="baz")
@@ -93,6 +117,11 @@ class TestDataFrameConcat:
         tm.assert_frame_equal(concatted_unnamed, expected_unnamed)
 
     def test_concat_axis_parameter(self):
+        # [FUNCTION DOC]
+        # Verifies the axis argument accepts both numbers and the string aliases for rows
+        # and columns, for frames and series (series along columns give a frame with
+        # positional labels), and that an unknown axis name raises a value error saying no
+        # such axis exists (GH 14369).
         # GH#14369
         df1 = DataFrame({"A": [0.1, 0.2]}, index=range(2))
         df2 = DataFrame({"A": [0.3, 0.4]}, index=range(2))
@@ -151,6 +180,9 @@ class TestDataFrameConcat:
             concat([series1, series2], axis="something")
 
     def test_concat_numerical_names(self):
+        # [FUNCTION DOC]
+        # Verifies that integer level names of a multi-level index and int32 dtype are
+        # preserved when concatenating row slices (GH 15262, GH 12223).
         # GH#15262, GH#12223
         df = DataFrame(
             {"col": range(9)},
@@ -172,6 +204,10 @@ class TestDataFrameConcat:
         tm.assert_frame_equal(result, expected)
 
     def test_concat_astype_dup_col(self):
+        # [FUNCTION DOC]
+        # Verifies that casting to categorical a frame with duplicate column names
+        # (produced by column-wise concatenation) works and matches the expected result
+        # (GH 23049).
         # GH#23049
         df = DataFrame([{"a": "b"}])
         df = concat([df, df], axis=1)
@@ -183,6 +219,10 @@ class TestDataFrameConcat:
         tm.assert_frame_equal(result, expected)
 
     def test_concat_dataframe_keys_bug(self, sort):
+        # [FUNCTION DOC]
+        # Parametrized by sort. Smoke test: column-wise concatenation with keys and
+        # differently indexed frames succeeds and returns two-level column labels
+        # (GH ticket none).
         t1 = DataFrame(
             {"value": Series([1, 2, 3], index=Index(["a", "b", "c"], name="id"))}
         )
@@ -193,6 +233,10 @@ class TestDataFrameConcat:
         assert list(result.columns) == [("t1", "value"), ("t2", "value")]
 
     def test_concat_bool_with_int(self):
+        # [FUNCTION DOC]
+        # Verifies concatenating a bool column frame with an integer column frame gives
+        # the integer result (current behavior; the comment says object might be preferable
+        # but would need deprecation) (GH 42092).
         # GH#42092 we may want to change this to return object, but that
         #  would need a deprecation
         df1 = DataFrame(Series([True, False, True, True], dtype="bool"))
@@ -203,6 +247,10 @@ class TestDataFrameConcat:
         tm.assert_frame_equal(result, expected)
 
     def test_concat_duplicates_in_index_with_keys(self):
+        # [FUNCTION DOC]
+        # Verifies that duplicate values in the index are kept and named levels created
+        # when concatenating a single frame with key and names; the index level keeps
+        # unique values (GH 42651).
         # GH#42651
         index = [1, 1, 3]
         data = [1, 2, 3]
@@ -215,6 +263,9 @@ class TestDataFrameConcat:
         tm.assert_index_equal(result.index.levels[1], Index([1, 3], name="date"))
 
     def test_outer_sort_columns(self):
+        # [FUNCTION DOC]
+        # Verifies outer join with sort enabled sorts mixed-type column labels (integer
+        # before string) and fills missing values with NaN (GH 47127).
         # GH#47127
         df1 = DataFrame({"A": [0], "B": [1], 0: 1})
         df2 = DataFrame({"A": [100]})
@@ -223,6 +274,9 @@ class TestDataFrameConcat:
         tm.assert_frame_equal(result, expected)
 
     def test_inner_sort_columns(self):
+        # [FUNCTION DOC]
+        # Verifies inner join with sort enabled keeps only common columns, sorted
+        # (GH 47127).
         # GH#47127
         df1 = DataFrame({"A": [0], "B": [1], 0: 1})
         df2 = DataFrame({"A": [100], 0: 2})
@@ -231,6 +285,9 @@ class TestDataFrameConcat:
         tm.assert_frame_equal(result, expected)
 
     def test_sort_columns_one_df(self):
+        # [FUNCTION DOC]
+        # Verifies that even with a single frame, inner join with sort enabled sorts the
+        # columns (GH 47127).
         # GH#47127
         df1 = DataFrame({"A": [100], 0: 2})
         result = concat([df1], ignore_index=True, join="inner", sort=True)

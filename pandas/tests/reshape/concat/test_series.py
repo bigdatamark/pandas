@@ -1,3 +1,8 @@
+# [MODULE DOC]
+# Tests for the concatenate function on series: bool/numeric mixes, row-wise and
+# column-wise concatenation, name handling and keys/names arguments, alignment
+# with reindexing, and length-one reversed input. Uses the sort and
+# frame_or_series fixtures from conftest.
 import numpy as np
 import pytest
 
@@ -14,9 +19,16 @@ import pandas._testing as tm
 
 
 class TestSeriesConcat:
+    # [CLASS DOC]
+    # Test collection for series concatenation. Stateless.
     @pytest.mark.parametrize("bool_dtype", [bool, "boolean"])
     @pytest.mark.parametrize("dtype", [np.int64, np.float64, "Int64", "Float64"])
     def test_concat_bool_and_numeric(self, bool_dtype, dtype):
+        # [FUNCTION DOC]
+        # Parametrized over bool or nullable boolean on the left and integer/float (numpy
+        # or nullable) on the right. Verifies that concatenation gives object dtype where
+        # booleans stay booleans and numbers are not converted to bool (GH 21108,
+        # GH 45101).
         # GH#21108, GH#45101
         left = Series([True, False], dtype=bool_dtype)
         right = Series([1, 2], dtype=dtype)
@@ -27,6 +39,11 @@ class TestSeriesConcat:
         tm.assert_series_equal(result, expected)
 
     def test_concat_series(self):
+        # [FUNCTION DOC]
+        # Verifies that concatenating consecutive slices of a named series restores it and
+        # keeps the name, and that supplying keys builds a two-level index with the keys
+        # and the original datetime index (the redundant second name assignment on the
+        # source series does nothing new).
         ts = Series(
             np.arange(20, dtype=np.float64),
             index=date_range("2020-01-01", periods=20, unit="ns"),
@@ -51,6 +68,9 @@ class TestSeriesConcat:
         tm.assert_series_equal(result, expected)
 
     def test_concat_empty_and_non_empty_series_regression(self):
+        # [FUNCTION DOC]
+        # Verifies that concatenating a one-element integer series with an empty object
+        # series gives an object series (GH 18187).
         # GH 18187 regression test
         s1 = Series([1])
         s2 = Series([], dtype=object)
@@ -60,6 +80,9 @@ class TestSeriesConcat:
         tm.assert_series_equal(result, expected)
 
     def test_concat_series_axis1(self):
+        # [FUNCTION DOC]
+        # Verifies that column-wise concatenation of overlapping slices of a series equals
+        # the transposed frame built from the pieces, also when keys label the columns.
         ts = Series(
             np.arange(10, dtype=np.float64), index=date_range("2020-01-01", periods=10)
         )
@@ -75,6 +98,9 @@ class TestSeriesConcat:
         tm.assert_frame_equal(result, expected)
 
     def test_concat_series_axis1_preserves_series_names(self):
+        # [FUNCTION DOC]
+        # Verifies that series names become column labels when concatenating along columns
+        # and that an unnamed series gets position 0 as label (GH 2489).
         # preserve series names, #2489
         s = Series(np.random.default_rng(2).standard_normal(5), name="A")
         s2 = Series(np.random.default_rng(2).standard_normal(5), name="B")
@@ -88,6 +114,9 @@ class TestSeriesConcat:
         tm.assert_index_equal(result.columns, Index(["A", 0], dtype="object"))
 
     def test_concat_series_axis1_with_reindex(self, sort):
+        # [FUNCTION DOC]
+        # Parametrized by sort. Verifies column-wise concatenation aligns on the union
+        # index: first-appearance order, or sorted when sort is true (GH 2603).
         # must reindex, #2603
         s = Series(
             np.random.default_rng(2).standard_normal(3), index=["c", "a", "b"], name="A"
@@ -104,6 +133,10 @@ class TestSeriesConcat:
         tm.assert_frame_equal(result, expected)
 
     def test_concat_series_axis1_names_applied(self):
+        # [FUNCTION DOC]
+        # Verifies that the names argument is applied to column labels when concatenating
+        # along columns with keys (single name for plain keys, two names for tuple keys)
+        # (GH 23490).
         # ensure names argument is not ignored on axis=1, #23490
         s = Series([1, 2, 3])
         s2 = Series([4, 5, 6])
@@ -121,6 +154,9 @@ class TestSeriesConcat:
         tm.assert_frame_equal(result, expected)
 
     def test_concat_series_axis1_same_names_ignore_index(self):
+        # [FUNCTION DOC]
+        # Verifies that two same-named series concatenated along columns with ignored
+        # index yield range-typed columns.
         dates = date_range("01-Jan-2013", "01-Jan-2014", freq="MS")[0:-1]
         s1 = Series(
             np.random.default_rng(2).standard_normal(len(dates)),
@@ -140,6 +176,10 @@ class TestSeriesConcat:
 
     @pytest.mark.parametrize("s1name", [np.int64(190), 190])
     def test_concat_series_name_npscalar_tuple(self, s1name):
+        # [FUNCTION DOC]
+        # Parametrized over a numpy integer name or a plain integer. Verifies row-wise
+        # concatenation of series with different (scalar, tuple) names gives an unnamed
+        # series (GH 21015).
         # GH21015
         s2name = (43, 0)
         s1 = Series({"a": 1, "b": 2}, name=s1name)
@@ -149,6 +189,10 @@ class TestSeriesConcat:
         tm.assert_series_equal(result, expected)
 
     def test_concat_series_partial_columns_names(self):
+        # [FUNCTION DOC]
+        # Verifies column naming for a mix of named and unnamed series: named keeps its
+        # name and unnamed get positions; keys override names; ignored index renumbers
+        # (GH 10698).
         # GH10698
         named_series = Series([1, 2], name="foo")
         unnamed_series1 = Series([1, 2])
@@ -178,6 +222,9 @@ class TestSeriesConcat:
         tm.assert_frame_equal(result, expected)
 
     def test_concat_series_length_one_reversed(self, frame_or_series):
+        # [FUNCTION DOC]
+        # Takes the frame_or_series fixture. Verifies that concatenating a single reversed
+        # length-one object returns an equal object (GH 39401).
         # GH39401
         obj = frame_or_series([100])
         result = concat([obj.iloc[::-1]])

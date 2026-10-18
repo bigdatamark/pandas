@@ -1,3 +1,11 @@
+# [MODULE DOC]
+# Tests for concatenating datetime-like data: naive and tz-aware datetimes, NaT
+# handling, period data, timedeltas and mixed datetime-like/other dtypes, for
+# series and frames, including frequency, multi-level index and resolution (unit)
+# handling. Three test classes group datetime, timezone and period cases, followed
+# by module-level tests for timedelta blocks, NaT in multi-level indexes and
+# float/datetime mixes. Uses the unit and unit2 fixtures (datetime resolutions)
+# from conftest.
 import datetime as dt
 from datetime import datetime
 
@@ -23,7 +31,13 @@ import pandas._testing as tm
 
 
 class TestDatetimeConcat:
+    # [CLASS DOC]
+    # Test collection for naive datetime and NaT behavior in concatenation.
+    # Stateless.
     def test_concat_datetime64_block(self):
+        # [FUNCTION DOC]
+        # Verifies that concatenating a frame holding a datetime column with itself keeps
+        # the values in both halves.
         rng = date_range("1/1/2000", periods=10)
 
         df = DataFrame({"time": rng})
@@ -33,6 +47,9 @@ class TestDatetimeConcat:
         assert (result.iloc[10:]["time"] == rng).all()
 
     def test_concat_datetime_datetime64_frame(self):
+        # [FUNCTION DOC]
+        # Smoke test: concatenating a frame with a datetime column with one built from
+        # mixed object records must not raise (GH 2624).
         # GH#2624
         rows = []
         rows.append([datetime(2010, 1, 1), 1])
@@ -47,6 +64,12 @@ class TestDatetimeConcat:
         concat([df1, df2_obj])
 
     def test_concat_datetime_timezone(self):
+        # [FUNCTION DOC]
+        # Verifies concatenation along columns of frames with tz-aware indexes: same zone
+        # (the naive-built second index inherits the zone) aligns and keeps frequency;
+        # different zones (Paris, Tokyo) union to a UTC index and emit a Pandas4Warning
+        # about default sorting; and after resampling, row-wise concatenation with sorting
+        # gives the combined index (GH 18523, GH 13783).
         # GH 18523
         idx1 = date_range(
             "2011-01-01", periods=3, freq="h", tz="Europe/Paris", unit="ns"
@@ -112,6 +135,10 @@ class TestDatetimeConcat:
         tm.assert_frame_equal(result, expected)
 
     def test_concat_datetimeindex_freq(self):
+        # [FUNCTION DOC]
+        # Verifies that concatenating consecutive slices keeps a frequency-bearing
+        # tz-aware index equal to the original, while concatenating the slices in reversed
+        # order gives a non-monotonic index without frequency (GH 3232).
         # GH 3232
         # Monotonic index result
         dr = date_range("01-Jan-2013", periods=100, freq="50ms", tz="UTC")
@@ -127,6 +154,10 @@ class TestDatetimeConcat:
         tm.assert_frame_equal(result, expected)
 
     def test_concat_multiindex_datetime_object_index(self):
+        # [FUNCTION DOC]
+        # Verifies column-wise concatenation of series with multi-level indexes whose
+        # second level is an object index of date objects keeps an object level and
+        # aligns the rows (GH 11058).
         # https://github.com/pandas-dev/pandas/issues/11058
         idx = Index(
             [dt.date(2013, 1, 1), dt.date(2014, 1, 1), dt.date(2015, 1, 1)],
@@ -164,6 +195,9 @@ class TestDatetimeConcat:
         tm.assert_frame_equal(result, expected)
 
     def test_concat_NaT_series(self):
+        # [FUNCTION DOC]
+        # Verifies concatenating a tz-aware datetime series with an all-NaT series of the
+        # same dtype, and two all-NaT series, keeps the tz-aware datetime dtype (GH 11693).
         # GH 11693
         # test for merging NaT series with datetime series.
         x = Series(
@@ -187,6 +221,9 @@ class TestDatetimeConcat:
         tm.assert_series_equal(result, expected)
 
     def test_concat_NaT_series2(self):
+        # [FUNCTION DOC]
+        # Verifies the same for tz-naive data: datetime with an all-NaT series, then two
+        # all-NaT series giving a naive datetime dtype.
         # without tz
         x = Series(date_range("20151124 08:00", "20151124 09:00", freq="1h", unit="ns"))
         y = Series(date_range("20151124 10:00", "20151124 11:00", freq="1h", unit="ns"))
@@ -203,6 +240,9 @@ class TestDatetimeConcat:
 
     @pytest.mark.parametrize("tz", [None, "UTC"])
     def test_concat_NaT_dataframes(self, tz):
+        # [FUNCTION DOC]
+        # Parametrized on timezone (none or UTC). Verifies concatenating a frame of NaT
+        # with a frame of timestamps along rows keeps the datetime dtype (GH 12396).
         # GH 12396
 
         dti = DatetimeIndex([pd.NaT, pd.NaT], tz=tz)
@@ -227,6 +267,11 @@ class TestDatetimeConcat:
     @pytest.mark.parametrize("tz2", [None, "UTC"])
     @pytest.mark.parametrize("item", [pd.NaT, Timestamp("20150101").as_unit("ns")])
     def test_concat_NaT_dataframes_all_NaT_axis_0(self, tz1, tz2, item):
+        # [FUNCTION DOC]
+        # Parametrized over timezones of both frames and the second item (NaT or a
+        # timestamp). Verifies row concatenation of an all-NaT frame with another frame:
+        # result takes the second frame's timezone, or object dtype when the timezones
+        # differ (GH 12396).
         # GH 12396
 
         # tz-naive
@@ -244,6 +289,9 @@ class TestDatetimeConcat:
     @pytest.mark.parametrize("tz1", [None, "UTC"])
     @pytest.mark.parametrize("tz2", [None, "UTC"])
     def test_concat_NaT_dataframes_all_NaT_axis_1(self, tz1, tz2):
+        # [FUNCTION DOC]
+        # Parametrized over two timezones. Verifies column-wise concatenation of all-NaT
+        # frames keeps each column's own timezone-aware or naive dtype (GH 12396).
         # GH 12396
 
         first = DataFrame(Series([pd.NaT, pd.NaT]).dt.tz_localize(tz1))
@@ -260,6 +308,9 @@ class TestDatetimeConcat:
     @pytest.mark.parametrize("tz1", [None, "UTC"])
     @pytest.mark.parametrize("tz2", [None, "UTC"])
     def test_concat_NaT_series_dataframe_all_NaT(self, tz1, tz2):
+        # [FUNCTION DOC]
+        # Parametrized over two timezones. Verifies concatenating an all-NaT series with a
+        # timestamp frame gives datetimes if timezones match, otherwise object (GH 12396).
         # GH 12396
 
         # tz-naive
@@ -287,6 +338,9 @@ class TestDatetimeConcat:
         tm.assert_frame_equal(result, expected)
 
     def test_concat_compat_on_non_ns_datetime_EA(self):
+        # [FUNCTION DOC]
+        # Verifies concatenating a day-resolution datetime series with a categorical string
+        # series gives an object series with Timestamp and strings (GH 33331).
         # GH#33331
         first = Series(np.array([datetime(2010, 1, 1)], dtype="datetime64[D]"))
         second = Series(pd.array(["a", "b"], dtype="category"))
@@ -298,7 +352,12 @@ class TestDatetimeConcat:
 
 
 class TestTimezoneConcat:
+    # [CLASS DOC]
+    # Test collection for concatenation of timezone-aware data. Stateless.
     def test_concat_tz_series(self):
+        # [FUNCTION DOC]
+        # Verifies tz-aware plus naive datetime series concatenation yields object dtype
+        # (GH 11755).
         # gh-11755: tz and no tz
         x = Series(date_range("20151124 08:00", "20151124 09:00", freq="1h", tz="UTC"))
         y = Series(date_range("2012-01-01", "2012-01-02"))
@@ -307,6 +366,8 @@ class TestTimezoneConcat:
         tm.assert_series_equal(result, expected)
 
     def test_concat_tz_series2(self):
+        # [FUNCTION DOC]
+        # Verifies tz-aware datetime plus object series yields object dtype (GH 11887).
         # gh-11887: concat tz and object
         x = Series(date_range("20151124 08:00", "20151124 09:00", freq="1h", tz="UTC"))
         y = Series(["a", "b"])
@@ -315,6 +376,9 @@ class TestTimezoneConcat:
         tm.assert_series_equal(result, expected)
 
     def test_concat_tz_series3(self, unit, unit2):
+        # [FUNCTION DOC]
+        # Takes the unit and unit2 fixtures. Verifies concatenating UTC datetime columns of
+        # two resolutions gives a UTC dtype in the finer unit (GH 12217, GH 12306).
         # see gh-12217 and gh-12306
         # Concatenating two UTC times
         first = DataFrame([[datetime(2016, 1, 1)]], dtype=f"M8[{unit}]")
@@ -328,6 +392,8 @@ class TestTimezoneConcat:
         assert result[0].dtype == f"datetime64[{exp_unit}, UTC]"
 
     def test_concat_tz_series4(self, unit, unit2):
+        # [FUNCTION DOC]
+        # Same as above but for the Europe/London zone with two single-row frames.
         # Concatenating two London times
         first = DataFrame([[datetime(2016, 1, 1)]], dtype=f"M8[{unit}]")
         first[0] = first[0].dt.tz_localize("Europe/London")
@@ -340,6 +406,8 @@ class TestTimezoneConcat:
         assert result[0].dtype == f"datetime64[{exp_unit}, Europe/London]"
 
     def test_concat_tz_series5(self, unit, unit2):
+        # [FUNCTION DOC]
+        # Same as above with a two-row first frame and one-row second frame (London).
         # Concatenating 2+1 London times
         first = DataFrame(
             [[datetime(2016, 1, 1)], [datetime(2016, 1, 2)]], dtype=f"M8[{unit}]"
@@ -354,6 +422,8 @@ class TestTimezoneConcat:
         assert result[0].dtype == f"datetime64[{exp_unit}, Europe/London]"
 
     def test_concat_tz_series6(self, unit, unit2):
+        # [FUNCTION DOC]
+        # Same as above with a one-row first frame and two-row second frame (London).
         # Concatenating 1+2 London times
         first = DataFrame([[datetime(2016, 1, 1)]], dtype=f"M8[{unit}]")
         first[0] = first[0].dt.tz_localize("Europe/London")
@@ -368,6 +438,9 @@ class TestTimezoneConcat:
         assert result[0].dtype == f"datetime64[{exp_unit}, Europe/London]"
 
     def test_concat_tz_series_tzlocal(self):
+        # [FUNCTION DOC]
+        # Verifies concatenating series of timestamps with the dateutil local timezone
+        # keeps equal values and the local-timezone microsecond dtype (GH 13583).
         # see gh-13583
         x = [
             Timestamp("2011-01-01", tz=dateutil.tz.tzlocal()),
@@ -383,6 +456,9 @@ class TestTimezoneConcat:
         assert result.dtype == "datetime64[us, tzlocal()]"
 
     def test_concat_tz_series_with_datetimelike(self):
+        # [FUNCTION DOC]
+        # Verifies tz-aware timestamps mixed with timedeltas, or with periods, concatenate
+        # to object dtype (GH 12620).
         # see gh-12620: tz and timedelta
         x = [
             Timestamp("2011-01-01", tz="US/Eastern"),
@@ -398,6 +474,9 @@ class TestTimezoneConcat:
         tm.assert_series_equal(result, Series(x + y, dtype="object"))
 
     def test_concat_tz_frame(self):
+        # [FUNCTION DOC]
+        # Verifies column-wise concatenation of two single-column frames with different
+        # timezones reconstructs the original two-timezone frame.
         df2 = DataFrame(
             {
                 "A": Timestamp("20130102", tz="US/Eastern"),
@@ -411,6 +490,9 @@ class TestTimezoneConcat:
         tm.assert_frame_equal(df2, df3)
 
     def test_concat_multiple_tzs(self):
+        # [FUNCTION DOC]
+        # Verifies concatenating frames of a naive timestamp, a UTC one and an EST one:
+        # naive with either gives object dtype; UTC with EST gives the pair (GH 12467).
         # GH#12467
         # combining datetime tz-aware and naive DataFrames
         ts1 = Timestamp("2015-01-01", tz=None)
@@ -434,6 +516,9 @@ class TestTimezoneConcat:
         tm.assert_frame_equal(results, expected)
 
     def test_concat_multiindex_with_tz(self):
+        # [FUNCTION DOC]
+        # Verifies that concatenating a frame twice, indexed by a tz-aware datetime level
+        # and a string level, preserves the multi-level index and zone (GH 6606).
         # GH 6606
         df = DataFrame(
             {
@@ -467,6 +552,9 @@ class TestTimezoneConcat:
         tm.assert_frame_equal(result, expected)
 
     def test_concat_tz_not_aligned(self):
+        # [FUNCTION DOC]
+        # Verifies that with sorting and ignored index, concatenating frames with one
+        # shared and one extra tz-aware column gives NaT in the missing part (GH 22796).
         # GH#22796
         ts = pd.to_datetime([1, 2]).tz_localize("UTC")
         a = DataFrame({"A": ts})
@@ -490,6 +578,10 @@ class TestTimezoneConcat:
         ],
     )
     def test_concat_tz_NaT(self, t1):
+        # [FUNCTION DOC]
+        # Parametrized on the first timestamp (a date string, or NaT marked as expected
+        # failure for GH 23037 incorrect dtype). Verifies concatenating tz-aware
+        # multi-column frames of different widths keeps the dtype with NaT fill (GH 22796).
         # GH#22796
         # Concatenating tz-aware multicolumn DataFrames
         ts1 = Timestamp(t1, tz="UTC")
@@ -505,6 +597,9 @@ class TestTimezoneConcat:
         tm.assert_frame_equal(result, expected)
 
     def test_concat_tz_with_empty(self):
+        # [FUNCTION DOC]
+        # Verifies concatenating a tz-aware frame with an empty frame returns the tz-aware
+        # frame unchanged (GH 9188).
         # GH 9188
         result = concat(
             [DataFrame(date_range("2000", periods=1, tz="UTC")), DataFrame()]
@@ -514,7 +609,12 @@ class TestTimezoneConcat:
 
 
 class TestPeriodConcat:
+    # [CLASS DOC]
+    # Test collection for concatenation of period data. Stateless.
     def test_concat_period_series(self):
+        # [FUNCTION DOC]
+        # Verifies concatenating period series of the same frequency keeps the period
+        # dtype.
         x = Series(pd.PeriodIndex(["2015-11-01", "2015-12-01"], freq="D"))
         y = Series(pd.PeriodIndex(["2015-10-01", "2016-01-01"], freq="D"))
         expected = Series([x[0], x[1], y[0], y[1]], dtype="Period[D]")
@@ -522,6 +622,9 @@ class TestPeriodConcat:
         tm.assert_series_equal(result, expected)
 
     def test_concat_period_multiple_freq_series(self):
+        # [FUNCTION DOC]
+        # Verifies series of periods with different frequencies (day and month) concatenate
+        # to object dtype.
         x = Series(pd.PeriodIndex(["2015-11-01", "2015-12-01"], freq="D"))
         y = Series(pd.PeriodIndex(["2015-10-01", "2016-01-01"], freq="M"))
         expected = Series([x[0], x[1], y[0], y[1]], dtype="object")
@@ -530,6 +633,9 @@ class TestPeriodConcat:
         assert result.dtype == "object"
 
     def test_concat_period_other_series(self):
+        # [FUNCTION DOC]
+        # Verifies day-frequency and month-frequency periods with the same dates
+        # concatenate to object dtype.
         x = Series(pd.PeriodIndex(["2015-11-01", "2015-12-01"], freq="D"))
         y = Series(pd.PeriodIndex(["2015-11-01", "2015-12-01"], freq="M"))
         expected = Series([x[0], x[1], y[0], y[1]], dtype="object")
@@ -538,6 +644,8 @@ class TestPeriodConcat:
         assert result.dtype == "object"
 
     def test_concat_period_other_series2(self):
+        # [FUNCTION DOC]
+        # Verifies periods with datetimes concatenate to object dtype.
         # non-period
         x = Series(pd.PeriodIndex(["2015-11-01", "2015-12-01"], freq="D"))
         y = Series(DatetimeIndex(["2015-11-01", "2015-12-01"]))
@@ -547,6 +655,8 @@ class TestPeriodConcat:
         assert result.dtype == "object"
 
     def test_concat_period_other_series3(self):
+        # [FUNCTION DOC]
+        # Verifies periods with strings concatenate to object dtype.
         x = Series(pd.PeriodIndex(["2015-11-01", "2015-12-01"], freq="D"))
         y = Series(["A", "B"])
         expected = Series([x[0], x[1], y[0], y[1]], dtype="object")
@@ -556,6 +666,9 @@ class TestPeriodConcat:
 
 
 def test_concat_timedelta64_block():
+    # [FUNCTION DOC]
+    # Verifies concatenating a frame with a timedelta column with itself keeps the
+    # values in both halves (index type not checked).
     rng = to_timedelta(np.arange(10), unit="s")
 
     df = DataFrame({"time": rng})
@@ -566,6 +679,9 @@ def test_concat_timedelta64_block():
 
 
 def test_concat_multiindex_datetime_nat():
+    # [FUNCTION DOC]
+    # Verifies column-wise concatenation of frames whose multi-level indexes contain
+    # NaT in the second level aligns rows correctly with missing fill (GH 44900).
     # GH#44900
     left = DataFrame({"a": 1}, index=MultiIndex.from_tuples([(1, pd.NaT)]))
     right = DataFrame(
@@ -579,6 +695,10 @@ def test_concat_multiindex_datetime_nat():
 
 
 def test_concat_float_datetime64():
+    # [FUNCTION DOC]
+    # Verifies concatenation of a datetime frame with a float frame yields an object
+    # column holding both values; with empty slices of either (or both) the result
+    # is an object column, with the non-empty values retained as object (GH 32934).
     # GH#32934
     df_time = DataFrame({"A": pd.array(["2000"], dtype="datetime64[ns]")})
     df_float = DataFrame({"A": pd.array([1.0], dtype="float64")})

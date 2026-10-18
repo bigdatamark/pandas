@@ -1,3 +1,13 @@
+# [MODULE DOC]
+# Tests for the frame join method and related merge-based join behavior: outer,
+# inner, left, right and cross joins, joins on columns, indexes, series and
+# multi-level indexes, suffix handling, join of several frames at once, sorting,
+# dtype preservation, empty inputs, categorical/tz-aware/datetime keys. Contains
+# module-level helper functions (test data generator and checking utilities used
+# by the outer/inner join checks) and the TestJoin class with fixtures; several
+# module-level tests follow the class. Uses the join_type, sort,
+# using_infer_string and lexsorted_two_level_string_multiindex fixtures from
+# conftest.
 from datetime import datetime
 import re
 
@@ -23,6 +33,12 @@ import pandas._testing as tm
 
 
 def get_test_data(ngroups=8, n=50):
+    # [FUNCTION DOC]
+    # HELPER: builds a one-dimensional integer array of length n made by repeating the
+    # group labels zero through ngroups minus one, topping up with the first labels if
+    # the tiling is short, then shuffling in place with a fixed-seed random generator.
+    # Parameters: ngroups (default 8) the number of distinct labels; n (default 50) the
+    # output length. Returns the shuffled array. Used to create join keys.
     unique_groups = list(range(ngroups))
     arr = np.asarray(np.tile(unique_groups, n // ngroups))
 
@@ -34,9 +50,16 @@ def get_test_data(ngroups=8, n=50):
 
 
 class TestJoin:
+    # [CLASS DOC]
+    # Collection of join/merge tests on frames. Defines three fixtures (df, df2,
+    # target_source) that provide the data. Stateless between tests.
     # aggregate multiple columns
     @pytest.fixture
     def df(self):
+        # [FUNCTION DOC]
+        # HELPER: fixture returning a frame of 50 rows with two integer key columns built by
+        # the key generator and two random float data columns, keeping only rows whose
+        # second key is greater than one (so some keys are excluded).
         df = DataFrame(
             {
                 "key1": get_test_data(),
@@ -52,6 +75,9 @@ class TestJoin:
 
     @pytest.fixture
     def df2(self):
+        # [FUNCTION DOC]
+        # HELPER: fixture returning a ten-row frame with integer key columns (eight- and
+        # four-group key generators) and a random float value column.
         return DataFrame(
             {
                 "key1": get_test_data(n=10),
@@ -62,6 +88,12 @@ class TestJoin:
 
     @pytest.fixture
     def target_source(self):
+        # [FUNCTION DOC]
+        # HELPER: fixture returning a pair of frames. The target has columns of floats,
+        # a zero/one float column, strings and business-day datetimes with a string
+        # index; the source has columns MergedA and MergedD (copies of the float and
+        # datetime columns) indexed by the string column of the target, for joining on a
+        # string value.
         data = {
             "A": [0.0, 1.0, 2.0, 3.0, 4.0],
             "B": [0.0, 1.0, 0.0, 1.0, 0.0],
@@ -78,6 +110,9 @@ class TestJoin:
         return target, source
 
     def test_left_outer_join(self, df, df2):
+        # [FUNCTION DOC]
+        # Verifies a default (left) merge on one key and on both keys passes the shared
+        # join consistency checker.
         joined_key2 = merge(df, df2, on="key2")
         _check_join(df, df2, joined_key2, ["key2"], how="left")
 
@@ -85,6 +120,8 @@ class TestJoin:
         _check_join(df, df2, joined_both, ["key1", "key2"], how="left")
 
     def test_right_outer_join(self, df, df2):
+        # [FUNCTION DOC]
+        # Same as above for right joins.
         joined_key2 = merge(df, df2, on="key2", how="right")
         _check_join(df, df2, joined_key2, ["key2"], how="right")
 
@@ -92,6 +129,8 @@ class TestJoin:
         _check_join(df, df2, joined_both, ["key1", "key2"], how="right")
 
     def test_full_outer_join(self, df, df2):
+        # [FUNCTION DOC]
+        # Same as above for outer joins.
         joined_key2 = merge(df, df2, on="key2", how="outer")
         _check_join(df, df2, joined_key2, ["key2"], how="outer")
 
@@ -99,6 +138,8 @@ class TestJoin:
         _check_join(df, df2, joined_both, ["key1", "key2"], how="outer")
 
     def test_inner_join(self, df, df2):
+        # [FUNCTION DOC]
+        # Same as above for inner joins.
         joined_key2 = merge(df, df2, on="key2", how="inner")
         _check_join(df, df2, joined_key2, ["key2"], how="inner")
 
@@ -106,12 +147,18 @@ class TestJoin:
         _check_join(df, df2, joined_both, ["key1", "key2"], how="inner")
 
     def test_handle_overlap(self, df, df2):
+        # [FUNCTION DOC]
+        # Verifies the given suffixes are applied to overlapping non-key columns when
+        # merging on one key.
         joined = merge(df, df2, on="key2", suffixes=(".foo", ".bar"))
 
         assert "key1.foo" in joined
         assert "key1.bar" in joined
 
     def test_handle_overlap_arbitrary_key(self, df, df2):
+        # [FUNCTION DOC]
+        # Verifies suffixes are applied to overlapping column names when left and right key
+        # columns differ.
         joined = merge(
             df,
             df2,
@@ -126,6 +173,14 @@ class TestJoin:
         "infer_string", [False, pytest.param(True, marks=td.skip_if_no("pyarrow"))]
     )
     def test_join_on(self, target_source, infer_string):
+        # [FUNCTION DOC]
+        # Parametrized by infer_string (second needs pyarrow).
+        # KNOWN ISSUE: the parameter
+        # is accepted but never used in the body, so both variants run identically. Verifies
+        # joining on a column against an index: result columns match the target; duplicates
+        # on the left are repeated; missing keys give missing values; joining on a missing
+        # column raises a key error; joining on a numeric column against a string index
+        # raises a value error about merging float and object/string columns.
         target, source = target_source
 
         merged = target.join(source, on="C")
@@ -163,6 +218,9 @@ class TestJoin:
             target.join(source, on="A")
 
     def test_join_on_fails_with_different_right_index(self):
+        # [FUNCTION DOC]
+        # Verifies a value error when the number of left key columns differs from the number
+        # of levels of a multi-level right index.
         df = DataFrame(
             {
                 "a": np.random.default_rng(2).choice(["m", "f"], size=3),
@@ -181,6 +239,9 @@ class TestJoin:
             merge(df, df2, left_on="a", right_index=True)
 
     def test_join_on_fails_with_different_left_index(self):
+        # [FUNCTION DOC]
+        # Verifies the analogous error when the left frame has a multi-level index but one
+        # right key is given.
         df = DataFrame(
             {
                 "a": np.random.default_rng(2).choice(["m", "f"], size=3),
@@ -199,6 +260,8 @@ class TestJoin:
             merge(df, df2, right_on="b", left_index=True)
 
     def test_join_on_fails_with_different_column_counts(self):
+        # [FUNCTION DOC]
+        # Verifies a value error that the right and left key lists must have equal length.
         df = DataFrame(
             {
                 "a": np.random.default_rng(2).choice(["m", "f"], size=3),
@@ -218,6 +281,10 @@ class TestJoin:
 
     @pytest.mark.parametrize("wrong_type", [2, "str", None, np.array([0, 1])])
     def test_join_on_fails_with_wrong_object_type(self, wrong_type):
+        # [FUNCTION DOC]
+        # Parametrized over a number, string, None and an array. Verifies a type error that
+        # only series or frames can be merged, naming the type, for either argument
+        # position (GH 12081, GH 21220).
         # GH12081 - original issue
 
         # GH21220 - merging of Series and DataFrame is now allowed
@@ -234,6 +301,10 @@ class TestJoin:
             merge(df, wrong_type, left_on="a", right_on="a")
 
     def test_join_on_pass_vector(self, target_source):
+        # [FUNCTION DOC]
+        # Verifies joining on a series (popped column) gives the same data as joining on
+        # the column name, except the key column is named with a default key label and
+        # moved first.
         target, source = target_source
         expected = target.join(source, on="C")
         expected = expected.rename(columns={"C": "key_0"})
@@ -244,6 +315,9 @@ class TestJoin:
         tm.assert_frame_equal(result, expected)
 
     def test_join_with_len0(self, target_source):
+        # [FUNCTION DOC]
+        # Verifies joining with an empty source gives all source columns present and
+        # missing, and with inner join gives zero rows and the same columns.
         # nothing to merge
         target, source = target_source
         merged = target.join(source.reindex([]), on="C")
@@ -256,6 +330,9 @@ class TestJoin:
         assert len(merged2) == 0
 
     def test_join_on_inner(self):
+        # [FUNCTION DOC]
+        # Verifies an inner join on a column keeps only rows with a match, same as the left
+        # join filtered by non-missing values (value dtype not checked).
         df = DataFrame({"key": ["a", "a", "d", "b", "b", "c"]})
         df2 = DataFrame({"value": [0, 1]}, index=["a", "b"])
 
@@ -268,6 +345,9 @@ class TestJoin:
         tm.assert_index_equal(joined.index, expected.index)
 
     def test_join_on_singlekey_list(self):
+        # [FUNCTION DOC]
+        # Verifies that giving the key as a one-element list is equivalent to a single
+        # name.
         df = DataFrame({"key": ["a", "a", "b", "b", "c"]})
         df2 = DataFrame({"value": [0, 1, 2]}, index=["a", "b", "c"])
 
@@ -278,12 +358,18 @@ class TestJoin:
         tm.assert_frame_equal(joined, expected)
 
     def test_join_on_series(self, target_source):
+        # [FUNCTION DOC]
+        # Verifies that joining with a named series equals joining with the one-column frame
+        # holding the same data.
         target, source = target_source
         result = target.join(source["MergedA"], on="C")
         expected = target.join(source[["MergedA"]], on="C")
         tm.assert_frame_equal(result, expected)
 
     def test_join_on_series_buglet(self):
+        # [FUNCTION DOC]
+        # Verifies joining on a column against a series indexed by an integer label repeats
+        # the value for each matching row (GH 638).
         # GH #638
         df = DataFrame({"a": [1, 1]})
         ds = Series([2], index=[1], name="b")
@@ -292,6 +378,10 @@ class TestJoin:
         tm.assert_frame_equal(result, expected)
 
     def test_join_index_mixed(self, join_type):
+        # [FUNCTION DOC]
+        # Takes the join_type fixture. Verifies index-based join of frames with
+        # disjoint column dtypes (bool, string vs int, float) equals the join computed by
+        # the by-hand helper in both orders.
         # no overlapping blocks
         df1 = DataFrame(index=np.arange(10))
         df1["bool"] = True
@@ -310,6 +400,10 @@ class TestJoin:
         tm.assert_frame_equal(joined, expected)
 
     def test_join_index_mixed_overlap(self):
+        # [FUNCTION DOC]
+        # Verifies joining frames with the same column names and suffixes equals the by-hand
+        # join with renamed columns; also asserts the integer and bool column dtypes of
+        # the input.
         df1 = DataFrame(
             {"A": 1.0, "B": 2, "C": "foo", "D": True},
             index=np.arange(10),
@@ -342,11 +436,17 @@ class TestJoin:
         tm.assert_frame_equal(joined, expected)
 
     def test_join_empty_bug(self):
+        # [FUNCTION DOC]
+        # Smoke test: outer join of an empty frame with a one-column frame must not raise
+        # (historical bug).
         # generated an exception in 0.4.3
         x = DataFrame()
         x.join(DataFrame([3], index=[0], columns=["A"]), how="outer")
 
     def test_join_unconsolidated(self):
+        # [FUNCTION DOC]
+        # Smoke test: joining frames where one has a newly added (unconsolidated) column
+        # works in both directions (GH 331).
         # GH #331
         a = DataFrame(
             np.random.default_rng(2).standard_normal((30, 2)), columns=["a", "b"]
@@ -360,6 +460,10 @@ class TestJoin:
         d.join(a)
 
     def test_join_multiindex(self):
+        # [FUNCTION DOC]
+        # Verifies outer join of frames with two-level indexes with the same names yields
+        # the union index (names preserved) and the expected values, for frames sorted by
+        # the first and by the second level.
         index1 = MultiIndex.from_arrays(
             [["a", "a", "a", "b", "b", "b"], [1, 2, 3, 1, 2, 3]],
             names=["first", "second"],
@@ -403,6 +507,13 @@ class TestJoin:
         assert joined.index.names == index1.names
 
     def test_join_inner_multiindex(self, lexsorted_two_level_string_multiindex):
+        # [FUNCTION DOC]
+        # Takes a lexsorted two-level string index fixture. Verifies inner join of a frame
+        # to a frame with a multi-level index on two key columns equals the merge on the
+        # reset index (with the extra index columns dropped), has a monotonic index.
+        # KNOWN ISSUE: the second computed reference frame is assigned but never used and
+        # a commented-out assertion remains; the first reference result is also computed
+        # twice.
         key1 = ["bar", "bar", "bar", "foo", "foo", "baz", "baz", "qux", "qux", "snap"]
         key2 = [
             "two",
@@ -465,6 +576,10 @@ class TestJoin:
         # _assert_same_contents(expected, expected2.loc[:, expected.columns])
 
     def test_join_hierarchical_mixed_raises(self):
+        # [FUNCTION DOC]
+        # Verifies a merge error saying merging between different column levels is not
+        # allowed, when joining a frame with hierarchical columns to a flat one (GH 2024,
+        # GH 40993, GH 9455, GH 12219).
         # GH 2024
         # GH 40993: For raising, enforced in 2.0
         df = DataFrame([(1, 2, 3), (4, 5, 6)], columns=["a", "b", "c"])
@@ -478,6 +593,9 @@ class TestJoin:
             merge(new_df, other_df, left_index=True, right_index=True)
 
     def test_join_float64_float32(self):
+        # [FUNCTION DOC]
+        # Verifies join and merge preserve float64, float32 and int64 dtypes per column, and
+        # that two equivalent merges give the same frame.
         a = DataFrame(
             np.random.default_rng(2).standard_normal((10, 2)),
             columns=["a", "b"],
@@ -511,6 +629,10 @@ class TestJoin:
         tm.assert_frame_equal(rs, xp)
 
     def test_join_many_non_unique_index(self):
+        # [FUNCTION DOC]
+        # Verifies joining a list of frames with non-unique two-level indexes (outer and
+        # inner) equals sequential merges; and that joining a frame with a series with
+        # repeated index gives the same result for every join kind (GH 11519).
         df1 = DataFrame({"a": [1, 1], "b": [1, 1], "c": [10, 20]})
         df2 = DataFrame({"a": [1, 1], "b": [1, 2], "d": [100, 200]})
         df3 = DataFrame({"a": [1, 1], "b": [1, 2], "e": [1000, 2000]})
@@ -568,6 +690,10 @@ class TestJoin:
         "infer_string", [False, pytest.param(True, marks=td.skip_if_no("pyarrow"))]
     )
     def test_join_sort(self, infer_string):
+        # [FUNCTION DOC]
+        # Parametrized by infer_string (needs pyarrow for true), run under that option.
+        # Verifies join on a key with sort enabled orders the result rows by key (keeping
+        # original labels), and that without sort the index is a range (smoke test).
         with option_context("future.infer_string", infer_string):
             left = DataFrame(
                 {"key": ["foo", "bar", "baz", "foo"], "value": [1, 2, 3, 4]}
@@ -590,6 +716,9 @@ class TestJoin:
             tm.assert_index_equal(joined.index, Index(range(4)), exact=True)
 
     def test_join_mixed_non_unique_index(self):
+        # [FUNCTION DOC]
+        # Verifies joins where the indexes mix integers and strings and contain duplicates
+        # do not fail on unorderable types (GH 12814).
         # GH 12814, unorderable types in py3 with a non-unique index
         df1 = DataFrame({"a": [1, 2, 3, 4]}, index=[1, 2, 3, "a"])
         df2 = DataFrame({"b": [5, 6, 7, 8]}, index=[1, 3, 3, 4])
@@ -609,6 +738,9 @@ class TestJoin:
         tm.assert_frame_equal(result, expected)
 
     def test_join_non_unique_period_index(self):
+        # [FUNCTION DOC]
+        # Verifies an inner join with a duplicated period index and a right suffix gives
+        # paired values with the sorted index (GH 16871).
         # GH #16871
         index = pd.period_range("2016-01-01", periods=16, freq="M")
         df = DataFrame(list(range(len(index))), index=index, columns=["pnum"])
@@ -622,6 +754,10 @@ class TestJoin:
         tm.assert_frame_equal(result, expected)
 
     def test_mixed_type_join_with_suffix(self, using_infer_string):
+        # [FUNCTION DOC]
+        # Verifies that taking a mean of a group with a string column raises a type error
+        # (message differs under infer-string mode) while numeric-only mean joined with
+        # counts using a right suffix works (GH 916).
         # GH #916
         df = DataFrame(
             np.random.default_rng(2).standard_normal((20, 6)),
@@ -643,6 +779,11 @@ class TestJoin:
         mn.join(cn, rsuffix="_right")
 
     def test_join_many(self):
+        # [FUNCTION DOC]
+        # Verifies joining a list of frames equals the original, for outer, left and inner
+        # joins over differently sliced frames (via the nested checker), and that joining a
+        # list on a column raises a value error saying only index joins are supported for
+        # multiple frames.
         df = DataFrame(
             np.random.default_rng(2).standard_normal((10, 6)), columns=list("abcdef")
         )
@@ -654,6 +795,9 @@ class TestJoin:
         df_list = [df[["a", "b"]][:-2], df[["c", "d"]][2:], df[["e", "f"]][1:9]]
 
         def _check_diff_index(df_list, result, exp_index):
+            # [FUNCTION DOC]
+            # HELPER: nested in test_join_many. Reindexes every frame of the list to the given
+            # index, joins them by index and asserts equality with the supplied result.
             reindexed = [x.reindex(exp_index) for x in df_list]
             expected = reindexed[0].join(reindexed[1:])
             tm.assert_frame_equal(result, expected)
@@ -674,6 +818,10 @@ class TestJoin:
 
     @pytest.mark.parametrize("how", ["left", "right", "inner", "outer"])
     def test_join_many_sort_unique(self, how, sort):
+        # [FUNCTION DOC]
+        # Parametrized over join kind and the sort fixture. Verifies join of a list with a
+        # unique non-monotonic index: the result keeps left order (right order for right
+        # join), but is sorted for outer joins or when sort is true (pull request 62954).
         # https://github.com/pandas-dev/pandas/pull/62954
         df = DataFrame({"a": [1, 2, 3]}, index=[1, 0, 2])
         df2 = DataFrame({"b": [4, 5, 6]}, index=[2, 0, 1])
@@ -689,6 +837,9 @@ class TestJoin:
 
     @pytest.mark.parametrize("how", ["left", "right", "inner", "outer"])
     def test_join_many_sort_nonunique(self, how, sort):
+        # [FUNCTION DOC]
+        # Same parametrization for non-unique indexes: checks the expected values per join
+        # kind (with missing fill), sorted by index when sort is true (pull request 62954).
         # https://github.com/pandas-dev/pandas/pull/62954
         df = DataFrame({"a": [1, 2, 3]}, index=[3, 0, 0])
         df2 = DataFrame({"b": [4, 5, 6]}, index=[2, 0, 1])
@@ -717,6 +868,9 @@ class TestJoin:
 
     @pytest.mark.parametrize("how", ["inner", "outer", "left", "right"])
     def test_join_many_datetime_unsorted(self, how):
+        # [FUNCTION DOC]
+        # Parametrized over join kind. Verifies joining a list with an unsorted datetime
+        # index preserves the order except for outer join which sorts (pull request 62843).
         # https://github.com/pandas-dev/pandas/pull/62843
         index = Index([datetime(2024, 1, 2), datetime(2024, 1, 1)])
         df = DataFrame({"a": [1, 2]}, index=index)
@@ -730,6 +884,9 @@ class TestJoin:
         tm.assert_frame_equal(result, expected)
 
     def test_join_many_mixed(self):
+        # [FUNCTION DOC]
+        # Verifies joining a frame with a list of the remaining column groups, including a
+        # string column, reproduces the original frame.
         df = DataFrame(
             np.random.default_rng(2).standard_normal((8, 4)),
             columns=["A", "B", "C", "D"],
@@ -743,6 +900,10 @@ class TestJoin:
         tm.assert_frame_equal(result, df)
 
     def test_join_dups(self):
+        # [FUNCTION DOC]
+        # Verifies joining a frame with duplicate column labels to itself with a right suffix
+        # equals concatenation along columns; also that merging when suffixes would create
+        # duplicate columns raises a merge error (GH 4975, GH 40991).
         # joining dups
         df = concat(
             [
@@ -788,6 +949,11 @@ class TestJoin:
             dta.merge(w, left_index=True, right_index=True)
 
     def test_join_multi_to_multi(self, join_type):
+        # [FUNCTION DOC]
+        # Takes the join_type fixture. Verifies joining a three-level indexed frame to a
+        # two-level indexed one on the shared levels equals the corresponding merge on reset
+        # indexes, and that mismatching the number of levels raises a value error
+        # (GH 20475).
         # GH 20475
         leftindex = MultiIndex.from_product(
             [list("abc"), list("xy"), [1, 2]], names=["abc", "xy", "num"]
@@ -815,6 +981,9 @@ class TestJoin:
             right.join(left, on=["abc", "xy"], how=join_type)
 
     def test_join_on_tz_aware_datetimeindex(self):
+        # [FUNCTION DOC]
+        # Verifies a join on a tz-aware date column against a frame indexed by it, keeping
+        # the left rows and filling missing for non-matching dates (GH 23931, GH 26335).
         # GH 23931, 26335
         df1 = DataFrame(
             {
@@ -839,6 +1008,9 @@ class TestJoin:
         tm.assert_frame_equal(result, expected)
 
     def test_join_datetime_string(self):
+        # [FUNCTION DOC]
+        # Verifies joining on two key columns (datetime and string) against a two-level
+        # index keeps the left index and brings the matching values (GH 5647).
         # GH 5647
         dfa = DataFrame(
             [
@@ -869,6 +1041,9 @@ class TestJoin:
         tm.assert_frame_equal(result, expected)
 
     def test_join_with_categorical_index(self):
+        # [FUNCTION DOC]
+        # Verifies joining frames with categorical indexes having the same categories in
+        # different order keeps the left categorical index (GH 47812).
         # GH47812
         ix = ["a", "b"]
         id1 = pd.CategoricalIndex(ix, categories=ix)
@@ -885,6 +1060,14 @@ class TestJoin:
 
 
 def _check_join(left, right, result, join_col, how="left", lsuffix="_x", rsuffix="_y"):
+    # [FUNCTION DOC]
+    # HELPER: smoke-test checker for merge results. Takes the left and right input
+    # frames, the merge result, the list of key column names, the join kind (default
+    # left) and the two suffixes (defaults underscore x and underscore y). Asserts that
+    # keys are never missing, then for every key group in the result checks that the
+    # left and right portions match the corresponding input groups, that keys missing
+    # from an input are only allowed for the join kinds that allow it (raising an
+    # assertion error otherwise), and that unmatched sides are all-missing.
     # some smoke tests
     for c in join_col:
         assert result[c].notna().all()
@@ -922,6 +1105,10 @@ def _check_join(left, right, result, join_col, how="left", lsuffix="_x", rsuffix
 
 
 def _restrict_to_columns(group, columns, suffix):
+    # [FUNCTION DOC]
+    # HELPER: for _check_join. Selects from a group frame the columns that belong to
+    # the given original columns (directly or after removing the suffix), strips the
+    # suffix from their names and returns them in the order of the original columns.
     found = [
         c for c in group.columns if c in columns or c.replace(suffix, "") in columns
     ]
@@ -939,6 +1126,11 @@ def _restrict_to_columns(group, columns, suffix):
 
 
 def _assert_same_contents(join_chunk, source):
+    # [FUNCTION DOC]
+    # HELPER: for _check_join. Compares a chunk of the join result to the source group:
+    # after replacing missing values by a sentinel and dropping duplicates, the number
+    # of distinct result rows must equal the number of source rows and every source row
+    # must appear in the result rows.
     NA_SENTINEL = -1234567  # drop_duplicates not so NA-friendly...
 
     jvalues = join_chunk.fillna(NA_SENTINEL).drop_duplicates().values
@@ -950,6 +1142,9 @@ def _assert_same_contents(join_chunk, source):
 
 
 def _assert_all_na(join_chunk, source_columns, join_col):
+    # [FUNCTION DOC]
+    # HELPER: for _check_join. Asserts that every non-key column of a chunk is entirely
+    # missing.
     for c in source_columns:
         if c in join_col:
             continue
@@ -957,6 +1152,11 @@ def _assert_all_na(join_chunk, source_columns, join_col):
 
 
 def _join_by_hand(a, b, how="left"):
+    # [FUNCTION DOC]
+    # HELPER: reference implementation of an index join. Joins the two indexes with the
+    # requested kind (default left), reindexes both frames to it, assigns the second
+    # frame's columns onto the first and returns the result with columns ordered as the
+    # concatenation of the two column indexes.
     join_index = a.index.join(b.index, how=how)
 
     a_re = a.reindex(join_index)
@@ -970,6 +1170,10 @@ def _join_by_hand(a, b, how="left"):
 
 
 def test_join_inner_multiindex_deterministic_order():
+    # [FUNCTION DOC]
+    # Verifies an inner join of a three-level indexed frame and a two-level one
+    # produces a deterministic index order (left levels followed by the extra right
+    # level) (GH 36910).
     # GH: 36910
     left = DataFrame(
         data={"e": 5},
@@ -990,6 +1194,10 @@ def test_join_inner_multiindex_deterministic_order():
     ("input_col", "output_cols"), [("b", ["a", "b"]), ("a", ["a_x", "a_y"])]
 )
 def test_join_cross(input_col, output_cols):
+    # [FUNCTION DOC]
+    # Parametrized over the right column name (new or overlapping) and expected column
+    # names. Verifies a cross join gives all pairs, applying the suffixes only when
+    # names overlap (GH 5401).
     # GH#5401
     left = DataFrame({"a": [1, 3]})
     right = DataFrame({input_col: [3, 4]})
@@ -999,6 +1207,10 @@ def test_join_cross(input_col, output_cols):
 
 
 def test_join_multiindex_one_level(join_type):
+    # [FUNCTION DOC]
+    # Takes the join_type fixture. Verifies joining a two-level indexed frame with a
+    # one-level multi-level indexed frame on the shared level; for right join the result
+    # index levels are ordered with the shared level first (GH 36909).
     # GH#36909
     left = DataFrame(
         data={"c": 3}, index=MultiIndex.from_tuples([(1, 2)], names=("a", "b"))
@@ -1031,6 +1243,10 @@ def test_join_multiindex_one_level(join_type):
     ],
 )
 def test_join_multiindex_not_alphabetical_categorical(categories, values):
+    # [FUNCTION DOC]
+    # Parametrized over category sets in non-alphabetical order (strings, ints, floats,
+    # timestamps). Verifies join on two-level indexes with a categorical level keeps
+    # category order and the matching rows (GH 38502).
     # GH#38502
     left = DataFrame(
         {
@@ -1075,6 +1291,11 @@ def test_join_multiindex_not_alphabetical_categorical(categories, values):
     ],
 )
 def test_join_empty(left_empty, how, exp):
+    # [FUNCTION DOC]
+    # Parametrized over (left empty or right empty, join kind, expected outcome kind).
+    # Verifies the result: the left rows with missing right data, the right rows, or an
+    # empty frame with the right column dtypes depending on the join kind (the index
+    # name dropped for cross joins; sorted for outer).
     left = DataFrame({"A": [2, 1], "B": [3, 4]}, dtype="int64").set_index("A")
     right = DataFrame({"A": [1], "C": [5]}, dtype="int64").set_index("A")
 
@@ -1102,6 +1323,11 @@ def test_join_empty(left_empty, how, exp):
 
 
 def test_join_empty_uncomparable_columns():
+    # [FUNCTION DOC]
+    # Verifies column union of empty frames with unorderable labels (strings and a
+    # tuple) (GH 57048).
+    # KNOWN ISSUE: despite its name the test does not call join: it
+    # adds the frames with the arithmetic plus operator, which aligns the columns.
     # GH 57048
     df1 = DataFrame()
     df2 = DataFrame(columns=["test"])
@@ -1130,6 +1356,10 @@ def test_join_empty_uncomparable_columns():
     ],
 )
 def test_join_multiindex_categorical_output_index_dtype(how, values):
+    # [FUNCTION DOC]
+    # Parametrized over join kind and the expected level values. Verifies a join on
+    # two categorical index levels keeps categorical dtype in the result index, with the
+    # right join ordered per the right frame (GH 50906).
     # GH#50906
     df1 = DataFrame(
         {
@@ -1161,6 +1391,10 @@ def test_join_multiindex_categorical_output_index_dtype(how, values):
 
 
 def test_join_multiindex_with_none_as_label():
+    # [FUNCTION DOC]
+    # Verifies that joining multi-level indexes where one level is unnamed and the
+    # other named in swapped positions aligns by name and keeps each left frame's
+    # index name order, in both directions (GH 58721).
     # GH 58721
     df1 = DataFrame(
         {"A": [1]},

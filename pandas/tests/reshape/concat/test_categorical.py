@@ -1,3 +1,9 @@
+# [MODULE DOC]
+# Tests for concatenating categorical data (columns, series and categorical
+# indexes) with the concatenate function: dtype preservation when categories
+# match, fallback to object or the underlying dtype otherwise, handling of
+# timezone/datetime values, missing columns and category ordering. Takes the
+# sort and using_infer_string fixtures from conftest.
 from datetime import datetime
 
 import numpy as np
@@ -16,7 +22,15 @@ import pandas._testing as tm
 
 
 class TestCategoricalConcat:
+    # [CLASS DOC]
+    # Test collection for categorical behavior of the concatenate function.
+    # Stateless.
     def test_categorical_concat(self, sort):
+        # [FUNCTION DOC]
+        # Concatenates a frame with a frame having an extra categorical column along
+        # rows with ignored index. Expected result keeps the categorical dtype for that
+        # column, filled with missing for the first frame's rows, and missing values for
+        # the column absent from the second frame. Parametrized by sort (GH 10177).
         # See GH 10177
         df1 = DataFrame(
             np.arange(18, dtype="int64").reshape(6, 3), columns=["a", "b", "c"]
@@ -54,6 +68,11 @@ class TestCategoricalConcat:
         tm.assert_frame_equal(res, exp)
 
     def test_categorical_concat_dtypes(self, using_infer_string):
+        # [FUNCTION DOC]
+        # Verifies the column dtypes after concatenating categorical, string and
+        # integer series side by side with keys: the dtype comparison pinpoints which
+        # column is object (or the string dtype in infer-string mode), integer and
+        # categorical (GH 8143).
         # GH8143
         index = ["cat", "obj", "num"]
         cat = Categorical(["a", "b", "c"])
@@ -74,6 +93,10 @@ class TestCategoricalConcat:
         tm.assert_series_equal(result, expected)
 
     def test_concat_categoricalindex(self):
+        # [FUNCTION DOC]
+        # Verifies side-by-side concatenation of series indexed by categorical indexes
+        # whose categories are not sorted yields a categorical union index preserving
+        # the category order (GH 16111).
         # GH 16111, categories that aren't lexsorted
         categories = [9, 0, 1, 2, 3]
 
@@ -96,6 +119,11 @@ class TestCategoricalConcat:
         tm.assert_frame_equal(result, exp)
 
     def test_categorical_concat_preserve(self):
+        # [FUNCTION DOC]
+        # Verifies series and frame concatenation: different categories fall back to
+        # object values, identical categories keep categorical dtype, and a frame with
+        # a categorical column concatenated with itself keeps the category set and
+        # order (GH 8641, GH 13524).
         # GH 8641  series concat not preserving category dtype
         # GH 13524 can concat different categories
         s = Series(list("abc"), dtype="category")
@@ -127,6 +155,11 @@ class TestCategoricalConcat:
         tm.assert_frame_equal(res, exp)
 
     def test_categorical_index_preserver(self):
+        # [FUNCTION DOC]
+        # Verifies concatenating frames indexed by a categorical column keeps the
+        # categorical index when categories are the same. With a frame whose categories
+        # differ (built under an expected Pandas4Warning about values not in the dtype),
+        # concatenation casts both indexes to object.
         a = Series(np.arange(6, dtype="int64"))
         b = Series(list("aabbca"))
 
@@ -158,6 +191,9 @@ class TestCategoricalConcat:
         tm.assert_frame_equal(result, expected)
 
     def test_concat_categorical_tz(self):
+        # [FUNCTION DOC]
+        # Verifies concatenating a tz-aware datetime series with a categorical series
+        # gives an object series of Timestamps and strings (GH 23816).
         # GH-23816
         a = Series(pd.date_range("2017-01-01", periods=2, tz="US/Pacific"))
         b = Series(["a", "b"], dtype="category")
@@ -173,6 +209,9 @@ class TestCategoricalConcat:
         tm.assert_series_equal(result, expected)
 
     def test_concat_categorical_datetime(self):
+        # [FUNCTION DOC]
+        # Verifies concatenating frames whose column is a categorical of single datetime
+        # values yields a datetime column (not categorical) (GH 39443).
         # GH-39443
         df1 = DataFrame(
             {"x": Series(datetime(2021, 1, 1), index=[0], dtype="category")}
@@ -189,6 +228,10 @@ class TestCategoricalConcat:
         tm.assert_equal(result, expected)
 
     def test_concat_categorical_unchanged(self):
+        # [FUNCTION DOC]
+        # Verifies that side-by-side concatenation of a categorical frame column and a
+        # numeric series with a misaligned index keeps the categorical dtype (with
+        # missing value) and the float dtype for the other column (GH 12007).
         # GH-12007
         # test fix for when concat on categorical and float
         # coerces dtype categorical -> float
@@ -204,6 +247,12 @@ class TestCategoricalConcat:
         tm.assert_equal(result, expected)
 
     def test_categorical_concat_gh7864(self):
+        # [FUNCTION DOC]
+        # Verifies that splitting a frame with a categorical column into two parts and
+        # concatenating them preserves the categories index.
+        # KNOWN ISSUE: the call that
+        # sets new categories on the column returns a new object that is discarded, so it
+        # has no effect on the frame and the stated ordering check is not exercised.
         # GH 7864
         # make sure ordering is preserved
         df = DataFrame({"id": [1, 2, 3, 4, 5, 6], "raw_grade": list("abbaae")})
@@ -220,6 +269,9 @@ class TestCategoricalConcat:
         tm.assert_index_equal(df["grade"].cat.categories, dfx["grade"].cat.categories)
 
     def test_categorical_index_upcast(self):
+        # [FUNCTION DOC]
+        # Verifies that concatenating frames or series whose categorical indexes have
+        # non-identical categories upcasts the index to object (GH 17629).
         # GH 17629
         # test upcasting to object when concatenating on categorical indexes
         # with non-identical categories
@@ -241,6 +293,10 @@ class TestCategoricalConcat:
         tm.assert_equal(res, exp)
 
     def test_categorical_missing_from_one_frame(self):
+        # [FUNCTION DOC]
+        # Verifies concatenating (with sort enabled) a frame lacking a categorical column
+        # with one that has it keeps the column categorical with missing codes for the
+        # first frame's rows (GH 25412).
         # GH 25412
         df1 = DataFrame({"f1": [1, 2, 3]})
         df2 = DataFrame({"f1": [2, 3, 1], "f2": Series([4, 4, 4]).astype("category")})
@@ -256,6 +312,10 @@ class TestCategoricalConcat:
         tm.assert_frame_equal(result, expected)
 
     def test_concat_categorical_same_categories_different_order(self):
+        # [FUNCTION DOC]
+        # Verifies concatenating frames indexed by unordered categorical indexes with the
+        # same categories in a different order gives a categorical index with the first
+        # index's category order.
         # https://github.com/pandas-dev/pandas/issues/24845
 
         c1 = pd.CategoricalIndex(["a", "a"], categories=["a", "b"], ordered=False)
