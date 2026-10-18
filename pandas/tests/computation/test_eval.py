@@ -1,3 +1,17 @@
+# [MODULE DOC]
+# Tests for pandas.eval and DataFrame.eval / DataFrame.query expression
+# evaluation across all engines (python, numexpr) and parsers (python, pandas).
+# Covers comparison, boolean, arithmetic and unary operators on scalars, Series and
+# DataFrames, scope handling (locals, globals, resolvers), assignment, attribute and
+# index access, function calls and math functions, datetime and string handling,
+# the PyTables expression visitor, and error conditions. Contains module level
+# fixtures (engine, parser, lhs, idx_func_dict) and helpers, and these test classes:
+# TestEval (core operators), TestTypeCasting, TestOperations / engine-specific
+# variants and others defined further down. At import time it tries to import the
+# optional numexpr library (ignoring failure) and builds fixtures parametrized
+# over the available engines; the numexpr engine is skipped when numexpr is
+# missing or disabled.
+
 from __future__ import annotations
 
 from functools import reduce
@@ -79,15 +93,26 @@ numexpr = import_optional_dependency("numexpr", errors="ignore")
     )
 )
 def engine(request):
+    # [FUNCTION DOC]
+    # HELPER: fixture parametrized over every registered engine name; the numexpr
+    # engine is skipped when numexpr is disabled or not installed. Returns the engine name.
     return request.param
 
 
 @pytest.fixture(params=expr.PARSERS)
 def parser(request):
+    # [FUNCTION DOC]
+    # HELPER: fixture parametrized over the registered parser names. Returns the parser name.
     return request.param
 
 
 def _eval_single_bin(lhs, cmp1, rhs, engine):
+    # [FUNCTION DOC]
+    # HELPER: reference evaluator for one binary operation. Inputs: lhs and rhs
+    # operands, cmp1 (operator symbol), engine (name). Looks up the Python function for
+    # the symbol and applies it to the operands. When the engine reports that it cannot
+    # handle negative numbers raised to fractional powers, a value error with that
+    # message is converted to NaN; any other error is re-raised. Returns the result.
     c = _binary_ops_dict[cmp1]
     if ENGINES[engine].has_neg_frac:
         try:
@@ -107,6 +132,15 @@ def _eval_single_bin(lhs, cmp1, rhs, engine):
     ids=["DataFrame", "Series", "SeriesNaN", "DataFrameNaN", "float"],
 )
 def lhs(request):
+    # [FUNCTION DOC]
+    # HELPER: fixture parametrized over five operand kinds (ids DataFrame, Series,
+    # SeriesNaN, DataFrameNaN, float). Uses a seeded random generator. Returns a random
+    # 10 by 5 DataFrame; a random Series of length five; a Series with missing values;
+    # a DataFrame with entries above 0.5 set to NaN; or a random scalar float. The names
+    # rhs and midhs are aliases of this fixture so tests can request independent
+    # operands of the same kinds.
+    # KNOWN ISSUE: a TODO above this fixture calls its use of a range of five integers
+    # a kludge (the parameter is an index selecting the operand kind).
     rng = np.random.default_rng(2)
     if request.param == 0:
         return DataFrame(rng.standard_normal((10, 5)))
@@ -130,6 +164,11 @@ midhs = lhs
 
 @pytest.fixture
 def idx_func_dict():
+    # [FUNCTION DOC]
+    # HELPER: fixture returning a dict mapping index kind names (i, f, s, dt, td, p)
+    # to builders that take a length and produce an integer index, float index,
+    # string index (labels from the letters starting at code 97), daily datetime
+    # index, daily timedelta index and daily period index.
     return {
         "i": lambda n: Index(np.arange(n), dtype=np.int64),
         "f": lambda n: Index(np.arange(n), dtype=np.float64),
@@ -141,6 +180,10 @@ def idx_func_dict():
 
 
 class TestEval:
+    # [CLASS DOC]
+    # Core tests of expression evaluation for operators with scalar, Series and
+    # DataFrame operands; each test is run for every engine and parser combination and
+    # compares pd.eval results to direct pandas/numpy evaluation.
     @pytest.mark.parametrize(
         "cmp1",
         ["!=", "==", "<=", ">=", "<", ">"],
@@ -149,6 +192,12 @@ class TestEval:
     @pytest.mark.parametrize("cmp2", [">", "<"], ids=["gt", "lt"])
     @pytest.mark.parametrize("binop", expr.BOOL_OPS_SYMS)
     def test_complex_cmp_ops(self, cmp1, cmp2, binop, lhs, rhs, engine, parser):
+        # [FUNCTION DOC]
+        # Parametrized over comparison operators, a second comparison and the boolean
+        # operators. For the python parser with and/or verifies a not-implemented error
+        # (BoolOp nodes). Otherwise evaluates two comparisons combined with the boolean
+        # operator and verifies equality with the result computed step by step using the
+        # reference evaluator.
         if parser == "python" and binop in ["and", "or"]:
             msg = "'BoolOp' nodes are not implemented"
             ex = f"(lhs {cmp1} rhs) {binop} (lhs {cmp2} rhs)"
@@ -166,6 +215,12 @@ class TestEval:
 
     @pytest.mark.parametrize("cmp_op", expr.CMP_OPS_SYMS)
     def test_simple_cmp_ops(self, cmp_op, lhs, rhs, engine, parser):
+        # [FUNCTION DOC]
+        # Parametrized over comparison operators (including in and not in). Converts operands
+        # to booleans by comparing with zero. For the python parser with in / not in
+        # verifies a not-implemented error. For in / not in with a non-list-like right operand
+        # verifies a type error; otherwise verifies the evaluated comparison equals the
+        # reference result.
         lhs = lhs < 0
         rhs = rhs < 0
 
@@ -200,6 +255,13 @@ class TestEval:
 
     @pytest.mark.parametrize("op", expr.CMP_OPS_SYMS)
     def test_compound_invert_op(self, op, lhs, rhs, request, engine, parser):
+        # [FUNCTION DOC]
+        # Parametrized over comparison operators; uses request. Evaluates the inversion of a
+        # comparison. For the python parser with in / not in expects a not-implemented
+        # error. Marks expected failure for float left operand, non-float right operand,
+        # in / not in, python engine with pandas parser. When the right operand is a scalar
+        # and the operator is in / not in verifies a type error; otherwise verifies the result
+        # equals the logical negation of the reference result (scalars are wrapped in arrays).
         if parser == "python" and op in ["in", "not in"]:
             msg = "'(In|NotIn)' nodes are not implemented"
             ex = f"~(lhs {op} rhs)"
@@ -253,6 +315,12 @@ class TestEval:
     @pytest.mark.parametrize("cmp1", ["<", ">"])
     @pytest.mark.parametrize("cmp2", ["<", ">"])
     def test_chained_cmp_op(self, cmp1, cmp2, lhs, midhs, rhs, engine, parser):
+        # [FUNCTION DOC]
+        # Parametrized over two comparison operators (less and greater). For the python
+        # parser verifies a not-implemented error for chained comparisons. Otherwise
+        # evaluates chained comparison forms (plain chain, chain with and, parenthesized
+        # with bitwise and) and verifies each equals the bitwise and of the two reference
+        # comparisons.
         mid = midhs
         if parser == "python":
             ex1 = f"lhs {cmp1} mid {cmp2} rhs"
@@ -279,6 +347,13 @@ class TestEval:
         "arith1", sorted(set(ARITH_OPS_SYMS).difference({"**", "//", "%"}))
     )
     def test_binary_arith_ops(self, arith1, lhs, rhs, engine, parser):
+        # [FUNCTION DOC]
+        # Parametrized over arithmetic operators except power, floor division and modulus.
+        # Verifies the evaluated binary expression equals the reference result, then a
+        # three-operand expression: the left result is aligned with the right operand and
+        # the evaluated result is compared with the numexpr evaluation (values only,
+        # approximately, GH37328) or direct evaluation for other engines. Returns early
+        # if alignment is impossible (value, type or attribute errors).
         ex = f"lhs {arith1} rhs"
         result = pd.eval(ex, engine=engine, parser=parser)
         expected = _eval_single_bin(lhs, arith1, rhs, engine)
@@ -311,6 +386,10 @@ class TestEval:
     # modulus, pow, and floor division require special casing
 
     def test_modulus(self, lhs, rhs, engine, parser):
+        # [FUNCTION DOC]
+        # Verifies evaluating a modulus expression equals direct computation, and then a
+        # second modulus applied to that result matches (numexpr evaluates the second step
+        # itself and compares values, converting scalar results to Python scalars).
         ex = r"lhs % rhs"
         result = pd.eval(ex, engine=engine, parser=parser)
         expected = lhs % rhs
@@ -329,6 +408,10 @@ class TestEval:
             tm.assert_almost_equal(result, expected)
 
     def test_floor_division(self, lhs, rhs, engine, parser):
+        # [FUNCTION DOC]
+        # Verifies floor division: for the python engine, or numexpr 2.13.0 or newer, the
+        # evaluated result equals direct floor division; otherwise evaluating raises a type
+        # error about unsupported operand types for floor division between variable nodes.
         ex = "lhs // rhs"
 
         if engine == "python" or (
@@ -352,6 +435,11 @@ class TestEval:
 
     @td.skip_if_windows
     def test_pow(self, lhs, rhs, engine, parser):
+        # [FUNCTION DOC]
+        # Skipped on Windows (odd failures on win32). Verifies power: the evaluated result
+        # equals the reference; when both operands are scalars and the reference is complex
+        # the result is NaN and the exact array comparison is expected to fail; otherwise also
+        # verifies a nested power expression against step-by-step reference results.
         # odd failure on win32 platform, so skip
         ex = "lhs ** rhs"
         expected = _eval_single_bin(lhs, "**", rhs, engine)
@@ -377,6 +465,9 @@ class TestEval:
             tm.assert_almost_equal(result, expected)
 
     def test_check_single_invert_op(self, lhs, engine, parser):
+        # [FUNCTION DOC]
+        # Verifies bitwise inversion of a variable converted to boolean (scalars wrapped
+        # in a one-element boolean array) equals the evaluated inversion.
         # simple
         try:
             elb = lhs.astype(bool)
@@ -387,6 +478,12 @@ class TestEval:
         tm.assert_almost_equal(expected, result)
 
     def test_frame_invert(self, engine, parser):
+        # [FUNCTION DOC]
+        # Verifies inversion of DataFrames: float always raises (not-implemented error for
+        # numexpr about the opcode, type error about the ufunc otherwise); integer raises with
+        # numexpr older than 2.13.0, works otherwise; boolean works; object columns raise
+        # (value error for numexpr "unknown type object", type error for bad operand
+        # otherwise). The frame variable is passed via the local namespace of the test.
         expr = "~lhs"
 
         # ~ ##
@@ -432,6 +529,12 @@ class TestEval:
                 pd.eval(expr, engine=engine, parser=parser)
 
     def test_series_invert(self, engine, parser):
+        # [FUNCTION DOC]
+        # Same inversion checks as the frame version but for Series: float raises, integer
+        # raises with old numexpr, boolean works, object raises.
+        # KNOWN ISSUE: in the float case the evaluation result is assigned to a variable
+        # that is never used, and the trailing comments listing types (float, int, bool)
+        # are leftovers without code.
         # ~ ####
         expr = "~lhs"
 
@@ -479,6 +582,10 @@ class TestEval:
                 pd.eval(expr, engine=engine, parser=parser)
 
     def test_frame_negate(self, engine, parser):
+        # [FUNCTION DOC]
+        # Verifies unary negation on DataFrames: float and int work and equal negating the
+        # frame; boolean raises a not-implemented error for numexpr and equals negation for
+        # other engines.
         expr = "-lhs"
 
         # float
@@ -505,6 +612,8 @@ class TestEval:
             tm.assert_frame_equal(expect, result)
 
     def test_series_negate(self, engine, parser):
+        # [FUNCTION DOC]
+        # Verifies unary negation on Series with the same three cases as for DataFrames.
         expr = "-lhs"
 
         # float
@@ -542,6 +651,11 @@ class TestEval:
         ],
     )
     def test_frame_pos(self, lhs, engine, parser):
+        # [FUNCTION DOC]
+        # Parametrized over float, int (2-d) arrays and a boolean array (the boolean array is
+        # one dimensional). Wraps in a DataFrame and verifies unary plus returns an equal frame.
+        # KNOWN ISSUE: the third parameter is a one-dimensional boolean array, so the frame
+        # case is built from 1-d data unlike the other two parameters (still works).
         lhs = DataFrame(lhs)
         expr = "+lhs"
         expect = lhs
@@ -561,6 +675,9 @@ class TestEval:
         ],
     )
     def test_series_pos(self, lhs, engine, parser):
+        # [FUNCTION DOC]
+        # Parametrized over float, int and boolean arrays. Wraps in a Series and verifies
+        # unary plus returns an equal Series.
         lhs = Series(lhs)
         expr = "+lhs"
         expect = lhs
@@ -569,6 +686,12 @@ class TestEval:
         tm.assert_series_equal(expect, result)
 
     def test_scalar_unary(self, engine, parser):
+        # [FUNCTION DOC]
+        # Verifies unary operators on literals: bitwise invert of a float raises a type error;
+        # minus and plus on floats, ints and booleans evaluate as in Python; invert on
+        # booleans evaluates as in Python and emits a deprecation warning about bitwise
+        # inversion on certain Python versions (3.14 with the numexpr/pandas combination,
+        # 3.12 for the others), without checking stack level.
         msg = "bad operand type for unary ~: 'float'"
         warn = None
         if (PY314 and engine == "numexpr" and parser == "pandas") or (
@@ -597,6 +720,11 @@ class TestEval:
         assert pd.eval("+False", parser=parser, engine=engine) == +False
 
     def test_unary_in_array(self):
+        # [FUNCTION DOC]
+        # Regression test (GH 11235). Verifies a list literal containing unary-operated
+        # numbers and booleans evaluates to the same object array as in Python.
+        # KNOWN ISSUE: a TODO notes the result was a list with numexpr 2.7.3 in CI and could
+        # not be reproduced locally.
         # GH 11235
         # TODO: 2022-01-29: result return list with numexpr 2.7.3 in CI
         # but cannot reproduce locally
@@ -623,12 +751,20 @@ class TestEval:
 
     @pytest.mark.parametrize("expr", ["x < -0.1", "-5 > x"])
     def test_float_comparison_bin_op(self, float_numpy_dtype, expr):
+        # [FUNCTION DOC]
+        # Regression test (GH 16363). Parametrized over expressions comparing a column to a
+        # negative constant and over float dtype fixture. Verifies DataFrame.eval of
+        # the comparison on a one-row column of zero gives a result equal to false.
         # GH 16363
         df = DataFrame({"x": np.array([0], dtype=float_numpy_dtype)})
         res = df.eval(expr)
         assert res.values == np.array([False])
 
     def test_unary_in_function(self):
+        # [FUNCTION DOC]
+        # Regression test (GH 46471). Verifies DataFrame.eval calls methods on a column with
+        # unary-minus arguments (fillna and shift with fill value) and the results equal the
+        # direct calls; names are only compared when numexpr is not in use.
         # GH 46471
         df = DataFrame({"x": [0, 1, np.nan]})
 
@@ -655,6 +791,10 @@ class TestEval:
         ),
     )
     def test_disallow_scalar_bool_ops(self, ex, engine, parser):
+        # [FUNCTION DOC]
+        # Parametrized over expressions using boolean operators between scalars or with
+        # arrays and frames. Verifies evaluation raises a not-implemented error (scalar-only
+        # boolean operators or BoolOp nodes unsupported).
         x, a, b = np.random.default_rng(2).standard_normal(3), 1, 2  # noqa: F841
         df = DataFrame(np.random.default_rng(2).standard_normal((3, 2)))  # noqa: F841
 
@@ -663,6 +803,10 @@ class TestEval:
             pd.eval(ex, engine=engine, parser=parser)
 
     def test_identical(self, engine, parser):
+        # [FUNCTION DOC]
+        # Regression test (gh-10546). Verifies evaluating a bare variable name returns the
+        # variable unchanged: scalars stay scalars (integer, float, boolean) and one-element
+        # numpy arrays keep their values and shape.
         # see gh-10546
         x = 1
         result = pd.eval("x", engine=engine, parser=parser)
@@ -696,6 +840,9 @@ class TestEval:
         assert result.shape == (1,)
 
     def test_line_continuation(self, engine, parser):
+        # [FUNCTION DOC]
+        # Regression test (GH 11149). Verifies an expression string with a backslash
+        # continuation across lines evaluates to 12.
         # GH 11149
         exp = """1 + 2 * \
         5 - 1 + 2 """
@@ -703,6 +850,11 @@ class TestEval:
         assert result == 12
 
     def test_float_truncation(self, engine, parser):
+        # [FUNCTION DOC]
+        # Regression test (GH 14241). Verifies a large float literal keeps its precision when
+        # evaluated, and that DataFrame.query comparisons with formatted four-decimal
+        # cutoffs near one billion select the expected rows (less-than gives none,
+        # greater-than gives rows 1 and 2, equality gives row 1).
         # GH 14241
         exp = "1000000000.006"
         result = pd.eval(exp, engine=engine, parser=parser)
@@ -725,6 +877,10 @@ class TestEval:
         tm.assert_frame_equal(expected, result)
 
     def test_disallow_python_keywords(self):
+        # [FUNCTION DOC]
+        # Regression test (GH 18221). Verifies querying with a Python keyword used as a
+        # column name or index name raises a syntax error ("Python keyword not valid
+        # identifier in numexpr query").
         # GH 18221
         df = DataFrame([[0, 0, 0]], columns=["foo", "bar", "class"])
         msg = "Python keyword not valid identifier in numexpr query"
@@ -737,6 +893,10 @@ class TestEval:
             df.query("lambda == 0")
 
     def test_true_false_logic(self):
+        # [FUNCTION DOC]
+        # Regression test (GH 25823). Verifies logical negation of boolean literals
+        # evaluates with integer-like results (negative two, negative one, and zero for
+        # a combination), tolerating a deprecation warning on Python 3.12 or newer.
         # GH 25823
         # This behavior is deprecated in Python 3.12
         with tm.maybe_produces_warning(
@@ -747,18 +907,27 @@ class TestEval:
             assert pd.eval("True and not True") == 0
 
     def test_and_logic_string_match(self):
+        # [FUNCTION DOC]
+        # Regression test (GH 25823). Verifies evaluating the string form of a string-match
+        # result (a boolean) is true, including with a logical and of two such results.
         # GH 25823
         event = Series({"a": "hello"})
         assert pd.eval(f"{event.str.match('hello').a}")
         assert pd.eval(f"{event.str.match('hello').a and event.str.match('hello').a}")
 
     def test_eval_keep_name(self, engine, parser):
+        # [FUNCTION DOC]
+        # Verifies DataFrame.eval of a sum of a column with itself returns a Series that
+        # keeps the column name.
         df = Series([2, 15, 28], name="a").to_frame()
         res = df.eval("a + a", engine=engine, parser=parser)
         expected = Series([4, 30, 56], name="a")
         tm.assert_series_equal(expected, res)
 
     def test_eval_unmatching_names(self, engine, parser):
+        # [FUNCTION DOC]
+        # Verifies evaluating a named Series plus zero from the local scope returns
+        # an equal Series (name kept).
         variable_name = Series([42], name="series_name")
         res = pd.eval("variable_name + 0", engine=engine, parser=parser)
         tm.assert_series_equal(variable_name, res)
@@ -769,6 +938,9 @@ class TestEval:
 
 
 class TestTypeCasting:
+    # [CLASS DOC]
+    # Tests that the type of results in expression evaluation is consistent with Python
+    # for complex and float frames (gh-12388).
     @pytest.mark.parametrize("op", ["+", "-", "*", "**", "/"])
     # maybe someday... numexpr has too many upcasting rules now
     # chain(*(np.core.sctypes[x] for x in ['uint', 'int', 'float']))
@@ -776,6 +948,16 @@ class TestTypeCasting:
     def test_binop_typecasting(
         self, engine, parser, op, complex_or_float_dtype, left_right, request
     ):
+        # [FUNCTION DOC]
+        # Regression test (GH#21374). Parametrized over operators (add, subtract, multiply,
+        # power, divide), operand order (frame and the constant three on either side), engine,
+        # parser and the complex_or_float_dtype fixture. Evaluates the expression on a random
+        # frame of that dtype, marks expected failure for complex64 with numexpr (upcasting
+        # bug), and verifies the frame and result dtype equal the requested dtype and the
+        # result equals the direct Python evaluation of the same expression.
+        # KNOWN ISSUE: the expected-failure marker is applied only after the evaluation call
+        # has already run, so an error raised by the evaluation itself happens before the
+        # marker is registered.
         # GH#21374
         dtype = complex_or_float_dtype
         df = DataFrame(np.random.default_rng(2).standard_normal((5, 3)), dtype=dtype)
@@ -799,6 +981,11 @@ class TestTypeCasting:
 
 
 def should_warn(*args):
+    # [FUNCTION DOC]
+    # HELPER: decides whether aligning the given indexes should raise a runtime
+    # warning. Input: any number of index objects. Returns true if none of the indexes is
+    # monotonic increasing and exactly one (by exclusive-or reduction) has a datetime64
+    # dtype; false otherwise.
     not_mono = not any(map(operator.attrgetter("is_monotonic_increasing"), args))
     only_one_dt = reduce(
         operator.xor, (issubclass(x.dtype.type, np.datetime64) for x in args)
@@ -807,10 +994,17 @@ def should_warn(*args):
 
 
 class TestAlignment:
+    # [CLASS DOC]
+    # Tests of alignment of DataFrame and Series operands inside expressions across
+    # index types. Class attributes index_types and lhs_index_types list index kind
+    # names (integer, string, datetime) used with the idx_func_dict fixture.
     index_types = ["i", "s", "dt"]
     lhs_index_types = [*index_types, "s"]  # 'p'
 
     def test_align_nested_unary_op(self, engine, parser):
+        # [FUNCTION DOC]
+        # Verifies a frame multiplied by an inverted integer literal aligns/evaluates
+        # like the direct expression.
         s = "df * ~2"
         df = DataFrame(np.random.default_rng(2).standard_normal((5, 3)))
         res = pd.eval(s, engine=engine, parser=parser)
@@ -823,6 +1017,11 @@ class TestAlignment:
     def test_basic_frame_alignment(
         self, engine, parser, lr_idx_type, rr_idx_type, c_idx_type, idx_func_dict
     ):
+        # [FUNCTION DOC]
+        # Parametrized over left row index kind, right row index kind and the column index
+        # kind. Evaluates the sum of two frames (10 by 10 and 20 by 10) with different
+        # row indexes; expects a runtime warning only when should_warn says so; verifies the
+        # result equals the direct sum.
         df = DataFrame(
             np.random.default_rng(2).standard_normal((10, 10)),
             index=idx_func_dict[lr_idx_type](10),
@@ -846,6 +1045,9 @@ class TestAlignment:
     def test_frame_comparison(
         self, engine, parser, r_idx_type, c_idx_type, idx_func_dict
     ):
+        # [FUNCTION DOC]
+        # Parametrized over row and column index kinds. Verifies comparison of a frame with
+        # a scalar, and with a second frame of identical labels, equals the direct comparison.
         df = DataFrame(
             np.random.default_rng(2).standard_normal((10, 10)),
             index=idx_func_dict[r_idx_type](10),
@@ -870,6 +1072,10 @@ class TestAlignment:
     def test_medium_complex_frame_alignment(
         self, engine, parser, r1, c1, r2, c2, idx_func_dict
     ):
+        # [FUNCTION DOC]
+        # Parametrized over index kinds of three frames (3 by 2, 4 by 2 and 5 by 2). Evaluates
+        # the sum of the three frames (aligned) and verifies it equals the direct sum;
+        # expects a runtime warning if should_warn says so.
         df = DataFrame(
             np.random.default_rng(2).standard_normal((3, 2)),
             index=idx_func_dict[r1](3),
@@ -899,6 +1105,11 @@ class TestAlignment:
     def test_basic_frame_series_alignment(
         self, engine, parser, index_name, r_idx_type, c_idx_type, idx_func_dict
     ):
+        # [FUNCTION DOC]
+        # Parametrized over which axis labels the series follows (index or columns), column
+        # and row index kinds. Evaluates frame plus a shorter series taken from that axis
+        # and verifies it equals the direct sum (the add method for datetime with
+        # numexpr); warning expectation from should_warn.
         df = DataFrame(
             np.random.default_rng(2).standard_normal((10, 10)),
             index=idx_func_dict[r_idx_type](10),
@@ -928,6 +1139,12 @@ class TestAlignment:
     def test_basic_series_frame_alignment(
         self, request, engine, parser, index_name, r_idx_type, c_idx_type, idx_func_dict
     ):
+        # [FUNCTION DOC]
+        # Parametrized over axis name and index kind pairs. Marks a known flaky combination
+        # (numexpr, integer row index, string columns, index axis) as non-strict expected
+        # failure. Evaluates series plus frame and verifies equality with the direct
+        # sum (the add method for datetime with numexpr); warning expectation from
+        # should_warn.
         if (
             engine == "numexpr"
             and parser in ("pandas", "python")
@@ -968,6 +1185,11 @@ class TestAlignment:
     def test_series_frame_commutativity(
         self, engine, parser, index_name, op, r_idx_type, c_idx_type, idx_func_dict
     ):
+        # [FUNCTION DOC]
+        # Parametrized over operator (plus, times), axis name and index kinds. Evaluates the
+        # series-frame and frame-series forms and, for numexpr with no datetime indexes,
+        # verifies both evaluations are equal; other combinations only check that
+        # the evaluation runs and warns as expected.
         df = DataFrame(
             np.random.default_rng(2).standard_normal((10, 10)),
             index=idx_func_dict[r_idx_type](10),
@@ -999,6 +1221,11 @@ class TestAlignment:
     def test_complex_series_frame_alignment(
         self, engine, parser, r1, c1, r2, c2, idx_func_dict
     ):
+        # [FUNCTION DOC]
+        # Parametrized over index kinds of two frames. Evaluates the sum of a larger
+        # frame, a series taken from its columns and a smaller frame, and verifies the
+        # shape and values equal the expected step by step sum (using the add method for
+        # datetime indexes with numexpr); warning expectation from should_warn.
         n = 3
         m1 = 5
         m2 = 2 * m1
@@ -1042,6 +1269,13 @@ class TestAlignment:
     def test_performance_warning_for_poor_alignment(
         self, performance_warning, engine, parser
     ):
+        # [FUNCTION DOC]
+        # Uses the performance_warning fixture. Verifies a performance warning
+        # ("Alignment difference on axis 1 is larger than an order of magnitude") is emitted
+        # for a frame plus a series with a large length difference for engines other than
+        # python (numexpr when the fixture permits), is not emitted for modest size
+        # differences, and when emitted exactly once its text names term df and the
+        # log10 of the size difference.
         df = DataFrame(np.random.default_rng(2).standard_normal((1000, 10)))
         s = Series(np.random.default_rng(2).standard_normal(10000))
         if engine == "numexpr" and performance_warning:
@@ -1092,11 +1326,24 @@ class TestAlignment:
 
 
 class TestOperations:
+    # [CLASS DOC]
+    # Tests of more complex operations: scalar arithmetic and boolean operators,
+    # assignment inside expressions, multi-line expressions, subscripts, attribute access
+    # and errors. A helper method evaluates with an adjusted stack level.
     def eval(self, *args, **kwargs):
+        # [FUNCTION DOC]
+        # HELPER: calls pd.eval with all given arguments, increasing the stack level keyword
+        # (default zero) by one so the expression sees the caller's local variables rather
+        # than this wrapper's. Returns the result of pd.eval.
         kwargs["level"] = kwargs.pop("level", 0) + 1
         return pd.eval(*args, **kwargs)
 
     def test_simple_arith_ops(self, engine, parser):
+        # [FUNCTION DOC]
+        # Evaluates, for every arithmetic and comparison operator (excluding floor
+        # division, and in / not in for the python parser), expressions of two literals, a
+        # variable and a literal, and a literal with a parenthesized sum, and verifies each
+        # equals the reference evaluation; in / not in with integers must raise a type error.
         exclude_arith = []
         if parser == "python":
             exclude_arith = ["in", "not in"]
@@ -1135,6 +1382,12 @@ class TestOperations:
     @pytest.mark.parametrize("lhs", [True, False])
     @pytest.mark.parametrize("op", expr.BOOL_OPS_SYMS)
     def test_simple_bool_ops(self, rhs, lhs, op):
+        # [FUNCTION DOC]
+        # Parametrized over boolean operands and boolean operators. Evaluates the operation
+        # on two boolean literals and verifies the result equals Python evaluation.
+        # KNOWN ISSUE: the test refers to the name parser without receiving it as a test
+        # argument; that name resolves to the module-level fixture function, so the check for
+        # the python parser is never true and the not-implemented branch is dead.
         ex = f"{lhs} {op} {rhs}"
 
         if parser == "python" and op in ["and", "or"]:
@@ -1151,6 +1404,11 @@ class TestOperations:
     @pytest.mark.parametrize("lhs", [True, False])
     @pytest.mark.parametrize("op", expr.BOOL_OPS_SYMS)
     def test_bool_ops_with_constants(self, rhs, lhs, op):
+        # [FUNCTION DOC]
+        # Same scenario and implementation as the previous test (boolean operands and
+        # operators evaluated as constants).
+        # KNOWN ISSUE: exact duplicate of the previous test, including the dead python-parser
+        # branch that refers to the module-level fixture function named parser.
         ex = f"{lhs} {op} {rhs}"
 
         if parser == "python" and op in ["and", "or"]:
@@ -1164,6 +1422,9 @@ class TestOperations:
         assert res == exp
 
     def test_4d_ndarray_fails(self):
+        # [FUNCTION DOC]
+        # Verifies evaluating an expression with a four-dimensional array raises a
+        # not-implemented error (N-dimensional objects with N greater than 2 are not supported).
         x = np.random.default_rng(2).standard_normal((3, 4, 5, 6))
         y = Series(np.random.default_rng(2).standard_normal(10))
         msg = "N-dimensional objects, where N > 2, are not supported with eval"
@@ -1171,26 +1432,38 @@ class TestOperations:
             self.eval("x + y", local_dict={"x": x, "y": y})
 
     def test_constant(self):
+        # [FUNCTION DOC]
+        # Verifies a constant expression evaluates to the constant.
         x = self.eval("1")
         assert x == 1
 
     def test_single_variable(self):
+        # [FUNCTION DOC]
+        # Verifies evaluating the name of a DataFrame given in local_dict returns an equal frame.
         df = DataFrame(np.random.default_rng(2).standard_normal((10, 2)))
         df2 = self.eval("df", local_dict={"df": df})
         tm.assert_frame_equal(df, df2)
 
     def test_failing_subscript_with_name_error(self):
+        # [FUNCTION DOC]
+        # Verifies a subscript referencing an undefined name raises a name error.
         df = DataFrame(np.random.default_rng(2).standard_normal((5, 3)))  # noqa: F841
         with pytest.raises(NameError, match="name 'x' is not defined"):
             self.eval("df[x > 2] > 2")
 
     def test_lhs_expression_subscript(self):
+        # [FUNCTION DOC]
+        # Verifies subscripting a parenthesized expression with a boolean frame equals the
+        # direct pandas expression.
         df = DataFrame(np.random.default_rng(2).standard_normal((5, 3)))
         result = self.eval("(df + 1)[df > 2]", local_dict={"df": df})
         expected = (df + 1)[df > 2]
         tm.assert_frame_equal(result, expected)
 
     def test_attr_expression(self):
+        # [FUNCTION DOC]
+        # Verifies attribute-style column access in expressions (comparison, sum, sum with
+        # masked column) equals the direct Series operations.
         df = DataFrame(
             np.random.default_rng(2).standard_normal((5, 3)), columns=list("abc")
         )
@@ -1206,6 +1479,9 @@ class TestOperations:
             tm.assert_series_equal(expec, self.eval(e, local_dict={"df": df}))
 
     def test_assignment_fails(self):
+        # [FUNCTION DOC]
+        # Verifies assigning a whole frame to a name without a target object raises a value
+        # error ("cannot assign without a target object").
         df = DataFrame(
             np.random.default_rng(2).standard_normal((5, 3)), columns=list("abc")
         )
@@ -1216,6 +1492,9 @@ class TestOperations:
             self.eval(expr1, local_dict={"df": df, "df2": df2})
 
     def test_assignment_column_multiple_raise(self):
+        # [FUNCTION DOC]
+        # Verifies DataFrame.eval with two assignment targets separated by a space raises a
+        # syntax error ("invalid syntax").
         df = DataFrame(
             np.random.default_rng(2).standard_normal((5, 2)), columns=list("ab")
         )
@@ -1224,6 +1503,9 @@ class TestOperations:
             df.eval("d c = a + b")
 
     def test_assignment_column_invalid_assign(self):
+        # [FUNCTION DOC]
+        # Verifies a tuple on the left side of an assignment raises a syntax error ("left hand
+        # side of an assignment must be a single name").
         df = DataFrame(
             np.random.default_rng(2).standard_normal((5, 2)), columns=list("ab")
         )
@@ -1233,6 +1515,9 @@ class TestOperations:
             df.eval("d,c = a + b")
 
     def test_assignment_column_invalid_assign_function_call(self):
+        # [FUNCTION DOC]
+        # Verifies assigning to a function call raises a syntax error ("cannot assign to
+        # function call").
         df = DataFrame(
             np.random.default_rng(2).standard_normal((5, 2)), columns=list("ab")
         )
@@ -1241,6 +1526,8 @@ class TestOperations:
             df.eval('Timestamp("20131001") = a + b')
 
     def test_assignment_single_assign_existing(self):
+        # [FUNCTION DOC]
+        # Verifies in-place assignment to an existing column updates it to the computed sum.
         df = DataFrame(
             np.random.default_rng(2).standard_normal((5, 2)), columns=list("ab")
         )
@@ -1251,6 +1538,8 @@ class TestOperations:
         tm.assert_frame_equal(df, expected)
 
     def test_assignment_single_assign_new(self):
+        # [FUNCTION DOC]
+        # Verifies in-place assignment creates a new column holding the computed sum.
         df = DataFrame(
             np.random.default_rng(2).standard_normal((5, 2)), columns=list("ab")
         )
@@ -1261,6 +1550,9 @@ class TestOperations:
         tm.assert_frame_equal(df, expected)
 
     def test_assignment_single_assign_local_overlap(self):
+        # [FUNCTION DOC]
+        # Verifies a frame column takes precedence over a local variable with the same name
+        # in an in-place assignment.
         df = DataFrame(
             np.random.default_rng(2).standard_normal((5, 2)), columns=list("ab")
         )
@@ -1273,6 +1565,10 @@ class TestOperations:
         tm.assert_frame_equal(df, expected)
 
     def test_assignment_single_assign_name(self):
+        # [FUNCTION DOC]
+        # Verifies in-place assignment of a column from an expression using itself gives
+        # the sum of the old column and another, and the unnamed result matches
+        # irrespective of name.
         df = DataFrame(
             np.random.default_rng(2).standard_normal((5, 2)), columns=list("ab")
         )
@@ -1285,6 +1581,9 @@ class TestOperations:
         assert result.name is None
 
     def test_assignment_multiple_raises(self):
+        # [FUNCTION DOC]
+        # Verifies chained assignment (two targets) raises a syntax error ("can only assign a
+        # single expression") after a successful single assignment.
         df = DataFrame(
             np.random.default_rng(2).standard_normal((5, 2)), columns=list("ab")
         )
@@ -1295,6 +1594,9 @@ class TestOperations:
             df.eval("c = a = b")
 
     def test_assignment_explicit(self):
+        # [FUNCTION DOC]
+        # Verifies pd.eval with an explicit target frame and in-place assignment adds the
+        # computed column to the target.
         df = DataFrame(
             np.random.default_rng(2).standard_normal((5, 2)), columns=list("ab")
         )
@@ -1305,6 +1607,9 @@ class TestOperations:
         tm.assert_frame_equal(df, expected)
 
     def test_column_in(self, engine):
+        # [FUNCTION DOC]
+        # Regression test (GH 11235). Verifies DataFrame.eval with the in operator over a list
+        # of values on a column gives a boolean Series named like the column.
         # GH 11235
         df = DataFrame({"a": [11], "b": [-32]})
         result = df.eval("a in [11, -32]", engine=engine)
@@ -1313,6 +1618,13 @@ class TestOperations:
 
     @pytest.mark.xfail(reason="Unknown: Omitted test_ in name prior.")
     def test_assignment_not_inplace(self):
+        # [FUNCTION DOC]
+        # Regression test (gh-9297). Expected to fail. Verifies a non in-place assignment
+        # returns a result and leaves the original frame unchanged.
+        # KNOWN ISSUE: the test is marked as an expected failure (reason: it once lacked the
+        # test prefix in its name). Its final assertion compares the original frame to a
+        # frame that includes the new column, although a not in-place evaluation must leave
+        # the original frame without that column, so the assertion cannot hold.
         # see gh-9297
         df = DataFrame(
             np.random.default_rng(2).standard_normal((5, 2)), columns=list("ab")
@@ -1326,6 +1638,12 @@ class TestOperations:
         tm.assert_frame_equal(df, expected)
 
     def test_multi_line_expression(self):
+        # [FUNCTION DOC]
+        # Regression test (GH 11149). Verifies DataFrame.eval of a multi-line string of
+        # assignments in place adds the columns and returns nothing, also when later lines
+        # use earlier results or reassign a column; and that a multi-line expression that is
+        # not all assignments raises a value error ("Multi-line expressions are only valid if
+        # all expressions contain").
         # GH 11149
         df = DataFrame({"a": [1, 2, 3], "b": [4, 5, 6]})
         expected = df.copy()
@@ -1363,6 +1681,9 @@ class TestOperations:
             )
 
     def test_multi_line_expression_not_inplace(self):
+        # [FUNCTION DOC]
+        # Regression test (GH 11149). Verifies multi-line assignments without in-place
+        # return a new frame with the new and updated columns.
         # GH 11149
         df = DataFrame({"a": [1, 2, 3], "b": [4, 5, 6]})
         expected = df.copy()
@@ -1388,6 +1709,10 @@ class TestOperations:
         tm.assert_frame_equal(expected, df)
 
     def test_multi_line_expression_local_variable(self):
+        # [FUNCTION DOC]
+        # Regression test (GH 15342). Verifies a multi-line in-place evaluation can
+        # reference a local Python variable with the at-sign prefix: the new columns equal
+        # the products and sums with the local value, and the call returns nothing.
         # GH 15342
         df = DataFrame({"a": [1, 2, 3], "b": [4, 5, 6]})
         expected = df.copy()
@@ -1406,10 +1731,17 @@ class TestOperations:
         assert answer is None
 
     def test_multi_line_expression_callable_local_variable(self):
+        # [FUNCTION DOC]
+        # Regression test (26426). Verifies a multi-line in-place evaluation can call a local
+        # function referenced with the at-sign prefix and positional arguments; results equal
+        # the direct computation, and the call returns nothing.
         # 26426
         df = DataFrame({"a": [1, 2, 3], "b": [4, 5, 6]})
 
         def local_func(a, b):
+            # [FUNCTION DOC]
+            # HELPER: local function used by the enclosing test. Inputs: a and b. Returns b
+            # (ignores a).
             return b
 
         expected = df.copy()
@@ -1426,10 +1758,16 @@ class TestOperations:
         assert answer is None
 
     def test_multi_line_expression_callable_local_variable_with_kwargs(self):
+        # [FUNCTION DOC]
+        # Regression test (26426). Same as the previous test but the local function is
+        # called with keyword arguments inside the expression.
         # 26426
         df = DataFrame({"a": [1, 2, 3], "b": [4, 5, 6]})
 
         def local_func(a, b):
+            # [FUNCTION DOC]
+            # HELPER: local function used by the enclosing test. Inputs: a and b. Returns b
+            # (ignores a).
             return b
 
         expected = df.copy()
@@ -1446,6 +1784,9 @@ class TestOperations:
         assert answer is None
 
     def test_assignment_in_query(self):
+        # [FUNCTION DOC]
+        # Regression test (GH 8664). Verifies DataFrame.query with an assignment raises a
+        # value error ("cannot assign without a target object") and leaves the frame unchanged.
         # GH 8664
         df = DataFrame({"a": [1, 2, 3], "b": [4, 5, 6]})
         df_orig = df.copy()
@@ -1455,6 +1796,10 @@ class TestOperations:
         tm.assert_frame_equal(df, df_orig)
 
     def test_query_inplace(self):
+        # [FUNCTION DOC]
+        # Regression test (gh-11149). Verifies query with the in-place flag filters the
+        # frame in place, and that evaluating an assignment with a dict target and in-place
+        # flag adds the key to the dict.
         # see gh-11149
         df = DataFrame({"a": [1, 2, 3], "b": [4, 5, 6]})
         expected = df.copy()
@@ -1470,6 +1815,11 @@ class TestOperations:
 
     @pytest.mark.parametrize("invalid_target", [1, "cat", [1, 2], np.array([]), (1, 3)])
     def test_cannot_item_assign(self, invalid_target):
+        # [FUNCTION DOC]
+        # Parametrized over invalid targets (integer, string, list, empty array, tuple).
+        # Verifies in-place evaluation of an assignment with such a target raises a value
+        # error ("Cannot assign expression output to target"), and so does the not in-place form
+        # for targets that have a copy method.
         msg = "Cannot assign expression output to target"
         expression = "a = 1 + 2"
 
@@ -1482,6 +1832,10 @@ class TestOperations:
 
     @pytest.mark.parametrize("invalid_target", [1, "cat", (1, 3)])
     def test_cannot_copy_item(self, invalid_target):
+        # [FUNCTION DOC]
+        # Parametrized over targets without copy support (integer, string, tuple). Verifies
+        # a not in-place assignment evaluation raises a value error ("Cannot return a copy of
+        # the target").
         msg = "Cannot return a copy of the target"
         expression = "a = 1 + 2"
 
@@ -1490,6 +1844,10 @@ class TestOperations:
 
     @pytest.mark.parametrize("target", [1, "cat", [1, 2], np.array([]), (1, 3), {1: 2}])
     def test_inplace_no_assignment(self, target):
+        # [FUNCTION DOC]
+        # Parametrized over various targets. Verifies evaluating an expression with no
+        # assignment returns the value (3) when not in-place, and raises a value error
+        # ("Cannot operate inplace if there is no assignment") when in-place.
         expression = "1 + 2"
 
         assert self.eval(expression, target=target, inplace=False) == 3
@@ -1499,6 +1857,9 @@ class TestOperations:
             self.eval(expression, target=target, inplace=True)
 
     def test_basic_period_index_boolean_expression(self):
+        # [FUNCTION DOC]
+        # Verifies comparison of a frame with period-typed columns to a scalar via eval
+        # equals the direct comparison.
         df = DataFrame(
             np.random.default_rng(2).standard_normal((2, 2)),
             columns=period_range("2020-01-01", freq="D", periods=2),
@@ -1511,6 +1872,9 @@ class TestOperations:
         tm.assert_frame_equal(x, e)
 
     def test_basic_period_index_subscript_expression(self):
+        # [FUNCTION DOC]
+        # Verifies subscripting a period-column frame by a comparison with a sum of
+        # constants via eval equals the direct expression.
         df = DataFrame(
             np.random.default_rng(2).standard_normal((2, 2)),
             columns=period_range("2020-01-01", freq="D", periods=2),
@@ -1520,6 +1884,9 @@ class TestOperations:
         tm.assert_frame_equal(r, e)
 
     def test_nested_period_index_subscript_expression(self):
+        # [FUNCTION DOC]
+        # Verifies a nested subscript expression plus scaled frame on a period-column frame
+        # equals the direct expression.
         df = DataFrame(
             np.random.default_rng(2).standard_normal((2, 2)),
             columns=period_range("2020-01-01", freq="D", periods=2),
@@ -1529,6 +1896,9 @@ class TestOperations:
         tm.assert_frame_equal(r, e)
 
     def test_date_boolean(self, engine, parser):
+        # [FUNCTION DOC]
+        # Verifies comparing a datetime column to an integer date literal in an expression
+        # equals comparing it to the corresponding string date.
         df = DataFrame(np.random.default_rng(2).standard_normal((5, 3)))
         df["dates1"] = date_range("1/1/2012", periods=5)
         res = self.eval(
@@ -1541,6 +1911,10 @@ class TestOperations:
         tm.assert_series_equal(res, expec)
 
     def test_simple_in_ops(self, engine, parser):
+        # [FUNCTION DOC]
+        # Verifies membership operators: for parsers other than python, in and not in work
+        # for scalars, lists, tuples and nested containers with the expected truth values; for
+        # the python parser each raises a not-implemented error naming the In or NotIn node.
         if parser != "python":
             res = pd.eval("1 in [1, 2]", engine=engine, parser=parser)
             assert res
@@ -1588,6 +1962,8 @@ class TestOperations:
                 pd.eval("[3] not in (1, 2, [[3]])", engine=engine, parser=parser)
 
     def test_check_many_exprs(self, engine, parser):
+        # [FUNCTION DOC]
+        # Verifies an expression with 33 operands multiplied evaluates (many terms) to 1.
         a = 1  # noqa: F841
         expr = " * ".join("a" * 33)
         expected = 1
@@ -1603,6 +1979,10 @@ class TestOperations:
         ],
     )
     def test_fails_and_or_not(self, expr, engine, parser):
+        # [FUNCTION DOC]
+        # Parametrized over expressions using and, or and not on frames. For the python
+        # parser verifies a not-implemented error (BoolOp or Not nodes); otherwise only that
+        # evaluation does not raise.
         df = DataFrame(np.random.default_rng(2).standard_normal((5, 3)))
         if parser == "python":
             msg = "'BoolOp' nodes are not implemented"
@@ -1627,6 +2007,11 @@ class TestOperations:
 
     @pytest.mark.parametrize("char", ["|", "&"])
     def test_fails_ampersand_pipe(self, char, engine, parser):
+        # [FUNCTION DOC]
+        # Parametrized over the bitwise characters. For the python parser verifies a
+        # not-implemented error ("cannot evaluate scalar only bool ops") for an expression mixing
+        # a masked frame comparison with a bitwise operator; otherwise only that evaluation
+        # does not raise.
         df = DataFrame(np.random.default_rng(2).standard_normal((5, 3)))  # noqa: F841
         ex = f"(df + 2)[df > 1] > 0 {char} (df > 0)"
         if parser == "python":
@@ -1639,13 +2024,23 @@ class TestOperations:
 
 
 class TestMath:
+    # [CLASS DOC]
+    # Tests of mathematical functions (unary, binary, in assignments) inside expressions.
     def eval(self, *args, **kwargs):
+        # [FUNCTION DOC]
+        # HELPER: calls pd.eval with all given arguments, increasing the stack level keyword
+        # (default zero) by one so the expression sees the caller's local variables.
+        # Returns the result of pd.eval.
         kwargs["level"] = kwargs.pop("level", 0) + 1
         return pd.eval(*args, **kwargs)
 
     @pytest.mark.filterwarnings("ignore::RuntimeWarning")
     @pytest.mark.parametrize("fn", _unary_math_ops)
     def test_unary_functions(self, fn, engine, parser):
+        # [FUNCTION DOC]
+        # Parametrized over the supported unary math function names. Evaluates the function
+        # of a random Series from the local scope and verifies it equals the numpy function
+        # applied directly. Runtime warnings are ignored.
         df = DataFrame({"a": np.random.default_rng(2).standard_normal(10)})
         a = df.a
 
@@ -1657,6 +2052,9 @@ class TestMath:
 
     @pytest.mark.parametrize("fn", _binary_math_ops)
     def test_binary_functions(self, fn, engine, parser):
+        # [FUNCTION DOC]
+        # Parametrized over the supported binary math function names. Evaluates the function
+        # of two random Series and verifies it approximately equals the numpy function.
         df = DataFrame(
             {
                 "a": np.random.default_rng(2).standard_normal(10),
@@ -1673,6 +2071,9 @@ class TestMath:
         tm.assert_almost_equal(got, expect)
 
     def test_df_use_case(self, engine, parser):
+        # [FUNCTION DOC]
+        # Verifies DataFrame.eval in place can assign the arctangent of a sine and a column to
+        # a new column equal to the direct numpy computation.
         df = DataFrame(
             {
                 "a": np.random.default_rng(2).standard_normal(10),
@@ -1690,6 +2091,9 @@ class TestMath:
         tm.assert_series_equal(got, expect)
 
     def test_df_arithmetic_subexpression(self, engine, parser):
+        # [FUNCTION DOC]
+        # Verifies a math function applied to an arithmetic subexpression assigned in place
+        # equals the direct computation.
         df = DataFrame(
             {
                 "a": np.random.default_rng(2).standard_normal(10),
@@ -1712,6 +2116,11 @@ class TestMath:
         ],
     )
     def test_result_types(self, dtype, expect_dtype, engine, parser):
+        # [FUNCTION DOC]
+        # Parametrized over (input dtype, expected result dtype) for 32 and 64-bit integers,
+        # floats and complex (complex skipped on Windows). Verifies the sine of a column
+        # of that dtype assigned in place has the expected dtype and equals numpy's result
+        # (xref issue 12293).
         # xref https://github.com/pandas-dev/pandas/issues/12293
         #  this fails on Windows, apparently a floating point precision issue
 
@@ -1729,6 +2138,9 @@ class TestMath:
         tm.assert_series_equal(got, expect)
 
     def test_undefined_func(self, engine, parser):
+        # [FUNCTION DOC]
+        # Verifies calling a function that is not supported raises a value error
+        # (function is not a supported function).
         df = DataFrame({"a": np.random.default_rng(2).standard_normal(10)})
         msg = '"mysin" is not a supported function'
 
@@ -1736,6 +2148,9 @@ class TestMath:
             df.eval("mysin(a)", engine=engine, parser=parser)
 
     def test_keyword_arg(self, engine, parser):
+        # [FUNCTION DOC]
+        # Verifies calling a supported function with a keyword argument raises a type error
+        # (function does not support keyword arguments).
         df = DataFrame({"a": np.random.default_rng(2).standard_normal(10)})
         msg = 'Function "sin" does not support keyword arguments'
 
@@ -1747,13 +2162,22 @@ _var_s = np.random.default_rng(2).standard_normal(10)
 
 
 class TestScope:
+    # [CLASS DOC]
+    # Tests of variable scope resolution during evaluation: globals, locals, and
+    # no leakage into the caller's namespace. Uses the module-level array named _var_s
+    # defined just before this class.
     def test_global_scope(self, engine, parser):
+        # [FUNCTION DOC]
+        # Verifies a module-level global array can be used in an expression.
         e = "_var_s * 2"
         tm.assert_numpy_array_equal(
             _var_s * 2, pd.eval(e, engine=engine, parser=parser)
         )
 
     def test_no_new_locals(self, engine, parser):
+        # [FUNCTION DOC]
+        # Verifies evaluation with an explicit local dictionary does not add names to the
+        # caller's locals.
         x = 1
         lcls = locals().copy()
         pd.eval("x + 1", local_dict=lcls, engine=engine, parser=parser)
@@ -1762,6 +2186,8 @@ class TestScope:
         assert lcls == lcls2
 
     def test_no_new_globals(self, engine, parser):
+        # [FUNCTION DOC]
+        # Verifies evaluation does not add names to the module's globals.
         x = 1  # noqa: F841
         gbls = globals().copy()
         pd.eval("x + 1", engine=engine, parser=parser)
@@ -1769,6 +2195,9 @@ class TestScope:
         assert gbls == gbls2
 
     def test_empty_locals(self, engine, parser):
+        # [FUNCTION DOC]
+        # Regression test (GH 47084). Verifies passing an empty local dictionary hides the
+        # caller's variables (undefined-variable error "name 'x' is not defined").
         # GH 47084
         x = 1  # noqa: F841
         msg = "name 'x' is not defined"
@@ -1776,6 +2205,9 @@ class TestScope:
             pd.eval("x + 1", engine=engine, parser=parser, local_dict={})
 
     def test_empty_globals(self, engine, parser):
+        # [FUNCTION DOC]
+        # Regression test (GH 47084). Verifies passing an empty global dictionary hides the
+        # module-level variables (undefined-variable error).
         # GH 47084
         msg = "name '_var_s' is not defined"
         e = "_var_s * 2"
@@ -1785,6 +2217,9 @@ class TestScope:
 
 @td.skip_if_no("numexpr")
 def test_invalid_engine():
+    # [FUNCTION DOC]
+    # Skipped without numexpr. Verifies an unknown engine name raises a key error
+    # ("Invalid engine 'asdf' passed").
     msg = "Invalid engine 'asdf' passed"
     with pytest.raises(KeyError, match=msg):
         pd.eval("x + y", local_dict={"x": 1, "y": 2}, engine="asdf")
@@ -1799,6 +2234,10 @@ def test_invalid_engine():
     ),
 )
 def test_numexpr_option_respected(use_numexpr, expected):
+    # [FUNCTION DOC]
+    # Regression test (GH 32556). Skipped without numexpr. Parametrized over the
+    # use_numexpr option. Verifies the private engine check, given no engine,
+    # returns numexpr when the option is true and python when false.
     # GH 32556
     from pandas.core.computation.eval import _check_engine
 
@@ -1809,6 +2248,10 @@ def test_numexpr_option_respected(use_numexpr, expected):
 
 @td.skip_if_no("numexpr")
 def test_numexpr_option_incompatible_op():
+    # [FUNCTION DOC]
+    # Regression test (GH 32556). Skipped without numexpr. With the numexpr option
+    # disabled verifies a query using an operation numexpr cannot handle (checking for
+    # missing values) works and gives the expected rows.
     # GH 32556
     with pd.option_context("compute.use_numexpr", False):
         df = DataFrame(
@@ -1821,6 +2264,9 @@ def test_numexpr_option_incompatible_op():
 
 @td.skip_if_no("numexpr")
 def test_invalid_parser():
+    # [FUNCTION DOC]
+    # Skipped without numexpr. Verifies an unknown parser name raises a key error
+    # ("Invalid parser 'asdf' passed").
     msg = "Invalid parser 'asdf' passed"
     with pytest.raises(KeyError, match=msg):
         pd.eval("x + y", local_dict={"x": 1, "y": 2}, parser="asdf")
@@ -1836,6 +2282,11 @@ _parsers: dict[str, type[BaseExprVisitor]] = {
 @pytest.mark.parametrize("engine", ENGINES)
 @pytest.mark.parametrize("parser", _parsers)
 def test_disallowed_nodes(engine, parser):
+    # [FUNCTION DOC]
+    # Parametrized over engines and visitor parsers (python, pytables, pandas). For each
+    # unsupported node visitor method of the expression visitor class, verifies calling
+    # it on an instance for a simple expression raises a not-implemented error
+    # ("nodes are not implemented").
     VisitorClass = _parsers[parser]
     inst = VisitorClass("x + 1", engine, parser)
 
@@ -1846,12 +2297,17 @@ def test_disallowed_nodes(engine, parser):
 
 
 def test_syntax_error_exprs(engine, parser):
+    # [FUNCTION DOC]
+    # Verifies an incomplete expression raises a syntax error ("invalid syntax").
     e = "s +"
     with pytest.raises(SyntaxError, match="invalid syntax"):
         pd.eval(e, engine=engine, parser=parser)
 
 
 def test_name_error_exprs(engine, parser):
+    # [FUNCTION DOC]
+    # Verifies an expression with undefined names raises a name error ("name 's' is not
+    # defined").
     e = "s + t"
     msg = "name 's' is not defined"
     with pytest.raises(NameError, match=msg):
@@ -1860,6 +2316,11 @@ def test_name_error_exprs(engine, parser):
 
 @pytest.mark.parametrize("express", ["a + @b", "@a + b", "@a + @b"])
 def test_invalid_local_variable_reference(engine, parser, express):
+    # [FUNCTION DOC]
+    # Parametrized over expressions using the at-sign local prefix. Verifies a syntax
+    # error is raised: for the pandas parser saying the prefix is not allowed in this
+    # context, and for other parsers saying the prefix is only supported by the pandas
+    # parser.
     a, b = 1, 2  # noqa: F841
 
     if parser != "pandas":
@@ -1871,6 +2332,10 @@ def test_invalid_local_variable_reference(engine, parser, express):
 
 
 def test_numexpr_builtin_raises(engine, parser):
+    # [FUNCTION DOC]
+    # Verifies that local variables named like numexpr built-in functions raise a clobbering
+    # error ("Variables in expression") with the numexpr engine, and evaluate to
+    # their sum with the other engines.
     sin, dotted_line = 1, 2
     if engine == "numexpr":
         msg = "Variables in expression .+"
@@ -1882,18 +2347,27 @@ def test_numexpr_builtin_raises(engine, parser):
 
 
 def test_bad_resolver_raises(engine, parser):
+    # [FUNCTION DOC]
+    # Verifies passing resolvers that are not mappings raises a type error ("Resolver of
+    # type ...").
     cannot_resolve = 42, 3.0
     with pytest.raises(TypeError, match="Resolver of type .+"):
         pd.eval("1 + 2", resolvers=cannot_resolve, engine=engine, parser=parser)
 
 
 def test_empty_string_raises(engine, parser):
+    # [FUNCTION DOC]
+    # Regression test (GH 13139). Verifies evaluating an empty string raises a value error
+    # ("expr cannot be an empty string").
     # GH 13139
     with pytest.raises(ValueError, match="expr cannot be an empty string"):
         pd.eval("", engine=engine, parser=parser)
 
 
 def test_more_than_one_expression_raises(engine, parser):
+    # [FUNCTION DOC]
+    # Verifies multiple statements separated by a semicolon raise a syntax error (only
+    # a single expression is allowed).
     with pytest.raises(SyntaxError, match="only a single expression is allowed"):
         pd.eval("1 + 1; 2 + 2", engine=engine, parser=parser)
 
@@ -1902,6 +2376,11 @@ def test_more_than_one_expression_raises(engine, parser):
 @pytest.mark.parametrize("lhs", (int, float))
 @pytest.mark.parametrize("rhs", (int, float))
 def test_bool_ops_fails_on_scalars(lhs, cmp, rhs, engine, parser):
+    # [FUNCTION DOC]
+    # Parametrized over and/or and the numeric kinds (integer, float) of the three
+    # scalar operands. Builds random scalars and verifies boolean operator expressions
+    # (chained, with and, and with bitwise and of parenthesized parts) raise a
+    # not-implemented error (scalar only boolean operations or BoolOp nodes).
     gen = {
         int: lambda: np.random.default_rng(2).integers(10),
         float: np.random.default_rng(2).standard_normal,
@@ -1928,6 +2407,10 @@ def test_bool_ops_fails_on_scalars(lhs, cmp, rhs, engine, parser):
     ],
 )
 def test_equals_various(other):
+    # [FUNCTION DOC]
+    # Parametrized over comparison targets (string literal, ellipsis literal). Verifies
+    # equality comparison of an object column to these gives an all-false boolean Series
+    # named like the column.
     df = DataFrame({"A": ["a", "b", "c"]}, dtype=object)
     result = df.eval(f"A == {other}")
     expected = Series([False, False, False], name="A")
@@ -1935,6 +2418,8 @@ def test_equals_various(other):
 
 
 def test_inf(engine, parser):
+    # [FUNCTION DOC]
+    # Verifies evaluating infinity plus one gives infinity.
     s = "inf + 1"
     expected = np.inf
     result = pd.eval(s, engine=engine, parser=parser)
@@ -1943,6 +2428,10 @@ def test_inf(engine, parser):
 
 @pytest.mark.parametrize("column", ["Temp(°C)", "Capacitance(μF)"])
 def test_query_token(engine, column):
+    # [FUNCTION DOC]
+    # Parametrized over column names with special characters (degree sign, mu). Pull
+    # request 42826. Verifies query with a backtick-quoted column name filters
+    # rows like the direct boolean selection.
     # See: https://github.com/pandas-dev/pandas/pull/42826
     df = DataFrame(
         np.random.default_rng(2).standard_normal((5, 2)), columns=[column, "b"]
@@ -1954,6 +2443,10 @@ def test_query_token(engine, column):
 
 
 def test_negate_lt_eq_le(engine, parser):
+    # [FUNCTION DOC]
+    # Verifies query with inverted comparison (tilde) selects rows like direct negation;
+    # the word-form negation is not implemented in the python parser (not-implemented
+    # error) and works in the others.
     df = DataFrame([[0, 10], [1, 20]], columns=["cat", "count"])
     expected = df[~(df.cat > 0)]
 
@@ -1974,6 +2467,11 @@ def test_negate_lt_eq_le(engine, parser):
     DEFAULT_GLOBALS.keys(),
 )
 def test_eval_no_support_column_name(request, column):
+    # [FUNCTION DOC]
+    # Regression test (GH 44603). Parametrized over every name in the default globals
+    # dictionary of the evaluator. Uses request; expected failure with key error for the
+    # names true, false and infinity (GH 47859). Verifies query can use such a name as a
+    # column name in a comparison and selects like direct selection.
     # GH 44603
     if column in ["True", "False", "inf", "Inf"]:
         request.applymarker(
@@ -1994,6 +2492,10 @@ def test_eval_no_support_column_name(request, column):
 
 
 def test_set_inplace():
+    # [FUNCTION DOC]
+    # Regression test (GitHub issue 47449). Verifies in-place assignment via eval updates
+    # the column values themselves: the frame has the new values while the previously
+    # taken Series and a view of the frame keep the old values.
     # https://github.com/pandas-dev/pandas/issues/47449
     # Ensure we don't only update the DataFrame inplace, but also the actual
     # column values, such that references to this column also get updated
@@ -2010,6 +2512,10 @@ def test_set_inplace():
 
 @pytest.mark.parametrize("value", [1, "True", [1, 2, 3], 5.0])
 def test_validate_bool_args(value):
+    # [FUNCTION DOC]
+    # Parametrized over non-boolean values (integer, string, list, float). Verifies the
+    # in-place argument of eval is validated and raises a value error ("For argument
+    # inplace expected type bool").
     msg = 'For argument "inplace" expected type bool, received type'
     with pytest.raises(ValueError, match=msg):
         pd.eval("2+2", inplace=value)
@@ -2017,6 +2523,9 @@ def test_validate_bool_args(value):
 
 @td.skip_if_no("numexpr")
 def test_eval_float_div_numexpr():
+    # [FUNCTION DOC]
+    # Regression test (GH 59736). Skipped without numexpr. Verifies the numexpr engine
+    # evaluates true division of two integers to 0.5.
     # GH 59736
     result = pd.eval("1 / 2", engine="numexpr")
     expected = 0.5
@@ -2024,6 +2533,10 @@ def test_eval_float_div_numexpr():
 
 
 def test_method_calls_on_binop():
+    # [FUNCTION DOC]
+    # Regression test (GH 61175). Verifies method calls (dropna, chained with
+    # reset_index) on parenthesized binary operations of Series work in eval and equal
+    # the direct pandas results.
     # GH 61175
     x = Series([1, 2, 3, 5])
     y = Series([2, 3, 4])
@@ -2045,6 +2558,11 @@ def test_method_calls_on_binop():
 
 
 def test_eval_inplace_cow_alias_corruption(engine):
+    # [FUNCTION DOC]
+    # Regression test (issue 65664). Verifies after an in-place assignment of one column
+    # to another, changing the new column does not change the old column (copy on
+    # write), and that for the not in-place form the returned frame is independent of
+    # the original.
     # https://github.com/pandas-dev/pandas/issues/65664
     df = DataFrame({"old": [1, 2, 3]})
     df.eval("new = old", inplace=True, engine=engine)

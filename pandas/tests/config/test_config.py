@@ -1,3 +1,12 @@
+# [MODULE DOC]
+# Tests for the pandas option system implemented in pandas._config.config
+# (imported as cf): registering, getting, setting, resetting and describing
+# options, validators, deprecation and key rerouting, callbacks, config prefixes,
+# option_context (as context manager and decorator, with dicts), attribute access
+# through the options wrapper, and deprecated option warnings. The class-level
+# autouse fixture isolates every test by replacing the global option registries
+# with empty ones. No import-time side effects.
+
 import pytest
 
 from pandas._config import config as cf
@@ -10,8 +19,19 @@ import pandas._testing as tm
 
 
 class TestConfig:
+    # [CLASS DOC]
+    # Tests of the configuration machinery. An autouse fixture gives each test a clean
+    # option registry so options registered by tests do not leak into the real pandas
+    # options.
     @pytest.fixture(autouse=True)
     def clean_config(self, monkeypatch):
+        # [FUNCTION DOC]
+        # HELPER: autouse fixture. Inside a monkeypatch context, replaces the module-level
+        # global option store, the options wrapper around it, and the deprecated and
+        # registered option registries with fresh empty ones; re-registers the
+        # chained assignment option with value raise (the conftest fixture only sets it after
+        # setup, so it would otherwise be missing); yields to run the test; the
+        # monkeypatch context restores the real registries afterwards.
         with monkeypatch.context() as m:
             m.setattr(cf, "_global_config", {})
             m.setattr(cf, "options", cf.DictWrapper(cf._global_config))
@@ -26,6 +46,9 @@ class TestConfig:
             yield
 
     def test_api(self):
+        # [FUNCTION DOC]
+        # Verifies the top-level pandas namespace exposes get_option, set_option,
+        # reset_option and describe_option.
         # the pandas object exposes the user API
         assert hasattr(pd, "get_option")
         assert hasattr(pd, "set_option")
@@ -33,6 +56,10 @@ class TestConfig:
         assert hasattr(pd, "describe_option")
 
     def test_is_one_of_factory(self):
+        # [FUNCTION DOC]
+        # Verifies the factory building a validator from a list of allowed values accepts
+        # listed values (including None) and raises a value error ("Value must be one of
+        # None|12") for others.
         v = cf.is_one_of_factory([None, 12])
 
         v(12)
@@ -42,6 +69,11 @@ class TestConfig:
             v(1.1)
 
     def test_register_option(self):
+        # [FUNCTION DOC]
+        # Verifies register_option errors: registering the same key twice raises an option
+        # error; registering a key below an existing option raises an option error (path
+        # prefix is already an option); keys containing python keywords or invalid
+        # identifiers raise value errors; deep nested keys and sibling keys register fine.
         cf.register_option("a", 1, "doc")
 
         # can't register an already registered option
@@ -75,6 +107,11 @@ class TestConfig:
         cf.register_option("k.b.c.d2", 1, "doc")
 
     def test_describe_option(self):
+        # [FUNCTION DOC]
+        # Verifies describe_option: unknown keys raise an option error; descriptions
+        # contain the given doc text, a default message when no doc was given,
+        # deprecation text for deprecated options (including the replacement key for
+        # rerouted ones), the default value and the current value after a change.
         cf.register_option("a", 1, "doc")
         cf.register_option("b", 1, "doc2")
         cf.deprecate_option("b", FutureWarning)
@@ -115,6 +152,11 @@ class TestConfig:
 
     @pytest.mark.parametrize("category", [DeprecationWarning, FutureWarning])
     def test_case_insensitive(self, category):
+        # [FUNCTION DOC]
+        # Parametrized over warning category (deprecation, future). Verifies option keys
+        # are case insensitive for register, describe, get and set; unknown keys raise
+        # an option error; a deprecated option warns of the given category with a message
+        # that the lowercase key is deprecated.
         cf.register_option("KanBAN", 1, "doc")
 
         assert "doc" in cf.describe_option("kanbaN", _print_desc=False)
@@ -133,6 +175,9 @@ class TestConfig:
             cf.get_option("kAnBaN")
 
     def test_get_option(self):
+        # [FUNCTION DOC]
+        # Verifies get_option returns values (including None) of registered options and
+        # raises an option error for unknown keys.
         cf.register_option("a", 1, "doc")
         cf.register_option("b.c", "hullo", "doc2")
         cf.register_option("b.b", None, "doc2")
@@ -148,6 +193,9 @@ class TestConfig:
             cf.get_option("no_such_option")
 
     def test_set_option(self):
+        # [FUNCTION DOC]
+        # Verifies set_option changes values of registered options (any type, no validator)
+        # and raises an option error for an unknown key.
         cf.register_option("a", 1, "doc")
         cf.register_option("b.c", "hullo", "doc2")
         cf.register_option("b.b", None, "doc2")
@@ -169,21 +217,32 @@ class TestConfig:
             cf.set_option("no.such.key", None)
 
     def test_set_option_empty_args(self):
+        # [FUNCTION DOC]
+        # Verifies set_option with no arguments raises a value error (must provide an even
+        # number of non-keyword arguments).
         msg = "Must provide an even number of non-keyword arguments"
         with pytest.raises(ValueError, match=msg):
             cf.set_option()
 
     def test_set_option_uneven_args(self):
+        # [FUNCTION DOC]
+        # Verifies set_option with an odd number of positional arguments raises the same
+        # value error.
         msg = "Must provide an even number of non-keyword arguments"
         with pytest.raises(ValueError, match=msg):
             cf.set_option("a.b", 2, "b.c")
 
     def test_set_option_invalid_single_argument_type(self):
+        # [FUNCTION DOC]
+        # Verifies set_option with one non-dict argument raises the same value error.
         msg = "Must provide an even number of non-keyword arguments"
         with pytest.raises(ValueError, match=msg):
             cf.set_option(2)
 
     def test_set_option_multiple(self):
+        # [FUNCTION DOC]
+        # Verifies set_option with alternating key and value positional arguments sets
+        # several options at once.
         cf.register_option("a", 1, "doc")
         cf.register_option("b.c", "hullo", "doc2")
         cf.register_option("b.b", None, "doc2")
@@ -199,6 +258,9 @@ class TestConfig:
         assert cf.get_option("b.b") == 10.0
 
     def test_set_option_dict(self):
+        # [FUNCTION DOC]
+        # Regression test (GH 61093). Verifies set_option accepts a dict mapping keys to
+        # values and sets all of them.
         # GH 61093
 
         cf.register_option("a", 1, "doc")
@@ -217,6 +279,11 @@ class TestConfig:
         assert cf.get_option("b.b") == 10.0
 
     def test_validation(self):
+        # [FUNCTION DOC]
+        # Verifies validators: registering with an invalid default raises a value error
+        # (type, nonnegative integer or None, text, callable-or-None checks); setting
+        # valid values succeeds (none allowed for nonnegative integer); setting
+        # invalid values raises value errors with the validator messages.
         cf.register_option("a", 1, "doc", validator=cf.is_int)
         cf.register_option("d", 1, "doc", validator=cf.is_nonnegative_int)
         cf.register_option("b.c", "hullo", "doc2", validator=cf.is_text)
@@ -254,6 +321,8 @@ class TestConfig:
             cf.set_option("b", "%.1f")
 
     def test_reset_option(self):
+        # [FUNCTION DOC]
+        # Verifies reset_option restores a single option's default and leaves the others.
         cf.register_option("a", 1, "doc", validator=cf.is_int)
         cf.register_option("b.c", "hullo", "doc2", validator=cf.is_str)
         assert cf.get_option("a") == 1
@@ -272,6 +341,8 @@ class TestConfig:
         assert cf.get_option("b.c") == "hullo"
 
     def test_reset_option_all(self):
+        # [FUNCTION DOC]
+        # Verifies reset_option with the key all restores every option default.
         cf.register_option("a", 1, "doc", validator=cf.is_int)
         cf.register_option("b.c", "hullo", "doc2", validator=cf.is_str)
         assert cf.get_option("a") == 1
@@ -287,6 +358,11 @@ class TestConfig:
         assert cf.get_option("b.c") == "hullo"
 
     def test_deprecate_option(self):
+        # [FUNCTION DOC]
+        # Verifies deprecate_option: non-existent options can be deprecated (getting them
+        # warns and then raises a key error); a deprecated option warns on get with the
+        # removal version; deprecating twice raises an option error; a custom message is
+        # used; a rerouted key warns and reads/writes the target option.
         # we can deprecate non-existent options
         cf.deprecate_option("foo", FutureWarning)
 
@@ -327,6 +403,10 @@ class TestConfig:
             assert cf.get_option("d.dep") == "baz"
 
     def test_config_prefix(self):
+        # [FUNCTION DOC]
+        # Verifies config_prefix: options registered, read and set inside the context are
+        # reachable by short names inside and by the full prefixed names outside, with
+        # descriptions, reset and prefix reuse.
         with cf.config_prefix("base"):
             cf.register_option("a", 1, "doc1")
             cf.register_option("b", 2, "doc2")
@@ -351,10 +431,16 @@ class TestConfig:
             assert cf.get_option("b") == 2
 
     def test_callback(self):
+        # [FUNCTION DOC]
+        # Verifies a registered change callback is invoked with the option key after
+        # set_option and after reset_option (and not otherwise), by recording calls in lists.
         k = [None]
         v = [None]
 
         def callback(key):
+            # [FUNCTION DOC]
+            # HELPER: callback that records the changed key and the option's new value in the
+            # enclosing lists.
             k.append(key)
             v.append(cf.get_option(key))
 
@@ -376,7 +462,12 @@ class TestConfig:
         assert k[-1] == "d.b"
 
     def test_set_ContextManager(self):
+        # [FUNCTION DOC]
+        # Verifies option_context as a nested context manager changes and restores
+        # an option, and also works as a decorator (#34253).
         def eq(val):
+            # [FUNCTION DOC]
+            # HELPER: asserts the current value of option a equals val.
             assert cf.get_option("a") == val
 
         cf.register_option("a", 0)
@@ -394,12 +485,19 @@ class TestConfig:
         # Test that option_context can be used as a decorator too (#34253).
         @cf.option_context("a", 123)
         def f():
+            # [FUNCTION DOC]
+            # HELPER: decorated function that asserts option a has the decorator's value.
             eq(123)
 
         f()
 
     def test_set_ContextManager_dict(self):
+        # [FUNCTION DOC]
+        # Verifies option_context given a dict of options as nested context manager and as
+        # a decorator, setting and restoring several options.
         def eq(val):
+            # [FUNCTION DOC]
+            # HELPER: asserts options a and b.c both equal val.
             assert cf.get_option("a") == val
             assert cf.get_option("b.c") == val
 
@@ -421,14 +519,24 @@ class TestConfig:
         # Test that option_context can be used as a decorator too
         @cf.option_context({"a": 123, "b.c": 123})
         def f():
+            # [FUNCTION DOC]
+            # HELPER: decorated function that asserts the values of the options inside the
+            # decorator context via the enclosing helper.
             eq(123)
 
         f()
 
     def test_attribute_access(self):
+        # [FUNCTION DOC]
+        # Verifies attribute access through the options wrapper: reading, assigning
+        # existing options, reset, option_context interplay; assigning unknown or group
+        # names raises an option error ("You can only set the value of existing options")
+        # and assigning triggers the callback.
         holder = []
 
         def f3(key):
+            # [FUNCTION DOC]
+            # HELPER: change callback that records that it was called (ignores the key).
             holder.append(True)
 
         cf.register_option("a", 0)
@@ -456,6 +564,10 @@ class TestConfig:
         assert len(holder) == 1
 
     def test_option_context_scope(self):
+        # [FUNCTION DOC]
+        # Regression test (issue 8514). Verifies creating an option_context object does
+        # not change the option; the value changes only inside the with block and is restored
+        # afterwards.
         # Ensure that creating a context does not affect the existing
         # environment as it is supposed to be used with the `with` statement.
         # See https://github.com/pandas-dev/pandas/issues/8514
@@ -478,6 +590,9 @@ class TestConfig:
         assert cf.get_option(option_name) == original_value
 
     def test_dictwrapper_getattr(self):
+        # [FUNCTION DOC]
+        # Regression test (GH 19789). Verifies attribute access to an unknown option raises
+        # an option error ("No such option") and has-attribute reports false.
         options = cf.options
         # GH 19789
         with pytest.raises(OptionError, match="No such option"):
@@ -486,6 +601,10 @@ class TestConfig:
 
 
 def test_no_silent_downcasting_deprecated():
+    # [FUNCTION DOC]
+    # Regression test (GH#59502). Verifies getting and setting the future
+    # no-silent-downcasting option each emit a Pandas4Warning deprecation. Note the
+    # class fixture does not apply to this module-level test, so the real registry is used.
     # GH#59502
     with tm.assert_produces_warning(Pandas4Warning, match="is deprecated"):
         cf.get_option("future.no_silent_downcasting")
@@ -494,6 +613,9 @@ def test_no_silent_downcasting_deprecated():
 
 
 def test_option_context_invalid_option():
+    # [FUNCTION DOC]
+    # Verifies option_context with an unknown option raises an option error ("No such
+    # keys").
     with pytest.raises(OptionError, match="No such keys"):
         with cf.option_context("invalid", True):
             pass

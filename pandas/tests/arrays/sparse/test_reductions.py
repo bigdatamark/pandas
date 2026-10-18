@@ -1,3 +1,8 @@
+# [MODULE DOC]
+# Tests for reductions on SparseArray: all/any, sum, mean (also through the
+# numpy functions with their unsupported-argument errors), min/max with various
+# fill values and no valid values, and argmax/argmin. No import-time side effects.
+
 import numpy as np
 import pytest
 
@@ -11,6 +16,9 @@ from pandas.core.arrays.sparse import SparseArray
 
 
 class TestReductions:
+    # [CLASS DOC]
+    # Tests boolean and arithmetic reductions (all, any, sum, mean), both as methods
+    # and via the numpy functions.
     @pytest.mark.parametrize(
         "data,pos,neg",
         [
@@ -20,6 +28,11 @@ class TestReductions:
         ],
     )
     def test_all(self, data, pos, neg):
+        # [FUNCTION DOC]
+        # Parametrized over (data, truthy fill value, falsy value) for bool, int and
+        # float lists. Verifies the all method is true on all-truthy data with default
+        # and truthy fill value, and false after one element is set falsy (the data list
+        # is mutated in place by the test).
         # GH#17570
         out = SparseArray(data).all()
         assert out
@@ -43,6 +56,12 @@ class TestReductions:
         ],
     )
     def test_numpy_all(self, data, pos, neg):
+        # [FUNCTION DOC]
+        # Same scenarios as the all method test but through the numpy all function.
+        # Also verifies that passing the out argument raises a value error ("the 'out'
+        # parameter is not supported").
+        # KNOWN ISSUE: the comment about a different message on python 2 is stale; the
+        # check applies to the current implementation only.
         # GH#17570
         out = np.all(SparseArray(data))
         assert out
@@ -71,6 +90,10 @@ class TestReductions:
         ],
     )
     def test_any(self, data, pos, neg):
+        # [FUNCTION DOC]
+        # Parametrized over (data, truthy fill value, falsy value). Verifies the any
+        # method is true when some element is truthy (default and truthy fill) and false
+        # after the only truthy element is set falsy (data list mutated in place).
         # GH#17570
         out = SparseArray(data).any()
         assert out
@@ -94,6 +117,10 @@ class TestReductions:
         ],
     )
     def test_numpy_any(self, data, pos, neg):
+        # [FUNCTION DOC]
+        # Same scenarios as the any method test but through the numpy any function; also
+        # verifies passing the out argument raises a value error ("the 'out' parameter
+        # is not supported").
         # GH#17570
         out = np.any(SparseArray(data))
         assert out
@@ -113,6 +140,9 @@ class TestReductions:
             np.any(SparseArray(data), out=out)
 
     def test_sum(self):
+        # [FUNCTION DOC]
+        # Verifies sum of 0..9 as floats is 45, and 40 after one value is replaced by NaN
+        # (NaN skipped), for fill value 2 and NaN fill value.
         data = np.arange(10).astype(float)
         out = SparseArray(data).sum()
         assert out == 45.0
@@ -131,6 +161,10 @@ class TestReductions:
     @pytest.mark.parametrize("fill_value", [0, 1, np.nan])
     @pytest.mark.parametrize("min_count, expected", [(3, 2), (4, np.nan)])
     def test_sum_min_count(self, arr, fill_value, min_count, expected):
+        # [FUNCTION DOC]
+        # Regression test (GH#25777). Parametrized over data with and without NaN, fill
+        # values 0, 1, NaN, and (min_count, expected) of (3, 2) and (4, NaN). Verifies
+        # the sum is 2 when the number of valid values meets min_count and NaN otherwise.
         # GH#25777
         sparray = SparseArray(np.array(arr), fill_value=fill_value)
         result = sparray.sum(min_count=min_count)
@@ -140,6 +174,9 @@ class TestReductions:
             assert result == expected
 
     def test_bool_sum_min_count(self):
+        # [FUNCTION DOC]
+        # Verifies sum of a boolean SparseArray (fill value True) with min_count 1 is 5
+        # and with min_count 11 (more than the length) is missing.
         spar_bool = SparseArray([False, True] * 5, dtype=np.bool_, fill_value=True)
         res = spar_bool.sum(min_count=1)
         assert res == 5
@@ -147,6 +184,10 @@ class TestReductions:
         assert isna(res)
 
     def test_numpy_sum(self):
+        # [FUNCTION DOC]
+        # Like the sum method test but via the numpy sum function, and verifies that the
+        # dtype argument and the out argument each raise a value error stating the
+        # parameter is not supported.
         data = np.arange(10).astype(float)
         out = np.sum(SparseArray(data))
         assert out == 45.0
@@ -167,6 +208,8 @@ class TestReductions:
             np.sum(SparseArray(data), out=out)
 
     def test_mean(self):
+        # [FUNCTION DOC]
+        # Verifies mean of 0..9 is 4.5, and 40/9 after one element becomes NaN.
         data = np.arange(10).astype(float)
         out = SparseArray(data).mean()
         assert out == 4.5
@@ -176,6 +219,9 @@ class TestReductions:
         assert out == 40.0 / 9
 
     def test_numpy_mean(self):
+        # [FUNCTION DOC]
+        # Like the mean method test via the numpy mean function, and verifies the dtype
+        # and out arguments raise value errors ("the ... parameter is not supported").
         data = np.arange(10).astype(float)
         out = np.mean(SparseArray(data))
         assert out == 4.5
@@ -194,6 +240,8 @@ class TestReductions:
 
 
 class TestMinMax:
+    # [CLASS DOC]
+    # Tests minimum and maximum reductions.
     @pytest.mark.parametrize(
         "raw_data,max_expected,min_expected",
         [
@@ -205,6 +253,11 @@ class TestMinMax:
         ],
     )
     def test_nan_fill_value(self, raw_data, max_expected, min_expected):
+        # [FUNCTION DOC]
+        # Parametrized over float data (ramps, with NaN, all NaN, empty) with expected
+        # max and min. With a NaN fill value, verifies max and min with skipna default
+        # and, with skipna false, that NaN data gives NaN results while NaN-free data
+        # gives the normal results.
         arr = SparseArray(raw_data)
         max_result = arr.max()
         min_result = arr.min()
@@ -228,6 +281,10 @@ class TestMinMax:
         ],
     )
     def test_fill_value(self, fill_value, max_expected, min_expected):
+        # [FUNCTION DOC]
+        # Parametrized over fill values (100 and -100) with expected max and min.
+        # Builds an int SparseArray whose dtype fill value equals the first element and
+        # verifies the max and min take the fill value into account.
         arr = SparseArray(
             np.array([fill_value, 0, 1]), dtype=SparseDtype("int", fill_value)
         )
@@ -238,6 +295,9 @@ class TestMinMax:
         assert min_result == min_expected
 
     def test_only_fill_value(self):
+        # [FUNCTION DOC]
+        # Verifies that when every element equals the fill value (so no stored valid
+        # values exist) max and min, with and without skipna, return the fill value.
         fv = 100
         arr = SparseArray(np.array([fv, fv, fv]), dtype=SparseDtype("int", fv))
         assert len(arr._valid_sp_values) == 0
@@ -259,6 +319,13 @@ class TestMinMax:
         ],
     )
     def test_na_value_if_no_valid_values(self, func, data, dtype, expected):
+        # [FUNCTION DOC]
+        # Parametrized over function (min, max), data (empty, all NaN), and sparse dtypes
+        # (float with NaN or non-NaN fill, datetime with NaT or a timestamp fill) with the
+        # expected result (NaN or NaT). Verifies the reduction of an array with no valid
+        # values returns the NA value of the dtype.
+        # KNOWN ISSUE: a TODO notes the datetime case may return a numpy NaT rather than
+        # the pandas NaT, and the assertion accepts either.
         arr = SparseArray(data, dtype=dtype)
         result = getattr(arr, func)()
         if expected is NaT:
@@ -269,6 +336,8 @@ class TestMinMax:
 
 
 class TestArgmaxArgmin:
+    # [CLASS DOC]
+    # Tests argmax and argmin on SparseArray.
     @pytest.mark.parametrize(
         "arr,argmax_expected,argmin_expected",
         [
@@ -291,6 +360,10 @@ class TestArgmaxArgmin:
         ],
     )
     def test_argmax_argmin(self, arr, argmax_expected, argmin_expected):
+        # [FUNCTION DOC]
+        # Parametrized over many arrays (different data and fill values, including NaN
+        # and fill value greater/lower/equal to data) with expected positions. Verifies
+        # argmax and argmin return the expected integer positions.
         argmax_result = arr.argmax()
         argmin_result = arr.argmin()
         assert argmax_result == argmax_expected
@@ -298,6 +371,10 @@ class TestArgmaxArgmin:
 
     @pytest.mark.parametrize("method", ["argmax", "argmin"])
     def test_empty_array(self, method):
+        # [FUNCTION DOC]
+        # Parametrized over method (argmax, argmin). Verifies calling it on an empty
+        # SparseArray raises a value error saying it attempted to get the method of an
+        # empty sequence.
         msg = f"attempt to get {method} of an empty sequence"
         arr = SparseArray([])
         with pytest.raises(ValueError, match=msg):

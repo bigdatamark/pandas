@@ -1,3 +1,10 @@
+# [MODULE DOC]
+# Tests specific to the pyarrow-backed string array (ArrowStringArray) and its
+# interplay with StringDtype and the string_storage option: configuration,
+# constructor validation of the pyarrow input types, dtype/storage consistency
+# in the private sequence constructor, setitem, pickling and error messages.
+# Most tests skip when pyarrow is not installed. No import-time side effects.
+
 import pickle
 import re
 
@@ -19,6 +26,14 @@ from pandas.core.arrays.string_arrow import (
 
 
 def test_config(string_storage):
+    # [FUNCTION DOC]
+    # Uses the string_storage fixture. Verifies the default storage of the string
+    # dtype, then inside a temporary option context that the dtype and the array
+    # created from a list of strings use the chosen storage, and that the created
+    # array equals one built directly from the NA-variant dtype with that storage.
+    # KNOWN ISSUE: the first assertion has a conditional-expression precedence
+    # problem: without pyarrow it asserts the truthy constant "python" rather than
+    # comparing the storage, so it checks nothing in that case.
     # with the default string_storage setting
     # always "python" at the moment
     assert StringDtype().storage == "pyarrow" if HAS_PYARROW else "python"
@@ -35,6 +50,9 @@ def test_config(string_storage):
 
 
 def test_config_bad_storage_raises():
+    # [FUNCTION DOC]
+    # Verifies that setting the string storage option to an unsupported value raises
+    # a value error saying the value must be one of python or pyarrow.
     msg = re.escape("Value must be one of python|pyarrow")
     with pytest.raises(ValueError, match=msg):
         pd.options.mode.string_storage = "foo"
@@ -43,6 +61,12 @@ def test_config_bad_storage_raises():
 @pytest.mark.parametrize("chunked", [True, False])
 @pytest.mark.parametrize("array_lib", ["numpy", "pyarrow"])
 def test_constructor_not_string_type_raises(array_lib, chunked):
+    # [FUNCTION DOC]
+    # Parametrized over array library (numpy, pyarrow) and chunked (true, false).
+    # Skips unless pyarrow is installed (and for chunked numpy). Verifies that
+    # constructing an ArrowStringArray from a non-string integer array raises a value
+    # error: for numpy because the type is unsupported for the arrow extension array,
+    # for pyarrow because a large_string typed (chunked) array is required.
     pa = pytest.importorskip("pyarrow")
 
     array_lib = pa if array_lib == "pyarrow" else np
@@ -64,6 +88,10 @@ def test_constructor_not_string_type_raises(array_lib, chunked):
 
 @pytest.mark.parametrize("chunked", [True, False])
 def test_constructor_not_string_type_value_dictionary_raises(chunked):
+    # [FUNCTION DOC]
+    # Parametrized over chunked (true, false). Verifies that constructing an
+    # ArrowStringArray from a dictionary-typed pyarrow array with integer values
+    # raises a value error requiring a large_string typed array.
     pa = pytest.importorskip("pyarrow")
 
     arr = pa.array([1, 2, 3], pa.dictionary(pa.int32(), pa.int32()))
@@ -80,6 +108,10 @@ def test_constructor_not_string_type_value_dictionary_raises(chunked):
 @pytest.mark.parametrize("string_type", ["string", "large_string"])
 @pytest.mark.parametrize("chunked", [True, False])
 def test_constructor_valid_string_type_value_dictionary(string_type, chunked):
+    # [FUNCTION DOC]
+    # Parametrized over string type (string, large_string) and chunked. Verifies that
+    # a dictionary-encoded pyarrow string array is accepted and converted to a dense
+    # large_string array internally.
     pa = pytest.importorskip("pyarrow")
 
     arr = pa.array(["1", "2", "3"], getattr(pa, string_type)()).dictionary_encode()
@@ -93,6 +125,12 @@ def test_constructor_valid_string_type_value_dictionary(string_type, chunked):
 
 @pytest.mark.parametrize("chunked", [True, False])
 def test_constructor_valid_string_view(chunked):
+    # [FUNCTION DOC]
+    # Parametrized over chunked. Requires pyarrow 18 or newer (for casting
+    # string_view). Verifies that a string_view pyarrow array is accepted and
+    # converted to a large_string array internally.
+    # KNOWN ISSUE: the comment in the body mentions dictionary type conversion but
+    # the test is about string_view input.
     # requires pyarrow>=18 for casting string_view to string
     pa = pytest.importorskip("pyarrow", minversion="18")
 
@@ -106,6 +144,9 @@ def test_constructor_valid_string_view(chunked):
 
 
 def test_constructor_from_list():
+    # [FUNCTION DOC]
+    # Regression test (GH#27673). Verifies that building a Series from a list of
+    # strings with pyarrow-storage StringDtype yields a string dtype with pyarrow storage.
     # GH#27673
     pytest.importorskip("pyarrow")
     result = pd.Series(["E"], dtype=StringDtype(storage="pyarrow"))
@@ -114,6 +155,16 @@ def test_constructor_from_list():
 
 
 def test_from_sequence_wrong_dtype_raises(using_infer_string):
+    # [FUNCTION DOC]
+    # Exercises the private sequence constructors of ArrowStringArray and
+    # StringArray with string alias dtypes, bare StringDtype and explicit storage
+    # dtypes under different string_storage option settings. Verifies that a
+    # dtype whose storage does not match the array class raises an assertion error
+    # (for example python storage into the arrow array and vice versa), while
+    # matching storage or generic dtype under a matching option setting succeeds.
+    # Cases depending on option-driven inference are skipped when the infer-string
+    # mode is enabled (fixture using_infer_string).
+    # KNOWN ISSUE: the test name says it raises, but most calls are expected to succeed.
     pytest.importorskip("pyarrow")
     with pd.option_context("string_storage", "python"):
         ArrowStringArray._from_sequence(["a", None, "c"], dtype="string")
@@ -170,6 +221,10 @@ def test_from_sequence_wrong_dtype_raises(using_infer_string):
 
 @td.skip_if_installed("pyarrow")
 def test_pyarrow_not_installed_raises():
+    # [FUNCTION DOC]
+    # Only runs when pyarrow is not installed. Verifies that creating a pyarrow
+    # storage dtype, an empty ArrowStringArray, or calling its sequence constructor
+    # raises an import error stating pyarrow 13.0.0 or newer is required.
     msg = re.escape("pyarrow>=13.0.0 is required for PyArrow backed")
 
     with pytest.raises(ImportError, match=msg):
@@ -204,6 +259,13 @@ def test_pyarrow_not_installed_raises():
     ],
 )
 def test_setitem(multiple_chunks, key, value, expected):
+    # [FUNCTION DOC]
+    # Parametrized over multiple_chunks and many (key, value, expected values)
+    # cases: integer, negative, list, slice (including negative step), full slice and
+    # boolean mask keys, with scalar string, None, NA or list values. Builds
+    # an ArrowStringArray over five letters (optionally split into two chunks),
+    # assigns, and verifies it equals the array built from the expected values
+    # (missing values stored as nulls).
     pa = pytest.importorskip("pyarrow")
 
     result = pa.array(list("abcde"))
@@ -221,6 +283,11 @@ def test_setitem(multiple_chunks, key, value, expected):
 
 
 def test_setitem_invalid_indexer_raises():
+    # [FUNCTION DOC]
+    # Verifies that assigning with out-of-bounds integer positions (scalar and list,
+    # positive and negative) or a boolean mask of the wrong length raises an index
+    # error, and assigning a list value of the wrong length raises a value error;
+    # both are errors raised by the underlying library.
     pa = pytest.importorskip("pyarrow")
 
     arr = ArrowStringArray(pa.array(list("abcde")))
@@ -246,6 +313,11 @@ def test_setitem_invalid_indexer_raises():
 
 @pytest.mark.parametrize("na_value", [pd.NA, np.nan])
 def test_pickle_roundtrip(na_value):
+    # [FUNCTION DOC]
+    # Regression test (GH 42600). Parametrized over NA marker (NA, NaN). Skips
+    # without pyarrow. Verifies pickling a pyarrow string Series round trips, and that
+    # the pickle of a two-row slice is smaller than that of the full Series (the
+    # whole underlying buffer is not serialized).
     # GH 42600
     pytest.importorskip("pyarrow")
     dtype = StringDtype("pyarrow", na_value=na_value)
@@ -264,6 +336,10 @@ def test_pickle_roundtrip(na_value):
 
 
 def test_string_dtype_error_message():
+    # [FUNCTION DOC]
+    # Regression test (GH#55051). Verifies that creating a StringDtype with an
+    # unknown storage name raises a value error ("Storage must be 'python' or
+    # 'pyarrow'").
     # GH#55051
     pytest.importorskip("pyarrow")
     msg = "Storage must be 'python' or 'pyarrow'."

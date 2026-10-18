@@ -1,3 +1,10 @@
+# [MODULE DOC]
+# Miscellaneous tests of the base object behavior for Series, Index and
+# DataFrame: alias docstrings, generated binary operation docstrings, numpy
+# compatibility properties, memory usage, searchsorted and positional access.
+# Uses the index_or_series_obj, frame_or_series and related fixtures. No import-time
+# side effects.
+
 import sys
 
 import numpy as np
@@ -17,6 +24,10 @@ from pandas import (
 
 
 def test_isnull_notnull_docstrings():
+    # [FUNCTION DOC]
+    # Regression test (GH#41855). Verifies the docstrings of isnull and notnull on
+    # DataFrame and Series start with a sentence stating they are aliases of isna
+    # and notna.
     # GH#41855 make sure its clear these are aliases
     doc = pd.DataFrame.notnull.__doc__
     assert doc.strip().startswith("DataFrame.notnull is an alias for DataFrame.notna.")
@@ -42,6 +53,12 @@ def test_isnull_notnull_docstrings():
     ],
 )
 def test_binary_ops_docstring(frame_or_series, op_name, op):
+    # [FUNCTION DOC]
+    # Parametrized over operation names (add, sub, mul, mod, pow, truediv, floordiv)
+    # with their operator symbols; uses the frame_or_series fixture. Verifies the
+    # generated docstring of the operation contains the expression with the lower
+    # cased class name as left operand and other as right operand, and the reflected
+    # operation contains the reversed expression.
     # not using the all_arithmetic_functions fixture with _get_opstr
     # as _get_opstr is used internally in the dynamic implementation of the docstring
     klass = frame_or_series
@@ -57,6 +74,11 @@ def test_binary_ops_docstring(frame_or_series, op_name, op):
 
 
 def test_ndarray_compat_properties(index_or_series_obj):
+    # [FUNCTION DOC]
+    # Verifies the numpy-compatible properties shape, dtype, transpose and nbytes exist;
+    # the removed properties strides, itemsize, base and data do not exist; item on
+    # a multi-element object raises a value error (only size-1 conversion allowed);
+    # ndim is one and size equals the length; item works on length-one objects.
     obj = index_or_series_obj
 
     # Check that we work.
@@ -80,6 +102,13 @@ def test_ndarray_compat_properties(index_or_series_obj):
 
 @pytest.mark.skipif(PYPY, reason="not relevant for PyPy")
 def test_memory_usage(index_or_series_memory_obj):
+    # [FUNCTION DOC]
+    # Skipped on PyPy. Uses index_or_series_memory_obj. Clears the index engine
+    # mapping cache so empty objects report zero memory. Verifies memory usage equals
+    # zero for empty objects, deep usage exceeds shallow usage when object-like
+    # values (python-storage strings, object dtype, categories, levels or the Series
+    # index) are present, equals it otherwise, and that deep usage is within 100 bytes
+    # of the built-in size function result.
     obj = index_or_series_memory_obj
     # Clear index caches so that len(obj) == 0 report 0 memory usage
     if isinstance(obj, Series):
@@ -93,6 +122,11 @@ def test_memory_usage(index_or_series_memory_obj):
     res_deep = obj.memory_usage(deep=True)
 
     def _is_object_dtype(obj):
+        # [FUNCTION DOC]
+        # HELPER: recursive predicate for the memory usage test. Input: obj (Index or
+        # Series). Returns true if the values are stored as Python objects: any level of a
+        # MultiIndex, the categories of a categorical, python-storage string dtype, or
+        # object dtype. Returns false otherwise.
         if isinstance(obj, pd.MultiIndex):
             return any(_is_object_dtype(level) for level in obj.levels)
         elif isinstance(obj.dtype, pd.CategoricalDtype):
@@ -119,6 +153,9 @@ def test_memory_usage(index_or_series_memory_obj):
 
 
 def test_memory_usage_components_series(series_with_simple_index):
+    # [FUNCTION DOC]
+    # Verifies a Series memory usage including the index equals the sum of its
+    # usage without index and the index usage.
     series = series_with_simple_index
     total_usage = series.memory_usage(index=True)
     non_index_usage = series.memory_usage(index=False)
@@ -127,6 +164,9 @@ def test_memory_usage_components_series(series_with_simple_index):
 
 
 def test_memory_usage_components_narrow_series(any_real_numpy_dtype):
+    # [FUNCTION DOC]
+    # Uses any_real_numpy_dtype. Same sum check for a Series of five values with string
+    # index labels.
     series = Series(
         range(5),
         dtype=any_real_numpy_dtype,
@@ -140,6 +180,11 @@ def test_memory_usage_components_narrow_series(any_real_numpy_dtype):
 
 
 def test_searchsorted(request, index_or_series_obj):
+    # [FUNCTION DOC]
+    # Regression test (gh-12238). Uses the request and index_or_series_obj fixtures.
+    # Marks expected failure for MultiIndex (GH 14833) and for complex Index. Verifies
+    # the numpy searchsorted function with the maximum (or zero if empty) returns a
+    # position between zero and the length, with and without a sorter.
     # numpy.searchsorted calls obj.searchsorted under the hood.
     # See gh-12238
     obj = index_or_series_obj
@@ -166,6 +211,14 @@ def test_searchsorted(request, index_or_series_obj):
 
 
 def test_access_by_position(index_flat):
+    # [FUNCTION DOC]
+    # Uses index_flat. Skips empty. Verifies positional lookup of an index and of a
+    # Series built from it agree at positions 0, 5 and -1 and that -1 equals the last
+    # element; indexing past the end raises an index error (message differs for pyarrow
+    # strings) as does Series iloc ("single positional indexer is out-of-bounds").
+    # KNOWN ISSUE: position 5 is read without checking the length is at least six, so
+    # indexes with fewer elements would raise an index error unrelated to the intended
+    # checks.
     index = index_flat
 
     if len(index) == 0:

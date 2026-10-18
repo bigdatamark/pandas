@@ -1,3 +1,12 @@
+# [MODULE DOC]
+# Tests for the top-level array factory (the public pandas array function): dtype
+# inference from data, explicit dtype handling for many dtype families, copy
+# semantics, error cases, and unboxing of Series and Index inputs before they
+# reach third-party extension array constructors. Defines two small helper
+# classes (DecimalDtype2 and DecimalArray2) built on the decimal test extension
+# types. Importing the module registers the decimal2 extension dtype
+# globally.
+
 import datetime
 import decimal
 import zoneinfo
@@ -32,6 +41,11 @@ from pandas.tests.extension.decimal import (
 
 @pytest.mark.parametrize("dtype_unit", ["M8[h]", "M8[m]", "m8[h]"])
 def test_dt64_array(dtype_unit):
+    # [FUNCTION DOC]
+    # Regression test (GH#53817). Parametrized over unsupported numpy datetime or
+    # timedelta resolutions (hours, minutes). Verifies the array factory with such a
+    # dtype raises a value error stating only second, millisecond, microsecond and
+    # nanosecond resolutions are supported.
     # GH#53817
     dtype_var = np.dtype(dtype_unit)
     msg = (
@@ -297,11 +311,25 @@ def test_dt64_array(dtype_unit):
     ],
 )
 def test_array(data, dtype, expected):
+    # [FUNCTION DOC]
+    # Parametrized over (data, dtype, expected array). Cases: numpy defaults for lists
+    # and numpy arrays (Float64/Int64 masked arrays for empty/int/float data and a
+    # fallback to the numpy-backed array for object, float16, float32 and complex),
+    # string aliases, idempotency for numpy-backed input, period, datetime (naive
+    # and tz-aware, several units; inferred microsecond unit from a DatetimeIndex),
+    # timedelta (including non-nanosecond preserved), category, interval, sparse,
+    # nullable integer, string and str dtypes, boolean, Index and Series inputs, an
+    # extension array input with a different requested dtype, and a third-party decimal
+    # dtype. Verifies the result of the array factory equals the expected array.
     result = pd.array(data, dtype=dtype)
     tm.assert_equal(result, expected)
 
 
 def test_array_copy():
+    # [FUNCTION DOC]
+    # Verifies copy semantics of the array factory on a numpy input with matching
+    # dtype: by default and with copy true the result does not share memory with the
+    # input; with copy false it does.
     a = np.array([1, 2])
     # default is to copy
     b = pd.array(a, dtype=a.dtype)
@@ -435,6 +463,12 @@ def test_array_copy():
     ],
 )
 def test_array_inference(data, expected):
+    # [FUNCTION DOC]
+    # Parametrized over (data, expected array). With no dtype requested, verifies the
+    # inferred array type: period, interval, datetime (unit from the inputs, or
+    # microseconds for Python datetimes, timezone-aware too), timedelta, nullable
+    # integer / float (missing values NaN, None and NA allowed, integer-like floats
+    # and mixed int/float become Float64), string and boolean data.
     result = pd.array(data)
     tm.assert_equal(result, expected)
 
@@ -454,6 +488,11 @@ def test_array_inference(data, expected):
     ],
 )
 def test_array_inference_fails(data):
+    # [FUNCTION DOC]
+    # Parametrized over inputs that cannot be inferred as one extension type (mixed
+    # period frequencies, mixed interval closedness, mixed timezones, mixed
+    # tz-aware and naive). Verifies the result falls back to an object-dtype
+    # numpy-backed array containing the original elements.
     result = pd.array(data)
     expected = NumpyExtensionArray(np.array(data, dtype=object))
     tm.assert_extension_array_equal(result, expected)
@@ -461,16 +500,24 @@ def test_array_inference_fails(data):
 
 @pytest.mark.parametrize("data", [np.array(0)])
 def test_nd_raises(data):
+    # [FUNCTION DOC]
+    # Parametrized over a zero-dimensional numpy array. Verifies the array factory
+    # raises a value error saying the numpy-backed array must be one dimensional.
     with pytest.raises(ValueError, match="NumpyExtensionArray must be 1-dimensional"):
         pd.array(data, dtype="int64")
 
 
 def test_scalar_raises():
+    # [FUNCTION DOC]
+    # Verifies passing a scalar raises a value error ("Cannot pass scalar '1'").
     with pytest.raises(ValueError, match="Cannot pass scalar '1'"):
         pd.array(1)
 
 
 def test_dataframe_raises():
+    # [FUNCTION DOC]
+    # Regression test (GH#51167). Verifies passing a DataFrame raises a type error
+    # instead of attempting inference on the columns.
     # GH#51167 don't accidentally cast to StringArray by doing inference on columns
     df = pd.DataFrame([[1, 2], [3, 4]], columns=["A", "B"])
     msg = "Cannot pass DataFrame to 'pandas.array'"
@@ -479,6 +526,10 @@ def test_dataframe_raises():
 
 
 def test_bounds_check():
+    # [FUNCTION DOC]
+    # Regression test (GH21796). Verifies that requesting unsigned 16-bit nullable
+    # integers for data containing a negative number raises a type error saying
+    # the values cannot be safely cast.
     # GH21796
     with pytest.raises(
         TypeError, match=r"cannot safely cast non-equivalent int(32|64) to uint16"
@@ -493,9 +544,15 @@ def test_bounds_check():
 
 @register_extension_dtype
 class DecimalDtype2(DecimalDtype):
+    # [CLASS DOC]
+    # Test-only decimal extension dtype registered under the name decimal2, inheriting
+    # from the decimal test dtype; its array type is DecimalArray2. Used to check that
+    # Series and Index inputs are unboxed before reaching the array class.
     name = "decimal2"
 
     def construct_array_type(self):
+        # [FUNCTION DOC]
+        # Returns the array class associated with this dtype, which is DecimalArray2.
         """
         Return the array type associated with this dtype.
 
@@ -507,8 +564,16 @@ class DecimalDtype2(DecimalDtype):
 
 
 class DecimalArray2(DecimalArray):
+    # [CLASS DOC]
+    # Test-only decimal extension array whose sequence constructor refuses to accept
+    # a Series or Index as the scalars input, which makes any missing unboxing visible.
     @classmethod
     def _from_sequence(cls, scalars, *, dtype=None, copy=False):
+        # [FUNCTION DOC]
+        # Class method constructor. Inputs: scalars (sequence), dtype (keyword only,
+        # default none), copy (keyword only, default false). Raises a type error if
+        # scalars is a Series or Index; otherwise delegates to the parent constructor and
+        # returns its result.
         if isinstance(scalars, (pd.Series, pd.Index)):
             raise TypeError("scalars should not be of type pd.Series or pd.Index")
 
@@ -516,6 +581,11 @@ class DecimalArray2(DecimalArray):
 
 
 def test_array_unboxes(index_or_series):
+    # [FUNCTION DOC]
+    # Uses the index_or_series fixture. Verifies that calling the sequence
+    # constructor directly with a boxed value raises the type error, while the array
+    # factory with the registered decimal2 name unboxes first and so returns the same
+    # array as direct construction from the underlying values.
     box = index_or_series
 
     data = box([decimal.Decimal("1"), decimal.Decimal("2")])
@@ -532,6 +602,10 @@ def test_array_unboxes(index_or_series):
 
 
 def test_array_to_numpy_na():
+    # [FUNCTION DOC]
+    # Regression test (GH#40638). Verifies to_numpy on a python-storage string array
+    # with NA present, with na_value true and bool dtype, gives an array of True
+    # values.
     # GH#40638
     arr = pd.array([pd.NA, 1], dtype="string[python]")
     result = arr.to_numpy(na_value=True, dtype=bool)

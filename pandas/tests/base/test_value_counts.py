@@ -1,3 +1,10 @@
+# [MODULE DOC]
+# Tests for value_counts (and related unique and nunique checks) on Series and
+# Index: generic objects with and without missing values, inferred string data,
+# bins, datetime64 and timedelta64 data, NaN handling, object-dtype timestamps, and
+# datetime-like index duplicates. Uses the index_or_series_obj, index_or_series,
+# unit and dropna fixtures from the suite conftest. No import-time side effects.
+
 import collections
 from datetime import timedelta
 
@@ -23,6 +30,13 @@ from pandas.tests.base.common import allow_na_ops
 
 @pytest.mark.filterwarnings(r"ignore:PeriodDtype\[B\] is deprecated:FutureWarning")
 def test_value_counts(index_or_series_obj):
+    # [FUNCTION DOC]
+    # Repeats each element of the object a growing number of times, then verifies
+    # value_counts equals a Series of counts built with a standard counter in
+    # descending order, named count, indexed by the values with the object dtype and
+    # name(s). Float16 objects are only checked to raise the not-implemented error for
+    # the index cast. Nullable result dtypes expect Int64, or the arrow integer for
+    # pyarrow-backed strings. Period deprecation warnings are ignored.
     obj = index_or_series_obj
     obj = np.repeat(obj, range(1, len(obj) + 1))
     result = obj.value_counts()
@@ -54,6 +68,12 @@ def test_value_counts(index_or_series_obj):
 @pytest.mark.parametrize("null_obj", [np.nan, None])
 @pytest.mark.filterwarnings(r"ignore:PeriodDtype\[B\] is deprecated:FutureWarning")
 def test_value_counts_null(null_obj, index_or_series_obj):
+    # [FUNCTION DOC]
+    # Parametrized over null marker (NaN, None). Skips unsupported objects. Replaces the
+    # first two values by the null marker, repeats the values by growing counts and
+    # verifies value_counts drops missing values (counts match a counter of the
+    # non-null values), and with dropna false the missing marker is counted three
+    # times, compared after sorting by index.
     orig = index_or_series_obj
 
     if not allow_na_ops(orig):
@@ -103,6 +123,11 @@ def test_value_counts_null(null_obj, index_or_series_obj):
 
 
 def test_value_counts_inferred(index_or_series, using_infer_string):
+    # [FUNCTION DOC]
+    # Uses index_or_series and using_infer_string. For ten letters, verifies the
+    # default value_counts (descending), unique (an Index, or numpy/string array),
+    # nunique, unsorted counts (sorted afterwards), ascending order and normalized
+    # proportions.
     klass = index_or_series
     s_values = ["a", "b", "b", "b", "b", "c", "d", "d", "a", "a"]
     s = klass(s_values)
@@ -139,6 +164,17 @@ def test_value_counts_inferred(index_or_series, using_infer_string):
 
 
 def test_value_counts_bins(index_or_series, using_infer_string):
+    # [FUNCTION DOC]
+    # Verifies the bins argument: raises a type error for non-numeric data ("bins
+    # argument only works with numeric data"); for a numeric Series with one bin gives a
+    # single interval with all counts (and proportion 1.0 with normalize); four bins give
+    # intervals with expected counts for dropna true and false and normalized; NaN
+    # handling for string data (missing excluded from counts, unique keeps NaN, nunique
+    # three); and the empty object case.
+    # KNOWN ISSUE: the numeric checks use a Series built directly, so the branch that
+    # tests whether it is an Index is never taken; the empty-object construction also
+    # tests the container class against dict, which can never be true here. The two
+    # four-bin checks (dropna true and false) are identical.
     klass = index_or_series
     s_values = ["a", "b", "b", "b", "b", "c", "d", "d", "a", "a"]
     s = klass(s_values)
@@ -210,6 +246,13 @@ def test_value_counts_bins(index_or_series, using_infer_string):
 
 
 def test_value_counts_datetime64(index_or_series, unit):
+    # [FUNCTION DOC]
+    # Uses index_or_series and unit. Regression test (GH 3002). Verifies value_counts
+    # of a datetime column in the unit (counts 3, 2, 1 with index of dates), unique
+    # (DatetimeIndex or datetime array in appearance order), nunique, then with four NaT
+    # appended: value_counts excludes NaT by default, includes it with dropna false
+    # (count 4 placed first), the dtype keeps the unit, unique contains NaT last and
+    # nunique is three (four with NaT).
     klass = index_or_series
 
     # GH 3002, datetime64[ns]
@@ -291,6 +334,11 @@ def test_value_counts_datetime64(index_or_series, unit):
 
 
 def test_value_counts_timedelta64(index_or_series, unit):
+    # [FUNCTION DOC]
+    # Uses index_or_series and unit. Verifies value_counts of six equal one-day
+    # timedeltas gives a single entry with count six indexed by the timedelta index,
+    # unique returns that index (or its values), and the same result when the
+    # timedelta data is built by adding the zero array on the other side.
     # timedelta64[ns]
     klass = index_or_series
 
@@ -318,6 +366,10 @@ def test_value_counts_timedelta64(index_or_series, unit):
 
 
 def test_value_counts_with_nan(dropna, index_or_series):
+    # [FUNCTION DOC]
+    # Regression test (GH31944). Uses dropna and index_or_series. For a container with
+    # True, NA and NaN: with dropna true only True is counted; otherwise True, NA and
+    # NaN each counted once.
     # GH31944
     klass = index_or_series
     values = [True, pd.NA, np.nan]
@@ -331,6 +383,10 @@ def test_value_counts_with_nan(dropna, index_or_series):
 
 
 def test_value_counts_object_inference_deprecated():
+    # [FUNCTION DOC]
+    # Regression test (GH#56161). Verifies value_counts of an object-dtype index of
+    # timezone-aware timestamps equals the datetime index result with the index cast
+    # to object (no dtype inference).
     # GH#56161
     dti = pd.date_range("2016-01-01", periods=3, tz="UTC")
 
@@ -416,5 +472,10 @@ def test_value_counts_object_inference_deprecated():
     ],
 )
 def test_value_counts_index_datetimelike(index, expected_index):
+    # [FUNCTION DOC]
+    # Parametrized over (datetime-like index, expected index) including duplicates and
+    # NaT, for datetimes and timedeltas. Verifies the index of value_counts with
+    # sorting disabled and dropna false equals the expected index in first-appearance
+    # order (unique values, NaT kept).
     vc = index.value_counts(sort=False, dropna=False)
     tm.assert_index_equal(vc.index, expected_index)

@@ -1,3 +1,9 @@
+# [MODULE DOC]
+# Tests for the resulting dtype and values when concatenating string-dtype
+# Series with each other, with object Series, and the common-type resolution
+# between StringDtype and numpy dtypes. Uses the string_dtype_arguments fixture
+# supplied by the test suite conftest. No import-time side effects.
+
 import numpy as np
 import pytest
 
@@ -25,6 +31,15 @@ from pandas.util.version import Version
     ],
 )
 def test_concat_series(request, to_concat_dtypes, result_dtype):
+    # [FUNCTION DOC]
+    # Parametrized over lists of (storage, NA value) pairs for the inputs and the
+    # (storage, NA value) of the expected result: same types stay the same, pyarrow
+    # storage wins over python storage, and the pandas NA marker wins over the
+    # NaN marker. Skips when pyarrow is needed but not installed. Builds a Series of
+    # two strings and a missing value per input, concatenates ignoring the index,
+    # and verifies the values and expected string dtype. The request argument is unused.
+    # KNOWN ISSUE: the second check is commented as showing order does not matter,
+    # but it slices with step one, which keeps the same order rather than reversing it.
     if any(storage == "pyarrow" for storage, _ in to_concat_dtypes) and not HAS_PYARROW:
         pytest.skip("Could not import 'pyarrow'")
 
@@ -45,6 +60,10 @@ def test_concat_series(request, to_concat_dtypes, result_dtype):
 
 
 def test_concat_with_object(string_dtype_arguments):
+    # [FUNCTION DOC]
+    # Verifies that concatenating a string-dtype Series with an object-dtype Series
+    # holding strings results in object dtype, because common-type resolution cannot
+    # inspect values.
     # _get_common_dtype cannot inspect values, so object dtype with strings still
     # results in object dtype
     result = pd.concat(
@@ -57,6 +76,12 @@ def test_concat_with_object(string_dtype_arguments):
 
 
 def test_concat_with_numpy(string_dtype_arguments):
+    # [FUNCTION DOC]
+    # Verifies the common-type finder: the string dtype combined with a numpy
+    # unicode dtype (any width, either order) yields the string dtype; with a numpy
+    # bytes or integer dtype it yields object. With numpy 2 or newer, the numpy
+    # variable-width string dtype combined with the string dtype yields the string
+    # dtype in either order.
     # common type with a numpy string dtype always preserves the pandas string dtype
     dtype = pd.StringDtype(*string_dtype_arguments)
     assert find_common_type([dtype, np.dtype("U")]) == dtype

@@ -2,6 +2,9 @@
 Though Index.fillna and Series.fillna has separate impl,
 test here to confirm these works as the same
 """
+# [MODULE DOC]
+# Tests that fillna behaves identically for Index and Series (they have separate
+# implementations), using the index_or_series_obj fixture. No import-time side effects.
 
 import numpy as np
 import pytest
@@ -12,6 +15,10 @@ from pandas.tests.base.common import allow_na_ops
 
 
 def test_fillna(index_or_series_obj):
+    # [FUNCTION DOC]
+    # Regression test (GH 11343). Verifies that filling a MultiIndex raises a
+    # not-implemented error; for other objects, filling with an existing value
+    # (or zero if empty) returns an equal object that is a new object, not the same one.
     # GH 11343
     obj = index_or_series_obj
 
@@ -33,6 +40,12 @@ def test_fillna(index_or_series_obj):
 
 @pytest.mark.parametrize("null_obj", [np.nan, None])
 def test_fillna_null(null_obj, index_or_series_obj):
+    # [FUNCTION DOC]
+    # Regression test (GH 11343). Parametrized over null marker (NaN, None). Skips
+    # objects that cannot hold missing values, empty objects and MultiIndex. Replaces
+    # the first two values by the null marker and verifies fillna with the first value
+    # yields the object whose first two values equal the first value, and is a new
+    # object.
     # GH 11343
     obj = index_or_series_obj
     klass = type(obj)

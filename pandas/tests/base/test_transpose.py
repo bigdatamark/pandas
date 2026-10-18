@@ -1,3 +1,8 @@
+# [MODULE DOC]
+# Tests for transpose on Index and Series (identity operation with argument
+# validation), and DataFrame transpose with duplicate labels. No import-time
+# side effects.
+
 import numpy as np
 import pytest
 
@@ -9,11 +14,16 @@ import pandas._testing as tm
 
 
 def test_transpose(index_or_series_obj):
+    # [FUNCTION DOC]
+    # Verifies transpose of an index or series returns an equal object.
     obj = index_or_series_obj
     tm.assert_equal(obj.transpose(), obj)
 
 
 def test_transpose_non_default_axes(index_or_series_obj):
+    # [FUNCTION DOC]
+    # Verifies passing axes positionally or by keyword raises a value error
+    # ("the 'axes' parameter is not supported").
     msg = "the 'axes' parameter is not supported"
     obj = index_or_series_obj
     with pytest.raises(ValueError, match=msg):
@@ -23,6 +33,9 @@ def test_transpose_non_default_axes(index_or_series_obj):
 
 
 def test_numpy_transpose(index_or_series_obj):
+    # [FUNCTION DOC]
+    # Verifies the numpy transpose function returns an equal object, and with
+    # the axes argument raises a value error.
     msg = "the 'axes' parameter is not supported"
     obj = index_or_series_obj
     tm.assert_equal(np.transpose(obj), obj)
@@ -49,6 +62,11 @@ def test_numpy_transpose(index_or_series_obj):
     ],
 )
 def test_duplicate_labels(data, transposed_data, index, columns, dtype):
+    # [FUNCTION DOC]
+    # Regression test (GH 42380). Parametrized over data, expected transposed data,
+    # index, columns and dtype (integer or categorical), with duplicate labels.
+    # Verifies transposing the frame equals the expected frame with swapped labels and
+    # the same dtype.
     # GH 42380
     df = DataFrame(data, index=index, columns=columns, dtype=dtype)
     result = df.T

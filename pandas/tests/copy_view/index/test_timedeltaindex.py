@@ -1,3 +1,9 @@
+# [MODULE DOC]
+# Copy-on-write tests for TimedeltaIndex: an index created from a Series must
+# not change when the Series is modified, and construction copies its input.
+# A module-level marker ignores future warnings about setting a value on a view.
+# No import-time side effects.
+
 import numpy as np
 import pytest
 
@@ -24,6 +30,10 @@ pytestmark = pytest.mark.filterwarnings(
     ],
 )
 def test_timedeltaindex(cons):
+    # [FUNCTION DOC]
+    # Parametrized over constructor (single or doubly wrapped TimedeltaIndex). Builds
+    # the index from a timedelta Series, modifies the Series, and verifies the index is
+    # unchanged.
     dt = timedelta_range("1 day", periods=3)
     ser = Series(dt)
     idx = cons(ser)
@@ -33,6 +43,9 @@ def test_timedeltaindex(cons):
 
 
 def test_constructor_copy_input_timedelta_ndarray_default():
+    # [FUNCTION DOC]
+    # Regression test (GH 63388). Verifies constructing a TimedeltaIndex from a numpy
+    # timedelta array copies by default.
     # GH 63388
     arr = np.array([1, 2], dtype="timedelta64[ns]")
     idx = TimedeltaIndex(arr)
@@ -40,6 +53,9 @@ def test_constructor_copy_input_timedelta_ndarray_default():
 
 
 def test_constructor_copy_input_timedelta_ea_default():
+    # [FUNCTION DOC]
+    # Regression test (GH 63388). Verifies constructing a TimedeltaIndex from a timedelta
+    # extension array copies by default.
     # GH 63388
     arr = array([1, 2], dtype="timedelta64[ns]")
     idx = TimedeltaIndex(arr)
@@ -47,6 +63,10 @@ def test_constructor_copy_input_timedelta_ea_default():
 
 
 def test_series_from_temporary_timedeltaindex_readonly_data():
+    # [FUNCTION DOC]
+    # Regression test (GH 63388). With a read-only numpy source, verifies a Series
+    # built from a temporary TimedeltaIndex does not share memory and can be modified,
+    # yielding the expected values.
     # GH 63388
     arr = np.array([1, 2], dtype="timedelta64[ns]")
     arr.flags.writeable = False

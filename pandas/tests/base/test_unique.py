@@ -1,3 +1,8 @@
+# [MODULE DOC]
+# Tests for unique and nunique on Index and Series objects (via the
+# index_or_series_obj fixture), including missing values and unusual strings.
+# No import-time side effects.
+
 import numpy as np
 import pytest
 
@@ -8,6 +13,11 @@ from pandas.tests.base.common import allow_na_ops
 
 @pytest.mark.filterwarnings(r"ignore:PeriodDtype\[B\] is deprecated:FutureWarning")
 def test_unique(index_or_series_obj):
+    # [FUNCTION DOC]
+    # Repeats each element of the object a growing number of times then verifies unique
+    # returns the values in first-appearance order: as an Index with the dtype
+    # (timezone-aware values normalized) or MultiIndex with names for indexes, and a numpy
+    # array for series. Period deprecation warnings are ignored.
     obj = index_or_series_obj
     obj = np.repeat(obj, range(1, len(obj) + 1))
     result = obj.unique()
@@ -31,6 +41,12 @@ def test_unique(index_or_series_obj):
 @pytest.mark.filterwarnings(r"ignore:PeriodDtype\[B\] is deprecated:FutureWarning")
 @pytest.mark.parametrize("null_obj", [np.nan, None])
 def test_unique_null(null_obj, index_or_series_obj, using_nan_is_na):
+    # [FUNCTION DOC]
+    # Parametrized over null marker (NaN, None). Skips objects that cannot hold NA,
+    # empty ones, MultiIndex, and dtype/NaN combinations where NaN is not a valid NA.
+    # Replaces the first two values by the null marker, repeats, and verifies unique
+    # returns the null marker first followed by the non-null values in appearance
+    # order (the NaN and None cases differ in how duplicates collapse).
     obj = index_or_series_obj
 
     if not allow_na_ops(obj):
@@ -73,6 +89,8 @@ def test_unique_null(null_obj, index_or_series_obj, using_nan_is_na):
 
 
 def test_nunique(index_or_series_obj):
+    # [FUNCTION DOC]
+    # Verifies nunique without dropping missing values equals the number of unique values.
     obj = index_or_series_obj
     obj = np.repeat(obj, range(1, len(obj) + 1))
     expected = len(obj.unique())
@@ -81,6 +99,11 @@ def test_nunique(index_or_series_obj):
 
 @pytest.mark.parametrize("null_obj", [np.nan, None])
 def test_nunique_null(null_obj, index_or_series_obj):
+    # [FUNCTION DOC]
+    # Parametrized over null marker. Skips objects without NA support and MultiIndex.
+    # Replaces the first two values by the marker and verifies nunique counts distinct
+    # non-missing values by default and including missing with dropna false; for a
+    # categorical index the category count (plus one when including missing).
     obj = index_or_series_obj
 
     if not allow_na_ops(obj):
@@ -107,6 +130,9 @@ def test_nunique_null(null_obj, index_or_series_obj):
 
 @pytest.mark.single_cpu
 def test_unique_bad_unicode(index_or_series):
+    # [FUNCTION DOC]
+    # Regression test (#34550). Single CPU. Verifies unique of an object container with a
+    # lone surrogate string repeated twice gives one element.
     # regression test for #34550
     uval = "\ud83d"  # smiley emoji
 
@@ -122,6 +148,12 @@ def test_unique_bad_unicode(index_or_series):
 
 
 def test_nunique_dropna(dropna):
+    # [FUNCTION DOC]
+    # Regression test (GH37566). Uses the dropna fixture. Verifies nunique of a Series
+    # with a string and several kinds of missing markers.
+    # KNOWN ISSUE: the assertion is parsed as a conditional expression, so when dropna
+    # is false it asserts the truthy constant 5 and checks nothing; the intended
+    # comparison for that case is never made.
     # GH37566
     ser = pd.Series(["yes", "yes", pd.NA, np.nan, None, pd.NaT])
     res = ser.nunique(dropna)

@@ -1,3 +1,9 @@
+# [MODULE DOC]
+# Copy-on-write tests for PeriodIndex: an index created from a Series must not
+# change when the Series is modified, and construction copies its input.
+# A module-level marker ignores future warnings about setting a value on a view.
+# No import-time side effects.
+
 import numpy as np
 import pytest
 
@@ -18,6 +24,10 @@ pytestmark = pytest.mark.filterwarnings(
 
 @pytest.mark.parametrize("box", [lambda x: x, PeriodIndex])
 def test_periodindex(box):
+    # [FUNCTION DOC]
+    # Parametrized over wrapper (identity, or an extra PeriodIndex construction).
+    # Builds a PeriodIndex from a period Series, modifies the Series, and verifies the
+    # index is unchanged.
     dt = period_range("2019-12-31", periods=3, freq="D")
     ser = Series(dt)
     idx = box(PeriodIndex(ser))
@@ -27,6 +37,9 @@ def test_periodindex(box):
 
 
 def test_constructor_copy_input_period_ea_default():
+    # [FUNCTION DOC]
+    # Regression test (GH 63388). Verifies constructing a PeriodIndex from a period
+    # extension array copies by default.
     # GH 63388
     arr = array(["2020-01-01", "2020-01-02"], dtype="period[D]")
     idx = PeriodIndex(arr)
@@ -34,6 +47,9 @@ def test_constructor_copy_input_period_ea_default():
 
 
 def test_series_from_temporary_periodindex_readonly_data():
+    # [FUNCTION DOC]
+    # Regression test (GH 63388). With a read-only backing array, verifies a Series
+    # built from a temporary PeriodIndex does not share memory and can be modified.
     # GH 63388
     arr = array(["2020-01-01", "2020-01-02"], dtype="period[D]")
     arr._ndarray.flags.writeable = False

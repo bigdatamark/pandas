@@ -1,6 +1,14 @@
 """
 Tests for DatetimeArray
 """
+# [MODULE DOC]
+# Tests for DatetimeArray: non-nanosecond resolution behavior (TestNonNano),
+# comparisons against index and list-likes (TestDatetimeArrayComparisons),
+# and a general class (TestDatetimeArray) covering astype, setitem, fill, numpy
+# array protocol, searchsorted, shift, timezone handling, and frequency alias
+# validation in date_range. Also one module-level test of factorize with sort.
+# Shares behavior tests with the datetime-like shared tests module. No
+# import-time side effects.
 
 from __future__ import annotations
 
@@ -28,13 +36,24 @@ from pandas.core.arrays import (
 
 
 class TestNonNano:
+    # [CLASS DOC]
+    # Tests of DatetimeArray holding non-nanosecond units (second, millisecond,
+    # microsecond). Fixtures parametrize unit and timezone; most tests compare
+    # the non-nano array with its nanosecond DatetimeIndex counterpart.
     @pytest.fixture(params=["s", "ms", "us"])
     def unit(self, request):
+        # [FUNCTION DOC]
+        # HELPER: fixture parametrized over the units second, millisecond and
+        # microsecond. Returns the unit string.
         """Fixture returning parametrized time units"""
         return request.param
 
     @pytest.fixture
     def dtype(self, unit, tz_naive_fixture):
+        # [FUNCTION DOC]
+        # HELPER: fixture. Combines the unit and tz_naive_fixture fixtures: returns a
+        # numpy datetime64 dtype of that unit for tz-naive data, otherwise a timezone-aware
+        # datetime dtype of that unit and timezone.
         tz = tz_naive_fixture
         if tz is None:
             return np.dtype(f"datetime64[{unit}]")
@@ -43,6 +62,11 @@ class TestNonNano:
 
     @pytest.fixture
     def dta_dti(self, unit, dtype):
+        # [FUNCTION DOC]
+        # HELPER: fixture. Returns a pair of equal logical data: a DatetimeArray of 55
+        # daily timestamps from 2016-01-01 in the fixture unit and dtype (built via the
+        # private simple constructor from UTC wall values), and the nanosecond DatetimeIndex
+        # of the same timestamps for comparison.
         tz = getattr(dtype, "tz", None)
 
         dti = pd.date_range("2016-01-01", periods=55, freq="D", tz=tz, unit="ns")
@@ -58,10 +82,16 @@ class TestNonNano:
 
     @pytest.fixture
     def dta(self, dta_dti):
+        # [FUNCTION DOC]
+        # HELPER: fixture. Returns only the array from the dta_dti fixture.
         dta, dti = dta_dti
         return dta
 
     def test_non_nano(self, unit, dtype):
+        # [FUNCTION DOC]
+        # Verifies a non-nano array built from integer values has the expected dtype,
+        # its elements retain the unit and timezone, and the first element equals the
+        # slice of length one.
         arr = np.arange(5, dtype=np.int64).view(f"M8[{unit}]")
         dta = DatetimeArray._simple_new(arr, dtype=dtype)
 
@@ -74,6 +104,10 @@ class TestNonNano:
         "field", DatetimeArray._field_ops + DatetimeArray._bool_ops
     )
     def test_fields(self, unit, field, dtype, dta_dti):
+        # [FUNCTION DOC]
+        # Parametrized over all integer field and boolean field properties. Verifies the
+        # non-nano array equals the index elementwise and its property values equal the
+        # nanosecond index property values.
         dta, dti = dta_dti
 
         assert (dti == dta).all()
@@ -83,6 +117,10 @@ class TestNonNano:
         tm.assert_numpy_array_equal(res, expected)
 
     def test_normalize(self, unit):
+        # [FUNCTION DOC]
+        # Parametrized by unit. Verifies the array is not normalized when it holds
+        # times of day and that normalize gives midnight values equal to the nanosecond
+        # index normalized result converted to the unit.
         dti = pd.date_range("2016-01-01 06:00:00", periods=55, freq="D")
         arr = np.asarray(dti).astype(f"M8[{unit}]")
 
@@ -98,6 +136,10 @@ class TestNonNano:
         tm.assert_extension_array_equal(res, expected)
 
     def test_normalize_overflow_raises(self):
+        # [FUNCTION DOC]
+        # Regression test (GH#60583). Verifies normalizing the minimum representable
+        # timestamp raises a value error ("Cannot normalize Timestamp without integer
+        # overflow").
         # GH#60583
         ts = pd.Timestamp.min
         dta = DatetimeArray._from_sequence([ts], dtype="M8[ns]")
@@ -107,6 +149,10 @@ class TestNonNano:
             dta.normalize()
 
     def test_simple_new_requires_match(self, unit):
+        # [FUNCTION DOC]
+        # Verifies the private simple constructor accepts a timezone dtype whose unit
+        # matches the data, and raises an assertion error (empty message) for a dtype of
+        # a different unit.
         arr = np.arange(5, dtype=np.int64).view(f"M8[{unit}]")
         dtype = DatetimeTZDtype(unit, "UTC")
 
@@ -118,6 +164,9 @@ class TestNonNano:
             DatetimeArray._simple_new(arr, dtype=wrong)
 
     def test_std_non_nano(self, unit):
+        # [FUNCTION DOC]
+        # Verifies the standard deviation of a non-nano array has the same resolution as
+        # the array and equals the nanosecond standard deviation floored to the unit.
         dti = pd.date_range("2016-01-01", periods=55, freq="D", unit="ns")
         arr = np.asarray(dti).astype(f"M8[{unit}]")
 
@@ -130,6 +179,9 @@ class TestNonNano:
 
     @pytest.mark.filterwarnings("ignore:Converting to PeriodArray.*:UserWarning")
     def test_to_period(self, dta_dti):
+        # [FUNCTION DOC]
+        # Verifies conversion to daily periods equals that of the nanosecond array. A
+        # warning about converting to a period is ignored.
         dta, dti = dta_dti
         result = dta.to_period("D")
         expected = dti._data.to_period("D")
@@ -137,6 +189,9 @@ class TestNonNano:
         tm.assert_extension_array_equal(result, expected)
 
     def test_iter(self, dta):
+        # [FUNCTION DOC]
+        # Verifies iteration yields Timestamp objects (exactly that class) that keep the
+        # integer value, resolution and equality of the first element.
         res = next(iter(dta))
         expected = dta[0]
 
@@ -146,11 +201,16 @@ class TestNonNano:
         assert res == expected
 
     def test_astype_object(self, dta):
+        # [FUNCTION DOC]
+        # Verifies casting to object gives Timestamps keeping the array resolution and
+        # equal to the array elements.
         result = dta.astype(object)
         assert all(x._creso == dta._creso for x in result)
         assert all(x == y for x, y in zip(result, dta, strict=True))
 
     def test_to_pydatetime(self, dta_dti):
+        # [FUNCTION DOC]
+        # Verifies conversion to Python datetimes equals the index result.
         dta, dti = dta_dti
 
         result = dta.to_pydatetime()
@@ -159,6 +219,9 @@ class TestNonNano:
 
     @pytest.mark.parametrize("meth", ["time", "timetz", "date"])
     def test_time_date(self, dta_dti, meth):
+        # [FUNCTION DOC]
+        # Parametrized over time, timetz and date. Verifies the array property
+        # equals the index property.
         dta, dti = dta_dti
 
         result = getattr(dta, meth)
@@ -166,6 +229,9 @@ class TestNonNano:
         tm.assert_numpy_array_equal(result, expected)
 
     def test_format_native_types(self, unit, dtype, dta_dti):
+        # [FUNCTION DOC]
+        # Verifies the private native-type formatting gives the same strings as the
+        # nanosecond index data. The unit and dtype parameters are unused.
         # In this case we should get the same formatted values with our nano
         #  version dti._data as we do with the non-nano dta
         dta, dti = dta_dti
@@ -175,12 +241,22 @@ class TestNonNano:
         tm.assert_numpy_array_equal(res, exp)
 
     def test_repr(self, dta_dti, unit):
+        # [FUNCTION DOC]
+        # Verifies the repr equals the nanosecond index repr with the unit text replaced.
         dta, dti = dta_dti
 
         assert repr(dta) == repr(dti._data).replace("[ns", f"[{unit}")
 
     # TODO: tests with td64
     def test_compare_mismatched_resolutions(self, comparison_op):
+        # [FUNCTION DOC]
+        # Uses the comparison_op fixture. With values near the int64 limits where numpy
+        # overflows silently, verifies comparisons between a nanosecond array and a
+        # second-unit array (array to array and element to array) give the correct
+        # results for each operator. For order comparisons also verifies that the raw
+        # numpy comparison raises an overflow error on new numpy versions, or still gets
+        # the wrong answer on older ones.
+        # KNOWN ISSUE: the TODO above the test says tests with timedelta are missing.
         # comparison that numpy gets wrong bc of silent overflows
         op = comparison_op
 
@@ -222,6 +298,9 @@ class TestNonNano:
                 tm.assert_numpy_array_equal(np_res[1:], ~expected[1:])
 
     def test_add_mismatched_reso_doesnt_downcast(self):
+        # [FUNCTION DOC]
+        # Verifies adding a microsecond timedelta to a microsecond array keeps unit
+        # microsecond even if the result values are whole days (no downcasting).
         # https://github.com/pandas-dev/pandas/pull/48748#issuecomment-1260181008
         td = pd.Timedelta(microseconds=1)
         dti = pd.date_range("2016-01-01", periods=3) - td
@@ -244,6 +323,11 @@ class TestNonNano:
         ],
     )
     def test_add_timedeltalike_scalar_mismatched_reso(self, dta_dti, scalar):
+        # [FUNCTION DOC]
+        # Parametrized over several equal two-hour scalars (timedelta, Timedelta, numpy
+        # timedelta64 in hours and ms, minute and hour offsets). Verifies adding on either
+        # side and subtracting give results equal to the nanosecond index operations,
+        # converted to the finer of the two units.
         dta, dti = dta_dti
 
         td = pd.Timedelta(scalar)
@@ -261,6 +345,9 @@ class TestNonNano:
         tm.assert_extension_array_equal(result, expected)
 
     def test_sub_datetimelike_scalar_mismatch(self):
+        # [FUNCTION DOC]
+        # Verifies subtracting a second-unit timestamp from a microsecond array gives a
+        # timedelta array of microsecond unit with the expected values.
         dti = pd.date_range("2016-01-01", periods=3)
         dta = dti._data.as_unit("us")
 
@@ -272,6 +359,9 @@ class TestNonNano:
         tm.assert_extension_array_equal(result, expected)
 
     def test_sub_datetime64_reso_mismatch(self):
+        # [FUNCTION DOC]
+        # Verifies subtracting datetime arrays of different resolutions (seconds minus
+        # milliseconds, and the reverse) gives zero timedeltas in the finer unit.
         dti = pd.date_range("2016-01-01", periods=3)
         left = dti._data.as_unit("s")
         right = left.as_unit("ms")
@@ -288,10 +378,19 @@ class TestNonNano:
 
 
 class TestDatetimeArrayComparisons:
+    # [CLASS DOC]
+    # Tests of comparison operators on DatetimeArray. A TODO says it should be
+    # merged into the datetime64 arithmetic tests when those are robust enough.
     # TODO: merge this into tests/arithmetic/test_datetime64 once it is
     #  sufficiently robust
 
     def test_cmp_dt64_arraylike_tznaive(self, comparison_op):
+        # [FUNCTION DOC]
+        # Uses the comparison_op fixture. For a tz-naive array of nine month starts,
+        # verifies the array has the same frequency and timezone as the index, and that
+        # comparing it to itself and to the index, numpy array, list, tuple and object
+        # Index (on either side) gives all true for equality-like operators, and all false for
+        # not-equal, greater and less.
         # arbitrary tz-naive DatetimeIndex
         op = comparison_op
 
@@ -324,7 +423,13 @@ class TestDatetimeArrayComparisons:
 
 
 class TestDatetimeArray:
+    # [CLASS DOC]
+    # General tests of DatetimeArray (as opposed to non-nano specific tests).
     def test_astype_ns_to_ms_near_bounds(self):
+        # [FUNCTION DOC]
+        # Regression test (GH#55979). Verifies casting a nanosecond array holding a
+        # timestamp near the lower bound to millisecond gives the correct truncated value,
+        # matching construction directly with the millisecond unit.
         # GH#55979
         ts = pd.Timestamp("1677-09-21 00:12:43.145225")
         target = ts.as_unit("ms")
@@ -341,6 +446,9 @@ class TestDatetimeArray:
         tm.assert_datetime_array_equal(result, expected)
 
     def test_astype_non_nano_tznaive(self):
+        # [FUNCTION DOC]
+        # Verifies astype to a non-nano naive dtype on an index and an array gives the
+        # requested dtype and the array result is a DatetimeArray.
         dti = pd.date_range("2016-01-01", periods=3)
 
         res = dti.astype("M8[s]")
@@ -352,6 +460,12 @@ class TestDatetimeArray:
         assert isinstance(res, pd.core.arrays.DatetimeArray)  # used to be ndarray
 
     def test_astype_non_nano_tzaware(self):
+        # [FUNCTION DOC]
+        # Verifies astype to a non-nano timezone-aware dtype on index and array, then
+        # from non-nano to non-nano: a default cast copies (no shared memory) and copy false
+        # shares memory.
+        # KNOWN ISSUE: after the copy-false cast the assertion on the dtype is made on the
+        # earlier result rather than the new one.
         dti = pd.date_range("2016-01-01", periods=3, tz="UTC")
 
         res = dti.astype("M8[s, US/Pacific]")
@@ -371,6 +485,8 @@ class TestDatetimeArray:
         assert tm.shares_memory(res3, res)
 
     def test_astype_to_same(self):
+        # [FUNCTION DOC]
+        # Verifies casting to an equal timezone dtype with copy false returns the same object.
         arr = DatetimeArray._from_sequence(
             ["2000"], dtype=DatetimeTZDtype(tz="US/Central")
         )
@@ -382,6 +498,11 @@ class TestDatetimeArray:
         "other", ["datetime64[ns]", "datetime64[ns, UTC]", "datetime64[ns, CET]"]
     )
     def test_astype_copies(self, dtype, other):
+        # [FUNCTION DOC]
+        # Parametrized over source and target datetime64 nanosecond dtypes (naive, UTC,
+        # CET). Regression test for pull request 32490. Casting between naive and aware
+        # raises a type error (message suggests tz_localize, or says aware to naive); other
+        # casts return a copy so changing the result leaves the original Series unchanged.
         # https://github.com/pandas-dev/pandas/pull/32490
         ser = pd.Series([1, 2], dtype=dtype)
         orig = ser.copy()
@@ -405,6 +526,10 @@ class TestDatetimeArray:
 
     @pytest.mark.parametrize("dtype", [int, np.int32, np.int64, "uint32", "uint64"])
     def test_astype_int(self, dtype):
+        # [FUNCTION DOC]
+        # Parametrized over integer dtypes. Verifies casting to anything other than int64
+        # raises a type error advising to cast to int64, and casting to int64 gives
+        # the integer view of the values.
         arr = DatetimeArray._from_sequence(
             [pd.Timestamp("2000"), pd.Timestamp("2001")], dtype="M8[ns]"
         )
@@ -419,6 +544,9 @@ class TestDatetimeArray:
         tm.assert_numpy_array_equal(result, expected)
 
     def test_astype_to_sparse_dt64(self):
+        # [FUNCTION DOC]
+        # Regression test (GH#50082). Verifies casting to a sparse datetime dtype
+        # yields that dtype and equal values.
         # GH#50082
         dti = pd.date_range("2016-01-01", periods=4)
         dta = dti._data
@@ -428,6 +556,8 @@ class TestDatetimeArray:
         assert (result == dta).all()
 
     def test_tz_setter_raises(self):
+        # [FUNCTION DOC]
+        # Verifies assigning the tz attribute raises an attribute error mentioning tz_localize.
         arr = DatetimeArray._from_sequence(
             ["2000"], dtype=DatetimeTZDtype(tz="US/Central")
         )
@@ -435,6 +565,10 @@ class TestDatetimeArray:
             arr.tz = "UTC"
 
     def test_setitem_str_impute_tz(self, tz_naive_fixture):
+        # [FUNCTION DOC]
+        # Uses tz_naive_fixture. Verifies setting a tz-naive string (scalar and list-like)
+        # on a possibly timezone-aware array interprets the string in the array timezone,
+        # equal to assigning the localized timestamp.
         # Like for getitem, if we are passed a naive-like string, we impute
         #  our own timezone.
         tz = tz_naive_fixture
@@ -458,6 +592,10 @@ class TestDatetimeArray:
         tm.assert_equal(arr, expected)
 
     def test_setitem_different_tz_raises(self):
+        # [FUNCTION DOC]
+        # Verifies setting a naive timestamp on a tz-aware array raises a type error
+        # (cannot compare tz-naive and tz-aware), while setting a timestamp in another
+        # timezone is allowed and stored converted to the array timezone.
         # pre-2.0 we required exact tz match, in 2.0 we require only
         #  tzawareness-match
         data = np.array([1, 2, 3], dtype="M8[ns]")
@@ -472,6 +610,8 @@ class TestDatetimeArray:
         assert arr[0] == ts.tz_convert("US/Central")
 
     def test_setitem_clears_freq(self):
+        # [FUNCTION DOC]
+        # Verifies setting an element clears the array frequency.
         a = pd.date_range("2000", periods=2, freq="D", tz="US/Central")._data
         a[0] = pd.Timestamp("2000", tz="US/Central")
         assert a.freq is None
@@ -485,6 +625,9 @@ class TestDatetimeArray:
         ],
     )
     def test_setitem_objects(self, obj):
+        # [FUNCTION DOC]
+        # Parametrized over a Timestamp, a numpy datetime64 and a Python datetime.
+        # Verifies each can be assigned and compares equal when read.
         # make sure we accept datetime64 and datetime in addition to Timestamp
         dti = pd.date_range("2000", periods=2, freq="D")
         arr = dti._data
@@ -493,6 +636,8 @@ class TestDatetimeArray:
         assert arr[0] == obj
 
     def test_repeat_preserves_tz(self):
+        # [FUNCTION DOC]
+        # Verifies repeat keeps timezone and values but drops frequency.
         dti = pd.date_range("2000", periods=2, freq="D", tz="US/Central")
         arr = dti._data
 
@@ -503,6 +648,9 @@ class TestDatetimeArray:
         tm.assert_equal(repeated, expected)
 
     def test_value_counts_preserves_tz(self):
+        # [FUNCTION DOC]
+        # Verifies value_counts keeps the timezone in its index, and with a NaT included
+        # and dropna false gives counts for each value and for NaT.
         dti = pd.date_range("2000", periods=2, freq="D", tz="US/Central")
         arr = dti._data.repeat([4, 3])
 
@@ -518,6 +666,10 @@ class TestDatetimeArray:
 
     @pytest.mark.parametrize("method", ["pad", "backfill"])
     def test_fillna_preserves_tz(self, method):
+        # [FUNCTION DOC]
+        # Parametrized over pad and backfill. Verifies the private pad-or-backfill
+        # fills the missing middle value from the previous or next neighbor keeping the
+        # timezone, and does not modify the array or the index.
         dti = pd.date_range(
             "2000-01-01", periods=5, freq="D", tz="US/Central", unit="ns"
         )
@@ -538,6 +690,12 @@ class TestDatetimeArray:
         assert dti[2] == pd.Timestamp("2000-01-03", tz="US/Central")
 
     def test_fillna_2d(self):
+        # [FUNCTION DOC]
+        # Verifies pad-or-backfill on a 2-d tz-aware array in both directions fills along
+        # the first axis, behaves identically for Fortran-ordered backing data, and that
+        # DataFrame ffill and bfill give matching results.
+        # KNOWN ISSUE: the expected array for backfill is created by copying twice in
+        # immediate succession; the duplicate copy is redundant.
         dti = pd.date_range("2016-01-01", periods=6, tz="US/Pacific")
         dta = dti._data.reshape(3, 2).copy()
         dta[0, 1] = pd.NaT
@@ -579,6 +737,10 @@ class TestDatetimeArray:
         tm.assert_frame_equal(res, expected)
 
     def test_array_interface_tz(self):
+        # [FUNCTION DOC]
+        # Verifies the numpy array protocol on a tz-aware array: default and object dtype
+        # give Timestamp objects with the timezone; datetime64 nanosecond dtype gives UTC
+        # naive values.
         tz = "US/Central"
         data = pd.date_range("2017", periods=2, tz=tz, unit="ns")._data
         result = np.asarray(data)
@@ -603,6 +765,9 @@ class TestDatetimeArray:
         tm.assert_numpy_array_equal(result, expected)
 
     def test_array_interface(self):
+        # [FUNCTION DOC]
+        # Verifies the numpy array protocol for a tz-naive array: default gives datetime64
+        # nanosecond values and object dtype gives Timestamp objects.
         data = pd.date_range("2017", periods=2, unit="ns")._data
         expected = np.array(
             ["2017-01-01T00:00:00", "2017-01-02T00:00:00"], dtype="datetime64[ns]"
@@ -620,6 +785,10 @@ class TestDatetimeArray:
 
     @pytest.mark.parametrize("index", [True, False])
     def test_searchsorted_different_tz(self, index):
+        # [FUNCTION DOC]
+        # Parametrized over index (true uses an Index wrapper). Verifies searchsorted of a
+        # scalar and an array in a different timezone gives the same positions as the same
+        # instants in the array timezone.
         data = np.arange(10, dtype="i8") * 24 * 3600 * 10**9
         arr = pd.DatetimeIndex(data, freq="D")._data.tz_localize("Asia/Tokyo")
         if index:
@@ -635,6 +804,10 @@ class TestDatetimeArray:
 
     @pytest.mark.parametrize("index", [True, False])
     def test_searchsorted_tzawareness_compat(self, index):
+        # [FUNCTION DOC]
+        # Parametrized over index. Verifies searchsorted with a tz-aware scalar/array on
+        # naive data and the reverse raises a type error (cannot compare tz-naive and
+        # tz-aware).
         data = np.arange(10, dtype="i8") * 24 * 3600 * 10**9
         arr = pd.DatetimeIndex(data, freq="D")._data
         if index:
@@ -669,6 +842,10 @@ class TestDatetimeArray:
     )
     @pytest.mark.parametrize("index", [True, False])
     def test_searchsorted_invalid_types(self, other, index):
+        # [FUNCTION DOC]
+        # Parametrized over many invalid search values (numbers, timedelta objects,
+        # the string "invalid", integer and timedelta arrays, a period) and index.
+        # Verifies searchsorted raises a type error with one of two accepted messages.
         data = np.arange(10, dtype="i8") * 24 * 3600 * 10**9
         arr = pd.DatetimeIndex(data, freq="D")._data
         if index:
@@ -684,6 +861,10 @@ class TestDatetimeArray:
             arr.searchsorted(other)
 
     def test_shift_fill_value(self):
+        # [FUNCTION DOC]
+        # Verifies shift by one with a fill value (Timestamp, Python datetime, numpy
+        # datetime64) rolls the data and fills with the last value; the same for
+        # tz-aware data (without the numpy datetime64 case).
         dti = pd.date_range("2016-01-01", periods=3)
 
         dta = dti._data
@@ -704,6 +885,10 @@ class TestDatetimeArray:
             tm.assert_datetime_array_equal(result, expected)
 
     def test_shift_value_tzawareness_mismatch(self):
+        # [FUNCTION DOC]
+        # Verifies shifting with a fill value whose timezone awareness does not match
+        # the array raises a type error ("Cannot compare"), in both directions and for
+        # timestamp, datetime and datetime64 inputs.
         dti = pd.date_range("2016-01-01", periods=3)
 
         dta = dti._data
@@ -720,6 +905,9 @@ class TestDatetimeArray:
                 dta.shift(1, fill_value=invalid)
 
     def test_shift_requires_tzmatch(self):
+        # [FUNCTION DOC]
+        # Verifies a fill value in a different timezone is accepted on shift and converted
+        # (only tz-awareness must match since version 2.0).
         # pre-2.0 we required exact tz match, in 2.0 we require just
         #  matching tzawareness
         dti = pd.date_range("2016-01-01", periods=3, tz="UTC")
@@ -732,6 +920,9 @@ class TestDatetimeArray:
         tm.assert_equal(result, expected)
 
     def test_tz_localize_t2d(self):
+        # [FUNCTION DOC]
+        # Verifies tz_localize to naive on a 2-d array equals the flattened result
+        # reshaped, and localizing back round trips to the original.
         dti = pd.date_range("1994-05-12", periods=12, tz="US/Pacific")
         dta = dti._data.reshape(3, 4)
         result = dta.tz_localize(None)
@@ -746,6 +937,11 @@ class TestDatetimeArray:
         "tz", ["US/Eastern", "dateutil/US/Eastern", "pytz/US/Eastern"]
     )
     def test_iter_zoneinfo_fold(self, tz):
+        # [FUNCTION DOC]
+        # Regression test (GH#49684). Parametrized over timezone specs (zoneinfo,
+        # dateutil, pytz; pytz skipped if not installed). With times around a daylight
+        # saving fold, verifies a scalar taken from the array, an element from iterating
+        # the array, and an element from casting to object have equal text and UTC offsets.
         # GH#49684
         if tz.startswith("pytz/"):
             pytz = pytest.importorskip("pytz")
@@ -783,6 +979,9 @@ class TestDatetimeArray:
         ["2M", "2SM", "2sm", "2Q", "2Q-SEP", "1Y", "2Y-MAR", "2m", "2q-sep", "2y"],
     )
     def test_date_range_frequency_M_Q_Y_raises(self, freq):
+        # [FUNCTION DOC]
+        # Parametrized over month, semi-month, quarter and year aliases in invalid
+        # spellings. Verifies date_range raises a value error "Invalid frequency".
         msg = f"Invalid frequency: {freq}"
 
         with pytest.raises(ValueError, match=msg):
@@ -790,6 +989,11 @@ class TestDatetimeArray:
 
     @pytest.mark.parametrize("freq_depr", ["2MIN", "2nS", "2Us"])
     def test_date_range_uppercase_frequency_deprecated(self, freq_depr):
+        # [FUNCTION DOC]
+        # Regression test (GH#9586, GH#54939). Parametrized over uppercase minute,
+        # nano and micro unit aliases. Verifies date_range with the uppercase alias emits
+        # the Pandas4Warning deprecation (suggesting lowercase) and equals the result of the
+        # lowercase alias.
         # GH#9586, GH#54939
         depr_msg = (
             f"'{freq_depr[1:]}' is deprecated and will be removed in a "
@@ -816,12 +1020,18 @@ class TestDatetimeArray:
         ],
     )
     def test_date_range_lowercase_frequency_raises(self, freq):
+        # [FUNCTION DOC]
+        # Parametrized over lowercase anchored aliases. Verifies date_range raises a value
+        # error "Invalid frequency".
         msg = f"Invalid frequency: {freq}"
 
         with pytest.raises(ValueError, match=msg):
             pd.date_range("1/1/2000", periods=4, freq=freq)
 
     def test_date_range_lowercase_frequency_deprecated(self):
+        # [FUNCTION DOC]
+        # Regression test (GH#9586, GH#54939). Verifies the lowercase week alias emits a
+        # Pandas4Warning deprecation and equals the result of the uppercase alias.
         # GH#9586, GH#54939
         depr_msg = "'w' is deprecated and will be removed in a future version"
 
@@ -832,6 +1042,9 @@ class TestDatetimeArray:
 
     @pytest.mark.parametrize("freq", ["1A", "2A-MAR", "2a-mar"])
     def test_date_range_frequency_A_raises(self, freq):
+        # [FUNCTION DOC]
+        # Parametrized over legacy year aliases. Verifies date_range raises a value error
+        # "Invalid frequency".
         msg = f"Invalid frequency: {freq}"
 
         with pytest.raises(ValueError, match=msg):
@@ -839,6 +1052,9 @@ class TestDatetimeArray:
 
     @pytest.mark.parametrize("freq", ["2H", "2CBH", "2S"])
     def test_date_range_uppercase_frequency_raises(self, freq):
+        # [FUNCTION DOC]
+        # Parametrized over removed uppercase aliases for hour, business hour and second.
+        # Verifies date_range raises a value error "Invalid frequency".
         msg = f"Invalid frequency: {freq}"
 
         with pytest.raises(ValueError, match=msg):
@@ -846,6 +1062,10 @@ class TestDatetimeArray:
 
 
 def test_factorize_sort_without_freq():
+    # [FUNCTION DOC]
+    # Verifies factorize with sorting on a datetime array without frequency raises a
+    # not-implemented error telling users to call the top-level factorize function, and
+    # the same for a TimedeltaArray derived from it.
     dta = DatetimeArray._from_sequence([0, 2, 1], dtype="M8[ns]")
 
     msg = r"call pd.factorize\(obj, sort=True\) instead"
