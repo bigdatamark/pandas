@@ -1,3 +1,10 @@
+# [MODULE DOC]
+# Tests for the apply method of rolling windows with user-supplied functions:
+# engine and raw argument validation, out-of-bounds windows, pandas objects
+# passed to the function, time-based windows, args and kwargs forwarding,
+# missing-value handling, centering, minimum periods and consistency on the
+# mocked series and frame fixtures. A module-level filter silences the runtime
+# warnings about empty slices, because zero-length inputs are tested on purpose.
 import numpy as np
 import pytest
 
@@ -24,16 +31,27 @@ pytestmark = pytest.mark.filterwarnings(
 
 
 def f(x):
+    # [FUNCTION DOC]
+    # HELPER: shared window function for the tests below. Takes an array-like x,
+    # keeps only its finite entries (drops missing and infinite values) and returns
+    # their mean (not a number when nothing is finite).
     return x[np.isfinite(x)].mean()
 
 
 @pytest.mark.parametrize("bad_raw", [None, 1, 0])
 def test_rolling_apply_invalid_raw(bad_raw):
+    # [FUNCTION DOC]
+    # Parametrized over invalid raw values (none, one, zero). Verifies apply raises
+    # a value error saying the raw parameter must be true or false.
     with pytest.raises(ValueError, match="raw parameter must be `True` or `False`"):
         Series(range(3)).rolling(1).apply(len, raw=bad_raw)
 
 
 def test_rolling_apply_out_of_bounds(engine_and_raw):
+    # [FUNCTION DOC]
+    # Regression test for gh-1850. For each valid engine and raw pair, verifies a
+    # window larger than the series gives all missing results by default and the
+    # cumulative sums when minimum periods is one.
     # gh-1850
     engine, raw = engine_and_raw
 
@@ -49,6 +67,13 @@ def test_rolling_apply_out_of_bounds(engine_and_raw):
 
 @pytest.mark.parametrize("window", [2, "2s"])
 def test_rolling_apply_with_pandas_objects(window):
+    # [FUNCTION DOC]
+    # Regression test for issue 5071, parametrized over window sizes of two
+    # observations and "2s". On an equally spaced time-indexed frame, verifies that
+    # with raw false the function receives pandas objects (using the index of the
+    # passed window, returning missing for the first window and the last value
+    # otherwise) and that raw true makes the same function fail with an attribute
+    # error that is treated as an external error.
     # 5071
     df = DataFrame(
         {
@@ -61,6 +86,10 @@ def test_rolling_apply_with_pandas_objects(window):
     # we have an equal spaced timeseries index
     # so simulate removing the first period
     def f(x):
+        # [FUNCTION DOC]
+        # HELPER: nested window function for the test above. Takes a pandas window
+        # object, returns not a number if its first index label equals the first label
+        # of the enclosing frame, otherwise the last element of the window by position.
         if x.index[0] == df.index[0]:
             return np.nan
         return x.iloc[-1]
@@ -74,6 +103,12 @@ def test_rolling_apply_with_pandas_objects(window):
 
 
 def test_rolling_apply(engine_and_raw, step):
+    # [FUNCTION DOC]
+    # For each engine and raw pair and step: verifies rolling apply on an empty
+    # float series returns the same empty series; and (gh-8080) with a series of
+    # three missing objects, window 2 and minimum periods zero, applying a length
+    # function (as a lambda and as the builtin) returns the window sizes 1, 2, 2
+    # (sliced by step).
     engine, raw = engine_and_raw
 
     expected = Series([], dtype="float64")
@@ -95,6 +130,10 @@ def test_rolling_apply(engine_and_raw, step):
 
 
 def test_all_apply(engine_and_raw):
+    # [FUNCTION DOC]
+    # Verifies that a one-observation fixed window and a one-second time-based
+    # window on a one-second-spaced time-indexed frame produce identical results
+    # when applying a constant-returning function (each engine and raw pair).
     engine, raw = engine_and_raw
 
     df = (
@@ -112,6 +151,10 @@ def test_all_apply(engine_and_raw):
 
 
 def test_ragged_apply(engine_and_raw):
+    # [FUNCTION DOC]
+    # Verifies apply on irregularly spaced timestamps (gaps of 1 to 2 seconds) with
+    # time windows of 1s, 2s and 5s and minimum periods one, using a constant
+    # function returning one: every row yields 1.0 as a float.
     engine, raw = engine_and_raw
 
     df = DataFrame({"B": range(5)})
@@ -141,11 +184,17 @@ def test_ragged_apply(engine_and_raw):
 
 
 def test_invalid_engine():
+    # [FUNCTION DOC]
+    # Verifies an unknown engine name makes apply raise a value error saying the
+    # engine must be numba or cython.
     with pytest.raises(ValueError, match="engine must be either 'numba' or 'cython'"):
         Series(range(1)).rolling(1).apply(lambda x: x, engine="foo")
 
 
 def test_invalid_engine_kwargs_cython():
+    # [FUNCTION DOC]
+    # Verifies that passing engine keyword options together with the cython engine
+    # raises a value error saying the cython engine does not accept them.
     with pytest.raises(ValueError, match="cython engine does not accept engine_kwargs"):
         Series(range(1)).rolling(1).apply(
             lambda x: x, engine="cython", engine_kwargs={"nopython": False}
@@ -153,6 +202,9 @@ def test_invalid_engine_kwargs_cython():
 
 
 def test_invalid_raw_numba():
+    # [FUNCTION DOC]
+    # Verifies that raw false combined with the numba engine raises a value error
+    # saying raw must be true when using numba.
     with pytest.raises(
         ValueError, match="raw must be `True` when using the numba engine"
     ):
@@ -161,8 +213,16 @@ def test_invalid_raw_numba():
 
 @pytest.mark.parametrize("args_kwargs", [[None, {"par": 10}], [(10,), None]])
 def test_rolling_apply_args_kwargs(args_kwargs):
+    # [FUNCTION DOC]
+    # Regression test for GH 33433. Parametrized over passing the extra parameter
+    # as keyword arguments or as positional arguments. Verifies the extra argument
+    # is forwarded to the user function (a sum after adding the parameter 10) for a
+    # frame rolling and for a grouped series rolling (with a two-level index).
     # GH 33433
     def numpysum(x, par):
+        # [FUNCTION DOC]
+        # HELPER: nested user function. Takes an array x and a number par, returns the
+        # sum of x after adding par to every element.
         return np.sum(x + par)
 
     df = DataFrame({"gr": [1, 1], "a": [1, 2]})
@@ -183,6 +243,13 @@ def test_rolling_apply_args_kwargs(args_kwargs):
 
 
 def test_nans(raw):
+    # [FUNCTION DOC]
+    # Verifies, on random data with ten missing values at each end, that apply of
+    # the finite-mean function respects minimum periods: the last value for a window
+    # of 50 and minimum periods 30 equals the mean of the middle values; for window
+    # 20 and minimum periods 15 the first non-missing result is at position 24 and
+    # results go missing again five from the end; window 10 with minimum periods 5
+    # first yields at position 4; and minimum periods zero equals minimum periods one.
     obj = Series(np.random.default_rng(2).standard_normal(50))
     obj[:10] = np.nan
     obj[-10:] = np.nan
@@ -209,6 +276,10 @@ def test_nans(raw):
 
 
 def test_center(raw):
+    # [FUNCTION DOC]
+    # Verifies a centered rolling apply (window 20, minimum periods 15) equals the
+    # non-centered apply on the series padded with nine trailing missing values,
+    # with the first nine results dropped and the index reset.
     obj = Series(np.random.default_rng(2).standard_normal(50))
     obj[:10] = np.nan
     obj[-10:] = np.nan
@@ -225,12 +296,19 @@ def test_center(raw):
 
 
 def test_series(raw, series):
+    # [FUNCTION DOC]
+    # Verifies rolling apply with window 50 on the mocked series fixture returns a
+    # series whose last value is the mean of the last 50 values.
     result = series.rolling(50).apply(f, raw=raw)
     assert isinstance(result, Series)
     tm.assert_almost_equal(result.iloc[-1], np.mean(series[-50:]))
 
 
 def test_frame(raw, frame):
+    # [FUNCTION DOC]
+    # Verifies rolling apply with window 50 on the mocked frame fixture returns a
+    # frame whose last row equals the column means of the last 50 rows (names not
+    # compared).
     result = frame.rolling(50).apply(f, raw=raw)
     assert isinstance(result, DataFrame)
     tm.assert_series_equal(
@@ -241,6 +319,11 @@ def test_frame(raw, frame):
 
 
 def test_time_rule_series(raw, series):
+    # [FUNCTION DOC]
+    # Verifies on a series resampled to business-day frequency (taking every other
+    # point) that rolling apply with window 25 and minimum periods 10 has a last
+    # value equal to the mean of the original data truncated to the last 25
+    # business days.
     win = 25
     minp = 10
     ser = series[::2].resample("B").mean()
@@ -253,6 +336,10 @@ def test_time_rule_series(raw, series):
 
 
 def test_time_rule_frame(raw, frame):
+    # [FUNCTION DOC]
+    # Frame variant of the business-day resampled rolling apply check: the final
+    # row of the result equals the column means of the original data truncated to
+    # the last 25 business days (names not compared).
     win = 25
     minp = 10
     frm = frame[::2].resample("B").mean()
@@ -270,6 +357,10 @@ def test_time_rule_frame(raw, frame):
 
 @pytest.mark.parametrize("minp", [0, 99, 100])
 def test_min_periods(raw, series, minp, step):
+    # [FUNCTION DOC]
+    # Parametrized over minimum periods 0, 99 and 100, plus step. Verifies that a
+    # window one longer than the series and a window equal to the series length
+    # give identical missing-value patterns and, where present, matching values.
     result = series.rolling(len(series) + 1, min_periods=minp, step=step).apply(
         f, raw=raw
     )
@@ -284,6 +375,10 @@ def test_min_periods(raw, series, minp, step):
 
 
 def test_center_reindex_series(raw, series):
+    # [FUNCTION DOC]
+    # Verifies centered rolling apply on the series fixture equals computing a
+    # non-centered rolling apply on the series padded with twelve extra labels,
+    # shifting back by twelve, and reindexing to the original index.
     # shifter index
     s = [f"x{x:d}" for x in range(12)]
     minp = 10
@@ -302,6 +397,10 @@ def test_center_reindex_series(raw, series):
 
 
 def test_center_reindex_frame(raw):
+    # [FUNCTION DOC]
+    # Same check as the series variant, for a 100-row daily frame: centered rolling
+    # apply (window 25, minimum periods 10) equals the padded, shifted and
+    # reindexed non-centered result.
     # shifter index
     frame = DataFrame(range(100), index=date_range("2020-01-01", freq="D", periods=100))
     s = [f"x{x:d}" for x in range(12)]

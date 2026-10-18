@@ -1,3 +1,10 @@
+# [MODULE DOC]
+# Tests that rolling aggregations (count, max, min, sum, mean, std, var,
+# median) work across many input dtypes (object, category, signed and unsigned
+# integers, floats, timedelta, datetime, tz-aware datetime, nullable integers),
+# for both series and frames, following gh-12373. Only rolling is exercised
+# for full dtype coverage though expanding and ewm inherit the behavior.
+# Provides a dtype-name fixture and a dtype resolution helper.
 import numpy as np
 import pytest
 
@@ -20,6 +27,12 @@ import pandas._testing as tm
 
 
 def get_dtype(dtype, coerce_int=None):
+    # [FUNCTION DOC]
+    # HELPER: resolves a dtype name for building test data. Inputs: dtype (string
+    # name) and coerce_int (optional flag, default none). When coerce_int is exactly
+    # false and the name contains the text int (including unsigned names), returns
+    # none so that the data's own inference is used (needed because integers cannot
+    # hold missing values); otherwise returns the dtype object for the name.
     if coerce_int is False and "int" in dtype:
         return None
     return pandas_dtype(dtype)
@@ -46,6 +59,10 @@ def get_dtype(dtype, coerce_int=None):
     ]
 )
 def dtypes(request):
+    # [FUNCTION DOC]
+    # Fixture parametrized over 16 dtype name strings: object, category, int8 to
+    # int64, uint8 to uint64, float16/32/64, timedelta, datetime and tz-aware
+    # datetime. Yields one name per test.
     """Dtypes for window tests"""
     return request.param
 
@@ -94,6 +111,14 @@ def dtypes(request):
 def test_series_dtypes(
     method, data, expected_data, coerce_int, dtypes, min_periods, step
 ):
+    # [FUNCTION DOC]
+    # Parametrized over aggregation method with input data, the expected float
+    # results for a window of 2, whether integer dtypes should be coerced
+    # (false for data containing missing values), and minimum periods; also over the
+    # dtype fixture and step. Builds a series with the resolved dtype and rolls it.
+    # For timedelta and datetime dtypes, any method except count must raise a data
+    # error with the message about no numeric types to aggregate. Otherwise the
+    # result must be almost equal to the expected float64 series sliced by step.
     ser = Series(data, dtype=get_dtype(dtypes, coerce_int=coerce_int))
     rolled = ser.rolling(2, min_periods=min_periods, step=step)
 
@@ -108,6 +133,11 @@ def test_series_dtypes(
 
 
 def test_series_nullable_int(any_signed_int_ea_dtype, step):
+    # [FUNCTION DOC]
+    # Regression test for GH 43016. A series of nullable signed integers with one
+    # missing value, rolling mean with window 2 (and step), gives not a number at
+    # the start and wherever the window includes the missing value, with value 0.5
+    # in between.
     # GH 43016
     ser = Series([0, 1, NA], dtype=any_signed_int_ea_dtype)
     result = ser.rolling(2, step=step).mean()
@@ -160,6 +190,14 @@ def test_series_nullable_int(any_signed_int_ea_dtype, step):
     ],
 )
 def test_dataframe_dtypes(method, expected_data, dtypes, min_periods, step):
+    # [FUNCTION DOC]
+    # Frame counterpart of the series dtype test: parametrized over method, expected
+    # columns (as a mapping of column to series) and minimum periods, plus the dtype
+    # fixture and step. Builds a five by two frame of the integers 0 to 9 with the
+    # dtype, rolls with window 2. For timedelta and datetime dtypes, any method
+    # except count must raise a data error about not being able to aggregate a
+    # non-numeric type; otherwise the result equals the expected float64 frame
+    # sliced by step.
     df = DataFrame(np.arange(10).reshape((5, 2)), dtype=get_dtype(dtypes))
     rolled = df.rolling(2, min_periods=min_periods, step=step)
 

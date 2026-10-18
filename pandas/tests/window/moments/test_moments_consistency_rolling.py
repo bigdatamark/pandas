@@ -1,3 +1,9 @@
+# [MODULE DOC]
+# Consistency tests for fixed-window rolling moments: checks that sum, mean,
+# variance, standard deviation, covariance and correlation computed by the
+# rolling window agree with each other and with the apply path, for two
+# (window, min_periods) cases and both center settings. Uses data fixtures
+# from the moments conftest and center from the window conftest.
 import numpy as np
 import pytest
 
@@ -6,15 +12,24 @@ import pandas._testing as tm
 
 
 def no_nans(x):
+    # [FUNCTION DOC]
+    # HELPER: returns true when a series or frame contains no missing values
+    # (reduces over all axes).
     return x.notna().all(axis=None)
 
 
 def all_na(x):
+    # [FUNCTION DOC]
+    # HELPER: returns true when every element of a series or frame is missing
+    # (reduces over all axes; true for empty objects).
     return x.isnull().all(axis=None)
 
 
 @pytest.fixture(params=[(1, 0), (5, 1)])
 def rolling_consistency_cases(request):
+    # [FUNCTION DOC]
+    # Fixture parametrized over two (window size, minimum periods) pairs:
+    # (1, 0) and (5, 1). Yields the pair as a tuple.
     """window, min_periods"""
     return request.param
 
@@ -23,6 +38,13 @@ def rolling_consistency_cases(request):
 def test_rolling_apply_consistency_sum(
     request, all_data, rolling_consistency_cases, center, f
 ):
+    # [FUNCTION DOC]
+    # Verifies the rolling sum equals rolling apply (raw mode) with three
+    # equivalent functions: a series-sum lambda, nan-skipping sum and plain
+    # numpy sum. For plain numpy sum the test is marked expected-to-fail
+    # unless the data has no missing values or is entirely missing, non-empty
+    # and minimum periods is positive, since plain sum propagates missing
+    # values.
     window, min_periods = rolling_consistency_cases
 
     if f is np.sum:
@@ -43,6 +65,10 @@ def test_rolling_apply_consistency_sum(
 
 @pytest.mark.parametrize("ddof", [0, 1])
 def test_moments_consistency_var(all_data, rolling_consistency_cases, center, ddof):
+    # [FUNCTION DOC]
+    # Parametrized over ddof 0 and 1. Verifies rolling variance is never
+    # negative and, with ddof zero, equals rolling mean of squares minus the
+    # square of the rolling mean.
     window, min_periods = rolling_consistency_cases
 
     var_x = all_data.rolling(window=window, min_periods=min_periods, center=center).var(
@@ -67,6 +93,11 @@ def test_moments_consistency_var(all_data, rolling_consistency_cases, center, dd
 def test_moments_consistency_var_constant(
     consistent_data, rolling_consistency_cases, center, ddof
 ):
+    # [FUNCTION DOC]
+    # Parametrized over ddof 0 and 1. For constant data verifies rolling
+    # variance is never positive and equals zero where the rolling count
+    # reaches the minimum (at least one), missing elsewhere, and with ddof one
+    # also missing where fewer than two observations are in the window.
     window, min_periods = rolling_consistency_cases
 
     count_x = consistent_data.rolling(
@@ -89,6 +120,10 @@ def test_moments_consistency_var_constant(
 def test_rolling_consistency_var_std_cov(
     all_data, rolling_consistency_cases, center, ddof
 ):
+    # [FUNCTION DOC]
+    # Parametrized over ddof 0 and 1. Verifies rolling variance, standard
+    # deviation and self-covariance are non-negative, variance equals standard
+    # deviation squared, and variance equals self-covariance.
     window, min_periods = rolling_consistency_cases
 
     var_x = all_data.rolling(window=window, min_periods=min_periods, center=center).var(
@@ -117,6 +152,11 @@ def test_rolling_consistency_var_std_cov(
 def test_rolling_consistency_series_cov_corr(
     series_data, rolling_consistency_cases, center, ddof
 ):
+    # [FUNCTION DOC]
+    # Parametrized over ddof 0 and 1, series only. Verifies covariance equals
+    # half of (variance of the sum minus the two variances), correlation
+    # equals covariance over the product of standard deviations, and with ddof
+    # zero covariance equals mean of product minus product of means.
     window, min_periods = rolling_consistency_cases
 
     var_x_plus_y = (
@@ -168,6 +208,9 @@ def test_rolling_consistency_series_cov_corr(
 
 
 def test_rolling_consistency_mean(all_data, rolling_consistency_cases, center):
+    # [FUNCTION DOC]
+    # Verifies the rolling mean equals rolling sum divided by rolling count
+    # (same window, minimum periods and center), compared as float64.
     window, min_periods = rolling_consistency_cases
 
     result = all_data.rolling(
@@ -188,6 +231,11 @@ def test_rolling_consistency_mean(all_data, rolling_consistency_cases, center):
 def test_rolling_consistency_constant(
     consistent_data, rolling_consistency_cases, center
 ):
+    # [FUNCTION DOC]
+    # For constant data verifies the rolling mean equals the constant where
+    # the rolling count reaches the minimum (at least one) and is missing
+    # elsewhere, and rolling correlation of the data with itself is entirely
+    # missing.
     window, min_periods = rolling_consistency_cases
 
     count_x = consistent_data.rolling(
@@ -220,6 +268,10 @@ def test_rolling_consistency_constant(
 def test_rolling_consistency_var_debiasing_factors(
     all_data, rolling_consistency_cases, center
 ):
+    # [FUNCTION DOC]
+    # Verifies unbiased rolling variance equals biased (ddof zero) variance
+    # times rolling count divided by (count minus one), where a zero
+    # denominator is treated as missing.
     window, min_periods = rolling_consistency_cases
 
     # check variance debiasing factors

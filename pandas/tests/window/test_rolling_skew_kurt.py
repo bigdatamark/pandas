@@ -1,3 +1,11 @@
+# [MODULE DOC]
+# Tests for rolling skewness and kurtosis: agreement with the scipy statistics
+# functions (unbiased variant) on series, frames and time-rule resampled data,
+# missing value and minimum periods handling, centering, edge cases (constant
+# data, too-small windows, hand-computed values) and floating point error on
+# equal values. Tests comparing with scipy skip when scipy is missing. Each
+# comparison test is parametrized over (scipy function, rolling method) pairs
+# for kurtosis and skew.
 from functools import partial
 
 import numpy as np
@@ -17,6 +25,10 @@ from pandas.tseries import offsets
 
 @pytest.mark.parametrize("sp_func, roll_func", [["kurtosis", "kurt"], ["skew", "skew"]])
 def test_series(series, sp_func, roll_func):
+    # [FUNCTION DOC]
+    # Verifies rolling kurtosis or skewness (window 50) on the series fixture returns
+    # a series whose last value equals the unbiased scipy statistic of the last 50
+    # values.
     sp_stats = pytest.importorskip("scipy.stats")
 
     compare_func = partial(getattr(sp_stats, sp_func), bias=False)
@@ -27,6 +39,9 @@ def test_series(series, sp_func, roll_func):
 
 @pytest.mark.parametrize("sp_func, roll_func", [["kurtosis", "kurt"], ["skew", "skew"]])
 def test_frame(raw, frame, sp_func, roll_func):
+    # [FUNCTION DOC]
+    # Frame counterpart (raw fixture): the last row equals the unbiased scipy
+    # statistic applied column by column to the last 50 rows (names not compared).
     sp_stats = pytest.importorskip("scipy.stats")
 
     compare_func = partial(getattr(sp_stats, sp_func), bias=False)
@@ -41,6 +56,10 @@ def test_frame(raw, frame, sp_func, roll_func):
 
 @pytest.mark.parametrize("sp_func, roll_func", [["kurtosis", "kurt"], ["skew", "skew"]])
 def test_time_rule_series(series, sp_func, roll_func):
+    # [FUNCTION DOC]
+    # On the series fixture sampled every other point and resampled to business days,
+    # verifies the last result (window 25, minimum periods 10) equals the unbiased
+    # scipy statistic of the original data truncated to the last 25 business days.
     sp_stats = pytest.importorskip("scipy.stats")
 
     compare_func = partial(getattr(sp_stats, sp_func), bias=False)
@@ -56,6 +75,9 @@ def test_time_rule_series(series, sp_func, roll_func):
 
 @pytest.mark.parametrize("sp_func, roll_func", [["kurtosis", "kurt"], ["skew", "skew"]])
 def test_time_rule_frame(raw, frame, sp_func, roll_func):
+    # [FUNCTION DOC]
+    # Frame counterpart of the time-rule test (raw fixture): the final row equals
+    # the scipy statistic applied column by column (names not compared).
     sp_stats = pytest.importorskip("scipy.stats")
 
     compare_func = partial(getattr(sp_stats, sp_func), bias=False)
@@ -75,6 +97,12 @@ def test_time_rule_frame(raw, frame, sp_func, roll_func):
 
 @pytest.mark.parametrize("sp_func, roll_func", [["kurtosis", "kurt"], ["skew", "skew"]])
 def test_nans(sp_func, roll_func):
+    # [FUNCTION DOC]
+    # On random data with ten missing values at each end, verifies: window 50 with
+    # minimum periods 30 gives the scipy statistic of the middle values at the end;
+    # window 20 with minimum periods 15 first yields at position 24 and becomes
+    # missing again five from the end; window 10 with minimum periods 5 first yields
+    # at position 4; and minimum periods zero equals one.
     sp_stats = pytest.importorskip("scipy.stats")
 
     compare_func = partial(getattr(sp_stats, sp_func), bias=False)
@@ -106,6 +134,10 @@ def test_nans(sp_func, roll_func):
 @pytest.mark.parametrize("minp", [0, 99, 100])
 @pytest.mark.parametrize("roll_func", ["kurt", "skew"])
 def test_min_periods(series, minp, roll_func, step):
+    # [FUNCTION DOC]
+    # Parametrized over kurt and skew, minimum periods 0, 99, 100 and step. Verifies
+    # a window one longer than the series and a window equal to the length give
+    # identical missing patterns and matching values where present.
     result = getattr(
         series.rolling(len(series) + 1, min_periods=minp, step=step), roll_func
     )()
@@ -121,6 +153,10 @@ def test_min_periods(series, minp, roll_func, step):
 
 @pytest.mark.parametrize("roll_func", ["kurt", "skew"])
 def test_center(roll_func):
+    # [FUNCTION DOC]
+    # Verifies a centered rolling window of 20 equals the non-centered result on
+    # data padded with nine trailing missing values, dropping the first nine results
+    # and resetting the index (kurt and skew).
     obj = Series(np.random.default_rng(2).standard_normal(50))
     obj[:10] = np.nan
     obj[-10:] = np.nan
@@ -136,6 +172,10 @@ def test_center(roll_func):
 
 @pytest.mark.parametrize("roll_func", ["kurt", "skew"])
 def test_center_reindex_series(series, roll_func):
+    # [FUNCTION DOC]
+    # Verifies a centered rolling window of 25 on the series fixture equals the
+    # non-centered result on the series padded with twelve extra labels, shifted back
+    # by twelve and reindexed (kurt and skew).
     # shifter index
     s = [f"x{x:d}" for x in range(12)]
 
@@ -154,6 +194,9 @@ def test_center_reindex_series(series, roll_func):
 @pytest.mark.slow
 @pytest.mark.parametrize("roll_func", ["kurt", "skew"])
 def test_center_reindex_frame(frame, roll_func):
+    # [FUNCTION DOC]
+    # Marked slow. Frame counterpart of the series centered-reindex test (kurt and
+    # skew).
     # shifter index
     s = [f"x{x:d}" for x in range(12)]
 
@@ -170,6 +213,12 @@ def test_center_reindex_frame(frame, roll_func):
 
 
 def test_rolling_skew_edge_cases(step):
+    # [FUNCTION DOC]
+    # Verifies skewness edge cases with step: constant data with window 5 gives
+    # missing for the first four positions then 0.0 at the fifth; a window of 2
+    # gives all missing; and a hand-computed five-value example with window 4 gives
+    # missing, missing, missing, 0.177994, 1.548824.
+    # KNOWN ISSUE: the first inline comment says the constant-data case yields all missing values, but the expectation (and the following comment) says the full-window value is 0.0, so the first comment is inaccurate.
     expected = Series([np.nan] * 4 + [0.0])[::step]
     # yields all NaN (0 variance)
     d = Series([1] * 5)
@@ -191,6 +240,12 @@ def test_rolling_skew_edge_cases(step):
 
 
 def test_rolling_kurt_edge_cases(step):
+    # [FUNCTION DOC]
+    # Verifies kurtosis edge cases with step: constant data with window 5 gives
+    # missing for the first four positions then -3.0; a window of 3 gives all
+    # missing; and a hand-computed five-value example with window 4 gives missing,
+    # missing, missing, 1.224307, 2.671499.
+    # KNOWN ISSUE: the first inline comment says the constant-data case yields all missing values, but the expected result ends with -3.0 at the full window, so the comment is inaccurate.
     expected = Series([np.nan] * 4 + [-3.0])[::step]
 
     # yields all NaN (0 variance)
@@ -212,6 +267,11 @@ def test_rolling_kurt_edge_cases(step):
 
 
 def test_rolling_skew_eq_value_fperr(step):
+    # [FUNCTION DOC]
+    # Regression test for 18804 (updated by 46717). Verifies rolling skewness with
+    # window 10 over 15 equal floating point values is zero (not missing) from the
+    # tenth position on, and missing before it.
+    # KNOWN ISSUE: the first inline comment still says equal values should give a missing result; the second comment and the assertions say zero.
     # #18804 all rolling skew for all equal values should return Nan
     # #46717 update: all equal values should return 0 instead of NaN
     a = Series([1.1] * 15).rolling(window=10, step=step).skew()
@@ -220,6 +280,11 @@ def test_rolling_skew_eq_value_fperr(step):
 
 
 def test_rolling_kurt_eq_value_fperr(step):
+    # [FUNCTION DOC]
+    # Regression test for 18804 (updated by 46717). Verifies rolling kurtosis with
+    # window 10 over 15 equal floating point values is -3 from the tenth position on,
+    # and missing before it.
+    # KNOWN ISSUE: the first inline comment still says equal values should give a missing result; the second comment and the assertions say -3.
     # #18804 all rolling kurt for all equal values should return Nan
     # #46717 update: all equal values should return -3 instead of NaN
     a = Series([1.1] * 15).rolling(window=10, step=step).kurt()

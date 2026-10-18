@@ -1,3 +1,10 @@
+# [MODULE DOC]
+# Consistency tests for exponentially weighted (ewm) moments: checks that
+# mean, variance, standard deviation, covariance and correlation agree with
+# each other and with a pure-python reference computation of the weights.
+# Uses the data and min_periods fixtures from the moments conftest and the
+# adjust and ignore_na fixtures from the window conftest. Contains two weight
+# builder helpers used only by the tests here.
 import numpy as np
 import pytest
 
@@ -10,6 +17,14 @@ import pandas._testing as tm
 
 
 def create_mock_weights(obj, com, adjust, ignore_na):
+    # [FUNCTION DOC]
+    # HELPER: builds reference ewm weights for a series or frame. Inputs: obj
+    # (series or frame), com (center of mass), adjust and ignore_na (booleans
+    # with the same meaning as the ewm options). For a frame with no columns
+    # returns an empty frame with the same index and columns; for a frame with
+    # columns computes weights per column via the series helper, concatenates
+    # them side by side and restores the original index and columns; for a
+    # series delegates directly. Returns weights with the same shape as obj.
     if isinstance(obj, DataFrame):
         if not len(obj.columns):
             return DataFrame(index=obj.index, columns=obj.columns)
@@ -30,6 +45,17 @@ def create_mock_weights(obj, com, adjust, ignore_na):
 
 
 def create_mock_series_weights(s, com, adjust, ignore_na):
+    # [FUNCTION DOC]
+    # HELPER: reference weight computation for one series, used by the weight
+    # builder. Inputs: s (series), com (center of mass; smoothing factor is
+    # one over one plus com), adjust, ignore_na. Returns a float series with
+    # the same index and name holding a weight at each non-missing position
+    # and missing elsewhere. With adjust, weight is the inverse of one minus
+    # alpha raised to the running observation count; the count increments for
+    # each non-missing value and, unless ignore_na, also for missing values.
+    # Without adjust, the first non-missing weight is one and later ones are
+    # alpha times the running weight sum divided by one minus alpha raised to
+    # the distance (in counted positions) from the previous valid value.
     w = Series(np.nan, index=s.index, name=s.name)
     alpha = 1.0 / (1.0 + com)
     if adjust:
@@ -59,6 +85,12 @@ def create_mock_series_weights(s, com, adjust, ignore_na):
 
 
 def test_ewm_consistency_mean(all_data, adjust, ignore_na, min_periods):
+    # [FUNCTION DOC]
+    # Verifies the ewm mean (center of mass 3) equals a reference: the
+    # cumulative sum of data times mock weights divided by the cumulative sum
+    # of weights, forward-filled, with entries set to missing where the
+    # expanding observation count is below the required minimum (at least
+    # one). Compared as float64 for every fixture dataset and option combo.
     com = 3.0
 
     result = all_data.ewm(
@@ -73,6 +105,11 @@ def test_ewm_consistency_mean(all_data, adjust, ignore_na, min_periods):
 
 
 def test_ewm_consistency_consistent(consistent_data, adjust, ignore_na, min_periods):
+    # [FUNCTION DOC]
+    # For constant data, verifies the ewm mean equals the constant wherever
+    # the expanding count reaches the minimum (at least one) and is missing
+    # elsewhere, and that the ewm correlation of the data with itself is
+    # entirely missing (zero variance).
     com = 3.0
 
     count_x = consistent_data.expanding().count()
@@ -102,6 +139,11 @@ def test_ewm_consistency_consistent(consistent_data, adjust, ignore_na, min_peri
 def test_ewm_consistency_var_debiasing_factors(
     all_data, adjust, ignore_na, min_periods
 ):
+    # [FUNCTION DOC]
+    # Verifies the unbiased ewm variance equals the biased variance times a
+    # debiasing factor derived from the mock weights: squared cumulative
+    # weight sum divided by (that square minus the cumulative sum of squared
+    # weights), with non-positive denominators treated as missing.
     com = 3.0
 
     # check variance debiasing factors
@@ -125,6 +167,10 @@ def test_ewm_consistency_var_debiasing_factors(
 
 @pytest.mark.parametrize("bias", [True, False])
 def test_moments_consistency_var(all_data, adjust, ignore_na, min_periods, bias):
+    # [FUNCTION DOC]
+    # Parametrized over bias true and false. Verifies the ewm variance is never
+    # negative, and when biased equals the ewm mean of squares minus the
+    # square of the ewm mean.
     com = 3.0
 
     mean_x = all_data.ewm(
@@ -149,6 +195,11 @@ def test_moments_consistency_var(all_data, adjust, ignore_na, min_periods, bias)
 def test_moments_consistency_var_constant(
     consistent_data, adjust, ignore_na, min_periods, bias
 ):
+    # [FUNCTION DOC]
+    # Parametrized over bias true and false. For constant data verifies the
+    # ewm variance is never positive and equals exactly zero where the
+    # expanding count reaches the minimum (at least one), missing elsewhere;
+    # when unbiased it is also missing where fewer than two observations exist.
     com = 3.0
     count_x = consistent_data.expanding(min_periods=min_periods).count()
     var_x = consistent_data.ewm(
@@ -166,6 +217,11 @@ def test_moments_consistency_var_constant(
 
 @pytest.mark.parametrize("bias", [True, False])
 def test_ewm_consistency_std(all_data, adjust, ignore_na, min_periods, bias):
+    # [FUNCTION DOC]
+    # Parametrized over bias true and false. Verifies ewm variance, standard
+    # deviation and self-covariance are never negative, that variance equals
+    # the standard deviation squared, and that variance equals the covariance
+    # of the data with itself.
     com = 3.0
     var_x = all_data.ewm(
         com=com, min_periods=min_periods, adjust=adjust, ignore_na=ignore_na
@@ -193,6 +249,13 @@ def test_ewm_consistency_std(all_data, adjust, ignore_na, min_periods, bias):
 def test_ewm_consistency_series_cov_corr(
     series_data, adjust, ignore_na, min_periods, bias
 ):
+    # [FUNCTION DOC]
+    # Parametrized over bias true and false, series data only. Verifies the
+    # polarization identity for covariance (cov of x with itself equals half of
+    # var of the sum minus the two variances), that correlation equals
+    # covariance divided by the product of standard deviations, and, when
+    # biased, that covariance equals the mean of the product minus the product
+    # of means.
     com = 3.0
 
     var_x_plus_y = (

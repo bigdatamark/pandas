@@ -1,3 +1,6 @@
+# [MODULE DOC]
+# Tests for the keyword-argument validator and the boolean keyword validator
+# in the private validators module of the util package.
 import pytest
 
 from pandas.util._validators import (
@@ -8,10 +11,17 @@ from pandas.util._validators import (
 
 @pytest.fixture
 def _fname():
+    # [FUNCTION DOC]
+    # HELPER: fixture supplying the fake function name used in error messages
+    # by the tests in this module. Returns the string "func".
     return "func"
 
 
 def test_bad_kwarg(_fname):
+    # [FUNCTION DOC]
+    # Verifies a type error reporting an unexpected keyword argument when a
+    # supplied keyword ("fo") is not among the compatible names (which are
+    # "f" and "foo").
     good_arg = "f"
     bad_arg = good_arg + "o"
 
@@ -26,9 +36,14 @@ def test_bad_kwarg(_fname):
 
 @pytest.mark.parametrize("i", range(1, 3))
 def test_not_all_none(i, _fname):
+    # [FUNCTION DOC]
+    # Verifies a value error when a keyword's value differs from its default
+    # in the compatibility mapping. Parametrized by how many leading keywords
+    # (one or two) are passed; "foo" is given 2 versus default 1, so the
+    # message names "foo" as unsupported in the pandas implementation.
     bad_arg = "foo"
     msg = (
-        rf"the '{bad_arg}' parameter is not supported "
+        f"the '{bad_arg}' parameter is not supported "
         rf"in the pandas implementation of {_fname}\(\)"
     )
 
@@ -44,6 +59,9 @@ def test_not_all_none(i, _fname):
 
 
 def test_validation(_fname):
+    # [FUNCTION DOC]
+    # Verifies the success path: a subset of keywords equal to their defaults
+    # passes without raising.
     # No exceptions should be raised.
     compat_args = {"f": None, "b": 1, "ba": "s"}
 
@@ -54,6 +72,11 @@ def test_validation(_fname):
 @pytest.mark.parametrize("name", ["inplace", "copy"])
 @pytest.mark.parametrize("value", [1, "True", [1, 2, 3], 5.0])
 def test_validate_bool_kwarg_fail(name, value):
+    # [FUNCTION DOC]
+    # Verifies the boolean keyword validator raises a value error, whose
+    # message gives the argument name and the received type name, for
+    # non-boolean values (integer, string, list, float). Parametrized over the
+    # argument names inplace and copy.
     msg = (
         f'For argument "{name}" expected type bool, '
         f"received type {type(value).__name__}"
@@ -66,4 +89,8 @@ def test_validate_bool_kwarg_fail(name, value):
 @pytest.mark.parametrize("name", ["inplace", "copy"])
 @pytest.mark.parametrize("value", [True, False, None])
 def test_validate_bool_kwarg(name, value):
+    # [FUNCTION DOC]
+    # Verifies the boolean keyword validator returns the input unchanged for
+    # true, false and none (none allowed by default). Parametrized over the
+    # argument names inplace and copy.
     assert validate_bool_kwarg(value, name) == value

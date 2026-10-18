@@ -1,3 +1,13 @@
+# [MODULE DOC]
+# Tests for the numba execution engine of window operations (rolling,
+# expanding, ewm, including grouped and the table method): agreement with the
+# cython engine, caching of compiled functions, argument forwarding, engine
+# option validation, global configuration, the table method, and numba-based
+# min and max with custom indexers. Import-time side effects: the whole module is
+# skipped when numba is missing, marked single-cpu, and skipped on ARM with
+# numba 0.61 because it segfaults there. Defines a method fixture, a fixture
+# listing operations supported by numba with their keyword arguments, a frame
+# fixture, and a prescribed-bounds indexer helper class.
 import numpy as np
 import pytest
 
@@ -28,6 +38,9 @@ pytestmark.append(
 
 @pytest.fixture(params=["single", "table"])
 def method(request):
+    # [FUNCTION DOC]
+    # Fixture parametrized over "single" and "table"; yields the value for the
+    # method keyword of the rolling, expanding and ewm constructors.
     """method keyword in rolling/expanding/ewm constructor"""
     return request.param
 
@@ -46,11 +59,18 @@ def method(request):
     ]
 )
 def arithmetic_numba_supported_operators(request):
+    # [FUNCTION DOC]
+    # Fixture parametrized over (operation name, keyword arguments) pairs for the
+    # operations numba supports: sum, mean, median, max, min, var and std (the
+    # latter two also with ddof zero). Yields the pair as a list.
     return request.param
 
 
 @pytest.fixture
 def roll_frame():
+    # [FUNCTION DOC]
+    # Fixture returning a 40-row frame with group column A (20 ones, 12 twos, 8
+    # threes) and column B holding the integers 0 to 39.
     return DataFrame({"A": [1] * 20 + [2] * 12 + [3] * 8, "B": np.arange(40)})
 
 
@@ -58,9 +78,23 @@ def roll_frame():
 @pytest.mark.filterwarnings("ignore")
 # Filter warnings when parallel=True and the function can't be parallelized by Numba
 class TestEngine:
+    # [CLASS DOC]
+    # Tests that the numba engine matches the cython engine and that compiled
+    # functions are cached properly. Requires numba (skipped otherwise); warnings
+    # are ignored because numba warns when parallel mode cannot be applied. Has no
+    # state.
     @pytest.mark.parametrize("jit", [True, False])
     def test_numba_vs_cython_apply(self, jit, nogil, parallel, nopython, center, step):
+        # [FUNCTION DOC]
+        # Parametrized over whether the user function is numba-compiled (jit true or
+        # false) plus the nogil, parallel, nopython, center and step fixtures. Verifies
+        # rolling apply with window 2 over ten numbers using the numba engine and engine
+        # options gives the same series as the cython engine, with a user function
+        # adding a sum of extra positional arguments (here 2) to the window mean.
         def f(x, *args):
+            # [FUNCTION DOC]
+            # HELPER: nested user function. Takes an array x and any number of extra
+            # positional numbers; returns the mean of x plus the sum of the extra numbers.
             arg_sum = 0
             for arg in args:
                 arg_sum += arg
@@ -84,9 +118,18 @@ class TestEngine:
         tm.assert_series_equal(result, expected)
 
     def test_apply_numba_with_kwargs(self, roll_frame):
+        # [FUNCTION DOC]
+        # Regression test for GH 58995. Verifies extra keyword arguments (a mapping with
+        # a constant of 1) and extra positional arguments (a one-element tuple) are
+        # passed through to the numba function for rolling apply, expanding apply, and
+        # the grouped versions of each, equal to the corresponding sum plus 1. The
+        # function returns the window sum plus the optional constant.
         # GH 58995
         # rolling apply
         def func(sr, a=0):
+            # [FUNCTION DOC]
+            # HELPER: nested user function. Takes an array sr and an optional constant a
+            # (default 0); returns the sum of sr plus a.
             return sr.sum() + a
 
         data = DataFrame(range(10))
@@ -140,8 +183,16 @@ class TestEngine:
         tm.assert_frame_equal(result, expected)
 
     def test_numba_min_periods(self):
+        # [FUNCTION DOC]
+        # Regression test for GH 58868. Four-row frame with the table method, window 3
+        # and minimum periods 3: the user function (which asserts it only ever receives
+        # windows of exactly 3 rows) must never see partial windows; the first two rows
+        # are missing and the rest are the last row of each window.
         # GH 58868
         def last_row(x):
+            # [FUNCTION DOC]
+            # HELPER: nested user function. Takes a two-dimensional array x, asserts it has
+            # exactly three rows, and returns its last row.
             assert len(x) == 3
             return x[-1]
 
@@ -179,6 +230,12 @@ class TestEngine:
         arithmetic_numba_supported_operators,
         step,
     ):
+        # [FUNCTION DOC]
+        # Parametrized over five data objects (identity frame, a transposed frame with
+        # missing and infinite values, and three series including infinities and
+        # missing values) and the supported operation fixture, with nogil, parallel,
+        # nopython and step. Verifies rolling (window 3) results using the numba engine
+        # equal those from the cython engine.
         method, kwargs = arithmetic_numba_supported_operators
 
         engine_kwargs = {"nogil": nogil, "parallel": parallel, "nopython": nopython}
@@ -196,6 +253,11 @@ class TestEngine:
     def test_numba_vs_cython_expanding_methods(
         self, data, nogil, parallel, nopython, arithmetic_numba_supported_operators
     ):
+        # [FUNCTION DOC]
+        # Parametrized over data objects (an identity frame and a named series) and the
+        # supported operation fixture, with nogil, parallel and nopython. Verifies
+        # expanding results with the numba engine equal those from the cython engine.
+        # KNOWN ISSUE: the data parameter is overwritten with a fixed five by five identity frame before use, so the parametrization over the series case is ineffective and only the identity frame is tested.
         method, kwargs = arithmetic_numba_supported_operators
 
         engine_kwargs = {"nogil": nogil, "parallel": parallel, "nopython": nopython}
@@ -210,11 +272,22 @@ class TestEngine:
 
     @pytest.mark.parametrize("jit", [True, False])
     def test_cache_apply(self, jit, nogil, parallel, nopython, step):
+        # [FUNCTION DOC]
+        # Parametrized over jit true or false, with nogil, parallel, nopython and step.
+        # Verifies compiled function caching: applies a first function with the numba
+        # engine, then a second function, then the first again (which must reuse the
+        # cached compiled version without returning results of the second), each time
+        # comparing with the cython engine result.
         # Test that the functions are cached correctly if we switch functions
         def func_1(x):
+            # [FUNCTION DOC]
+            # HELPER: nested user function. Takes an array x and returns its mean plus 4.
             return np.mean(x) + 4
 
         def func_2(x):
+            # [FUNCTION DOC]
+            # HELPER: nested user function. Takes an array x and returns its standard
+            # deviation times 5.
             return np.std(x) * 5
 
         if jit:
@@ -254,9 +327,18 @@ class TestEngine:
     def test_dont_cache_args(
         self, window, window_kwargs, nogil, parallel, nopython, method
     ):
+        # [FUNCTION DOC]
+        # Regression test for GH 42287. Parametrized over rolling (window 3, minimum
+        # periods 0) and expanding, with the method fixture. Applies a function adding
+        # an extra positional argument, first with 1 and then with 2, to a frame of
+        # three zeros using the numba engine; verifies results are all 1.0 and then all
+        # 2.0, so the extra argument value is not cached inside the compiled function.
         # GH 42287
 
         def add(values, x):
+            # [FUNCTION DOC]
+            # HELPER: nested user function. Takes an array values and a number x; returns
+            # the sum of values plus x.
             return np.sum(values) + x
 
         engine_kwargs = {"nopython": nopython, "nogil": nogil, "parallel": parallel}
@@ -274,6 +356,12 @@ class TestEngine:
         tm.assert_frame_equal(result, expected)
 
     def test_dont_cache_engine_kwargs(self):
+        # [FUNCTION DOC]
+        # Verifies that different engine option sets do not share a compiled function:
+        # a function summing three module-level-like booleans (no-gil false, parallel,
+        # no-python true) is applied once with parallel true (expected 2.0 everywhere) and
+        # once after switching parallel to false (expected 1.0), which only holds if the
+        # function is recompiled for the new options.
         # If the user passes a different set of engine_kwargs don't return the same
         # jitted function
         nogil = False
@@ -281,6 +369,9 @@ class TestEngine:
         nopython = True
 
         def func(x):
+            # [FUNCTION DOC]
+            # HELPER: nested user function. Ignores its argument and returns the sum of the
+            # enclosing test's three boolean option variables, read at compile time.
             return nogil + parallel + nopython
 
         engine_kwargs = {"nopython": nopython, "nogil": nogil, "parallel": parallel}
@@ -302,11 +393,18 @@ class TestEngine:
 
 @td.skip_if_no("numba")
 class TestEWM:
+    # [CLASS DOC]
+    # Tests for the numba engine of exponentially weighted windows, including
+    # grouped ewm. Requires numba (skipped otherwise). Has no state.
     @pytest.mark.parametrize(
         "grouper", [lambda x: x, lambda x: x.groupby("A")], ids=["None", "groupby"]
     )
     @pytest.mark.parametrize("method", ["mean", "sum"])
     def test_invalid_engine(self, grouper, method):
+        # [FUNCTION DOC]
+        # Parametrized over plain or grouped frames and the methods mean and sum.
+        # Verifies an unknown engine name raises a value error saying the engine must be
+        # one of the allowed values.
         df = DataFrame({"A": ["a", "b", "a", "b"], "B": range(4)})
         with pytest.raises(ValueError, match="engine must be either"):
             getattr(grouper(df).ewm(com=1.0), method)(engine="foo")
@@ -316,6 +414,10 @@ class TestEWM:
     )
     @pytest.mark.parametrize("method", ["mean", "sum"])
     def test_invalid_engine_kwargs(self, grouper, method):
+        # [FUNCTION DOC]
+        # Parametrized over plain or grouped frames and the methods mean and sum.
+        # Verifies passing engine options with the cython engine raises a value error
+        # saying the cython engine does not accept them.
         df = DataFrame({"A": ["a", "b", "a", "b"], "B": range(4)})
         with pytest.raises(ValueError, match="cython engine does not"):
             getattr(grouper(df).ewm(com=1.0), method)(
@@ -327,6 +429,11 @@ class TestEWM:
     def test_cython_vs_numba(
         self, grouper, method, nogil, parallel, nopython, ignore_na, adjust
     ):
+        # [FUNCTION DOC]
+        # Parametrized over plain or grouped data and the methods mean and sum, with
+        # nogil, parallel, nopython, ignore_na and adjust. Verifies the numba engine
+        # result equals the cython engine result for ewm with center of mass 1 (sum is
+        # only tested with adjust true).
         df = DataFrame({"B": range(4)})
         if grouper == "None":
             grouper = lambda x: x
@@ -345,6 +452,10 @@ class TestEWM:
 
     @pytest.mark.parametrize("grouper", ["None", "groupby"])
     def test_cython_vs_numba_times(self, grouper, nogil, parallel, nopython, ignore_na):
+        # [FUNCTION DOC]
+        # Regression test for GH 40951. Parametrized over plain or grouped data. With
+        # irregular timestamps and a 23 days half-life, verifies the ewm mean using
+        # numba equals the cython mean.
         # GH 40951
 
         df = DataFrame({"B": [0, 0, 1, 1, 2, 2]})
@@ -379,7 +490,13 @@ class TestEWM:
 
 @td.skip_if_no("numba")
 def test_use_global_config():
+    # [FUNCTION DOC]
+    # Verifies that setting the global option to compute with numba makes rolling
+    # apply with no explicit engine give the same result as asking for the numba
+    # engine explicitly.
     def f(x):
+        # [FUNCTION DOC]
+        # HELPER: nested user function. Takes an array x and returns its mean plus 2.
         return np.mean(x) + 2
 
     s = Series(range(10))
@@ -391,6 +508,12 @@ def test_use_global_config():
 
 @td.skip_if_no("numba")
 def test_invalid_kwargs_nopython():
+    # [FUNCTION DOC]
+    # Verifies keyword argument handling of numba apply: an unknown keyword raises a
+    # type error naming the unexpected argument; a function with a keyword-only
+    # parameter raises a numba utility error saying keyword-only arguments are
+    # unsupported; and a function with a normal parameter receiving a keyword
+    # argument works, giving the data plus one as floats.
     with pytest.raises(TypeError, match="got an unexpected keyword argument 'a'"):
         Series(range(1)).rolling(1).apply(
             lambda x: x, kwargs={"a": 1}, engine="numba", raw=True
@@ -415,8 +538,18 @@ def test_invalid_kwargs_nopython():
 @pytest.mark.filterwarnings("ignore")
 # Filter warnings when parallel=True and the function can't be parallelized by Numba
 class TestTableMethod:
+    # [CLASS DOC]
+    # Tests for the table method (whole-frame windows) of the numba engine for
+    # rolling, expanding and ewm. Requires numba, marked slow, warnings ignored.
+    # Has no state.
     def test_table_series_valueerror(self):
+        # [FUNCTION DOC]
+        # Verifies using the table method on a series raises a value error saying the
+        # table method is not applicable for series objects.
         def f(x):
+            # [FUNCTION DOC]
+            # HELPER: nested user function. Takes a two-dimensional array x and returns the
+            # column sums plus 1.
             return np.sum(x, axis=0) + 1
 
         with pytest.raises(
@@ -434,6 +567,12 @@ class TestTableMethod:
         arithmetic_numba_supported_operators,
         step,
     ):
+        # [FUNCTION DOC]
+        # Parametrized over supported operations with nogil, parallel, nopython and
+        # step. For var and std, verifies the table method raises a not implemented
+        # error saying the operation is not supported; for other operations verifies
+        # the table method result on an identity frame (window 2, minimum periods 0)
+        # equals the single method result.
         method, kwargs = arithmetic_numba_supported_operators
 
         engine_kwargs = {"nogil": nogil, "parallel": parallel, "nopython": nopython}
@@ -456,9 +595,15 @@ class TestTableMethod:
             tm.assert_frame_equal(result, expected)
 
     def test_table_method_rolling_apply(self, nogil, parallel, nopython, step):
+        # [FUNCTION DOC]
+        # Verifies rolling apply with the table method equals the single method for a
+        # function returning column sums plus 1, with numba engine options and step.
         engine_kwargs = {"nogil": nogil, "parallel": parallel, "nopython": nopython}
 
         def f(x):
+            # [FUNCTION DOC]
+            # HELPER: nested user function. Takes a two-dimensional array x and returns the
+            # column sums plus 1.
             return np.sum(x, axis=0) + 1
 
         df = DataFrame(np.eye(3))
@@ -471,8 +616,16 @@ class TestTableMethod:
         tm.assert_frame_equal(result, expected)
 
     def test_table_method_rolling_apply_col_order(self):
+        # [FUNCTION DOC]
+        # Regression test for GH#59666. Verifies a table rolling apply on a selection of
+        # two columns uses the selected column order: the function returns the mean of
+        # (first column minus second column) so the result for the order a, b is the
+        # negation of that for b, a, matching expected values for window 3.
         # GH#59666
         def f(x):
+            # [FUNCTION DOC]
+            # HELPER: nested user function. Takes a two-column array x; returns the nan-aware
+            # mean of the first column minus the second.
             return np.nanmean(x[:, 0] - x[:, 1])
 
         df = DataFrame(
@@ -503,7 +656,15 @@ class TestTableMethod:
         tm.assert_almost_equal(result, expected)
 
     def test_table_method_rolling_weighted_mean(self, step):
+        # [FUNCTION DOC]
+        # Verifies the table method with a function returning a full row: a weighted mean
+        # of the first two columns by the third, with ones elsewhere. Window 2, minimum
+        # periods 0, sliced by step, matching the expected frame.
         def weighted_mean(x):
+            # [FUNCTION DOC]
+            # HELPER: nested user function. Takes a two-dimensional window x whose third
+            # column holds weights; returns a one-row array of ones whose first two entries
+            # are the weighted means of the first two columns.
             arr = np.ones((1, x.shape[1]))
             arr[:, :2] = (x[:, :2] * x[:, 2]).sum(axis=0) / x[:, 2].sum()
             return arr
@@ -523,9 +684,15 @@ class TestTableMethod:
         tm.assert_frame_equal(result, expected)
 
     def test_table_method_expanding_apply(self, nogil, parallel, nopython):
+        # [FUNCTION DOC]
+        # Verifies expanding apply with the table method equals the single method for a
+        # column-sums-plus-one function, using numba engine options.
         engine_kwargs = {"nogil": nogil, "parallel": parallel, "nopython": nopython}
 
         def f(x):
+            # [FUNCTION DOC]
+            # HELPER: nested user function. Takes a two-dimensional array x and returns the
+            # column sums plus 1.
             return np.sum(x, axis=0) + 1
 
         df = DataFrame(np.eye(3))
@@ -540,6 +707,11 @@ class TestTableMethod:
     def test_table_method_expanding_methods(
         self, nogil, parallel, nopython, arithmetic_numba_supported_operators
     ):
+        # [FUNCTION DOC]
+        # Parametrized over supported operations. For var and std, verifies the table
+        # method raises a not implemented error saying the operation is not supported;
+        # for others verifies the table result on an identity frame equals the single
+        # method result.
         method, kwargs = arithmetic_numba_supported_operators
 
         engine_kwargs = {"nogil": nogil, "parallel": parallel, "nopython": nopython}
@@ -564,6 +736,10 @@ class TestTableMethod:
     @pytest.mark.parametrize("data", [np.eye(3), np.ones((2, 3)), np.ones((3, 2))])
     @pytest.mark.parametrize("method", ["mean", "sum"])
     def test_table_method_ewm(self, data, method, nogil, parallel, nopython):
+        # [FUNCTION DOC]
+        # Parametrized over three array shapes (square, wide, tall) and mean or sum.
+        # Verifies ewm (center of mass 1) with the table method equals the single method
+        # using the numba engine.
         engine_kwargs = {"nogil": nogil, "parallel": parallel, "nopython": nopython}
 
         df = DataFrame(data)
@@ -579,13 +755,24 @@ class TestTableMethod:
 
 @td.skip_if_no("numba")
 def test_npfunc_no_warnings():
+    # [FUNCTION DOC]
+    # Verifies that applying a numpy function (product) with the numba engine in
+    # rolling apply emits no warnings.
     df = DataFrame({"col1": [1, 2, 3, 4, 5]})
     with tm.assert_produces_warning(False):
         df.col1.rolling(2).apply(np.prod, raw=True, engine="numba")
 
 
 class PrescribedWindowIndexer(BaseIndexer):
+    # [CLASS DOC]
+    # HELPER: test indexer whose window bounds are given explicitly as two arrays
+    # (start and end positions per row) at construction; extends the base indexer.
+    # Bounds are clipped to the valid range when requested. State: start and end
+    # arrays.
     def __init__(self, start, end):
+        # [FUNCTION DOC]
+        # HELPER: constructor. Takes start and end integer arrays, stores them in
+        # private attributes, then runs the base class constructor with defaults.
         self._start = start
         self._end = end
         super().__init__()
@@ -593,6 +780,11 @@ class PrescribedWindowIndexer(BaseIndexer):
     def get_window_bounds(
         self, num_values=None, min_periods=None, center=None, closed=None, step=None
     ):
+        # [FUNCTION DOC]
+        # HELPER: returns the stored bounds. Inputs: number of values (defaults to the
+        # length of the stored start array when none), and unused minimum periods,
+        # center, closed and step. Returns start and end arrays clipped to the range
+        # zero through number of values.
         if num_values is None:
             num_values = len(self._start)
         start = np.clip(self._start, 0, num_values)
@@ -602,6 +794,9 @@ class PrescribedWindowIndexer(BaseIndexer):
 
 @td.skip_if_no("numba")
 class TestMinMaxNumba:
+    # [CLASS DOC]
+    # Tests for the numba implementation of rolling min and max with arbitrary
+    # (non-monotonic) window bounds. Requires numba. Has no state.
     @pytest.mark.parametrize(
         "is_max, has_nan, exp_list",
         [
@@ -612,6 +807,11 @@ class TestMinMaxNumba:
         ],
     )
     def test_minmax(self, is_max, has_nan, exp_list):
+        # [FUNCTION DOC]
+        # Parametrized over max/min, whether some data values are missing, and expected
+        # results. A ten-row frame with prescribed start and end bounds per row (via the
+        # indexer helper) is rolled with the numba engine; the max or min per window
+        # (ignoring missing values) must equal the expected series.
         nan_idx = [0, 5, 8]
         df = DataFrame(
             {
@@ -634,6 +834,11 @@ class TestMinMaxNumba:
         tm.assert_series_equal(result, expected)
 
     def test_wrong_order(self):
+        # [FUNCTION DOC]
+        # Verifies that bounds whose start or end positions are not monotonic (the
+        # fourth window ends where the third does and starts before the third's start)
+        # make numba max raise a value error saying the start/end ordering requirement
+        # is violated at row 3.
         start = np.array(range(5), dtype=np.int64)
         end = start + 1
         end[3] = end[2]

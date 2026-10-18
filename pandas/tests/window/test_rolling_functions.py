@@ -1,3 +1,12 @@
+# [MODULE DOC]
+# Tests for the built-in rolling aggregation methods (mean, sum, count, median,
+# min, max, std, var, with delta degrees of freedom variants): agreement with
+# numpy reductions on series and frames, time-rule resampled data, missing
+# value and minimum periods handling, centering, non-shrinkage of results when
+# windows exceed the data, resample then rolling max/min/median, memory and
+# dtype checks, and zero-length inputs. Uses series, frame, raw and step
+# fixtures; the lambda-based parametrizations pair a numpy comparison function
+# with a method name and keyword arguments.
 from datetime import datetime
 
 import numpy as np
@@ -38,6 +47,12 @@ from pandas.tseries import offsets
     ],
 )
 def test_series(series, compare_func, roll_func, kwargs, step):
+    # [FUNCTION DOC]
+    # Parametrized over ten (numpy comparison, rolling method name, keyword) triples
+    # (mean, sum ignoring missing, count of finite values, median, min, max, std and
+    # var with two ddof settings) plus step. Verifies a rolling window of 50 on the
+    # series fixture returns a series whose last value equals the comparison applied
+    # to the last full window of 50 values before the final stepped position.
     result = getattr(series.rolling(50, step=step), roll_func)(**kwargs)
     assert isinstance(result, Series)
     end = range(0, len(series), step or 1)[-1] + 1
@@ -64,6 +79,11 @@ def test_series(series, compare_func, roll_func, kwargs, step):
     ],
 )
 def test_frame(raw, frame, compare_func, roll_func, kwargs, step):
+    # [FUNCTION DOC]
+    # Frame counterpart of the series test over the same ten triples and the raw
+    # fixture and step. Verifies the result is a frame and its last row equals the
+    # comparison applied column by column to the corresponding last 50 rows (names
+    # not compared).
     result = getattr(frame.rolling(50, step=step), roll_func)(**kwargs)
     assert isinstance(result, DataFrame)
     end = range(0, len(frame), step or 1)[-1] + 1
@@ -90,6 +110,11 @@ def test_frame(raw, frame, compare_func, roll_func, kwargs, step):
     ],
 )
 def test_time_rule_series(series, compare_func, roll_func, kwargs, minp):
+    # [FUNCTION DOC]
+    # Parametrized over the ten triples with minimum periods (10, or 0 for count).
+    # On the series fixture sampled every other point and resampled to business days,
+    # verifies the last rolling value (window 25) equals the comparison function
+    # applied to the original data truncated to the last 25 business days.
     win = 25
     ser = series[::2].resample("B").mean()
     series_result = getattr(ser.rolling(window=win, min_periods=minp), roll_func)(
@@ -118,6 +143,10 @@ def test_time_rule_series(series, compare_func, roll_func, kwargs, minp):
     ],
 )
 def test_time_rule_frame(raw, frame, compare_func, roll_func, kwargs, minp):
+    # [FUNCTION DOC]
+    # Frame counterpart of the time-rule test (raw fixture): the final row of the
+    # result equals the comparison applied column by column to the truncated data
+    # (names not compared).
     win = 25
     frm = frame[::2].resample("B").mean()
     frame_result = getattr(frm.rolling(window=win, min_periods=minp), roll_func)(
@@ -149,6 +178,15 @@ def test_time_rule_frame(raw, frame, compare_func, roll_func, kwargs, minp):
     ],
 )
 def test_nans(compare_func, roll_func, kwargs):
+    # [FUNCTION DOC]
+    # Parametrized over nine methods (all except count) with a numpy comparison. On
+    # random data with ten missing values at each end, verifies: the last value for
+    # window 50 and minimum periods 30 equals the comparison on the middle values;
+    # for window 20 and minimum periods 15 the first non-missing result is at
+    # position 24 and results become missing again five from the end; window 10
+    # with minimum periods 5 first yields at position 4; and, except for sum (which
+    # returns zero for empty windows), minimum periods zero and one give the same
+    # result.
     obj = Series(np.random.default_rng(2).standard_normal(50))
     obj[:10] = np.nan
     obj[-10:] = np.nan
@@ -176,6 +214,9 @@ def test_nans(compare_func, roll_func, kwargs):
 
 
 def test_nans_count():
+    # [FUNCTION DOC]
+    # Verifies rolling count with window 50 and minimum periods 30 equals the number
+    # of finite values in the data with ten missing at each end.
     obj = Series(np.random.default_rng(2).standard_normal(50))
     obj[:10] = np.nan
     obj[-10:] = np.nan
@@ -201,6 +242,11 @@ def test_nans_count():
 )
 @pytest.mark.parametrize("minp", [0, 99, 100])
 def test_min_periods(series, minp, roll_func, kwargs, step):
+    # [FUNCTION DOC]
+    # Parametrized over nine methods with keywords, minimum periods 0, 99 and 100,
+    # and step. Verifies that rolling with a window one longer than the series and
+    # rolling with a window equal to the length give identical missing patterns and,
+    # where present, almost equal values.
     result = getattr(
         series.rolling(len(series) + 1, min_periods=minp, step=step), roll_func
     )(**kwargs)
@@ -215,6 +261,10 @@ def test_min_periods(series, minp, roll_func, kwargs, step):
 
 
 def test_min_periods_count(series, step):
+    # [FUNCTION DOC]
+    # Same as the minimum periods test but for count with minimum periods zero and
+    # step: a window one longer than the length matches a window equal to the length
+    # in missing pattern and values.
     result = series.rolling(len(series) + 1, min_periods=0, step=step).count()
     expected = series.rolling(len(series), min_periods=0, step=step).count()
     nan_mask = isna(result)
@@ -240,6 +290,11 @@ def test_min_periods_count(series, step):
     ],
 )
 def test_center(roll_func, kwargs, minp):
+    # [FUNCTION DOC]
+    # Parametrized over ten methods/keywords with minimum periods (15, or 0 for
+    # count). Verifies a centered rolling window of 20 equals a non-centered window
+    # on the data padded with nine trailing missing values, dropping the first nine
+    # results and resetting the index.
     obj = Series(np.random.default_rng(2).standard_normal(50))
     obj[:10] = np.nan
     obj[-10:] = np.nan
@@ -273,6 +328,12 @@ def test_center(roll_func, kwargs, minp):
     ],
 )
 def test_center_reindex_series(series, roll_func, kwargs, minp, fill_value):
+    # [FUNCTION DOC]
+    # Parametrized over ten methods with minimum periods and an optional fill value
+    # (zero for count). Verifies a centered rolling window of 25 on the series
+    # fixture equals the non-centered result on the series padded with twelve extra
+    # labels, shifted back by twelve and reindexed to the original index, with the
+    # fill value applied to the shifted result first when given.
     # shifter index
     s = [f"x{x:d}" for x in range(12)]
 
@@ -308,6 +369,9 @@ def test_center_reindex_series(series, roll_func, kwargs, minp, fill_value):
     ],
 )
 def test_center_reindex_frame(frame, roll_func, kwargs, minp, fill_value):
+    # [FUNCTION DOC]
+    # Frame counterpart of the series centered-reindex test: same parameters, same
+    # check on the frame fixture.
     # shifter index
     s = [f"x{x:d}" for x in range(12)]
 
@@ -353,6 +417,14 @@ def test_center_reindex_frame(frame, roll_func, kwargs, minp, fill_value):
     ],
 )
 def test_rolling_functions_window_non_shrinkage(f):
+    # [FUNCTION DOC]
+    # Regression test for GH 7764. Parametrized over many lambda operations on a
+    # window of 10 with minimum periods 5 (covariance and correlation without
+    # pairwise, max, min, sum, mean, std, var, skew, kurtosis, first, last,
+    # quantile, median, apply with a sum function in both raw modes, and, when scipy
+    # is available, a boxcar window mean). Verifies that on a four-element series and
+    # a four-row frame (fewer observations than minimum periods) the result keeps its
+    # original shape with all values missing.
     # GH 7764
     s = Series(range(4))
     s_expected = Series(np.nan, index=s.index)
@@ -367,6 +439,11 @@ def test_rolling_functions_window_non_shrinkage(f):
 
 
 def test_rolling_max_gh6297(step):
+    # [FUNCTION DOC]
+    # Replicates the expected result of GH 6297. Builds a float series over five
+    # days with an extra data point at 06:00 on day three, sorted by time; resamples
+    # daily with max then rolls with window 1 and max (and step); the day-three value
+    # is the larger of its two points (6.0).
     """Replicate result expected in GH #6297"""
     indices = [datetime(1975, 1, i) for i in range(1, 6)]
     # So that we can have 2 datapoints on one of the days
@@ -386,6 +463,11 @@ def test_rolling_max_gh6297(step):
 
 
 def test_rolling_max_resample(step):
+    # [FUNCTION DOC]
+    # Builds a float series over five days with two extra points on day five. After
+    # resampling daily and applying a rolling window of one with max (step
+    # fixture): max resampling gives 20 for the last day, median resampling gives
+    # 10, mean resampling gives the average of 4, 10 and 20.
     indices = [datetime(1975, 1, i) for i in range(1, 6)]
     # So that we can have 3 datapoints on last day (4, 10, and 20)
     indices.append(datetime(1975, 1, 5, 1))
@@ -423,6 +505,9 @@ def test_rolling_max_resample(step):
 
 
 def test_rolling_min_resample(step):
+    # [FUNCTION DOC]
+    # Same series as the max/resample test; after resampling daily with min and
+    # rolling window one min (step fixture), the last day equals 4.0.
     indices = [datetime(1975, 1, i) for i in range(1, 6)]
     # So that we can have 3 datapoints on last day (4, 10, and 20)
     indices.append(datetime(1975, 1, 5, 1))
@@ -443,6 +528,10 @@ def test_rolling_min_resample(step):
 
 
 def test_rolling_median_resample():
+    # [FUNCTION DOC]
+    # Same series as the max/resample test; after resampling daily with median and
+    # rolling window one median, the last day equals 10 and the others the original
+    # values.
     indices = [datetime(1975, 1, i) for i in range(1, 6)]
     # So that we can have 3 datapoints on last day (4, 10, and 20)
     indices.append(datetime(1975, 1, 5, 1))
@@ -463,6 +552,9 @@ def test_rolling_median_resample():
 
 
 def test_rolling_median_memory_error():
+    # [FUNCTION DOC]
+    # Regression test for GH11722. Runs rolling median with window 2 on 20000 random
+    # values (twice) and asserts nothing; passes if no memory error occurs.
     # GH11722
     n = 20000
     Series(np.random.default_rng(2).standard_normal(n)).rolling(
@@ -474,6 +566,9 @@ def test_rolling_median_memory_error():
 
 
 def test_rolling_min_max_numeric_types(any_real_numpy_dtype):
+    # [FUNCTION DOC]
+    # Regression test for GH12373. For every real numpy dtype, verifies rolling max
+    # and min with window 5 on a 20-element frame return columns of dtype float64.
     # GH12373
 
     # Just testing that these don't throw exceptions and that
@@ -516,6 +611,13 @@ def test_rolling_min_max_numeric_types(any_real_numpy_dtype):
     ],
 )
 def test_moment_functions_zero_length(f):
+    # [FUNCTION DOC]
+    # Regression test for GH 8056. Parametrized over rolling operations (count with
+    # minimum periods 0, covariance and correlation without pairwise, max, min,
+    # sum, mean, std, var, skew, kurtosis, first, last, quantile, median, apply in
+    # both raw modes, and a boxcar window mean when scipy is available). Verifies
+    # that applying each to an empty float series, an empty frame, and an empty frame
+    # with one float column returns an object equal to the input.
     # GH 8056
     s = Series(dtype=np.float64)
     s_expected = s

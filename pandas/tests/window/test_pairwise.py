@@ -1,3 +1,10 @@
+# [MODULE DOC]
+# Tests for pairwise window statistics (covariance and correlation) on rolling,
+# expanding and ewm windows: agreement with numpy, bias correction, differing
+# lengths and indexes, zero variance, shape and labels of pairwise results with
+# duplicate and mixed-type column labels, series operands, multi-level columns,
+# and error cases. Defines three fixtures (pairwise frames with varied column
+# labels, a target frame and an other frame) used by the pairwise test class.
 import numpy as np
 import pytest
 
@@ -28,18 +35,29 @@ from pandas.core.algorithms import safe_sort
     ]
 )
 def pairwise_frames(request):
+    # [FUNCTION DOC]
+    # Fixture parametrized over nine four-by-two frames with the same values but
+    # different column labels (integers, duplicates, strings, floats, mixed) and
+    # some with float or mixed dtypes. Yields one frame per test.
     """Pairwise frames test_pairwise"""
     return request.param
 
 
 @pytest.fixture
 def pairwise_target_frame():
+    # [FUNCTION DOC]
+    # Fixture returning the reference four-by-two integer frame (same values as the
+    # pairwise frames) with sorted integer column labels 0 and 1; used to compute
+    # the expected results.
     """Pairwise target frame for test_pairwise"""
     return DataFrame([[2, 4], [1, 2], [5, 2], [8, 1]], columns=[0, 1])
 
 
 @pytest.fixture
 def pairwise_other_frame():
+    # [FUNCTION DOC]
+    # Fixture returning a four-row frame with columns Y, Z, X where Y is entirely
+    # missing and Z and X hold small integers; used as the second operand.
     """Pairwise other frame for test_pairwise"""
     return DataFrame(
         [[None, 1, 1], [None, 1, 2], [None, 3, 2], [None, 8, 1]],
@@ -48,6 +66,10 @@ def pairwise_other_frame():
 
 
 def test_rolling_cov(series):
+    # [FUNCTION DOC]
+    # Verifies the last rolling covariance (window 50, minimum periods 25) between
+    # the series fixture and a noisy copy equals the numpy covariance of the last 50
+    # values of each.
     A = series
     B = A + np.random.default_rng(2).standard_normal(len(A))
 
@@ -56,6 +78,10 @@ def test_rolling_cov(series):
 
 
 def test_rolling_corr(series):
+    # [FUNCTION DOC]
+    # Verifies the last rolling correlation (window 50, minimum periods 25) between
+    # the series fixture and a noisy copy equals the numpy correlation coefficient
+    # of the last 50 values of each.
     A = series
     B = A + np.random.default_rng(2).standard_normal(len(A))
 
@@ -64,6 +90,10 @@ def test_rolling_corr(series):
 
 
 def test_rolling_corr_bias_correction():
+    # [FUNCTION DOC]
+    # Verifies a rolling correlation with window equal to the length and minimum
+    # periods one, between two series that have leading missing values of different
+    # lengths, ends with the same value as the plain series correlation.
     # test for correct bias correction
     a = Series(
         np.arange(20, dtype=np.float64), index=date_range("2020-01-01", periods=20)
@@ -78,6 +108,10 @@ def test_rolling_corr_bias_correction():
 
 @pytest.mark.parametrize("func", ["cov", "corr"])
 def test_rolling_pairwise_cov_corr(func, frame):
+    # [FUNCTION DOC]
+    # Parametrized over cov and corr. Verifies the pairwise rolling result of the
+    # frame (window 10, minimum periods 5), restricted to rows with column label 1
+    # and column 5, equals the rolling result of column 1 against column 5.
     result = getattr(frame.rolling(window=10, min_periods=5), func)()
     result = result.loc[(slice(None), 1), 5]
     result.index = result.index.droplevel(1)
@@ -87,6 +121,11 @@ def test_rolling_pairwise_cov_corr(func, frame):
 
 @pytest.mark.parametrize("method", ["corr", "cov"])
 def test_flex_binary_frame(method, frame):
+    # [FUNCTION DOC]
+    # Parametrized over corr and cov. Verifies rolling (window 10) of a series
+    # against a frame, and the frame against the series, equals applying the series
+    # rolling to each column separately; also verifies the frame against another
+    # frame of the same shape equals the column-wise results.
     series = frame[1]
 
     res = getattr(series.rolling(window=10), method)(frame)
@@ -112,6 +151,9 @@ def test_flex_binary_frame(method, frame):
 
 @pytest.mark.parametrize("window", range(7))
 def test_rolling_corr_with_zero_variance(window):
+    # [FUNCTION DOC]
+    # Regression test for GH 18430. Parametrized over windows 0 to 6. A constant zero
+    # series correlated with an increasing series gives all missing values.
     # GH 18430
     s = Series(np.zeros(20))
     other = Series(np.arange(20))
@@ -120,6 +162,10 @@ def test_rolling_corr_with_zero_variance(window):
 
 
 def test_corr_sanity():
+    # [FUNCTION DOC]
+    # Regression test for GH 3155. Verifies centered rolling correlation (window 5)
+    # never has absolute value above 1 (missing treated as 0) for a small fixed frame
+    # and for random data.
     # GH 3155
     df = DataFrame(
         np.array(
@@ -143,6 +189,10 @@ def test_corr_sanity():
 
 
 def test_rolling_cov_diff_length():
+    # [FUNCTION DOC]
+    # Regression test for GH 7512. Rolling covariance (window 3, minimum periods 2)
+    # between series with differing lengths and indexes gives missing, missing, 2.0;
+    # an explicit missing value in the other series gives the same result.
     # GH 7512
     s1 = Series([1, 2, 3], index=range(3))
     s2 = Series([1, 3], index=range(0, 4, 2))
@@ -156,6 +206,10 @@ def test_rolling_cov_diff_length():
 
 
 def test_rolling_corr_diff_length():
+    # [FUNCTION DOC]
+    # Regression test for GH 7512. Correlation variant: result is missing, missing,
+    # 1.0 for the differing-length series and for the version with an explicit
+    # missing value.
     # GH 7512
     s1 = Series([1, 2, 3], index=range(3))
     s2 = Series([1, 3], index=range(0, 4, 2))
@@ -170,6 +224,11 @@ def test_rolling_corr_diff_length():
 
 @pytest.mark.parametrize("func", ["cov", "corr"])
 def test_time_based_rolling_other_longer_raises(func):
+    # [FUNCTION DOC]
+    # Regression test for GH#62937. Parametrized over cov and corr. Verifies that a
+    # time-based rolling window ("2D") on a 3-element series with an other series of
+    # 5 elements raises a value error saying the variable window requires lengths
+    # to match (got 3 < 5).
     # GH#62937
     idx_short = date_range("2020-01-01", periods=3, freq="D")
     idx_long = date_range("2020-01-01", periods=5, freq="D")
@@ -188,6 +247,11 @@ def test_time_based_rolling_other_longer_raises(func):
     ],
 )
 def test_rolling_functions_window_non_shrinkage_binary(f):
+    # [FUNCTION DOC]
+    # Parametrized over pairwise rolling cov and corr (window 10, minimum periods 5,
+    # lambda inputs). On a four-row frame with fewer observations than the minimum
+    # periods, verifies the result has the full two-level index (rows by columns)
+    # and column labels, with all values missing as float64 and names preserved.
     # corr/cov return a MI DataFrame
     df = DataFrame(
         [[1, 5], [3, 2], [3, 9], [-1, 0]],
@@ -211,6 +275,10 @@ def test_rolling_functions_window_non_shrinkage_binary(f):
     ],
 )
 def test_moment_functions_zero_length_pairwise(f):
+    # [FUNCTION DOC]
+    # Parametrized over pairwise rolling cov and corr (lambda inputs). Verifies an
+    # empty frame and an empty named float frame return empty frames with the
+    # expected multi-level index and column labels, dtype and names.
     df1 = DataFrame()
     df2 = DataFrame(columns=Index(["a"], name="foo"), index=Index([], name="bar"))
     df2["a"] = df2["a"].astype("float64")
@@ -230,9 +298,21 @@ def test_moment_functions_zero_length_pairwise(f):
 
 
 class TestPairwise:
+    # [CLASS DOC]
+    # Test class (GH 7738) for pairwise cov and corr across expanding, rolling and
+    # ewm windows with frames, other frames and series. Has no state; the frame
+    # fixtures provide variants of the same numeric data under different column
+    # labels, and results are compared against the same computation on a frame with
+    # clean sorted labels (only non-missing values are compared because sorting
+    # reorders results).
     # GH 7738
     @pytest.mark.parametrize("f", [lambda x: x.cov(), lambda x: x.corr()])
     def test_no_flex(self, pairwise_frames, pairwise_target_frame, f):
+        # [FUNCTION DOC]
+        # Parametrized over plain frame cov and corr (methods that do not use the
+        # flexible binary machinery). Verifies the result is indexed by the frame's
+        # columns on both axes and that its non-missing values equal those for the
+        # target frame.
         # DataFrame methods (which do not call flex_binary_moment())
 
         result = f(pairwise_frames)
@@ -258,6 +338,12 @@ class TestPairwise:
         ],
     )
     def test_pairwise_with_self(self, pairwise_frames, pairwise_target_frame, f):
+        # [FUNCTION DOC]
+        # Parametrized over pairwise cov and corr for expanding, rolling (window 3) and
+        # ewm (center of mass 3). Verifies the first level of the result index equals
+        # the frame's index (names ignored), the second level equals the unique column
+        # labels after a safe sort, columns equal the frame's columns, and non-missing
+        # values equal those for the target frame.
         # DataFrame with itself, pairwise=True
         # note that we may construct the 1st level of the MI
         # in a non-monotonic way, so compare accordingly
@@ -290,6 +376,10 @@ class TestPairwise:
         ],
     )
     def test_no_pairwise_with_self(self, pairwise_frames, pairwise_target_frame, f):
+        # [FUNCTION DOC]
+        # Parametrized over cov and corr with pairwise false for expanding, rolling
+        # (window 3) and ewm. Verifies the result has the frame's index and columns and
+        # that non-missing values equal the target frame results.
         # DataFrame with itself, pairwise=False
         result = f(pairwise_frames)
         tm.assert_index_equal(result.index, pairwise_frames.index)
@@ -322,6 +412,13 @@ class TestPairwise:
     def test_pairwise_with_other(
         self, pairwise_frames, pairwise_target_frame, pairwise_other_frame, f
     ):
+        # [FUNCTION DOC]
+        # Parametrized over pairwise cov and corr against another frame for expanding,
+        # rolling (window 3; the correlation variant is expected to fail non-strictly on
+        # 32-bit platforms due to precision) and ewm. Verifies the result's first index
+        # level equals the frame's index, the second level equals the other frame's
+        # unique columns after a safe sort, and non-missing values equal the target
+        # frame results.
         # DataFrame with another DataFrame, pairwise=True
         result = f(pairwise_frames, pairwise_other_frame)
         tm.assert_index_equal(
@@ -352,6 +449,13 @@ class TestPairwise:
         ],
     )
     def test_no_pairwise_with_other(self, pairwise_frames, pairwise_other_frame, f):
+        # [FUNCTION DOC]
+        # Parametrized over cov and corr with pairwise false against another frame for
+        # expanding, rolling and ewm. If the frame's column labels are unique, verifies
+        # the result index is the union of both indexes and the columns the union of both
+        # column sets. Otherwise verifies a value error saying the columns of the first
+        # (or second, when swapped) argument are not unique.
+        # KNOWN ISSUE: the warning filter mark is written as "ignore:RuntimeWarning", which is parsed as a message pattern rather than a warning category, so it does not suppress runtime warnings of that class.
         # DataFrame with another DataFrame, pairwise=False
         result = (
             f(pairwise_frames, pairwise_other_frame)
@@ -384,6 +488,11 @@ class TestPairwise:
         ],
     )
     def test_pairwise_with_series(self, pairwise_frames, pairwise_target_frame, f):
+        # [FUNCTION DOC]
+        # Parametrized over cov and corr for expanding, rolling and ewm. Verifies cov and
+        # corr between a frame and a series (in both operand orders) give a result with
+        # the frame's index and columns and non-missing values equal to those from the
+        # target frame.
         # DataFrame with a Series
         result = f(pairwise_frames, Series([1, 1, 3, 8]))
         tm.assert_index_equal(result.index, pairwise_frames.index)
@@ -406,6 +515,10 @@ class TestPairwise:
         tm.assert_numpy_array_equal(result, expected, check_dtype=False)
 
     def test_corr_freq_memory_error(self):
+        # [FUNCTION DOC]
+        # Regression test for GH 31789: time-based rolling ("12h") correlation of a
+        # five-element daily series with itself does not run out of memory and gives
+        # all missing values.
         # GH 31789
         s = Series(range(5), index=date_range("2020", periods=5))
         result = s.rolling("12h").corr(s)
@@ -413,6 +526,11 @@ class TestPairwise:
         tm.assert_series_equal(result, expected)
 
     def test_cov_mulittindex(self):
+        # [FUNCTION DOC]
+        # Regression test for GH 34440 (the name has a misspelling of multi-index).
+        # Verifies ewm pairwise covariance with alpha 0.1 on a frame with three-level
+        # columns gives a four-level row index and values: missing for the first row,
+        # 32.0 for the second and 63.881919 for the third.
         # GH 34440
 
         columns = MultiIndex.from_product([list("ab"), list("xy"), list("AB")])
@@ -438,6 +556,10 @@ class TestPairwise:
         tm.assert_frame_equal(result, expected)
 
     def test_multindex_columns_pairwise_func(self):
+        # [FUNCTION DOC]
+        # Regression test for GH 21157. Verifies rolling (window 3) pairwise correlation
+        # of a frame of ones with two-level named columns keeps the column level names in
+        # the result index and returns all missing values.
         # GH 21157
         columns = MultiIndex.from_arrays([["M", "N"], ["P", "Q"]], names=["a", "b"])
         df = DataFrame(np.ones((5, 2)), columns=columns)

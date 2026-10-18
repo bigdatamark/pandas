@@ -1,3 +1,10 @@
+# [MODULE DOC]
+# Tests for the public API surface of rolling and expanding window objects:
+# column selection, attribute access, skipping non-numeric columns, aggregation
+# with function lists and dicts, the pipe method, count on non-numeric dtypes,
+# metadata preservation, grouped multi-function aggregation, immutability of
+# window attributes, and minimum-periods validation. Uses step, raw, center,
+# min_periods, closed and arithmetic_win_operators fixtures.
 import numpy as np
 import pytest
 
@@ -21,6 +28,11 @@ import pandas._testing as tm
 
 
 def test_getitem(step):
+    # [FUNCTION DOC]
+    # Verifies selecting columns on a rolling object (parametrized by step): the
+    # selected object keeps the stepped columns of the frame, a scalar key selects a
+    # single named series, and a tuple key or a list key selects the two chosen
+    # columns (the tuple form is noted as technically allowed).
     frame = DataFrame(np.random.default_rng(2).standard_normal((5, 5)))
     r = frame.rolling(window=5, step=step)
     tm.assert_index_equal(r._selected_obj.columns, frame[::step].columns)
@@ -37,6 +49,10 @@ def test_getitem(step):
 
 
 def test_select_bad_cols():
+    # [FUNCTION DOC]
+    # Verifies selecting a missing column from a rolling object raises a key error
+    # saying the column is not found, and that when a good and a bad column are
+    # requested together the message mentions only the bad one.
     df = DataFrame([[1, 2]], columns=["A", "B"])
     g = df.rolling(window=5)
     with pytest.raises(KeyError, match="Columns not found: 'C'"):
@@ -48,6 +64,10 @@ def test_select_bad_cols():
 
 
 def test_attribute_access():
+    # [FUNCTION DOC]
+    # Verifies a column can be reached as an attribute of the rolling object with
+    # the same result as item access, and that an unknown attribute raises an
+    # attribute error saying the rolling object has no such attribute.
     df = DataFrame([[1, 2]], columns=["A", "B"])
     r = df.rolling(window=5)
     tm.assert_series_equal(r.A.sum(), r["A"].sum())
@@ -57,6 +77,10 @@ def test_attribute_access():
 
 
 def tests_skip_nuisance(step):
+    # [FUNCTION DOC]
+    # Verifies that selecting only the numeric columns of a frame that also has a
+    # string column and rolling-summing with window 3 yields the expected sums
+    # (missing for the first two rows), sliced by the step fixture.
     df = DataFrame({"A": range(5), "B": range(5, 10), "C": "foo"})
     r = df.rolling(window=3, step=step)
     result = r[["A", "B"]].sum()
@@ -68,6 +92,9 @@ def tests_skip_nuisance(step):
 
 
 def test_sum_object_str_raises(step):
+    # [FUNCTION DOC]
+    # Verifies that rolling sum on a frame with a string column raises a data error
+    # saying non-numeric type cannot be aggregated (behavior enforced since 2.0).
     df = DataFrame({"A": range(5), "B": range(5, 10), "C": "foo"})
     r = df.rolling(window=3, step=step)
     with pytest.raises(
@@ -78,6 +105,15 @@ def test_sum_object_str_raises(step):
 
 
 def test_agg(step):
+    # [FUNCTION DOC]
+    # Verifies aggregate on a rolling object (window 3, step fixture) for: a list
+    # of two functions (mean and a standard deviation lambda) giving a two-level
+    # column result; a dict mapping columns to single functions; a dict mapping a
+    # column to a list of method names; a list of method names on a single column
+    # selection; nested renaming dicts raising a specification error with message
+    # about nested renamer being unsupported; and a dict with lists for both columns.
+    # Results are compared with concatenations of individually computed rolling
+    # results.
     df = DataFrame({"A": range(5), "B": range(0, 10, 2)})
 
     r = df.rolling(window=3, step=step)
@@ -126,6 +162,10 @@ def test_agg(step):
 
 
 def test_agg_apply(raw):
+    # [FUNCTION DOC]
+    # Verifies aggregating a rolling object with a dict of a numpy sum and a
+    # standard deviation lambda equals concatenating the rolling sum of the first
+    # column with an apply of that lambda to the second (parametrized by raw).
     # passed lambda
     df = DataFrame({"A": range(5), "B": range(0, 10, 2)})
 
@@ -139,6 +179,11 @@ def test_agg_apply(raw):
 
 
 def test_agg_consistency(step):
+    # [FUNCTION DOC]
+    # Verifies the resulting column labels when aggregating a rolling object with
+    # function lists: two-level labels for the frame, flat labels for a single
+    # column selection, and a tuple-based two-level index for a dict of lists. The
+    # labels are named after the function names (sum, mean).
     df = DataFrame({"A": range(5), "B": range(0, 10, 2)})
     r = df.rolling(window=3, step=step)
 
@@ -156,6 +201,11 @@ def test_agg_consistency(step):
 
 
 def test_agg_nested_dicts():
+    # [FUNCTION DOC]
+    # Verifies nested dict specifications (a dict of dicts) to aggregate raise a
+    # specification error with the nested renamer message, both on the full rolling
+    # object and on a column selection.
+    # KNOWN ISSUE: an expected frame with a renamed multi-level column index is built here but never used in any assertion, so it is dead code.
     # API change for disallowing these types of nested dicts
     df = DataFrame({"A": range(5), "B": range(0, 10, 2)})
     r = df.rolling(window=3)
@@ -191,6 +241,12 @@ def test_agg_nested_dicts():
     ],
 )
 def test_pipe(func, window_size):
+    # [FUNCTION DOC]
+    # Regression test for issue 57076. Parametrized over rolling (window 2) and
+    # expanding (no window). Verifies the pipe method on the window object applies
+    # the given function to the window object itself, both with only a function and
+    # with an extra keyword argument forwarded to it, matching the equivalent
+    # manually computed frames.
     # Issue #57076
     df = DataFrame(
         {
@@ -210,6 +266,13 @@ def test_pipe(func, window_size):
 
 
 def test_count_nonnumeric_types(step):
+    # [FUNCTION DOC]
+    # Regression test for issue 12541. Builds a frame with eleven columns of various
+    # dtypes (integer, float, string, datetime, timedelta, period, infinite float,
+    # and columns with missing values) and verifies rolling count with window 2 and
+    # minimum periods zero counts non-missing values per window for every dtype
+    # (missing ones reduce the count), sliced by step. Also verifies that a window
+    # of 1 gives the not-missing indicator as floats.
     # GH12541
     cols = [
         "int",
@@ -277,6 +340,9 @@ def test_count_nonnumeric_types(step):
 
 
 def test_preserve_metadata():
+    # [FUNCTION DOC]
+    # Regression test for issue 10565: rolling sums with different windows on a
+    # named series keep the series name.
     # GH 10565
     s = Series(np.arange(100), name="foo")
 
@@ -318,6 +384,12 @@ def test_preserve_metadata():
     ],
 )
 def test_multiple_agg_funcs(func, window_size, expected_vals):
+    # [FUNCTION DOC]
+    # Regression test for issue 15072. Parametrized over grouped rolling (window 2)
+    # and grouped expanding with their expected values. Verifies aggregating a
+    # grouped window object by stock with a dict of lists (mean and max for the low
+    # column, mean and min for the high column) yields a frame indexed by group key
+    # and original row position with two-level columns matching the expected values.
     # GH 15072
     df = DataFrame(
         [
@@ -355,6 +427,10 @@ def test_multiple_agg_funcs(func, window_size, expected_vals):
 def test_dont_modify_attributes_after_methods(
     arithmetic_win_operators, closed, center, min_periods, step
 ):
+    # [FUNCTION DOC]
+    # Regression test for issue 39554. For each arithmetic operator name, center,
+    # closed, minimum periods and step, verifies that calling the aggregation does
+    # not change any of the window object's declared attributes.
     # GH 39554
     roll_obj = Series(range(1)).rolling(
         1, center=center, closed=closed, min_periods=min_periods, step=step
@@ -366,6 +442,11 @@ def test_dont_modify_attributes_after_methods(
 
 
 def test_rolling_min_min_periods(step):
+    # [FUNCTION DOC]
+    # Verifies rolling min with a window larger than the data and minimum periods
+    # one returns all ones (sliced by step), and that minimum periods greater than
+    # the window raises a value error stating minimum periods must be at most the
+    # window.
     a = Series([1, 2, 3, 4, 5])
     result = a.rolling(window=100, min_periods=1, step=step).min()
     expected = Series(np.ones(len(a)))[::step]
@@ -376,6 +457,10 @@ def test_rolling_min_min_periods(step):
 
 
 def test_rolling_max_min_periods(step):
+    # [FUNCTION DOC]
+    # Same as the rolling min case but for rolling max on float data: window larger
+    # than the data with minimum periods one returns the data (sliced by step), and
+    # minimum periods larger than the window raises a value error.
     a = Series([1, 2, 3, 4, 5], dtype=np.float64)
     result = a.rolling(window=100, min_periods=1, step=step).max()
     expected = a[::step]

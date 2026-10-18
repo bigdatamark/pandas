@@ -1,3 +1,9 @@
+# [MODULE DOC]
+# Tests for the rolling quantile aggregation: agreement with a pure-python
+# percentile reference on series, frames and time-rule resampled data, missing
+# value and minimum periods handling, centering, and centered-versus-padded
+# equivalence. Every test is parametrized over the quantiles 0.0, 0.1, 0.5, 0.9
+# and 1.0. Uses series, frame, raw and step fixtures.
 from functools import partial
 
 import numpy as np
@@ -16,6 +22,14 @@ from pandas.tseries import offsets
 
 
 def scoreatpercentile(a, per):
+    # [FUNCTION DOC]
+    # HELPER: reference implementation of a percentile with linear interpolation.
+    # Inputs: a (array-like of numbers, assumed free of missing values) and per (a
+    # fraction between 0 and 1). Sorts the values; computes a position by
+    # truncating the fraction times (length minus one); if that position is the last
+    # element returns the largest value, otherwise linearly interpolates between the
+    # values at that position and the next, using their fractional ranks. Returns
+    # a single number (a column-wise result for two-dimensional input).
     values = np.sort(a, axis=0)
 
     idx = int(per / 1.0 * (values.shape[0] - 1))
@@ -35,6 +49,10 @@ def scoreatpercentile(a, per):
 
 @pytest.mark.parametrize("q", [0.0, 0.1, 0.5, 0.9, 1.0])
 def test_series(series, q, step):
+    # [FUNCTION DOC]
+    # Verifies rolling quantile (window 50, step) on the series fixture returns a
+    # series whose last value equals the reference percentile of the last full window
+    # of 50 values before the final stepped position.
     compare_func = partial(scoreatpercentile, per=q)
     result = series.rolling(50, step=step).quantile(q)
     assert isinstance(result, Series)
@@ -44,6 +62,9 @@ def test_series(series, q, step):
 
 @pytest.mark.parametrize("q", [0.0, 0.1, 0.5, 0.9, 1.0])
 def test_frame(raw, frame, q, step):
+    # [FUNCTION DOC]
+    # Frame counterpart (raw fixture, step): the last row equals the reference
+    # percentile applied column by column to the last 50 rows (names not compared).
     compare_func = partial(scoreatpercentile, per=q)
     result = frame.rolling(50, step=step).quantile(q)
     assert isinstance(result, DataFrame)
@@ -57,6 +78,11 @@ def test_frame(raw, frame, q, step):
 
 @pytest.mark.parametrize("q", [0.0, 0.1, 0.5, 0.9, 1.0])
 def test_time_rule_series(series, q):
+    # [FUNCTION DOC]
+    # On the series fixture sampled every other point and resampled to business days,
+    # verifies the last rolling quantile (window 25, minimum periods 10) equals the
+    # reference percentile of the original data truncated to the last 25 business
+    # days.
     compare_func = partial(scoreatpercentile, per=q)
     win = 25
     ser = series[::2].resample("B").mean()
@@ -70,6 +96,9 @@ def test_time_rule_series(series, q):
 
 @pytest.mark.parametrize("q", [0.0, 0.1, 0.5, 0.9, 1.0])
 def test_time_rule_frame(raw, frame, q):
+    # [FUNCTION DOC]
+    # Frame counterpart of the time-rule test (raw fixture): the final row equals
+    # the reference percentile applied column by column (names not compared).
     compare_func = partial(scoreatpercentile, per=q)
     win = 25
     frm = frame[::2].resample("B").mean()
@@ -87,6 +116,12 @@ def test_time_rule_frame(raw, frame, q):
 
 @pytest.mark.parametrize("q", [0.0, 0.1, 0.5, 0.9, 1.0])
 def test_nans(q):
+    # [FUNCTION DOC]
+    # On random data with ten missing values at each end, verifies: window 50 with
+    # minimum periods 30 gives the reference percentile of the middle values at the
+    # end; window 20 with minimum periods 15 first yields at position 24 and becomes
+    # missing again five from the end; window 10 with minimum periods 5 first yields
+    # at position 4; and minimum periods zero equals one.
     compare_func = partial(scoreatpercentile, per=q)
     obj = Series(np.random.default_rng(2).standard_normal(50))
     obj[:10] = np.nan
@@ -116,6 +151,10 @@ def test_nans(q):
 @pytest.mark.parametrize("minp", [0, 99, 100])
 @pytest.mark.parametrize("q", [0.0, 0.1, 0.5, 0.9, 1.0])
 def test_min_periods(series, minp, q, step):
+    # [FUNCTION DOC]
+    # Parametrized additionally over minimum periods 0, 99, 100 and step. Verifies a
+    # window one longer than the series and a window equal to the length give
+    # identical missing patterns and, where present, matching values.
     result = series.rolling(len(series) + 1, min_periods=minp, step=step).quantile(q)
     expected = series.rolling(len(series), min_periods=minp, step=step).quantile(q)
     nan_mask = isna(result)
@@ -127,6 +166,10 @@ def test_min_periods(series, minp, q, step):
 
 @pytest.mark.parametrize("q", [0.0, 0.1, 0.5, 0.9, 1.0])
 def test_center(q):
+    # [FUNCTION DOC]
+    # Verifies a centered rolling quantile of window 20 equals the non-centered
+    # result on data padded with nine trailing missing values, dropping the first
+    # nine results and resetting the index.
     obj = Series(np.random.default_rng(2).standard_normal(50))
     obj[:10] = np.nan
     obj[-10:] = np.nan
@@ -144,6 +187,10 @@ def test_center(q):
 
 @pytest.mark.parametrize("q", [0.0, 0.1, 0.5, 0.9, 1.0])
 def test_center_reindex_series(series, q):
+    # [FUNCTION DOC]
+    # Verifies a centered rolling quantile (window 25) on the series fixture equals
+    # the non-centered result on the series padded with twelve extra labels, shifted
+    # back by twelve and reindexed to the original index.
     # shifter index
     s = [f"x{x:d}" for x in range(12)]
 
@@ -161,6 +208,8 @@ def test_center_reindex_series(series, q):
 
 @pytest.mark.parametrize("q", [0.0, 0.1, 0.5, 0.9, 1.0])
 def test_center_reindex_frame(frame, q):
+    # [FUNCTION DOC]
+    # Frame counterpart of the series centered-reindex test.
     # shifter index
     s = [f"x{x:d}" for x in range(12)]
 

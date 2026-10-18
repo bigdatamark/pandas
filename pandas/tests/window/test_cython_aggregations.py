@@ -1,3 +1,11 @@
+# [MODULE DOC]
+# Tests for the compiled rolling aggregation kernels directly (the window
+# aggregations extension module): checks the kernels give consistent results
+# when only a selection of windows is requested and when the data contains
+# values outside the requested windows. Builds a list of named kernels (sum,
+# mean, variance with two ddof values, skew, kurtosis, median, max, min, first,
+# last, nunique, quantiles with interpolation types, ranks with tiebreak
+# methods) at import time and exposes them through a parametrized fixture.
 from functools import partial
 import sys
 
@@ -11,6 +19,13 @@ import pandas._testing as tm
 
 
 def _get_rolling_aggregations():
+    # [FUNCTION DOC]
+    # HELPER: builds the kernel list for the fixture. Takes no inputs. Returns a
+    # mapping with two keys: ids (tuple of display names, such as roll_var with its
+    # ddof, quantile with its quantile and interpolation, rank with its percentile,
+    # method and ascending) and params (tuple of the matching callables, with
+    # parameters bound by partial application). All kernels take values, start,
+    # end arrays and a minimum periods count, and return an array.
     # list pairs of name and function
     # each function has this signature:
     # (const float64_t[:] values, ndarray[int64_t] start,
@@ -73,11 +88,19 @@ _rolling_aggregations = _get_rolling_aggregations()
     params=_rolling_aggregations["params"], ids=_rolling_aggregations["ids"]
 )
 def rolling_aggregation(request):
+    # [FUNCTION DOC]
+    # Fixture parametrized over every kernel from the module-level mapping, using
+    # the display names as test ids. Yields the kernel callable.
     """Make a rolling aggregation function as fixture."""
     return request.param
 
 
 def test_rolling_aggregation_boundary_consistency(rolling_aggregation):
+    # [FUNCTION DOC]
+    # Regression test for GH-45647. With 11 values, windows of width 3 and minimum
+    # periods zero, verifies running a kernel on only two selected windows (positions
+    # 2 and 7) gives the same values as running it on all windows and then selecting
+    # those two.
     # GH-45647
     minp, step, width, size, selection = 0, 1, 3, 11, [2, 7]
     values = np.arange(1, 1 + size, dtype=np.float64)
@@ -90,6 +113,13 @@ def test_rolling_aggregation_boundary_consistency(rolling_aggregation):
 
 
 def test_rolling_aggregation_with_unused_elements(rolling_aggregation):
+    # [FUNCTION DOC]
+    # Regression test for GH-45647. Builds 15 values where elements between the two
+    # requested windows include extreme values (smallest and largest positive floats)
+    # and a missing value. Verifies the kernel on the two sparse windows equals the
+    # kernel on the compacted data of just those windows, and asserts all expected
+    # values are finite (width of 5 is at least the 4 needed for kurtosis), so
+    # unused elements must not leak into results.
     # GH-45647
     minp, width = 0, 5  # width at least 4 for kurt
     size = 2 * width + 5

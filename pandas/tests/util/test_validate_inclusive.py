@@ -1,3 +1,7 @@
+# [MODULE DOC]
+# Tests for the interval-closedness validator in the private validators module
+# of the util package: invalid inputs raise, valid strings map to a pair of
+# booleans (left inclusive, right inclusive).
 import numpy as np
 import pytest
 
@@ -19,6 +23,11 @@ import pandas as pd
     ),
 )
 def test_invalid_inclusive(invalid_inclusive):
+    # [FUNCTION DOC]
+    # Verifies that any value other than the four allowed strings (an unknown
+    # string, integer, plain object, None, NaN, NA, or an empty frame) makes
+    # the validator raise a value error stating the inclusive option has to be
+    # both, neither, left or right.
     with pytest.raises(
         ValueError,
         match="Inclusive has to be either 'both', 'neither', 'left' or 'right'",
@@ -36,5 +45,9 @@ def test_invalid_inclusive(invalid_inclusive):
     ),
 )
 def test_valid_inclusive(valid_inclusive, expected_tuple):
+    # [FUNCTION DOC]
+    # Verifies each valid option maps to the expected pair of flags (left
+    # closed, right closed): left gives true/false, right false/true, both
+    # true/true, neither false/false.
     resultant_tuple = validate_inclusive(valid_inclusive)
     assert expected_tuple == resultant_tuple

@@ -1,3 +1,14 @@
+# [MODULE DOC]
+# General tests for fixed and time-based rolling windows: constructor validation,
+# step and window-type restrictions, closed interval handling (fixed,
+# datetime-like, centered, nonunique and decreasing indexes), min, max, median
+# and quantile with closed sides, empty inputs, minimum periods, iteration over
+# rolling objects, numerical accuracy regressions (compensated sums, variance,
+# skewness and kurtosis), first/last, rank, unique count, quantile argument
+# validation, numeric-only handling, time units and time zones, and rolling
+# min/max with custom prescribed window bounds. Uses frame_or_series, closed,
+# center, step, raw, ascending, arithmetic_win_operators, numeric_only and unit
+# fixtures.
 from datetime import (
     datetime,
     timedelta,
@@ -29,6 +40,10 @@ from pandas.tseries.offsets import BusinessDay
 
 
 def test_doc_string():
+    # [FUNCTION DOC]
+    # Smoke test of the documentation example: a one-column frame with a missing
+    # value rolled with a window of 2, summed with default and with minimum periods
+    # 1. Asserts nothing; passes if no exception is raised.
     df = DataFrame({"B": [0, 1, 2, np.nan, 4]})
     df
     df.rolling(2).sum()
@@ -36,6 +51,11 @@ def test_doc_string():
 
 
 def test_constructor(frame_or_series):
+    # [FUNCTION DOC]
+    # Regression test for GH 12669 and GH 13383, parametrized over series and
+    # frame. Verifies valid constructor calls (window zero, window 2, minimum
+    # periods, centering both ways) succeed, and that a negative window raises a
+    # value error saying the window must be an integer zero or greater.
     # GH 12669
 
     c = frame_or_series(range(5)).rolling
@@ -57,6 +77,12 @@ def test_constructor(frame_or_series):
 
 @pytest.mark.parametrize("w", [2.0, "foo", np.array([2])])
 def test_invalid_constructor(frame_or_series, w):
+    # [FUNCTION DOC]
+    # Parametrized over series/frame and invalid values (float, string, array).
+    # Verifies each invalid value for window raises a value error (message about
+    # the window being an integer, or a string not compatible with a datetimelike
+    # index), for minimum periods a value error that it must be an integer, and for
+    # center a value error that it must be a boolean.
     # not valid
 
     c = frame_or_series(range(5)).rolling
@@ -91,6 +117,11 @@ def test_invalid_constructor(frame_or_series, w):
     ],
 )
 def test_freq_window_not_implemented(window):
+    # [FUNCTION DOC]
+    # Regression test for GH 15354. Parametrized over a timedelta, a pandas
+    # timedelta, a "3D" string and a variable offset window indexer. Verifies rolling
+    # with step 3 on a daily-indexed frame raises a not implemented error beginning
+    # with "step not implemented" or "step is not supported".
     # GH 15354
     df = DataFrame(
         np.arange(10),
@@ -104,6 +135,10 @@ def test_freq_window_not_implemented(window):
 
 @pytest.mark.parametrize("agg", ["cov", "corr"])
 def test_step_not_implemented_for_cov_corr(agg):
+    # [FUNCTION DOC]
+    # Regression test for GH 15354. Parametrized over cov and corr. Verifies a
+    # rolling object with step 2 raises a not implemented error saying step is not
+    # implemented for these methods.
     # GH 15354
     roll = DataFrame(range(2)).rolling(1, step=2)
     with pytest.raises(NotImplementedError, match="step not implemented"):
@@ -112,6 +147,10 @@ def test_step_not_implemented_for_cov_corr(agg):
 
 @pytest.mark.parametrize("window", [timedelta(days=3), Timedelta(days=3)])
 def test_constructor_with_timedelta_window(window):
+    # [FUNCTION DOC]
+    # Regression test for GH 15440. Parametrized over a standard and a pandas
+    # timedelta of three days. Verifies the rolling sum over ten daily values equals
+    # the expected sums and equals the "3D" string window result.
     # GH 15440
     n = 10
     df = DataFrame(
@@ -132,6 +171,10 @@ def test_constructor_with_timedelta_window(window):
 
 @pytest.mark.parametrize("window", [timedelta(days=3), Timedelta(days=3), "3D"])
 def test_constructor_timedelta_window_and_minperiods(window, raw):
+    # [FUNCTION DOC]
+    # Regression test for GH 15305. Parametrized over three window forms of three
+    # days (and raw). Verifies the sum and the generic apply of a sum function with
+    # minimum periods 2 both give the expected values (first missing).
     # GH 15305
     n = 10
     df = DataFrame(
@@ -149,6 +192,10 @@ def test_constructor_timedelta_window_and_minperiods(window, raw):
 
 
 def test_closed_fixed(closed, arithmetic_win_operators):
+    # [FUNCTION DOC]
+    # Regression test for GH 34315. Uses the closed and arithmetic window operator
+    # fixtures. Verifies a fixed window of 2 observations with minimum periods 1 and
+    # the given closed side equals a "2D" time window on daily data (index ignored).
     # GH 34315
     func_name = arithmetic_win_operators
     df_fixed = DataFrame({"A": [0, 1, 2, 3, 4]})
@@ -214,6 +261,11 @@ def test_closed_fixed(closed, arithmetic_win_operators):
 def test_datetimelike_centered_selections(
     closed, window_selections, arithmetic_win_operators
 ):
+    # [FUNCTION DOC]
+    # Regression test for GH 34315. Parametrized over closed side with a boolean
+    # selection matrix describing which of five points each centered window of "2D"
+    # includes, and over the operator fixture. Verifies the centered time-based
+    # result equals the operator applied to each selected subset.
     # GH 34315
     func_name = arithmetic_win_operators
     df_time = DataFrame(
@@ -249,6 +301,10 @@ def test_datetimelike_centered_selections(
 def test_datetimelike_centered_offset_covers_all(
     window, closed, expected, frame_or_series
 ):
+    # [FUNCTION DOC]
+    # Regression test for GH 42753. Parametrized over a window ("3s" or "2s"), closed
+    # side and expected sums, for series and frame. With three timestamps (the last
+    # two equal), verifies centered time-window sums equal the expected counts.
     # GH 42753
 
     index = [
@@ -275,6 +331,10 @@ def test_datetimelike_centered_offset_covers_all(
 def test_datetimelike_nonunique_index_centering(
     window, closed, expected, frame_or_series
 ):
+    # [FUNCTION DOC]
+    # Parametrized over window "2D", closed side and expected counts, for series and
+    # frame. With a datetime index in which every day occurs twice, verifies centered
+    # window sums of ones equal the expected counts.
     index = DatetimeIndex(
         [
             "2020-01-01",
@@ -306,6 +366,10 @@ def test_datetimelike_nonunique_index_centering(
     ],
 )
 def test_variable_window_nonunique(closed, expected, frame_or_series):
+    # [FUNCTION DOC]
+    # Regression test for GH 20712. Parametrized over closed side and expected sums.
+    # With a nonunique datetime index, verifies a "2D" time window sum of ten values
+    # for each closed side.
     # GH 20712
     index = DatetimeIndex(
         [
@@ -340,6 +404,10 @@ def test_variable_window_nonunique(closed, expected, frame_or_series):
     ],
 )
 def test_variable_offset_window_nonunique(closed, expected, frame_or_series):
+    # [FUNCTION DOC]
+    # Regression test for GH 20712. Parametrized over closed side and expected sums.
+    # With the same nonunique index, verifies a variable offset window indexer with
+    # a two business day offset and minimum periods 1 gives the expected sums.
     # GH 20712
     index = DatetimeIndex(
         [
@@ -367,6 +435,10 @@ def test_variable_offset_window_nonunique(closed, expected, frame_or_series):
 
 
 def test_even_number_window_alignment():
+    # [FUNCTION DOC]
+    # See discussion in GH 38780. Verifies a centered "2D" time window mean with
+    # minimum periods 1 on three daily values gives 0.5, 1.5, 2. The comment notes
+    # that integer windows align differently.
     # see discussion in GH 38780
     s = Series(range(3), index=date_range(start="2020-01-01", freq="D", periods=3))
 
@@ -381,6 +453,11 @@ def test_even_number_window_alignment():
 
 
 def test_closed_fixed_binary_col(center, step):
+    # [FUNCTION DOC]
+    # Regression test for GH 34315. Uses the center and step fixtures. Verifies a
+    # fixed window as long as the data with closed left, minimum periods 1 and
+    # the given centering gives the expected running means of a binary column
+    # (sliced by step).
     # GH 34315
     data = [0, 1, 1, 0, 0, 1, 0, 1]
     df = DataFrame(
@@ -408,6 +485,10 @@ def test_closed_fixed_binary_col(center, step):
 
 @pytest.mark.parametrize("closed", ["neither", "left"])
 def test_closed_empty(closed, arithmetic_win_operators):
+    # [FUNCTION DOC]
+    # Regression test for GH 26005. Parametrized over closed neither and left and the
+    # operator fixture. With points spaced two days apart and a "1D" window, every
+    # window is empty so every result is missing.
     # GH 26005
     func_name = arithmetic_win_operators
     ser = Series(data=np.arange(5), index=date_range("2000", periods=5, freq="2D"))
@@ -420,6 +501,9 @@ def test_closed_empty(closed, arithmetic_win_operators):
 
 @pytest.mark.parametrize("func", ["min", "max"])
 def test_closed_one_entry(func):
+    # [FUNCTION DOC]
+    # Regression test for GH24718. Parametrized over min and max. Verifies a
+    # single-entry series rolled over "10D" with closed left gives missing.
     # GH24718
     ser = Series(data=[2], index=date_range("2000", periods=1))
     result = getattr(ser.rolling("10D", closed="left"), func)()
@@ -428,6 +512,10 @@ def test_closed_one_entry(func):
 
 @pytest.mark.parametrize("func", ["min", "max"])
 def test_closed_one_entry_groupby(func):
+    # [FUNCTION DOC]
+    # Regression test for GH24718. Parametrized over min and max. Verifies a grouped
+    # (unsorted groups) "10D" rolling with closed left gives missing for the first
+    # entry of each group and the earlier value for the second entry of group 1.
     # GH24718
     ser = DataFrame(
         data={"A": [1, 1, 2], "B": [3, 2, 1]},
@@ -456,6 +544,10 @@ def test_closed_one_entry_groupby(func):
     ],
 )
 def test_closed_min_max_datetime(input_dtype, func, closed, expected):
+    # [FUNCTION DOC]
+    # See gh-21704. Parametrized over input dtype (integer or float), min/max, closed
+    # side and expected values. Verifies "3D" rolling min and max on ten daily values
+    # for each closed side.
     # see gh-21704
     ser = Series(
         data=np.arange(10).astype(input_dtype),
@@ -468,6 +560,9 @@ def test_closed_min_max_datetime(input_dtype, func, closed, expected):
 
 
 def test_closed_uneven():
+    # [FUNCTION DOC]
+    # See gh-21704. Verifies a "3D" rolling min with closed left on a daily series
+    # from which two entries were dropped gives the expected values.
     # see gh-21704
     ser = Series(data=np.arange(10), index=date_range("2000", periods=10))
 
@@ -492,6 +587,11 @@ def test_closed_uneven():
     ],
 )
 def test_closed_min_max_minp(func, closed, expected):
+    # [FUNCTION DOC]
+    # See gh-21704. Parametrized over min/max, closed side and expected values. A
+    # float daily series whose last three values are missing is rolled over "3D"
+    # with minimum periods 2; verifies the expected values including missing where
+    # too few observations.
     # see gh-21704
     ser = Series(data=np.arange(10), index=date_range("2000", periods=10))
     # Explicit cast to float to avoid implicit cast when setting nan
@@ -512,6 +612,10 @@ def test_closed_min_max_minp(func, closed, expected):
     ],
 )
 def test_closed_median_quantile(closed, expected):
+    # [FUNCTION DOC]
+    # Regression test for GH 26005. Parametrized over closed side and expected
+    # values. Verifies "3D" rolling median and quantile 0.5 give identical expected
+    # values.
     # GH 26005
     ser = Series(data=np.arange(10), index=date_range("2000", periods=10))
     roll = ser.rolling("3D", closed=closed)
@@ -526,6 +630,11 @@ def test_closed_median_quantile(closed, expected):
 
 @pytest.mark.parametrize("roller", ["1s", 1])
 def tests_empty_df_rolling(roller):
+    # [FUNCTION DOC]
+    # Regression test for GH 15819. Parametrized over a "1s" string window and an
+    # integer window of 1. Verifies rolling sum on an empty frame, with and without
+    # an empty datetime index, returns an equal empty frame. (The function name
+    # begins with "tests", which pytest still collects.)
     # GH 15819 Verifies that datetime and integer rolling windows can be
     # applied to empty DataFrames
     expected = DataFrame()
@@ -540,6 +649,9 @@ def tests_empty_df_rolling(roller):
 
 
 def test_empty_window_median_quantile():
+    # [FUNCTION DOC]
+    # Regression test for GH 26005. Verifies rolling median and quantile with a
+    # window of zero over three values return all missing.
     # GH 26005
     expected = Series([np.nan, np.nan, np.nan])
     roll = Series(np.arange(3)).rolling(0)
@@ -552,6 +664,11 @@ def test_empty_window_median_quantile():
 
 
 def test_missing_minp_zero():
+    # [FUNCTION DOC]
+    # Regression test for pull request 18921 (rolling analogue of the expanding case).
+    # Verifies rolling sum with window 1 and minimum periods zero over a single
+    # missing value gives 0.0, and (in the part below) minimum periods one gives
+    # missing.
     # https://github.com/pandas-dev/pandas/pull/18921
     # minp=0
     x = Series([np.nan])
@@ -566,6 +683,10 @@ def test_missing_minp_zero():
 
 
 def test_missing_minp_zero_variable():
+    # [FUNCTION DOC]
+    # Regression test for pull request 18921. Verifies a time-based rolling sum with
+    # a "2D" window and minimum periods zero over four missing values gives 0.0 at
+    # every position.
     # https://github.com/pandas-dev/pandas/pull/18921
     x = Series(
         [np.nan] * 4,
@@ -577,6 +698,11 @@ def test_missing_minp_zero_variable():
 
 
 def test_multi_index_names():
+    # [FUNCTION DOC]
+    # Regression test for GH 16789 and 16825. Verifies pairwise rolling covariance
+    # (window 3) on a frame with two-level named columns keeps the original columns
+    # and gives a result index whose level names are none followed by the two column
+    # level names.
     # GH 16789, 16825
     cols = MultiIndex.from_product([["A", "B"], ["C", "D", "E"]], names=["1", "2"])
     df = DataFrame(np.ones((10, 6)), columns=cols)
@@ -587,6 +713,9 @@ def test_multi_index_names():
 
 
 def test_rolling_axis_sum():
+    # [FUNCTION DOC]
+    # See gh-23372. Verifies rolling sum with window 3 over a 10 by 20 frame of ones
+    # gives two missing rows then 3.0 in every column.
     # see gh-23372.
     df = DataFrame(np.ones((10, 20)))
     expected = DataFrame({i: [np.nan] * 2 + [3.0] * 8 for i in range(20)})
@@ -595,6 +724,9 @@ def test_rolling_axis_sum():
 
 
 def test_rolling_axis_count():
+    # [FUNCTION DOC]
+    # See gh-26055. Verifies rolling count with window 2 and minimum periods 0 gives
+    # 1, 2, 2 per column.
     # see gh-26055
     df = DataFrame({"x": range(3), "y": range(3)})
 
@@ -604,6 +736,10 @@ def test_rolling_axis_count():
 
 
 def test_readonly_array():
+    # [FUNCTION DOC]
+    # Regression test for GH-27766. Verifies rolling mean works on a read-only numpy
+    # array (window 2), producing missing wherever a window includes the missing
+    # value.
     # GH-27766
     arr = np.array([1, 3, np.nan, 3, 5])
     arr.setflags(write=False)
@@ -613,6 +749,11 @@ def test_readonly_array():
 
 
 def test_rolling_datetime(tz_naive_fixture):
+    # [FUNCTION DOC]
+    # Regression test for GH-28192, using the timezone-naive fixture (a set of time
+    # zones including none). Verifies rolling "2D" sum along the columns (transposed)
+    # of a frame whose column labels are dates gives 1.0 for the first date and 2.0
+    # for later dates.
     # GH-28192
     tz = tz_naive_fixture
     df = DataFrame(
@@ -636,6 +777,11 @@ def test_rolling_datetime(tz_naive_fixture):
 
 
 def test_rolling_window_as_string(center):
+    # [FUNCTION DOC]
+    # See gh-22590. Uses the center fixture. Builds a daily frame over one year from
+    # the current time; verifies a "21D" rolling max with minimum periods 2 and
+    # closed left over a column of ones gives ones, with the first two missing when
+    # not centered.
     # see gh-22590
     date_today = datetime.now()
     days = date_range(date_today, date_today + timedelta(365), freq="D")
@@ -658,6 +804,9 @@ def test_rolling_window_as_string(center):
 
 
 def test_min_periods1():
+    # [FUNCTION DOC]
+    # Regression test for GH#6795. Verifies centered rolling max (window 3, minimum
+    # periods 1) of 0, 1, 2, 1, 0 gives 1, 2, 2, 2, 1.
     # GH#6795
     df = DataFrame([0, 1, 2, 1, 0], columns=["a"])
     result = df["a"].rolling(3, center=True, min_periods=1).max()
@@ -666,6 +815,9 @@ def test_min_periods1():
 
 
 def test_rolling_count_with_min_periods(frame_or_series):
+    # [FUNCTION DOC]
+    # Regression test for GH 26996, for series and frame. Verifies rolling count
+    # with window 3 and minimum periods 3 gives missing, missing, 3, 3, 3.
     # GH 26996
     result = frame_or_series(range(5)).rolling(3, min_periods=3).count()
     expected = frame_or_series([np.nan, np.nan, 3.0, 3.0, 3.0])
@@ -673,6 +825,10 @@ def test_rolling_count_with_min_periods(frame_or_series):
 
 
 def test_rolling_count_default_min_periods_with_null_values(frame_or_series):
+    # [FUNCTION DOC]
+    # Regression test for GH 26996 and GH 31302. Verifies rolling count with window
+    # 3 and minimum periods 0 over values with a missing entry counts only
+    # non-missing values.
     # GH 26996
     values = [1, 2, 3, np.nan, 4, 5, 6]
     expected_counts = [1.0, 2.0, 3.0, 2.0, 2.0, 2.0, 3.0]
@@ -752,6 +908,12 @@ def test_rolling_count_default_min_periods_with_null_values(frame_or_series):
     ],
 )
 def test_iter_rolling_dataframe(df, expected, window, min_periods):
+    # [FUNCTION DOC]
+    # Regression test for GH 11704. Parametrized over frame data, expected sequence
+    # of window frames with their index labels, window size and minimum periods
+    # (including cases with fewer rows than the window, empty frames and missing
+    # values). Verifies iterating over a rolling object yields the expected window
+    # frames in order.
     # GH 11704
     df = DataFrame(df)
     expecteds = [DataFrame(values, index=index) for (values, index) in expected]
@@ -792,6 +954,11 @@ def test_iter_rolling_dataframe(df, expected, window, min_periods):
     ],
 )
 def test_iter_rolling_on_dataframe(expected, window):
+    # [FUNCTION DOC]
+    # Regression test for GH 11704 and GH 40373. Parametrized over "2D", "3D" and
+    # "1D" windows. Verifies iterating a time-based rolling object with the on
+    # column set to a date column yields window frames indexed by that column and
+    # excluding it from the values.
     # GH 11704, 40373
     df = DataFrame(
         {
@@ -809,6 +976,10 @@ def test_iter_rolling_on_dataframe(expected, window):
 
 
 def test_iter_rolling_on_dataframe_unordered():
+    # [FUNCTION DOC]
+    # Regression test for GH 43386. Verifies iterating over a grouped rolling object
+    # of window 2 yields frames matching selected rows in group order, including
+    # the windows for the interleaved group.
     # GH 43386
     df = DataFrame({"a": ["x", "y", "x"], "b": [0, 1, 2]})
     results = list(df.groupby("a").rolling(2))
@@ -851,6 +1022,11 @@ def test_iter_rolling_on_dataframe_unordered():
     ],
 )
 def test_iter_rolling_series(ser, expected, window, min_periods):
+    # [FUNCTION DOC]
+    # Regression test for GH 11704. Parametrized over series, expected sequence of
+    # windows, window size and minimum periods (including an empty series).
+    # Verifies iteration yields equal series, strictly pairing with the expected
+    # list.
     # GH 11704
     expecteds = [Series(values, index=index) for (values, index) in expected]
 
@@ -899,6 +1075,10 @@ def test_iter_rolling_series(ser, expected, window, min_periods):
     ],
 )
 def test_iter_rolling_datetime(expected, expected_index, window):
+    # [FUNCTION DOC]
+    # Regression test for GH 11704. Parametrized over "1D", "2D", "3D" windows with
+    # expected values and date indexes of each window. Verifies iterating a
+    # time-based rolling object on a daily series yields the expected windows.
     # GH 11704
     ser = Series(range(5), index=date_range(start="2020-01-01", periods=5, freq="D"))
 
@@ -929,9 +1109,20 @@ def test_iter_rolling_datetime(expected, expected_index, window):
     ],
 )
 def test_rolling_positional_argument(grouping, _index, raw):
+    # [FUNCTION DOC]
+    # Regression test for GH 34605 (and GH 40341). Parametrized over grouping by
+    # index level or by column X, with the expected index. Verifies grouped rolling
+    # apply with extra positional arguments (a divisor of 2) passes them through to
+    # the function; when grouping by a column, the grouping column is dropped from
+    # the expected result.
     # GH 34605
 
     def scaled_sum(*args):
+        # [FUNCTION DOC]
+        # HELPER: nested user function taking any positional arguments. Raises a value
+        # error saying two arguments are needed if given fewer than two; otherwise
+        # treats them as an array and a scale and returns the sum of the array divided
+        # by the scale.
         if len(args) < 2:
             raise ValueError("The function needs two arguments")
         array, scale = args
@@ -949,6 +1140,12 @@ def test_rolling_positional_argument(grouping, _index, raw):
 
 @pytest.mark.parametrize("add", [0.0, 2.0])
 def test_rolling_numerical_accuracy_kahan_mean(add, unit):
+    # [FUNCTION DOC]
+    # Regression test for GH 36031 (compensated summation). Parametrized over an
+    # added offset of 0.0 or 2.0 and the time unit fixture. Resamples three huge
+    # values spaced three seconds apart with forward fill, rolls "3s" with closed
+    # left and minimum periods 3 and verifies the mean matches the expected values
+    # (first three missing, then 3002399751580330.5 and so on, ending at 0.0).
     # GH: 36031 implementing kahan summation
     dti = DatetimeIndex(
         [
@@ -983,6 +1180,10 @@ def test_rolling_numerical_accuracy_kahan_mean(add, unit):
 
 
 def test_rolling_numerical_accuracy_kahan_sum():
+    # [FUNCTION DOC]
+    # Regression test for GH 13254. Verifies rolling sum with window 3 of small
+    # values with cancellation gives 0.539, -1.647, 0.0, 0.0 after the initial
+    # missing values (exact zeros, no floating drift).
     # GH: 13254
     df = DataFrame([2.186, -1.647, 0.0, 0.0, 0.0, 0.0], columns=["x"])
     result = df["x"].rolling(3).sum()
@@ -991,6 +1192,10 @@ def test_rolling_numerical_accuracy_kahan_sum():
 
 
 def test_rolling_numerical_accuracy_jump():
+    # [FUNCTION DOC]
+    # Regression test for GH 32761. Verifies a "60s" rolling mean over one-minute
+    # data followed by a jump of one day returns the data itself (each window holds
+    # only the current point).
     # GH: 32761
     index = date_range(start="2020-01-01", end="2020-01-02", freq="60s").append(
         DatetimeIndex(["2020-01-03"])
@@ -1003,6 +1208,9 @@ def test_rolling_numerical_accuracy_jump():
 
 
 def test_rolling_numerical_accuracy_small_values():
+    # [FUNCTION DOC]
+    # Regression test for GH 10319. Verifies a rolling mean with window 1 over tiny
+    # values (and negative zeros) returns the original series.
     # GH: 10319
     s = Series(
         data=[0.00012456, 0.0003, -0.0, -0.0],
@@ -1013,6 +1221,10 @@ def test_rolling_numerical_accuracy_small_values():
 
 
 def test_rolling_numerical_too_large_numbers():
+    # [FUNCTION DOC]
+    # Regression test for GH 11645. Verifies a rolling mean (window 5) over a series
+    # containing one huge negative value (minus 9e33) gives that value divided by 5
+    # while the huge value is in the window and normal means afterwards.
     # GH: 11645
     dates = date_range("2015-01-01", periods=10, freq="D")
     ds = Series(data=range(10), index=dates, dtype=np.float64)
@@ -1060,6 +1272,11 @@ def test_rolling_numerical_too_large_numbers():
     ],
 )
 def test_rolling_period_index(index, window, func, values):
+    # [FUNCTION DOC]
+    # Regression test for GH 34225. Parametrized over period indexes (per-minute with
+    # a "2min" window, and 30-minute spaced with a "1h" window) and min, max, sum
+    # with expected values. Verifies time-based rolling on period-indexed series
+    # with closed left.
     # GH: 34225
     ds = Series([0, 1, 2, 3, 4, 5, 6, 7, 8], index=index)
     result = getattr(ds.rolling(window, closed="left"), func)()
@@ -1068,6 +1285,10 @@ def test_rolling_period_index(index, window, func, values):
 
 
 def test_rolling_sem(frame_or_series):
+    # [FUNCTION DOC]
+    # Regression test for GH 26476, for series and frame. Verifies rolling standard
+    # error of the mean (window 2, minimum periods 1) of 0, 1, 2 gives missing, 0.5,
+    # 0.5.
     # GH: 26476
     obj = frame_or_series([0, 1, 2])
     result = obj.rolling(2, min_periods=1).sem()
@@ -1152,6 +1373,14 @@ def test_rolling_sem(frame_or_series):
     ],
 )
 def test_rolling_var_correctness(func, values, window, ddof, expected_values):
+    # [FUNCTION DOC]
+    # Regression test for several issues (GH 37051, 42064, 54518, 52407, 47721).
+    # Parametrized over var/std, input values (including very large and very small
+    # magnitudes), window, ddof and expected results. Verifies the numerically
+    # stable rolling variance and standard deviation: the valid portion of the
+    # result (trimmed from the first to the last valid position when any exists)
+    # matches the expected within a tiny absolute tolerance, and exact zeros occur
+    # exactly where expected.
     # GH: 37051, 42064, 54518, 52407, 47721
     ts = Series(values)
     result = getattr(ts.rolling(window=window), func)(ddof=ddof)
@@ -1166,6 +1395,11 @@ def test_rolling_var_correctness(func, values, window, ddof, expected_values):
 
 
 def test_timeoffset_as_window_parameter_for_corr(unit):
+    # [FUNCTION DOC]
+    # Regression test for GH 28266 (time unit fixture). Verifies pairwise rolling
+    # correlation with a "3D" window on a two-column frame indexed by five
+    # irregular timestamps gives the expected values, with a two-level index of
+    # timestamp and column name.
     # GH: 28266
     dti = DatetimeIndex(
         [
@@ -1220,6 +1454,11 @@ def test_timeoffset_as_window_parameter_for_corr(unit):
 
 @pytest.mark.parametrize("method", ["var", "sum", "mean", "skew", "kurt", "min", "max"])
 def test_rolling_decreasing_indices(method):
+    # [FUNCTION DOC]
+    # GH 36933. Parametrized over var, sum, mean, skew, kurt, min, max. Verifies a
+    # rolling window of 5 over a frame whose index is in decreasing order gives the
+    # same values (reversed, with the unfilled warm-up elements excluded) as over an
+    # increasing index, with tolerance 1e-12.
     """
     Make sure that decreasing indices give the same results as increasing indices.
 
@@ -1250,6 +1489,11 @@ def test_rolling_decreasing_indices(method):
     ],
 )
 def test_rolling_decreasing_indices_centered(window, closed, expected, frame_or_series):
+    # [FUNCTION DOC]
+    # GH 43927. Parametrized over window ("2s" or "3s"), closed side and expected
+    # sums, for series and frame. Verifies a centered time-window sum over a
+    # decreasing index gives the same values (matched by position in the reversed
+    # index) as over the increasing index.
     """
     Ensure that a symmetrical inverted index return same result as non-inverted.
     """
@@ -1279,6 +1523,11 @@ def test_rolling_decreasing_indices_centered(window, closed, expected, frame_or_
 def test_rolling_center_nanosecond_resolution(
     window, closed, expected, frame_or_series
 ):
+    # [FUNCTION DOC]
+    # Parametrized over windows "1ns" and "3ns" with expected counts, the closed
+    # fixture, and series/frame. Verifies centered rolling sum of ones on a
+    # nanosecond-spaced index gives the expected counts (windows of one or three
+    # points), independent of closed side.
     index = date_range("2020", periods=4, freq="1ns")
     df = frame_or_series([1, 1, 1, 1], index=index, dtype=float)
     expected = frame_or_series(expected, index=index, dtype=float)
@@ -1339,6 +1588,11 @@ def test_rolling_center_nanosecond_resolution(
     ],
 )
 def test_rolling_non_monotonic(method, expected):
+    # [FUNCTION DOC]
+    # GH 36933. Parametrized over var, mean, sum, skew, kurt with expected values
+    # (from version 1.1.3, with sum and mean verified by hand). Uses a custom indexer
+    # that alternates expanding and fixed-size windows so that windows are not
+    # monotonic, to cover the rare non-monotonic branch of the rolling kernels.
     """
     Make sure the (rare) branch of non-monotonic indices is covered by a test.
 
@@ -1352,7 +1606,16 @@ def test_rolling_non_monotonic(method, expected):
     df = DataFrame({"values": np.arange(len(use_expanding)) ** 2})
 
     class CustomIndexer(BaseIndexer):
+        # [CLASS DOC]
+        # Local indexer subclass whose per-row behavior is controlled by a list of
+        # flags (use expanding) supplied to the constructor; used only by the test that
+        # defines it.
         def get_window_bounds(self, num_values, min_periods, center, closed, step):
+            # [FUNCTION DOC]
+            # Computes window bounds. Inputs: number of values, minimum periods, center,
+            # closed and step (the last four unused). Returns two int64 arrays: for flagged
+            # rows the window starts at zero and ends just after the row; otherwise it
+            # starts at the row and spans the indexer's window size.
             start = np.empty(num_values, dtype=np.int64)
             end = np.empty(num_values, dtype=np.int64)
             for i in range(num_values):
@@ -1379,6 +1642,11 @@ def test_rolling_non_monotonic(method, expected):
     ],
 )
 def test_rolling_corr_timedelta_index(index, window):
+    # [FUNCTION DOC]
+    # Regression test for GH 31286. Parametrized over an integer index with window 2
+    # and a daily index with a "2D" window. Verifies rolling correlation of a series
+    # whose first two values are replaced by zeros with a copy of the original gives
+    # missing, missing, 1, 1, 1.
     # GH: 31286
     x = Series([1, 2, 3, 4, 5], index=index)
     y = x.copy()
@@ -1414,6 +1682,12 @@ def test_rolling_corr_timedelta_index(index, window):
     ],
 )
 def test_rolling_first_last(values, method, expected):
+    # [FUNCTION DOC]
+    # Regression test for GH#33155. Parametrized over values with and without missing
+    # entries, first or last, and expected results. With window 3 (default minimum
+    # periods), verifies the first two results are missing, then first returns the
+    # first element of each window and last the final element; when every window
+    # contains a missing value the result is all missing; for series and frame.
     # GH#33155
     x = Series(values)
     result = getattr(x.rolling(3), method)()
@@ -1452,6 +1726,10 @@ def test_rolling_first_last(values, method, expected):
     ],
 )
 def test_rolling_first_last_no_minp(values, method, expected):
+    # [FUNCTION DOC]
+    # Regression test for GH#33155. Same as the first/last test but with minimum
+    # periods zero: results exist from the start; with missing entries first and last
+    # return the first or last valid value in the window.
     # GH#33155
     x = Series(values)
     result = getattr(x.rolling(3, min_periods=0), method)()
@@ -1465,6 +1743,11 @@ def test_rolling_first_last_no_minp(values, method, expected):
 
 
 def test_groupby_rolling_nan_included():
+    # [FUNCTION DOC]
+    # Regression test for GH 35542. Verifies a grouped rolling mean (window 1,
+    # minimum periods 1) with groups containing missing keys, grouping with
+    # dropping of missing keys disabled, keeps the missing group (placed last) in a
+    # multi-level index where the missing key lives in the level values.
     # GH 35542
     data = {"group": ["g1", np.nan, "g1", "g2", np.nan], "B": [0, 1, 2, 3, 4]}
     df = DataFrame(data)
@@ -1488,6 +1771,10 @@ def test_groupby_rolling_nan_included():
 
 @pytest.mark.parametrize("method", ["skew", "kurt"])
 def test_rolling_skew_kurt_numerical_stability(method):
+    # [FUNCTION DOC]
+    # Regression test for GH#6929. Parametrized over skew and kurt. Verifies rolling
+    # (window 3) results on random data are unchanged when 50000 is added, and that
+    # the input series is not modified by the first computation.
     # GH#6929
     ser = Series(np.random.default_rng(2).random(10))
     ser_copy = ser.copy()
@@ -1524,6 +1811,10 @@ def test_rolling_skew_kurt_numerical_stability(method):
     ],
 )
 def test_rolling_skew_kurt_large_value_range(method, data, values):
+    # [FUNCTION DOC]
+    # Regression test for GH: 37557, 47461 and 61416. Parametrized over skew/kurt,
+    # data containing values of very different magnitudes, and expected values.
+    # Verifies rolling window 4 results match the expected numbers.
     # GH: 37557, 47461, 61416
     s = Series(data)
     result = getattr(s.rolling(4), method)()
@@ -1533,6 +1824,11 @@ def test_rolling_skew_kurt_large_value_range(method, data, values):
 
 @pytest.mark.parametrize("method", ["skew", "kurt"])
 def test_same_result_with_different_lengths(method):
+    # [FUNCTION DOC]
+    # Regression test for GH-54380. Parametrized over skew and kurt. Verifies the
+    # rolling statistic (window 8) over the first 10 values of a longer series is
+    # exactly equal to the first 10 results over the 12-value series, so results do
+    # not depend on later data.
     # GH-54380
     len_smaller = 10
     len_bigger = 12
@@ -1552,11 +1848,19 @@ def test_same_result_with_different_lengths(method):
 
 
 def test_invalid_method():
+    # [FUNCTION DOC]
+    # Verifies an unknown method argument to rolling raises a value error saying the
+    # method must be table or single.
     with pytest.raises(ValueError, match="method must be 'table' or 'single"):
         Series(range(1)).rolling(1, method="foo")
 
 
 def test_rolling_descending_date_order_with_offset(frame_or_series):
+    # [FUNCTION DOC]
+    # Regression test for GH#40002. For series and frame, verifies a "1d" time
+    # window with closed left over a daily index gives missing, 1, 2 (and the
+    # lower-case day alias emits the future deprecation warning that it is
+    # deprecated), and rolling over the reversed index with "1D" gives missing, 3, 2.
     # GH#40002
     msg = "'d' is deprecated and will be removed in a future version."
 
@@ -1575,6 +1879,10 @@ def test_rolling_descending_date_order_with_offset(frame_or_series):
 
 
 def test_rolling_var_floating_artifact_precision():
+    # [FUNCTION DOC]
+    # Regression test for GH 37051 and GH 42064. Verifies rolling variance (window 3)
+    # of 7, 5, 5, 5 matches missing, missing, 4/3, 0 within a tiny tolerance and that
+    # the exact-zero positions coincide with the expected.
     # GH 37051
     s = Series([7, 5, 5, 5])
     result = s.rolling(3).var()
@@ -1586,6 +1894,9 @@ def test_rolling_var_floating_artifact_precision():
 
 
 def test_rolling_std_small_values():
+    # [FUNCTION DOC]
+    # Regression test for GH 37051. Verifies rolling standard deviation (window 2) of
+    # three tiny close values is about 7.07e-9 for each full window.
     # GH 37051
     s = Series(
         [
@@ -1607,6 +1918,13 @@ def test_rolling_std_small_values():
     ],
 )
 def test_rolling_mean_all_nan_window_floating_artifacts(start, exp_values):
+    # [FUNCTION DOC]
+    # Regression test for GH#41053. Parametrized over a start offset (1 or 2) with
+    # expected leading values. A frame containing runs of missing values is rolled
+    # (window 5, minimum periods 0) after skipping the first rows; verifies the means
+    # (without floating drift leaving residue where the window holds only missing
+    # values, which should be missing) match the expected values, indexed from the
+    # start offset.
     # GH#41053
     df = DataFrame(
         [
@@ -1647,6 +1965,10 @@ def test_rolling_mean_all_nan_window_floating_artifacts(start, exp_values):
 
 
 def test_rolling_sum_all_nan_window_floating_artifacts():
+    # [FUNCTION DOC]
+    # Regression test for GH#41053. Verifies rolling sum (window 3, minimum periods 0)
+    # over values followed by missing entries gives the running sums ending in exactly
+    # 0.0 when the window holds only missing values.
     # GH#41053
     df = DataFrame([0.002, 0.008, 0.005, np.nan, np.nan, np.nan])
     result = df.rolling(3, min_periods=0).sum()
@@ -1655,6 +1977,9 @@ def test_rolling_sum_all_nan_window_floating_artifacts():
 
 
 def test_rolling_zero_window():
+    # [FUNCTION DOC]
+    # Regression test for GH 22719. Verifies rolling min with window zero over one
+    # value gives missing.
     # GH 22719
     s = Series(range(1))
     result = s.rolling(0).min()
@@ -1667,6 +1992,12 @@ def test_rolling_zero_window():
 @pytest.mark.parametrize("pct", [True, False])
 @pytest.mark.parametrize("test_data", ["default", "duplicates", "nans"])
 def test_rank(window, method, pct, ascending, test_data):
+    # [FUNCTION DOC]
+    # Parametrized over windows 1, 3, 10, 20, method (min, max, average), percentile
+    # flag, the ascending fixture and data kind (random floats, duplicates, floats
+    # with missing and infinite values) of length 20. Verifies rolling rank equals
+    # applying a function that ranks the window with the same options and takes the
+    # last rank.
     length = 20
     if test_data == "default":
         ser = Series(data=np.random.default_rng(2).random(length))
@@ -1690,6 +2021,11 @@ def test_rank(window, method, pct, ascending, test_data):
 @pytest.mark.parametrize("window", [1, 3, 10, 20])
 @pytest.mark.parametrize("test_data", ["default", "duplicates", "nans", "precision"])
 def test_nunique(window, test_data):
+    # [FUNCTION DOC]
+    # Parametrized over windows and data kind (random floats, duplicates, missing and
+    # infinite values, and values built so nearly equal floats may differ in the last
+    # bit). Verifies rolling unique count equals applying a function that counts
+    # unique values in the window.
     length = 20
     if test_data == "default":
         ser = Series(data=np.random.default_rng(2).random(length))
@@ -1725,6 +2061,11 @@ def test_nunique(window, test_data):
 
 
 def test_rolling_quantile_np_percentile():
+    # [FUNCTION DOC]
+    # Regression test for 9413 about the default quantile interpolation being
+    # analogous to numpy percentile. Compares frame quantiles at 0.25, 0.5, 0.75 (axis
+    # zero) against numpy percentiles.
+    # KNOWN ISSUE: despite the name and purpose, no rolling object is created here; the test only compares the frame quantile method to numpy's percentile, so it does not exercise rolling quantile.
     # #9413: Tests that rolling window's quantile default behavior
     # is analogous to Numpy's percentile
     row = 10
@@ -1757,6 +2098,13 @@ def test_rolling_quantile_np_percentile():
     ],
 )
 def test_rolling_quantile_interpolation_options(quantile, interpolation, data):
+    # [FUNCTION DOC]
+    # Parametrized over quantiles 0.0, 0.1, 0.45, 0.5, 1, five interpolation options
+    # and seven data lists (including missing values, an all-missing list and a
+    # single element). Verifies an expanding quantile (minimum periods 1) at the last
+    # position equals the series quantile for the same interpolation; both missing
+    # counts as equal; on 32-bit platforms a relative tolerance is used.
+    # KNOWN ISSUE: the comment says it tests the rolling window's quantile, but the code uses an expanding window.
     # Tests that rolling window's quantile behavior is analogous to
     # Series' quantile for each interpolation option
     s = Series(data)
@@ -1774,6 +2122,9 @@ def test_rolling_quantile_interpolation_options(quantile, interpolation, data):
 
 
 def test_invalid_quantile_value():
+    # [FUNCTION DOC]
+    # Verifies an unsupported interpolation name makes rolling quantile raise a value
+    # error saying the interpolation is not supported.
     data = np.arange(5)
     s = Series(data)
 
@@ -1783,6 +2134,10 @@ def test_invalid_quantile_value():
 
 
 def test_rolling_quantile_param():
+    # [FUNCTION DOC]
+    # Verifies rolling quantile argument validation: values below zero or above one
+    # raise a value error naming the value and the allowed range; a string raises a
+    # type error saying a real number is required.
     ser = Series([0.0, 0.1, 0.5, 0.9, 1.0])
     msg = "quantile value -0.1 not in \\[0, 1\\]"
     with pytest.raises(ValueError, match=msg):
@@ -1798,6 +2153,11 @@ def test_rolling_quantile_param():
 
 
 def test_rolling_std_1obs():
+    # [FUNCTION DOC]
+    # Verifies rolling standard deviation of single-observation windows (minimum
+    # periods 1) is missing with default ddof and zero with ddof zero, and that a
+    # window with fewer than the minimum periods gives missing at the third
+    # position.
     vals = Series([1.0, 2.0, 3.0, 4.0, 5.0])
 
     result = vals.rolling(1, min_periods=1).std()
@@ -1813,6 +2173,10 @@ def test_rolling_std_1obs():
 
 
 def test_rolling_std_neg_sqrt():
+    # [FUNCTION DOC]
+    # Unit test from Bottleneck for the negative square root case: rolling (window 3)
+    # and ewm (span 3) standard deviations of tiny nearly-constant values must be
+    # finite from the third position on.
     # unit test from Bottleneck
 
     # Test move_nanstd for neg sqrt.
@@ -1834,11 +2198,17 @@ def test_rolling_std_neg_sqrt():
 
 
 def test_step_not_integer_raises():
+    # [FUNCTION DOC]
+    # Verifies a non-integer step makes rolling raise a value error saying step must
+    # be an integer.
     with pytest.raises(ValueError, match="step must be an integer"):
         DataFrame(range(2)).rolling(1, step="foo")
 
 
 def test_step_not_positive_raises():
+    # [FUNCTION DOC]
+    # Verifies a negative step makes rolling raise a value error saying step must be
+    # at least 0.
     with pytest.raises(ValueError, match="step must be >= 0"):
         DataFrame(range(2)).rolling(1, step=-1)
 
@@ -1891,6 +2261,12 @@ def test_step_not_positive_raises():
     ],
 )
 def test_rolling_var_same_value_count_logic(values, window, min_periods, expected):
+    # [FUNCTION DOC]
+    # Regression test for GH 42064. Parametrized over data (with infinities, missing
+    # values and repeated values), window, minimum periods and expected variances.
+    # Verifies rolling variance is close to the expected values with exact zeros
+    # matching where consecutive equal values are found, and that standard
+    # deviation equals the square root of the expected variance with the same zeros.
     # GH 42064.
 
     expected = Series(expected)
@@ -1918,6 +2294,10 @@ def test_rolling_var_same_value_count_logic(values, window, min_periods, expecte
 
 
 def test_rolling_mean_sum_floating_artifacts():
+    # [FUNCTION DOC]
+    # Regression test for GH 42064. Verifies rolling (window 3) mean and sum of a
+    # series ending in zeros are exactly zero for the last three results (no
+    # leftover floating artifacts).
     # GH 42064.
 
     sr = Series([1 / 3, 4, 0, 0, 0, 0, 0])
@@ -1929,6 +2309,10 @@ def test_rolling_mean_sum_floating_artifacts():
 
 
 def test_rolling_skew_kurt_floating_artifacts():
+    # [FUNCTION DOC]
+    # Regression test for GH 42064 and 46431. Verifies rolling (window 4) skewness
+    # and kurtosis of a series ending in zeros give the expected values, with exactly
+    # 0.0 skew and -3.0 kurtosis for all-zero windows.
     # GH 42064 46431
 
     sr = Series([1 / 3, 4, 0, 0, 0, 0, 0])
@@ -1942,6 +2326,11 @@ def test_rolling_skew_kurt_floating_artifacts():
 
 
 def test_numeric_only_frame(arithmetic_win_operators, numeric_only):
+    # [FUNCTION DOC]
+    # Regression test for GH#46560. For each rolling operation, verifies a frame
+    # with two numeric columns and one object column, for the numeric_only
+    # fixture, equals the aggregation of the corresponding columns (object column
+    # dropped when numeric_only is true) cast to float.
     # GH#46560
     kernel = arithmetic_win_operators
     df = DataFrame({"a": [1], "b": 2, "c": 3})
@@ -1960,6 +2349,10 @@ def test_numeric_only_frame(arithmetic_win_operators, numeric_only):
 @pytest.mark.parametrize("kernel", ["corr", "cov"])
 @pytest.mark.parametrize("use_arg", [True, False])
 def test_numeric_only_corr_cov_frame(kernel, numeric_only, use_arg):
+    # [FUNCTION DOC]
+    # Regression test for GH#46560. Parametrized over corr/cov, with or without the
+    # other-frame argument, and numeric_only. Verifies the result equals the same
+    # operation on a float-cast frame of the selected columns.
     # GH#46560
     df = DataFrame({"a": [1, 2, 3], "b": 2, "c": 3})
     df["c"] = df["c"].astype(object)
@@ -1981,6 +2374,11 @@ def test_numeric_only_corr_cov_frame(kernel, numeric_only, use_arg):
 
 @pytest.mark.parametrize("dtype", [int, object])
 def test_numeric_only_series(arithmetic_win_operators, numeric_only, dtype):
+    # [FUNCTION DOC]
+    # Regression test for GH#46560. Parametrized over integer and object dtype.
+    # Object dtype with numeric_only true must raise a not implemented error saying
+    # the rolling operation does not implement numeric_only; otherwise the result
+    # equals the series aggregate cast to float.
     # GH#46560
     kernel = arithmetic_win_operators
     ser = Series([1], dtype=dtype)
@@ -2000,6 +2398,11 @@ def test_numeric_only_series(arithmetic_win_operators, numeric_only, dtype):
 @pytest.mark.parametrize("use_arg", [True, False])
 @pytest.mark.parametrize("dtype", [int, object])
 def test_numeric_only_corr_cov_series(kernel, use_arg, numeric_only, dtype):
+    # [FUNCTION DOC]
+    # Regression test for GH#46560. Parametrized over corr/cov, with or without an
+    # other argument, dtype integer or object, and numeric_only. Object dtype with
+    # numeric_only true must raise a not implemented error; otherwise the result
+    # equals the same operation on a float-cast copy.
     # GH#46560
     ser = Series([1, 2, 3], dtype=dtype)
     arg = (ser,) if use_arg else ()
@@ -2022,6 +2425,12 @@ def test_numeric_only_corr_cov_series(kernel, use_arg, numeric_only, dtype):
 
 @pytest.mark.parametrize("tz", [None, "UTC", "Europe/Prague"])
 def test_rolling_timedelta_window_non_nanoseconds(unit, tz):
+    # [FUNCTION DOC]
+    # Regression tests for GH#55106 and GH#55026. Parametrized over time zones (none,
+    # UTC, Europe/Prague) and the time unit fixture. Verifies a "1s" rolling sum
+    # gives the same result whether the index has nanosecond or the other unit, and
+    # a rolling max over a timedelta of four days on a daily index gives the same
+    # values for nanosecond and the other unit.
     # Test Sum, GH#55106
     df_time = DataFrame(
         {"A": range(5)},
@@ -2053,7 +2462,15 @@ def test_rolling_timedelta_window_non_nanoseconds(unit, tz):
 
 
 class PrescribedWindowIndexer(BaseIndexer):
+    # [CLASS DOC]
+    # HELPER: test indexer whose window bounds are given explicitly as two arrays
+    # (start and end positions per row) at construction; extends the base indexer.
+    # Bounds are clipped to the valid range when requested. State: start and end
+    # arrays.
     def __init__(self, start, end):
+        # [FUNCTION DOC]
+        # HELPER: constructor. Takes start and end integer arrays, stores them in
+        # private attributes, then runs the base class constructor with defaults.
         self._start = start
         self._end = end
         super().__init__()
@@ -2061,6 +2478,11 @@ class PrescribedWindowIndexer(BaseIndexer):
     def get_window_bounds(
         self, num_values=None, min_periods=None, center=None, closed=None, step=None
     ):
+        # [FUNCTION DOC]
+        # HELPER: returns the stored bounds. Inputs: number of values (defaults to the
+        # length of the stored start array when none), and unused minimum periods,
+        # center, closed and step. Returns start and end arrays clipped to the range
+        # zero through number of values.
         if num_values is None:
             num_values = len(self._start)
         start = np.clip(self._start, 0, num_values)
@@ -2069,6 +2491,9 @@ class PrescribedWindowIndexer(BaseIndexer):
 
 
 class TestMinMax:
+    # [CLASS DOC]
+    # Tests for rolling min and max with arbitrary (non-monotonic) window bounds
+    # supplied through the prescribed-bounds indexer helper. No state.
     @pytest.mark.parametrize(
         "is_max, has_nan, exp_list",
         [
@@ -2079,6 +2504,11 @@ class TestMinMax:
         ],
     )
     def test_minmax(self, is_max, has_nan, exp_list):
+        # [FUNCTION DOC]
+        # Parametrized over max/min, whether some data values are missing, and expected
+        # results. A ten-row frame with prescribed start and end bounds per row is rolled;
+        # the max or min per window (ignoring missing values) must equal the expected
+        # series.
         nan_idx = [0, 5, 8]
         df = DataFrame(
             {
@@ -2101,6 +2531,11 @@ class TestMinMax:
         tm.assert_series_equal(result, expected)
 
     def test_wrong_order(self):
+        # [FUNCTION DOC]
+        # Verifies that bounds whose start or end positions are not monotonic (the
+        # fourth window ends where the third does and starts before the third's start)
+        # make rolling max raise a value error saying the start/end ordering requirement
+        # is violated at row 3.
         start = np.array(range(5), dtype=np.int64)
         end = start + 1
         end[3] = end[2]

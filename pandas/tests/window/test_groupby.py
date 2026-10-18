@@ -1,3 +1,13 @@
+# [MODULE DOC]
+# Tests for window operations on grouped data (the groupby then rolling,
+# expanding or ewm combinations): equivalence with applying the window to each
+# group, result index construction (group keys combined with original index
+# levels), handling of the grouping column, custom indexers, closed intervals,
+# time-based windows and the on argument, monotonicity validation, named
+# aggregation, empty and nan cases, ewm with times, and non-mutation of the
+# grouped object. Organized into three test classes (rolling, expanding, ewm)
+# plus two module-level tests, with two fixtures: a times frame and a
+# group-and-values frame.
 import numpy as np
 import pytest
 
@@ -21,6 +31,10 @@ from pandas.core.groupby.groupby import get_groupby
 
 @pytest.fixture
 def times_frame():
+    # [FUNCTION DOC]
+    # Fixture returning a ten-row frame for ewm with times: column A holds group
+    # labels a, b, c repeating, column B an integer sequence per position, and
+    # column C irregular datetimes in January 2020.
     """Frame for testing times argument in EWM groupby."""
     return DataFrame(
         {
@@ -46,16 +60,32 @@ def times_frame():
 
 @pytest.fixture
 def roll_frame():
+    # [FUNCTION DOC]
+    # Fixture returning a 40-row frame with group column A (20 ones, 12 twos, 8
+    # threes) and column B holding the integers 0 to 39.
     return DataFrame({"A": [1] * 20 + [2] * 12 + [3] * 8, "B": np.arange(40)})
 
 
 class TestRolling:
+    # [CLASS DOC]
+    # Tests for grouped rolling windows. Most tests build expected results by applying
+    # the equivalent rolling operation to every group with a group-wise apply and
+    # rebuilding the expected two-level index (group label, original position). No
+    # state.
     def test_groupby_unsupported_argument(self, roll_frame):
+        # [FUNCTION DOC]
+        # Verifies grouping with an unknown keyword argument raises a type error saying
+        # the grouping call got an unexpected keyword argument named foo.
         msg = r"groupby\(\) got an unexpected keyword argument 'foo'"
         with pytest.raises(TypeError, match=msg):
             roll_frame.groupby("A", foo=1)
 
     def test_getitem(self, roll_frame):
+        # [FUNCTION DOC]
+        # Verifies selecting column B in four orders (after the aggregation, on the
+        # rolling object, on the grouped object before rolling, and via a series grouped
+        # by another series) all equal the group-wise mean of a two-observation rolling
+        # window computed by an internal grouping helper.
         g = roll_frame.groupby("A")
         g_mutated = get_groupby(roll_frame, by="A")
 
@@ -74,6 +104,10 @@ class TestRolling:
         tm.assert_series_equal(result, expected)
 
     def test_getitem_multiple(self, roll_frame):
+        # [FUNCTION DOC]
+        # Regression test for GH 13174. Verifies the count of a column selected from a
+        # grouped rolling object (window 2, minimum periods 0) equals the group-wise
+        # count; the same check is made twice to confirm repeating the call is stable.
         # GH 13174
         g = roll_frame.groupby("A")
         r = g.rolling(2, min_periods=0)
@@ -102,6 +136,11 @@ class TestRolling:
         ],
     )
     def test_rolling(self, f, roll_frame):
+        # [FUNCTION DOC]
+        # Parametrized over ten methods (sum, mean, min, max, first, last, count,
+        # kurtosis, skewness, unique count). Verifies a grouped rolling window of 4
+        # equals the group-wise rolling result with the expected index being the group
+        # label combined with the original row position (GH 39732).
         g = roll_frame.groupby("A", group_keys=False)
         r = g.rolling(window=4)
 
@@ -114,6 +153,10 @@ class TestRolling:
 
     @pytest.mark.parametrize("f", ["std", "var"])
     def test_rolling_ddof(self, f, roll_frame):
+        # [FUNCTION DOC]
+        # Parametrized over std and var with delta degrees of freedom 1. Same check as
+        # the method test: grouped window of 4 equals the group-wise result with the
+        # reconstructed index.
         g = roll_frame.groupby("A", group_keys=False)
         r = g.rolling(window=4)
 
@@ -128,6 +171,10 @@ class TestRolling:
         "interpolation", ["linear", "lower", "higher", "midpoint", "nearest"]
     )
     def test_rolling_quantile(self, interpolation, roll_frame):
+        # [FUNCTION DOC]
+        # Parametrized over five interpolation methods. Verifies the grouped rolling
+        # quantile 0.4 (window 4) equals the group-wise result with the reconstructed
+        # index.
         g = roll_frame.groupby("A", group_keys=False)
         r = g.rolling(window=4)
 
@@ -142,6 +189,13 @@ class TestRolling:
 
     @pytest.mark.parametrize("f, expected_val", [["corr", 1], ["cov", 0.5]])
     def test_rolling_corr_cov_other_same_size_as_groups(self, f, expected_val):
+        # [FUNCTION DOC]
+        # Regression test for GH 42915. Parametrized over correlation (expected 1) and
+        # covariance (expected 0.5). A frame indexed by two levels is grouped by the first
+        # level and rolled with window 2 against an other frame whose length equals the
+        # group size; verifies the result has missing first values per group and the
+        # expected value afterwards, with a three-level index whose first two levels are
+        # both named idx1.
         # GH 42915
         df = DataFrame(
             {"value": range(10), "idx1": [1] * 5 + [2] * 5, "idx2": [1, 2, 3, 4, 5] * 2}
@@ -167,12 +221,21 @@ class TestRolling:
 
     @pytest.mark.parametrize("f", ["corr", "cov"])
     def test_rolling_corr_cov_other_diff_size_as_groups(self, f, roll_frame):
+        # [FUNCTION DOC]
+        # Parametrized over corr and cov. Verifies a grouped rolling window of 4 against
+        # the full frame (different size from groups) equals the group-wise result,
+        # except that the grouping column A is set to missing in the expectation (GH
+        # 39591: the group-wise apply would insert zeros for covariance).
         g = roll_frame.groupby("A")
         r = g.rolling(window=4)
 
         result = getattr(r, f)(roll_frame)
 
         def func(x):
+            # [FUNCTION DOC]
+            # HELPER: nested function applied per group. Takes a group frame x and returns
+            # the window-4 rolling correlation or covariance (as chosen by the enclosing
+            # test) of x against the full frame.
             return getattr(x.rolling(4), f)(roll_frame)
 
         expected = g.apply(func)
@@ -183,12 +246,19 @@ class TestRolling:
 
     @pytest.mark.parametrize("f", ["corr", "cov"])
     def test_rolling_corr_cov_pairwise(self, f, roll_frame):
+        # [FUNCTION DOC]
+        # Parametrized over corr and cov. Verifies the pairwise form of column B of a
+        # grouped rolling window of 4 equals the group-wise application.
         g = roll_frame.groupby("A")
         r = g.rolling(window=4)
 
         result = getattr(r.B, f)(pairwise=True)
 
         def func(x):
+            # [FUNCTION DOC]
+            # HELPER: nested function applied per group. Takes a group frame x and returns
+            # the pairwise rolling window-4 correlation or covariance (as chosen by the
+            # enclosing test) of its column B.
             return getattr(x.B.rolling(4), f)(pairwise=True)
 
         expected = g.apply(func)
@@ -199,6 +269,12 @@ class TestRolling:
         [("cov", [[1.0, 1.0], [1.0, 4.0]]), ("corr", [[1.0, 0.5], [0.5, 1.0]])],
     )
     def test_rolling_corr_cov_unordered(self, func, expected_values):
+        # [FUNCTION DOC]
+        # Regression test for GH 43386. Parametrized over cov and corr with expected
+        # 2 by 2 values. Verifies grouped rolling (window 3) pairwise results for a
+        # frame whose groups are interleaved: the result has a three-level index (group,
+        # original position, column name), with missing values except for the one full
+        # window of group g1.
         # GH 43386
         df = DataFrame(
             {
@@ -231,6 +307,9 @@ class TestRolling:
         tm.assert_frame_equal(result, expected)
 
     def test_rolling_apply(self, raw, roll_frame):
+        # [FUNCTION DOC]
+        # Verifies grouped rolling apply of a sum function (raw fixture) equals the
+        # group-wise apply with the reconstructed index (GH 39732).
         g = roll_frame.groupby("A", group_keys=False)
         r = g.rolling(window=4)
 
@@ -243,6 +322,11 @@ class TestRolling:
         tm.assert_frame_equal(result, expected)
 
     def test_rolling_apply_mutability(self):
+        # [FUNCTION DOC]
+        # Regression test for GH 14013. Verifies a grouped rolling sum (window 2) leaves
+        # the grouping column out of the result, gives the expected values with a
+        # two-level index, and that running an unrelated aggregation on the same grouped
+        # object does not change a second run of the rolling sum.
         # GH 14013
         df = DataFrame({"A": ["foo"] * 3 + ["bar"] * 3, "B": [1] * 6})
         g = df.groupby("A")
@@ -267,9 +351,16 @@ class TestRolling:
 
     @pytest.mark.parametrize("expected_value,raw_value", [[1.0, True], [0.0, False]])
     def test_groupby_rolling(self, expected_value, raw_value):
+        # [FUNCTION DOC]
+        # Regression test for GH 31754. Parametrized over raw true (expecting 1.0) and
+        # false (expecting 0.0). Verifies the object passed to the applied function is a
+        # numpy array exactly when raw is true.
         # GH 31754
 
         def isnumpyarray(x):
+            # [FUNCTION DOC]
+            # HELPER: nested function. Takes any object x and returns the integer 1 if it is
+            # a numpy array, otherwise 0.
             return int(isinstance(x, np.ndarray))
 
         df = DataFrame({"id": [1, 1, 1], "value": [1, 2, 3]})
@@ -282,6 +373,12 @@ class TestRolling:
         tm.assert_series_equal(result, expected)
 
     def test_groupby_rolling_center_center(self):
+        # [FUNCTION DOC]
+        # Regression test for GH 35552. Verifies centered grouped rolling means with
+        # window 3: for series grouped by their own distinct values every window has one
+        # observation so results are all missing (odd and even lengths); for a frame
+        # with groups of 5 and 6 (or 5 and 5) rows, windows at the edges are missing
+        # and interior positions take the neighbor mean.
         # GH 35552
         series = Series(range(1, 6))
         result = series.groupby(series).rolling(center=True, window=3).mean()
@@ -347,6 +444,10 @@ class TestRolling:
         tm.assert_frame_equal(result, expected)
 
     def test_groupby_rolling_center_on(self):
+        # [FUNCTION DOC]
+        # Regression test for GH 37141. Verifies centered grouped rolling mean with a
+        # window of 6, minimum periods 1 and on set to a date column gives the expected
+        # values with an index of group label and date.
         # GH 37141
         df = DataFrame(
             data={
@@ -370,6 +471,11 @@ class TestRolling:
 
     @pytest.mark.parametrize("min_periods", [5, 4, 3])
     def test_groupby_rolling_center_min_periods(self, min_periods):
+        # [FUNCTION DOC]
+        # Regression test for GH 36040. Parametrized over minimum periods 5, 4, 3 with
+        # window 5 and centered windows over two groups of ten. Verifies the number of
+        # missing results at each end of each group equals the larger of zero and
+        # minimum periods minus 3, and the interior values match the expected means.
         # GH 36040
         df = DataFrame({"group": ["A"] * 10 + ["B"] * 10, "data": range(20)})
 
@@ -396,6 +502,10 @@ class TestRolling:
         tm.assert_frame_equal(result, expected)
 
     def test_groupby_subselect_rolling(self):
+        # [FUNCTION DOC]
+        # Regression test for GH 35486. Verifies selecting column b (as a list or as a
+        # single name) after grouping by a and rolling with window 2 max returns the
+        # frame or series with the expected values and a two-level index.
         # GH 35486
         df = DataFrame(
             {"a": [1, 2, 3, 2], "b": [4.0, 2.0, 3.0, 1.0], "c": [10, 20, 30, 20]}
@@ -421,8 +531,15 @@ class TestRolling:
         tm.assert_series_equal(result, expected)
 
     def test_groupby_rolling_custom_indexer(self):
+        # [FUNCTION DOC]
+        # Regression test for GH 35557. Verifies a grouped rolling sum with a custom
+        # indexer of window size 3 and minimum periods 1 equals the same operation with
+        # an integer window of 3.
         # GH 35557
         class SimpleIndexer(BaseIndexer):
+            # [CLASS DOC]
+            # Local indexer subclass producing trailing windows of the indexer's window size
+            # ending at each position; used only by the test that defines it.
             def get_window_bounds(
                 self,
                 num_values=0,
@@ -431,6 +548,13 @@ class TestRolling:
                 closed=None,
                 step=None,
             ):
+                # [FUNCTION DOC]
+                # Computes window bounds. Inputs: number of values (default 0), minimum periods,
+                # center, closed and step (center, closed and step unused). Returns int64 start
+                # and end arrays: the end is the position plus one, the start is the end minus
+                # the window size, with negative starts clamped to a clamp value that is the
+                # window size if minimum periods is none, else zero.
+                # KNOWN ISSUE: the local variable named minimum periods is reused as the clamp value for negative starts, which is not a minimum periods concept; when rolling passes an explicit minimum periods the clamp becomes zero, otherwise the window size, so the clamp is a quirk of the test not a semantic of the argument.
                 min_periods = self.window_size if min_periods is None else 0
                 end = np.arange(num_values, dtype=np.int64) + 1
                 start = end - self.window_size
@@ -449,6 +573,10 @@ class TestRolling:
         tm.assert_frame_equal(result, expected)
 
     def test_groupby_rolling_subset_with_closed(self):
+        # [FUNCTION DOC]
+        # Regression test for GH 35549. Verifies a grouped rolling "1D" sum with on set
+        # to a date column and closed on the left, selecting column1 afterwards, gives the
+        # expected sums for both groups and an index of group label and date.
         # GH 35549
         df = DataFrame(
             {
@@ -476,6 +604,11 @@ class TestRolling:
         tm.assert_series_equal(result, expected)
 
     def test_groupby_rolling_agg_namedagg(self):
+        # [FUNCTION DOC]
+        # Regression test for GH#28333. Verifies named aggregation (output name with
+        # column and built-in sum or min function) on a grouped rolling window of 2:
+        # total weight and minimum height per window, with missing for the first row of
+        # each group.
         # GH#28333
         df = DataFrame(
             {
@@ -506,6 +639,10 @@ class TestRolling:
         tm.assert_frame_equal(result, expected)
 
     def test_groupby_subset_rolling_subset_with_closed(self):
+        # [FUNCTION DOC]
+        # Regression test for GH 35549. Same as the closed-left subset test but the
+        # grouped object is first reduced to the two columns column1 and date before
+        # rolling; the result is the same series.
         # GH 35549
         df = DataFrame(
             {
@@ -537,6 +674,10 @@ class TestRolling:
 
     @pytest.mark.parametrize("func", ["max", "min"])
     def test_groupby_rolling_index_changed(self, func):
+        # [FUNCTION DOC]
+        # Regression test for GH: #36018 (index depth change). Parametrized over max and
+        # min. Verifies grouping a series with a two-level index by its own values and
+        # rolling with window 2 gives a three-level index starting with the group value.
         # GH: #36018 nlevels of MultiIndex changed
         ds = Series(
             [1, 2, 2],
@@ -557,6 +698,11 @@ class TestRolling:
         tm.assert_series_equal(result, expected)
 
     def test_groupby_rolling_empty_frame(self):
+        # [FUNCTION DOC]
+        # Regression test for GH 36197 (and 32262, GH-38057). Verifies a grouped rolling
+        # sum on an empty frame with one or two group columns returns an empty frame
+        # without the grouping columns and with a multi-level index whose levels are
+        # empty float (group keys) and integer (position) indexes.
         # GH 36197
         expected = DataFrame({"s1": []})
         result = expected.groupby("s1").rolling(window=1).sum()
@@ -584,6 +730,11 @@ class TestRolling:
         tm.assert_frame_equal(result, expected)
 
     def test_groupby_rolling_string_index(self):
+        # [FUNCTION DOC]
+        # Regression test for GH: 36727. A frame with a string index, groups and event
+        # times is rolled over "10D" on the event-time column; applying a row-count
+        # function gives counts of rows in each window and an index of group and original
+        # label, with groups in group order.
         # GH: 36727
         df = DataFrame(
             [
@@ -613,6 +764,10 @@ class TestRolling:
         tm.assert_frame_equal(result, expected)
 
     def test_groupby_rolling_no_sort(self):
+        # [FUNCTION DOC]
+        # Regression test for GH 36889. Verifies grouped rolling min with window 1 on
+        # data grouped without sorting keeps the group order of first appearance (2
+        # before 1) and excludes the grouping column.
         # GH 36889
         result = (
             DataFrame({"foo": [2, 1], "bar": [2, 1]})
@@ -630,6 +785,12 @@ class TestRolling:
         tm.assert_frame_equal(result, expected)
 
     def test_groupby_rolling_count_closed_on(self, unit):
+        # [FUNCTION DOC]
+        # Regression test for GH 35869 (time unit fixture). Verifies a grouped "3d"
+        # rolling count with closed left on a date column raises the future-deprecation
+        # warning that the lowercase day alias is deprecated, and gives counts missing
+        # for the first value of each group then ones, with an index of group and date
+        # at the given unit.
         # GH 35869
         df = DataFrame(
             {
@@ -684,6 +845,11 @@ class TestRolling:
         ],
     )
     def test_groupby_rolling_sem(self, func, kwargs, expected_values):
+        # [FUNCTION DOC]
+        # Regression test for GH: 26476. Parametrized over rolling (window 2, minimum
+        # periods 1) and expanding with expected standard error values. Verifies grouped
+        # standard error of the mean excludes the grouping column and gives the expected
+        # values (missing where fewer than two observations).
         # GH: 26476
         df = DataFrame(
             [["a", 1], ["a", 2], ["b", 1], ["b", 2], ["b", 3]], columns=["a", "b"]
@@ -703,6 +869,11 @@ class TestRolling:
         ("rollings", "key"), [({"on": "a"}, "a"), ({"on": None}, "index")]
     )
     def test_groupby_rolling_nans_in_index(self, rollings, key):
+        # [FUNCTION DOC]
+        # Regression test for GH: 34617. Parametrized over using a column via on or the
+        # index. Verifies creating a grouped time-based rolling object when the datetime
+        # values contain a missing timestamp raises a value error saying the values must
+        # not have NaT (message names the column as a or index).
         # GH: 34617
         df = DataFrame(
             {
@@ -718,6 +889,11 @@ class TestRolling:
 
     @pytest.mark.parametrize("group_keys", [True, False])
     def test_groupby_rolling_group_keys(self, group_keys):
+        # [FUNCTION DOC]
+        # Regression test for GH 37641 and GH 38523. Parametrized over group_keys true
+        # and false. Verifies group_keys has no effect on the grouped rolling result,
+        # which always repeats the group levels followed by the original index levels
+        # (a four-level index with duplicated level names).
         # GH 37641
         # GH 38523: GH 37641 actually was not a bug.
         # group_keys only applies to groupby.apply directly
@@ -740,6 +916,10 @@ class TestRolling:
         tm.assert_series_equal(result, expected)
 
     def test_groupby_rolling_index_level_and_column_label(self):
+        # [FUNCTION DOC]
+        # Verifies grouping by an index level name and a column label at once and rolling
+        # (window 1, mean) excludes the group column from the output and gives an index
+        # of the group keys followed by the original index levels.
         # The groupby keys should not appear as a resulting column
         arrays = [["val1", "val1", "val2"], ["val1", "val1", "val2"]]
         index = MultiIndex.from_arrays(arrays, names=("idx1", "idx2"))
@@ -760,6 +940,10 @@ class TestRolling:
         tm.assert_frame_equal(result, expected)
 
     def test_groupby_rolling_resulting_multiindex(self):
+        # [FUNCTION DOC]
+        # Verifies grouping by one column yields a two-level index (group key and
+        # original position) listing groups in order with their original positions
+        # (pull request 38057).
         # a few different cases checking the created MultiIndex of the result
         # https://github.com/pandas-dev/pandas/pull/38057
 
@@ -773,6 +957,9 @@ class TestRolling:
         tm.assert_index_equal(result.index, expected_index)
 
     def test_groupby_rolling_resulting_multiindex2(self):
+        # [FUNCTION DOC]
+        # Verifies grouping by two columns yields a three-level index (the two keys and
+        # the original position) with the expected group ordering.
         # grouping by 2 columns -> 3-level MI as result
         df = DataFrame({"a": np.arange(12.0), "b": [1, 2] * 6, "c": [1, 2, 3, 4] * 3})
         result = df.groupby(["b", "c"]).rolling(2).sum()
@@ -796,6 +983,10 @@ class TestRolling:
         tm.assert_index_equal(result.index, expected_index)
 
     def test_groupby_rolling_resulting_multiindex3(self):
+        # [FUNCTION DOC]
+        # Verifies grouping with one key on a frame already having a two-level index
+        # yields a three-level index (key followed by the two original levels), compared
+        # with equivalent-type checking.
         # grouping with 1 level on dataframe with 2-level MI -> 3-level MI as result
         df = DataFrame({"a": np.arange(8.0), "b": [1, 2] * 4, "c": [1, 2, 3, 4] * 2})
         df = df.set_index("c", append=True)
@@ -816,6 +1007,10 @@ class TestRolling:
         tm.assert_index_equal(result.index, expected_index, exact="equiv")
 
     def test_groupby_rolling_object_doesnt_affect_groupby_apply(self, roll_frame):
+        # [FUNCTION DOC]
+        # Regression test for GH 39732. Verifies that merely creating a grouped rolling
+        # object does not change the index produced by a later group-wise apply on the
+        # same grouped object.
         # GH 39732
         g = roll_frame.groupby("A", group_keys=False)
         expected = g.apply(lambda x: x.rolling(4).sum()).index
@@ -833,6 +1028,11 @@ class TestRolling:
         ],
     )
     def test_groupby_rolling_var(self, window, min_periods, closed, expected):
+        # [FUNCTION DOC]
+        # Parametrized over window, minimum periods, closed side and expected variances
+        # (zero delta degrees of freedom). Groups alternate over eight rows in two
+        # groups; verifies grouped rolling variance equals the expected values, indexed
+        # by group key and original position.
         df = DataFrame([1, 2, 3, 4, 5, 6, 7, 8])
         result = (
             df.groupby([1, 2, 1, 2, 1, 2, 1, 2])
@@ -852,6 +1052,10 @@ class TestRolling:
         "columns", [MultiIndex.from_tuples([("A", ""), ("B", "C")]), ["A", "B"]]
     )
     def test_by_column_not_in_values(self, columns):
+        # [FUNCTION DOC]
+        # Regression test for GH 32262. Parametrized over a two-level column index and a
+        # plain column list. Verifies a grouped rolling sum excludes the grouping column
+        # from the result columns and does not modify the grouped object's data.
         # GH 32262
         df = DataFrame([[1, 0]] * 20 + [[2, 0]] * 12 + [[3, 0]] * 8, columns=columns)
         g = df.groupby("A")
@@ -862,6 +1066,10 @@ class TestRolling:
         tm.assert_frame_equal(g.obj, original_obj)
 
     def test_groupby_level(self):
+        # [FUNCTION DOC]
+        # Regression test for GH 38523 and 38787. Verifies grouping by index level 0 and
+        # rolling a selected column with window 2 gives a three-level index whose first
+        # two levels are both named Animal, with sums of consecutive pairs.
         # GH 38523, 38787
         arrays = [
             ["Falcon", "Falcon", "Parrot", "Parrot"],
@@ -904,6 +1112,11 @@ class TestRolling:
         ],
     )
     def test_as_index_false(self, by, expected_data, unit):
+        # [FUNCTION DOC]
+        # Regression test for GH 39433 (time unit fixture). Parametrized over grouping
+        # by one or two keys (id; id and date index) with expected data. Verifies a
+        # grouped rolling mean (window 2, minimum periods 1) with as_index false keeps
+        # the original index and returns the group key columns as regular columns.
         # GH 39433
         data = [
             ["A", "2018-01-01", 100.0],
@@ -931,6 +1144,12 @@ class TestRolling:
         tm.assert_frame_equal(result, expected)
 
     def test_nan_and_zero_endpoints(self, any_int_numpy_dtype):
+        # [FUNCTION DOC]
+        # Regression test for an old issue (twosigma pandas 53), parametrized over
+        # integer dtypes. A 1000-row series of a huge constant with a missing first value
+        # and zero last value, grouped by an index with 999 zeros and a single one:
+        # verifies a grouped rolling mean (window 10, minimum periods 1) preserves the
+        # values without numerical drift and with an index made of the group key twice.
         # https://github.com/twosigma/pandas/issues/53
         typ = np.dtype(any_int_numpy_dtype).type
         size = 1000
@@ -962,6 +1181,10 @@ class TestRolling:
         tm.assert_series_equal(result, expected)
 
     def test_groupby_rolling_non_monotonic(self):
+        # [FUNCTION DOC]
+        # Regression test for GH 43909. Verifies that creating a grouped time-based
+        # rolling object over a non-monotonic on column raises a value error saying it
+        # must be monotonic.
         # GH 43909
 
         shuffled = [3, 0, 1, 2]
@@ -973,6 +1196,10 @@ class TestRolling:
             df.groupby("c").rolling(on="t", window="3s")
 
     def test_groupby_monotonic(self):
+        # [FUNCTION DOC]
+        # Regression test for GH 15130. With date-sorted data over three people, verifies
+        # a grouped "180D" rolling sum over the date column equals the group-wise rolling
+        # sum on a date-indexed frame.
         # GH 15130
         # we don't need to validate monotonicity when grouping
 
@@ -1005,6 +1232,10 @@ class TestRolling:
         tm.assert_series_equal(result, expected)
 
     def test_datelike_on_monotonic_within_each_group(self):
+        # [FUNCTION DOC]
+        # Regression test for GH 13966 and GH 46061. Verifies that an on column that
+        # repeats its dates in two parts (monotonic within each group but not overall)
+        # is accepted and gives the same result as group-wise rolling "4s" means.
         # GH 13966 (similar to #15130, closed by #15175)
 
         # superseded by 43909
@@ -1026,6 +1257,10 @@ class TestRolling:
         tm.assert_series_equal(result, expected)
 
     def test_datelike_on_not_monotonic_within_each_group(self):
+        # [FUNCTION DOC]
+        # Regression test for GH 46061. Verifies creating a grouped time-based rolling
+        # object whose on column is not monotonic inside a group raises a value error
+        # saying each group within B must be monotonic.
         # GH 46061
         df = DataFrame(
             {
@@ -1039,8 +1274,16 @@ class TestRolling:
 
 
 class TestExpanding:
+    # [CLASS DOC]
+    # Tests for grouped expanding windows. Mirrors the grouped rolling checks by
+    # comparing with group-wise application. Defines its own frame fixture that
+    # overrides the shared one. No state.
     @pytest.fixture
     def frame(self):
+        # [FUNCTION DOC]
+        # Fixture local to this class returning a 40-row frame with group column A (20
+        # ones, 12 twos, 8 threes) and column B holding the integers 0 to 39. It
+        # shadows the random-data frame fixture of the shared conftest.
         return DataFrame({"A": [1] * 20 + [2] * 12 + [3] * 8, "B": np.arange(40)})
 
     @pytest.mark.parametrize(
@@ -1059,6 +1302,11 @@ class TestExpanding:
         ],
     )
     def test_expanding(self, f, frame):
+        # [FUNCTION DOC]
+        # Parametrized over ten methods (sum, mean, min, max, first, last, count,
+        # kurtosis, skewness, unique count). Verifies grouped expanding equals the
+        # group-wise expanding result with the reconstructed index of group label and
+        # original position (GH 39732).
         g = frame.groupby("A", group_keys=False)
         r = g.expanding()
 
@@ -1071,6 +1319,9 @@ class TestExpanding:
 
     @pytest.mark.parametrize("f", ["std", "var"])
     def test_expanding_ddof(self, f, frame):
+        # [FUNCTION DOC]
+        # Parametrized over std and var with delta degrees of freedom 0. Same check as
+        # the method test.
         g = frame.groupby("A", group_keys=False)
         r = g.expanding()
 
@@ -1085,6 +1336,9 @@ class TestExpanding:
         "interpolation", ["linear", "lower", "higher", "midpoint", "nearest"]
     )
     def test_expanding_quantile(self, interpolation, frame):
+        # [FUNCTION DOC]
+        # Parametrized over five interpolation methods. Verifies the grouped expanding
+        # quantile 0.4 equals the group-wise result with the reconstructed index.
         g = frame.groupby("A", group_keys=False)
         r = g.expanding()
 
@@ -1099,12 +1353,23 @@ class TestExpanding:
 
     @pytest.mark.parametrize("f", ["corr", "cov"])
     def test_expanding_corr_cov(self, f, frame):
+        # [FUNCTION DOC]
+        # Parametrized over corr and cov. Verifies grouped expanding results against the
+        # full frame equal the group-wise application except that selected positions
+        # (20 to 60 and 72 to 112 of the second column) are set missing, because the
+        # group-wise apply returns 1 rather than missing for all-missing windows (GH
+        # 39591), and the grouping column is set missing (apply inserts zeros). Also
+        # verifies the pairwise form of column B equals the group-wise application.
         g = frame.groupby("A")
         r = g.expanding()
 
         result = getattr(r, f)(frame)
 
         def func_0(x):
+            # [FUNCTION DOC]
+            # HELPER: nested function applied per group. Takes a group frame x and returns
+            # the expanding correlation or covariance (as chosen by the enclosing test) of x
+            # against the full frame.
             return getattr(x.expanding(), f)(frame)
 
         expected = g.apply(func_0)
@@ -1120,12 +1385,18 @@ class TestExpanding:
         result = getattr(r.B, f)(pairwise=True)
 
         def func_1(x):
+            # [FUNCTION DOC]
+            # HELPER: nested function applied per group. Takes a group frame x and returns
+            # the pairwise expanding correlation or covariance of its column B.
             return getattr(x.B.expanding(), f)(pairwise=True)
 
         expected = g.apply(func_1)
         tm.assert_series_equal(result, expected)
 
     def test_expanding_apply(self, raw, frame):
+        # [FUNCTION DOC]
+        # Verifies grouped expanding apply of a sum function (raw fixture) equals the
+        # group-wise apply with the reconstructed index (GH 39732).
         g = frame.groupby("A", group_keys=False)
         r = g.expanding()
 
@@ -1138,6 +1409,11 @@ class TestExpanding:
         tm.assert_frame_equal(result, expected)
 
     def test_groupby_expanding_agg_namedagg(self):
+        # [FUNCTION DOC]
+        # Regression test for GH#28333. Verifies named aggregation (total weight using
+        # the built-in sum, minimum height using the built-in min) on a grouped
+        # expanding window with minimum periods 1 gives running totals and minima per
+        # group with a two-level index.
         # GH#28333
         df = DataFrame(
             {
@@ -1169,6 +1445,9 @@ class TestExpanding:
 
 
 class TestEWM:
+    # [CLASS DOC]
+    # Tests for grouped exponentially weighted windows (mean, standard deviation,
+    # variance, correlation, covariance, named aggregation, times). No state.
     @pytest.mark.parametrize(
         "method, expected_data",
         [
@@ -1178,6 +1457,10 @@ class TestEWM:
         ],
     )
     def test_methods(self, method, expected_data):
+        # [FUNCTION DOC]
+        # Regression test for GH 16037. Parametrized over mean, std and var with
+        # expected values. Verifies grouped ewm (center of mass 1.0) on a single group
+        # of four values gives the expected series with a two-level index.
         # GH 16037
         df = DataFrame({"A": ["a"] * 4, "B": range(4)})
         result = getattr(df.groupby("A").ewm(com=1.0), method)()
@@ -1196,6 +1479,10 @@ class TestEWM:
         tm.assert_frame_equal(result, expected)
 
     def test_groupby_ewm_agg_namedagg(self):
+        # [FUNCTION DOC]
+        # Regression test for GH#28333. Verifies named aggregation of mean, standard
+        # deviation and variance of column B for a grouped ewm (center of mass 1.0)
+        # gives the same numbers as the individual methods.
         # GH#28333
         df = DataFrame({"A": ["a"] * 4, "B": range(4)})
         result = (
@@ -1235,6 +1522,11 @@ class TestEWM:
         [["corr", [np.nan, 1.0, 1.0, 1]], ["cov", [np.nan, 0.5, 0.928571, 1.385714]]],
     )
     def test_pairwise_methods(self, method, expected_data):
+        # [FUNCTION DOC]
+        # Regression test for GH 16037. Parametrized over corr and cov with expected
+        # values. Verifies the pairwise grouped ewm result has a three-level index
+        # (group, position, column name) with the expected values, and equals the
+        # group-wise application on the selected column.
         # GH 16037
         df = DataFrame({"A": ["a"] * 4, "B": range(4)})
         result = getattr(df.groupby("A").ewm(com=1.0), method)()
@@ -1258,6 +1550,11 @@ class TestEWM:
         tm.assert_frame_equal(result, expected)
 
     def test_times(self, times_frame):
+        # [FUNCTION DOC]
+        # Regression test for GH 40951 (and GH#42738). Using the times frame fixture with
+        # its datetime column removed and passed as times, verifies a grouped ewm mean
+        # with a 23 days half-life gives the expected values per group and original
+        # position.
         # GH 40951
         halflife = "23 days"
         # GH#42738
@@ -1297,6 +1594,9 @@ class TestEWM:
         tm.assert_frame_equal(result, expected)
 
     def test_times_array(self, times_frame):
+        # [FUNCTION DOC]
+        # Regression test for GH 40951. Verifies passing times as a series gives the same
+        # grouped ewm mean as passing the underlying array.
         # GH 40951
         halflife = "23 days"
         times = times_frame.pop("C")
@@ -1306,6 +1606,11 @@ class TestEWM:
         tm.assert_frame_equal(result, expected)
 
     def test_dont_mutate_obj_after_slicing(self):
+        # [FUNCTION DOC]
+        # Regression test for GH 43355. With a grouped hourly rolling "1h" object on a
+        # timestamp column, verifies counts for the frame, then for a selected column
+        # (indexed by group and timestamp), and again for the frame, which must be
+        # unchanged by the earlier slicing.
         # GH 43355
         df = DataFrame(
             {
@@ -1346,6 +1651,11 @@ class TestEWM:
 
 
 def test_rolling_corr_with_single_integer_in_index():
+    # [FUNCTION DOC]
+    # Regression test for GH 44078. Grouping by a column of one-element tuples,
+    # verifies grouped rolling correlation (window 2) against the whole frame gives
+    # missing for the first value and 1.0 afterwards, indexed by the tuple key and
+    # position.
     # GH 44078
     df = DataFrame({"a": [(1,), (1,), (1,)], "b": [4, 5, 6]})
     gb = df.groupby(["a"])
@@ -1358,6 +1668,9 @@ def test_rolling_corr_with_single_integer_in_index():
 
 
 def test_rolling_corr_with_tuples_in_index():
+    # [FUNCTION DOC]
+    # Regression test for GH 44078. Same as the single-integer tuple key case but
+    # with two-element tuple keys.
     # GH 44078
     df = DataFrame(
         {

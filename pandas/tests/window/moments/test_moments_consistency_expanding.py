@@ -1,3 +1,8 @@
+# [MODULE DOC]
+# Consistency tests for expanding window moments: checks that sum, mean,
+# variance, standard deviation, covariance and correlation computed by the
+# expanding window agree with each other and with the apply path. Uses the
+# data and min_periods fixtures from the moments conftest.
 import numpy as np
 import pytest
 
@@ -6,6 +11,9 @@ import pandas._testing as tm
 
 
 def no_nans(x):
+    # [FUNCTION DOC]
+    # HELPER: returns true when a series or frame contains no missing values
+    # (for a frame, true only if every column has none).
     if isinstance(x, Series):
         return x.notna().all()
     else:
@@ -13,6 +21,9 @@ def no_nans(x):
 
 
 def all_na(x):
+    # [FUNCTION DOC]
+    # HELPER: returns true when every element of a series or frame is missing
+    # (true for empty objects too).
     if isinstance(x, Series):
         return x.isnull().all()
     else:
@@ -21,6 +32,13 @@ def all_na(x):
 
 @pytest.mark.parametrize("f", [lambda v: Series(v).sum(), np.nansum, np.sum])
 def test_expanding_apply_consistency_sum_nans(request, all_data, min_periods, f):
+    # [FUNCTION DOC]
+    # Verifies the expanding sum equals expanding apply (raw mode) with three
+    # equivalent functions: a series-sum lambda, nan-skipping sum, and plain
+    # numpy sum. For plain numpy sum the test is marked expected-to-fail
+    # unless the data has no missing values or is entirely missing, non-empty
+    # and the minimum periods is positive, because plain sum propagates
+    # missing values.
     if f is np.sum:
         if not no_nans(all_data) and not (
             all_na(all_data) and not all_data.empty and min_periods > 0
@@ -37,6 +55,10 @@ def test_expanding_apply_consistency_sum_nans(request, all_data, min_periods, f)
 
 @pytest.mark.parametrize("ddof", [0, 1])
 def test_moments_consistency_var(all_data, min_periods, ddof):
+    # [FUNCTION DOC]
+    # Parametrized over delta degrees of freedom 0 and 1. Verifies expanding
+    # variance is never negative and, when ddof is zero, equals the expanding
+    # mean of squares minus the square of the expanding mean.
     var_x = all_data.expanding(min_periods=min_periods).var(ddof=ddof)
     assert not (var_x < 0).any(axis=None)
 
@@ -49,6 +71,11 @@ def test_moments_consistency_var(all_data, min_periods, ddof):
 
 @pytest.mark.parametrize("ddof", [0, 1])
 def test_moments_consistency_var_constant(consistent_data, min_periods, ddof):
+    # [FUNCTION DOC]
+    # Parametrized over ddof 0 and 1. For constant data verifies expanding
+    # variance is never positive and equals zero where the count reaches the
+    # minimum (at least one), missing elsewhere, and with ddof one also
+    # missing where fewer than two observations exist.
     count_x = consistent_data.expanding(min_periods=min_periods).count()
     var_x = consistent_data.expanding(min_periods=min_periods).var(ddof=ddof)
 
@@ -63,6 +90,10 @@ def test_moments_consistency_var_constant(consistent_data, min_periods, ddof):
 
 @pytest.mark.parametrize("ddof", [0, 1])
 def test_expanding_consistency_var_std_cov(all_data, min_periods, ddof):
+    # [FUNCTION DOC]
+    # Parametrized over ddof 0 and 1. Verifies expanding variance, standard
+    # deviation and self-covariance are non-negative, variance equals the
+    # standard deviation squared, and variance equals self-covariance.
     var_x = all_data.expanding(min_periods=min_periods).var(ddof=ddof)
     assert not (var_x < 0).any(axis=None)
 
@@ -81,6 +112,11 @@ def test_expanding_consistency_var_std_cov(all_data, min_periods, ddof):
 
 @pytest.mark.parametrize("ddof", [0, 1])
 def test_expanding_consistency_series_cov_corr(series_data, min_periods, ddof):
+    # [FUNCTION DOC]
+    # Parametrized over ddof 0 and 1, series only. Verifies covariance equals
+    # half of (variance of the sum minus the two variances), correlation
+    # equals covariance over the product of standard deviations, and with
+    # ddof zero covariance equals mean of product minus product of means.
     var_x_plus_y = (
         (series_data + series_data).expanding(min_periods=min_periods).var(ddof=ddof)
     )
@@ -110,6 +146,9 @@ def test_expanding_consistency_series_cov_corr(series_data, min_periods, ddof):
 
 
 def test_expanding_consistency_mean(all_data, min_periods):
+    # [FUNCTION DOC]
+    # Verifies the expanding mean equals the expanding sum divided by the
+    # expanding count (same minimum periods), compared as float64.
     result = all_data.expanding(min_periods=min_periods).mean()
     expected = (
         all_data.expanding(min_periods=min_periods).sum()
@@ -119,6 +158,11 @@ def test_expanding_consistency_mean(all_data, min_periods):
 
 
 def test_expanding_consistency_constant(consistent_data, min_periods):
+    # [FUNCTION DOC]
+    # For constant data verifies the expanding mean equals the constant where
+    # the unrestricted expanding count reaches the minimum (at least one) and
+    # is missing elsewhere, and that expanding correlation of the data with
+    # itself is entirely missing.
     count_x = consistent_data.expanding().count()
     mean_x = consistent_data.expanding(min_periods=min_periods).mean()
     # check that correlation of a series with itself is either 1 or NaN
@@ -141,6 +185,10 @@ def test_expanding_consistency_constant(consistent_data, min_periods):
 
 
 def test_expanding_consistency_var_debiasing_factors(all_data, min_periods):
+    # [FUNCTION DOC]
+    # Verifies unbiased expanding variance equals biased (ddof zero) variance
+    # times count divided by (count minus one), where a zero denominator is
+    # treated as missing. Counts use the default minimum periods.
     # check variance debiasing factors
     var_unbiased_x = all_data.expanding(min_periods=min_periods).var()
     var_biased_x = all_data.expanding(min_periods=min_periods).var(ddof=0)
