@@ -2,6 +2,10 @@
 #  retention or inference.  Other arithmetic tests belong in
 #  tests/arithmetic/test_datetime64.py
 
+# [MODULE DOC]
+# Arithmetic tests specific to DatetimeIndex, concerned with freq retention or inference when
+# adding or subtracting timedeltas, offsets and timestamps (including across DST). Other
+# datetime arithmetic tests live in the shared arithmetic test package.
 from pandas import (
     Timedelta,
     TimedeltaIndex,
@@ -14,7 +18,11 @@ import pandas._testing as tm
 
 
 class TestDatetimeIndexArithmetic:
+    # [CLASS DOC]
+    # Groups freq-retention arithmetic tests for DatetimeIndex; no state.
     def test_add_timedelta_preserves_freq(self):
+        # [FUNCTION DOC]
+        # Verifies adding a one-day timedelta to a twelve-hourly timezone-aware index keeps the freq.
         # GH#37295 should hold for any DTI with freq=None or Tick freq
         # GH#41943 as of pandas3 Tick does not include Day
         tz = "Canada/Eastern"
@@ -27,6 +35,10 @@ class TestDatetimeIndexArithmetic:
         assert result.freq == dti.freq
 
     def test_sub_datetime_preserves_freq(self, tz_naive_fixture):
+        # [FUNCTION DOC]
+        # Uses tz_naive_fixture. Verifies subtracting the first element from an index with a 24-hour
+        # tick freq gives a timedelta range with that same freq (tick offsets are preserved, unlike
+        # calendar days across DST).
         # GH#48818
         # In pandas3 "D" preserves time-of-day across DST transitions, so
         #  is not preserved by subtraction.  Ticks offsets like "24h"
@@ -44,6 +56,10 @@ class TestDatetimeIndexArithmetic:
         assert res.freq == expected.freq
 
     def test_sub_datetime_preserves_freq_across_dst(self):
+        # [FUNCTION DOC]
+        # Verifies subtracting the first element from a daily US/Pacific index spanning a DST change
+        # gives timedeltas that include a 23-hour last step, and the result freq equals the expected
+        # (none).
         # GH#48818
         ts = Timestamp("2016-03-11", tz="US/Pacific")
         dti = date_range(ts, periods=4, unit="ns")
@@ -62,6 +78,9 @@ class TestDatetimeIndexArithmetic:
         assert res.freq == expected.freq
 
     def test_add_dti_day(self):
+        # [FUNCTION DOC]
+        # Regression test: adding the daily freq offset to a Berlin index spanning a DST change and
+        # trimming the last element equals the index without its first element.
         # GH#35388
         dti = date_range("2020-03-28", periods=4, freq="D", tz="Europe/Berlin")
         result = (dti + dti.freq)[:-1]
@@ -69,6 +88,9 @@ class TestDatetimeIndexArithmetic:
         tm.assert_index_equal(result, expected)
 
     def test_sub_timestamp_preserves_day_freq(self):
+        # [FUNCTION DOC]
+        # Regression test: subtracting a Timestamp from a daily index gives a TimedeltaIndex whose freq
+        # equals the index freq.
         # GH#62094
         dti = date_range("2021-01-01", periods=5, freq="D")
         ts = Timestamp("2020-01-01")

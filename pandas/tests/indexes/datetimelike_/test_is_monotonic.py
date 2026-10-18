@@ -1,3 +1,6 @@
+# [MODULE DOC]
+# Test that monotonicity flags of PeriodIndex, DatetimeIndex and timedelta Index, and of their
+# engines, agree and are never increasing when NaT is present.
 from pandas import (
     Index,
     NaT,
@@ -6,6 +9,11 @@ from pandas import (
 
 
 def test_is_monotonic_with_nat():
+    # [FUNCTION DOC]
+    # Regression test: for datetime, period and timedelta indexes (and their private engines) over
+    # three days, checks monotonic increasing, not decreasing, unique; after inserting NaT at the
+    # start or at the end, the objects are neither monotonic increasing nor decreasing but remain
+    # unique (including hourly period conversion for the end case).
     # GH#31437
     # PeriodIndex.is_monotonic_increasing should behave analogously to DatetimeIndex,
     #  in particular never be monotonic when we have NaT

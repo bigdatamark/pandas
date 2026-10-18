@@ -1,3 +1,6 @@
+# [MODULE DOC]
+# Tests for DatetimeIndex.insert: NA flavors, freq retention/reset, units, timezone
+# (mis)matching, string handling and invalid item types.
 from datetime import datetime
 import zoneinfo
 
@@ -16,11 +19,18 @@ import pandas._testing as tm
 
 
 class TestInsert:
+    # [CLASS DOC]
+    # Groups insert tests for DatetimeIndex; no state.
     @pytest.mark.parametrize(
         "null", [None, np.nan, np.datetime64("NaT", "ns"), NaT, NA]
     )
     @pytest.mark.parametrize("tz", [None, "UTC", "US/Eastern"])
     def test_insert_nat(self, tz, null):
+        # [FUNCTION DOC]
+        # Parametrized over timezone (none, UTC, US/Eastern) and null flavors (None, NaN, numpy NaT,
+        # NaT, NA). Verifies inserting a null at position zero gives a DatetimeIndex with NaT first,
+        # except a numpy NaT inserted into a timezone-aware index which yields an object Index holding the
+        # numpy value.
         # GH#16537, GH#18295 (test missing)
 
         idx = DatetimeIndex(["2017-01-01"], tz=tz)
@@ -33,6 +43,9 @@ class TestInsert:
 
     @pytest.mark.parametrize("tz", [None, "UTC", "US/Eastern"])
     def test_insert_invalid_na(self, tz):
+        # [FUNCTION DOC]
+        # Parametrized over timezone. Verifies inserting a timedelta NaT (wrong kind of null) gives an
+        # object Index containing it.
         idx = DatetimeIndex(["2017-01-01"], tz=tz)
 
         item = np.timedelta64("NaT", "ns")
@@ -41,6 +54,10 @@ class TestInsert:
         tm.assert_index_equal(result, expected)
 
     def test_insert_empty_preserves_freq(self, tz_naive_fixture):
+        # [FUNCTION DOC]
+        # Uses tz_naive_fixture. Regression test: inserting a conforming daily Timestamp into an empty
+        # index with daily freq keeps the freq; into an empty index with a weekly-Thursday freq the
+        # freq is reset to none.
         # GH#33573
         tz = tz_naive_fixture
         dti = DatetimeIndex([], tz=tz, freq="D")
@@ -55,6 +72,9 @@ class TestInsert:
         assert result.freq is None
 
     def test_insert(self, unit):
+        # [FUNCTION DOC]
+        # Uses unit. Verifies inserting a datetime in the middle keeps datetime dtype and unit, and
+        # inserting a string coerces to an object Index (not DatetimeIndex) with name preserved.
         idx = DatetimeIndex(
             ["2000-01-04", "2000-01-01", "2000-01-02"], name="idx"
         ).as_unit(unit)
@@ -81,6 +101,10 @@ class TestInsert:
         assert result.name == expected.name
 
     def test_insert2(self, unit):
+        # [FUNCTION DOC]
+        # Uses unit. For a three-element month-end range, inserting a conforming month end at the front
+        # (positions 0 and -3) or end keeps freq; inserting a non-conforming date in the middle or at the
+        # end resets freq. Checks values, name and freq for each case.
         idx = date_range("1/1/2000", periods=3, freq="ME", name="idx", unit=unit)
 
         # preserve freq
@@ -122,6 +146,9 @@ class TestInsert:
             assert result.freq == expected.freq
 
     def test_insert3(self, unit):
+        # [FUNCTION DOC]
+        # Uses unit. Verifies inserting an off-frequency date at the end resets freq to none, keeping
+        # name.
         idx = date_range("1/1/2000", periods=3, freq="ME", name="idx", unit=unit)
 
         # reset freq to None
@@ -142,6 +169,10 @@ class TestInsert:
         ids=["Timestamp", "datetime"],
     )
     def test_insert4(self, unit, tz, to_ts):
+        # [FUNCTION DOC]
+        # Parametrized over unit, timezone (US/Pacific, Singapore), and conversion (identity or to python
+        # datetime). Verifies inserting the next hourly stamp (created in a zoneinfo timezone) at the end
+        # keeps freq, name and timezone.
         idx = date_range(
             "1/1/2000 09:00", periods=6, freq="h", tz=tz, name="idx", unit=unit
         )
@@ -164,6 +195,9 @@ class TestInsert:
         ids=["Timestamp", "datetime"],
     )
     def test_insert4_no_freq(self, unit, tz, to_ts):
+        # [FUNCTION DOC]
+        # Parametrized like the previous test. Verifies inserting an out-of-sequence hourly stamp at the
+        # end resets freq to none while preserving name and timezone.
         idx = date_range(
             "1/1/2000 09:00", periods=6, freq="h", tz=tz, name="idx", unit=unit
         )
@@ -191,6 +225,10 @@ class TestInsert:
 
     # TODO: also changes DataFrame.__setitem__ with expansion
     def test_insert_mismatched_tzawareness(self):
+        # [FUNCTION DOC]
+        # Verifies inserting a naive Timestamp or datetime into a timezone-aware index returns an object
+        # Index containing the original elements and the item. (A TODO notes that setitem with expansion
+        # on frames is also affected.)
         # see GH#7299
         idx = date_range("1/1/2000", periods=3, freq="D", tz="Asia/Tokyo", name="idx")
 
@@ -212,6 +250,12 @@ class TestInsert:
 
     # TODO: also changes DataFrame.__setitem__ with expansion
     def test_insert_mismatched_tz(self):
+        # [FUNCTION DOC]
+        # Verifies inserting a Timestamp or datetime in a different timezone into a Tokyo index converts
+        # it to the index's timezone and keeps the datetime dtype.
+        # KNOWN ISSUE: the inline comment says a mismatched timezone casts to object, but the
+        # assertions require the result to keep the original datetime dtype (the item is converted to the
+        # index timezone), so the comment is outdated.
         # see GH#7299
         # pre-2.0 with mismatched tzs we would cast to object
         idx = date_range(
@@ -241,6 +285,10 @@ class TestInsert:
         "item", [0, np.int64(0), np.float64(0), np.array(0), np.timedelta64(456, "ns")]
     )
     def test_insert_mismatched_types_raises(self, tz_aware_fixture, item):
+        # [FUNCTION DOC]
+        # Uses tz_aware_fixture; parametrized over integers, floats, a zero-dimensional array and a numpy
+        # timedelta. Verifies inserting such items into a timezone-aware index gives an object Index
+        # containing the item (the array is unwrapped to its scalar), not a datetime cast.
         # GH#33703 dont cast these to dt64
         tz = tz_aware_fixture
         dti = date_range("2019-11-04", periods=9, freq="-1D", name=9, tz=tz)
@@ -256,6 +304,9 @@ class TestInsert:
         tm.assert_index_equal(result, expected)
 
     def test_insert_castable_str(self, tz_aware_fixture):
+        # [FUNCTION DOC]
+        # Uses tz_aware_fixture. Verifies inserting a date string that can be parsed gives a DatetimeIndex
+        # with the parsed stamp localized to the index timezone.
         # GH#33703
         tz = tz_aware_fixture
         dti = date_range("2019-11-04", periods=3, freq="-1D", name=9, tz=tz)
@@ -268,6 +319,9 @@ class TestInsert:
         tm.assert_index_equal(result, expected)
 
     def test_insert_non_castable_str(self, tz_aware_fixture):
+        # [FUNCTION DOC]
+        # Uses tz_aware_fixture. Verifies inserting a non-date string gives an object Index with the
+        # string first.
         # GH#33703
         tz = tz_aware_fixture
         dti = date_range("2019-11-04", periods=3, freq="-1D", name=9, tz=tz)

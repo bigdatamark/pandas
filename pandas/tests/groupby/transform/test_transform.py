@@ -1,4 +1,11 @@
 """test with the .transform"""
+# [MODULE DOC]
+# Tests for the groupby transform machinery (DataFrameGroupBy and SeriesGroupBy transform),
+# covering user-defined functions, string aliases, cython-backed cumulative/shift/fill
+# operations, null group keys, categorical keys, dtype preservation and index alignment.
+# Relies on fixtures from the groupby test conftest (frames, series, function-name lists)
+# and on the shared helper that builds default arguments for groupby methods.
+# No import-time side effects beyond imports.
 
 import numpy as np
 import pytest
@@ -24,10 +31,21 @@ from pandas.tests.groupby import get_groupby_method_args
 
 
 def assert_fp_equal(a, b):
+    # [FUNCTION DOC]
+    # HELPER: assertion helper for the transform tests.
+    # Takes two array-like numeric objects a and b and asserts that every element-wise absolute
+    # difference is below one trillionth. Returns nothing; fails with an assertion error otherwise.
     assert (np.abs(a - b) < 1e-12).all()
 
 
 def test_transform():
+    # [FUNCTION DOC]
+    # Checks basic transform on a shuffled-index Series grouped by a function of the label
+    # (the group-wise multiplied sum is looked up at a label), that DataFrame transform preserves
+    # input order for an unsorted index (compared to a sorted-index computation), that demeaning
+    # via transform equals demeaning via apply, that grouping by a monthly Grouper on a
+    # business-day frame works, and that the builtin max passed to transform on a frame returns
+    # only the non-key column.
     data = Series(np.arange(9) // 3, index=np.arange(9))
 
     index = np.arange(9)
@@ -57,6 +75,8 @@ def test_transform():
     tm.assert_frame_equal(result, expected)
 
     def demean(arr):
+        # [FUNCTION DOC]
+        # HELPER: subtracts the column-wise mean from the input array; used as the transform function.
         return arr - arr.mean(axis=0)
 
     people = DataFrame(
@@ -86,6 +106,9 @@ def test_transform():
 
 
 def test_transform_fast():
+    # [FUNCTION DOC]
+    # Verifies that transforming a grouped Series with a numpy mean function and with the string
+    # alias mean both equal the group means repeated per row (same index, name preserved).
     df = DataFrame(
         {
             "id": np.arange(10) / 3,
@@ -106,6 +129,10 @@ def test_transform_fast():
 
 
 def test_transform_fast2():
+    # [FUNCTION DOC]
+    # Verifies that the "first" transform on a frame with datetime, float and int columns keeps
+    # dtypes (datetime stays datetime64 nanosecond) and drops the key column, and also with a
+    # column selection on the groupby.
     # GH 12737
     df = DataFrame(
         {
@@ -140,6 +167,9 @@ def test_transform_fast2():
 
 
 def test_transform_fast3():
+    # [FUNCTION DOC]
+    # Verifies that "first" transform works with duplicate column names: result equals the frame
+    # without the grouping column.
     # dup columns
     df = DataFrame([[1, 2, 3], [4, 5, 6]], columns=["g", "a", "a"])
     result = df.groupby("g").transform("first")
@@ -148,6 +178,10 @@ def test_transform_fast3():
 
 
 def test_transform_broadcast(tsframe, ts):
+    # [FUNCTION DOC]
+    # Using the tsframe and ts fixtures, verifies that transforming by month with a mean function
+    # broadcasts group means back over each group's rows, keeps the original index, for both
+    # Series and DataFrame.
     grouped = ts.groupby(lambda x: x.month)
     result = grouped.transform(np.mean)
 
@@ -166,6 +200,9 @@ def test_transform_broadcast(tsframe, ts):
 
 
 def test_transform_axis_ts(tsframe):
+    # [FUNCTION DOC]
+    # Checks that subtracting a weekday-grouped mean transform equals applying demeaning per
+    # group, for both a monotonic and a non-monotonic (two rows swapped) index.
     # make sure that we are setting the axes correctly
     # in the presence of a non-monotonic indexer
     # GH12713
@@ -195,6 +232,9 @@ def test_transform_axis_ts(tsframe):
 
 
 def test_transform_dtype():
+    # [FUNCTION DOC]
+    # Verifies that a mean transform on an integer frame yields float results with the expected
+    # frame shape (dtype of the output is float).
     # GH 9807
     # Check transform dtype output is preserved
     df = DataFrame([[1, 3], [2, 3]])
@@ -204,6 +244,9 @@ def test_transform_dtype():
 
 
 def test_transform_bug():
+    # [FUNCTION DOC]
+    # Regression test: transform with a ranking function on a datetime-keyed grouping returns a
+    # float Series named like the selected column.
     # GH 5712
     # transforming on a datetime column
     df = DataFrame({"A": Timestamp("20130101"), "B": np.arange(5)})
@@ -213,6 +256,9 @@ def test_transform_bug():
 
 
 def test_transform_numeric_to_boolean():
+    # [FUNCTION DOC]
+    # Verifies that a transform function returning a constant boolean produces a boolean Series
+    # for both float and integer value columns.
     # GH 16875
     # inconsistency in transforming boolean values
     expected = Series([True, True], name="A")
@@ -227,6 +273,9 @@ def test_transform_numeric_to_boolean():
 
 
 def test_transform_datetime_to_timedelta():
+    # [FUNCTION DOC]
+    # Verifies that date arithmetic inside transform (max minus min) can return timedelta values:
+    # once with a base time added and subtracted, once directly; both yield timedelta zero Series.
     # GH 15429
     # transforming a datetime to timedelta
     df = DataFrame({"A": Timestamp("20130101"), "B": np.arange(5)})
@@ -248,6 +297,9 @@ def test_transform_datetime_to_timedelta():
 
 
 def test_transform_datetime_to_numeric():
+    # [FUNCTION DOC]
+    # Verifies that transforming a datetime column into day-of-week arithmetic gives a float Series
+    # (mean subtraction) or an int32 Series (minimum subtraction).
     # GH 10972
     # convert dt to float
     df = DataFrame({"a": 1, "b": date_range("2015-01-01", periods=2, freq="D")})
@@ -269,6 +321,9 @@ def test_transform_datetime_to_numeric():
 
 
 def test_transform_casting():
+    # [FUNCTION DOC]
+    # Regression test: a transform that applies diff on a datetime column grouped by a string key
+    # must give timedelta dtype for both Series and DataFrame selections.
     # 13046
     times = [
         "13:43:27",
@@ -302,12 +357,18 @@ def test_transform_casting():
 
 
 def test_transform_multiple(ts):
+    # [FUNCTION DOC]
+    # Smoke test: transform by multiple function-based keys with a lambda and with a numpy mean
+    # works without error (no result assertions).
     grouped = ts.groupby([lambda x: x.year, lambda x: x.month])
     grouped.transform(lambda x: x * 2)
     grouped.transform(np.mean)
 
 
 def test_dispatch_transform(tsframe):
+    # [FUNCTION DOC]
+    # Verifies that the groupby forward-fill method gives the same result as transforming with a
+    # forward-fill function, on a frame with every fifth row retained and the rest missing.
     df = tsframe[::5].reindex(tsframe.index)
 
     grouped = df.groupby(lambda x: x.month)
@@ -319,6 +380,13 @@ def test_dispatch_transform(tsframe):
 
 
 def test_transform_transformation_func(transformation_func):
+    # [FUNCTION DOC]
+    # Parametrized over the transformation_func fixture (names of transformation methods).
+    # Builds a frame with a string key and float column with NaNs on a daily index. Computes the
+    # expected value by applying a mock operation to each group in group order, concatenating and
+    # sorting by index (then restoring the index to drop frequency). Special cases cumcount and
+    # ngroup, which return a Series built from a range or a running counter. Compares with the
+    # result of transform by name; Series comparison for cumcount/ngroup, frame comparison else.
     # GH 30918
     df = DataFrame(
         {
@@ -335,6 +403,10 @@ def test_transform_transformation_func(transformation_func):
         counter = -1
 
         def mock_op(x):
+            # [FUNCTION DOC]
+            # HELPER: used by test_transform_transformation_func for ngroup. Increments the
+            # enclosing counter (starting at minus one) on each call and returns a Series with
+            # the counter value over the index of the passed group, mimicking group numbering.
             nonlocal counter
             counter += 1
             return Series(counter, index=x.index)
@@ -359,6 +431,9 @@ def test_transform_transformation_func(transformation_func):
 
 
 def test_transform_select_columns(df):
+    # [FUNCTION DOC]
+    # Verifies that transform on a selected list of columns with a mean function equals the same
+    # transform applied to the pre-selected sub-frame grouped by the key column.
     f = lambda x: x.mean()
     result = df.groupby("A")[["C", "D"]].transform(f)
 
@@ -369,6 +444,11 @@ def test_transform_select_columns(df):
 
 
 def test_transform_nuisance_raises(df, using_infer_string):
+    # [FUNCTION DOC]
+    # Verifies that transforming with a numpy mean over a non-numeric duplicated column "B"
+    # raises a type error, from both SeriesGroupBy and DataFrameGroupBy; the message depends on
+    # the using_infer_string fixture (reduction-on-string message when True, conversion message
+    # otherwise).
     # case that goes through _transform_item_by_item
 
     df.columns = ["A", "B", "B", "D"]
@@ -389,6 +469,9 @@ def test_transform_nuisance_raises(df, using_infer_string):
 
 
 def test_transform_function_aliases(df):
+    # [FUNCTION DOC]
+    # Verifies that string "mean" with numeric_only equals the numpy mean transform on numeric
+    # columns, and likewise for a single-column Series transform.
     result = df.groupby("A").transform("mean", numeric_only=True)
     expected = df.groupby("A")[["C", "D"]].transform(np.mean)
     tm.assert_frame_equal(result, expected)
@@ -399,6 +482,9 @@ def test_transform_function_aliases(df):
 
 
 def test_series_fast_transform_date():
+    # [FUNCTION DOC]
+    # Regression test: "first" transform on a datetime column with a NaN group key gives NaT for
+    # the NaN-key row and datetime64 nanosecond dtype overall.
     # GH 13191
     df = DataFrame(
         {
@@ -419,6 +505,10 @@ def test_series_fast_transform_date():
 
 @pytest.mark.parametrize("func", [lambda x: np.nansum(x), sum])
 def test_transform_length(func):
+    # [FUNCTION DOC]
+    # Parametrized over a numpy nansum lambda and builtin sum. Verifies the transform result
+    # length equals the input length for frame and Series selections; with builtin sum the group
+    # containing NaN gives NaN, with nansum the result is the group sum.
     # GH 9697
     df = DataFrame({"col1": [1, 1, 2, 2], "col2": [1, 2, 3, np.nan]})
     if func is sum:
@@ -435,6 +525,9 @@ def test_transform_length(func):
 
 
 def test_transform_coercion():
+    # [FUNCTION DOC]
+    # Verifies that a mean transform and a lambda computing the numpy mean along axis 0 give equal
+    # frames (no coercion through assignment).
     # 14457
     # when we are transforming be sure to not coerce
     # via assignment
@@ -447,6 +540,12 @@ def test_transform_coercion():
 
 
 def test_groupby_transform_with_int(using_infer_string):
+    # [FUNCTION DOC]
+    # Covers upcasting in item-by-item transforms: standardizing float columns gives NaN for a
+    # constant column; with an integer frame containing a string column the full-frame transform
+    # raises a type error (message depends on using_infer_string) while column-selected transform
+    # works; integer data requiring float conversion is standardized per group; and an identity
+    # arithmetic transform of integer columns yields floats (no downcast).
     # GH 3740, make sure that we might upcast on item-by-item transform
 
     # floats
@@ -512,6 +611,9 @@ def test_groupby_transform_with_int(using_infer_string):
 
 
 def test_groupby_transform_with_nan_group():
+    # [FUNCTION DOC]
+    # Regression test: grouping by a column with NaN and transforming "a" with builtin max yields
+    # NaN for the NaN-key row and group maxima elsewhere.
     # GH 9941
     df = DataFrame({"a": range(10), "b": [1, 1, 2, 3, np.nan, 4, 4, 5, 5, 5]})
     result = df.groupby(df.b)["a"].transform(max)
@@ -520,6 +622,10 @@ def test_groupby_transform_with_nan_group():
 
 
 def test_transform_mixed_type():
+    # [FUNCTION DOC]
+    # Verifies apply on a mixed-type frame with a multi-index: a nested function mutates a group
+    # by adding a doubled column and returns its first row; result float dtype is preserved and
+    # each group result equals the function applied to the group without the key column.
     index = MultiIndex.from_arrays([[0, 0, 0, 1, 1, 1], [1, 2, 3, 1, 2, 3]])
     df = DataFrame(
         {
@@ -531,6 +637,9 @@ def test_transform_mixed_type():
     )
 
     def f(group):
+        # [FUNCTION DOC]
+        # HELPER: used by test_transform_mixed_type. Mutates the passed group by adding a column
+        # named g equal to twice column d, and returns only the first row of the group.
         group["g"] = group["d"] * 2
         return group[:1]
 
@@ -555,6 +664,11 @@ def test_transform_mixed_type():
     ],
 )
 def test_cython_transform_series(op, args, targop):
+    # [FUNCTION DOC]
+    # Parametrized over (op, args, targop) for cumprod, cumsum, shift backward by one and shift forward by one. For a
+    # random Series, with and without missing values, grouped by random float labels, verifies
+    # transform with the operation name plus args, the equivalent callable, and the direct
+    # groupby method all agree.
     # GH 4095
     s = Series(np.random.default_rng(2).standard_normal(1000))
     s_missing = s.copy()
@@ -615,6 +729,12 @@ def test_cython_transform_series(op, args, targop):
     ],
 )
 def test_groupby_cum_skipna(op, skipna, input, exp):
+    # [FUNCTION DOC]
+    # Parametrized over cumprod/cumsum, the skipna fixture, and input frames (all-NaN values,
+    # or a single NaN). Verifies that the cumulative transform respects skipna: with skipna true
+    # the NaN position stays NaN while accumulation continues; with false everything after NaN
+    # in the group is NaN. Expected is looked up in a dictionary keyed by operation and skipna
+    # when given a dictionary, else used directly.
     df = DataFrame(input)
     result = df.groupby("key")["value"].transform(op, skipna=skipna)
     if isinstance(exp, dict):
@@ -627,6 +747,10 @@ def test_groupby_cum_skipna(op, skipna, input, exp):
 
 @pytest.fixture
 def frame():
+    # [FUNCTION DOC]
+    # HELPER: fixture. Builds a 10-row frame with float, float-with-missing, int, datetime,
+    # timedelta, string, string-with-missing and categorical columns, used by the cython
+    # transform tests.
     floating = Series(np.random.default_rng(2).standard_normal(10))
     floating_missing = floating.copy()
     floating_missing.iloc[2:7] = np.nan
@@ -651,6 +775,9 @@ def frame():
 
 @pytest.fixture
 def frame_mi(frame):
+    # [FUNCTION DOC]
+    # HELPER: fixture. Takes the frame fixture and assigns it a two-level product MultiIndex
+    # (5 by 2). Mutates and returns the same frame.
     frame.index = MultiIndex.from_product([range(5), range(2)])
     return frame
 
@@ -677,6 +804,13 @@ def frame_mi(frame):
     ],
 )
 def test_cython_transform_frame(request, op, args, targop, df_fix, gb_target):
+    # [FUNCTION DOC]
+    # Slow test, parametrized over operation (cumprod, cumsum, shift forward/back), frame fixture
+    # (flat or MultiIndex), and grouping target (random float labels, level, string column,
+    # string with missing column which is marked xfail, multi-column). Computes the expected frame
+    # via apply of the equivalent callable (concatenating int and float columns separately when
+    # dtype promotion is a concern) and compares to transform by name and to the direct method.
+    # For shift, string columns' missing values are normalized to NaN.
     df = request.getfixturevalue(df_fix)
     gb = df.groupby(group_keys=False, **gb_target)
 
@@ -739,6 +873,12 @@ def test_cython_transform_frame(request, op, args, targop, df_fix, gb_target):
 def test_cython_transform_frame_column(
     request, op, args, targop, df_fix, gb_target, column
 ):
+    # [FUNCTION DOC]
+    # Slow test, parametrized like the frame variant plus a single column. For columns that are
+    # not float/int/float-missing (except shift and timedelta cumsum) asserts a type error is
+    # raised by both transform and the direct method with one of several unsupported-dtype
+    # messages; otherwise compares transform and direct-method results against apply of the
+    # callable (with NaN normalization for string columns).
     df = request.getfixturevalue(df_fix)
     gb = df.groupby(group_keys=False, **gb_target)
     c = column
@@ -784,6 +924,11 @@ def test_cython_transform_frame_column(
 )
 @pytest.mark.parametrize("agg_func", ["count", "rank", "size"])
 def test_transform_numeric_ret(cols, expected, agg_func):
+    # [FUNCTION DOC]
+    # Parametrized over column selection (single column or list), expected output, and
+    # aggregation (count, rank, size). Verifies transform on a datetime column returns numeric
+    # results: ranks become floats, and size with several columns yields a Series rather than a
+    # frame.
     # GH#19200 and GH#27469
     df = DataFrame(
         {"a": date_range("2018-01-01", periods=3), "b": range(3), "c": range(7, 10)}
@@ -799,6 +944,9 @@ def test_transform_numeric_ret(cols, expected, agg_func):
 
 
 def test_transform_ffill():
+    # [FUNCTION DOC]
+    # Verifies that "ffill" transform fills NaN within each key for both frame and Series
+    # selections.
     # GH 24211
     data = [["a", 0.0], ["a", float("nan")], ["b", 1.0], ["b", float("nan")]]
     df = DataFrame(data, columns=["key", "values"])
@@ -833,6 +981,12 @@ def test_transform_ffill():
 def test_group_fill_methods(
     mix_groupings, as_series, val1, val2, fill_method, limit, exp_vals
 ):
+    # [FUNCTION DOC]
+    # Parametrized over mixed vs sequential group layout, Series vs DataFrame, three value types
+    # (string, int, float), and fill method (forward or backward) with a limit. Builds values with
+    # NaNs, substitutes placeholders in the expected list with the actual values, interleaves
+    # if groupings are mixed, then compares the groupby fill method result with the expected
+    # Series or frame.
     vals = [np.nan, np.nan, val1, np.nan, np.nan, val2, np.nan, np.nan]
     _exp_vals = list(exp_vals)
     # Overwrite placeholder values
@@ -848,6 +1002,9 @@ def test_group_fill_methods(
         keys = ["a", "b"] * len(vals)
 
         def interweave(list_obj):
+            # [FUNCTION DOC]
+            # HELPER: used by test_group_fill_methods. Returns a new list where every element of the
+            # input is repeated twice consecutively.
             temp = []
             for x in list_obj:
                 temp.extend([x, x])
@@ -874,6 +1031,9 @@ def test_group_fill_methods(
 
 @pytest.mark.parametrize("fill_method", ["ffill", "bfill"])
 def test_pad_stable_sorting(fill_method):
+    # [FUNCTION DOC]
+    # Regression test: forward and backward fill by a constant key must keep original order
+    # (stable sort); the result equals the frame without the key column.
     # GH 21207
     x = [0] * 20
     y = [np.nan] * 10 + [1] * 10
@@ -903,6 +1063,11 @@ def test_pad_stable_sorting(fill_method):
 )
 @pytest.mark.parametrize("periods", [1, -1])
 def test_pct_change(frame_or_series, freq, periods):
+    # [FUNCTION DOC]
+    # Parametrized over freq (None, or "D" marked xfail because the vectorized method uses freq),
+    # periods (1, -1), and frame_or_series. Verifies pct_change by group equals value divided by
+    # the grouped shifted value minus one, for DataFrame (converted to one-column frame) and
+    # Series groupby.
     # GH 21200, 21621, 30463
     vals = [3, np.nan, np.nan, np.nan, 1, 2, 4, 10, np.nan, 4]
     keys = ["a", "b"]
@@ -933,6 +1098,9 @@ def test_pct_change(frame_or_series, freq, periods):
     ],
 )
 def test_ffill_bfill_non_unique_multilevel(func, expected_status):
+    # [FUNCTION DOC]
+    # Parametrized over ffill/bfill and expected status columns. Verifies that fill within groups
+    # works with a non-unique MultiIndex (date, symbol), preserving the index.
     # GH 19437
     date = pd.to_datetime(
         [
@@ -962,6 +1130,9 @@ def test_ffill_bfill_non_unique_multilevel(func, expected_status):
 
 @pytest.mark.parametrize("func", [np.any, np.all])
 def test_any_all_np_func(func):
+    # [FUNCTION DOC]
+    # Parametrized over numpy any and all. Verifies that transform with these numpy functions on
+    # a boolean column with a NaN key gives NaN for the row whose key is NaN and True elsewhere.
     # GH 20653
     df = DataFrame(
         [["foo", True], [np.nan, True], ["foo", True]], columns=["key", "val"]
@@ -974,8 +1145,15 @@ def test_any_all_np_func(func):
 
 
 def test_groupby_transform_rename():
+    # [FUNCTION DOC]
+    # Verifies that a transform function which renames output columns (appending a suffix on frames)
+    # does not alter the resulting names: the frame result keeps the original column name and the
+    # selected Series result matches.
     # https://github.com/pandas-dev/pandas/issues/23461
     def demean_rename(x):
+        # [FUNCTION DOC]
+        # HELPER: used by test_groupby_transform_rename. Subtracts the mean from the object; if the
+        # object is a Series returns it, otherwise renames each column to add a demeaned suffix.
         result = x - x.mean()
 
         if isinstance(x, Series):
@@ -996,6 +1174,9 @@ def test_groupby_transform_rename():
 
 @pytest.mark.parametrize("func", [min, max, np.min, np.max, "first", "last"])
 def test_groupby_transform_timezone_column(func):
+    # [FUNCTION DOC]
+    # Parametrized over min, max, numpy min/max, "first", "last". Verifies that transform of a
+    # timezone-aware datetime column keeps the timezone and equals the original value.
     # GH 24198
     ts = pd.to_datetime("now", utc=True).tz_convert("Asia/Singapore")
     result = DataFrame({"end_time": [ts], "id": [1]})
@@ -1012,6 +1193,10 @@ def test_groupby_transform_timezone_column(func):
     ],
 )
 def test_groupby_transform_with_datetimes(func, values):
+    # [FUNCTION DOC]
+    # Parametrized over idxmin/idxmax with expected dates. Verifies that transform with these
+    # functions on a daily-indexed frame grouped by ISO week gives nanosecond datetime values
+    # at the expected index labels.
     # GH 15306
     dates = date_range("1/1/2011", periods=10, freq="D", unit="ns")
 
@@ -1028,6 +1213,9 @@ def test_groupby_transform_with_datetimes(func, values):
 
 
 def test_groupby_transform_dtype():
+    # [FUNCTION DOC]
+    # Verifies that transform with a function mapping floats to strings returns string
+    # (object-like) Series for plain Series, groupby, and object-dtype input.
     # GH 22243
     df = DataFrame({"a": [1], "val": [1.35]})
 
@@ -1048,6 +1236,9 @@ def test_groupby_transform_dtype():
 
 
 def test_transform_absent_categories(all_numeric_accumulations):
+    # [FUNCTION DOC]
+    # Uses the all_numeric_accumulations fixture. With a categorical key that has more
+    # categories than rows (unobserved), the accumulation by group returns the original Series.
     # GH 16771
     # cython transforms with more groups than rows
     x_vals = [1]
@@ -1062,6 +1253,10 @@ def test_transform_absent_categories(all_numeric_accumulations):
 @pytest.mark.parametrize("func", ["ffill", "bfill", "shift"])
 @pytest.mark.parametrize("key, val", [("level", 0), ("by", Series([0]))])
 def test_ffill_not_in_axis(func, key, val):
+    # [FUNCTION DOC]
+    # Parametrized over ffill/bfill/shift and grouping via level or a by Series. Verifies that
+    # filling or shifting a frame whose only column is NaN and is not a grouping column returns
+    # the same frame.
     # GH 21521
     df = DataFrame([[np.nan]])
     result = getattr(df.groupby(**{key: val}), func)()
@@ -1071,6 +1266,10 @@ def test_ffill_not_in_axis(func, key, val):
 
 
 def test_transform_invalid_name_raises():
+    # [FUNCTION DOC]
+    # Verifies that transform with a nonexistent function name raises a value error saying it is
+    # not a valid function name, as does a name for an existing but non-transform method
+    # (aggregate), for both DataFrameGroupBy and SeriesGroupBy.
     # GH#27486
     df = DataFrame({"a": [0, 1, 1, 2]})
     g = df.groupby(["a", "b", "b", "c"])
@@ -1089,6 +1288,12 @@ def test_transform_invalid_name_raises():
 
 
 def test_transform_agg_by_name(request, reduction_func, frame_or_series):
+    # [FUNCTION DOC]
+    # Uses the reduction_func and frame_or_series fixtures. Verifies that transform by reduction
+    # name gives a result with the same index as the input (and same columns for frames except
+    # size and ngroup) and that values are constant within each group. For corrwith on Series
+    # asserts the groupby has no such method and returns; for frames, corrwith emits the
+    # Pandas4Warning deprecation, which is asserted.
     func = reduction_func
 
     obj = DataFrame(
@@ -1127,6 +1332,9 @@ def test_transform_agg_by_name(request, reduction_func, frame_or_series):
 
 
 def test_transform_lambda_with_datetimetz():
+    # [FUNCTION DOC]
+    # Regression test: a transform lambda that localizes each group's datetime to the timezone
+    # named in the group key returns timezone-aware datetimes with per-row zones preserved.
     # GH 27496
     df = DataFrame(
         {
@@ -1151,6 +1359,11 @@ def test_transform_lambda_with_datetimetz():
 
 
 def test_transform_fastpath_raises():
+    # [FUNCTION DOC]
+    # Verifies that when the fast path for a transform raises (the function fails on frames) the
+    # transform still succeeds via the slow path (function applied per column), producing the
+    # expected doubled values. Also directly asserts the fast path raises not-implemented.
+    # Uses private groupby internals (object with exclusions, grouper iterator, path definition).
     # GH#29631 case where fastpath defined in groupby.generic _choose_path
     #  raises, but slow_path does not
 
@@ -1158,6 +1371,9 @@ def test_transform_fastpath_raises():
     gb = df.groupby("A")
 
     def func(grp):
+        # [FUNCTION DOC]
+        # HELPER: used by test_transform_fastpath_raises. Raises a not-implemented error when given a
+        # two-dimensional object, otherwise returns the input multiplied by two.
         # we want a function such that func(frame) fails but func.apply(frame)
         #  works
         if grp.ndim == 2:
@@ -1181,6 +1397,9 @@ def test_transform_fastpath_raises():
 
 
 def test_transform_lambda_indexing():
+    # [FUNCTION DOC]
+    # Verifies that transform with a function selecting the last row of each group on a sorted
+    # MultiIndex frame returns the last value repeated for each member of the group.
     # GH 7883
     df = DataFrame(
         {
@@ -1218,6 +1437,10 @@ def test_transform_lambda_indexing():
 
 
 def test_categorical_and_not_categorical_key(observed):
+    # [FUNCTION DOC]
+    # Parametrized over the observed fixture. Verifies that grouping by a categorical and a
+    # non-categorical key with a sum transform returns the input shape (no unobserved categories
+    # added), for both frame and Series, equal to the non-categorical equivalent.
     # Checks that groupby-transform, when grouping by both a categorical
     # and a non-categorical key, doesn't try to expand the output to include
     # non-observed categories but instead matches the input shape.
@@ -1251,6 +1474,8 @@ def test_categorical_and_not_categorical_key(observed):
 
 
 def test_string_rank_grouping():
+    # [FUNCTION DOC]
+    # Verifies that the rank transform by group on a two-column frame gives float ranks.
     # GH 19354
     df = DataFrame({"A": [1, 1, 2], "B": [1, 2, 3]})
     result = df.groupby("A").transform("rank")
@@ -1259,6 +1484,9 @@ def test_string_rank_grouping():
 
 
 def test_transform_cumcount():
+    # [FUNCTION DOC]
+    # Verifies that the groupby cumcount method and the "cumcount" transform name both give the
+    # within-group counter Series.
     # GH 27472
     df = DataFrame({"a": [0, 0, 0, 1, 1, 1], "b": range(6)})
     grp = df.groupby(np.repeat([0, 1], 3))
@@ -1273,6 +1501,10 @@ def test_transform_cumcount():
 
 @pytest.mark.parametrize("keys", [["A1"], ["A1", "A2"]])
 def test_null_group_lambda_self(sort, dropna, keys):
+    # [FUNCTION DOC]
+    # Parametrized over key lists, sort and dropna fixtures. Verifies that an identity transform
+    # on a column with groups containing NaN keys returns the original values when dropna is false,
+    # and NaN for rows whose group key is null when dropna is true.
     # GH 17093
     size = 50
     nulls1 = np.random.default_rng(2).choice([False, True], size)
@@ -1299,6 +1531,11 @@ def test_null_group_lambda_self(sort, dropna, keys):
 
 
 def test_null_group_str_reducer(request, dropna, reduction_func):
+    # [FUNCTION DOC]
+    # Uses dropna and reduction_func fixtures. Verifies transform by reducer name with NaN group
+    # keys: the expected value is computed per group (with explicit values for first, last, nth,
+    # size, corrwith); with dropna the null-key rows become NaN with float (or object for any/all)
+    # dtype. corrwith is marked as an expected failure ("incorrectly raises").
     # GH 17093
     if reduction_func == "corrwith":
         msg = "incorrectly raises"
@@ -1342,6 +1579,10 @@ def test_null_group_str_reducer(request, dropna, reduction_func):
 
 
 def test_null_group_str_transformer(dropna, transformation_func):
+    # [FUNCTION DOC]
+    # Uses dropna and transformation_func fixtures. Verifies transform by name for a frame with a
+    # NaN key: expected is built from applying the method to each group (cumcount and ngroup are
+    # built by hand and returned as Series), plus a NaN row for the null key when dropna.
     # GH 17093
     df = DataFrame({"A": [1, 1, np.nan], "B": [1, 2, 2]}, index=[1, 2, 3])
     args = get_groupby_method_args(transformation_func, df)
@@ -1371,6 +1612,11 @@ def test_null_group_str_transformer(dropna, transformation_func):
 
 
 def test_null_group_str_reducer_series(request, dropna, reduction_func):
+    # [FUNCTION DOC]
+    # Series variant of the null-group reducer test with the dropna and reduction_func fixtures.
+    # For corrwith, asserts SeriesGroupBy lacks the method and returns. Otherwise compares
+    # transform by reducer name with a manually built expected Series, setting null-key rows to
+    # NaN when dropna.
     # GH 17093
     index = [1, 2, 3, 4]  # test transform preserves non-standard index
     ser = Series([1, 2, 2, 3], index=index)
@@ -1412,6 +1658,10 @@ def test_null_group_str_reducer_series(request, dropna, reduction_func):
 
 
 def test_null_group_str_transformer_series(dropna, transformation_func):
+    # [FUNCTION DOC]
+    # Series variant of the null-group transformer test (dropna and transformation_func
+    # fixtures): compares transform by name with the concatenation of per-group results, adding
+    # a NaN entry for the null key when dropna.
     # GH 17093
     ser = Series([1, 2, 2], index=[1, 2, 3])
     args = get_groupby_method_args(transformation_func, ser)
@@ -1446,6 +1696,10 @@ def test_null_group_str_transformer_series(dropna, transformation_func):
 @pytest.mark.parametrize("keys", [["a1"], ["a1", "a2"]])
 @pytest.mark.parametrize("keys_in_index", [True, False])
 def test_transform_aligns(func, frame_or_series, expected_values, keys, keys_in_index):
+    # [FUNCTION DOC]
+    # Parametrized over function (sort_values, or a head-one lambda), frame_or_series, expected
+    # values, key lists and whether keys are in the index. Verifies that transform aligns the
+    # output to the input's index (values dropped by head become NaN).
     # GH#45648 - transform should align with the input's index
     df = DataFrame({"a1": [1, 1, 3, 2, 2], "b": [5, 4, 3, 2, 1]})
     if "a2" in keys:
@@ -1466,6 +1720,10 @@ def test_transform_aligns(func, frame_or_series, expected_values, keys, keys_in_
 
 @pytest.mark.parametrize("keys", ["A", ["A", "B"]])
 def test_as_index_no_change(keys, df, groupby_func):
+    # [FUNCTION DOC]
+    # Parametrized over key(s) and the groupby_func fixture. Verifies that the as_index setting
+    # has no effect on transform output: results with true and false are equal. For single key "A"
+    # drops string column "B". corrwith is expected to emit the Pandas4Warning deprecation.
     # GH#49834 - as_index should have no impact on DataFrameGroupBy.transform
     if keys == "A":
         # Column B is string dtype; will fail on some ops
@@ -1489,6 +1747,11 @@ def test_as_index_no_change(keys, df, groupby_func):
 @pytest.mark.parametrize("how", ["idxmax", "idxmin"])
 @pytest.mark.parametrize("numeric_only", [True, False])
 def test_idxmin_idxmax_transform_args(how, skipna, numeric_only):
+    # [FUNCTION DOC]
+    # Parametrized over idxmax/idxmin, skipna and numeric_only. Verifies positional arguments
+    # given to transform are passed on to the method: with skipna true the positional call equals
+    # the keyword call; with false a value error is expected stating that the method with
+    # skipna false found an NA value.
     # GH#55268 - ensure *args are passed through when calling transform
     df = DataFrame({"a": [1, 1, 1, 2], "b": [3.0, 4.0, np.nan, 6.0], "c": list("abcd")})
     gb = df.groupby("a")
@@ -1503,6 +1766,9 @@ def test_idxmin_idxmax_transform_args(how, skipna, numeric_only):
 
 
 def test_transform_sum_one_column_no_matching_labels():
+    # [FUNCTION DOC]
+    # Verifies a sum transform by an external Series key whose label matches nothing in a
+    # one-column frame returns the frame unchanged.
     df = DataFrame({"X": [1.0]})
     series = Series(["Y"])
     result = df.groupby(series, as_index=False).transform("sum")
@@ -1511,6 +1777,9 @@ def test_transform_sum_one_column_no_matching_labels():
 
 
 def test_transform_sum_no_matching_labels():
+    # [FUNCTION DOC]
+    # Verifies a sum transform by an external Series of unique labels returns the input values
+    # unchanged.
     df = DataFrame({"X": [1.0, -93204, 4935]})
     series = Series(["A", "B", "C"])
 
@@ -1520,6 +1789,9 @@ def test_transform_sum_no_matching_labels():
 
 
 def test_transform_sum_one_column_with_matching_labels():
+    # [FUNCTION DOC]
+    # Verifies a sum transform by an external Series with repeated labels broadcasts the group
+    # sum to each member.
     df = DataFrame({"X": [1.0, -93204, 4935]})
     series = Series(["A", "B", "A"])
 
@@ -1529,6 +1801,9 @@ def test_transform_sum_one_column_with_matching_labels():
 
 
 def test_transform_sum_one_column_with_missing_labels():
+    # [FUNCTION DOC]
+    # Verifies a sum transform when the external key Series is shorter than the frame: rows without
+    # a key label get NaN.
     df = DataFrame({"X": [1.0, -93204, 4935]})
     series = Series(["A", "C"])
 
@@ -1538,6 +1813,9 @@ def test_transform_sum_one_column_with_missing_labels():
 
 
 def test_transform_sum_one_column_with_matching_labels_and_missing_labels():
+    # [FUNCTION DOC]
+    # Verifies a sum transform when the key Series has fewer entries than rows and repeated labels:
+    # labeled rows get the group sum, the unlabeled row gets NaN.
     df = DataFrame({"X": [1.0, -93204, 4935]})
     series = Series(["A", "A"])
 
@@ -1548,6 +1826,9 @@ def test_transform_sum_one_column_with_matching_labels_and_missing_labels():
 
 @pytest.mark.parametrize("dtype", ["int32", "float32"])
 def test_min_one_unobserved_category_no_type_coercion(dtype):
+    # [FUNCTION DOC]
+    # Parametrized over int32 and float32. Regression test: min transform with an unobserved
+    # categorical key keeps the original dtype of the value column rather than coercing.
     # GH#58084
     df = DataFrame({"A": Categorical([1, 1, 2], categories=[1, 2, 3]), "B": [3, 4, 5]})
     df["B"] = df["B"].astype(dtype)
@@ -1559,6 +1840,9 @@ def test_min_one_unobserved_category_no_type_coercion(dtype):
 
 
 def test_min_all_empty_data_no_type_coercion():
+    # [FUNCTION DOC]
+    # Regression test: min transform on an empty frame with a categorical key (all categories
+    # unobserved) keeps the int32 dtype of the value column.
     # GH#58084
     df = DataFrame(
         {
@@ -1579,6 +1863,9 @@ def test_min_all_empty_data_no_type_coercion():
 
 
 def test_min_one_dim_no_type_coercion():
+    # [FUNCTION DOC]
+    # Regression test: min transform when grouping by a categorical object (with unobserved
+    # categories) with a single int32 column keeps int32 dtype and gives group minima per row.
     # GH#58084
     df = DataFrame({"Y": [9435, -5465765, 5055, 0, 954960]})
     df["Y"] = df["Y"].astype("int32")
@@ -1592,6 +1879,9 @@ def test_min_one_dim_no_type_coercion():
 
 
 def test_nan_in_cumsum_group_label():
+    # [FUNCTION DOC]
+    # Regression test: cumulative sum by a nullable Int16 key containing missing gives a nullable
+    # Int16 Series with a missing value for the null-key row.
     # GH#58811
     df = DataFrame({"A": [1, None], "B": [2, 3]}, dtype="Int16")
     gb = df.groupby("A")["B"]

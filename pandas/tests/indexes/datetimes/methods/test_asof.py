@@ -1,3 +1,5 @@
+# [MODULE DOC]
+# Tests for DatetimeIndex.asof (last label at or before a key).
 from datetime import timedelta
 
 from pandas import (
@@ -10,7 +12,12 @@ from pandas import (
 
 
 class TestAsOf:
+    # [CLASS DOC]
+    # Groups asof tests for DatetimeIndex; no state.
     def test_asof_partial(self):
+        # [FUNCTION DOC]
+        # Verifies asof with a partial-date string on a month-end index returns the Timestamp of the
+        # last month end within that month, as a scalar rather than an Index.
         index = date_range("2010-01-01", periods=2, freq="ME")
         expected = Timestamp("2010-02-28")
         result = index.asof("2010-02")
@@ -18,6 +25,10 @@ class TestAsOf:
         assert not isinstance(result, Index)
 
     def test_asof(self):
+        # [FUNCTION DOC]
+        # Verifies asof on a daily index: an exact label returns itself, a key before the first label
+        # returns NA, a key after the last label returns the last, and a python datetime key gives a
+        # Timestamp.
         index = date_range("2020-01-01", periods=10)
 
         dt = index[0]
@@ -31,6 +42,9 @@ class TestAsOf:
         assert isinstance(index.asof(dt), Timestamp)
 
     def test_asof_datetime_string(self):
+        # [FUNCTION DOC]
+        # Regression test: asof with a date string on a daily index returns the matching label, also
+        # after appending a non-midnight timestamp past the key.
         # GH#50946
 
         dti = date_range("2021-08-05", "2021-08-10", freq="1D")

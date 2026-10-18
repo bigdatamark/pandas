@@ -1,3 +1,7 @@
+# [MODULE DOC]
+# Tests for DatetimeIndex.tz_localize: freq invalidation, copying, nonexistent and ambiguous times
+# (raise, NaT, infer, flags, shift), conversions to UTC, round trips, and local timezone. Defines a
+# module-level fixture of equivalent US/Eastern timezone objects.
 from datetime import (
     datetime,
     timedelta,
@@ -23,6 +27,9 @@ import pandas._testing as tm
 
 @pytest.fixture(params=["pytz/US/Eastern", gettz("US/Eastern"), ZoneInfo("US/Eastern")])
 def tz(request):
+    # [FUNCTION DOC]
+    # HELPER: fixture parametrized over a pytz Eastern timezone (skipped if pytz is unavailable), a
+    # dateutil Eastern timezone and a zoneinfo Eastern timezone; returns the timezone object.
     if isinstance(request.param, str) and request.param.startswith("pytz/"):
         pytz = pytest.importorskip("pytz")
         return pytz.timezone(request.param.removeprefix("pytz/"))
@@ -30,7 +37,13 @@ def tz(request):
 
 
 class TestTZLocalize:
+    # [CLASS DOC]
+    # Groups tz_localize tests; no state.
     def test_tz_localize_invalidates_freq(self):
+        # [FUNCTION DOC]
+        # Verifies localizing keeps hourly freq for no-op and UTC localization, drops freq (and does not
+        # infer one) when localizing across a US/Eastern DST jump with shifted nonexistent times, and
+        # keeps freq for a length-one index.
         # we only preserve freq in unambiguous cases
 
         # if localized to US/Eastern, this crosses a DST transition
@@ -53,6 +66,9 @@ class TestTZLocalize:
         assert result.freq == "h"
 
     def test_tz_localize_utc_copies(self, utc_fixture):
+        # [FUNCTION DOC]
+        # Uses utc_fixture. Regression test: localizing naive data to UTC returns a new object that does
+        # not share memory, for the index and for its array.
         # GH#46460
         times = ["2015-03-08 01:00", "2015-03-08 02:00", "2015-03-08 03:00"]
         index = DatetimeIndex(times)
@@ -64,6 +80,10 @@ class TestTZLocalize:
         assert not tm.shares_memory(index._data, res2)
 
     def test_dti_tz_localize_nonexistent_raise_coerce(self):
+        # [FUNCTION DOC]
+        # Verifies localizing times that include a nonexistent spring-forward time raises a value error
+        # listing the times by default and with nonexistent set to raise, and with NaT coercion gives NaT
+        # in the nonexistent slot and the expected Eastern stamps elsewhere.
         # GH#13057
         times = ["2015-03-08 01:00", "2015-03-08 02:00", "2015-03-08 03:00"]
         index = DatetimeIndex(times)
@@ -81,6 +101,9 @@ class TestTZLocalize:
         tm.assert_index_equal(result, expected)
 
     def test_dti_tz_localize_ambiguous_infer(self, tz):
+        # [FUNCTION DOC]
+        # Uses the tz fixture. Verifies inferring ambiguity fails with a value error saying the DST time
+        # cannot be inferred when the range has no repeated hours around a fall-back date.
         # November 6, 2011, fall back, repeat 2 AM hour
         # With no repeated hours, we cannot infer the transition
         dr = date_range(datetime(2011, 11, 6, 0), periods=5, freq=offsets.Hour())
@@ -88,6 +111,9 @@ class TestTZLocalize:
             dr.tz_localize(tz)
 
     def test_dti_tz_localize_ambiguous_infer2(self, tz, unit):
+        # [FUNCTION DOC]
+        # Uses tz and unit. Verifies that with repeated hours the ambiguous time is inferred by
+        # tz_localize and by the constructor, giving the expected range without freq.
         # With repeated hours, we can infer the transition
         dr = date_range(
             datetime(2011, 11, 6, 0), periods=5, freq=offsets.Hour(), tz=tz, unit=unit
@@ -107,6 +133,8 @@ class TestTZLocalize:
         tm.assert_index_equal(result2, expected)
 
     def test_dti_tz_localize_ambiguous_infer3(self, tz):
+        # [FUNCTION DOC]
+        # Uses tz. Verifies that infer on a range without a DST transition equals the plain localization.
         # When there is no dst transition, nothing special happens
         dr = date_range(datetime(2011, 6, 1, 0), periods=10, freq=offsets.Hour())
         localized = dr.tz_localize(tz)
@@ -114,6 +142,11 @@ class TestTZLocalize:
         tm.assert_index_equal(localized, localized_infer)
 
     def test_dti_tz_localize_ambiguous_times(self, tz):
+        # [FUNCTION DOC]
+        # Uses tz. Verifies localizing a range through the spring-forward gap raises a value error naming
+        # the nonexistent time, and through the fall-back repeat raises the cannot-infer error.
+        # KNOWN ISSUE: two of the ranges built below (one after the transition, one in UTC) are assigned
+        # but never checked, so those parts of the test make no assertion.
         # March 13, 2011, spring forward, skip from 2 AM to 3 AM
         dr = date_range(datetime(2011, 3, 13, 1, 30), periods=3, freq=offsets.Hour())
         with pytest.raises(ValueError, match="2011-03-13 02:30:00"):
@@ -136,6 +169,9 @@ class TestTZLocalize:
 
     @pytest.mark.parametrize("tzstr", ["US/Eastern", "dateutil/US/Eastern"])
     def test_dti_tz_localize_pass_dates_to_utc(self, tzstr):
+        # [FUNCTION DOC]
+        # Parametrized over timezone spelling. Verifies localizing naive dates equals constructing with
+        # the timezone (same tz and same UTC values).
         strdates = ["1/1/2012", "3/1/2012", "4/1/2012"]
 
         idx = DatetimeIndex(strdates)
@@ -148,6 +184,10 @@ class TestTZLocalize:
 
     @pytest.mark.parametrize("prefix", ["", "dateutil/"])
     def test_dti_tz_localize(self, prefix):
+        # [FUNCTION DOC]
+        # Parametrized over name prefix. Verifies localizing a millisecond range to Eastern gives the same
+        # UTC integer values as a UTC range five hours later, converting to Pacific keeps values, and
+        # ranges within the ambiguous or nonexistent hour raise value errors.
         tzstr = prefix + "US/Eastern"
         dti = date_range(start="1/1/2005", end="1/1/2005 0:00:02.256", freq="ms")
         dti2 = dti.tz_localize(tzstr)
@@ -170,6 +210,10 @@ class TestTZLocalize:
             dti.tz_localize(tzstr)
 
     def test_dti_tz_localize_utc_conversion(self, tz):
+        # [FUNCTION DOC]
+        # Uses tz. Verifies localizing a half-hourly range converts to UTC (five hours ahead for the
+        # pre-DST day) and that a range crossing spring forward raises a value error naming the
+        # nonexistent time.
         # Localizing to time zone should:
         #  1) check for DST ambiguities
         #  2) convert to UTC
@@ -187,6 +231,9 @@ class TestTZLocalize:
             rng.tz_localize(tz)
 
     def test_dti_tz_localize_roundtrip(self, tz_aware_fixture):
+        # [FUNCTION DOC]
+        # Uses tz_aware_fixture. Verifies a localized index cannot be localized again (type error
+        # suggesting tz_convert), and localizing to none restores the naive index with freq dropped.
         # note: this tz tests that a tz-naive index can be localized
         # and de-localized successfully, when there are no DST transitions
         # in the range.
@@ -204,6 +251,9 @@ class TestTZLocalize:
         tm.assert_index_equal(reset, expected)
 
     def test_dti_tz_localize_naive(self):
+        # [FUNCTION DOC]
+        # Verifies localizing an hourly naive range to US/Pacific equals the timezone-aware range (freq
+        # dropped).
         rng = date_range("1/1/2011", periods=100, freq="h")
 
         conv = rng.tz_localize("US/Pacific")
@@ -212,6 +262,9 @@ class TestTZLocalize:
         tm.assert_index_equal(conv, exp._with_freq(None))
 
     def test_dti_tz_localize_tzlocal(self):
+        # [FUNCTION DOC]
+        # Regression test: localizing to the local dateutil timezone shifts the underlying integers by the
+        # local UTC offset (and removing it shifts back).
         # GH#13583
         offset = dateutil.tz.tzlocal().utcoffset(datetime(2011, 1, 1))
         offset = int(offset.total_seconds() * 1000000000)
@@ -227,6 +280,8 @@ class TestTZLocalize:
         tm.assert_numpy_array_equal(dti2.asi8 - offset, dti.asi8)
 
     def test_dti_tz_localize_ambiguous_nat(self, tz):
+        # [FUNCTION DOC]
+        # Uses tz. Verifies ambiguous set to NaT turns the two ambiguous times into NaT.
         times = [
             "11/06/2011 00:00",
             "11/06/2011 01:00",
@@ -251,6 +306,11 @@ class TestTZLocalize:
         tm.assert_numpy_array_equal(di_test.values, localized.values)
 
     def test_dti_tz_localize_ambiguous_flags(self, tz, unit):
+        # [FUNCTION DOC]
+        # Uses tz and unit. Verifies explicit ambiguity flags (list, numeric array, boolean array) select
+        # the right transition for tz_localize and the constructor; a flag list of the wrong length raises
+        # an error about length; for doubled times with a doubled flag array the result equals the range
+        # appended to itself.
         # November 6, 2011, fall back, repeat 2 AM hour
 
         # Pass in flags to determine right dst transition
@@ -301,6 +361,9 @@ class TestTZLocalize:
         tm.assert_index_equal(dr, localized)
 
     def test_dti_tz_localize_ambiguous_flags2(self, tz):
+        # [FUNCTION DOC]
+        # Uses tz. Verifies ambiguity flags are accepted when there is no transition and give the same
+        # result as plain localization.
         # When there is no dst transition, nothing special happens
         dr = date_range(datetime(2011, 6, 1, 0), periods=10, freq=offsets.Hour())
         is_dst = np.array([1] * 10)
@@ -309,6 +372,9 @@ class TestTZLocalize:
         tm.assert_index_equal(localized, localized_is_dst)
 
     def test_dti_tz_localize_bdate_range(self):
+        # [FUNCTION DOC]
+        # Verifies localizing a business-day range to UTC equals the business-day range created with the
+        # UTC timezone.
         dr = bdate_range("1/1/2009", "1/1/2010")
         dr_utc = bdate_range("1/1/2009", "1/1/2010", tz=timezone.utc)
         localized = dr.tz_localize(timezone.utc)
@@ -361,6 +427,11 @@ class TestTZLocalize:
     def test_dti_tz_localize_nonexistent_shift(
         self, start_ts, tz, end_ts, shift, tz_type, unit
     ):
+        # [FUNCTION DOC]
+        # Parametrized over (start, timezone, expected end, shift) for Warsaw and US Pacific gaps (shift
+        # forward, shift backward, positive and negative timedelta), a timezone type prefix (plain or
+        # dateutil), and unit. Verifies localizing a nonexistent time with the named shift gives the
+        # expected shifted stamp.
         # GH#8917
         tz = tz_type + tz
         if isinstance(shift, str):
@@ -372,6 +443,10 @@ class TestTZLocalize:
 
     @pytest.mark.parametrize("offset", [-1, 1])
     def test_dti_tz_localize_nonexistent_shift_invalid(self, offset, warsaw):
+        # [FUNCTION DOC]
+        # Parametrized over offsets of plus and minus one second; uses the warsaw timezone fixture.
+        # Verifies a timedelta shift that leaves the time nonexistent raises a value error saying the
+        # provided timedelta would relocalize on a nonexistent time.
         # GH#8917
         tz = warsaw
         dti = DatetimeIndex([Timestamp("2015-03-29 02:20:00")])

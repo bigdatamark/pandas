@@ -1,3 +1,6 @@
+# [MODULE DOC]
+# Test of NaT-related attributes (the NA sentinel, NA-holding capability, NaN mask, hasnans) on
+# TimedeltaIndex, PeriodIndex and DatetimeIndex (naive and UTC).
 import numpy as np
 import pytest
 
@@ -20,6 +23,11 @@ import pandas._testing as tm
     ],
 )
 def test_nat(index_without_na):
+    # [FUNCTION DOC]
+    # Parametrized over four two-element indexes without missing values. Checks the NA value of
+    # empty, missing-containing and plain indexes is NaT; the index can hold NA; the NaN mask and
+    # hasnans reflect no missing values in the original, and a deep copy with NaT assigned into the
+    # second element reports a mask with True second and hasnans True.
     empty_index = index_without_na[:0]
 
     index_with_na = index_without_na.copy(deep=True)

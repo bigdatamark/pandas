@@ -1,3 +1,6 @@
+# [MODULE DOC]
+# Tests for factorize on DatetimeIndex (and Series/Index of datetimes), covering sorting,
+# timezone preservation, freq preservation, daylight saving transitions and non-nanosecond units.
 import numpy as np
 import pytest
 
@@ -11,7 +14,14 @@ import pandas._testing as tm
 
 
 class TestDatetimeIndexFactorize:
+    # [CLASS DOC]
+    # Groups factorize tests for DatetimeIndex; no state.
     def test_factorize(self):
+        # [FUNCTION DOC]
+        # Verifies factorize on a monthly index with repeats: codes in order of appearance, the uniques as
+        # an index with matching freq, the same when sort is requested, with a timezone, and for an
+        # unsorted index both with sorting (codes by sorted order) and without (codes by first
+        # appearance).
         idx1 = DatetimeIndex(
             ["2014-01", "2014-01", "2014-02", "2014-02", "2014-03", "2014-03"]
         )
@@ -57,6 +67,9 @@ class TestDatetimeIndexFactorize:
         assert idx.freq == exp_idx.freq
 
     def test_factorize_preserves_freq(self):
+        # [FUNCTION DOC]
+        # Regression test: factorizing a unique timezone-aware month-end range, via the method and via
+        # the top-level function, returns identity codes and uniques equal to the input with freq kept.
         # GH#38120 freq should be preserved
         idx3 = date_range("2000-01", periods=4, freq="ME", tz="Asia/Tokyo")
         exp_arr = np.array([0, 1, 2, 3], dtype=np.intp)
@@ -72,6 +85,9 @@ class TestDatetimeIndexFactorize:
         assert idx.freq == idx3.freq
 
     def test_factorize_tz(self, tz_naive_fixture, index_or_series):
+        # [FUNCTION DOC]
+        # Uses tz_naive_fixture and index_or_series. Verifies factorizing an hourly index repeated five
+        # times each gives codes repeated by value and uniques equal to the base with freq None.
         tz = tz_naive_fixture
         # GH#13750
         base = date_range("2016-11-05", freq="h", periods=100, tz=tz)
@@ -88,6 +104,9 @@ class TestDatetimeIndexFactorize:
         assert res.freq == expected.freq
 
     def test_factorize_dst(self, index_or_series):
+        # [FUNCTION DOC]
+        # Uses index_or_series. Verifies factorize across US Eastern fall and summer hourly ranges gives
+        # identity codes and uniques equal to the input; for Index input the freq is also retained.
         # GH#13750
         idx = date_range("2016-11-06", freq="h", periods=12, tz="US/Eastern")
         obj = index_or_series(idx)
@@ -109,6 +128,10 @@ class TestDatetimeIndexFactorize:
 
     @pytest.mark.parametrize("sort", [True, False])
     def test_factorize_no_freq_non_nano(self, tz_naive_fixture, sort):
+        # [FUNCTION DOC]
+        # Parametrized over sort and tz_naive_fixture. Verifies that for an unsorted index (no usable
+        # freq) factorizing after conversion to second unit (for both Index and Series) gives the same
+        # codes as the nanosecond case and uniques in second unit.
         # GH#51978 case that does not go through the fastpath based on
         #  non-None freq
         tz = tz_naive_fixture

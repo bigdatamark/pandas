@@ -1,3 +1,5 @@
+# [MODULE DOC]
+# Tests for DatetimeIndex.isocalendar and its agreement with Timestamp.isocalendar.
 from pandas import (
     DataFrame,
     DatetimeIndex,
@@ -7,6 +9,10 @@ import pandas._testing as tm
 
 
 def test_isocalendar_returns_correct_values_close_to_new_year_with_tz():
+    # [FUNCTION DOC]
+    # Regression test: for Brussels-timezone dates around New Year, isocalendar returns an unsigned
+    # 32-bit nullable integer frame with year, week and day columns indexed by the dates (the
+    # last days of December belong to the next ISO year week one).
     # GH#6538: Check that DatetimeIndex and its TimeStamp elements
     # return the same weekofyear accessor close to new year w/ tz
     dates = ["2013/12/29", "2013/12/30", "2013/12/31"]
@@ -22,6 +28,9 @@ def test_isocalendar_returns_correct_values_close_to_new_year_with_tz():
 
 
 def test_dti_timestamp_isocalendar_fields():
+    # [FUNCTION DOC]
+    # Verifies the isocalendar tuple of the last Timestamp equals the values in the last row of the
+    # index-level isocalendar frame.
     idx = date_range("2020-01-01", periods=10)
     expected = tuple(idx.isocalendar().iloc[-1].to_list())
     result = idx[-1].isocalendar()

@@ -1,3 +1,6 @@
+# [MODULE DOC]
+# Tests for the CategoricalIndex constructor: scalar rejection, building from lists,
+# Categoricals, indexes and dtypes, and validation of conflicting arguments.
 import numpy as np
 import pytest
 
@@ -13,7 +16,11 @@ import pandas._testing as tm
 
 
 class TestCategoricalIndexConstructors:
+    # [CLASS DOC]
+    # Groups CategoricalIndex constructor tests; no state.
     def test_construction_disallows_scalar(self):
+        # [FUNCTION DOC]
+        # Verifies passing a scalar, or no data, raises a type error saying a collection is required.
         msg = "must be called with a collection of some kind"
         with pytest.raises(TypeError, match=msg):
             CategoricalIndex(data=1, categories=list("abcd"), ordered=False)
@@ -21,6 +28,12 @@ class TestCategoricalIndexConstructors:
             CategoricalIndex(categories=list("abcd"), ordered=False)
 
     def test_construction(self):
+        # [FUNCTION DOC]
+        # Verifies construction from lists, Categoricals and existing CategoricalIndexes: categories and
+        # integer codes as expected (empty case gives empty int8 codes), orderedness defaults to
+        # False, passing categories not covering the data emits the Pandas4Warning and gives missing
+        # codes, ordered=True is honored, equivalence with passing the category dtype string, and that
+        # plain Index of a numpy array of values is not categorical.
         ci = CategoricalIndex(list("aabbca"), categories=list("abcd"), ordered=False)
         categories = ci.categories
 
@@ -99,6 +112,9 @@ class TestCategoricalIndexConstructors:
         assert not isinstance(result, CategoricalIndex)
 
     def test_construction_with_dtype(self):
+        # [FUNCTION DOC]
+        # Verifies Index with the category dtype string builds an equal CategoricalIndex from arrays
+        # and lists (up to category order), and that an Index used as categories works with ordered.
         # specify dtype
         ci = CategoricalIndex(list("aabbca"), categories=list("abc"), ordered=False)
 
@@ -121,12 +137,18 @@ class TestCategoricalIndexConstructors:
         tm.assert_index_equal(result, expected, exact=True)
 
     def test_construction_empty_with_bool_categories(self):
+        # [FUNCTION DOC]
+        # Regression test: an empty index with boolean categories has the two categories False and True.
         # see GH#22702
         cat = CategoricalIndex([], categories=[True, False])
         categories = sorted(cat.categories.tolist())
         assert categories == [False, True]
 
     def test_construction_with_categorical_dtype(self):
+        # [FUNCTION DOC]
+        # Verifies constructing from a CategoricalDtype (either with the class or with Index) matches
+        # the equivalent categories/ordered arguments, and that passing categories or ordered together
+        # with dtype raises a value error.
         # construction with CategoricalDtype
         # GH#18109
         data, cats, ordered = "a a b b".split(), "c b a".split(), True

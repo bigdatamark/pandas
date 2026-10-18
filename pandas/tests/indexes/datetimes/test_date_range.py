@@ -1,6 +1,12 @@
 """
 test date_range, bdate_range construction from the convenience range functions
 """
+# [MODULE DOC]
+# Tests for the range construction convenience functions date_range and bdate_range (and the
+# private range generator): argument validation, edge and overflow behavior, timezones and DST,
+# inclusive endpoints, frequency strings and offsets, business-day and custom business-day
+# ranges. Defines module-level START and END datetimes and shared helpers; imports test helpers
+# from the timezone test module.
 
 from datetime import (
     datetime,
@@ -55,6 +61,14 @@ def _get_expected_range(
     both_range,
     inclusive_endpoints,
 ):
+    # [FUNCTION DOC]
+    # HELPER: computes the expected result for the inclusive-endpoints tests. Takes the timestamps
+    # that were used as start (begin_to_match) and end (end_to_match), the range generated with both
+    # endpoints inclusive (both_range), and the inclusive option string (left, right, neither or
+    # both). Returns a slice of the both-inclusive range with the first and/or last element removed
+    # when the option excludes an endpoint that actually coincides with the start or end value.
+    # KNOWN ISSUE: the branch for the both option returns the same full slice as the final fallback
+    # branch, so it is redundant (not wrong).
     """Helper to get expected range from a both inclusive range"""
     left_match = begin_to_match == both_range[0]
     right_match = end_to_match == both_range[-1]
@@ -78,12 +92,17 @@ def _get_expected_range(
 
 
 class TestTimestampEquivDateRange:
+    # [CLASS DOC]
+    # Checks that Timestamps built directly are equal to elements taken from date_range results in
+    # the same situations; no state.
     # Older tests in TestTimeSeries constructed their `stamp` objects
     # using `date_range` instead of the `Timestamp` constructor.
     # TestTimestampEquivDateRange checks that these are equivalent in the
     # pertinent cases.
 
     def test_date_range_timestamp_equiv(self):
+        # [FUNCTION DOC]
+        # Verifies the first element of a US/Eastern date_range equals a Timestamp built with that zone.
         rng = date_range("20090415", "20090519", tz="US/Eastern")
         stamp = rng[0]
 
@@ -91,6 +110,8 @@ class TestTimestampEquivDateRange:
         assert ts == stamp
 
     def test_date_range_timestamp_equiv_dateutil(self):
+        # [FUNCTION DOC]
+        # Same as the previous test using a dateutil-prefixed timezone.
         rng = date_range("20090415", "20090519", tz="dateutil/US/Eastern")
         stamp = rng[0]
 
@@ -98,6 +119,8 @@ class TestTimestampEquivDateRange:
         assert ts == stamp
 
     def test_date_range_timestamp_equiv_explicit_pytz(self):
+        # [FUNCTION DOC]
+        # Same using an explicit pytz timezone object (skipped without pytz).
         pytz = pytest.importorskip("pytz")
         rng = date_range("20090415", "20090519", tz=pytz.timezone("US/Eastern"))
         stamp = rng[0]
@@ -107,6 +130,9 @@ class TestTimestampEquivDateRange:
 
     @td.skip_if_windows
     def test_date_range_timestamp_equiv_explicit_dateutil(self):
+        # [FUNCTION DOC]
+        # Same using an explicit dateutil zone object obtained from the private getter (skipped on
+        # Windows).
         from pandas._libs.tslibs.timezones import dateutil_gettz as gettz
 
         rng = date_range("20090415", "20090519", tz=gettz("US/Eastern"))
@@ -116,6 +142,9 @@ class TestTimestampEquivDateRange:
         assert ts == stamp
 
     def test_date_range_timestamp_equiv_from_datetime_instance(self):
+        # [FUNCTION DOC]
+        # Verifies a Timestamp built from a datetime equals the first element of a one-period range from
+        # that datetime.
         datetime_instance = datetime(2014, 3, 4)
         # build a timestamp with a frequency, since then it supports
         # addition/subtraction of integers
@@ -125,6 +154,8 @@ class TestTimestampEquivDateRange:
         assert ts == timestamp_instance
 
     def test_date_range_timestamp_equiv_preserve_frequency(self):
+        # [FUNCTION DOC]
+        # Verifies the one-element daily range element equals the equivalent Timestamp.
         timestamp_instance = date_range("2014-03-05", periods=1, freq="D")[0]
         ts = Timestamp("2014-03-05")
 
@@ -132,28 +163,41 @@ class TestTimestampEquivDateRange:
 
 
 class TestDateRanges:
+    # [CLASS DOC]
+    # Main group of date_range tests; no state.
     def test_date_range_name(self):
+        # [FUNCTION DOC]
+        # Verifies the name argument is stored on the result.
         idx = date_range(start="2000-01-01", periods=1, freq="YE", name="TEST")
         assert idx.name == "TEST"
 
     def test_date_range_invalid_periods(self):
+        # [FUNCTION DOC]
+        # Verifies a non-integer string for periods raises a type error saying periods must be an integer.
         msg = "periods must be an integer, got foo"
         with pytest.raises(TypeError, match=msg):
             date_range(start="1/1/2000", periods="foo", freq="D")
 
     def test_date_range_fractional_period(self):
+        # [FUNCTION DOC]
+        # Verifies a fractional periods value raises a type error requiring an integer.
         msg = "periods must be an integer"
         with pytest.raises(TypeError, match=msg):
             date_range("1/1/2000", periods=10.5)
 
     @pytest.mark.parametrize("freq", ["2M", "1m", "2SM", "2BQ", "1bq", "2BY"])
     def test_date_range_frequency_M_SM_BQ_BY_raises(self, freq):
+        # [FUNCTION DOC]
+        # Parametrized over removed frequency aliases (month, semi-month, business quarter and year).
+        # Verifies each raises a value error that the frequency is invalid.
         msg = f"Invalid frequency: {freq}"
 
         with pytest.raises(ValueError, match=msg):
             date_range("1/1/2000", periods=4, freq=freq)
 
     def test_date_range_tuple_freq_raises(self):
+        # [FUNCTION DOC]
+        # Regression test: passing a tuple as freq raises a type error asking for a string instead.
         # GH#34703
         edate = datetime(2000, 1, 1)
         with pytest.raises(TypeError, match="pass as a string instead"):
@@ -161,6 +205,11 @@ class TestDateRanges:
 
     @pytest.mark.parametrize("freq", ["ns", "us", "ms", "min", "s", "h", "D"])
     def test_date_range_edges(self, freq):
+        # [FUNCTION DOC]
+        # Parametrized over frequencies from nanoseconds to days. Verifies a range one period after the
+        # epoch through four periods gives the expected stamps with the matching freq (microsecond unit
+        # except nanosecond), an empty range when start is after end, and a single element when start
+        # equals end.
         # GH#13672
         td = Timedelta(f"1{freq}")
         ts = Timestamp("1970-01-01")
@@ -197,6 +246,9 @@ class TestDateRanges:
         tm.assert_index_equal(idx, exp)
 
     def test_date_range_near_implementation_bound(self):
+        # [FUNCTION DOC]
+        # Verifies generating a range whose end is the minimum Timestamp with a one-nanosecond step
+        # raises an out-of-bounds error saying the range cannot be generated.
         # GH#???
         freq = Timedelta(1)
 
@@ -204,6 +256,8 @@ class TestDateRanges:
             date_range(end=Timestamp.min, periods=2, freq=freq)
 
     def test_date_range_nat(self):
+        # [FUNCTION DOC]
+        # Verifies NaT as either start or end raises a value error saying neither can be NaT.
         # GH#11587
         msg = "Neither `start` nor `end` can be NaT"
         with pytest.raises(ValueError, match=msg):
@@ -212,6 +266,9 @@ class TestDateRanges:
             date_range(start=pd.NaT, end="2016-01-01", freq="D")
 
     def test_date_range_multiplication_overflow(self):
+        # [FUNCTION DOC]
+        # Regression test: a range of 213503 days from 1677 works without an overflow warning, while a
+        # range whose multiplication overflows raises an out-of-bounds error.
         # GH#24255
         # check that overflows in calculating `addend = periods * stride`
         #  are caught
@@ -227,6 +284,10 @@ class TestDateRanges:
             date_range("1969-05-04", periods=200000000, freq="30000D")
 
     def test_date_range_unsigned_overflow_handling(self):
+        # [FUNCTION DOC]
+        # Regression test: ranges built from start with periods and from end with periods over the
+        # maximum supported span equal the full daily range (the intermediate product overflows signed but
+        # not unsigned 64-bit integers).
         # GH#24255
         # case where `addend = periods * stride` overflows int64 bounds
         #  but not uint64 bounds
@@ -239,6 +300,9 @@ class TestDateRanges:
         assert dti3.equals(dti)
 
     def test_date_range_int64_overflow_non_recoverable(self):
+        # [FUNCTION DOC]
+        # Verifies that ranges whose periods times stride overflow 64-bit integers and cannot be recovered
+        # raise out-of-bounds errors, both for start-based and end-based ranges.
         # GH#24255
         # case with start later than 1970-01-01, overflow int64 but not uint64
         msg = "Cannot generate range with"
@@ -256,6 +320,10 @@ class TestDateRanges:
     def test_date_range_int64_overflow_stride_endpoint_different_signs(
         self, s_ts, e_ts
     ):
+        # [FUNCTION DOC]
+        # Slow test, parametrized over start/end pairs where the stride and endpoint have different signs.
+        # Verifies a descending hourly range from start to end has the endpoints exactly, and that the
+        # range built from the end and length equals it.
         # cases where stride * periods overflow int64 and stride/endpoint
         #  have different signs
         start = Timestamp(s_ts)
@@ -269,6 +337,9 @@ class TestDateRanges:
         tm.assert_index_equal(dti, expected)
 
     def test_date_range_out_of_bounds(self):
+        # [FUNCTION DOC]
+        # Verifies ranges that would run past the bounds of nanosecond datetimes, from a start or to an end,
+        # raise out-of-bounds errors.
         # GH#14187
         msg = "Cannot generate range"
         with pytest.raises(OutOfBoundsDatetime, match=msg):
@@ -277,10 +348,16 @@ class TestDateRanges:
             date_range(end="1763-10-12", periods=100000, freq="D", unit="ns")
 
     def test_date_range_gen_error(self):
+        # [FUNCTION DOC]
+        # Verifies a five-minute range over eighteen minutes has four elements (the end is not
+        # overshot).
         rng = date_range("1/1/2000 00:00", "1/1/2000 00:18", freq="5min")
         assert len(rng) == 4
 
     def test_date_range_normalize(self):
+        # [FUNCTION DOC]
+        # Verifies normalize false keeps the time of day of the start (for two-day steps and for business
+        # days), producing the expected microsecond index.
         snap = datetime.today()
         n = 50
 
@@ -299,6 +376,9 @@ class TestDateRanges:
             assert val.time() == the_time
 
     def test_date_range_ambiguous_arguments(self):
+        # [FUNCTION DOC]
+        # Verifies passing start, end, periods and freq together raises a value error stating exactly
+        # three of the four parameters must be specified.
         # #2538
         start = datetime(2011, 1, 1, 5, 3, 40)
         end = datetime(2011, 1, 1, 8, 9, 40)
@@ -311,6 +391,9 @@ class TestDateRanges:
             date_range(start, end, periods=10, freq="s")
 
     def test_date_range_convenience_periods(self, unit):
+        # [FUNCTION DOC]
+        # Uses unit. Verifies the periods convenience: three points linearly spaced between start and end
+        # (freq none); and with a Sydney timezone across DST the spacing remains linear in absolute time.
         # GH 20808
         result = date_range("2018-04-24", "2018-04-27", periods=3, unit=unit)
         expected = DatetimeIndex(
@@ -339,6 +422,10 @@ class TestDateRanges:
         tm.assert_index_equal(result, expected)
 
     def test_date_range_index_comparison(self):
+        # [FUNCTION DOC]
+        # Verifies comparing a timezone-aware index to a frame raises a value error about coercion;
+        # comparing the frame to arrays works element-wise; comparing the index to a 2-D array
+        # broadcasts to a full matrix of booleans.
         rng = date_range("2011-01-01", periods=3, tz="US/Eastern")
         df = Series(rng).to_frame()
         arr = np.array([rng.to_list()]).T
@@ -385,12 +472,18 @@ class TestDateRanges:
         ],
     )
     def test_date_range_linspacing_tz(self, start, end, result_tz):
+        # [FUNCTION DOC]
+        # Parametrized over start/end types (string, datetime, naive Timestamp, aware Timestamp) and
+        # result timezone. Regression test: periods with start and end are linearly spaced and carry the
+        # timezone, equal to the daily range in US/Eastern.
         # GH 20983
         result = date_range(start, end, periods=3, tz=result_tz)
         expected = date_range("20180101", periods=3, freq="D", tz="US/Eastern")
         tm.assert_index_equal(result, expected)
 
     def test_date_range_timedelta(self):
+        # [FUNCTION DOC]
+        # Verifies freq given as a python timedelta of three days equals the three-day string.
         start = "2020-01-01"
         end = "2020-01-11"
         rng1 = date_range(start, end, freq="3D")
@@ -398,6 +491,9 @@ class TestDateRanges:
         tm.assert_index_equal(rng1, rng2)
 
     def test_range_misspecified(self):
+        # [FUNCTION DOC]
+        # Verifies underspecified argument combinations (missing parameters) each raise a value error
+        # saying exactly three of the four parameters must be specified, including no arguments.
         # GH #1095
         msg = (
             "Of the four parameters: start, end, periods, and "
@@ -426,12 +522,17 @@ class TestDateRanges:
             date_range()
 
     def test_compat_replace(self):
+        # [FUNCTION DOC]
+        # Verifies a range with a quarter-start January frequency starting 1960 gives 76 elements
+        # (compatibility with a statsmodels use).
         # https://github.com/statsmodels/statsmodels/issues/3349
         # replace should take ints/longs for compat
         result = date_range(Timestamp("1960-04-01 00:00:00"), periods=76, freq="QS-JAN")
         assert len(result) == 76
 
     def test_catch_infinite_loop(self):
+        # [FUNCTION DOC]
+        # Verifies an offset that never advances the date raises a value error instead of looping forever.
         offset = offsets.DateOffset(minute=5)
         # blow up, don't loop forever
         msg = "Offset <DateOffset: minute=5> did not increment date"
@@ -439,6 +540,9 @@ class TestDateRanges:
             date_range(datetime(2011, 11, 11), datetime(2011, 11, 12), freq=offset)
 
     def test_construct_over_dst(self, unit):
+        # [FUNCTION DOC]
+        # Uses unit. Regression test: an hourly range across the end of daylight time in US/Pacific
+        # includes both the first and the second occurrences of the repeated hour.
         # GH 20854
         pre_dst = Timestamp("2010-11-07 01:00:00").tz_localize(
             "US/Pacific", ambiguous=True
@@ -458,6 +562,9 @@ class TestDateRanges:
         tm.assert_index_equal(result, expected)
 
     def test_construct_with_different_start_end_string_format(self, unit):
+        # [FUNCTION DOC]
+        # Uses unit. Verifies start and end strings in different formats but with the same offset produce
+        # the expected hourly range.
         # GH 12064
         result = date_range(
             "2013-01-01 00:00:00+09:00",
@@ -476,11 +583,17 @@ class TestDateRanges:
         tm.assert_index_equal(result, expected)
 
     def test_error_with_zero_monthends(self):
+        # [FUNCTION DOC]
+        # Verifies a zero month-end offset as freq raises a value error saying the offset did not
+        # increment the date.
         msg = r"Offset <0 \* MonthEnds> did not increment date"
         with pytest.raises(ValueError, match=msg):
             date_range("1/1/2000", "1/1/2001", freq=MonthEnd(0))
 
     def test_range_bug(self, unit):
+        # [FUNCTION DOC]
+        # Uses unit. Regression test: a three-month date offset gives the expected five stamps with that
+        # offset as freq.
         # GH #770
         offset = DateOffset(months=3)
         result = date_range("2011-1-1", "2012-1-31", freq=offset, unit=unit)
@@ -492,6 +605,9 @@ class TestDateRanges:
         tm.assert_index_equal(result, expected)
 
     def test_range_tz_pytz(self):
+        # [FUNCTION DOC]
+        # Skipped without pytz. Verifies ranges built from pytz-localized start and/or end carry the same
+        # timezone and endpoints.
         # see gh-2906
         pytz = pytest.importorskip("pytz")
         tz = pytz.timezone("US/Eastern")
@@ -521,6 +637,10 @@ class TestDateRanges:
         ],
     )
     def test_range_tz_dst_straddle_pytz(self, start, end):
+        # [FUNCTION DOC]
+        # Parametrized over two date ranges straddling a DST change. Skipped without pytz. Verifies daily
+        # ranges between pytz-aware endpoints keep midnight hours at the endpoints, whether the timezone
+        # is given by the endpoints, by the tz argument, or both.
         pytz = pytest.importorskip("pytz")
         tz = pytz.timezone("US/Eastern")
         start = Timestamp(start, tz=tz)
@@ -546,6 +666,9 @@ class TestDateRanges:
         assert np.all(dr.hour == 0)
 
     def test_range_tz_dateutil(self):
+        # [FUNCTION DOC]
+        # Verifies ranges built from dateutil-zone start and/or end carry the dateutil timezone and the
+        # endpoints.
         # see gh-2906
 
         # Use maybe_get_tz to fix filename in tz under dateutil.
@@ -574,6 +697,10 @@ class TestDateRanges:
     @pytest.mark.parametrize("freq", ["1D", "3D", "2ME", "7W", "3h", "YE"])
     @pytest.mark.parametrize("tz", [None, "US/Eastern"])
     def test_range_closed(self, freq, tz, inclusive_endpoints_fixture):
+        # [FUNCTION DOC]
+        # Parametrized over frequencies and naive/Eastern timezone, using the inclusive_endpoints_fixture.
+        # Verifies the result with each inclusive option equals the slice of the fully inclusive range
+        # computed by the module helper.
         # GH#12409, GH#12684
 
         begin = Timestamp("2011/1/1", tz=tz)
@@ -593,6 +720,9 @@ class TestDateRanges:
     def test_range_with_tz_closed_with_tz_aware_start_end(
         self, freq, inclusive_endpoints_fixture
     ):
+        # [FUNCTION DOC]
+        # Parametrized over frequencies, using the inclusive-endpoints fixture. Same as the previous test
+        # but with naive start/end and a tz argument, comparing against aware endpoints.
         begin = Timestamp("2011/1/1")
         end = Timestamp("2014/1/1")
         begintz = Timestamp("2011/1/1", tz="US/Eastern")
@@ -618,6 +748,10 @@ class TestDateRanges:
         tm.assert_index_equal(expected_range, result_range)
 
     def test_range_closed_boundary(self, inclusive_endpoints_fixture):
+        # [FUNCTION DOC]
+        # Uses the inclusive-endpoints fixture. Regression test: quarter-start ranges where only the right,
+        # only the left, both or neither boundary falls inside the specified dates have the expected
+        # membership per inclusive option.
         # GH#11804
         right_boundary = date_range(
             "2015-09-12",
@@ -664,6 +798,9 @@ class TestDateRanges:
         tm.assert_index_equal(neither_boundary, expected_neither)
 
     def test_date_range_years_only(self, tz_naive_fixture):
+        # [FUNCTION DOC]
+        # Uses tz_naive_fixture. Verifies year-only start and end strings with month end, month start, year
+        # end and year start freq give the expected ranges.
         tz = tz_naive_fixture
         # GH#6961
         rng1 = date_range("2014", "2015", freq="ME", tz=tz)
@@ -683,6 +820,9 @@ class TestDateRanges:
         tm.assert_index_equal(rng4, expected4)
 
     def test_freq_divides_end_in_nanos(self):
+        # [FUNCTION DOC]
+        # Regression test: a range with a 345-minute freq whose step does not divide the span evenly stops
+        # at the last full step; checked on two days.
         # GH 10885
         result_1 = date_range("2005-01-12 10:00", "2005-01-12 16:00", freq="345min")
         result_2 = date_range("2005-01-13 10:00", "2005-01-13 16:00", freq="345min")
@@ -702,23 +842,33 @@ class TestDateRanges:
         tm.assert_index_equal(result_2, expected_2)
 
     def test_cached_range_bug(self):
+        # [FUNCTION DOC]
+        # Verifies a range of 50 six-hour steps has 50 elements starting at the given start.
         rng = date_range("2010-09-01 05:00:00", periods=50, freq=DateOffset(hours=6))
         assert len(rng) == 50
         assert rng[0] == datetime(2010, 9, 1, 5)
 
     def test_timezone_comparison_bug(self):
+        # [FUNCTION DOC]
+        # Smoke test: a range with an aware start and matching tz has two elements.
         # smoke test
         start = Timestamp("20130220 10:00", tz="US/Eastern")
         result = date_range(start, periods=2, tz="US/Eastern")
         assert len(result) == 2
 
     def test_timezone_comparison_assert(self):
+        # [FUNCTION DOC]
+        # Verifies a start timezone differing from the tz argument raises an assertion error saying the
+        # inferred timezone is not equal to the passed one.
         start = Timestamp("20130220 10:00", tz="US/Eastern")
         msg = "Inferred time zone not equal to passed time zone"
         with pytest.raises(AssertionError, match=msg):
             date_range(start, periods=2, tz="Europe/Berlin")
 
     def test_negative_non_tick_frequency_descending_dates(self, tz_aware_fixture):
+        # [FUNCTION DOC]
+        # Uses tz_aware_fixture. Verifies a descending range with negative month-start freq equals the
+        # reversed ascending range.
         # GH 23270
         tz = tz_aware_fixture
         result = date_range(start="2011-06-01", end="2011-01-01", freq="-1MS", tz=tz)
@@ -728,6 +878,9 @@ class TestDateRanges:
         tm.assert_index_equal(result, expected)
 
     def test_range_where_start_equal_end(self, inclusive_endpoints_fixture):
+        # [FUNCTION DOC]
+        # Uses the inclusive-endpoints fixture. Regression test: when start equals end the result is the
+        # single day for all options except neither, where it is empty.
         # GH 43394
         start = "2021-09-02"
         end = "2021-09-02"
@@ -744,6 +897,9 @@ class TestDateRanges:
         tm.assert_index_equal(result, expected)
 
     def test_freq_dateoffset_with_relateivedelta_nanos(self):
+        # [FUNCTION DOC]
+        # Regression test: a date offset combining hours, days and nanoseconds with end and periods gives
+        # the expected stamps with nanosecond offsets back from the end.
         # GH 46877
         freq = DateOffset(hours=10, days=57, nanoseconds=3)
         result = date_range(end="1970-01-01 00:00:00", periods=10, freq=freq, name="a")
@@ -766,6 +922,9 @@ class TestDateRanges:
 
     @pytest.mark.parametrize("freq", ["2T", "2L", "1l", "1U", "2N", "2n"])
     def test_frequency_H_T_S_L_U_N_raises(self, freq):
+        # [FUNCTION DOC]
+        # Parametrized over removed single-letter and lowercase frequency aliases (minute, millisecond,
+        # microsecond, nanosecond). Verifies each raises a value error saying the frequency is invalid.
         msg = f"Invalid frequency: {freq}"
         with pytest.raises(ValueError, match=msg):
             date_range("1/1/2000", periods=2, freq=freq)
@@ -774,12 +933,19 @@ class TestDateRanges:
         "freq_depr", ["m", "bm", "CBM", "SM", "BQ", "q-feb", "y-may", "Y-MAY"]
     )
     def test_frequency_raises(self, freq_depr):
+        # [FUNCTION DOC]
+        # Parametrized over removed or unsupported aliases (month, business month, custom business month,
+        # semi-month, business quarter, lowercase quarter/year anchored forms). Verifies a value error
+        # that the frequency is invalid.
         msg = f"Invalid frequency: {freq_depr}"
 
         with pytest.raises(ValueError, match=msg):
             date_range("1/1/2000", periods=2, freq=freq_depr)
 
     def test_date_range_bday(self):
+        # [FUNCTION DOC]
+        # Verifies a range of 20 business days from a Saturday start has length 20, starts at the start
+        # value and has freq B.
         sdate = datetime(1999, 12, 25)
         idx = date_range(start=sdate, freq="1B", periods=20)
         assert len(idx) == 20
@@ -788,6 +954,10 @@ class TestDateRanges:
 
     @pytest.mark.parametrize("freq", ["200A", "2A-MAY"])
     def test_frequency_A_raises(self, freq):
+        # [FUNCTION DOC]
+        # Parametrized over removed annual aliases with multiples. The expected message is built by
+        # stripping the leading digits from the alias; verifies a value error that this frequency is
+        # invalid.
         freq_msg = re.split("[0-9]*", freq, maxsplit=1)[1]
         msg = f"Invalid frequency: {freq_msg}"
 
@@ -805,6 +975,10 @@ class TestDateRanges:
         ],
     )
     def test_date_range_depr_lowercase_frequency(self, freq, freq_depr):
+        # [FUNCTION DOC]
+        # Parametrized over (canonical, deprecated lowercase) frequency pairs. Verifies that the lowercase
+        # spelling emits the Pandas4Warning stating deprecation and returns a range equal to the canonical
+        # spelling.
         # GH#58998
         depr_msg = (
             f"'{freq_depr[1:]}' is deprecated and will be removed in a future version."
@@ -827,15 +1001,22 @@ class TestDateRanges:
     def test_error_message_for_removed_year_yearbegin_frequencies(
         self, freq, freq_removed
     ):
+        # [FUNCTION DOC]
+        # Parametrized over (removed alias, suggested replacement). Verifies the value error for the
+        # removed year or year-begin alias suggests the replacement frequency in its message.
         msg = f"Did you mean {freq}"
         with pytest.raises(ValueError, match=msg):
             date_range("1/1/2000", periods=2, freq=freq_removed)
 
 
 class TestDateRangeTZ:
+    # [CLASS DOC]
+    # Tests for date_range with timezones; no state.
     """Tests for date_range with timezones"""
 
     def test_hongkong_tz_convert(self):
+        # [FUNCTION DOC]
+        # Smoke test: a daily range in Hong Kong supports the hour accessor.
         # GH#1673 smoke test
         dr = date_range("2012-01-01", "2012-01-10", freq="D", tz="Hongkong")
 
@@ -844,6 +1025,11 @@ class TestDateRangeTZ:
 
     @pytest.mark.parametrize("tzstr", ["US/Eastern", "dateutil/US/Eastern"])
     def test_date_range_span_dst_transition(self, tzstr):
+        # [FUNCTION DOC]
+        # Parametrized over timezone spelling. Verifies weekly ranges spanning the DST start have hour
+        # zero throughout, and a daily range spanning the fall transition has hour zero (int32 Index).
+        # KNOWN ISSUE: the first range always uses the plain US/Eastern name instead of the
+        # parametrized timezone string, so the dateutil variant is not exercised for that part.
         # GH#1778
 
         # Standard -> Daylight Savings Time
@@ -858,6 +1044,9 @@ class TestDateRangeTZ:
 
     @pytest.mark.parametrize("tzstr", ["US/Eastern", "dateutil/US/Eastern"])
     def test_date_range_timezone_str_argument(self, tzstr):
+        # [FUNCTION DOC]
+        # Parametrized over timezone spelling. Verifies passing the timezone as a string equals passing
+        # the resolved timezone object.
         tz = timezones.maybe_get_tz(tzstr)
         result = date_range("1/1/2000", periods=10, tz=tzstr)
         expected = date_range("1/1/2000", periods=10, tz=tz)
@@ -865,6 +1054,10 @@ class TestDateRangeTZ:
         tm.assert_index_equal(result, expected)
 
     def test_date_range_with_fixed_tz(self):
+        # [FUNCTION DOC]
+        # Verifies a range between datetimes with a fixed-offset (seven hours) timezone carries that
+        # timezone; the range from start and periods with tz equal; and a string with an offset gives equal
+        # values.
         off = FixedOffset(420, "+07:00")
         start = datetime(2012, 3, 11, 5, 0, 0, tzinfo=off)
         end = datetime(2012, 6, 11, 5, 0, 0, tzinfo=off)
@@ -878,6 +1071,9 @@ class TestDateRangeTZ:
         assert (rng.values == rng3.values).all()
 
     def test_date_range_with_fixedoffset_noname(self):
+        # [FUNCTION DOC]
+        # Verifies a fixed-offset timezone without a name is carried by the range and by an Index built
+        # from the endpoints.
         off = fixed_off_no_name
         start = datetime(2012, 3, 11, 5, 0, 0, tzinfo=off)
         end = datetime(2012, 6, 11, 5, 0, 0, tzinfo=off)
@@ -889,6 +1085,9 @@ class TestDateRangeTZ:
 
     @pytest.mark.parametrize("tzstr", ["US/Eastern", "dateutil/US/Eastern"])
     def test_date_range_with_tz(self, tzstr):
+        # [FUNCTION DOC]
+        # Parametrized over timezone spelling. Verifies an hourly range with tz contains the same instant
+        # as a Timestamp with the same zone, at hour 5.
         stamp = Timestamp("3/11/2012 05:00", tz=tzstr)
         assert stamp.hour == 5
 
@@ -898,6 +1097,9 @@ class TestDateRangeTZ:
 
     @pytest.mark.parametrize("tz", ["Europe/London", "dateutil/Europe/London"])
     def test_date_range_ambiguous_endpoint(self, tz):
+        # [FUNCTION DOC]
+        # Parametrized over London timezone spellings. Regression test: an ambiguous end point raises a
+        # value error saying the DST time cannot be inferred, but works with ambiguous set to infer.
         # construction with an ambiguous end-point
         # GH#11626
 
@@ -923,6 +1125,10 @@ class TestDateRangeTZ:
         ],
     )
     def test_date_range_nonexistent_endpoint(self, tz, option, expected):
+        # [FUNCTION DOC]
+        # Parametrized over (timezone, nonexistent option, expected last stamp). Verifies a range whose end
+        # is a nonexistent time raises a value error naming that time; with shift forward, shift backward
+        # or a one-hour timedelta the last element equals the expected shifted stamp.
         # construction with an nonexistent end-point
 
         with pytest.raises(ValueError, match="2019-03-10 02:00:00"):
@@ -937,6 +1143,9 @@ class TestDateRangeTZ:
 
 
 class TestGenRangeGeneration:
+    # [CLASS DOC]
+    # Tests of the private range generator and range construction details; defines class-level
+    # timestamp strings and timezone names used by the mismatch test.
     @pytest.mark.parametrize(
         "freqstr,offset",
         [
@@ -945,11 +1154,17 @@ class TestGenRangeGeneration:
         ],
     )
     def test_generate(self, freqstr, offset):
+        # [FUNCTION DOC]
+        # Parametrized over business-day and custom-business-day offsets. Verifies the generator gives the
+        # same result for an offset object and its frequency string.
         rng1 = list(generate_range(START, END, periods=None, offset=offset, unit="ns"))
         rng2 = list(generate_range(START, END, periods=None, offset=freqstr, unit="ns"))
         assert rng1 == rng2
 
     def test_1(self):
+        # [FUNCTION DOC]
+        # Verifies the generator from a start and number of periods with a business-day offset gives the
+        # next business day.
         rng = list(
             generate_range(
                 start=datetime(2009, 3, 25),
@@ -963,6 +1178,8 @@ class TestGenRangeGeneration:
         assert rng == expected
 
     def test_2(self):
+        # [FUNCTION DOC]
+        # Verifies the generator from start to end with business-day offset gives three consecutive days.
         rng = list(
             generate_range(
                 start=datetime(2008, 1, 1),
@@ -976,6 +1193,8 @@ class TestGenRangeGeneration:
         assert rng == expected
 
     def test_3(self):
+        # [FUNCTION DOC]
+        # Verifies the generator over a weekend with a business-day offset yields an empty list.
         rng = list(
             generate_range(
                 start=datetime(2008, 1, 5),
@@ -989,6 +1208,9 @@ class TestGenRangeGeneration:
         assert rng == expected
 
     def test_precision_finer_than_offset(self):
+        # [FUNCTION DOC]
+        # Regression test: start values with sub-day precision are retained in quarter-end and weekly
+        # ranges, giving the expected stamps and frequencies.
         # GH#9907
         result1 = date_range(
             start="2015-04-15 00:00:03", end="2016-04-22 00:00:00", freq="QE"
@@ -1036,6 +1258,10 @@ class TestGenRangeGeneration:
         ],
     )
     def test_mismatching_tz_raises_err(self, start, end):
+        # [FUNCTION DOC]
+        # Parametrized over four (start, end) Timestamp pairs where at least one has a timezone and they
+        # differ. Regression test: date_range raises a type error saying start and end cannot both be
+        # timezone-aware with different timezones, also with a business-day freq.
         # issue 18488
         msg = "Start and end cannot both be tz-aware with different timezones"
         with pytest.raises(TypeError, match=msg):
@@ -1045,7 +1271,13 @@ class TestGenRangeGeneration:
 
 
 class TestBusinessDateRange:
+    # [CLASS DOC]
+    # Tests for bdate_range with the default business-day frequency; no state.
     def test_constructor(self):
+        # [FUNCTION DOC]
+        # Verifies bdate_range accepts start/end, start/periods and end/periods; a positional freq string
+        # in the periods position raises a type error for both date_range and bdate_range; and passing
+        # freq as none raises a type error that freq is required.
         bdate_range(START, END, freq=BDay())
         bdate_range(START, periods=20, freq=BDay())
         bdate_range(end=START, periods=20, freq=BDay())
@@ -1062,6 +1294,9 @@ class TestBusinessDateRange:
             bdate_range(START, END, periods=10, freq=None)
 
     def test_misc(self):
+        # [FUNCTION DOC]
+        # Verifies a range ending at a given date with 20 periods has length 20 ending at the end and
+        # starting nineteen business days before.
         end = datetime(2009, 5, 13)
         dr = bdate_range(end=end, periods=20)
         firstDate = end - 19 * BDay()
@@ -1071,6 +1306,9 @@ class TestBusinessDateRange:
         assert dr[-1] == end
 
     def test_date_parse_failure(self):
+        # [FUNCTION DOC]
+        # Verifies an unparsable date string raises a value error about the unknown format for Timestamp
+        # and for bdate_range as start, end or both.
         badly_formed_date = "2007/100/1"
 
         msg = "Unknown datetime string format, unable to parse: 2007/100/1"
@@ -1087,6 +1325,9 @@ class TestBusinessDateRange:
             bdate_range(badly_formed_date, badly_formed_date)
 
     def test_daterange_bug_456(self):
+        # [FUNCTION DOC]
+        # Regression test: a single-day range and a multi-day range have business-day freq, and their
+        # union is a DatetimeIndex.
         # GH #456
         rng1 = bdate_range("12/5/2011", "12/5/2011")
         rng2 = bdate_range("12/2/2011", "12/5/2011")
@@ -1096,6 +1337,9 @@ class TestBusinessDateRange:
         assert isinstance(result, DatetimeIndex)
 
     def test_bdays_and_open_boundaries(self, inclusive_endpoints_fixture):
+        # [FUNCTION DOC]
+        # Uses the inclusive-endpoints fixture. Verifies business-day ranges between a Saturday and a
+        # Sunday give the Monday to Friday days for every inclusive option (freqs are not compared).
         # GH 6673
         start = "2018-07-21"  # Saturday
         end = "2018-07-29"  # Sunday
@@ -1108,6 +1352,9 @@ class TestBusinessDateRange:
         # Note: we do _not_ expect the freqs to match here
 
     def test_bday_near_overflow(self):
+        # [FUNCTION DOC]
+        # Regression test: a one-period business-day range starting at the maximum Timestamp's date
+        # works without computing an overflowing addition.
         # GH#24252 avoid doing unnecessary addition that _would_ overflow
         start = Timestamp.max.floor("D").to_pydatetime()
         rng = date_range(start, end=None, periods=1, freq="B")
@@ -1115,6 +1362,9 @@ class TestBusinessDateRange:
         tm.assert_index_equal(rng, expected)
 
     def test_bday_overflow_error(self):
+        # [FUNCTION DOC]
+        # Regression test: a two-period business-day range at the maximum Timestamp raises an
+        # out-of-bounds error (not an overflow error).
         # GH#24252 check that we get OutOfBoundsDatetime and not OverflowError
         msg = "Out of bounds nanosecond timestamp"
         start = Timestamp.max.floor("D").to_pydatetime()
@@ -1122,12 +1372,17 @@ class TestBusinessDateRange:
             date_range(start, periods=2, freq="B", unit="ns")
 
     def test_bdate_range_end_weekend_periods(self):
+        # [FUNCTION DOC]
+        # Regression test: bdate_range ending on a Saturday with three periods gives the three business
+        # days before it.
         # GH#64834
         result = bdate_range(end="2026-03-21", periods=3)
         expected = DatetimeIndex(["2026-03-18", "2026-03-19", "2026-03-20"])
         tm.assert_index_equal(result, expected)
 
     def test_bdate_range_end_sunday_periods(self):
+        # [FUNCTION DOC]
+        # Regression test: same as above with an end on a Sunday.
         # GH#64834
         result = bdate_range(end="2026-03-22", periods=3)
         expected = DatetimeIndex(["2026-03-18", "2026-03-19", "2026-03-20"])
@@ -1135,7 +1390,12 @@ class TestBusinessDateRange:
 
 
 class TestCustomDateRange:
+    # [CLASS DOC]
+    # Tests for bdate_range with custom business-day frequency; no state.
     def test_constructor(self):
+        # [FUNCTION DOC]
+        # Verifies custom business-day ranges accept start/end, start/periods and end/periods; positional
+        # freq string in the periods position raises a type error for both functions.
         bdate_range(START, END, freq=CDay())
         bdate_range(START, periods=20, freq=CDay())
         bdate_range(end=START, periods=20, freq=CDay())
@@ -1148,6 +1408,9 @@ class TestCustomDateRange:
             bdate_range("2011-1-1", "2012-1-1", "C")
 
     def test_misc(self):
+        # [FUNCTION DOC]
+        # Verifies a custom-business-day range ending at a date has 20 elements and starts nineteen
+        # custom business days before.
         end = datetime(2009, 5, 13)
         dr = bdate_range(end=end, periods=20, freq="C")
         firstDate = end - 19 * CDay()
@@ -1157,6 +1420,9 @@ class TestCustomDateRange:
         assert dr[-1] == end
 
     def test_daterange_bug_456(self):
+        # [FUNCTION DOC]
+        # Regression test: a one-day and a multi-day custom range have a custom business-day freq and their
+        # union is a DatetimeIndex.
         # GH #456
         rng1 = bdate_range("12/5/2011", "12/5/2011", freq="C")
         rng2 = bdate_range("12/2/2011", "12/5/2011", freq="C")
@@ -1166,6 +1432,9 @@ class TestCustomDateRange:
         assert isinstance(result, DatetimeIndex)
 
     def test_cdaterange(self, unit):
+        # [FUNCTION DOC]
+        # Uses unit. Verifies a three-period custom business-day range from a Wednesday has the next
+        # consecutive weekdays, with freq C.
         result = bdate_range("2013-05-01", periods=3, freq="C", unit=unit)
         expected = DatetimeIndex(
             ["2013-05-01", "2013-05-02", "2013-05-03"], dtype=f"M8[{unit}]", freq="C"
@@ -1174,6 +1443,10 @@ class TestCustomDateRange:
         assert result.freq == expected.freq
 
     def test_cdaterange_weekmask(self, unit):
+        # [FUNCTION DOC]
+        # Uses unit. Verifies a custom weekmask (Sunday through Thursday) skips Friday and Saturday, and
+        # that passing weekmask without the custom frequency raises a value error saying a custom frequency
+        # string is required.
         result = bdate_range(
             "2013-05-01", periods=3, freq="C", weekmask="Sun Mon Tue Wed Thu", unit=unit
         )
@@ -1194,6 +1467,8 @@ class TestCustomDateRange:
             bdate_range("2013-05-01", periods=3, weekmask="Sun Mon Tue Wed Thu")
 
     def test_cdaterange_holidays(self, unit):
+        # [FUNCTION DOC]
+        # Uses unit. Verifies a holidays argument with the custom frequency skips the holiday.
         result = bdate_range(
             "2013-05-01", periods=3, freq="C", holidays=["2013-05-01"], unit=unit
         )
@@ -1214,6 +1489,9 @@ class TestCustomDateRange:
             bdate_range("2013-05-01", periods=3, holidays=["2013-05-01"])
 
     def test_cdaterange_weekmask_and_holidays(self, unit):
+        # [FUNCTION DOC]
+        # Uses unit. Verifies a custom business-day range with a weekmask of Sunday through Thursday and a
+        # holiday on the start date gives the next three allowed days, with the custom freq.
         result = bdate_range(
             "2013-05-01",
             periods=3,
@@ -1231,6 +1509,9 @@ class TestCustomDateRange:
         assert result.freq == expected.freq
 
     def test_cdaterange_holidays_weekmask_requires_freqstr(self):
+        # [FUNCTION DOC]
+        # Verifies passing both weekmask and holidays without a custom frequency string raises a value
+        # error saying a custom frequency string is required.
         # raise with non-custom freq
         msg = (
             "a custom frequency string is required when holidays or "
@@ -1248,6 +1529,10 @@ class TestCustomDateRange:
         "freq", [freq for freq in prefix_mapping if freq.upper().startswith("C")]
     )
     def test_all_custom_freq(self, freq):
+        # [FUNCTION DOC]
+        # Parametrized over every registered frequency prefix whose name starts with the letter C. Verifies
+        # the custom frequency is accepted with weekmask and holidays, and that appending junk to the
+        # name raises a value error about an invalid custom frequency string.
         # should not raise
         bdate_range(
             START, END, freq=freq, weekmask="Mon Wed Fri", holidays=["2009-03-14"]
@@ -1267,6 +1552,9 @@ class TestCustomDateRange:
         ],
     )
     def test_range_with_millisecond_resolution(self, start_end):
+        # [FUNCTION DOC]
+        # Parametrized over three start/end pairs with millisecond components in UTC. Regression test:
+        # two periods with the left inclusive option return only the start as a microsecond UTC index.
         # https://github.com/pandas-dev/pandas/issues/24110
         start, end = start_end
         result = date_range(start=start, end=end, periods=2, inclusive="left")
@@ -1286,12 +1574,19 @@ class TestCustomDateRange:
         ],
     )
     def test_range_with_timezone_and_custombusinessday(self, start, period, expected):
+        # [FUNCTION DOC]
+        # Parametrized over (start, periods, expected). Regression test: custom business-day ranges
+        # with a timezone offset start move a weekend start to the next Monday and keep the offset;
+        # result is in microsecond unit.
         # GH49441
         result = date_range(start=start, periods=period, freq="C")
         expected = DatetimeIndex(expected).as_unit("us")
         tm.assert_index_equal(result, expected)
 
     def test_data_range_custombusinessday_partial_time(self, unit):
+        # [FUNCTION DOC]
+        # Uses unit. Regression test: a custom business-day offset with a weekmask of Sunday to Tuesday and
+        # an end datetime not on the offset gives the expected stamps keeping the time of day.
         # GH#57456
         offset = offsets.CustomBusinessDay(weekmask="Sun Mon Tue")
         start = datetime(2024, 2, 6, 23)
@@ -1310,6 +1605,9 @@ class TestCustomDateRange:
         tm.assert_index_equal(result, expected)
 
     def test_cdaterange_cbh(self):
+        # [FUNCTION DOC]
+        # Regression test: a custom business hour range with weekmask and a holiday gives the working hours
+        # of the single permitted day, with freq cbh.
         # GH#62849
         result = bdate_range(
             "2009-03-13",
@@ -1335,6 +1633,9 @@ class TestCustomDateRange:
         tm.assert_index_equal(result, expected)
 
     def test_cdaterange_deprecated_error_CBH(self):
+        # [FUNCTION DOC]
+        # Verifies the uppercase CBH custom frequency string raises a value error suggesting the lowercase
+        # spelling.
         # GH#62849
         msg = "invalid custom frequency string: CBH, did you mean cbh?"
         with pytest.raises(ValueError, match=msg):
@@ -1344,12 +1645,19 @@ class TestCustomDateRange:
 
 
 class TestDateRangeNonNano:
+    # [CLASS DOC]
+    # Tests for date_range with non-nanosecond units; no state.
     def test_date_range_reso_validation(self):
+        # [FUNCTION DOC]
+        # Verifies an unsupported unit (hours) raises a value error listing the allowed units.
         msg = "'unit' must be one of 's', 'ms', 'us', 'ns'"
         with pytest.raises(ValueError, match=msg):
             date_range("2016-01-01", "2016-03-04", periods=3, unit="h")
 
     def test_date_range_freq_higher_than_reso(self):
+        # [FUNCTION DOC]
+        # Verifies a nanosecond freq with a millisecond unit raises a value error suggesting a lower freq or
+        # higher unit. (A TODO suggests a more informative message.)
         # freq being higher-resolution than reso is a problem
         msg = "Use a lower freq or a higher unit instead"
         with pytest.raises(ValueError, match=msg):
@@ -1357,6 +1665,9 @@ class TestDateRangeNonNano:
             date_range("2016-01-01", "2016-01-02", freq="ns", unit="ms")
 
     def test_date_range_freq_matches_reso(self):
+        # [FUNCTION DOC]
+        # Verifies ranges where the unit matches the freq (milliseconds, microseconds, nanoseconds) contain
+        # every step with the given freq.
         # GH#49106 matching reso is OK
         dti = date_range("2016-01-01", "2016-01-01 00:00:01", freq="ms", unit="ms")
         rng = np.arange(1_451_606_400_000, 1_451_606_401_001, dtype=np.int64)
@@ -1376,6 +1687,9 @@ class TestDateRangeNonNano:
         tm.assert_index_equal(dti, expected)
 
     def test_date_range_freq_lower_than_endpoints(self):
+        # [FUNCTION DOC]
+        # Verifies endpoints with microsecond precision cannot be cast to seconds without loss (value error
+        # about lossless conversion), but are accepted with microsecond unit.
         start = Timestamp("2022-10-19 11:50:44.719781")
         end = Timestamp("2022-10-19 11:50:47.066458")
 
@@ -1393,6 +1707,9 @@ class TestDateRangeNonNano:
         tm.assert_index_equal(dti, expected)
 
     def test_date_range_non_nano(self):
+        # [FUNCTION DOC]
+        # Verifies a daily range with second unit between dates in years 1066 and 2305 has freq D, dtype
+        # seconds and the expected values.
         start = np.datetime64("1066-10-14")  # Battle of Hastings
         end = np.datetime64("2305-07-13")  # Jean-Luc Picard's birthday
 
@@ -1410,9 +1727,14 @@ class TestDateRangeNonNano:
 
 
 class TestDateRangeNonTickFreq:
+    # [CLASS DOC]
+    # Tests of less common (non-Tick) freq values in date_range; no state.
     # Tests revolving around less-common (non-Tick) `freq` keywords.
 
     def test_date_range_custom_business_month_begin(self, unit):
+        # [FUNCTION DOC]
+        # Uses unit. Verifies a custom business-month-begin range with the US federal holiday calendar has
+        # every element on the offset and equals the expected dates.
         hcal = USFederalHolidayCalendar()
         freq = offsets.CBMonthBegin(calendar=hcal)
         dti = date_range(start="20120101", end="20130101", freq=freq, unit=unit)
@@ -1439,6 +1761,8 @@ class TestDateRangeNonTickFreq:
         tm.assert_index_equal(dti, expected)
 
     def test_date_range_custom_business_month_end(self, unit):
+        # [FUNCTION DOC]
+        # Uses unit. Same as the previous test with custom business month end.
         hcal = USFederalHolidayCalendar()
         freq = offsets.CBMonthEnd(calendar=hcal)
         dti = date_range(start="20120101", end="20130101", freq=freq, unit=unit)
@@ -1465,6 +1789,9 @@ class TestDateRangeNonTickFreq:
         tm.assert_index_equal(dti, expected)
 
     def test_date_range_with_custom_holidays(self, unit):
+        # [FUNCTION DOC]
+        # Uses unit. Regression test: a custom business hour offset starting at 15:00 with a holiday skips
+        # the holiday.
         # GH#30593
         freq = offsets.CustomBusinessHour(start="15:00", holidays=["2020-11-26"])
         result = date_range(start="2020-11-25 15:00", periods=4, freq=freq, unit=unit)
@@ -1481,6 +1808,9 @@ class TestDateRangeNonTickFreq:
         tm.assert_index_equal(result, expected)
 
     def test_date_range_businesshour(self, unit):
+        # [FUNCTION DOC]
+        # Uses unit. Verifies business-hour ranges for one day, across a weekend boundary and across
+        # multiple days equal the expected hourly stamps with freq bh.
         idx = DatetimeIndex(
             [
                 "2014-07-04 09:00",
@@ -1538,6 +1868,9 @@ class TestDateRangeNonTickFreq:
         tm.assert_index_equal(idx, rng)
 
     def test_date_range_business_hour2(self, unit):
+        # [FUNCTION DOC]
+        # Uses unit. Verifies business-hour ranges built from start/end, start/periods and end/periods are
+        # equal, including a variant with an extra 45 minutes offset in the start time.
         idx1 = date_range(
             start="2014-07-04 15:00", end="2014-07-08 10:00", freq="bh", unit=unit
         )
@@ -1578,12 +1911,17 @@ class TestDateRangeNonTickFreq:
         tm.assert_index_equal(idx6, expected2)
 
     def test_date_range_business_hour_short(self, unit):
+        # [FUNCTION DOC]
+        # Uses unit. Regression test: a one-period business-hour range from a mid-day start is that
+        # single time.
         # GH#49835
         idx4 = date_range(start="2014-07-01 10:00", freq="bh", periods=1, unit=unit)
         expected4 = DatetimeIndex(["2014-07-01 10:00"], dtype=f"M8[{unit}]", freq="bh")
         tm.assert_index_equal(idx4, expected4)
 
     def test_date_range_year_start(self, unit):
+        # [FUNCTION DOC]
+        # Uses unit. Verifies year-start ranges between 2013 and mid 2017 contain five dates.
         # see GH#9313
         rng = date_range("1/1/2013", "7/1/2017", freq="YS", unit=unit)
         exp = DatetimeIndex(
@@ -1594,6 +1932,8 @@ class TestDateRangeNonTickFreq:
         tm.assert_index_equal(rng, exp)
 
     def test_date_range_year_end(self, unit):
+        # [FUNCTION DOC]
+        # Uses unit. Verifies year-end ranges in the same span contain four dates.
         # see GH#9313
         rng = date_range("1/1/2013", "7/1/2017", freq="YE", unit=unit)
         exp = DatetimeIndex(
@@ -1604,6 +1944,9 @@ class TestDateRangeNonTickFreq:
         tm.assert_index_equal(rng, exp)
 
     def test_date_range_negative_freq_year_end(self, unit):
+        # [FUNCTION DOC]
+        # Uses unit. Verifies a negative two-year-end freq steps backward two years and freq keeps the
+        # sign.
         # GH#11018
         rng = date_range("2011-12-31", freq="-2YE", periods=3, unit=unit)
         exp = DatetimeIndex(
@@ -1613,6 +1956,9 @@ class TestDateRangeNonTickFreq:
         assert rng.freq == "-2YE"
 
     def test_date_range_business_year_end_year(self, unit):
+        # [FUNCTION DOC]
+        # Uses unit. Verifies business-year-end ranges fall on the last business day of the year (the last
+        # element is December 30, 2016).
         # see GH#9313
         rng = date_range("1/1/2013", "7/1/2017", freq="BYE", unit=unit)
         exp = DatetimeIndex(
@@ -1623,6 +1969,8 @@ class TestDateRangeNonTickFreq:
         tm.assert_index_equal(rng, exp)
 
     def test_date_range_bms(self, unit):
+        # [FUNCTION DOC]
+        # Uses unit. Verifies ten business-month-start periods land on the first business day of each month.
         # GH#1645
         result = date_range("1/1/2000", periods=10, freq="BMS", unit=unit)
 
@@ -1645,6 +1993,9 @@ class TestDateRangeNonTickFreq:
         tm.assert_index_equal(result, expected)
 
     def test_date_range_semi_month_begin(self, unit):
+        # [FUNCTION DOC]
+        # Uses unit. Verifies a semi-month-begin range between two dates yields the 1st and 15th of each
+        # month.
         dates = [
             datetime(2007, 12, 15),
             datetime(2008, 1, 1),
@@ -1678,6 +2029,8 @@ class TestDateRangeNonTickFreq:
         tm.assert_index_equal(result, exp)
 
     def test_date_range_semi_month_end(self, unit):
+        # [FUNCTION DOC]
+        # Uses unit. Verifies a semi-month-end range yields the 15th and last day of each month.
         dates = [
             datetime(2007, 12, 31),
             datetime(2008, 1, 15),
@@ -1711,6 +2064,9 @@ class TestDateRangeNonTickFreq:
         tm.assert_index_equal(result, exp)
 
     def test_date_range_week_of_month(self, unit):
+        # [FUNCTION DOC]
+        # Uses unit. Regression test: a week-of-month freq with a start not on the offset begins at the
+        # next first Monday (one and two periods).
         # GH#20517
         # Note the start here is not on_offset for this freq
         result = date_range(start="20110101", periods=1, freq="WOM-1MON", unit=unit)
@@ -1724,6 +2080,8 @@ class TestDateRangeNonTickFreq:
         tm.assert_index_equal(result2, expected2)
 
     def test_date_range_week_of_month2(self, unit):
+        # [FUNCTION DOC]
+        # Uses unit. Verifies the first-Saturday week-of-month range for four months.
         # GH#5115, GH#5348
         result = date_range("2013-1-1", periods=4, freq="WOM-1SAT", unit=unit)
         expected = DatetimeIndex(
@@ -1734,6 +2092,9 @@ class TestDateRangeNonTickFreq:
         tm.assert_index_equal(result, expected)
 
     def test_date_range_negative_freq_month_end(self, unit):
+        # [FUNCTION DOC]
+        # Uses unit. Verifies a negative two-month-end freq steps backward two months at month ends and
+        # keeps the negative freq.
         # GH#11018
         rng = date_range("2011-01-31", freq="-2ME", periods=3, unit=unit)
         exp = DatetimeIndex(
@@ -1743,6 +2104,9 @@ class TestDateRangeNonTickFreq:
         assert rng.freq == "-2ME"
 
     def test_date_range_fy5253(self, unit):
+        # [FUNCTION DOC]
+        # Uses unit. Verifies a range with the 52-53 week fiscal year offset (nearest variation) gives the
+        # expected two year-start dates.
         freq = offsets.FY5253(startingMonth=1, weekday=3, variation="nearest")
         dti = date_range(
             start="2013-01-01",
@@ -1765,6 +2129,9 @@ class TestDateRangeNonTickFreq:
         ],
     )
     def test_date_range_freqstr_matches_offset(self, freqstr, offset):
+        # [FUNCTION DOC]
+        # Parametrized over freq string and equivalent offset object (quarter start, business quarter end,
+        # weekly Sunday). Verifies both give the same length and the same freq.
         sdate = datetime(1999, 12, 25)
         edate = datetime(2000, 1, 1)
 
@@ -1774,6 +2141,9 @@ class TestDateRangeNonTickFreq:
         assert idx1.freq == idx2.freq
 
     def test_date_range_partial_day_year_end(self, unit):
+        # [FUNCTION DOC]
+        # Uses unit. Regression test: year-end ranges starting one second after midnight keep the time of day
+        # at each year end and stop before the end bound.
         # GH#56134
         rng = date_range(
             start="2021-12-31 00:00:01",
@@ -1789,6 +2159,9 @@ class TestDateRangeNonTickFreq:
         tm.assert_index_equal(rng, exp)
 
     def test_date_range_negative_freq_year_end_inbounds(self, unit):
+        # [FUNCTION DOC]
+        # Uses unit. Regression test: a descending year-end range stays within bounds and returns the
+        # last two year ends before the start date.
         # GH#56147
         rng = date_range(
             start="2023-10-31 00:00:00",
@@ -1804,6 +2177,9 @@ class TestDateRangeNonTickFreq:
         tm.assert_index_equal(rng, exp)
 
     def test_date_range_tzaware_endpoints_accept_ambiguous(self):
+        # [FUNCTION DOC]
+        # Regression test: a range between timezone-aware Oslo month-start endpoints accepts the ambiguous
+        # argument and equals the range built from naive strings and the timezone.
         # https://github.com/pandas-dev/pandas/issues/52908
         start = Timestamp("1916-08-01", tz="Europe/Oslo")
         end = Timestamp("1916-12-01", tz="Europe/Oslo")
@@ -1814,6 +2190,9 @@ class TestDateRangeNonTickFreq:
         tm.assert_index_equal(res, exp)
 
     def test_date_range_tzaware_endpoints_accept_nonexistent(self):
+        # [FUNCTION DOC]
+        # Verifies a daily range between London-aware endpoints across the spring-forward date, with
+        # nonexistent shifted forward, equals localizing the naive daily range with the same option.
         # Europe/London spring-forward: 2015-03-29 01:30 does not exist.
         tz = "Europe/London"
         start = Timestamp("2015-03-28 01:30", tz=tz)
@@ -1830,7 +2209,11 @@ class TestDateRangeNonTickFreq:
 
 
 class TestDateRangeUnitInference:
+    # [CLASS DOC]
+    # Tests of how date_range infers the unit of the result from its inputs; no state.
     def test_date_range_unit_inference_matching_unit(self, unit):
+        # [FUNCTION DOC]
+        # Uses unit. Verifies endpoints in the same unit as each other yield a result in that unit.
         start = Timestamp("2025-11-25").as_unit(unit)
         end = Timestamp("2025-11-26").as_unit(unit)
 
@@ -1838,6 +2221,9 @@ class TestDateRangeUnitInference:
         assert dti.unit == unit
 
     def test_date_range_unit_inference_mismatched_unit(self, unit):
+        # [FUNCTION DOC]
+        # Uses unit. Verifies mismatched endpoint units (parametrized unit and seconds) give the finer of the
+        # start unit, and nanosecond when one endpoint is nanosecond.
         start = Timestamp("2025-11-25").as_unit(unit)
         end = Timestamp("2025-11-26").as_unit("s")
 
@@ -1848,6 +2234,9 @@ class TestDateRangeUnitInference:
         assert dti.unit == "ns"
 
     def test_date_range_unit_inference_tick(self):
+        # [FUNCTION DOC]
+        # Verifies a tick freq finer than the endpoints (two million microseconds) gives microsecond
+        # unit, and nanosecond if an endpoint is nanosecond.
         start = Timestamp("2025-11-25").as_unit("ms")
         end = Timestamp("2025-11-26").as_unit("s")
 
@@ -1858,6 +2247,9 @@ class TestDateRangeUnitInference:
         assert dti.unit == "ns"
 
     def test_date_range_unit_inference_dateoffset_freq(self):
+        # [FUNCTION DOC]
+        # Verifies a date offset with microseconds gives microsecond unit, milliseconds gives millisecond, and
+        # nanoseconds gives nanosecond unit.
         start = Timestamp("2025-11-25 09:00:00").as_unit("s")
         end = Timestamp("2025-11-25 09:00:02").as_unit("s")
 

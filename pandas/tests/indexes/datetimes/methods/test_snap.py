@@ -1,3 +1,5 @@
+# [MODULE DOC]
+# Test of DatetimeIndex.snap (round each stamp to the nearest point of a frequency).
 import pytest
 
 from pandas.errors import Pandas4Warning
@@ -14,6 +16,14 @@ import pandas._testing as tm
 @pytest.mark.parametrize("tz", [None, "Asia/Shanghai", "Europe/Berlin"])
 @pytest.mark.parametrize("name", [None, "my_dti"])
 def test_dti_snap(name, tz, unit):
+    # [FUNCTION DOC]
+    # Parametrized over timezone (none, Shanghai, Berlin), name (none or a string), plus the unit
+    # fixture; ignores deprecation warnings about business-day periods. Verifies snapping a week of
+    # daily dates to the weekly Monday frequency repeats the nearest Monday (3 then 4 entries), and
+    # snapping to business days moves weekend dates to the nearest business day (counts 1,1,1,2,2),
+    # each time with the same timezone and name, and freq None on both result and expected. Building
+    # the expected ranges with the lowercase deprecated frequency aliases is asserted to emit the
+    # Pandas4Warning with a message that the alias is deprecated.
     dti = DatetimeIndex(
         [
             "1/1/2002",

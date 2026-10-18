@@ -1,3 +1,7 @@
+# [MODULE DOC]
+# General tests for CategoricalIndex: insert/delete, monotonicity, duplicates, unique, repr,
+# isin, identity, copy semantics, view as integers, engine selection by code dtype, arithmetic
+# rejection, method delegation to Categorical, and containment without building an engine.
 import numpy as np
 import pytest
 
@@ -18,19 +22,31 @@ from pandas.core.indexes.api import (
 
 
 class TestCategoricalIndex:
+    # [CLASS DOC]
+    # Groups general CategoricalIndex behavior tests; provides a simple_index fixture.
     @pytest.fixture
     def simple_index(self) -> CategoricalIndex:
+        # [FUNCTION DOC]
+        # HELPER: fixture returning an unordered CategoricalIndex of values a, a, b, b, c, a with
+        # categories ordered c, a, b.
         """
         Fixture that provides a CategoricalIndex.
         """
         return CategoricalIndex(list("aabbca"), categories=list("cab"), ordered=False)
 
     def test_can_hold_identifiers(self):
+        # [FUNCTION DOC]
+        # Verifies the private check for whether a key can be used as an identifier and holds a name
+        # returns True for a string label of a CategoricalIndex.
         idx = CategoricalIndex(list("aabbca"), categories=None, ordered=False)
         key = idx[0]
         assert idx._can_hold_identifiers_and_holds_name(key) is True
 
     def test_insert(self, simple_index):
+        # [FUNCTION DOC]
+        # Verifies insert: at the front, at a negative position, into an empty index with categories, a
+        # value outside the categories (result equals the object-index equivalent after casting), and
+        # all missing-value flavors inserted into a categorical index become a missing code.
         ci = simple_index
         categories = ci.categories
 
@@ -61,12 +77,17 @@ class TestCategoricalIndex:
             tm.assert_index_equal(result, expected)
 
     def test_insert_na_mismatched_dtype(self):
+        # [FUNCTION DOC]
+        # Verifies inserting NaT into an integer-category index yields an object Index with NaT first.
         ci = CategoricalIndex([0, 1, 1])
         result = ci.insert(0, pd.NaT)
         expected = Index([pd.NaT, 0, 1, 1], dtype=object)
         tm.assert_index_equal(result, expected)
 
     def test_delete(self, simple_index):
+        # [FUNCTION DOC]
+        # Verifies delete of the first and last positions keeps categories exactly, and that an out of
+        # range position raises an index error or a value error depending on the numpy version.
         ci = simple_index
         categories = ci.categories
 
@@ -87,6 +108,11 @@ class TestCategoricalIndex:
         [[[1, 2, 3], [9, 0, 1, 2, 3]], [list("abc"), list("fabcd")]],
     )
     def test_is_monotonic(self, data, non_lexsorted_data):
+        # [FUNCTION DOC]
+        # Parametrized over (increasing data, non-lexsorted category list). Verifies monotonic
+        # increasing/decreasing properties follow the category order, not the label order: both
+        # orderedness settings, reversed categories, a non-monotonic arrangement, and categories that
+        # are not lexically sorted.
         c = CategoricalIndex(data)
         assert c.is_monotonic_increasing is True
         assert c.is_monotonic_decreasing is False
@@ -121,6 +147,9 @@ class TestCategoricalIndex:
         assert c.is_monotonic_decreasing is False
 
     def test_has_duplicates(self):
+        # [FUNCTION DOC]
+        # Verifies uniqueness and duplicate flags: repeated values and repeated missing values are
+        # duplicates; a single missing value among unique labels is not.
         idx = CategoricalIndex([0, 0, 0], name="foo")
         assert idx.is_unique is False
         assert idx.has_duplicates is True
@@ -175,6 +204,11 @@ class TestCategoricalIndex:
         ],
     )
     def test_drop_duplicates(self, data, categories, expected):
+        # [FUNCTION DOC]
+        # Parametrized over (data, categories, expected masks per keep option). Verifies duplicated
+        # gives the expected mask for first, last and False keep options (missing values count as
+        # equal and values outside categories become missing), and drop_duplicates removes exactly the
+        # masked entries.
         idx = CategoricalIndex(data, categories=categories, name="foo")
         for keep, e in expected.items():
             tm.assert_numpy_array_equal(idx.duplicated(keep=keep), e)
@@ -192,6 +226,10 @@ class TestCategoricalIndex:
         ],
     )
     def test_unique(self, data, categories, expected_data, ordered):
+        # [FUNCTION DOC]
+        # Parametrized over data, categories, expected values and the ordered fixture. Verifies unique
+        # of a CategoricalIndex built from a dtype equals the expected index; construction with values
+        # outside the categories emits the Pandas4Warning, except when all values are in range.
         dtype = CategoricalDtype(categories, ordered=ordered)
 
         msg = "Constructing a Categorical with a dtype and values containing"
@@ -202,6 +240,9 @@ class TestCategoricalIndex:
         tm.assert_index_equal(idx.unique(), expected)
 
     def test_repr_roundtrip(self):
+        # [FUNCTION DOC]
+        # Verifies that an ordered CategoricalIndex survives a string/evaluate round trip of its repr
+        # exactly, and that the string form of a long index can be produced.
         ci = CategoricalIndex(["a", "b"], categories=["a", "b"], ordered=True)
         str(ci)
         tm.assert_index_equal(eval(repr(ci)), ci, exact=True)
@@ -215,6 +256,9 @@ class TestCategoricalIndex:
         str(ci)
 
     def test_isin(self):
+        # [FUNCTION DOC]
+        # Verifies isin with lists of values (including NaN) and with categorical arguments having
+        # different categories (compared by value, not by code).
         ci = CategoricalIndex([*list("aabca"), np.nan], categories=["c", "a", "b"])
         tm.assert_numpy_array_equal(
             ci.isin(["c"]), np.array([False, False, False, True, False, False])
@@ -236,6 +280,9 @@ class TestCategoricalIndex:
         tm.assert_numpy_array_equal(result, expected)
 
     def test_isin_overlapping_intervals(self):
+        # [FUNCTION DOC]
+        # Regression test: isin on a categorical index built from overlapping intervals matches all
+        # entries when given the same intervals.
         # GH 34974
         idx = pd.IntervalIndex([pd.Interval(0, 2), pd.Interval(0, 1)])
         result = CategoricalIndex(idx).isin(idx)
@@ -243,6 +290,9 @@ class TestCategoricalIndex:
         tm.assert_numpy_array_equal(result, expected)
 
     def test_identical(self):
+        # [FUNCTION DOC]
+        # Verifies identical is True for the same and a copied index but False for an index with a
+        # different set of categories.
         ci1 = CategoricalIndex(["a", "b"], categories=["a", "b"], ordered=True)
         ci2 = CategoricalIndex(["a", "b"], categories=["a", "b", "c"], ordered=True)
         assert ci1.identical(ci1)
@@ -250,6 +300,9 @@ class TestCategoricalIndex:
         assert not ci1.identical(ci2)
 
     def test_ensure_copied_data(self):
+        # [FUNCTION DOC]
+        # Verifies the copy argument of the constructor: copy true does not share the code array with
+        # the source, while copy false reuses the very same code array.
         # gh-12309: Check the "copy" argument of each
         # Index.__new__ is honored.
         #
@@ -266,7 +319,14 @@ class TestCategoricalIndex:
 
 
 class TestCategoricalIndex2:
+    # [CLASS DOC]
+    # More CategoricalIndex tests (view, engine type, arithmetic, delegation); no state.
     def test_view_i8(self):
+        # [FUNCTION DOC]
+        # Regression test: viewing as 64-bit integers fails with a value error about itemsize
+        # divisibility for an index (and its array) whose length is not a multiple of eight; after
+        # trimming to a divisible length, the view equals the codes viewed as 64-bit integers, for both
+        # index and array.
         # GH#25464
         ci = CategoricalIndex(list("ab") * 50)
         msg = "When changing to a larger dtype, its size must be a divisor"
@@ -294,6 +354,11 @@ class TestCategoricalIndex2:
         ],
     )
     def test_engine_type(self, dtype, engine_type):
+        # [FUNCTION DOC]
+        # Parametrized over (code integer dtype, expected engine class). Builds a CategoricalIndex with
+        # enough categories to force the code dtype (1, 128, 32768 categories for 8/16/32 bits); for
+        # 64-bit it forces the code array to 64 bits by replacing the backing array in place to avoid a
+        # huge allocation. Asserts the codes dtype and that the index engine is the matching class.
         if dtype != np.int64:
             # num. of uniques required to push CategoricalIndex.codes to a
             # dtype (128 categories required for .codes dtype to be int16 etc.)
@@ -320,6 +385,11 @@ class TestCategoricalIndex2:
         ],
     )
     def test_disallow_addsub_ops(self, func, op_name):
+        # [FUNCTION DOC]
+        # Parametrized over six lambda/operator-name pairs (addition and subtraction between index,
+        # index and list, list and index). Verifies each raises a type error with one of several
+        # accepted messages (unsupported operand, category dtype cannot perform numpy op, or string dtype
+        # operation not supported). The operator-name parameter is unused in the body.
         # GH 10039
         # set ops (+/-) raise TypeError
         idx = Index(Categorical(["a", "b"]))
@@ -336,6 +406,10 @@ class TestCategoricalIndex2:
             func(idx)
 
     def test_method_delegation(self):
+        # [FUNCTION DOC]
+        # Verifies that the index delegates category-management methods (set, rename including with a
+        # callable, add, remove, as_ordered, as_unordered) to the Categorical, with expected resulting
+        # indexes, and that set_categories with the inplace flag raises a value error.
         ci = CategoricalIndex(list("aabbca"), categories=list("cabdef"))
         result = ci.set_categories(list("cab"))
         tm.assert_index_equal(
@@ -384,6 +458,9 @@ class TestCategoricalIndex2:
             ci.set_categories(list("cab"), inplace=True)
 
     def test_remove_maintains_order(self):
+        # [FUNCTION DOC]
+        # Verifies that after reordering categories (ordered) and removing one category, the remaining
+        # categories keep their order and removed values become missing.
         ci = CategoricalIndex(list("abcdda"), categories=list("abcd"))
         result = ci.reorder_categories(["d", "c", "b", "a"], ordered=True)
         tm.assert_index_equal(
@@ -400,6 +477,9 @@ class TestCategoricalIndex2:
 
 
 def test_contains_rangeindex_categories_no_engine():
+    # [FUNCTION DOC]
+    # Verifies containment checks on a CategoricalIndex over a range work (present and absent
+    # values) without populating the engine cache entry.
     ci = CategoricalIndex(range(3))
     assert 2 in ci
     assert 5 not in ci

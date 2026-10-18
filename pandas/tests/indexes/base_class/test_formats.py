@@ -1,3 +1,6 @@
+# [MODULE DOC]
+# Tests for the repr/formatting of the base (object-dtype) Index: ASCII and East Asian
+# strings, truncation, summary, and boolean/NaN repr.
 import numpy as np
 import pytest
 
@@ -8,7 +11,11 @@ import pandas._testing as tm
 
 
 class TestIndexRendering:
+    # [CLASS DOC]
+    # Groups repr and formatting tests for the base Index; no state.
     def test_repr_is_valid_construction_code(self):
+        # [FUNCTION DOC]
+        # Verifies that evaluating the repr of an Index of strings reconstructs an equal Index.
         # for the case of Index, where the repr is traditional rather than
         # stylized
         idx = Index(["a", "b"])
@@ -76,6 +83,11 @@ class TestIndexRendering:
         ],
     )
     def test_string_index_repr(self, index, expected, using_infer_string):
+        # [FUNCTION DOC]
+        # Parametrized over a table of indexes (ASCII and Japanese strings; short, multi-line wrapped,
+        # and truncated with an ellipsis) and their exact expected repr text. When the using_infer_string
+        # fixture is set, the expected text has object dtype replaced by the str dtype. Asserts string
+        # equality of the repr.
         result = repr(index)
         if using_infer_string:
             expected = expected.replace("dtype='object'", "dtype='str'")
@@ -124,6 +136,11 @@ class TestIndexRendering:
     def test_string_index_repr_with_unicode_option(
         self, index, expected, using_infer_string
     ):
+        # [FUNCTION DOC]
+        # Same as the repr test but with the East Asian width display option enabled (via an option
+        # context), where wide characters count double and so wrapping differs. Parametrized over
+        # Japanese-string indexes (short, multi-line, truncated) and expected text, adjusting dtype
+        # text under infer-string mode.
         # Enable Unicode option -----------------------------------------
         with cf.option_context("display.unicode.east_asian_width", True):
             result = repr(index)
@@ -133,12 +150,18 @@ class TestIndexRendering:
         assert result == expected
 
     def test_repr_summary(self):
+        # [FUNCTION DOC]
+        # With the maximum displayed sequence items option set to ten, verifies the repr of a
+        # 1000-element integer Index is short (under 200 characters) and contains an ellipsis.
         with cf.option_context("display.max_seq_items", 10):
             result = repr(Index(np.arange(1000)))
             assert len(result) < 200
             assert "..." in result
 
     def test_summary_bug(self):
+        # [FUNCTION DOC]
+        # Regression test: the private summary method on an Index whose labels contain braces and
+        # percent signs must not apply formatting to them; both labels appear verbatim.
         # GH#3869
         ind = Index(["{other}%s", "~:{range}:0"], name="A")
         result = ind._summary()
@@ -147,6 +170,9 @@ class TestIndexRendering:
         assert "{other}%s" in result
 
     def test_index_repr_bool_nan(self):
+        # [FUNCTION DOC]
+        # Verifies the repr of an object-dtype Index of True, False and NaN prints the values and the
+        # object dtype exactly.
         # GH32146
         arr = Index([True, False, np.nan], dtype=object)
         exp2 = repr(arr)

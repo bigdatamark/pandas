@@ -1,3 +1,5 @@
+# [MODULE DOC]
+# Tests for fillna on CategoricalIndex and the underlying Categorical.
 import numpy as np
 import pytest
 
@@ -6,7 +8,12 @@ import pandas._testing as tm
 
 
 class TestFillNA:
+    # [CLASS DOC]
+    # Groups fillna tests for CategoricalIndex; no state.
     def test_fillna_categorical(self):
+        # [FUNCTION DOC]
+        # Verifies filling with a value among the categories works; filling with a value outside the
+        # categories raises a type error on the Categorical but casts to object for the index.
         # GH#11343
         idx = CategoricalIndex([1.0, np.nan, 3.0, 1.0], name="x")
         # fill by value in categories
@@ -25,6 +32,9 @@ class TestFillNA:
         tm.assert_index_equal(result, expected)
 
     def test_fillna_copies_with_no_nas(self):
+        # [FUNCTION DOC]
+        # Verifies fillna with nothing to fill returns a new index object that may share memory, while
+        # the Categorical-level method always returns a copy with its own non-view array.
         # Nothing to fill, should still get a copy for the Categorical method,
         #  but OK to get a view on CategoricalIndex method
         ci = CategoricalIndex([0, 1, 1])
@@ -40,6 +50,10 @@ class TestFillNA:
         assert not tm.shares_memory(result, cat)
 
     def test_fillna_validates_with_no_nas(self):
+        # [FUNCTION DOC]
+        # Verifies that an invalid fill value is validated even when there is nothing to fill: the
+        # Categorical method raises a type error while the index returns itself unchanged without
+        # casting.
         # We validate the fill value even if fillna is a no-op
         ci = CategoricalIndex([2, 3, 3])
         cat = ci._data

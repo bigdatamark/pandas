@@ -1,3 +1,7 @@
+# [MODULE DOC]
+# Tests for DatetimeIndex.to_pydatetime, including local and fixed-offset timezones. At import
+# time it builds a module-level fixed-offset timezone (seven hours behind UTC) from the timezone
+# test helper module.
 from datetime import (
     datetime,
     timezone,
@@ -20,7 +24,12 @@ fixed_off = FixedOffset(-420, "-07:00")
 
 
 class TestToPyDatetime:
+    # [CLASS DOC]
+    # Groups to_pydatetime tests; no state.
     def test_dti_to_pydatetime(self):
+        # [FUNCTION DOC]
+        # Regression test: a datetime in the local timezone converted by to_datetime with utc gives a UTC
+        # index; and python datetimes obtained from a local-timezone range also convert to UTC.
         dt = dateutil.parser.parse("2012-06-13T01:39:00Z")
         dt = dt.replace(tzinfo=tzlocal())
 
@@ -35,6 +44,10 @@ class TestToPyDatetime:
         assert result.tz is timezone.utc
 
     def test_dti_to_pydatetime_fizedtz(self):
+        # [FUNCTION DOC]
+        # Verifies that the object array of datetimes with a fixed offset timezone round-trips through a
+        # DatetimeIndex and both to_pydatetime and the private matplotlib representation return an equal
+        # array.
         dates = np.array(
             [
                 datetime(2000, 1, 1, tzinfo=fixed_off),

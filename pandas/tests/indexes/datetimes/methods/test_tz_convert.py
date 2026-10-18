@@ -1,3 +1,6 @@
+# [MODULE DOC]
+# Tests for DatetimeIndex.tz_convert: NaT handling, scalar/vector consistency, DST transitions
+# (hour overflow regressions), round trips, local timezone, and freq behavior.
 from datetime import datetime
 
 import dateutil.tz
@@ -19,7 +22,13 @@ import pandas._testing as tm
 
 
 class TestTZConvert:
+    # [CLASS DOC]
+    # Groups tz_convert tests; no state.
     def test_tz_convert_nat(self):
+        # [FUNCTION DOC]
+        # Regression test: localizing then converting an index of only NaT, and of dates with NaT, across
+        # Pacific, Eastern and UTC keeps NaT and shifts wall times correctly; adding an hour offset or a
+        # numpy timedelta afterwards gives the expected wall times in the current zone.
         # GH#5546
         dates = [NaT]
         idx = DatetimeIndex(dates)
@@ -55,6 +64,9 @@ class TestTZConvert:
 
     @pytest.mark.parametrize("prefix", ["", "dateutil/"])
     def test_dti_tz_convert_compat_timestamp(self, prefix):
+        # [FUNCTION DOC]
+        # Parametrized over timezone name prefix (plain or dateutil). Verifies converting a single stamp
+        # equals the first element of the converted index.
         strdates = ["1/1/2012", "3/1/2012", "4/1/2012"]
         idx = DatetimeIndex(strdates, tz=prefix + "US/Eastern")
 
@@ -64,6 +76,9 @@ class TestTZConvert:
         assert conv == expected
 
     def test_dti_tz_convert_hour_overflow_dst(self):
+        # [FUNCTION DOC]
+        # Regression test: hours after converting Eastern-localized dates (sorted and unsorted, across
+        # DST) to UTC and UTC to Eastern are as expected (int32 Index).
         # Regression test for GH#13306
 
         # sorted case US/Eastern -> UTC
@@ -96,6 +111,9 @@ class TestTZConvert:
 
     @pytest.mark.parametrize("tz", ["US/Eastern", "dateutil/US/Eastern"])
     def test_dti_tz_convert_hour_overflow_dst_timestamps(self, tz):
+        # [FUNCTION DOC]
+        # Parametrized over Eastern timezone spelling. Same as the previous test but building the index
+        # from timezone-aware Timestamps rather than localizing.
         # Regression test for GH#13306
 
         # sorted case US/Eastern -> UTC
@@ -144,6 +162,10 @@ class TestTZConvert:
 
     @pytest.mark.parametrize("freq, n", [("h", 1), ("min", 60), ("s", 3600)])
     def test_dti_tz_convert_trans_pos_plus_1__bug(self, freq, n):
+        # [FUNCTION DOC]
+        # Parametrized over (frequency, repetitions per hour) for hourly, minute and second ranges.
+        # Regression test: converting a UTC range to Moscow time across a transition gives the expected
+        # hour pattern (3, 4, 5 with repeated counts).
         # Regression test for tslib.tz_convert(vals, tz1, tz2).
         # See GH#4496 for details.
         idx = date_range(datetime(2011, 3, 26, 23), datetime(2011, 3, 27, 1), freq=freq)
@@ -154,6 +176,11 @@ class TestTZConvert:
         tm.assert_index_equal(idx.hour, Index(expected, dtype=np.int32))
 
     def test_dti_tz_convert_dst(self):
+        # [FUNCTION DOC]
+        # Verifies hours after converting between UTC and US/Eastern ranges at hourly, minute and second
+        # frequencies around the spring and fall DST transitions, and daily ranges across them.
+        # KNOWN ISSUE: one end date string in the last case is written with a three-digit hour field
+        # (zero-padded oddly); it parses but looks like a typo.
         for freq, n in [("h", 1), ("min", 60), ("s", 3600)]:
             # Start DST
             idx = date_range(
@@ -221,6 +248,10 @@ class TestTZConvert:
         tm.assert_index_equal(idx.hour, Index([4, 4], dtype=np.int32))
 
     def test_tz_convert_roundtrip(self, tz_aware_fixture):
+        # [FUNCTION DOC]
+        # Uses tz_aware_fixture. Verifies that converting UTC ranges (monthly, daily, hourly,
+        # minutely) to a timezone and back to naive equals the original naive range, and equals the
+        # UTC-converted naive range with inferred freq; the result has no tzinfo.
         tz = tz_aware_fixture
         idx1 = date_range(start="2014-01-01", end="2014-12-31", freq="ME", tz="UTC")
         exp1 = date_range(start="2014-01-01", end="2014-12-31", freq="ME")
@@ -244,6 +275,9 @@ class TestTZConvert:
             tm.assert_index_equal(reset, expected)
 
     def test_dti_tz_convert_tzlocal(self):
+        # [FUNCTION DOC]
+        # Verifies converting UTC to the local dateutil timezone and local to naive does not change
+        # the underlying integer values.
         # GH#13583
         # tz_convert doesn't affect to internal
         dti = date_range(start="2001-01-01", end="2001-03-01", tz="UTC")
@@ -264,6 +298,10 @@ class TestTZConvert:
         ],
     )
     def test_dti_tz_convert_utc_to_local_no_modify(self, tz):
+        # [FUNCTION DOC]
+        # Parametrized over timezone given as a name, a dateutil name, a pytz name (skipped if pytz is
+        # unavailable) and a zone object. Verifies that converting a UTC hourly range to local time leaves
+        # the integer values unchanged and the resulting timezone compares equal to the requested one.
         if isinstance(tz, str) and tz.startswith("pytz/"):
             pytz = pytest.importorskip("pytz")
             tz = pytz.timezone(tz.removeprefix("pytz/"))
@@ -277,6 +315,9 @@ class TestTZConvert:
 
     @pytest.mark.parametrize("tzstr", ["US/Eastern", "dateutil/US/Eastern"])
     def test_tz_convert_unsorted(self, tzstr):
+        # [FUNCTION DOC]
+        # Parametrized over timezone spelling. Verifies that the hours of a reversed converted index equal
+        # the reversed hours of the original (no ordering assumption).
         dr = date_range("2012-03-09", freq="h", periods=100, tz="utc")
         dr = dr.tz_convert(tzstr)
 
@@ -285,6 +326,9 @@ class TestTZConvert:
         tm.assert_almost_equal(result, exp)
 
     def test_dti_tz_convert_day_freq_not_preserved(self):
+        # [FUNCTION DOC]
+        # Regression test: converting a daily range in London to UTC keeps values equal but drops the
+        # freq.
         # GH#51716
         dti = date_range("2020-3-28", periods=5, freq="D", tz="Europe/London")
         result = dti.tz_convert("UTC")

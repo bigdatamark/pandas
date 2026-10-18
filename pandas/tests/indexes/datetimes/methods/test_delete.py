@@ -1,3 +1,7 @@
+# [MODULE DOC]
+# Tests for DatetimeIndex.delete and dropping from a datetime-indexed Series, focusing on
+# frequency retention (kept when removing from the ends, reset when removing from the middle),
+# name and timezone preservation.
 import pytest
 
 from pandas import (
@@ -9,7 +13,14 @@ import pandas._testing as tm
 
 
 class TestDelete:
+    # [CLASS DOC]
+    # Groups delete tests for DatetimeIndex; no state.
     def test_delete(self, unit):
+        # [FUNCTION DOC]
+        # Uses the unit fixture. On a five-element month-end index, deleting position 0 or -5 and
+        # position 4 or -1 keeps freq; deleting position 1 resets freq to none. Checks values, name and
+        # freq for each, and that an out of range position raises an index error or value error
+        # mentioning out of bounds.
         idx = date_range(
             start="2000-01-01", periods=5, freq="ME", name="idx", unit=unit
         )
@@ -48,6 +59,9 @@ class TestDelete:
 
     @pytest.mark.parametrize("tz", [None, "Asia/Tokyo", "US/Pacific"])
     def test_delete2(self, tz):
+        # [FUNCTION DOC]
+        # Parametrized over timezone (none, Tokyo, US Pacific). Verifies deleting the first and last
+        # elements of an hourly index keeps hourly freq, name and timezone.
         idx = date_range(
             start="2000-01-01 09:00", periods=10, freq="h", name="idx", tz=tz
         )
@@ -71,6 +85,9 @@ class TestDelete:
         assert result.tz == expected.tz
 
     def test_delete_slice(self, unit):
+        # [FUNCTION DOC]
+        # Uses the unit fixture. Verifies deleting a group of positions (as a tuple and as an equivalent
+        # slice): leading and trailing runs keep freq; a middle run resets freq to none; name is kept.
         idx = date_range(
             start="2000-01-01", periods=10, freq="D", name="idx", unit=unit
         )
@@ -117,6 +134,11 @@ class TestDelete:
     # TODO: belongs in Series.drop tests?
     @pytest.mark.parametrize("tz", [None, "Asia/Tokyo", "US/Pacific"])
     def test_delete_slice2(self, tz, unit):
+        # [FUNCTION DOC]
+        # Parametrized over timezone and the unit fixture. Verifies dropping labels from a Series with an
+        # hourly datetime index: dropping the leading five keeps freq; dropping alternating labels
+        # resets freq to none; name and timezone are preserved. (A comment suggests this belongs in
+        # Series.drop tests.)
         dti = date_range(
             "2000-01-01 09:00", periods=10, freq="h", name="idx", tz=tz, unit=unit
         )
