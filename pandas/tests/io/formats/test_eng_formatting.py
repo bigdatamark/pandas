@@ -1,3 +1,9 @@
+# [MODULE DOC]
+# Tests for engineering notation formatting of floats: the global option setter
+# that installs an engineering float format, and the formatter class itself
+# (exponent selection with and without SI prefixes, rounding by accuracy, nan and
+# inf handling). An autouse fixture resets the float format display option after
+# every test. Contains one test class.
 import numpy as np
 import pytest
 
@@ -12,12 +18,24 @@ from pandas.io.formats.format import EngFormatter
 
 @pytest.fixture(autouse=True)
 def reset_float_format():
+    # [FUNCTION DOC]
+    # HELPER: autouse fixture. Yields to run the test, then resets the display
+    # float format option to its default so engineering formats set by a test do not
+    # leak into others.
     yield
     reset_option("display.float_format")
 
 
 class TestEngFormatter:
+    # [CLASS DOC]
+    # Groups tests of engineering formatting via the option setter and via the
+    # formatter class. Has two helper methods that compare formatter output to
+    # expected strings.
     def test_eng_float_formatter2(self, float_frame):
+        # [FUNCTION DOC]
+        # Smoke test: takes the shared float frame fixture, sets a row to zero, and
+        # renders it (repr) after enabling the engineering format in default form, with
+        # SI prefixes, and with zero accuracy. Only checks that rendering does not raise.
         df = float_frame
         df.loc[5] = 0
 
@@ -31,6 +49,11 @@ class TestEngFormatter:
         repr(df)
 
     def test_eng_float_formatter(self):
+        # [FUNCTION DOC]
+        # Verifies frame string output for a float column spanning 1.41 to 1.41 million
+        # under three settings: default exponent notation with three decimals (exponents
+        # multiples of three), SI prefixes (k and M suffixes), and accuracy of zero
+        # (no decimals). Compares exact strings including alignment.
         df = DataFrame({"A": [1.41, 141.0, 14100, 1410000.0]})
 
         set_eng_float_format()
@@ -55,10 +78,18 @@ class TestEngFormatter:
         assert result == expected
 
     def compare(self, formatter, input, output):
+        # [FUNCTION DOC]
+        # HELPER: for the formatter tests. Applies the formatter to the input and asserts
+        # the result equals the expected output string.
         formatted_input = formatter(input)
         assert formatted_input == output
 
     def compare_all(self, formatter, in_out):
+        # [FUNCTION DOC]
+        # HELPER: for the formatter tests. Takes a formatter and a list of (number,
+        # expected string) pairs; numbers should be non-negative. For each pair checks
+        # the positive number against the expected string and the negated number against
+        # the expected string with its leading space replaced by a minus sign.
         """
         Parameters:
         -----------
@@ -74,6 +105,11 @@ class TestEngFormatter:
             self.compare(formatter, -input, "-" + output[1:])
 
     def test_exponents_with_eng_prefix(self):
+        # [FUNCTION DOC]
+        # Verifies formatter output with three decimals and SI prefixes for the square
+        # root of two scaled by every power of ten from minus twenty-four to plus
+        # twenty-six: prefixes y through Y with one to three integer digits, with a
+        # leading space for the sign position. Negative values are covered by the helper.
         formatter = EngFormatter(accuracy=3, use_eng_prefix=True)
         f = np.sqrt(2)
         in_out = [
@@ -132,6 +168,11 @@ class TestEngFormatter:
         self.compare_all(formatter, in_out)
 
     def test_exponents_without_eng_prefix(self):
+        # [FUNCTION DOC]
+        # Verifies formatter output with four decimals and no SI prefixes for pi scaled
+        # by every power of ten from minus twenty-four to plus twenty-six: exponent form
+        # with exponents that are multiples of three (zero padded to two digits), and
+        # one to three integer digits.
         formatter = EngFormatter(accuracy=4, use_eng_prefix=False)
         f = np.pi
         in_out = [
@@ -190,6 +231,10 @@ class TestEngFormatter:
         self.compare_all(formatter, in_out)
 
     def test_rounding(self):
+        # [FUNCTION DOC]
+        # Verifies rounding at accuracy three, one and zero with SI prefixes for values
+        # around 5.5 scaled by powers of a thousand (rounding half up on the displayed
+        # digits), and that zero formats as a zero with three decimals at accuracy three.
         formatter = EngFormatter(accuracy=3, use_eng_prefix=True)
         in_out = [
             (5.55555, " 5.556"),
@@ -228,6 +273,10 @@ class TestEngFormatter:
         assert result == " 0.000"
 
     def test_nan(self):
+        # [FUNCTION DOC]
+        # Regression test (issue 11981): the formatter renders nan as the text NaN, and
+        # a pivot table with missing cells printed under the engineering format option
+        # contains NaN in its string output.
         # Issue #11981
 
         formatter = EngFormatter(accuracy=1, use_eng_prefix=True)
@@ -247,6 +296,9 @@ class TestEngFormatter:
         assert "NaN" in result
 
     def test_inf(self):
+        # [FUNCTION DOC]
+        # Regression test (issue 11981): the formatter renders positive infinity as the
+        # text inf.
         # Issue #11981
 
         formatter = EngFormatter(accuracy=1, use_eng_prefix=True)

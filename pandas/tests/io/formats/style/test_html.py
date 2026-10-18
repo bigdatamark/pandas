@@ -1,3 +1,14 @@
+# [MODULE DOC]
+# Tests for html rendering of the table styler: whole-document output with and
+# without styles, doctype and encoding options, captions, custom template
+# subclassing and template block names, sticky headers and index, sparsification
+# options, header-cell ids, row and column limits, custom css class names, css
+# rules only for visible cells, hiding with multi-level indexes (alignment and
+# trimming), automatic hyperlink rendering, concatenated stylers (footer
+# prefixes in ids and classes), non-scalar data with a missing-value text, and
+# escaping of index names. Many tests compare the full html text to an expected
+# dedented string. Skipped at import time when jinja2 is missing (the skip call
+# precedes the styler import).
 import pathlib
 from textwrap import (
     dedent,
@@ -19,6 +30,11 @@ from pandas.io.formats.style import Styler
 
 @pytest.fixture
 def env():
+    # [FUNCTION DOC]
+    # HELPER: fixture building a jinja environment with a file system loader pointing
+    # at the templates directory of the io formats package (located relative to this
+    # test file by going up five directory levels) and block trimming enabled.
+    # Returns the environment.
     project_dir = pathlib.Path(__file__).parent.parent.parent.parent.parent.resolve()
     template_dir = project_dir / "io" / "formats" / "templates"
     loader = jinja2.FileSystemLoader(template_dir)
@@ -28,17 +44,27 @@ def env():
 
 @pytest.fixture
 def styler():
+    # [FUNCTION DOC]
+    # HELPER: fixture returning a styler (default random unique id) over a one-column
+    # frame A with values 2.61 and 2.69 and index a, b.
     return Styler(DataFrame([[2.61], [2.69]], index=["a", "b"], columns=["A"]))
 
 
 @pytest.fixture
 def styler_mi():
+    # [FUNCTION DOC]
+    # HELPER: fixture returning a styler over a four-by-four integer frame whose
+    # rows and columns both use the same two-level index (a, b by c, d).
     midx = MultiIndex.from_product([["a", "b"], ["c", "d"]])
     return Styler(DataFrame(np.arange(16).reshape(4, 4), index=midx, columns=midx))
 
 
 @pytest.fixture
 def styler_multi():
+    # [FUNCTION DOC]
+    # HELPER: fixture returning a styler over a four-by-four integer frame with
+    # two-level row and column indexes whose level names contain characters that need
+    # html escaping (A&, b&, X>, y_).
     df = DataFrame(
         data=np.arange(16).reshape(4, 4),
         columns=MultiIndex.from_product([["A", "B"], ["a", "b"]], names=["A&", "b&"]),
@@ -49,15 +75,24 @@ def styler_multi():
 
 @pytest.fixture
 def tpl_style(env):
+    # [FUNCTION DOC]
+    # HELPER: fixture returning the html style template loaded from the environment.
     return env.get_template("html_style.tpl")
 
 
 @pytest.fixture
 def tpl_table(env):
+    # [FUNCTION DOC]
+    # HELPER: fixture returning the html table template loaded from the environment.
     return env.get_template("html_table.tpl")
 
 
 def test_html_template_extends_options(datapath):
+    # [FUNCTION DOC]
+    # Reads the main html template file via the data path fixture and checks it
+    # includes the style and table sub-templates by variable name; this guards the
+    # dependency between the template text and the fixtures and custom template
+    # tests that rely on those include names.
     # make sure if templates are edited tests are updated as are setup fixtures
     # to understand the dependency
     path = datapath("..", "io", "formats", "templates", "html.tpl")
@@ -68,6 +103,10 @@ def test_html_template_extends_options(datapath):
 
 
 def test_exclude_styles(styler):
+    # [FUNCTION DOC]
+    # Verifies that rendering with styles excluded and a doctype produces a plain
+    # document: doctype, head with only the charset, a table without ids or classes,
+    # and default six-decimal floats.
     result = styler.to_html(exclude_styles=True, doctype_html=True)
     expected = dedent(
         """\
@@ -103,6 +142,11 @@ def test_exclude_styles(styler):
 
 
 def test_w3_html_format(styler):
+    # [FUNCTION DOC]
+    # Verifies a complete rendering combining an empty unique id, a table style, a
+    # per-cell style from a mapping function, custom table attributes, a cell class
+    # frame for one cell, a one-decimal format and a caption. Compares the whole html
+    # text (style element, table with attributes, caption, header and body cells).
     styler.set_uuid("").set_table_styles([{"selector": "th", "props": "att2:v2;"}]).map(
         lambda x: "att1:v1;"
     ).set_table_attributes('class="my-cls1" style="attr3:v3;"').set_td_classes(
@@ -143,6 +187,9 @@ def test_w3_html_format(styler):
 
 
 def test_colspan_w3():
+    # [FUNCTION DOC]
+    # Regression test (GH 36223): a two-level column index with a repeated top label
+    # renders that header cell with a column span of two (without cell ids).
     # GH 36223
     df = DataFrame(data=[[1, 2]], columns=[["l0", "l0"], ["l1a", "l1b"]])
     styler = Styler(df, uuid="_", cell_ids=False)
@@ -150,6 +197,9 @@ def test_colspan_w3():
 
 
 def test_rowspan_w3():
+    # [FUNCTION DOC]
+    # Regression test (GH 38533): a two-level row index with a repeated top label
+    # renders that header cell with a row span of two (without cell ids).
     # GH 38533
     df = DataFrame(data=[[1, 2]], index=[["l0", "l0"], ["l1a", "l1b"]])
     styler = Styler(df, uuid="_", cell_ids=False)
@@ -157,6 +207,10 @@ def test_rowspan_w3():
 
 
 def test_styles(styler):
+    # [FUNCTION DOC]
+    # Verifies a full document with a custom unique id and a td table style: style
+    # element in the head, ids prefixed with the unique id, and values at default
+    # precision.
     styler.set_uuid("abc")
     styler.set_table_styles([{"selector": "td", "props": "color: red;"}])
     result = styler.to_html(doctype_html=True)
@@ -199,6 +253,9 @@ def test_styles(styler):
 
 
 def test_doctype(styler):
+    # [FUNCTION DOC]
+    # Verifies that with the doctype option off, the output has none of the document
+    # level tags (doctype, html, head, body).
     result = styler.to_html(doctype_html=False)
     assert "<html>" not in result
     assert "<body>" not in result
@@ -207,6 +264,9 @@ def test_doctype(styler):
 
 
 def test_doctype_encoding(styler):
+    # [FUNCTION DOC]
+    # Verifies the charset meta tag takes the render encoding option value, and that
+    # an explicit encoding argument overrides it.
     with option_context("styler.render.encoding", "ASCII"):
         result = styler.to_html(doctype_html=True)
         assert '<meta charset="ASCII">' in result
@@ -215,6 +275,9 @@ def test_doctype_encoding(styler):
 
 
 def test_bold_headers_arg(styler):
+    # [FUNCTION DOC]
+    # Verifies the bold headers argument adds a header bold font rule to the style
+    # and is absent by default.
     result = styler.to_html(bold_headers=True)
     assert "th {\n  font-weight: bold;\n}" in result
     result = styler.to_html()
@@ -222,6 +285,9 @@ def test_bold_headers_arg(styler):
 
 
 def test_caption_arg(styler):
+    # [FUNCTION DOC]
+    # Verifies a caption argument is rendered in a caption element and absent by
+    # default.
     result = styler.to_html(caption="foo bar")
     assert "<caption>foo bar</caption>" in result
     result = styler.to_html()
@@ -229,6 +295,10 @@ def test_caption_arg(styler):
 
 
 def test_block_names(tpl_style, tpl_table):
+    # [FUNCTION DOC]
+    # Guards against accidental removal of template blocks: the set of block names of
+    # the style template must equal the expected five and the table template the
+    # expected twelve.
     # catch accidental removal of a block
     expected_style = {
         "before_style",
@@ -259,6 +329,12 @@ def test_block_names(tpl_style, tpl_table):
 
 
 def test_from_custom_template_table(tmpdir):
+    # [FUNCTION DOC]
+    # Verifies creating a styler subclass from a custom table template file (written
+    # to a temporary directory) that extends the base table template and adds a
+    # heading using a custom variable: the result is a subclass of the styler with its
+    # own environment and table template, and the rendered html contains the heading
+    # with the value passed at render time followed by the table.
     p = tmpdir.mkdir("tpl").join("myhtml_table.tpl")
     p.write(
         dedent(
@@ -279,6 +355,10 @@ def test_from_custom_template_table(tmpdir):
 
 
 def test_from_custom_template_style(tmpdir):
+    # [FUNCTION DOC]
+    # Same as the table template test but for a style template that adds a
+    # stylesheet link before the original style block; checks the subclass, its own
+    # environment and style template, and the link before the style element.
     p = tmpdir.mkdir("tpl").join("myhtml_style.tpl")
     p.write(
         dedent(
@@ -301,6 +381,9 @@ def test_from_custom_template_style(tmpdir):
 
 
 def test_caption_as_sequence(styler):
+    # [FUNCTION DOC]
+    # Verifies that a caption given as a (full, short) pair renders the full caption
+    # in html.
     styler.set_caption(("full cap", "short cap"))
     assert "<caption>full cap</caption>" in styler.to_html()
 
@@ -309,6 +392,13 @@ def test_caption_as_sequence(styler):
 @pytest.mark.parametrize("columns", [False, True])
 @pytest.mark.parametrize("index_name", [True, False])
 def test_sticky_basic(styler, index, columns, index_name):
+    # [FUNCTION DOC]
+    # Verifies the css for sticky index and column headers on a single-level index.
+    # Parametrized over whether the row index, the columns, and an index name are
+    # set. Checks the generated rules (left offset zero and stacking order three or
+    # one for the index in header and body; top offsets zero and twenty-five with a
+    # fixed height for the columns when an index name row exists, and without the
+    # height rule when it does not); each rule is present exactly when expected.
     if index_name:
         styler.index.name = "some text"
     if index:
@@ -347,6 +437,11 @@ def test_sticky_basic(styler, index, columns, index_name):
 @pytest.mark.parametrize("index", [False, True])
 @pytest.mark.parametrize("columns", [False, True])
 def test_sticky_mi(styler_mi, index, columns):
+    # [FUNCTION DOC]
+    # Verifies sticky css on a two-level row and column index: left offsets of zero
+    # and seventy-five pixels with fixed widths per level for the index in header and
+    # body, and top offsets of zero and twenty-five pixels with fixed height per
+    # column level. Parametrized over whether index and columns are sticky.
     if index:
         styler_mi.set_sticky(axis=0)
     if columns:
@@ -382,6 +477,11 @@ def test_sticky_mi(styler_mi, index, columns):
 @pytest.mark.parametrize("columns", [False, True])
 @pytest.mark.parametrize("levels", [[1], ["one"], "one"])
 def test_sticky_levels(styler_mi, index, columns, levels):
+    # [FUNCTION DOC]
+    # Verifies that sticking only one level (selected by number, by name in a list,
+    # or by bare name) generates the rules only for that level with offsets starting
+    # from zero, and none for the other level. Parametrized over index and columns
+    # stickiness and over the level selector form.
     styler_mi.index.names, styler_mi.columns.names = ["zero", "one"], ["zero", "one"]
     if index:
         styler_mi.set_sticky(axis=0, levels=levels)
@@ -413,6 +513,9 @@ def test_sticky_levels(styler_mi, index, columns, levels):
 
 
 def test_sticky_raises(styler):
+    # [FUNCTION DOC]
+    # Verifies that an invalid axis name given to the sticky setter raises a value
+    # error saying there is no such axis for the frame type.
     with pytest.raises(ValueError, match="No axis named bad for object type DataFrame"):
         styler.set_sticky(axis="bad")
 
@@ -422,6 +525,11 @@ def test_sticky_raises(styler):
     [(True, True), (True, False), (False, True), (False, False)],
 )
 def test_sparse_options(sparse_index, sparse_columns):
+    # [FUNCTION DOC]
+    # Verifies the sparsification options for rows and columns of a multi-level
+    # frame: setting the global options (parametrized over the four combinations)
+    # changes the output unless both are on (the default), and passing the equivalent
+    # arguments to the renderer gives the same html as the global options.
     cidx = MultiIndex.from_tuples([("Z", "a"), ("Z", "b"), ("Y", "c")])
     ridx = MultiIndex.from_tuples([("A", "a"), ("A", "b"), ("B", "c")])
     df = DataFrame([[1, 2, 3], [4, 5, 6], [7, 8, 9]], index=ridx, columns=cidx)
@@ -441,6 +549,11 @@ def test_sparse_options(sparse_index, sparse_columns):
 @pytest.mark.parametrize("index", [True, False])
 @pytest.mark.parametrize("columns", [True, False])
 def test_map_header_cell_ids(styler, index, columns):
+    # [FUNCTION DOC]
+    # Regression test (GH 41893): with cell ids disabled and an empty unique id,
+    # header cells still get ids and css rules when an index or column mapping style
+    # is applied (parametrized over each axis), while data cells never get ids; the
+    # absence of the header ids and rules is checked when a style is not applied.
     # GH 41893
     func = lambda v: "attr: val;"
     styler.uuid, styler.cell_ids = "", False
@@ -474,6 +587,11 @@ def test_map_header_cell_ids(styler, index, columns):
 @pytest.mark.parametrize("rows", [True, False])
 @pytest.mark.parametrize("cols", [True, False])
 def test_maximums(styler_mi, rows, cols):
+    # [FUNCTION DOC]
+    # Verifies the maximum rows and columns arguments: the first four cells always
+    # show, and the first trimmed vertical and horizontal elements are absent exactly
+    # when the corresponding limit is set. Parametrized over whether rows and columns
+    # are limited to two.
     result = styler_mi.to_html(
         max_rows=2 if rows else None,
         max_columns=2 if cols else None,
@@ -485,6 +603,13 @@ def test_maximums(styler_mi, rows, cols):
 
 
 def test_replaced_css_class_names():
+    # [FUNCTION DOC]
+    # Verifies that custom css class names given through the table styles setter
+    # replace the default names for row headings, index names, rows, row trim, level,
+    # data and blank cells (others commented out and left default). A multi-level
+    # frame with named index, one row and one column visible, and row, column and
+    # data style mappings is rendered and the whole html compared to the expected
+    # text, including the style element with the renamed ids.
     css = {
         "row_heading": "ROWHEAD",
         # "col_heading": "COLHEAD",
@@ -554,6 +679,9 @@ def test_replaced_css_class_names():
 
 
 def test_include_css_style_rules_only_for_visible_cells(styler_mi):
+    # [FUNCTION DOC]
+    # Regression test (GH 43619): after hiding all but the first row and column, the
+    # style element only includes the rule for the visible data cell.
     # GH 43619
     result = (
         styler_mi.set_uuid("")
@@ -575,6 +703,10 @@ def test_include_css_style_rules_only_for_visible_cells(styler_mi):
 
 
 def test_include_css_style_rules_only_for_visible_index_labels(styler_mi):
+    # [FUNCTION DOC]
+    # Regression test (GH 43619): with an index label style mapping and all columns
+    # and all but the first row hidden, the style element has the rule only for the
+    # visible row's two level labels.
     # GH 43619
     result = (
         styler_mi.set_uuid("")
@@ -596,6 +728,10 @@ def test_include_css_style_rules_only_for_visible_index_labels(styler_mi):
 
 
 def test_include_css_style_rules_only_for_visible_column_labels(styler_mi):
+    # [FUNCTION DOC]
+    # Regression test (GH 43619): with a column label style mapping and all rows and
+    # all but the first column hidden, the style element has the rule only for the
+    # visible column's two level labels.
     # GH 43619
     result = (
         styler_mi.set_uuid("")
@@ -617,6 +753,11 @@ def test_include_css_style_rules_only_for_visible_column_labels(styler_mi):
 
 
 def test_hiding_index_columns_multiindex_alignment():
+    # [FUNCTION DOC]
+    # Regression test (gh 43644): hides a whole level and some specific labels on
+    # three-level named row and column indexes, then compares the full html
+    # (header rows, index name row, row and column spans, and body cells) to check
+    # that labels, names and data stay aligned.
     # gh 43644
     midx = MultiIndex.from_product(
         [["i0", "j0"], ["i1"], ["i2", "j2"]], names=["i-0", "i-1", "i-2"]
@@ -686,6 +827,11 @@ def test_hiding_index_columns_multiindex_alignment():
 
 
 def test_hiding_index_columns_multiindex_trimming():
+    # [FUNCTION DOC]
+    # Regression test (gh 44272): an eight-by-eight frame with two-level named
+    # indexes, with some labels hidden, is rendered with limits of four rows and four
+    # columns. Compares the whole html to check that trimming marker cells and
+    # spans are right when hidden items are not counted toward the limits.
     # gh 44272
     df = DataFrame(np.arange(64).reshape(8, 8))
     df.columns = MultiIndex.from_product([[0, 1, 2, 3], [0, 1]])
@@ -810,6 +956,12 @@ def test_hiding_index_columns_multiindex_trimming():
     ],
 )
 def test_rendered_links(type, text, exp, found):
+    # [FUNCTION DOC]
+    # Verifies hyperlink detection when the hyperlinks option is html, for data
+    # values and for index labels. Parametrized over where the text is (data or
+    # index), and over example texts with the flag whether a link is expected and the
+    # link text found. A matched link is wrapped in an anchor opening in a new tab
+    # and the raw text is then absent; texts without a match are left as is.
     if type == "data":
         df = DataFrame([text])
         styler = df.style.format(hyperlinks="html")
@@ -824,6 +976,9 @@ def test_rendered_links(type, text, exp, found):
 
 
 def test_multiple_rendered_links():
+    # [FUNCTION DOC]
+    # Verifies that several links of different schemes within one cell text are each
+    # converted to an anchor, and that ordinary words are not.
     links = ("www.a.b", "http://a.c", "https://a.d", "ftp://a.e")
     df = DataFrame(["text {} {} text {} {}".format(*links)])
     result = df.style.format(hyperlinks="html").to_html()
@@ -834,6 +989,11 @@ def test_multiple_rendered_links():
 
 
 def test_concat(styler):
+    # [FUNCTION DOC]
+    # Verifies that concatenating a styler over the column mean appends a footer
+    # row whose header and data cell ids and class names have the footer prefix, and
+    # the tail of the html matches the expected text (closing the table body and
+    # table).
     other = styler.data.agg(["mean"]).style
     styler.concat(other).set_uuid("X")
     result = styler.to_html()
@@ -856,6 +1016,10 @@ def test_concat(styler):
 
 
 def test_concat_recursion(styler):
+    # [FUNCTION DOC]
+    # Verifies nested concatenation: the second-level footer row carries a doubled
+    # footer prefix in ids and classes, and each appended styler uses its own
+    # precision (three and four decimals).
     df = styler.data
     styler1 = styler
     styler2 = Styler(df.agg(["mean"]), precision=3)
@@ -888,6 +1052,9 @@ def test_concat_recursion(styler):
 
 
 def test_concat_chain(styler):
+    # [FUNCTION DOC]
+    # Verifies chained concatenation: footer rows get consecutively numbered footer
+    # prefixes (first and second), each with its own precision.
     df = styler.data
     styler1 = styler
     styler2 = Styler(df.agg(["mean"]), precision=3)
@@ -918,7 +1085,17 @@ def test_concat_chain(styler):
 
 
 def test_concat_combined():
+    # [FUNCTION DOC]
+    # Verifies a combination of chained and nested concatenation of four stylers that
+    # each highlight the maximum with a different colour: the css has one rule per
+    # styler with the matching nested footer prefixes, and the table lists the
+    # original rows followed by the row blocks with prefixes for each appended styler.
+    # Compares the full html.
     def html_lines(foot_prefix: str):
+        # [FUNCTION DOC]
+        # HELPER: builds the expected html rows of the two-row frame for a given footer
+        # prefix (empty or ending with an underscore, asserted). Returns the text indented
+        # by four spaces.
         assert foot_prefix.endswith("_") or foot_prefix == ""
         fp = foot_prefix
         return indent(
@@ -990,6 +1167,12 @@ def test_concat_combined():
 
 
 def test_to_html_na_rep_non_scalar_data(datapath):
+    # [FUNCTION DOC]
+    # Regression test (GH47103): rendering a frame with an integer, a list and a nan
+    # using a missing-value text gives the list as its string form and the nan as
+    # the missing text, with a table identifier given at render time. The whole html
+    # is compared.
+    # KNOWN ISSUE: the data path fixture argument is accepted but never used.
     # GH47103
     df = DataFrame([{"a": 1, "b": [1, 2, 3], "c": np.nan}])
     result = df.style.format(na_rep="-").to_html(table_uuid="test")
@@ -1021,6 +1204,11 @@ def test_to_html_na_rep_non_scalar_data(datapath):
 @pytest.mark.parametrize("escape_axis_0", [True, False])
 @pytest.mark.parametrize("escape_axis_1", [True, False])
 def test_format_index_names(styler_multi, escape_axis_0, escape_axis_1):
+    # [FUNCTION DOC]
+    # Verifies html escaping of index and column level names via the name formatter:
+    # names containing special characters are escaped for the row axis and/or column
+    # axis only when the escape is requested. Parametrized over each axis; checks the
+    # expected names followed by a closing header tag appear.
     if escape_axis_0:
         styler_multi.format_index_names(axis=0, escape="html")
         expected_index = ["X&gt;", "y_"]

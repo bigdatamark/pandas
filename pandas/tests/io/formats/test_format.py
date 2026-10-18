@@ -3,6 +3,16 @@ Tests for the file pandas.io.formats.format, *not* tests for general formatting
 of pandas objects.
 """
 
+# [MODULE DOC]
+# Tests for the module that implements text formatting of frames and series
+# (the formatter classes, percentile formatting and the file or buffer output
+# arguments). Not general tests of display of every pandas object. Covers
+# truncation by rows and columns and the wide (wrapped) layout under many display
+# options, east asian width alignment, datetime / timedelta / period / float /
+# generic array formatters, percentile formatting, and output to paths, path-like
+# objects and buffers. The module defines text-inspection helpers used by many
+# tests (info representation, truncation, expansion), a series generator, and
+# seven test classes plus module-level tests. No import-time side effects.
 from datetime import datetime
 from io import StringIO
 import re
@@ -31,6 +41,10 @@ import pandas.io.formats.format as fmt
 
 
 def has_info_repr(df):
+    # [FUNCTION DOC]
+    # HELPER: predicate on a frame. Returns true when the first line of its text
+    # representation starts with the class marker of an info summary, in either the
+    # plain form or the html-escaped form used by the html representation.
     r = repr(df)
     c1 = r.split("\n")[0].startswith("<class")
     c2 = r.split("\n")[0].startswith(r"&lt;class")  # _repr_html_
@@ -38,6 +52,11 @@ def has_info_repr(df):
 
 
 def has_non_verbose_info_repr(df):
+    # [FUNCTION DOC]
+    # HELPER: predicate on a frame. Returns true when the representation is an info
+    # summary (see the info predicate) and is also short: exactly six lines (class,
+    # index, columns summary, dtypes, memory usage, trailing empty line), i.e. the
+    # non-verbose summary.
     has_info = has_info_repr(df)
     r = repr(df)
 
@@ -52,6 +71,14 @@ def has_non_verbose_info_repr(df):
 
 
 def has_horizontally_truncated_repr(df):
+    # [FUNCTION DOC]
+    # HELPER: predicate on a frame. Finds the column position of the ellipsis marker in
+    # the first line of the text representation; returns false if there is none. Then
+    # checks that the same position holds an ellipsis in the whitespace-split token
+    # list, once per line, and returns true if so.
+    # KNOWN ISSUE: the per-line loop never uses its line index and always inspects the
+    # token list of the whole text at a fixed position, so it does not actually check
+    # that each row has the marker in the same place.
     try:  # Check header row
         fst_line = np.array(repr(df).splitlines()[0].split())
         cand_col = np.where(fst_line == "...")[0][0]
@@ -66,6 +93,9 @@ def has_horizontally_truncated_repr(df):
 
 
 def has_vertically_truncated_repr(df):
+    # [FUNCTION DOC]
+    # HELPER: predicate on a frame. Returns true when some line of the representation
+    # consists only of dots and spaces (the omitted rows marker line).
     r = repr(df)
     only_dot_row = False
     for row in r.splitlines():
@@ -75,14 +105,23 @@ def has_vertically_truncated_repr(df):
 
 
 def has_truncated_repr(df):
+    # [FUNCTION DOC]
+    # HELPER: predicate on a frame. True when it is truncated horizontally or
+    # vertically.
     return has_horizontally_truncated_repr(df) or has_vertically_truncated_repr(df)
 
 
 def has_doubly_truncated_repr(df):
+    # [FUNCTION DOC]
+    # HELPER: predicate on a frame. True when it is truncated both horizontally and
+    # vertically.
     return has_horizontally_truncated_repr(df) and has_vertically_truncated_repr(df)
 
 
 def has_expanded_repr(df):
+    # [FUNCTION DOC]
+    # HELPER: predicate on a frame. True when the wrapped (expanded) layout is used,
+    # detected by a line ending with a backslash.
     r = repr(df)
     for line in r.split("\n"):
         if line.endswith("\\"):
@@ -91,7 +130,19 @@ def has_expanded_repr(df):
 
 
 class TestDataFrameFormatting:
+    # [CLASS DOC]
+    # Groups tests of the text and html representation of frames: truncation, width
+    # handling, east asian text alignment, option interplay (maximum rows and
+    # columns, width, expand, dimensions, min rows, chop threshold, large repr),
+    # datetimes, periods, floats. Uses the helper predicates above and option
+    # contexts to scope global display options.
     def test_repr_truncation(self):
+        # [FUNCTION DOC]
+        # Verifies cell truncation by the maximum column width option on a frame with a
+        # random numeric column and a string column of lengths around the limit: lines whose
+        # value display width plus one exceeds the limit contain the ellipsis and others
+        # do not, using the active text adjuster to measure width. A very large limit, and
+        # a limit two above, give no ellipsis anywhere.
         max_len = 20
         with option_context("display.max_colwidth", max_len):
             df = DataFrame(
@@ -122,12 +173,20 @@ class TestDataFrameFormatting:
             assert "..." not in repr(df)
 
     def test_repr_truncation_preserves_na(self):
+        # [FUNCTION DOC]
+        # Regression test (issue 55630): with two maximum rows, a column of ten missing
+        # markers shows the markers in the first and last rows with an ellipsis row
+        # between, and no dimensions line.
         # https://github.com/pandas-dev/pandas/issues/55630
         df = DataFrame({"a": [pd.NA for _ in range(10)]})
         with option_context("display.max_rows", 2, "display.show_dimensions", False):
             assert repr(df) == "       a\n0   <NA>\n..   ...\n9   <NA>"
 
     def test_repr_truncation_dataframe_attrs(self):
+        # [FUNCTION DOC]
+        # Regression test (GH#60455): a frame whose attributes hold an empty frame is
+        # truncated by columns (maximum two) to first and last column with an ellipsis,
+        # without error.
         # GH#60455
         df = DataFrame([[0] * 10])
         df.attrs["b"] = DataFrame([])
@@ -135,6 +194,9 @@ class TestDataFrameFormatting:
             assert repr(df) == "   0  ...  9\n0  0  ...  0"
 
     def test_repr_truncation_series_with_dataframe_attrs(self):
+        # [FUNCTION DOC]
+        # Regression test (GH#60568): same as the frame attribute case for a series with
+        # maximum two rows, giving the first and last rows and an ellipsis row.
         # GH#60568
         ser = Series([0] * 10)
         ser.attrs["b"] = DataFrame([])
@@ -142,6 +204,10 @@ class TestDataFrameFormatting:
             assert repr(ser) == "0    0\n    ..\n9    0\ndtype: int64"
 
     def test_max_colwidth_negative_int_raises(self):
+        # [FUNCTION DOC]
+        # Verifies that setting the maximum column width option to a negative integer
+        # raises a value error saying it must be a non-negative integer or none (a
+        # deprecation enforced from issue 31532).
         # Deprecation enforced from:
         # https://github.com/pandas-dev/pandas/issues/31532
         with pytest.raises(
@@ -151,6 +217,10 @@ class TestDataFrameFormatting:
                 pass
 
     def test_repr_chop_threshold(self):
+        # [FUNCTION DOC]
+        # Verifies the chop threshold option on a two-by-two frame: default shows values;
+        # a threshold of 0.2 shows values below it as zero; 0.6 zeros all; none restores
+        # normal display.
         df = DataFrame([[0.1, 0.5], [0.5, -0.1]])
         reset_option("display.chop_threshold")  # default None
         assert repr(df) == "     0    1\n0  0.1  0.5\n1  0.5 -0.1"
@@ -165,6 +235,10 @@ class TestDataFrameFormatting:
             assert repr(df) == "     0    1\n0  0.1  0.5\n1  0.5 -0.1"
 
     def test_repr_chop_threshold_column_below(self):
+        # [FUNCTION DOC]
+        # Validation case for GH 6839: with a column of tiny values, a threshold of zero
+        # shows all in scientific notation, a threshold of 1e-8 zeroes the whole tiny
+        # column, and a threshold of 5e-11 zeroes only the entries below it.
         # GH 6839: validation case
 
         df = DataFrame([[10, 20, 30, 40], [8e-10, -1e-11, 2e-9, -2e-11]]).T
@@ -197,11 +271,21 @@ class TestDataFrameFormatting:
             )
 
     def test_repr_no_backslash(self):
+        # [FUNCTION DOC]
+        # Verifies that with simulated interactive mode, a random ten-by-four frame
+        # representation contains no backslash (no wrapped layout).
         with option_context("mode.sim_interactive", True):
             df = DataFrame(np.random.default_rng(2).standard_normal((10, 4)))
             assert "\\" not in repr(df)
 
     def test_expand_frame_repr(self):
+        # [FUNCTION DOC]
+        # Verifies the expand frame option with a small, a wide and a tall frame under a
+        # narrow width, maximum columns of ten and maximum rows of twenty in simulated
+        # interactive mode: when on, the wide frame is wrapped, the tall frame is
+        # truncated vertically and wrapped, the small frame is neither; when off, nothing
+        # is wrapped, the wide frame is not truncated horizontally and the tall frame is
+        # only truncated vertically.
         df_small = DataFrame("hello", index=[0], columns=[0])
         df_wide = DataFrame("hello", index=[0], columns=range(10))
         df_tall = DataFrame("hello", index=range(30), columns=range(5))
@@ -234,6 +318,10 @@ class TestDataFrameFormatting:
                     assert not has_expanded_repr(df_tall)
 
     def test_repr_non_interactive(self):
+        # [FUNCTION DOC]
+        # Verifies that in non-interactive mode with width zero and large maximum rows, a
+        # 1000-row frame is neither truncated nor wrapped (no dependence on terminal size
+        # detection).
         # in non interactive mode, there can be no dependency on the
         # result of terminal auto size detection
         df = DataFrame("hello", index=range(1000), columns=range(5))
@@ -245,6 +333,11 @@ class TestDataFrameFormatting:
             assert not has_expanded_repr(df)
 
     def test_repr_truncates_terminal_size(self, monkeypatch):
+        # [FUNCTION DOC]
+        # See gh-21180: with the terminal size patched to 118 by 96, a frame with long
+        # two-level column titles still shows the titles and sub-titles in the first two
+        # lines, and a frame with very long single-level column names shows the first
+        # name in the first line.
         # see gh-21180
 
         terminal_size = (118, 96)
@@ -276,6 +369,10 @@ class TestDataFrameFormatting:
         assert df2.columns[0] in result.split("\n")[0]
 
     def test_repr_truncates_terminal_size_full(self, monkeypatch):
+        # [FUNCTION DOC]
+        # Regression test (GH 22984): with the terminal size patched to 80 by 24, a
+        # one-row, seven-column random frame fits without an ellipsis in its string form
+        # (the entire width is used).
         # GH 22984 ensure entire window is filled
         terminal_size = (80, 24)
         df = DataFrame(np.random.default_rng(2).random((1, 7)))
@@ -286,6 +383,10 @@ class TestDataFrameFormatting:
         assert "..." not in str(df)
 
     def test_repr_truncation_column_size(self):
+        # [FUNCTION DOC]
+        # Verifies that when the last column is very wide, it is not used to size the
+        # truncation column: the string form has an ellipsis but no ellipsis surrounded by
+        # wide padding.
         # dataframe with last column very wide -> check it is not used to
         # determine size of truncation (...) column
         df = DataFrame(
@@ -301,11 +402,23 @@ class TestDataFrameFormatting:
         assert "    ...    " not in str(df)
 
     def test_repr_max_columns_max_rows(self):
+        # [FUNCTION DOC]
+        # Verifies interplay of maximum rows and columns with terminal width in simulated
+        # interactive mode (skipped if the terminal is smaller than ten by ten): small
+        # frames are neither wrapped nor truncated at the limit, a frame over both limits
+        # is doubly truncated and not wrapped, a frame over the column limit only fits
+        # the width and is neither wrapped nor truncated, exceeding only rows truncates
+        # vertically without wrapping, and with automatic width detection frames just
+        # under or over the terminal width are not wrapped or wrapped respectively.
+        # Uses the real terminal size.
         term_width, term_height = get_terminal_size()
         if term_width < 10 or term_height < 10:
             pytest.skip(f"terminal size too small, {term_width} x {term_height}")
 
         def mkframe(n):
+            # [FUNCTION DOC]
+            # HELPER: builds an n by n frame filled with zeros whose index and columns are
+            # the same zero-padded five digit number strings.
             index = [f"{i:05d}" for i in range(n)]
             return DataFrame(0, index, index)
 
@@ -346,6 +459,12 @@ class TestDataFrameFormatting:
                 assert has_expanded_repr(df)
 
     def test_repr_min_rows(self):
+        # [FUNCTION DOC]
+        # Verifies the minimum rows option for text and html: no truncation of a 20-row
+        # frame by default; a 61-row frame is truncated (default maximum 60); with
+        # maximum ten and minimum four only the first rows show; a minimum of none follows
+        # the maximum; a minimum above the maximum is ignored; a maximum of none never
+        # truncates.
         df = DataFrame({"a": range(20)})
 
         # default setting no truncation even if above min_rows
@@ -404,6 +523,13 @@ class TestDataFrameFormatting:
     def test_repr_float_formatting_html_output(
         self, data, format_option, expected_values
     ):
+        # [FUNCTION DOC]
+        # Verifies html output of a single cell under a float format option or default:
+        # the formatted number text appears (including an unsplit number wider than the
+        # format, none shown as None, empty string), and spaces in strings are converted
+        # to non-breaking space entities (leading space dropped, runs of spaces kept
+        # alternating). Parametrized over the data, the format string (or none to skip
+        # the option) and the expected fragment.
         if format_option is not None:
             with option_context("display.float_format", format_option.format):
                 df = DataFrame({"A": [data]})
@@ -415,6 +541,12 @@ class TestDataFrameFormatting:
             assert expected_values in html_output
 
     def test_str_max_colwidth(self):
+        # [FUNCTION DOC]
+        # Regression test (GH 7856): the string form of a frame with a long text column
+        # is not truncated by default, but is truncated with an ellipsis when the maximum
+        # column width option is twenty.
+        # KNOWN ISSUE: the call that sets the index from three columns discards its result
+        # (the frame is not modified), so it has no effect on the test.
         # GH 7856
         df = DataFrame(
             [
@@ -441,6 +573,13 @@ class TestDataFrameFormatting:
             )
 
     def test_auto_detect(self):
+        # [FUNCTION DOC]
+        # Verifies automatic size detection with maximum rows or columns of zero or none
+        # in simulated interactive mode on a frame wider (and then also taller) than the
+        # real terminal: none for both wraps the layout; zero for both truncates
+        # horizontally; a tall frame with zero rows and none columns wraps and truncates
+        # vertically; none rows and zero columns truncates horizontally. Uses the real
+        # terminal size.
         term_width, term_height = get_terminal_size()
         fac = 1.05  # Arbitrary large factor to exceed term width
         cols = range(int(term_width * fac))
@@ -470,6 +609,11 @@ class TestDataFrameFormatting:
                     assert has_horizontally_truncated_repr(df)
 
     def test_to_string_repr_unicode2(self):
+        # [FUNCTION DOC]
+        # Verifies that the series text representation with an index holding a non-ASCII
+        # label has all its lines (other than the dtype line) of the same length.
+        # KNOWN ISSUE: the decode attempt on each line is dead code, because text lines
+        # have no decode method; the attribute error is always swallowed.
         idx = Index(["abc", "\u03c3a", "aegdvg"])
         ser = Series(np.random.default_rng(2).standard_normal(len(idx)), idx)
         rs = repr(ser).split("\n")
@@ -483,6 +627,12 @@ class TestDataFrameFormatting:
                 assert len(line) == line_len
 
     def test_east_asian_unicode_false(self):
+        # [FUNCTION DOC]
+        # Verifies frame text output with east asian text when the east asian width option
+        # is off: alignment is by character count so wide characters misalign. Covers wide
+        # text in a middle column, last column, all columns, column names, index, index
+        # name, a combined case, a two-level index, and truncated output with and without
+        # a replaced index. Exact strings compared.
         # not aligned properly because of east asian width
 
         # mid col
@@ -638,6 +788,10 @@ class TestDataFrameFormatting:
             assert repr(df) == expected
 
     def test_east_asian_unicode_true(self):
+        # [FUNCTION DOC]
+        # Same cases as the option-off test but with the east asian width option on, so
+        # alignment is by display width; additionally covers a truncated frame and a case
+        # with ambiguous-width characters in values and index. Exact strings compared.
         # Enable Unicode option -----------------------------------------
         with option_context("display.unicode.east_asian_width", True):
             # mid col
@@ -820,6 +974,10 @@ class TestDataFrameFormatting:
             assert repr(df) == expected
 
     def test_to_string_buffer_all_unicode(self):
+        # [FUNCTION DOC]
+        # Smoke test: printing an empty and a non-empty frame whose column label contains
+        # a non-ASCII character into a text buffer, and reading the buffer, does not
+        # raise.
         buf = StringIO()
 
         empty = DataFrame({"c/\u03c3": Series(dtype=object)})
@@ -843,6 +1001,12 @@ class TestDataFrameFormatting:
     @pytest.mark.parametrize("h", [10, 20])
     @pytest.mark.parametrize("w", [10, 20])
     def test_to_string_truncate_indices(self, index_scalar, h, w):
+        # [FUNCTION DOC]
+        # Verifies truncation detection for frames with ten or twenty rows and columns and
+        # several index element types (text, integer, timestamp, period): with a limit of
+        # fifteen rows only twenty-row frames are vertically truncated, with a limit of
+        # fifteen columns only twenty-column frames horizontally truncated, and with both
+        # limits only the twenty by twenty frame is doubly truncated. Wrapping is off.
         with option_context("display.expand_frame_repr", False):
             df = DataFrame(
                 index=[index_scalar] * h, columns=[str(i) * 10 for i in range(w)]
@@ -864,6 +1028,9 @@ class TestDataFrameFormatting:
                     assert not has_doubly_truncated_repr(df)
 
     def test_to_string_truncate_multilevel(self):
+        # [FUNCTION DOC]
+        # Verifies that an eight-by-eight frame with two-level row and column indexes and
+        # limits of seven rows and columns is truncated in both directions.
         arrays = [
             ["bar", "bar", "baz", "baz", "foo", "foo", "qux", "qux"],
             ["one", "two", "one", "two", "one", "two", "one", "two"],
@@ -874,6 +1041,10 @@ class TestDataFrameFormatting:
 
     @pytest.mark.parametrize("dtype", ["object", "datetime64[us]"])
     def test_truncate_with_different_dtypes(self, dtype):
+        # [FUNCTION DOC]
+        # Regression test (11594): when a series of datetimes with one far-past value is
+        # truncated, the two parts can have different dtypes; the string form still
+        # contains the dtype name. Parametrized over object and microsecond datetime dtypes.
         # 11594, 12045
         # when truncated the dtypes of the splits can differ
 
@@ -890,6 +1061,9 @@ class TestDataFrameFormatting:
         assert dtype in result
 
     def test_truncate_with_different_dtypes2(self):
+        # [FUNCTION DOC]
+        # Regression test (12045): truncating an object frame with None values keeps the
+        # None text and shows no NaN.
         # 12045
         df = DataFrame({"text": ["some words"] + [None] * 9}, dtype=object)
 
@@ -899,6 +1073,10 @@ class TestDataFrameFormatting:
             assert "NaN" not in result
 
     def test_truncate_with_different_dtypes_multiindex(self):
+        # [FUNCTION DOC]
+        # Regression test (GH#13000): the representation of a one hundred row frame with
+        # a two-level index built by concatenation begins with the representation of its
+        # first five rows.
         # GH#13000
         df = DataFrame({"Vals": range(100)})
         frame = pd.concat([df], keys=["Sweep"], names=["Sweep", "Index"])
@@ -908,6 +1086,10 @@ class TestDataFrameFormatting:
         assert result.startswith(result2)
 
     def test_datetimelike_frame(self):
+        # [FUNCTION DOC]
+        # Regression test (GH 12211): truncated frames of timezone-aware datetimes mixed
+        # with not-a-time (first, last, or mixed time zones) show consistent offsets, NaT
+        # and an ellipsis row with the rows and columns count line; exact strings compared.
         # GH 12211
         df = DataFrame({"date": [Timestamp("20130101").tz_localize("UTC")] + [NaT] * 5})
 
@@ -974,6 +1156,10 @@ class TestDataFrameFormatting:
         ],
     )
     def test_datetimeindex_highprecision(self, start_date):
+        # [FUNCTION DOC]
+        # Regression test (GH19030): high precision end-of-day timestamps (from nine to
+        # four fractional digits) are shown in full in the frame string and the index
+        # string. Parametrized over six start dates.
         # GH19030
         # Check that high-precision time values for the end of day are
         # included in repr for DatetimeIndex
@@ -987,17 +1173,25 @@ class TestDataFrameFormatting:
         assert start_date in result
 
     def test_string_repr_encoding(self, datapath):
+        # [FUNCTION DOC]
+        # Smoke test: reads a latin-1 csv of unicode text located with the data path
+        # fixture and takes the representation of the frame and of its second column.
         filepath = datapath("io", "parser", "data", "unicode_series.csv")
         df = read_csv(filepath, header=None, encoding="latin1")
         repr(df)
         repr(df[1])
 
     def test_repr_corner(self):
+        # [FUNCTION DOC]
+        # Smoke test: a frame with negative and positive infinity can be represented.
         # representing infs poses no problems
         df = DataFrame({"foo": [-np.inf, np.inf]})
         repr(df)
 
     def test_frame_info_encoding(self):
+        # [FUNCTION DOC]
+        # Smoke test: representations of an empty frame with apostrophe and non-ASCII
+        # looking labels, and of its transpose, with maximum rows of one do not raise.
         index = ["'Til There Was You (1997)", "ldum klaka (Cold Fever) (1994)"]
         with option_context("display.max_rows", 1):
             df = DataFrame(columns=["a", "b", "c"], index=index)
@@ -1005,6 +1199,11 @@ class TestDataFrameFormatting:
             repr(df.T)
 
     def test_wide_repr(self):
+        # [FUNCTION DOC]
+        # Verifies the wrapped layout: for a 10-row frame with 19 text columns, a
+        # simulated interactive mode and maximum columns of twenty, with expansion off the
+        # dimensions line mentions the sizes; with expansion on the representation differs
+        # (is wrapped); and a larger display width gives a shorter representation.
         with option_context(
             "mode.sim_interactive",
             True,
@@ -1028,6 +1227,9 @@ class TestDataFrameFormatting:
                 assert len(wider_repr) < len(wide_repr)
 
     def test_wide_repr_wide_columns(self):
+        # [FUNCTION DOC]
+        # Verifies that a 5-row frame with three very wide (90 character) column labels is
+        # wrapped to exactly twenty lines.
         with option_context("mode.sim_interactive", True, "display.max_columns", 20):
             df = DataFrame(
                 np.random.default_rng(2).standard_normal((5, 3)),
@@ -1038,6 +1240,10 @@ class TestDataFrameFormatting:
             assert len(rep_str.splitlines()) == 20
 
     def test_wide_repr_named(self):
+        # [FUNCTION DOC]
+        # Verifies the wrapped layout for a frame with a named index: it differs from the
+        # unwrapped, a wider display width shortens it, and each wrapped block repeats the
+        # index name (checked every thirteenth line).
         with option_context("mode.sim_interactive", True, "display.max_columns", 20):
             max_cols = get_option("display.max_columns")
             df = DataFrame([["a" * 25] * (max_cols - 1)] * 10)
@@ -1056,6 +1262,9 @@ class TestDataFrameFormatting:
                 assert "DataFrame Index" in line
 
     def test_wide_repr_multiindex(self):
+        # [FUNCTION DOC]
+        # Same as the named case for a two-level named row index: the combined level
+        # names appear in each wrapped block.
         with option_context("mode.sim_interactive", True, "display.max_columns", 20):
             midx = MultiIndex.from_arrays([["a" * 5] * 10] * 2)
             max_cols = get_option("display.max_columns")
@@ -1075,6 +1284,9 @@ class TestDataFrameFormatting:
                 assert "Level 0 Level 1" in line
 
     def test_wide_repr_multiindex_cols(self):
+        # [FUNCTION DOC]
+        # Same wrapping checks for a frame with two-level row and column indexes; the
+        # wider-width check uses a separate option context after the first one.
         with option_context("mode.sim_interactive", True, "display.max_columns", 20):
             max_cols = get_option("display.max_columns")
             midx = MultiIndex.from_arrays([["a" * 5] * 10] * 2)
@@ -1094,6 +1306,10 @@ class TestDataFrameFormatting:
             assert len(wider_repr) < len(wide_repr)
 
     def test_wide_repr_unicode(self):
+        # [FUNCTION DOC]
+        # Verifies the wrapped layout for a 19-row frame of 10 text columns (wrapped
+        # differs from unwrapped; wider display width shortens it).
+        # KNOWN ISSUE: the name says unicode but the data are plain ASCII strings.
         with option_context("mode.sim_interactive", True, "display.max_columns", 20):
             max_cols = 20
             df = DataFrame([["a" * 25] * 10] * (max_cols - 1))
@@ -1108,6 +1324,9 @@ class TestDataFrameFormatting:
                 assert len(wider_repr) < len(wide_repr)
 
     def test_wide_repr_wide_long_columns(self):
+        # [FUNCTION DOC]
+        # Verifies that long text columns (70 and 80 characters) are not cut off in the
+        # wrapped layout in simulated interactive mode.
         with option_context("mode.sim_interactive", True):
             df = DataFrame({"a": ["a" * 30, "b" * 30], "b": ["c" * 70, "d" * 80]})
 
@@ -1116,6 +1335,9 @@ class TestDataFrameFormatting:
             assert "ddddd" in result
 
     def test_long_series(self):
+        # [FUNCTION DOC]
+        # Verifies that the representation of a series of 1000 entries has the dtype line
+        # exactly once.
         n = 1000
         s = Series(
             np.random.default_rng(2).integers(-50, 50, n),
@@ -1128,6 +1350,9 @@ class TestDataFrameFormatting:
         assert nmatches == 1
 
     def test_to_string_ascii_error(self):
+        # [FUNCTION DOC]
+        # Smoke test: a frame holding strings containing byte-like escape sequences can be
+        # represented without a decoding error.
         data = [
             (
                 "0  ",
@@ -1142,6 +1367,11 @@ class TestDataFrameFormatting:
         repr(df)
 
     def test_show_dimensions(self):
+        # [FUNCTION DOC]
+        # Verifies the show dimensions option on a 5-by-30 frame, in string and html:
+        # when true the row count text is shown; when false it is not; when the truncate
+        # setting is used it is shown only when the output is actually truncated (small
+        # maximum rows and columns) and not otherwise. The info expansion setting is used.
         df = DataFrame(123, index=range(10, 15), columns=range(30))
 
         with option_context(
@@ -1202,6 +1432,11 @@ class TestDataFrameFormatting:
             assert "5 rows" not in df._repr_html_()
 
     def test_info_repr(self):
+        # [FUNCTION DOC]
+        # Regression test (GH#21746): with the large representation option set to info,
+        # a frame taller than the default maximum rows, and one wider than the maximum
+        # columns (adjusted for the real terminal width), produce an info summary rather
+        # than a table.
         # GH#21746 For tests inside a terminal (i.e. not CI) we need to detect
         # the terminal size to ensure that we try to print something "too big"
         term_width, term_height = get_terminal_size()
@@ -1225,6 +1460,12 @@ class TestDataFrameFormatting:
             assert has_info_repr(df)
 
     def test_info_repr_max_cols(self):
+        # [FUNCTION DOC]
+        # Regression test (GH #6939): with the large repr option set to info, maximum
+        # columns of one and maximum info columns of four, a five-column frame shows the
+        # short (non-verbose) summary; with maximum info columns of five it does not.
+        # KNOWN ISSUE: a leftover comment asks to remove commented-out code and describes
+        # an unfinished verbose override check that is not implemented.
         # GH #6939
         df = DataFrame(np.random.default_rng(2).standard_normal((10, 5)))
         with option_context(
@@ -1252,18 +1493,31 @@ class TestDataFrameFormatting:
         # set_option('display.max_info_columns', 4)  # exceeded
 
     def test_pprint_pathological_object(self):
+        # [FUNCTION DOC]
+        # Smoke test: the representation of a frame holding an object that returns a
+        # constant for any item lookup completes (does not hang or raise). The class is a
+        # local helper.
         """
         If the test fails, it at least won't hang.
         """
 
         class A:
+            # [CLASS DOC]
+            # HELPER: local pathological class for the representation test. Its item lookup
+            # returns the integer three for any key, which makes naive sequence detection loop.
             def __getitem__(self, key):
+                # [FUNCTION DOC]
+                # HELPER: returns the integer three for any key.
                 return 3  # obviously simplified
 
         df = DataFrame([A()])
         repr(df)  # just don't die
 
     def test_float_trim_zeros(self):
+        # [FUNCTION DOC]
+        # Verifies that large floats (about 1e10) in a frame representation show the
+        # two-digit exponent form (three-digit on platforms with that format), except the
+        # first checked line which is skipped by a flag.
         vals = [
             2.08430917305e10,
             3.52205017305e10,
@@ -1295,6 +1549,13 @@ class TestDataFrameFormatting:
         ],
     )
     def test_repr_str_float_truncation(self, data, expected, using_infer_string):
+        # [FUNCTION DOC]
+        # Regression test (GH#38708): a series of strings and floats keeps trailing zeros of
+        # string values and aligns them with numeric entries; parametrized over data
+        # (strings, mixed, missing values) and expected text. Dtype object is forced when
+        # a literal 3.50 string is in the data.
+        # KNOWN ISSUE: the fixture argument for the string inference mode is accepted but
+        # never used.
         # GH#38708
         series = Series(data, dtype=object if "3.50" in data else None)
         result = repr(series)
@@ -1308,6 +1569,10 @@ class TestDataFrameFormatting:
         ],
     )
     def test_repr_float_format_in_object_col(self, float_format, expected):
+        # [FUNCTION DOC]
+        # Regression test (GH#40024): the float format option is applied to a float in an
+        # object series while the text element is left as is. Parametrized over two format
+        # functions with expected text.
         # GH#40024
         df = Series([1000.0, "test"])
         with option_context("display.float_format", float_format):
@@ -1316,6 +1581,10 @@ class TestDataFrameFormatting:
         assert result == expected
 
     def test_period(self):
+        # [FUNCTION DOC]
+        # Regression test (GH 12615): a frame with period columns of a monthly frequency
+        # and of mixed frequencies is shown with each period formatted at its own
+        # frequency; exact string compared.
         # GH 12615
         df = DataFrame(
             {
@@ -1352,6 +1621,12 @@ class TestDataFrameFormatting:
         ],
     )
     def test_max_rows_fitted(self, length, min_rows, max_rows, expected):
+        # [FUNCTION DOC]
+        # Regression test (GH #37359): the formatter's number of rows to display equals the
+        # frame length when it fits, otherwise the minimum rows setting when the frame
+        # exceeds the maximum, and the maximum when the minimum is larger; with edge cases
+        # at exactly the maximum and one above. Parametrized over length, maximum, minimum
+        # and expected rows.
         """Check that display logic is correct.
 
         GH #37359
@@ -1369,6 +1644,10 @@ class TestDataFrameFormatting:
 
 
 def gen_series_formatting():
+    # [FUNCTION DOC]
+    # HELPER: returns a dict of four test series: one hundred short strings, one
+    # hundred two-letter strings, ascending length strings, and the descending
+    # (reversed) series, keyed onel, twol, asc, desc.
     s1 = Series(["a"] * 100)
     s2 = Series(["ab"] * 100)
     s3 = Series(["a", "ab", "abc", "abcd", "abcde", "abcdef"])
@@ -1378,7 +1657,14 @@ def gen_series_formatting():
 
 
 class TestSeriesFormatting:
+    # [CLASS DOC]
+    # Groups tests of the text representation of series: names and frequency footers,
+    # east asian text alignment, datetimes and periods, truncation and maximum rows,
+    # number of columns, dimensions and minimum rows.
     def test_freq_name_separation(self):
+        # [FUNCTION DOC]
+        # Verifies the footer of a named series over a daily date index shows both the
+        # frequency and the name.
         s = Series(
             np.random.default_rng(2).standard_normal(10),
             index=date_range("1/1/2000", periods=10),
@@ -1389,11 +1675,20 @@ class TestSeriesFormatting:
         assert "Freq: D, Name: 0" in result
 
     def test_unicode_name_in_footer(self):
+        # [FUNCTION DOC]
+        # Verifies that building the footer of a series formatter whose name has Hebrew
+        # characters does not raise.
         s = Series([1, 2], name="\u05e2\u05d1\u05e8\u05d9\u05ea")
         sf = fmt.SeriesFormatter(s, name="\u05e2\u05d1\u05e8\u05d9\u05ea")
         sf._get_footer()  # should not raise exception
 
     def test_east_asian_unicode_series(self, using_infer_string):
+        # [FUNCTION DOC]
+        # Verifies series text output with east asian text with the width option off
+        # (index, values, both, name in the footer, two-level index, object dtype indexes
+        # shorter and longer than the unicode form, and truncation) and on (same cases
+        # plus ambiguous-width text). When the string inference mode is on, the expected
+        # dtype footer text is changed to the string dtype.
         # not aligned properly because of east asian width
 
         # unicode index
@@ -1645,6 +1940,9 @@ class TestSeriesFormatting:
             assert repr(s) == expected
 
     def test_float_trim_zeros(self):
+        # [FUNCTION DOC]
+        # Verifies large floats in a series representation show a two-digit exponent (or
+        # three-digit on platforms with that format) on every line except the dtype line.
         vals = [
             2.08430917305e10,
             3.52205017305e10,
@@ -1672,6 +1970,9 @@ class TestSeriesFormatting:
         ],
     )
     def test_datetimeindex_highprecision(self, start_date):
+        # [FUNCTION DOC]
+        # Regression test (GH19030): high precision end-of-day timestamps are shown in
+        # full in the series string and the index string. Parametrized over six dates.
         # GH19030
         # Check that high-precision time values for the end of day are
         # included in repr for DatetimeIndex
@@ -1685,6 +1986,9 @@ class TestSeriesFormatting:
         assert start_date in result
 
     def test_mixed_datetime64(self):
+        # [FUNCTION DOC]
+        # Verifies that a row selected from a frame holding an integer and a datetime
+        # column shows the datetime in its representation.
         df = DataFrame({"A": [1, 2], "B": ["2012-01-01", "2012-01-02"]})
         df["B"] = pd.to_datetime(df.B)
 
@@ -1692,6 +1996,10 @@ class TestSeriesFormatting:
         assert "2012-01-01" in result
 
     def test_period(self):
+        # [FUNCTION DOC]
+        # Regression test (GH 12615): a series with a period index shows the frequency in
+        # the footer; a series of periods shows the period dtype; a series of periods with
+        # mixed frequencies is object typed and each is formatted at its own frequency.
         # GH 12615
         index = pd.period_range("2013-01", periods=6, freq="M")
         s = Series(np.arange(6, dtype="int64"), index=index)
@@ -1733,6 +2041,10 @@ class TestSeriesFormatting:
         assert str(s) == exp
 
     def test_max_multi_index_display(self):
+        # [FUNCTION DOC]
+        # Regression test (GH 7101): line counts of the series string for various maximum
+        # rows values (ten, three, two, one, zero) for an eight-entry series with a
+        # two-level index and, separately, with a default index; zero means no limit.
         # GH 7101
 
         # doc example (indexing.rst)
@@ -1773,6 +2085,9 @@ class TestSeriesFormatting:
 
     # Make sure #8532 is fixed
     def test_consistent_format(self):
+        # [FUNCTION DOC]
+        # Regression test (issue 8532, per the comment above it): a truncated float series
+        # with one differing value uses a consistent four-decimal format for every line.
         s = Series([1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0.9999, 1, 1] * 10)
         with option_context("display.max_rows", 10, "display.show_dimensions", False):
             res = repr(s)
@@ -1785,6 +2100,10 @@ class TestSeriesFormatting:
         assert res == exp
 
     def chck_ncols(self, s):
+        # [FUNCTION DOC]
+        # HELPER: for the column count tests. Takes a series, splits its representation
+        # into lines, drops ellipsis lines and the last (dtype) line, and asserts that all
+        # remaining lines have the same stripped length.
         lines = [
             line for line in repr(s).split("\n") if not re.match(r"[^\.]*\.+", line)
         ][:-1]
@@ -1792,6 +2111,10 @@ class TestSeriesFormatting:
         assert ncolsizes == 1
 
     def test_format_explicit(self, using_infer_string):
+        # [FUNCTION DOC]
+        # Verifies exact truncated output (maximum rows four, no dimensions) for the four
+        # generated series, including right alignment and ellipsis placement; the dtype
+        # text is replaced when string inference is on.
         test_sers = gen_series_formatting()
         with option_context("display.max_rows", 4, "display.show_dimensions", False):
             res = repr(test_sers["onel"])
@@ -1822,11 +2145,17 @@ class TestSeriesFormatting:
             assert exp == res
 
     def test_ncols(self):
+        # [FUNCTION DOC]
+        # Verifies, for each generated series, that all content lines have the same width
+        # using the helper method.
         test_sers = gen_series_formatting()
         for s in test_sers.values():
             self.chck_ncols(s)
 
     def test_max_rows_eq_one(self):
+        # [FUNCTION DOC]
+        # Verifies that with maximum rows of one the output is the first entry then an
+        # ellipsis line.
         s = Series(range(10), dtype="int64")
         with option_context("display.max_rows", 1):
             strrepr = repr(s).split("\n")
@@ -1838,7 +2167,15 @@ class TestSeriesFormatting:
         assert exp2 == res2
 
     def test_truncate_ndots(self):
+        # [FUNCTION DOC]
+        # Verifies the number of dots in the truncation marker line: two for small
+        # values and three when values have three digits (marker width follows the data
+        # width), for a series truncated to two rows. The inner helper counts the leading
+        # run of dots after the first non-dot text.
         def getndots(s):
+            # [FUNCTION DOC]
+            # HELPER: returns the length of the first run of dot characters found after any
+            # leading non-dot characters in the given text.
             return len(re.match(r"[^\.]*(\.*)", s).groups()[0])
 
         s = Series([0, 2, 3, 6])
@@ -1852,6 +2189,10 @@ class TestSeriesFormatting:
         assert getndots(strrepr) == 3
 
     def test_show_dimensions(self):
+        # [FUNCTION DOC]
+        # Regression test (gh-7117): a series representation has no length footer by
+        # default, has it when truncated, when the dimensions option is true, and not when
+        # the option is false even if truncated.
         # gh-7117
         s = Series(range(5))
 
@@ -1867,6 +2208,11 @@ class TestSeriesFormatting:
             assert "Length" not in repr(s)
 
     def test_repr_min_rows(self):
+        # [FUNCTION DOC]
+        # Verifies the minimum rows option for series text output: no truncation of 20
+        # rows, truncation of 61 rows, only the first rows with maximum ten and minimum
+        # four, a minimum of none following the maximum, a minimum above the maximum being
+        # ignored, and a maximum of none never truncating.
         s = Series(range(20))
 
         # default setting no truncation even if above min_rows
@@ -1896,7 +2242,13 @@ class TestSeriesFormatting:
 
 
 class TestGenericArrayFormatter:
+    # [CLASS DOC]
+    # Groups tests of the generic array formatter, used for types with no dedicated
+    # formatter (boolean arrays are an example).
     def test_1d_array(self):
+        # [FUNCTION DOC]
+        # Verifies the formatter output for a one-dimensional boolean array: two strings,
+        # right justified with a leading space.
         # _GenericArrayFormatter is used on types for which there isn't a dedicated
         # formatter. np.bool_ is one of those types.
         obj = fmt._GenericArrayFormatter(np.array([True, False]))
@@ -1907,6 +2259,9 @@ class TestGenericArrayFormatter:
         assert res[1] == " False"
 
     def test_2d_array(self):
+        # [FUNCTION DOC]
+        # Verifies a two-dimensional boolean array is formatted as one bracketed list text
+        # per row with a leading space.
         obj = fmt._GenericArrayFormatter(np.array([[True, False], [False, True]]))
         res = obj.get_result()
         assert len(res) == 2
@@ -1914,6 +2269,9 @@ class TestGenericArrayFormatter:
         assert res[1] == " [False, True]"
 
     def test_3d_array(self):
+        # [FUNCTION DOC]
+        # Verifies a three-dimensional boolean array is formatted as one nested bracketed
+        # text per outer element with a leading space.
         obj = fmt._GenericArrayFormatter(
             np.array([[[True, True], [False, False]], [[False, True], [True, False]]])
         )
@@ -1924,22 +2282,37 @@ class TestGenericArrayFormatter:
 
 
 def _three_digit_exp():
+    # [FUNCTION DOC]
+    # HELPER: platform check for the float exponent tests. Returns true when the
+    # platform formats exponents with three digits (the output of a general format
+    # of 1.7e8 equals the three-digit form), false otherwise.
     return f"{1.7e8:.4g}" == "1.7e+008"
 
 
 class TestFloatArrayFormatter:
+    # [CLASS DOC]
+    # Groups tests of the float array formatter and the display precision option.
     def test_misc(self):
+        # [FUNCTION DOC]
+        # Verifies the formatter on an empty float array returns an empty result.
         obj = fmt.FloatArrayFormatter(np.array([], dtype=np.float64))
         result = obj.get_result()
         assert len(result) == 0
 
     def test_format(self):
+        # [FUNCTION DOC]
+        # Verifies the formatter on the array twelve and zero returns right-aligned
+        # one-decimal strings with a leading space.
         obj = fmt.FloatArrayFormatter(np.array([12, 0], dtype=np.float64))
         result = obj.get_result()
         assert result[0] == " 12.0"
         assert result[1] == "  0.0"
 
     def test_output_display_precision_trailing_zeroes(self):
+        # [FUNCTION DOC]
+        # Regression test (issue 20359): with display precision zero, trailing zeros are
+        # not trimmed when there is no decimal point; the string form of a series of 840
+        # and 4200 shows integers.
         # Issue #20359: trimming zeros while there is no decimal point
 
         # Happens when display precision is set to zero
@@ -1959,6 +2332,10 @@ class TestFloatArrayFormatter:
         ],
     )
     def test_set_option_precision(self, value, expected):
+        # [FUNCTION DOC]
+        # Regression test (issue 30122): with display precision zero, frame output for
+        # single values and pairs uses the correct rounding and switches to scientific
+        # notation for fractions. Parametrized over data and expected text.
         # Issue #30122
         # Precision was incorrectly shown
 
@@ -1967,6 +2344,10 @@ class TestFloatArrayFormatter:
             assert str(df_value) == expected
 
     def test_output_significant_digits(self):
+        # [FUNCTION DOC]
+        # Regression test (issue 9764): with display precision six, slices of a column of
+        # tiny values show enough significant digits in scientific notation (or fixed six
+        # decimals when the slice allows). Exact strings compared for five slices.
         # Issue #9764
 
         # In case default display precision changes:
@@ -2040,6 +2421,10 @@ class TestFloatArrayFormatter:
                 assert str(d[start:stop]) == v
 
     def test_too_long(self):
+        # [FUNCTION DOC]
+        # Regression test (GH 10451): with display precision four, a number over a million
+        # alone is shown in fixed notation when short enough, and as scientific notation
+        # when combined with another value that makes the fixed form too long.
         # GH 10451
         with option_context("display.precision", 4):
             # need both a number > 1e6 and something that normally formats to
@@ -2053,7 +2438,14 @@ class TestFloatArrayFormatter:
 
 
 class TestTimedelta64Formatter:
+    # [CLASS DOC]
+    # Groups tests of the timedelta array formatter on arrays created from the
+    # underlying values of a timedelta index.
     def test_days(self):
+        # [FUNCTION DOC]
+        # Verifies day-resolution timedeltas (zero to four days and a missing value) are
+        # formatted as the number of days with the unit text, for the full array and for a
+        # slice of one element (the checks are repeated twice).
         x = pd.to_timedelta([*list(range(5)), NaT], unit="D")._values
         result = fmt._Timedelta64Formatter(x).get_result()
         assert result[0].strip() == "0 days"
@@ -2070,24 +2462,35 @@ class TestTimedelta64Formatter:
         assert result[0].strip() == "1 days"
 
     def test_days_neg(self):
+        # [FUNCTION DOC]
+        # Verifies the negated array formats negative days with a minus sign (and zero as
+        # zero days).
         x = pd.to_timedelta([*list(range(5)), NaT], unit="D")._values
         result = fmt._Timedelta64Formatter(-x).get_result()
         assert result[0].strip() == "0 days"
         assert result[1].strip() == "-1 days"
 
     def test_subdays(self):
+        # [FUNCTION DOC]
+        # Verifies second-resolution timedeltas are formatted with days and a clock time.
         y = pd.to_timedelta([*list(range(5)), NaT], unit="s")._values
         result = fmt._Timedelta64Formatter(y).get_result()
         assert result[0].strip() == "0 days 00:00:00"
         assert result[1].strip() == "0 days 00:00:01"
 
     def test_subdays_neg(self):
+        # [FUNCTION DOC]
+        # Verifies negative second-resolution timedeltas use the minus-days plus clock
+        # time form.
         y = pd.to_timedelta([*list(range(5)), NaT], unit="s")._values
         result = fmt._Timedelta64Formatter(-y).get_result()
         assert result[0].strip() == "0 days 00:00:00"
         assert result[1].strip() == "-1 days +23:59:59"
 
     def test_zero(self):
+        # [FUNCTION DOC]
+        # Verifies a zero timedelta (with and without a trailing missing value) is
+        # formatted as zero days.
         x = pd.to_timedelta([*list(range(1)), NaT], unit="D")._values
         result = fmt._Timedelta64Formatter(x).get_result()
         assert result[0].strip() == "0 days"
@@ -2098,24 +2501,40 @@ class TestTimedelta64Formatter:
 
 
 class TestDatetime64Formatter:
+    # [CLASS DOC]
+    # Groups tests of the datetime array formatter and its time-zone aware variant on
+    # arrays taken from series values.
     def test_mixed(self):
+        # [FUNCTION DOC]
+        # Verifies that a mix of midnight and noon datetimes plus a missing value uses the
+        # full date-time form.
         x = Series([datetime(2013, 1, 1), datetime(2013, 1, 1, 12), NaT])._values
         result = fmt._Datetime64Formatter(x).get_result()
         assert result[0].strip() == "2013-01-01 00:00:00"
         assert result[1].strip() == "2013-01-01 12:00:00"
 
     def test_dates(self):
+        # [FUNCTION DOC]
+        # Verifies that midnight-only datetimes use the date-only form.
         x = Series([datetime(2013, 1, 1), datetime(2013, 1, 2), NaT])._values
         result = fmt._Datetime64Formatter(x).get_result()
         assert result[0].strip() == "2013-01-01"
         assert result[1].strip() == "2013-01-02"
 
     def test_date_nanos(self):
+        # [FUNCTION DOC]
+        # Verifies a timestamp of 200 nanoseconds after the epoch shows nine fractional
+        # digits.
         x = Series([Timestamp(200)])._values
         result = fmt._Datetime64Formatter(x).get_result()
         assert result[0].strip() == "1970-01-01 00:00:00.000000200"
 
     def test_dates_display(self):
+        # [FUNCTION DOC]
+        # Regression test (10170): the formatter shows a consistent date format for series
+        # with day, second, millisecond, microsecond and nanosecond frequency: the matching
+        # number of fractional digits, a missing value shown as NaT, and the proper last
+        # element.
         # 10170
         # make sure that we are consistently display date formatting
         x = Series(date_range("20130101 09:00:00", periods=5, freq="D"))
@@ -2154,9 +2573,14 @@ class TestDatetime64Formatter:
         assert result[4].strip() == "2013-01-01 09:00:00.000000004"
 
     def test_datetime64formatter_yearmonth(self):
+        # [FUNCTION DOC]
+        # Verifies that a custom formatting function (year and month) is used by the
+        # formatter for each element.
         x = Series([datetime(2016, 1, 1), datetime(2016, 2, 2)])._values
 
         def format_func(x):
+            # [FUNCTION DOC]
+            # HELPER: formatting function returning the year and month text of a timestamp.
             return x.strftime("%Y-%m")
 
         formatter = fmt._Datetime64Formatter(x, formatter=format_func)
@@ -2164,11 +2588,16 @@ class TestDatetime64Formatter:
         assert result == ["2016-01", "2016-02"]
 
     def test_datetime64formatter_hoursecond(self):
+        # [FUNCTION DOC]
+        # Verifies that a custom formatting function (hour and minute) is used by the
+        # formatter on time-only datetimes parsed from text.
         x = Series(
             pd.to_datetime(["10:10:10.100", "12:12:12.120"], format="%H:%M:%S.%f")
         )._values
 
         def format_func(x):
+            # [FUNCTION DOC]
+            # HELPER: formatting function returning the hour and minute text of a timestamp.
             return x.strftime("%H:%M")
 
         formatter = fmt._Datetime64Formatter(x, formatter=format_func)
@@ -2176,6 +2605,9 @@ class TestDatetime64Formatter:
         assert result == ["10:10", "12:12"]
 
     def test_datetime64formatter_tz_ms(self):
+        # [FUNCTION DOC]
+        # Verifies the time-zone aware formatter handles millisecond datetimes in a far
+        # future year localized to the US Pacific zone, showing the offset.
         x = (
             Series(
                 np.array(["2999-01-01", "2999-01-02", "NaT"], dtype="datetime64[ms]")
@@ -2189,6 +2621,8 @@ class TestDatetime64Formatter:
 
 
 class TestFormatPercentiles:
+    # [CLASS DOC]
+    # Groups tests of the percentile label formatting function.
     @pytest.mark.parametrize(
         "percentiles, expected",
         [
@@ -2209,6 +2643,11 @@ class TestFormatPercentiles:
         ],
     )
     def test_format_percentiles(self, percentiles, expected):
+        # [FUNCTION DOC]
+        # Verifies percentile fractions are turned into percent strings with the minimal
+        # number of decimals that keeps them distinct and exact (for example 2.001% and 50%
+        # in one list but 2.0% when needed for uniform precision). Parametrized over five
+        # lists with expected labels.
         result = fmt.format_percentiles(percentiles)
         assert result == expected
 
@@ -2222,11 +2661,18 @@ class TestFormatPercentiles:
         ],
     )
     def test_error_format_percentiles(self, percentiles):
+        # [FUNCTION DOC]
+        # Verifies that percentiles containing a missing value, a negative value, a value
+        # above one or a non-numeric item raise a value error saying all percentiles must
+        # lie in the interval from zero to one. Parametrized over four lists.
         msg = r"percentiles should all be in the interval \[0,1\]"
         with pytest.raises(ValueError, match=msg):
             fmt.format_percentiles(percentiles)
 
     def test_format_percentiles_integer_idx(self):
+        # [FUNCTION DOC]
+        # Regression test (Issue 26660): evenly spaced percentiles from zero to one in
+        # eleven steps give integer percent labels from zero to one hundred.
         # Issue #26660
         result = fmt.format_percentiles(np.linspace(0, 1, 10 + 1))
         expected = [
@@ -2258,6 +2704,14 @@ def test_filepath_or_buffer_arg(
     data,
     filepath_or_buffer_id,
 ):
+    # [FUNCTION DOC]
+    # Verifies the output argument for the string, html and latex methods (latex needs
+    # jinja2, skipped if missing). Parametrized over method, encoding (none, utf-8,
+    # gbk with Chinese text, and an unknown name), and the output kind (string path,
+    # path-like, or text buffer). Rules: a buffer with an encoding raises a value error
+    # saying the buffer is not a file name; an unknown encoding raises a lookup error;
+    # otherwise the file or buffer content (read with the encoding, default utf-8)
+    # must equal the returned text. A buffer is never closed by the call.
     if filepath_or_buffer_id == "buffer":
         filepath_or_buffer = StringIO()
     elif filepath_or_buffer_id == "pathlike":
@@ -2295,6 +2749,10 @@ def test_filepath_or_buffer_arg(
 
 @pytest.mark.parametrize("method", ["to_string", "to_html", "to_latex"])
 def test_filepath_or_buffer_bad_arg_raises(float_frame, method):
+    # [FUNCTION DOC]
+    # Verifies the string, html and latex methods raise a type error saying the
+    # buffer is not a file name and has no write method when given a plain object.
+    # Parametrized over method; uses the shared float frame fixture.
     if method in ["to_latex"]:  # uses styler implementation
         pytest.importorskip("jinja2")
     msg = "buf is not a file name and it has no write method"

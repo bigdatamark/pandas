@@ -1,3 +1,10 @@
+# [MODULE DOC]
+# Tests for the tooltip feature of the table styler: rendering of hover tooltips
+# via a hidden span plus generated css, ignoring of blank or unknown entries, the
+# css class and properties options, and the title attribute rendering mode
+# (including a frame with a hidden index level). Assertions check substrings of
+# the html output. The jinja2 skip call runs at import time before the styler
+# import.
 import numpy as np
 import pytest
 
@@ -12,6 +19,9 @@ from pandas.io.formats.style import Styler
 
 @pytest.fixture
 def df():
+    # [FUNCTION DOC]
+    # HELPER: fixture returning a three-by-three integer frame (values zero to eight)
+    # with columns A, B, C and index x, y, z.
     return DataFrame(
         data=[[0, 1, 2], [3, 4, 5], [6, 7, 8]],
         columns=["A", "B", "C"],
@@ -21,6 +31,8 @@ def df():
 
 @pytest.fixture
 def styler(df):
+    # [FUNCTION DOC]
+    # HELPER: fixture returning a styler over the df fixture with no unique id suffix.
     return Styler(df, uuid_len=0)
 
 
@@ -34,6 +46,14 @@ def styler(df):
     ],
 )
 def test_tooltip_render(data, columns, index, styler):
+    # [FUNCTION DOC]
+    # Regression test (GH 21266): a tooltip frame is aligned to the data (reindexing,
+    # extra columns dropped, reversed column order handled). Parametrized over a case
+    # with a missing value and empty string, and a case with a reversed column order,
+    # extra column and short index. Verifies the generated css for the hidden class,
+    # the hover rule and the content rule for the Min and Max entries, the span in the
+    # cell markup, and that missing, empty and unreferenced entries produce no rule
+    # or text.
     ttips = DataFrame(data=data, columns=columns, index=index)
 
     # GH 21266
@@ -61,6 +81,9 @@ def test_tooltip_render(data, columns, index, styler):
 
 
 def test_tooltip_ignored(styler):
+    # [FUNCTION DOC]
+    # Regression test (GH 21266): without setting tooltips the html has an empty
+    # style element, no tooltip span, and no title attribute.
     # GH 21266
     result = styler.to_html()  # no set_tooltips() creates no <span>
     assert '<style type="text/css">\n</style>' in result
@@ -69,6 +92,11 @@ def test_tooltip_ignored(styler):
 
 
 def test_tooltip_css_class(styler):
+    # [FUNCTION DOC]
+    # Regression test (GH 21266 and GH 39563): a custom css class and properties
+    # (given as a list of pairs) appear in the generated css, and that setting tooltips
+    # again replaces the previous ones; properties given as a string with repeated
+    # declarations are all kept.
     # GH 21266
     result = styler.set_tooltips(
         DataFrame([["tooltip"]], index=["x"], columns=["A"]),
@@ -97,6 +125,11 @@ def test_tooltip_css_class(styler):
     ],
 )
 def test_tooltip_render_as_title(data, columns, index, styler):
+    # [FUNCTION DOC]
+    # Regression test (GH 56605): with the title attribute option, tooltips are
+    # rendered as title attributes on the cells and no tooltip css or span is added.
+    # Same parametrization as the render test. Cells without a tooltip are rendered
+    # without a title.
     ttips = DataFrame(data=data, columns=columns, index=index)
     # GH 56605
     result = styler.set_tooltips(ttips, as_title_attribute=True).to_html()
@@ -130,6 +163,11 @@ def test_tooltip_render_as_title(data, columns, index, styler):
 
 
 def test_tooltip_render_as_title_with_hidden_index_level():
+    # [FUNCTION DOC]
+    # Regression test (GH 56605): same as the title attribute test but the frame has a
+    # three-level named index, the last level hidden (with names) and the tooltip
+    # frame has a matching index with a subset of rows; checks title attributes on
+    # the right cells and that no tooltip css is produced.
     df = DataFrame(
         data=[[0, 1, 2], [3, 4, 5], [6, 7, 8]],
         columns=["A", "B", "C"],

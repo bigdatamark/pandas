@@ -1,3 +1,13 @@
+# [MODULE DOC]
+# Tests for the in-cell bar formatting of the table styler. The computed per-cell
+# style context is compared against expected lists of (property, value) pairs
+# built with small helper functions that describe a ten em wide cell with an
+# optional linear gradient background. Covers alignment modes (left, right, mid,
+# zero, mean, numeric, callable) for positive, negative and mixed data, axis
+# choices, minimum/maximum clipping and widening, non-numeric columns being
+# skipped, two-colour bars, bar height, argument validation errors, and
+# missing-value (including pyarrow-backed) data rendering. The jinja2 skip call
+# runs at import time.
 import io
 
 import numpy as np
@@ -13,6 +23,12 @@ pytest.importorskip("jinja2")
 
 
 def bar_grad(a=None, b=None, c=None, d=None):
+    # [FUNCTION DOC]
+    # HELPER: builds the expected style list for one bar cell. Takes up to four
+    # optional gradient stop strings (default none). Always returns the width entry of
+    # ten em; if all stops are none this is the whole result, otherwise a background
+    # entry is appended whose value is a ninety degree linear gradient made of the
+    # given non-empty stops joined by commas.
     """Used in multiple tests to simplify formatting of expected result"""
     ret = [("width", "10em")]
     if all(x is None for x in [a, b, c, d]):
@@ -27,14 +43,24 @@ def bar_grad(a=None, b=None, c=None, d=None):
 
 
 def no_bar():
+    # [FUNCTION DOC]
+    # HELPER: expected style for a cell with no visible bar: the width entry only.
     return bar_grad()
 
 
 def bar_to(x, color="#d65f5f"):
+    # [FUNCTION DOC]
+    # HELPER: expected style for a bar drawn from the left edge up to x percent:
+    # the given colour (default a red hex) until x percent (one decimal), then
+    # transparent.
     return bar_grad(f" {color} {x:.1f}%", f" transparent {x:.1f}%")
 
 
 def bar_from_to(x, y, color="#d65f5f"):
+    # [FUNCTION DOC]
+    # HELPER: expected style for a bar between x and y percent: transparent up to x,
+    # the colour (default a red hex) from x to y (one decimal each), then
+    # transparent after y.
     return bar_grad(
         f" transparent {x:.1f}%",
         f" {color} {x:.1f}%",
@@ -45,16 +71,25 @@ def bar_from_to(x, y, color="#d65f5f"):
 
 @pytest.fixture
 def df_pos():
+    # [FUNCTION DOC]
+    # HELPER: fixture returning a one-column frame of the positive integers one to
+    # three.
     return DataFrame([[1], [2], [3]])
 
 
 @pytest.fixture
 def df_neg():
+    # [FUNCTION DOC]
+    # HELPER: fixture returning a one-column frame of the negative integers minus one
+    # to minus three.
     return DataFrame([[-1], [-2], [-3]])
 
 
 @pytest.fixture
 def df_mix():
+    # [FUNCTION DOC]
+    # HELPER: fixture returning a one-column frame with the values minus three, one
+    # and two (mixed signs).
     return DataFrame([[-3], [1], [2]])
 
 
@@ -71,6 +106,12 @@ def df_mix():
     ],
 )
 def test_align_positive_cases(df_pos, align, exp):
+    # [FUNCTION DOC]
+    # Verifies the computed bar styles for all-positive data for each alignment
+    # option: left, right, mid, zero, mean, a numeric reference of two, and the
+    # median function. Parametrized over the alignment and the expected three
+    # per-row style lists; compares the full computed context to a mapping from
+    # (row, column) to expected style.
     # test different align cases for all positive values
     result = df_pos.style.bar(align=align)._compute().ctx
     expected = {(0, 0): exp[0], (1, 0): exp[1], (2, 0): exp[2]}
@@ -90,6 +131,9 @@ def test_align_positive_cases(df_pos, align, exp):
     ],
 )
 def test_align_negative_cases(df_neg, align, exp):
+    # [FUNCTION DOC]
+    # Same as the positive-data test but for all-negative data, with the numeric
+    # reference being minus two and the callable the median function.
     # test different align cases for all negative values
     result = df_neg.style.bar(align=align)._compute().ctx
     expected = {(0, 0): exp[0], (1, 0): exp[1], (2, 0): exp[2]}
@@ -110,6 +154,12 @@ def test_align_negative_cases(df_neg, align, exp):
 )
 @pytest.mark.parametrize("nans", [True, False])
 def test_align_mixed_cases(df_mix, align, exp, nans):
+    # [FUNCTION DOC]
+    # Verifies bar styles for mixed-sign data under each alignment (including zero as
+    # a negative-zero reference and a nan-aware median). Parametrized over alignment
+    # and whether an all-missing fourth row is added; when added, that row is
+    # expected to have no bar and not to change the other rows' results. Mutates the
+    # fixture frame in the nans case.
     # test different align cases for mixed positive and negative values
     # also test no impact of NaNs and no_bar
     expected = {(0, 0): exp[0], (1, 0): exp[1], (2, 0): exp[2]}
@@ -177,6 +227,11 @@ def test_align_mixed_cases(df_mix, align, exp, nans):
 )
 @pytest.mark.parametrize("axis", ["index", "columns", "none"])
 def test_align_axis(align, exp, axis):
+    # [FUNCTION DOC]
+    # Verifies bar styles on a two-by-two positive frame for each alignment (left,
+    # mid, zero, numeric two) and each scaling axis (by rows, by columns, or the whole
+    # frame, where none maps to the no-axis argument). Compares the full computed
+    # context to the expected per-cell styles for that axis.
     # test all axis combinations with positive values and different aligns
     data = DataFrame([[1, 2], [3, 4]])
     result = (
@@ -204,6 +259,13 @@ def test_align_axis(align, exp, axis):
 @pytest.mark.parametrize("nullify", [None, "vmin", "vmax"])  # test min/max separately
 @pytest.mark.parametrize("align", ["left", "right", "zero", "mid"])
 def test_vmin_vmax_clipping(df_pos, df_neg, df_mix, values, vmin, vmax, nullify, align):
+    # [FUNCTION DOC]
+    # Verifies that giving a minimum above or maximum below the data clips values: the
+    # styles equal those of a frame whose values were first clipped to the bounds.
+    # Parametrized over data sign type with matching bounds, over which bound is
+    # disabled (neither, minimum or maximum) and over alignment; the mid alignment is
+    # mapped to left for positive data and right for negative data because it behaves
+    # like those. Uses a two-colour bar.
     # test that clipping occurs if any vmin > data_values or vmax < data_values
     if align == "mid":  # mid acts as left or right in each case
         if values == "positive":
@@ -237,6 +299,12 @@ def test_vmin_vmax_clipping(df_pos, df_neg, df_mix, values, vmin, vmax, nullify,
 @pytest.mark.parametrize("nullify", [None, "vmin", "vmax"])  # test min/max separately
 @pytest.mark.parametrize("align", ["left", "right", "zero", "mid"])
 def test_vmin_vmax_widening(df_pos, df_neg, df_mix, values, vmin, vmax, nullify, align):
+    # [FUNCTION DOC]
+    # Verifies that giving a minimum below or maximum above the data widens the scale:
+    # the styles equal the styles of a frame with two extra rows holding the bounds,
+    # restricted to the original cells (the result's items must be a subset of the
+    # expected items). Same parametrization as the clipping test; the mid alignment
+    # is mapped as there.
     # test that widening occurs if any vmax > data_values or vmin < data_values
     if align == "mid":  # mid acts as left or right in each case
         if values == "positive":
@@ -260,6 +328,9 @@ def test_vmin_vmax_widening(df_pos, df_neg, df_mix, values, vmin, vmax, nullify,
 
 
 def test_numerics():
+    # [FUNCTION DOC]
+    # Verifies that bars are applied only to numeric columns: in a frame with an
+    # integer and a string column, no style is produced for the string column cells.
     # test data is pre-selected for numeric values
     data = DataFrame([[1, "a"], [2, "b"]])
     result = data.style.bar()._compute().ctx
@@ -277,12 +348,20 @@ def test_numerics():
     ],
 )
 def test_colors_mixed(align, exp):
+    # [FUNCTION DOC]
+    # Verifies two-colour bars (first for negative, second for positive) on a frame
+    # holding minus one and three for left, right, mid and zero alignment, checking
+    # the colour assigned to each part of each gradient.
     data = DataFrame([[-1], [3]])
     result = data.style.bar(align=align, color=["red", "green"])._compute().ctx
     assert result == {(0, 0): exp[0], (1, 0): exp[1]}
 
 
 def test_bar_align_height():
+    # [FUNCTION DOC]
+    # Verifies that a height argument (fifty) adds the no-repeat centre suffix to the
+    # background and a background-size entry with full width and the height
+    # percentage. The first row (minimum, no bar) only has the width entry.
     # test when keyword height is used 'no-repeat center' and 'background-size' present
     data = DataFrame([[1], [2]])
     result = data.style.bar(align="left", height=50)._compute().ctx
@@ -299,6 +378,10 @@ def test_bar_align_height():
 
 
 def test_bar_value_error_raises():
+    # [FUNCTION DOC]
+    # Verifies validation errors on rendering: an unknown alignment name raises a
+    # value error listing the allowed names, and width or height outside zero to one
+    # hundred each raise a value error naming the argument.
     df = DataFrame({"A": [-100, -60, -30, -20]})
 
     msg = "`align` should be in {'left', 'right', 'mid', 'mean', 'zero'} or"
@@ -315,6 +398,9 @@ def test_bar_value_error_raises():
 
 
 def test_bar_color_and_cmap_error_raises():
+    # [FUNCTION DOC]
+    # Verifies that supplying both a colour and a colormap raises a value error
+    # saying they cannot both be given.
     df = DataFrame({"A": [1, 2, 3, 4]})
     msg = "`color` and `cmap` cannot both be given"
     # Test that providing both color and cmap raises a ValueError
@@ -323,6 +409,10 @@ def test_bar_color_and_cmap_error_raises():
 
 
 def test_bar_invalid_color_type_error_raises():
+    # [FUNCTION DOC]
+    # Verifies that a colour that is neither a string nor a list or tuple of two
+    # strings (an integer, or a list of three strings) raises a value error with the
+    # expected message.
     df = DataFrame({"A": [1, 2, 3, 4]})
     msg = (
         r"`color` must be string or list or tuple of 2 strings,"
@@ -338,6 +428,10 @@ def test_bar_invalid_color_type_error_raises():
 
 
 def test_styler_bar_with_NA_values():
+    # [FUNCTION DOC]
+    # Verifies that bars on columns containing the missing-value marker (a column
+    # with one missing item, and a frame wholly missing with left alignment and no
+    # axis) render html that still contains a style element, i.e. no exception.
     df1 = DataFrame({"A": [1, 2, NA, 4]})
     df2 = DataFrame([[NA, NA], [NA, NA]])
     expected_substring = "style type="
@@ -348,6 +442,10 @@ def test_styler_bar_with_NA_values():
 
 
 def test_style_bar_with_pyarrow_NA_values():
+    # [FUNCTION DOC]
+    # Skipped when pyarrow is missing. Reads a small csv text with the pyarrow-backed
+    # dtype option (one float value missing) and verifies that bars on that column
+    # render html containing a style element.
     pytest.importorskip("pyarrow")
     data = """name,age,test1,test2,teacher
         Adam,15,95.0,80,Ashby

@@ -1,3 +1,10 @@
+# [MODULE DOC]
+# Tests specific to the xlsxwriter Excel writer engine. Skipped at import time
+# when xlsxwriter is not installed. Covers column number formats applied
+# through the engine's native workbook, rejection of append mode, passing
+# engine options, and keeping the writer's sheet mapping in sync with the
+# native workbook. Defines local fixtures for the extension and a temporary
+# file path.
 import contextlib
 import uuid
 
@@ -12,17 +19,31 @@ xlsxwriter = pytest.importorskip("xlsxwriter")
 
 @pytest.fixture
 def ext():
+    # [FUNCTION DOC]
+    # Fixture returning the file extension (xlsx, with leading dot) used by
+    # the temporary file fixture in this module.
     return ".xlsx"
 
 
 @pytest.fixture
 def tmp_excel(ext, tmp_path):
+    # [FUNCTION DOC]
+    # HELPER: fixture supplying a path for the writer tests.
+    # Creates an empty file with a unique random name and the given extension
+    # inside the per-test temporary directory and returns its path as a string.
     tmp = tmp_path / f"{uuid.uuid4()}{ext}"
     tmp.touch()
     return str(tmp)
 
 
 def test_column_format(tmp_excel):
+    # [FUNCTION DOC]
+    # Regression test (issue 9167): a number format set on a column through the
+    # native xlsxwriter worksheet inside the writer context is applied to the
+    # cells written by the frame. The frame has two integer columns; column B
+    # gets a thousands-separator format. The file is then reloaded with openpyxl
+    # (skipped if missing) and the number format of cell B2 must equal it.
+    # Contains fallbacks for old openpyxl APIs.
     # Test that column formats are applied to cells. Test for issue #9167.
     # Applicable to xlsxwriter only.
     openpyxl = pytest.importorskip("openpyxl")
@@ -62,6 +83,9 @@ def test_column_format(tmp_excel):
 
 
 def test_write_append_mode_raises(tmp_excel):
+    # [FUNCTION DOC]
+    # Verifies that creating a writer with the xlsxwriter engine in append mode
+    # raises a value error stating that append mode is not supported.
     msg = "Append mode is not supported with xlsxwriter!"
 
     with pytest.raises(ValueError, match=msg):
@@ -70,6 +94,11 @@ def test_write_append_mode_raises(tmp_excel):
 
 @pytest.mark.parametrize("nan_inf_to_errors", [True, False])
 def test_engine_kwargs(tmp_excel, nan_inf_to_errors):
+    # [FUNCTION DOC]
+    # Regression test (GH 42286): engine options passed to the writer reach
+    # the native workbook. Parametrized over a boolean for the option that
+    # converts nan/inf to spreadsheet errors; the workbook attribute of the
+    # same name must equal the supplied value.
     # GH 42286
     engine_kwargs = {"options": {"nan_inf_to_errors": nan_inf_to_errors}}
     with ExcelWriter(
@@ -79,6 +108,10 @@ def test_engine_kwargs(tmp_excel, nan_inf_to_errors):
 
 
 def test_book_and_sheets_consistent(tmp_excel):
+    # [FUNCTION DOC]
+    # Regression test (GH 45687): the writer's sheet mapping is empty at first
+    # and reflects a worksheet added directly to the native workbook, keyed by
+    # the sheet name and mapping to the same worksheet object.
     # GH#45687 - Ensure sheets is updated if user modifies book
     with ExcelWriter(tmp_excel, engine="xlsxwriter") as writer:
         assert writer.sheets == {}

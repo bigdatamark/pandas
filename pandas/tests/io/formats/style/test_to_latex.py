@@ -1,3 +1,15 @@
+# [MODULE DOC]
+# Tests for latex output of the table styler: tabular layout, horizontal rules,
+# column formats, siunitx columns, float environment, position, label and
+# caption, custom table style commands, cell style conversion from css, multi-level
+# row and column indexes (sparse and non-sparse output, multirow and multicolumn
+# alignment), hidden labels, the longtable environment, header styling, hyperlink
+# rendering, line separators between rows (clines), concatenated stylers, and
+# empty frames. Also tests the private latex parsing helpers imported from the
+# style rendering module: table style lookup, cell style rendering, header span
+# rendering, table wrapping detection and css-to-latex conversion. Expected text
+# is compared exactly, usually via dedented strings with doubled backslashes. The
+# jinja2 skip call runs at import time before the styler imports.
 from textwrap import dedent
 
 import numpy as np
@@ -23,6 +35,9 @@ from pandas.io.formats.style_render import (
 
 @pytest.fixture
 def df():
+    # [FUNCTION DOC]
+    # HELPER: fixture returning a two-row frame with an integer column A, a float
+    # column B (minus 0.61, minus 1.22) and an object column C of strings.
     return DataFrame(
         {"A": [0, 1], "B": [-0.61, -1.22], "C": Series(["ab", "cd"], dtype=object)}
     )
@@ -30,6 +45,10 @@ def df():
 
 @pytest.fixture
 def df_ext():
+    # [FUNCTION DOC]
+    # HELPER: fixture returning a three-row frame with the same columns as df and
+    # values zero to two, minus 0.61, minus 1.22, minus 2.22 and the strings ab, cd,
+    # de.
     return DataFrame(
         {"A": [0, 1, 2], "B": [-0.61, -1.22, -2.22], "C": ["ab", "cd", "de"]}
     )
@@ -37,10 +56,17 @@ def df_ext():
 
 @pytest.fixture
 def styler(df):
+    # [FUNCTION DOC]
+    # HELPER: fixture returning a styler over the df fixture with no unique id suffix
+    # and a precision of two decimals.
     return Styler(df, uuid_len=0, precision=2)
 
 
 def test_minimal_latex_tabular(styler):
+    # [FUNCTION DOC]
+    # Verifies the default latex output is a tabular environment with the column
+    # format derived from the dtypes (left for the index, right for numbers, left for
+    # text), a header line, and one line per row, with no rules.
     expected = dedent(
         """\
         \\begin{tabular}{lrrl}
@@ -54,6 +80,9 @@ def test_minimal_latex_tabular(styler):
 
 
 def test_tabular_hrules(styler):
+    # [FUNCTION DOC]
+    # Verifies that the horizontal rules argument adds top, mid and bottom rule
+    # commands around the header and the body.
     expected = dedent(
         """\
         \\begin{tabular}{lrrl}
@@ -70,6 +99,10 @@ def test_tabular_hrules(styler):
 
 
 def test_tabular_custom_hrules(styler):
+    # [FUNCTION DOC]
+    # Verifies that table styles named top rule and bottom rule override the rule
+    # commands (a line command and a custom command), and that no mid rule is emitted
+    # when none is defined or requested.
     styler.set_table_styles(
         [
             {"selector": "toprule", "props": ":hline"},
@@ -91,6 +124,13 @@ def test_tabular_custom_hrules(styler):
 
 
 def test_column_format(styler):
+    # [FUNCTION DOC]
+    # Verifies the column format can come from a table style (colon-prefixed value) or
+    # from the argument, with the argument taking priority; a style value with bars
+    # is passed through.
+    # KNOWN ISSUE: a comment refers to the minimal tabular test by a name that does not
+    # exist (the actual test name has the words minimal and latex in the opposite
+    # order).
     # default setting is already tested in `test_latex_minimal_tabular`
     styler.set_table_styles([{"selector": "column_format", "props": ":cccc"}])
 
@@ -100,6 +140,9 @@ def test_column_format(styler):
 
 
 def test_siunitx_cols(styler):
+    # [FUNCTION DOC]
+    # Verifies the siunitx option: numeric columns use the S column type and every
+    # header cell is wrapped in braces, including the empty corner cell.
     expected = dedent(
         """\
         \\begin{tabular}{lSSl}
@@ -113,6 +156,10 @@ def test_siunitx_cols(styler):
 
 
 def test_position(styler):
+    # [FUNCTION DOC]
+    # Verifies the float position: the argument gives an optional placement in the
+    # table begin line and the end table command is present; a table style named
+    # position supplies it when no argument is passed.
     assert "\\begin{table}[h!]" in styler.to_latex(position="h!")
     assert "\\end{table}" in styler.to_latex(position="h!")
     styler.set_table_styles([{"selector": "position", "props": ":b!"}])
@@ -122,12 +169,20 @@ def test_position(styler):
 
 @pytest.mark.parametrize("env", [None, "longtable"])
 def test_label(styler, env):
+    # [FUNCTION DOC]
+    # Verifies the label command, added on its own line after the begin line, from the
+    # argument or from a table style (where a section sign is converted to a colon).
+    # Parametrized over the environment: default and longtable.
     assert "\n\\label{text}" in styler.to_latex(label="text", environment=env)
     styler.set_table_styles([{"selector": "label", "props": ":{more §text}"}])
     assert "\n\\label{more :text}" in styler.to_latex(environment=env)
 
 
 def test_position_float_raises(styler):
+    # [FUNCTION DOC]
+    # Verifies that an unknown float alignment value raises a value error listing the
+    # allowed values, and that using the float alignment with the longtable
+    # environment raises a value error saying it cannot be used there.
     msg = "`position_float` should be one of 'raggedright', 'raggedleft', 'centering',"
     with pytest.raises(ValueError, match=msg):
         styler.to_latex(position_float="bad_string")
@@ -145,6 +200,12 @@ def test_position_float_raises(styler):
 def test_kwargs_combinations(
     styler, label, position, caption, column_format, position_float
 ):
+    # [FUNCTION DOC]
+    # Verifies that the label, position, caption, column format and float alignment
+    # arguments can be combined freely: for each combination of given or none, the
+    # expected fragment for each is present in the output (an empty fragment is
+    # trivially present). Five stacked parametrizations of (value, expected fragment)
+    # pairs.
     result = styler.to_latex(
         label=label[0],
         position=position[0],
@@ -160,6 +221,10 @@ def test_kwargs_combinations(
 
 
 def test_custom_table_styles(styler):
+    # [FUNCTION DOC]
+    # Verifies that arbitrary table style selectors with colon-prefixed values are
+    # emitted as latex commands with the value as argument, right after the begin
+    # table line, in order.
     styler.set_table_styles(
         [
             {"selector": "mycommand", "props": ":{myoptions}"},
@@ -177,6 +242,11 @@ def test_custom_table_styles(styler):
 
 
 def test_cell_styling(styler):
+    # [FUNCTION DOC]
+    # Verifies cell styles from highlight_max given as latex-style props (an italic
+    # shape command without a wrap and a size command wrapping the value): the
+    # maximum cell of each column gets the commands before the value. The expected
+    # tabular text is compared exactly.
     styler.highlight_max(props="itshape:;Huge:--wrap;")
     expected = dedent(
         """\
@@ -191,6 +261,10 @@ def test_cell_styling(styler):
 
 
 def test_multiindex_columns(df):
+    # [FUNCTION DOC]
+    # Verifies a two-level column index renders two header lines with a multicolumn
+    # for the repeated top label (right aligned by default), and that turning off
+    # column sparsification repeats the labels instead. Compares the exact text.
     cidx = MultiIndex.from_tuples([("A", "a"), ("A", "b"), ("B", "c")])
     df.columns = cidx
     expected = dedent(
@@ -222,6 +296,11 @@ def test_multiindex_columns(df):
 
 
 def test_multiindex_row(df_ext):
+    # [FUNCTION DOC]
+    # Verifies a two-level row index renders with a multirow cell for the repeated
+    # outer label (centred by default) and an empty cell on the following row, an
+    # extra left column in the column format and an empty header cell; then checks the
+    # non-sparse output repeats the labels.
     ridx = MultiIndex.from_tuples([("A", "a"), ("A", "b"), ("B", "c")])
     df_ext.index = ridx
     expected = dedent(
@@ -254,6 +333,10 @@ def test_multiindex_row(df_ext):
 
 
 def test_multirow_naive(df_ext):
+    # [FUNCTION DOC]
+    # Verifies the naive multirow alignment option: the outer label appears once on
+    # the first row of its group and the following cells are left empty, without the
+    # multirow command.
     ridx = MultiIndex.from_tuples([("X", "x"), ("X", "y"), ("Y", "z")])
     df_ext.index = ridx
     expected = dedent(
@@ -272,6 +355,11 @@ def test_multirow_naive(df_ext):
 
 
 def test_multiindex_row_and_col(df_ext):
+    # [FUNCTION DOC]
+    # Verifies a combined multi-level row and column index with a bottom multirow
+    # alignment and left multicolumn alignment (header multicolumn left aligned, outer
+    # label multirow with bottom alignment), then the non-sparse output where all
+    # labels are repeated.
     cidx = MultiIndex.from_tuples([("Z", "a"), ("Z", "b"), ("Y", "c")])
     ridx = MultiIndex.from_tuples([("A", "a"), ("A", "b"), ("B", "c")])
     df_ext.index, df_ext.columns = ridx, cidx
@@ -316,6 +404,12 @@ def test_multiindex_row_and_col(df_ext):
     ],
 )
 def test_multicol_naive(df, multicol_align, siunitx, header):
+    # [FUNCTION DOC]
+    # Verifies the naive multicolumn options (label in the first or last of the
+    # spanned header cells, others empty) for a column index whose top level is all
+    # one label, with and without the siunitx option (braced header cells and S
+    # column types). Parametrized over alignment, siunitx and the expected header
+    # text.
     ridx = MultiIndex.from_tuples([("A", "a"), ("A", "b"), ("A", "c")])
     df.columns = ridx
     level1 = " & a & b & c" if not siunitx else "{} & {a} & {b} & {c}"
@@ -336,6 +430,11 @@ def test_multicol_naive(df, multicol_align, siunitx, header):
 
 
 def test_multi_options(df_ext):
+    # [FUNCTION DOC]
+    # Verifies the global options for multicolumn and multirow alignment: by default
+    # the right aligned multicolumn and centred multirow appear; with option contexts
+    # for left multicolumn alignment and bottom multirow alignment the output uses
+    # them.
     cidx = MultiIndex.from_tuples([("Z", "a"), ("Z", "b"), ("Y", "c")])
     ridx = MultiIndex.from_tuples([("A", "a"), ("A", "b"), ("B", "c")])
     df_ext.index, df_ext.columns = ridx, cidx
@@ -359,6 +458,10 @@ def test_multi_options(df_ext):
 
 
 def test_multiindex_columns_hidden():
+    # [FUNCTION DOC]
+    # Verifies the column format reflects the number of visible columns: five columns
+    # then four after hiding one label of a two-level column index (the table styles
+    # are reset first to clear the cached column format style).
     df = DataFrame([[1, 2, 3, 4]])
     df.columns = MultiIndex.from_tuples([("A", 1), ("A", 2), ("A", 3), ("B", 1)])
     s = df.style
@@ -378,6 +481,10 @@ def test_multiindex_columns_hidden():
     ],
 )
 def test_sparse_options(df_ext, option, value):
+    # [FUNCTION DOC]
+    # Verifies the global sparsify options: output inside an option context equals
+    # the default output exactly when the option is set to true (the default).
+    # Parametrized over index and columns option names with true and false values.
     cidx = MultiIndex.from_tuples([("Z", "a"), ("Z", "b"), ("Y", "c")])
     ridx = MultiIndex.from_tuples([("A", "a"), ("A", "b"), ("B", "c")])
     df_ext.index, df_ext.columns = ridx, cidx
@@ -390,6 +497,9 @@ def test_sparse_options(df_ext, option, value):
 
 
 def test_hidden_index(styler):
+    # [FUNCTION DOC]
+    # Verifies that hiding the row index removes the index column and its header cell
+    # and the column format loses the leading index entry.
     styler.hide(axis="index")
     expected = dedent(
         """\
@@ -405,6 +515,13 @@ def test_hidden_index(styler):
 
 @pytest.mark.parametrize("environment", ["table", "figure*", None])
 def test_comprehensive(df_ext, environment):
+    # [FUNCTION DOC]
+    # Verifies a rich combination of features at once: caption, label with a section
+    # sign, position, float alignment, column format, rules and a custom command from
+    # table styles, a two-level row and column index with sparsification, and cell
+    # styles with text-bold, cell colour, and a size command on a subset. Parametrized
+    # over the environment (table, figure-star, default); in the expected text the
+    # word table is replaced by the environment name. Compares the full output.
     # test as many low level features simultaneously as possible
     cidx = MultiIndex.from_tuples([("Z", "a"), ("Z", "b"), ("Y", "c")])
     ridx = MultiIndex.from_tuples([("A", "a"), ("A", "b"), ("B", "c")])
@@ -453,12 +570,19 @@ B & c & \\textbf{\\cellcolor[rgb]{1,1,0.6}{{\\Huge 2}}} & -2.22 & """
 
 
 def test_environment_option(styler):
+    # [FUNCTION DOC]
+    # Verifies the environment option sets the begin command name by default and that
+    # the argument overrides the option.
     with option_context("styler.latex.environment", "bar-env"):
         assert "\\begin{bar-env}" in styler.to_latex()
         assert "\\begin{foo-env}" in styler.to_latex(environment="foo-env")
 
 
 def test_parse_latex_table_styles(styler):
+    # [FUNCTION DOC]
+    # Verifies the private table style lookup helper: the last matching selector wins
+    # and only the first property value is used; a section sign in the value is
+    # converted to a colon.
     styler.set_table_styles(
         [
             {"selector": "foo", "props": [("attr", "value")]},
@@ -491,11 +615,23 @@ def test_parse_latex_cell_styles_basic():  # test nesting
     ],
 )
 def test_parse_latex_cell_styles_braces(wrap_arg, expected):
+    # [FUNCTION DOC]
+    # Verifies the private cell style renderer for each wrap flag: none or no-wrap (no
+    # braces), whole wrap, left wrap, double wrap and right wrap, using placeholder
+    # command, options and value text. Parametrized over the flag and expected text.
+    # [FUNCTION DOC]
+    # Verifies the private cell style renderer nests several (command, options with
+    # wrap flag) pairs, applying the first outermost, around the display value.
     cell_style = [("<command>", f"<options>{wrap_arg}")]
     assert _parse_latex_cell_styles(cell_style, "<display_value>") == expected
 
 
 def test_parse_latex_header_span():
+    # [FUNCTION DOC]
+    # Verifies the private header span renderer: a column span attribute gives a
+    # multicolumn command with the given column alignment, a row span attribute gives
+    # a multirow command with the given row alignment and star width, no span returns
+    # the plain text, and cell styles are applied around the text when present.
     cell = {"attributes": 'colspan="3"', "display_value": "text", "cellstyle": []}
     expected = "\\multicolumn{3}{Y}{text}"
     assert _parse_latex_header_span(cell, "X", "Y") == expected
@@ -512,6 +648,10 @@ def test_parse_latex_header_span():
 
 
 def test_parse_latex_table_wrapping(styler):
+    # [FUNCTION DOC]
+    # Verifies the private wrapping decision: with only styles for rules and column
+    # format and no caption it returns false, with a caption it returns true, and a
+    # different custom style forces wrapping even without a caption.
     styler.set_table_styles(
         [
             {"selector": "toprule", "props": ":value"},
@@ -532,6 +672,9 @@ def test_parse_latex_table_wrapping(styler):
 
 
 def test_short_caption(styler):
+    # [FUNCTION DOC]
+    # Verifies that a caption given as a (full, short) pair is rendered as a caption
+    # command with the short form in brackets.
     result = styler.to_latex(caption=("full cap", "short cap"))
     assert "\\caption[short cap]{full cap}" in result
 
@@ -570,6 +713,13 @@ def test_short_caption(styler):
     ],
 )
 def test_parse_latex_css_conversion(css, expected):
+    # [FUNCTION DOC]
+    # Verifies the private css to latex conversion for colours (named, rgb with
+    # absolute and percentage components, rgba, long and short hex), font weight
+    # (bold and bolder to bold series, normal dropped), background colour (cell colour
+    # with left wrap), font style (italic and oblique, normal dropped), and css
+    # comments carrying a wrap flag. Parametrized over input pairs and expected
+    # pairs.
     result = _parse_latex_css_conversion(css)
     assert result == expected
 
@@ -586,6 +736,12 @@ def test_parse_latex_css_conversion(css, expected):
     "convert, exp", [(True, "bfseries"), (False, "font-weightbold")]
 )
 def test_parse_latex_css_convert_minimal(styler, env, inner_env, convert, exp):
+    # [FUNCTION DOC]
+    # Verifies css conversion in rendered output: with conversion on, a bold font
+    # weight style becomes a bold series command; with conversion off, the property
+    # name and value are concatenated verbatim. Parametrized over environment (none,
+    # table, longtable, with the matching inner environment end) and the convert flag
+    # with the expected command text; ensures the longtable template is also covered.
     # parameters ensure longtable template is also tested
     styler.highlight_max(props="font-weight:bold;")
     result = styler.to_latex(convert_css=convert, environment=env)
@@ -600,6 +756,10 @@ def test_parse_latex_css_convert_minimal(styler, env, inner_env, convert, exp):
 
 
 def test_parse_latex_css_conversion_option():
+    # [FUNCTION DOC]
+    # Verifies that a property value with an embedded latex marker before the wrap
+    # flag has that marker removed (the pair is passed through without css
+    # conversion).
     css = [("command", "option--latex--wrap")]
     expected = [("command", "option--wrap")]
     result = _parse_latex_css_conversion(css)
@@ -607,6 +767,9 @@ def test_parse_latex_css_conversion_option():
 
 
 def test_styler_object_after_render(styler):
+    # [FUNCTION DOC]
+    # Regression test (GH 42320): rendering to latex with many options does not change
+    # the styler's table styles or caption (compared with a deep copy taken before).
     # GH 42320
     pre_render = styler._copy(deepcopy=True)
     styler.to_latex(
@@ -623,6 +786,11 @@ def test_styler_object_after_render(styler):
 
 
 def test_longtable_comprehensive(styler):
+    # [FUNCTION DOC]
+    # Verifies the full longtable layout with rules, label and a (full, short)
+    # caption: first-page head with caption and label, continuation head with an
+    # empty short caption, foot with a continued-on-next-page line, last foot with the
+    # bottom rule, and the body rows.
     result = styler.to_latex(
         environment="longtable", hrules=True, label="fig:A", caption=("full", "short")
     )
@@ -654,6 +822,9 @@ def test_longtable_comprehensive(styler):
 
 
 def test_longtable_minimal(styler):
+    # [FUNCTION DOC]
+    # Verifies the minimal longtable layout (no rules, caption or label) with head,
+    # foot and last foot sections.
     result = styler.to_latex(environment="longtable")
     expected = dedent(
         """\
@@ -683,6 +854,10 @@ def test_longtable_minimal(styler):
     ],
 )
 def test_longtable_multiindex_columns(df, sparse, exp, siunitx):
+    # [FUNCTION DOC]
+    # Verifies longtable header lines for a two-level column index, sparse or not and
+    # with or without siunitx, repeated in the first and continuation heads. Parametrized
+    # over sparse flag, expected top header text and siunitx flag.
     cidx = MultiIndex.from_tuples([("A", "a"), ("A", "b"), ("B", "c")])
     df.columns = cidx
     with_si = "{} & {a} & {b} & {c} \\\\"
@@ -713,6 +888,11 @@ def test_longtable_multiindex_columns(df, sparse, exp, siunitx):
 )
 @pytest.mark.parametrize("label, lab_exp", [(None, ""), ("tab:A", " \\label{tab:A}")])
 def test_longtable_caption_label(styler, caption, cap_exp, label, lab_exp):
+    # [FUNCTION DOC]
+    # Verifies the longtable caption and label lines: a plain caption, or a pair with
+    # a short form in brackets, followed by an optional label, then the header row;
+    # the continuation head repeats the caption with an empty short form. Parametrized
+    # over caption and label with their expected fragments.
     cap_exp1 = f"\\caption{cap_exp[1]}{cap_exp[0]}"
     cap_exp2 = f"\\caption[]{cap_exp[0]}"
 
@@ -739,6 +919,14 @@ def test_longtable_caption_label(styler, caption, cap_exp, label, lab_exp):
     ],
 )
 def test_apply_map_header_render_mi(df_ext, index, columns, siunitx):
+    # [FUNCTION DOC]
+    # Verifies that style mappings applied to index labels and to column labels of a
+    # multi-level frame render bold series commands around the matching labels
+    # (including the empty continuation cell of a multirow), with and without
+    # siunitx. The mapping returns a bold style when the label contains certain
+    # letters, otherwise none. Parametrized over whether index and columns are styled
+    # (columns with siunitx or without, or not at all); each expected fragment must be
+    # present exactly when its axis was styled.
     cidx = MultiIndex.from_tuples([("Z", "a"), ("Z", "b"), ("Y", "c")])
     ridx = MultiIndex.from_tuples([("A", "a"), ("A", "b"), ("B", "c")])
     df_ext.index, df_ext.columns = ridx, cidx
@@ -776,6 +964,10 @@ def test_apply_map_header_render_mi(df_ext, index, columns, siunitx):
 
 
 def test_repr_option(styler):
+    # [FUNCTION DOC]
+    # Verifies the notebook display option: by default the html representation starts
+    # with a style tag and the latex one is none; with the render repr option set to
+    # latex they swap.
     assert "<style" in styler._repr_html_()[:6]
     assert styler._repr_latex_() is None
     with option_context("styler.render.repr", "latex"):
@@ -785,6 +977,10 @@ def test_repr_option(styler):
 
 @pytest.mark.parametrize("option", ["hrules"])
 def test_bool_options(styler, option):
+    # [FUNCTION DOC]
+    # Verifies that the latex horizontal rules global option is read at render time:
+    # output with it false differs from output with it true. Parametrized (currently
+    # with only one option name).
     with option_context(f"styler.latex.{option}", False):
         latex_false = styler.to_latex()
     with option_context(f"styler.latex.{option}", True):
@@ -793,18 +989,27 @@ def test_bool_options(styler, option):
 
 
 def test_siunitx_basic_headers(styler):
+    # [FUNCTION DOC]
+    # Verifies header cells are braced when siunitx is on and plain by default.
     assert "{} & {A} & {B} & {C} \\\\" in styler.to_latex(siunitx=True)
     assert " & A & B & C \\\\" in styler.to_latex()  # default siunitx=False
 
 
 @pytest.mark.parametrize("axis", ["index", "columns"])
 def test_css_convert_apply_index(styler, axis):
+    # [FUNCTION DOC]
+    # Verifies that a bold font weight mapped over the index or over the columns is
+    # converted to a bold series command before every label when css conversion is
+    # on. Parametrized over axis.
     styler.map_index(lambda x: "font-weight: bold;", axis=axis)
     for label in getattr(styler, axis):
         assert f"\\bfseries {label}" in styler.to_latex(convert_css=True)
 
 
 def test_hide_index_latex(styler):
+    # [FUNCTION DOC]
+    # Regression test (GH 43637): hiding a row by label removes it from the output
+    # while the other row keeps its index entry.
     # GH 43637
     styler.hide([0], axis=0)
     result = styler.to_latex()
@@ -820,6 +1025,11 @@ def test_hide_index_latex(styler):
 
 
 def test_latex_hiding_index_columns_multiindex_alignment():
+    # [FUNCTION DOC]
+    # Regression test (gh 43644): with a hidden level and hidden labels on three-level
+    # row and column indexes plus a cell style and an index style, the latex output
+    # keeps names, labels and values aligned, with multirow spans only over visible
+    # rows and colour commands on the matching cells and labels.
     # gh 43644
     midx = MultiIndex.from_product(
         [["i0", "j0"], ["i1"], ["i2", "j2"]], names=["i-0", "i-1", "i-2"]
@@ -851,6 +1061,10 @@ def test_latex_hiding_index_columns_multiindex_alignment():
 
 
 def test_rendered_links():
+    # [FUNCTION DOC]
+    # Verifies the latex hyperlink format of the hyperlinks option: a link within text
+    # is wrapped in a href command. The main link detection tests live in the html
+    # test module.
     # note the majority of testing is done in test_html.py: test_rendered_links
     # these test only the alternative latex format is functional
     df = DataFrame(["text www.domain.com text"])
@@ -859,6 +1073,10 @@ def test_rendered_links():
 
 
 def test_apply_index_hidden_levels():
+    # [FUNCTION DOC]
+    # Regression test (gh 45156): an index style mapping applied to column level
+    # zero still works when a row level is hidden: the colour command appears on the
+    # right header cell with css conversion on.
     # gh 45156
     styler = DataFrame(
         [[1]],
@@ -883,6 +1101,10 @@ def test_apply_index_hidden_levels():
 
 @pytest.mark.parametrize("clines", ["bad", "index", "skip-last", "all", "data"])
 def test_clines_validation(clines, styler):
+    # [FUNCTION DOC]
+    # Verifies the line separator option rejects values that are not a valid
+    # combination (an unknown word, or a valid word without its second part) with a
+    # value error naming the value as invalid. Parametrized over five strings.
     msg = f"`clines` value of {clines} is invalid."
     with pytest.raises(ValueError, match=msg):
         styler.to_latex(clines=clines)
@@ -900,6 +1122,12 @@ def test_clines_validation(clines, styler):
 )
 @pytest.mark.parametrize("env", ["table", "longtable"])
 def test_clines_index(clines, exp, env):
+    # [FUNCTION DOC]
+    # Verifies the line separators with a single-level index: all-rows options add a
+    # cline command after every row (spanning the index only, or the index and data),
+    # skip-last options add none (only the last row would get one), as does none.
+    # Parametrized over the option with expected fragment and over the table and
+    # longtable environments.
     df = DataFrame([[1], [2], [3], [4]])
     result = df.style.to_latex(clines=clines, environment=env)
     expected = f"""\
@@ -985,6 +1213,12 @@ def test_clines_index(clines, exp, env):
 )
 @pytest.mark.parametrize("env", ["table"])
 def test_clines_multiindex(clines, expected, env):
+    # [FUNCTION DOC]
+    # Verifies the line separators on a three-level row index with two rows and a
+    # level hidden: no lines by default; skip-last options add lines after each outer
+    # group spanning index or data columns; all options add lines after every inner
+    # row, including combined lines for group ends. Parametrized over the option with
+    # the expected text, and the table environment.
     # also tests simultaneously with hidden rows and a hidden multiindex level
     midx = MultiIndex.from_product([["A", "-", "B"], [0], ["X", "Y"]])
     df = DataFrame([[1], [2], [99], [99], [3], [4]], index=midx)
@@ -996,6 +1230,10 @@ def test_clines_multiindex(clines, expected, env):
 
 
 def test_col_format_len(styler):
+    # [FUNCTION DOC]
+    # Regression test (gh 46037): a column format containing a braced width counts as
+    # one column, so a longtable's continuation line spans the correct number of
+    # columns (four).
     # gh 46037
     result = styler.to_latex(environment="longtable", column_format="lrr{10cm}")
     expected = r"\multicolumn{4}{r}{Continued on next page} \\"
@@ -1003,6 +1241,9 @@ def test_col_format_len(styler):
 
 
 def test_concat(styler):
+    # [FUNCTION DOC]
+    # Verifies that concatenating a styler holding the column sums appends a sum row
+    # to the tabular, with the appended styler's own default precision.
     result = styler.concat(styler.data.agg(["sum"]).style).to_latex()
     expected = dedent(
         """\
@@ -1018,6 +1259,10 @@ def test_concat(styler):
 
 
 def test_concat_recursion():
+    # [FUNCTION DOC]
+    # Verifies nested concatenation of three stylers, each with a hidden row and a
+    # highlighted minimum in a different colour, with css conversion on: the visible
+    # rows appear in nesting order each with its own cell colour command.
     # tests hidden row recursion and applied styles
     styler1 = DataFrame([[1], [9]]).style.hide([1]).highlight_min(color="red")
     styler2 = DataFrame([[9], [2]]).style.hide([0]).highlight_min(color="green")
@@ -1038,6 +1283,9 @@ def test_concat_recursion():
 
 
 def test_concat_chain():
+    # [FUNCTION DOC]
+    # Verifies chained concatenation with the same three stylers gives the same
+    # output as the nested case.
     # tests hidden row recursion and applied styles
     styler1 = DataFrame([[1], [9]]).style.hide([1]).highlight_min(color="red")
     styler2 = DataFrame([[9], [2]]).style.hide([0]).highlight_min(color="green")
@@ -1085,6 +1333,11 @@ def test_concat_chain():
     "clines", [None, "all;data", "all;index", "skip-last;data", "skip-last;index"]
 )
 def test_empty_clines(columns, expected: str, clines: str):
+    # [FUNCTION DOC]
+    # Regression test (GH 47203): empty frames render without error with any
+    # line separator option; with no columns the tabular has a single column and no
+    # rows, with three columns the header row only. Parametrized over the column list
+    # with expected text, and the separator option.
     # GH 47203
     df = DataFrame(columns=columns)
     result = df.style.to_latex(clines=clines)
