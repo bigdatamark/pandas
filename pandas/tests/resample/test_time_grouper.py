@@ -1,3 +1,11 @@
+# [MODULE DOC]
+# Tests for the time-based grouper (the frequency grouper used by groupby and the resample
+# interface): equivalence with ordinary groupby, aggregation with missing times, windows
+# with only missing values, representation text, upsampling sums with minimum count, error on
+# non-datetime indexes, and interpolation after grouping. Defines a fixture for a long
+# random daily series and another for a small weekly price/volume frame. All tests are
+# module-level functions.
+
 from datetime import datetime
 from operator import methodcaller
 
@@ -18,6 +26,9 @@ from pandas.core.indexes.datetimes import date_range
 
 @pytest.fixture
 def test_series():
+    # [FUNCTION DOC]
+    # Fixture named test_series: a series of 1000 random normal values indexed by 1000 consecutive
+    # days starting 2000-01-01. Newly generated per test.
     return Series(
         np.random.default_rng(2).standard_normal(1000),
         index=date_range("1/1/2000", periods=1000),
@@ -25,11 +36,19 @@ def test_series():
 
 
 def test_apply(test_series):
+    # [FUNCTION DOC]
+    # Verifies that grouping with a yearly right-closed, right-labeled grouper and applying a
+    # function that returns the three largest values of each group gives the same result as
+    # grouping by the calendar year of each timestamp, after dropping the first index level of
+    # both results.
     grouper = Grouper(freq="YE", label="right", closed="right")
 
     grouped = test_series.groupby(grouper)
 
     def f(x):
+        # [FUNCTION DOC]
+        # HELPER: nested in the apply test. Takes a series and returns its three largest values
+        # (after sorting ascending, the last three).
         return x.sort_values()[-3:]
 
     applied = grouped.apply(f)
@@ -41,6 +60,11 @@ def test_apply(test_series):
 
 
 def test_count(test_series):
+    # [FUNCTION DOC]
+    # Verifies counts per year: after setting every third value missing (mutating the fixture
+    # series), the count from grouping with a yearly right-closed grouper, and from resampling
+    # to year end, both equal the count grouped by calendar year, comparing with the index
+    # taken from the result.
     test_series[::3] = np.nan
 
     expected = test_series.groupby(lambda x: x.year).count()
@@ -56,6 +80,10 @@ def test_count(test_series):
 
 
 def test_numpy_reduction(test_series):
+    # [FUNCTION DOC]
+    # Verifies that resampling to year end (right-closed) and taking the product equals grouping
+    # by calendar year and aggregating with the numpy product function, with the index taken from
+    # the result.
     result = test_series.resample("YE", closed="right").prod()
     expected = test_series.groupby(lambda x: x.year).agg(np.prod)
     expected.index = result.index
@@ -63,6 +91,10 @@ def test_numpy_reduction(test_series):
 
 
 def test_apply_iteration():
+    # [FUNCTION DOC]
+    # Regression test (#2300): obtains the underlying grouper object from a month-frequency grouper
+    # over a 1000-day frame, groups by it without group keys, and applies a function dividing close by
+    # open; it must work and give a result index equal to the frame's index.
     # #2300
     N = 1000
     ind = date_range(start="2000-01-01", freq="D", periods=N)
@@ -75,6 +107,9 @@ def test_apply_iteration():
     grouped = df.groupby(grouper, group_keys=False)
 
     def f(df):
+        # [FUNCTION DOC]
+        # HELPER: nested in the iteration test. Takes a frame and returns the elementwise ratio of
+        # the close column to the open column.
         return df["close"] / df["open"]
 
     # it works!
@@ -92,6 +127,10 @@ def test_apply_iteration():
     ],
 )
 def test_fails_on_no_datetime_index(index):
+    # [FUNCTION DOC]
+    # Parametrized by integer, string, float and multi-level indexes. Grouping a frame with a daily
+    # grouper raises a type error saying it is only valid with datetime, timedelta or period
+    # indexes and naming the index class.
     name = type(index).__name__
     df = DataFrame({"a": range(len(index))}, index=index)
 
@@ -104,6 +143,10 @@ def test_fails_on_no_datetime_index(index):
 
 
 def test_aaa_group_order():
+    # [FUNCTION DOC]
+    # Regression test (GH 12840): the time grouper performs stable sorts. A frame of twenty rows
+    # has a key column cycling through five dates; grouping by the daily grouper on that key
+    # and getting each group equals taking every fifth row from the appropriate offset.
     # GH 12840
     # check TimeGrouper perform stable sorts
     n = 20
@@ -126,6 +169,10 @@ def test_aaa_group_order():
 
 
 def test_aggregate_normal(resample_method):
+    # [FUNCTION DOC]
+    # Parametrized by the resample-method fixture. Verifies the time grouper's aggregation of a
+    # datetime key column is identical to ordinary groupby on an integer key with the same
+    # pattern, once the expected index is set to a daily nanosecond datetime index named key.
     """Check TimeGrouper's aggregation is identical as normal groupby."""
 
     data = np.random.default_rng(2).standard_normal((20, 4))
@@ -158,6 +205,9 @@ def test_aggregate_normal(resample_method):
 
 @pytest.mark.xfail(reason="if TimeGrouper is used included, 'nth' doesn't work yet")
 def test_aggregate_nth():
+    # [FUNCTION DOC]
+    # Expected-failure test (nth does not yet work with the time grouper). Compares the nth
+    # selection of the third row per group from ordinary groupby with the time grouper version.
     """Check TimeGrouper's aggregation is identical as normal groupby."""
 
     data = np.random.default_rng(2).standard_normal((20, 4))
@@ -194,6 +244,11 @@ def test_aggregate_nth():
     ],
 )
 def test_resample_entirely_nat_window(method, method_args, unit):
+    # [FUNCTION DOC]
+    # Parametrized by sum or product, keyword arguments (default, minimum count zero or one)
+    # and the expected unit (zero, one, or missing). A series with two values and two
+    # missing values resampled in two-day bins has first-bin result zero and second-bin result
+    # equal to the unit (an entirely-missing window).
     ser = Series([0] * 2 + [np.nan] * 2, index=date_range("2017", periods=4, unit="ns"))
     result = methodcaller(method, **method_args)(ser.resample("2D"))
 
@@ -207,6 +262,14 @@ def test_resample_entirely_nat_window(method, method_args, unit):
     [("min", np.nan), ("max", np.nan), ("sum", 0), ("prod", 1), ("count", 0)],
 )
 def test_aggregate_with_nat(func, fill_value):
+    # [FUNCTION DOC]
+    # Parametrized by function and fill value: min and max fill missing, sum zero, product one,
+    # count zero. Compares the time grouper's aggregation on a key column containing a
+    # missing time (every third key) with ordinary groupby on a float key with missing values,
+    # after padding the missing day with the fill value and sorting. Expected index is daily
+    # without frequency set and the result index name is key. Data are random normal values
+    # truncated to integers.
+    # KNOWN ISSUE: the line removing the frequency from the expected index carries an unresolved to-do asking whether this is desired, so the behavior is undecided rather than specified.
     # check TimeGrouper's aggregation is identical as normal groupby
     # if NaT is included, 'var', 'std', 'mean', 'first','last'
     # and 'nth' doesn't work yet
@@ -251,6 +314,10 @@ def test_aggregate_with_nat(func, fill_value):
 
 
 def test_aggregate_with_nat_size():
+    # [FUNCTION DOC]
+    # Regression test (GH 9925): size of the time grouper with a missing key time: equals ordinary
+    # groupby size plus a zero for the day with no valid key, sorted, on a daily index with the
+    # frequency cleared; result index name is key.
     # GH 9925
     n = 20
     data = np.random.default_rng(2).standard_normal((n, 4)).astype("int64")
@@ -291,6 +358,11 @@ def test_aggregate_with_nat_size():
 
 
 def test_repr():
+    # [FUNCTION DOC]
+    # Regression test (GH18203): the text representation of a hourly grouper with a key shows the
+    # time grouper class name and its parameters (key, frequency, sort, drop-missing, closed, label,
+    # how, convention, origin), with the origin being start of day by default or the given
+    # timestamp when specified.
     # GH18203
     result = repr(Grouper(key="A", freq="h"))
     expected = (
@@ -323,6 +395,11 @@ def test_repr():
     ],
 )
 def test_upsample_sum(method, method_args, expected_values):
+    # [FUNCTION DOC]
+    # Parametrized by sum or product, keyword arguments (default, minimum count zero, one, two) and
+    # expected values. A two-point hourly series of ones upsampled to thirty minutes and summed or
+    # multiplied gives the ones at the original points and the unit or missing value at the
+    # new midpoint depending on the minimum count.
     ser = Series(1, index=date_range("2017", periods=2, freq="h", unit="ns"))
     resampled = ser.resample("30min")
     index = pd.DatetimeIndex(
@@ -337,6 +414,10 @@ def test_upsample_sum(method, method_args, expected_values):
 
 @pytest.fixture
 def groupy_test_df():
+    # [FUNCTION DOC]
+    # Fixture named groupy_test_df: a frame of three rows with price (ten, eleven, nine) and
+    # volume (fifty, sixty, fifty) indexed by three weekly dates starting 2018-01-01
+    # (nanosecond unit).
     return DataFrame(
         {"price": [10, 11, 9], "volume": [50, 60, 50]},
         index=date_range("01/01/2018", periods=3, freq="W", unit="ns"),
@@ -344,6 +425,10 @@ def groupy_test_df():
 
 
 def test_groupby_resample_interpolate_raises(groupy_test_df):
+    # [FUNCTION DOC]
+    # Regression test (GH 35325): grouping by volume and resampling daily then interpolating
+    # raises a not-implemented error saying direct interpolation of multi-level index frames is
+    # unsupported. Run both with the index named and with the index name removed on a copy.
     # GH 35325
 
     # Make a copy of the test data frame that has index.name=None
@@ -361,6 +446,12 @@ def test_groupby_resample_interpolate_raises(groupy_test_df):
 
 
 def test_groupby_resample_interpolate_with_apply_syntax(groupy_test_df):
+    # [FUNCTION DOC]
+    # Regression test (GH 35325): using the apply syntax (group by volume, apply a function that
+    # resamples daily and interpolates linearly) works for both a named and an unnamed index. The
+    # result has a two-level index (volume and the original index name) with fifteen daily
+    # rows for volume fifty and one for sixty, and price values linearly interpolated from ten
+    # down to nine, then eleven.
     # GH 35325
 
     # Make a copy of the test data frame that has index.name=None
@@ -411,6 +502,11 @@ def test_groupby_resample_interpolate_with_apply_syntax(groupy_test_df):
 
 
 def test_groupby_resample_interpolate_with_apply_syntax_off_grid(groupy_test_df):
+    # [FUNCTION DOC]
+    # Regression test (GH#21351): same as the apply syntax test but with a 265 hour resampling
+    # so some anchor points are missing; the result has index entries at 2018-01-07 and
+    # 2018-01-18 01:00 for volume fifty and 2018-01-14 for sixty with prices ten, 9.5 and eleven;
+    # index names are not checked.
     """Similar test as test_groupby_resample_interpolate_with_apply_syntax but
     with resampling that results in missing anchor points when interpolating.
     See GH#21351."""

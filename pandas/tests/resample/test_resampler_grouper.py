@@ -1,3 +1,11 @@
+# [MODULE DOC]
+# Tests for resampling on top of grouping: the resampler obtained from a groupby object
+# (deferred resample operations after grouping), column selection on it, aggregation and apply
+# behaviors, grouper origin handling, empty inputs, and comparison with the equivalent
+# apply-based or rolling forms. Provides a module fixture with a forty-second frame. All
+# tests are module-level functions. Some tests need an interactive-shell test fixture and
+# the optional shell package.
+
 from textwrap import dedent
 
 import numpy as np
@@ -19,6 +27,10 @@ from pandas.core.indexes.datetimes import date_range
 
 @pytest.fixture
 def test_frame():
+    # [FUNCTION DOC]
+    # Fixture named test_frame: a frame with a column A (twenty ones, twelve twos, eight threes)
+    # and a column B counting zero to thirty-nine, indexed by forty consecutive seconds from
+    # 2000-01-01 (nanosecond unit).
     return DataFrame(
         {"A": [1] * 20 + [2] * 12 + [3] * 8, "B": np.arange(40)},
         index=date_range("1/1/2000", freq="s", periods=40, unit="ns"),
@@ -26,6 +38,11 @@ def test_frame():
 
 
 def test_tab_complete_ipython6_warning(ip):
+    # [FUNCTION DOC]
+    # Uses the interactive-shell fixture. Runs a cell that creates a daily-resampled series,
+    # then asks the shell's completer for completions on the resampler with provisional
+    # completion, and verifies no warnings are emitted (extra warnings tolerated). A comment notes a
+    # jedi deprecation warning from newer versions (GH 31324) that appears resolved.
     from IPython.core.completer import provisionalcompleter
 
     code = dedent(
@@ -48,6 +65,11 @@ def test_tab_complete_ipython6_warning(ip):
 
 
 def test_deferred_with_groupby():
+    # [FUNCTION DOC]
+    # Regression test (GH 12486): deferred resample operations after groupby give the same result
+    # as applying the resample in a group-wise function. First checks daily frequency conversion
+    # on a long-form frame grouped by id, then forward filling on a weekly frame grouped by
+    # group.
     # GH 12486
     # support deferred resample ops with groupby
     data = [
@@ -67,6 +89,9 @@ def test_deferred_with_groupby():
     df.date = pd.to_datetime(df.date)
 
     def f_0(x):
+        # [FUNCTION DOC]
+        # HELPER: nested in the deferred-operation test. Takes a frame, sets date as the index,
+        # resamples daily and converts frequency; returned for group-wise application.
         return x.set_index("date").resample("D").asfreq()
 
     expected = df.groupby("id").apply(f_0)
@@ -82,6 +107,9 @@ def test_deferred_with_groupby():
     ).set_index("date")
 
     def f_1(x):
+        # [FUNCTION DOC]
+        # HELPER: nested in the deferred-operation test. Takes a frame, resamples daily and forward
+        # fills; used for group-wise application.
         return x.resample("1D").ffill()
 
     expected = df.groupby("group").apply(f_1)
@@ -90,6 +118,9 @@ def test_deferred_with_groupby():
 
 
 def test_getitem(test_frame):
+    # [FUNCTION DOC]
+    # Verifies selecting column B before or after resampling on a groupby gives the same
+    # two-second mean series as applying the resample group-wise to column B (three ways).
     g = test_frame.groupby("A")
 
     expected = g.B.apply(lambda x: x.resample("2s").mean())
@@ -105,6 +136,10 @@ def test_getitem(test_frame):
 
 
 def test_getitem_multiple():
+    # [FUNCTION DOC]
+    # Regression test (GH 13174): repeated calls after selecting a column of a grouped resampler
+    # do not suffer aliasing; counting buyers per id and day gives a series named buyer with a two
+    # level index, identical on the second call.
     # GH 13174
     # multiple calls after selection causing an issue with aliasing
     data = [{"id": 1, "buyer": "A"}, {"id": 2, "buyer": "B"}]
@@ -125,6 +160,9 @@ def test_getitem_multiple():
 
 
 def test_groupby_resample_on_api_with_getitem():
+    # [FUNCTION DOC]
+    # Regression test (GH 17813): resampling a grouped frame with the on argument naming a date
+    # column and then selecting a column and summing equals the version using a date index.
     # GH 17813
     df = DataFrame(
         {"id": list("aabbb"), "date": date_range("1-1-2016", periods=5), "data": 1}
@@ -135,6 +173,13 @@ def test_groupby_resample_on_api_with_getitem():
 
 
 def test_groupby_with_origin():
+    # [FUNCTION DOC]
+    # Regression test (GH 31809): grouper origin handling with unusual (prime-minute) frequency.
+    # First shows that a grouper without a fixed origin gives different bin indexes for the full
+    # series and for its second half (index mismatch assertion). Then verifies that with the
+    # origin at the epoch, and with an origin far in the future that is a multiple of the
+    # frequency from the epoch, the counts for the second half match those of the full series
+    # and the two origins give equal results.
     # GH 31809
 
     freq = "1399min"  # prime number that is smaller than 24h
@@ -176,6 +221,9 @@ def test_groupby_with_origin():
 
 
 def test_nearest():
+    # [FUNCTION DOC]
+    # Regression test (GH 17496): nearest resampling of a three-point minute series to twenty
+    # seconds gives values zero, zero, one, one, one, two, two on a regular twenty-second index.
     # GH 17496
     # Resample nearest
     index = date_range("1/1/2000", periods=3, freq="min", unit="ns")
@@ -221,6 +269,11 @@ def test_nearest():
     ],
 )
 def test_methods(f, test_frame):
+    # [FUNCTION DOC]
+    # Parametrized by many resample method names (first, last, median, standard error, sum, mean,
+    # min, max, size, count, nearest, backward fill, forward fill, frequency conversion,
+    # open-high-low-close). For each, the grouped resampler's two-second result equals applying
+    # the same method group-wise to resamples of each group.
     g = test_frame.groupby("A")
     r = g.resample("2s")
 
@@ -230,6 +283,9 @@ def test_methods(f, test_frame):
 
 
 def test_methods_nunique(test_frame):
+    # [FUNCTION DOC]
+    # Verifies the series-only unique count on a column of the grouped resampler equals applying
+    # it group-wise to each group's two-second resample.
     # series only
     g = test_frame.groupby("A")
     r = g.resample("2s")
@@ -240,6 +296,9 @@ def test_methods_nunique(test_frame):
 
 @pytest.mark.parametrize("f", ["std", "var"])
 def test_methods_std_var(f, test_frame):
+    # [FUNCTION DOC]
+    # Parametrized by standard deviation or variance. With one delta degree of freedom, the
+    # grouped resampler result equals applying it group-wise.
     g = test_frame.groupby("A")
     r = g.resample("2s")
     result = getattr(r, f)(ddof=1)
@@ -248,6 +307,10 @@ def test_methods_std_var(f, test_frame):
 
 
 def test_apply(test_frame):
+    # [FUNCTION DOC]
+    # Verifies the apply method of a grouped resampler with a function that resamples and sums each
+    # group equals the grouped sum, and the group apply with a function applying a lambda to
+    # the resample gives the same.
     g = test_frame.groupby("A")
     r = g.resample("2s")
 
@@ -255,12 +318,17 @@ def test_apply(test_frame):
     expected = g.resample("2s").sum()
 
     def f_0(x):
+        # [FUNCTION DOC]
+        # HELPER: nested in the apply test. Takes a frame and returns its two-second resampled sum.
         return x.resample("2s").sum()
 
     result = r.apply(f_0)
     tm.assert_frame_equal(result, expected)
 
     def f_1(x):
+        # [FUNCTION DOC]
+        # HELPER: nested in the apply test. Takes a frame and returns the two-second resample
+        # applying a function summing each column.
         return x.resample("2s").apply(lambda y: y.sum())
 
     result = g.apply(f_1)
@@ -268,6 +336,11 @@ def test_apply(test_frame):
 
 
 def test_apply_with_mutated_index():
+    # [FUNCTION DOC]
+    # Regression test (GH 15169): applying a function that returns a two-element series with a
+    # different index than its input works on a resample with month-end frequency, equal to
+    # applying through grouping by a month-end grouper, both for a frame and a series column
+    # (the latter without group keys).
     # GH 15169
     index = date_range("1-1-2015", "12-31-15", freq="D")
     df = DataFrame(
@@ -275,6 +348,9 @@ def test_apply_with_mutated_index():
     )
 
     def f(x):
+        # [FUNCTION DOC]
+        # HELPER: nested in the mutated-index test. Ignores its argument and returns a fixed series of
+        # one and two with index labels a and b.
         s = Series([1, 2], index=["a", "b"])
         return s
 
@@ -290,6 +366,10 @@ def test_apply_with_mutated_index():
 
 
 def test_apply_columns_multilevel():
+    # [FUNCTION DOC]
+    # Regression test (GH 16231): applying a per-column function on an hourly resample of a
+    # frame with four-level columns: columns tagged one are summed and others averaged; the
+    # result keeps the multi-level columns and has two hourly rows of zeros.
     # GH 16231
     cols = pd.MultiIndex.from_tuples([("A", "a", "", "one"), ("B", "b", "i", "two")])
     ind = date_range(start="2017-01-01", freq="15Min", periods=8)
@@ -309,7 +389,17 @@ def test_apply_columns_multilevel():
 
 
 def test_apply_non_naive_index():
+    # [FUNCTION DOC]
+    # Verifies applying a custom weighted quantile function with extra keyword arguments
+    # (weights and quantile 0.5) on a daily resample of a timezone-aware UTC series gives a
+    # single value of 1.0 on the UTC daily index.
     def weighted_quantile(series, weights, q):
+        # [FUNCTION DOC]
+        # HELPER: nested in the non-naive index apply test. Parameters: series of values, weights
+        # series on the same index, and q as the quantile fraction. Sorts the series ascending, takes
+        # the cumulative sum of the weights reordered to that order (missing as zero), computes the
+        # cutoff as the total weight times q, and returns the first value whose cumulative weight
+        # reaches the cutoff.
         series = series.sort_values()
         cumsum = weights.reindex(series.index).fillna(0).cumsum()
         cutoff = cumsum.iloc[-1] * q
@@ -328,6 +418,10 @@ def test_apply_non_naive_index():
 
 
 def test_resample_groupby_with_label(unit):
+    # [FUNCTION DOC]
+    # Regression test (GH 13235), parametrized by time unit fixture. Group by col0 and resample
+    # weekly with labels on the left and sum: the result index pairs each group with the week start
+    # (1999-12-26 for group zero's first bin and 2000-01-02 for the rest) and sums of the column.
     # GH 13235
     index = date_range("2000-01-01", freq="2D", periods=5, unit=unit)
     df = DataFrame(index=index, data={"col0": [0, 0, 1, 1, 2], "col1": [1, 1, 1, 1, 1]})
@@ -347,6 +441,10 @@ def test_resample_groupby_with_label(unit):
 
 
 def test_consistency_with_window(test_frame):
+    # [FUNCTION DOC]
+    # Verifies grouped resample mean and grouped rolling mean of the test frame each return a
+    # result with two index levels, whose first level equals the distinct values of column A (named
+    # A), i.e. a consistent shape between window and resample operations.
     # consistent return values with window
     df = test_frame
     expected = Index([1, 2, 3], name="A")
@@ -360,6 +458,10 @@ def test_consistency_with_window(test_frame):
 
 
 def test_median_duplicate_columns():
+    # [FUNCTION DOC]
+    # Regression test (GH 14233): resampling to five seconds and median on a frame with three
+    # columns with the same name matches the result obtained with distinct column names, once
+    # column labels are aligned.
     # GH 14233
 
     df = DataFrame(
@@ -375,6 +477,10 @@ def test_median_duplicate_columns():
 
 
 def test_apply_to_one_column_of_df():
+    # [FUNCTION DOC]
+    # Regression test (GH 36951): the apply method of a resampler with a function that reads
+    # one column either as an attribute or by key sums that column per hour (values 3, 12, 21,
+    # 9); both access styles must work (attribute errors and key errors are handled internally).
     # GH: 36951
     df = DataFrame(
         {"col": range(10), "col1": range(10, 20)},
@@ -394,6 +500,10 @@ def test_apply_to_one_column_of_df():
 
 
 def test_resample_groupby_agg():
+    # [FUNCTION DOC]
+    # Regression test (GH 33548): on a resampler obtained from group by category with yearly
+    # frequency on a date column, an aggregation by a dictionary mapping num to sum equals
+    # selecting num and summing.
     # GH: 33548
     df = DataFrame(
         {
@@ -430,6 +540,10 @@ def test_resample_groupby_agg():
 
 
 def test_resample_groupby_agg_listlike():
+    # [FUNCTION DOC]
+    # Regression test (GH 42905): a list-like aggregation (sum and size) on a selected column
+    # of a grouped month-end resampler gives a frame with columns sum and size on a two-level
+    # index (class, date).
     # GH 42905
     ts = Timestamp("2021-02-28 00:00:00")
     df = DataFrame({"class": ["beta"], "value": [69]}, index=Index([ts], name="date"))
@@ -445,6 +559,11 @@ def test_resample_groupby_agg_listlike():
 
 @pytest.mark.parametrize("keys", [["a"], ["a", "b"]])
 def test_empty(keys):
+    # [FUNCTION DOC]
+    # Regression test (GH 26411), parametrized by group keys (one or two keys). An empty frame
+    # with an empty timedelta index grouped by the keys and resampled each second with mean
+    # gives an empty frame with column b only when one key was used; with one key the index
+    # level has the key name.
     # GH 26411
     df = DataFrame([], columns=["a", "b"], index=TimedeltaIndex([]))
     result = df.groupby(keys).resample(rule=pd.to_timedelta("00:00:01")).mean()
@@ -462,6 +581,11 @@ def test_empty(keys):
 
 @pytest.mark.parametrize("consolidate", [True, False])
 def test_resample_groupby_agg_object_dtype_all_nan(consolidate):
+    # [FUNCTION DOC]
+    # Regression test (issue 39329), parametrized by whether the frame is consolidated first.
+    # Grouping two keys' frames (one lacking an object column) and resampling weekly on the date
+    # column with min gives minima per week for the first key and, for the object column, values for
+    # the first key and missing markers for the second.
     # https://github.com/pandas-dev/pandas/issues/39329
 
     dates = date_range("2020-01-01", periods=15, freq="D", unit="ns")
@@ -495,6 +619,11 @@ def test_resample_groupby_agg_object_dtype_all_nan(consolidate):
 def test_groupby_resample_empty_sum_string(
     string_dtype_no_object, test_frame, min_count
 ):
+    # [FUNCTION DOC]
+    # Regression test (issue 60229), parametrized by minimum count and the string dtype fixture
+    # without object. A frame with column B replaced by all-missing strings, grouped by A
+    # and resampled with a forty-second window and summed, gives an empty string for each group
+    # when the minimum count is zero and the missing marker otherwise, on a two-level index.
     # https://github.com/pandas-dev/pandas/issues/60229
     dtype = string_dtype_no_object
     test_frame = test_frame.assign(B=pd.array([pd.NA] * len(test_frame), dtype=dtype))
@@ -512,6 +641,10 @@ def test_groupby_resample_empty_sum_string(
 
 
 def test_groupby_resample_with_list_of_keys():
+    # [FUNCTION DOC]
+    # Regression test (GH 47362): grouping by group, resampling in two-day windows on date, and
+    # selecting a list of columns with one value gives a frame of means with a two-level index
+    # (group, date).
     # GH 47362
     df = DataFrame(
         data={
@@ -536,6 +669,11 @@ def test_groupby_resample_with_list_of_keys():
 
 @pytest.mark.parametrize("keys", [["a"], ["a", "b"]])
 def test_resample_no_index(keys):
+    # [FUNCTION DOC]
+    # Regression test (GH 47705), parametrized by group keys (one or two). An empty frame with an
+    # empty date index grouped and resampled by a one-second timedelta rule and averaged gives
+    # an empty frame with the right multi-level index and, when two keys, no remaining columns;
+    # with one key the index level has the key name.
     # GH 47705
     df = DataFrame([], columns=["a", "b", "date"])
     df["date"] = pd.to_datetime(df["date"])
@@ -552,6 +690,11 @@ def test_resample_no_index(keys):
 
 
 def test_resample_no_columns():
+    # [FUNCTION DOC]
+    # Regression test (GH#52484): a frame without columns with three timestamps, grouped
+    # by a list of labels and resampled at six hours with mean, gives an empty-column frame with
+    # a two-level index (group label and the filled six-hour grid). The index type check is
+    # skipped on Windows (GH#52710, the index is 32-bit there).
     # GH#52484
     df = DataFrame(
         index=Index(
@@ -583,6 +726,9 @@ def test_resample_no_columns():
 
 
 def test_groupby_resample_size_all_index_same():
+    # [FUNCTION DOC]
+    # Regression test (GH 46826): the size of a daily resample after grouping, where each group
+    # spans the same days, is three for each group and day on a two-level index.
     # GH 46826
     df = DataFrame(
         {"A": [1] * 3 + [2] * 3 + [1] * 3 + [2] * 3, "B": np.arange(12)},
@@ -605,6 +751,9 @@ def test_groupby_resample_size_all_index_same():
 
 
 def test_groupby_resample_on_index_with_list_of_keys():
+    # [FUNCTION DOC]
+    # Regression test (GH 50840): resampling every two days on a date-named index after grouping
+    # and selecting a list with one column gives the means on a two-level index (group, date).
     # GH 50840
     df = DataFrame(
         data={
@@ -628,6 +777,9 @@ def test_groupby_resample_on_index_with_list_of_keys():
 
 
 def test_groupby_resample_on_index_with_list_of_keys_multi_columns():
+    # [FUNCTION DOC]
+    # Regression test (GH 50876): as the previous test but selecting two columns out of three; the
+    # result contains only these columns with their means.
     # GH 50876
     df = DataFrame(
         data={
@@ -654,6 +806,9 @@ def test_groupby_resample_on_index_with_list_of_keys_multi_columns():
 
 
 def test_groupby_resample_on_index_with_list_of_keys_missing_column():
+    # [FUNCTION DOC]
+    # Regression test (GH 50876): selecting a column name that does not exist on a grouped
+    # resampler by a list raises a key error saying columns were not found.
     # GH 50876
     df = DataFrame(
         data={

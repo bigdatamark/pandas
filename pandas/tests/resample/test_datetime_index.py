@@ -1,3 +1,14 @@
+# [MODULE DOC]
+# Tests for resampling and time-grouping with datetime indexes: custom groupers, closed and
+# label sides, many down- and upsampling cases, open-high-low-close, origin and offset
+# arguments, daylight saving transitions, time zones, missing times, apply and aggregation
+# with callables and extra arguments, unique counts, group info and sizes, deprecated or invalid
+# frequency aliases, and various regressions. Most tests are parametrized by the time unit
+# fixture so that index resolution (for example second, millisecond, nanosecond) is varied.
+# Provides a factory fixture for random-valued daily-or-other frequency series. Imports the
+# private edge-computing helper from the resample implementation. Contains module-level
+# sample date lists used by two grouper tests.
+
 from datetime import datetime
 from functools import partial
 import zoneinfo
@@ -42,11 +53,17 @@ from pandas.tseries.offsets import Minute
 
 @pytest.fixture
 def simple_date_range_series():
+    # [FUNCTION DOC]
+    # Fixture returning a factory function that builds a series of random normal values on a date
+    # range from the given start to the given end at a given frequency (default daily).
     """
     Series with date range index and random data for test purposes.
     """
 
     def _simple_date_range_series(start, end, freq="D"):
+        # [FUNCTION DOC]
+        # HELPER: factory returned by the fixture. Parameters: start and end date-like values and
+        # freq (default daily). Returns a series with a seeded random normal value per date.
         rng = date_range(start, end, freq=freq)
         return Series(np.random.default_rng(2).standard_normal(len(rng)), index=rng)
 
@@ -54,6 +71,13 @@ def simple_date_range_series():
 
 
 def test_custom_grouper(unit):
+    # [FUNCTION DOC]
+    # Parametrized by time unit. Using a five-minute grouper on a series of ones over nine days
+    # at minute frequency, checks that every private fast aggregation (sum, mean, product,
+    # minimum, maximum, variance) and open-high-low-close work, with left- and right-closed
+    # groupers. With right closing and labeling there are 2593 groups, no missing means, and the
+    # sum is 1 for the first group then 5 for the rest on a five-minute index, preserving
+    # the integer dtype (GH2763).
     index = date_range(datetime(2005, 1, 1), datetime(2005, 1, 10), freq="Min")
     dti = index.as_unit(unit)
     s = Series(np.array([1] * len(dti)), index=dti, dtype="int64")
@@ -91,6 +115,9 @@ def test_custom_grouper(unit):
 
 
 def test_custom_grouper_df(unit):
+    # [FUNCTION DOC]
+    # Parametrized by time unit. Summing a ten-column random frame at daily points with a
+    # right-closed, right-labeled five-minute grouper gives ten columns and 2593 rows.
     index = date_range(datetime(2005, 1, 1), datetime(2005, 1, 10), freq="D")
     b = Grouper(freq=Minute(5), closed="right", label="right")
     dti = index.as_unit(unit)
@@ -125,6 +152,12 @@ def test_custom_grouper_df(unit):
     ],
 )
 def test_resample_basic(closed, expected, unit):
+    # [FUNCTION DOC]
+    # Parametrized by closed side and an expected-result function (right or left) and time unit.
+    # Resampling a 14-minute series to right-labeled five-minute bins and taking the mean gives the
+    # expected arrangement: with right closing, first value alone then the means of 1..5, 6..10
+    # and 11..13; with left closing, the means of the first three blocks at labels shifted by five
+    # minutes.
     index = date_range("1/1/2000 00:00:00", "1/1/2000 00:13:00", freq="Min")
     s = Series(range(len(index)), index=index)
     s.index.name = "index"
@@ -136,6 +169,9 @@ def test_resample_basic(closed, expected, unit):
 
 
 def test_resample_integerarray(unit):
+    # [FUNCTION DOC]
+    # Regression test (GH 25580), parametrized by unit: the sum and mean of a nullable-integer
+    # series in three-minute bins keep nullable dtypes (integer for sum, float for mean).
     # GH 25580, resample on IntegerArray
     ts = Series(
         range(9),
@@ -160,6 +196,9 @@ def test_resample_integerarray(unit):
 
 
 def test_resample_basic_grouper(unit):
+    # [FUNCTION DOC]
+    # Parametrized by unit. Resampling a minute series to five minutes with last equals grouping
+    # by an equivalent left-closed left-labeled grouper aggregating to the last element.
     index = date_range("1/1/2000 00:00:00", "1/1/2000 00:13:00", freq="Min")
     s = Series(range(len(index)), index=index)
     s.index.name = "index"
@@ -175,6 +214,10 @@ def test_resample_basic_grouper(unit):
     [("label", "righttt"), ("closed", "righttt"), ("convention", "starttt")],
 )
 def test_resample_string_kwargs(keyword, value, unit):
+    # [FUNCTION DOC]
+    # Regression test (gh-19303), parametrized by keyword name (label, closed, convention) and
+    # an invalid string value, and unit. Resampling raises a value error saying the value is
+    # unsupported for that keyword.
     # see gh-19303
     # Check that wrong keyword argument strings raise an error
     index = date_range("1/1/2000 00:00:00", "1/1/2000 00:13:00", freq="Min")
@@ -187,6 +230,11 @@ def test_resample_string_kwargs(keyword, value, unit):
 
 
 def test_resample_how(downsample_method, unit):
+    # [FUNCTION DOC]
+    # Parametrized by the downsample method fixture and unit. Skips open-high-low-close (covered
+    # elsewhere). Compares right-closed right-labeled five-minute resample using the method with
+    # grouping by manual group numbers (0, then 1 for next five, 2, 3) and the same method, with a
+    # five-minute index named index.
     if downsample_method == "ohlc":
         pytest.skip("covered by test_resample_how_ohlc")
     index = date_range("1/1/2000 00:00:00", "1/1/2000 00:13:00", freq="Min")
@@ -210,6 +258,10 @@ def test_resample_how(downsample_method, unit):
 
 
 def test_resample_how_ohlc(unit):
+    # [FUNCTION DOC]
+    # Parametrized by unit. Open-high-low-close with right-closed right-labeled five-minute bins
+    # equals a manual grouping with a function returning first, maximum, minimum and last (or four
+    # missing values if the group is all missing) as a frame with the four named columns.
     index = date_range("1/1/2000 00:00:00", "1/1/2000 00:13:00", freq="Min")
     s = Series(range(len(index)), index=index)
     s.index.name = "index"
@@ -221,6 +273,10 @@ def test_resample_how_ohlc(unit):
     grouplist[11:] = 3
 
     def _ohlc(group):
+        # [FUNCTION DOC]
+        # HELPER: nested in the ohlc test. Takes a group of values and returns either an array of four
+        # missing values if the group is entirely missing or a list of first, maximum, minimum and last
+        # values.
         if isna(group).all():
             return np.repeat(np.nan, 4)
         return [group.iloc[0], group.max(), group.min(), group.iloc[-1]]
@@ -238,6 +294,11 @@ def test_resample_how_ohlc(unit):
 
 
 def test_resample_how_callables(unit):
+    # [FUNCTION DOC]
+    # Regression test (GH#7929), parametrized by unit. Applying a plain function, a lambda, a
+    # partial of the function, a partial with a different keyword and a callable class instance to
+    # a month-end resample all give the same result (the string of the argument's type). Creating the
+    # index with a deprecated lowercase day alias emits a deprecation warning asserted by the test.
     # GH#7929
     data = np.arange(5, dtype=np.int64)
     msg = "'d' is deprecated and will be removed in a future version."
@@ -246,10 +307,18 @@ def test_resample_how_callables(unit):
     df = DataFrame({"A": data, "B": data}, index=ind)
 
     def fn(x, a=1):
+        # [FUNCTION DOC]
+        # HELPER: nested in the callables test. Takes x and an unused argument a (default one) and
+        # returns the string form of the type of x.
         return str(type(x))
 
     class FnClass:
+        # [CLASS DOC]
+        # HELPER: nested in the callables test. A callable class whose instances return the string
+        # form of the type of their argument. No state.
         def __call__(self, x):
+            # [FUNCTION DOC]
+            # HELPER: makes instances callable. Takes x and returns the string form of the type of x.
             return str(type(x))
 
     df_standard = df.resample("ME").apply(fn)
@@ -265,6 +334,10 @@ def test_resample_how_callables(unit):
 
 
 def test_resample_rounding(unit):
+    # [FUNCTION DOC]
+    # Regression test (GH 8371), parametrized by unit. Frames of 19 irregular timestamps with value
+    # one are summed for 6, 7, 11, 13 and 17 second bins and match the expected counts per bin
+    # (where rounding is needed, odd results previously occurred).
     # GH 8371
     # odd results when rounding is needed
 
@@ -329,6 +402,11 @@ def test_resample_rounding(unit):
 
 
 def test_resample_basic_from_daily(unit):
+    # [FUNCTION DOC]
+    # Parametrized by unit. Resampling a ten-day series from daily to weekly with last for
+    # every anchor day (Sunday via a deprecated lowercase alias that emits a deprecation warning,
+    # Monday to Friday) gives the expected length, anchor weekday, and values; resampling to business
+    # day gives seven rows with the expected weekdays and values and keeps the index name.
     # from daily
     dti = date_range(
         start=datetime(2005, 1, 1), end=datetime(2005, 1, 10), freq="D", name="index"
@@ -389,6 +467,10 @@ def test_resample_basic_from_daily(unit):
 
 
 def test_resample_upsampling_picked_but_not_correct(unit):
+    # [FUNCTION DOC]
+    # Issue 3020 and GH 5955, parametrized by unit. Daily resample of a daily series returns the
+    # same first index; a series with values at noon each day resampled daily gives counts of one,
+    # and sums and means equal to the values (the resampler does not wrongly choose upsampling).
     # Test for issue #3020
     dates = date_range("01-Jan-2014", "05-Jan-2014", freq="D").as_unit(unit)
     series = Series(1, index=dates)
@@ -420,6 +502,10 @@ def test_resample_upsampling_picked_but_not_correct(unit):
 
 @pytest.mark.parametrize("f", ["sum", "mean", "prod", "min", "max", "var"])
 def test_resample_frame_basic_cy_funcs(f, unit):
+    # [FUNCTION DOC]
+    # Parametrized by reduction name and unit. Verifies the private fast aggregation for a
+    # month-end grouper on a business-day random frame works for sum, mean, product, minimum, maximum
+    # and variance.
     df = DataFrame(
         np.random.default_rng(2).standard_normal((50, 4)),
         columns=Index(list("ABCD"), dtype=object),
@@ -436,6 +522,9 @@ def test_resample_frame_basic_cy_funcs(f, unit):
 
 @pytest.mark.parametrize("freq", ["YE", "ME"])
 def test_resample_frame_basic_M_A(freq, unit):
+    # [FUNCTION DOC]
+    # Parametrized by year end or month end and unit. The mean of a resampled frame's column A
+    # equals the mean from resampling the column as a series.
     df = DataFrame(
         np.random.default_rng(2).standard_normal((50, 4)),
         columns=Index(list("ABCD"), dtype=object),
@@ -447,6 +536,9 @@ def test_resample_frame_basic_M_A(freq, unit):
 
 
 def test_resample_upsample(unit):
+    # [FUNCTION DOC]
+    # Parametrized by unit. Forward-filling a daily random series to minutes gives 12961 rows with
+    # first and last values matching the series and the index name kept.
     # from daily
     dti = date_range(
         start=datetime(2005, 1, 1), end=datetime(2005, 1, 10), freq="D", name="index"
@@ -464,6 +556,9 @@ def test_resample_upsample(unit):
 
 
 def test_resample_how_method(unit):
+    # [FUNCTION DOC]
+    # Regression test (GH9915), parametrized by unit. A mean over ten-second bins of two points
+    # sixty seconds apart gives the two values and missing in between, on bins starting at 21:48:50.
     # GH9915
     s = Series(
         [11, 22],
@@ -493,6 +588,9 @@ def test_resample_how_method(unit):
 
 
 def test_resample_extra_index_point(unit):
+    # [FUNCTION DOC]
+    # Regression test (GH#9756), parametrized by unit. Taking the last value per business month
+    # end of a business-day integer frame gives 21, 41, 63 at month ends.
     # GH#9756
     index = date_range(start="20150101", end="20150331", freq="BME").as_unit(unit)
     expected = DataFrame({"A": Series([21, 41, 63], index=index)})
@@ -504,6 +602,9 @@ def test_resample_extra_index_point(unit):
 
 
 def test_upsample_with_limit(unit):
+    # [FUNCTION DOC]
+    # Parametrized by unit. Forward fill with a limit of two when upsampling five-minute data to
+    # minutes equals reindexing with the same fill limit.
     rng = date_range("1/1/2000", periods=3, freq="5min").as_unit(unit)
     ts = Series(np.random.default_rng(2).standard_normal(len(rng)), rng)
 
@@ -515,6 +616,10 @@ def test_upsample_with_limit(unit):
 @pytest.mark.parametrize("freq", ["1D", "10h", "5Min", "10s"])
 @pytest.mark.parametrize("rule", ["YE", "3ME", "15D", "30h", "15Min", "30s"])
 def test_nearest_upsample_with_limit(tz_aware_fixture, freq, rule, unit):
+    # [FUNCTION DOC]
+    # Regression test (GH 33939), parametrized by timezone-aware fixture, source frequency, target
+    # rule and unit. Nearest fill with a limit of two when upsampling equals reindexing with the
+    # nearest method and the same limit.
     # GH 33939
     rng = date_range("1/1/2000", periods=3, freq=freq, tz=tz_aware_fixture).as_unit(
         unit
@@ -527,6 +632,10 @@ def test_nearest_upsample_with_limit(tz_aware_fixture, freq, rule, unit):
 
 
 def test_resample_ohlc(unit):
+    # [FUNCTION DOC]
+    # Parametrized by unit. Open-high-low-close for five-minute bins over a day: the number of rows
+    # matches the grouper-based count, there are four columns, and the first and second-last rows
+    # have the expected open, high, low and close.
     index = date_range(datetime(2005, 1, 1), datetime(2005, 1, 2), freq="Min")
     s = Series(range(len(index)), index=index)
     s.index.name = "index"
@@ -553,6 +662,10 @@ def test_resample_ohlc(unit):
 
 
 def test_resample_ohlc_result(unit):
+    # [FUNCTION DOC]
+    # Regression test (GH 12332), parametrized by unit. Open-high-low-close at half-hour frequency
+    # over an index with a gap returns a data frame, both when the subset spans the gap and
+    # when it ends before it.
     # GH 12332
     index = date_range("1-1-2000", "2-15-2000", freq="h").as_unit(unit)
     index = index.union(date_range("4-15-2000", "5-15-2000", freq="h").as_unit(unit))
@@ -566,6 +679,9 @@ def test_resample_ohlc_result(unit):
 
 
 def test_resample_ohlc_result_odd_period(unit):
+    # [FUNCTION DOC]
+    # Regression test (GH12348), parametrized by unit. Business-day mean of a frame whose index
+    # lacks several days equals the frame reindexed onto the business day range.
     # GH12348
     # raising on odd period
     rng = date_range("2013-12-30", "2014-01-07").as_unit(unit)
@@ -584,6 +700,11 @@ def test_resample_ohlc_result_odd_period(unit):
 
 
 def test_resample_ohlc_dataframe(unit):
+    # [FUNCTION DOC]
+    # Parametrized by unit. Open-high-low-close on a frame of price and volume at hourly frequency
+    # equals concatenating each column's result under the original column keys, preserving the
+    # column index name; also works with a two-level column index. A leftover comment notes
+    # that duplicate columns currently fail.
     df = (
         DataFrame(
             {
@@ -632,6 +753,9 @@ def test_resample_ohlc_dataframe(unit):
 
 
 def test_resample_reresample(unit):
+    # [FUNCTION DOC]
+    # Parametrized by unit. Resampling business-day means (right-closed, right-labeled) to eight
+    # hours gives 25 rows with an hourly offset frequency of eight hours.
     dti = date_range(
         start=datetime(2005, 1, 1), end=datetime(2005, 1, 10), freq="D"
     ).as_unit(unit)
@@ -654,6 +778,11 @@ def test_resample_reresample(unit):
 def test_resample_timestamp_to_period(
     simple_date_range_series, freq, expected_kwargs, unit
 ):
+    # [FUNCTION DOC]
+    # Parametrized by frequency alias (year end December, year end June, month end), the expected
+    # period range keywords, the series factory fixture and unit. The mean of a resampled series
+    # converted to periods equals the original with its index replaced by the expected period
+    # range.
     ts = simple_date_range_series("1/1/1990", "1/1/2000")
     ts.index = ts.index.as_unit(unit)
 
@@ -664,7 +793,15 @@ def test_resample_timestamp_to_period(
 
 
 def test_ohlc_5min(unit):
+    # [FUNCTION DOC]
+    # Parametrized by unit. Open-high-low-close on right-closed right-labeled five-minute bins of
+    # ten-second data: the first bin equals the first value, the second bin equals the
+    # computed open/high/low/close of the next 30 points, and the last bin equals the one for
+    # the final points.
     def _ohlc(group):
+        # [FUNCTION DOC]
+        # HELPER: nested in the five-minute ohlc test. Takes a group and returns four missing values
+        # if all are missing, otherwise first, maximum, minimum and last.
         if isna(group).all():
             return np.repeat(np.nan, 4)
         return [group.iloc[0], group.max(), group.min(), group.iloc[-1]]
@@ -684,6 +821,9 @@ def test_ohlc_5min(unit):
 
 
 def test_downsample_non_unique(unit):
+    # [FUNCTION DOC]
+    # Parametrized by unit. Month-end mean of a series whose index has each date repeated five
+    # times has two rows that match the group-by-month means.
     rng = date_range("1/1/2000", "2/29/2000").as_unit(unit)
     rng2 = rng.repeat(5).values
     ts = Series(np.random.default_rng(2).standard_normal(len(rng2)), index=rng2)
@@ -697,6 +837,10 @@ def test_downsample_non_unique(unit):
 
 
 def test_asfreq_non_unique(unit):
+    # [FUNCTION DOC]
+    # Regression test (GH #1077), parametrized by unit. Converting the frequency to business day
+    # on a series with a duplicated index raises a value error saying it cannot reindex on an axis
+    # with duplicate labels.
     # GH #1077
     rng = date_range("1/1/2000", "2/29/2000").as_unit(unit)
     rng2 = rng.repeat(2).values
@@ -709,6 +853,11 @@ def test_asfreq_non_unique(unit):
 
 @pytest.mark.parametrize("freq", ["min", "5min", "15min", "30min", "4h", "12h"])
 def test_resample_anchored_ticks(freq, unit):
+    # [FUNCTION DOC]
+    # Parametrized by freq (minute, five, fifteen, thirty minute, four hour, twelve hour) and unit.
+    # For frequencies that divide a day evenly the origin is anchored at midnight: resampling the
+    # series after dropping the first two points (set to missing) gives the same left-closed
+    # left-labeled means as the full series.
     # If a fixed delta (5 minute, 4 hour) evenly divides a day, we should
     # "anchor" the origin at midnight so we get regular intervals rather
     # than starting from the first timestamp which might start in the
@@ -724,6 +873,9 @@ def test_resample_anchored_ticks(freq, unit):
 
 @pytest.mark.parametrize("end", [1, 2])
 def test_resample_single_group(end, unit):
+    # [FUNCTION DOC]
+    # Parametrized by end month and unit. A month-end sum equals applying a lambda summing each
+    # group.
     mysum = lambda x: x.sum()
 
     rng = date_range("2000-1-1", f"2000-{end}-10", freq="D").as_unit(unit)
@@ -732,6 +884,9 @@ def test_resample_single_group(end, unit):
 
 
 def test_resample_single_group_std(unit):
+    # [FUNCTION DOC]
+    # Regression test (GH 3849), parametrized by unit. Daily applying a function computing the
+    # population standard deviation of two values (30.1 and 31.6) gives 0.75.
     # GH 3849
     s = Series(
         [30.1, 31.6],
@@ -746,6 +901,10 @@ def test_resample_single_group_std(unit):
 
 
 def test_resample_offset(unit):
+    # [FUNCTION DOC]
+    # Regression test (GH 31809), parametrized by unit. Five-minute mean with an offset of two
+    # minutes on one second data starts three minutes before the first bin (23:57 the day before)
+    # and ends at 01:57.
     # GH 31809
 
     rng = date_range("1/1/2000 00:00:00", "1/1/2000 02:00", freq="s").as_unit(unit)
@@ -770,6 +929,10 @@ def test_resample_offset(unit):
     ],
 )
 def test_resample_origin(kwargs, unit):
+    # [FUNCTION DOC]
+    # Regression test (GH 31809), parametrized by keyword combinations (an origin string or
+    # timestamp, an epoch origin with a two-minute offset, or only a negative three-minute
+    # offset) and unit. All give the same five-minute index starting at 23:57 the day before.
     # GH 31809
     rng = date_range("2000-01-01 00:00:00", "2000-01-01 02:00", freq="s").as_unit(unit)
     ts = Series(np.random.default_rng(2).standard_normal(len(rng)), index=rng)
@@ -786,6 +949,10 @@ def test_resample_origin(kwargs, unit):
     "origin", ["invalid_value", "epch", "startday", "startt", "2000-30-30", object()]
 )
 def test_resample_bad_origin(origin, unit):
+    # [FUNCTION DOC]
+    # Parametrized by invalid origin values and unit. Passing an invalid origin raises a value
+    # error that lists the allowed values (epoch, start, start of day, end, end of day, or
+    # timestamp-convertible).
     rng = date_range("2000-01-01 00:00:00", "2000-01-01 02:00", freq="s").as_unit(unit)
     ts = Series(np.random.default_rng(2).standard_normal(len(rng)), index=rng)
     msg = (
@@ -799,6 +966,9 @@ def test_resample_bad_origin(origin, unit):
 
 @pytest.mark.parametrize("offset", ["invalid_value", "12dayys", "2000-30-30", object()])
 def test_resample_bad_offset(offset, unit):
+    # [FUNCTION DOC]
+    # Parametrized by invalid offset values and unit. Passing an invalid offset raises a value
+    # error saying it should be convertible to a duration.
     rng = date_range("2000-01-01 00:00:00", "2000-01-01 02:00", freq="s").as_unit(unit)
     ts = Series(np.random.default_rng(2).standard_normal(len(rng)), index=rng)
     msg = f"'offset' should be a Timedelta convertible type. Got '{offset}' instead."
@@ -807,6 +977,11 @@ def test_resample_bad_offset(offset, unit):
 
 
 def test_resample_origin_prime_freq(unit):
+    # [FUNCTION DOC]
+    # Regression test (GH 31809), parametrized by unit. For a 17-minute rule on 7-minute data across
+    # midnight, checks the resulting bin index for the default origin and start of day (anchored
+    # at 23:14), for origin start or an equivalent offset (anchored at the first timestamp), for
+    # epoch and for a given origin date.
     # GH 31809
     start, end = "2000-10-01 23:30:00", "2000-10-02 00:30:00"
     rng = date_range(start, end, freq="7min").as_unit(unit)
@@ -844,6 +1019,11 @@ def test_resample_origin_prime_freq(unit):
 
 
 def test_resample_origin_with_tz(unit):
+    # [FUNCTION DOC]
+    # Regression test (GH 31809), parametrized by unit. With a zone-aware index, origins given with
+    # various offsets or an epoch origin plus offset yield the same bins; a naive origin string
+    # raises a value error saying the origin must have the same time zone as the index, and so
+    # does a zone-aware origin with a naive index.
     # GH 31809
     msg = "The origin must have the same timezone as the index."
 
@@ -877,6 +1057,12 @@ def test_resample_origin_with_tz(unit):
 
 
 def test_resample_origin_epoch_with_tz_day_vs_24h(unit):
+    # [FUNCTION DOC]
+    # Regression test (GH 34474), parametrized by unit. For a seven-minute series spanning two
+    # months with a fixed offset time zone, daily mean equals 24-hour mean with epoch origin
+    # (ignoring the frequency check since a day and 24 hours no longer compare equal, GH#41943);
+    # equal as well for the same data without a zone (localized back) and for a similar series in a
+    # different zone offset (compared with the zone dropped).
     # GH 34474
     start, end = "2000-10-01 23:30:00+0500", "2000-12-02 00:30:00+0500"
     rng = date_range(start, end, freq="7min").as_unit(unit)
@@ -906,11 +1092,22 @@ def test_resample_origin_epoch_with_tz_day_vs_24h(unit):
 
 
 def test_resample_origin_with_day_freq_on_dst(unit):
+    # [FUNCTION DOC]
+    # Regression test (GH 31809), parametrized by unit. In Chicago time zone around the fall
+    # daylight saving change: daily sums with many origin values give 24 and 25 hours (a runtime
+    # warning is expected unless the origin is the start of day); with origin start and offsets
+    # the day bin is a single 25-hour bin starting at midnight, while a 24-hour rule with the
+    # offset negative two hours produces two bins of 22 and 3 observations. The calendar-day rule
+    # behavior changed in GH#61985.
     # GH 31809
     tz = "America/Chicago"
     msg = "The '(origin|offset)' keyword does not take effect"
 
     def _create_series(values, timestamps, freq="D"):
+        # [FUNCTION DOC]
+        # HELPER: nested in the daylight saving origin test. Parameters: values, timestamps (strings
+        # localized to Chicago) and freq (default daily). Returns a series with those values on a
+        # datetime index at the given unit, with ambiguous times resolved as the first occurrence.
         return Series(
             values,
             index=DatetimeIndex(
@@ -970,6 +1167,10 @@ def test_resample_origin_with_day_freq_on_dst(unit):
 
 
 def test_resample_dst_midnight_last_nonexistent():
+    # [FUNCTION DOC]
+    # Regression test (GH 58380): resampling a Cairo time zone series that ends at a
+    # nonexistent local midnight in seven-day bins gives a single sum equal to the length with a
+    # seven-day frequency index.
     # GH 58380
     ts = Series(
         1,
@@ -983,6 +1184,9 @@ def test_resample_dst_midnight_last_nonexistent():
 
 
 def test_resample_daily_anchored(unit):
+    # [FUNCTION DOC]
+    # Parametrized by unit. Daily left-closed left-labeled mean after dropping the first two
+    # (missing) points equals the full series result.
     rng = date_range("1/1/2000 0:00:00", periods=10000, freq="min").as_unit(unit)
     ts = Series(np.random.default_rng(2).standard_normal(len(rng)), index=rng)
     ts[:2] = np.nan  # so results are the same
@@ -993,6 +1197,9 @@ def test_resample_daily_anchored(unit):
 
 
 def test_resample_to_period_monthly_buglet(unit):
+    # [FUNCTION DOC]
+    # Regression test (GH #1259), parametrized by unit. Month-end mean converted to periods has
+    # index equal to the twelve monthly periods of 2000.
     # GH #1259
 
     rng = date_range("1/1/2000", "12/31/2000").as_unit(unit)
@@ -1004,6 +1211,9 @@ def test_resample_to_period_monthly_buglet(unit):
 
 
 def test_period_with_agg():
+    # [FUNCTION DOC]
+    # Verifies that aggregating a period-indexed resampler (daily from hourly) with a lambda taking
+    # the mean equals the timestamp-based daily mean converted to periods.
     # aggregate a period resampler with a lambda
     s2 = Series(
         np.random.default_rng(2).integers(0, 5, 50),
@@ -1017,6 +1227,9 @@ def test_period_with_agg():
 
 
 def test_resample_segfault(unit):
+    # [FUNCTION DOC]
+    # Regression test (GH 8573), parametrized by unit. Grouping by ID and resampling to five minutes
+    # and summing equals applying the resample group-wise (previously could segfault).
     # GH 8573
     # segfaulting in older versions
     all_wins_and_wagers = [
@@ -1036,6 +1249,10 @@ def test_resample_segfault(unit):
 
 
 def test_resample_dtype_preservation(unit):
+    # [FUNCTION DOC]
+    # Regression test (GH 12202), parametrized by unit. Forward-filling a daily resample of a
+    # weekly frame with a 32-bit integer column keeps that dtype, with and without a prior
+    # groupby.
     # GH 12202
     # validation tests for dtype preservation
 
@@ -1055,6 +1272,10 @@ def test_resample_dtype_preservation(unit):
 
 
 def test_resample_dtype_coercion(unit):
+    # [FUNCTION DOC]
+    # Regression test (GH 16361), parametrized by unit; skipped without scipy interpolate.
+    # Cubic interpolation after an hourly mean of an integer column equals the one from the float
+    # version, both from the series and frame forms.
     pytest.importorskip("scipy.interpolate")
 
     # GH 16361
@@ -1071,6 +1292,9 @@ def test_resample_dtype_coercion(unit):
 
 
 def test_weekly_resample_buglet(unit):
+    # [FUNCTION DOC]
+    # Regression test (#1327), parametrized by unit. Weekly mean equals Sunday-anchored weekly mean on
+    # business-day data.
     # #1327
     rng = date_range("1/1/2000", freq="B", periods=20).as_unit(unit)
     ts = Series(np.random.default_rng(2).standard_normal(len(rng)), index=rng)
@@ -1081,6 +1305,9 @@ def test_weekly_resample_buglet(unit):
 
 
 def test_monthly_resample_error(unit):
+    # [FUNCTION DOC]
+    # Regression test (#1451), parametrized by unit. Creating a month-end resampler on 5000 hourly
+    # points must not raise.
     # #1451
     dates = date_range("4/16/2012 20:00", periods=5000, freq="h").as_unit(unit)
     ts = Series(np.random.default_rng(2).standard_normal(len(dates)), index=dates)
@@ -1089,6 +1316,10 @@ def test_monthly_resample_error(unit):
 
 
 def test_nanosecond_resample_error():
+    # [FUNCTION DOC]
+    # Regression test (GH 12307): resampling with a 100 nanosecond offset and the mean on ten points at
+    # 100 nanosecond spacing starting at a non-aligned time returns the values aligned to 100
+    # nanosecond boundaries.
     # GH 12307 - Values falls after last bin when
     # Resampling using pd.tseries.offsets.Nano as period
     start = 1443707890427
@@ -1105,6 +1336,11 @@ def test_nanosecond_resample_error():
 
 
 def test_resample_anchored_intraday(unit):
+    # [FUNCTION DOC]
+    # Regression test (#1471, #1458), parametrized by unit. Month-end mean of a frame at 100
+    # minute spacing equals the end-of-month timestamps shifted so the labels fall at the final
+    # microsecond-adjusted point, with month-end frequency; same for left-closed using a frame
+    # shifted by a day.
     # #1471, #1458
 
     rng = date_range("1/1/2012", "4/1/2012", freq="100min").as_unit(unit)
@@ -1129,6 +1365,9 @@ def test_resample_anchored_intraday(unit):
 
 
 def test_resample_anchored_intraday2(unit):
+    # [FUNCTION DOC]
+    # Parametrized by unit. Same anchored intraday check as before but for quarter end; the
+    # expected index frequency is set through private attributes on the expected index.
     rng = date_range("1/1/2012", "4/1/2012", freq="100min").as_unit(unit)
     df = DataFrame(rng.month, index=rng)
 
@@ -1153,6 +1392,9 @@ def test_resample_anchored_intraday2(unit):
 
 
 def test_resample_anchored_intraday3(simple_date_range_series, unit):
+    # [FUNCTION DOC]
+    # Parametrized by unit. A month-end mean over hourly data crossing no month end has exactly one
+    # row.
     ts = simple_date_range_series("2012-04-29 23:00", "2012-04-30 5:00", freq="h")
     ts.index = ts.index.as_unit(unit)
     resampled = ts.resample("ME").mean()
@@ -1161,6 +1403,10 @@ def test_resample_anchored_intraday3(simple_date_range_series, unit):
 
 @pytest.mark.parametrize("freq", ["MS", "BMS", "QS-MAR", "YS-DEC", "YS-JUN"])
 def test_resample_anchored_monthstart(simple_date_range_series, freq, unit):
+    # [FUNCTION DOC]
+    # Parametrized by month-start style frequency and unit. Resampling with month-start,
+    # business-month-start, quarter-start and year-start anchored aliases and taking the mean
+    # must not raise.
     ts = simple_date_range_series("1/1/2000", "12/31/2002")
     ts.index = ts.index.as_unit(unit)
     ts.resample(freq).mean()
@@ -1168,6 +1414,10 @@ def test_resample_anchored_monthstart(simple_date_range_series, freq, unit):
 
 @pytest.mark.parametrize("label, sec", [[None, 2.0], ["right", "4.2"]])
 def test_resample_anchored_multiday(label, sec):
+    # [FUNCTION DOC]
+    # Regression test (issue 8683), parametrized by label side and the expected seconds text. When
+    # a range spans multiple days, the start date determines the offset; the last bin of a 2200 ms
+    # rule is 23:00:02.000 or, for right labels, 23:00:04.200.
     # When resampling a range spanning multiple days, ensure that the
     # start date gets used to determine the offset.  Fixes issue where
     # a one day period is not a multiple of the frequency.
@@ -1186,6 +1436,9 @@ def test_resample_anchored_multiday(label, sec):
 
 
 def test_corner_cases(unit):
+    # [FUNCTION DOC]
+    # Parametrized by unit. Five-minute right-closed left-labeled mean over twelve minutes gives
+    # four bins starting at 23:55 the day before.
     # miscellaneous test coverage
 
     rng = date_range("1/1/2000", periods=12, freq="min").as_unit(unit)
@@ -1197,6 +1450,9 @@ def test_corner_cases(unit):
 
 
 def test_corner_cases_date(simple_date_range_series, unit):
+    # [FUNCTION DOC]
+    # Parametrized by unit. Month-end mean of hourly data converted to periods gives one row with
+    # the April period.
     # resample to periods
     ts = simple_date_range_series("2000-04-28", "2000-04-30 11:00", freq="h")
     ts.index = ts.index.as_unit(unit)
@@ -1206,6 +1462,9 @@ def test_corner_cases_date(simple_date_range_series, unit):
 
 
 def test_anchored_lowercase_buglet(unit):
+    # [FUNCTION DOC]
+    # Parametrized by unit. Resampling with a lowercase day alias works but emits a deprecation
+    # warning that is asserted.
     dates = date_range("4/16/2012 20:00", periods=50000, freq="s").as_unit(unit)
     ts = Series(np.random.default_rng(2).standard_normal(len(dates)), index=dates)
     # it works!
@@ -1215,6 +1474,9 @@ def test_anchored_lowercase_buglet(unit):
 
 
 def test_upsample_apply_functions(unit):
+    # [FUNCTION DOC]
+    # Parametrized by unit. Upsampling hourly data to twenty minutes and aggregating with a
+    # list of mean and sum returns a data frame.
     # #1596
     rng = date_range("2012-06-12", periods=4, freq="h").as_unit(unit)
 
@@ -1225,6 +1487,9 @@ def test_upsample_apply_functions(unit):
 
 
 def test_resample_not_monotonic(unit):
+    # [FUNCTION DOC]
+    # Parametrized by unit. A daily sum of a series with a shuffled index equals the sum of the
+    # sorted series.
     rng = date_range("2012-06-12", periods=200, freq="h").as_unit(unit)
     ts = Series(np.random.default_rng(2).standard_normal(len(rng)), index=rng)
 
@@ -1245,6 +1510,10 @@ def test_resample_not_monotonic(unit):
     ],
 )
 def test_resample_median_bug_1688(dtype, unit):
+    # [FUNCTION DOC]
+    # Regression test (GH#55958), parametrized by dtype (two integer and two float) and unit.
+    # Minute resample of two points five minutes apart: applying a mean lambda or the median method
+    # both equal the frequency-converted frame (missing in between).
     # GH#55958
     dti = DatetimeIndex(
         [datetime(2012, 1, 1, 0, 0, 0), datetime(2012, 1, 1, 0, 5, 0)]
@@ -1265,6 +1534,10 @@ def test_resample_median_bug_1688(dtype, unit):
 
 
 def test_how_lambda_functions(simple_date_range_series, unit):
+    # [FUNCTION DOC]
+    # Parametrized by unit. Applying a mean lambda, a list of two lambdas (mean, standard
+    # deviation) renamed, and a dictionary of lambdas to a month-end resample gives results
+    # equal to the corresponding built-in reductions (names ignored for the dictionary case).
     ts = simple_date_range_series("1/1/2000", "4/1/2000")
     ts.index = ts.index.as_unit(unit)
 
@@ -1292,6 +1565,9 @@ def test_how_lambda_functions(simple_date_range_series, unit):
 
 
 def test_resample_unequal_times(unit):
+    # [FUNCTION DOC]
+    # Regression test (#1772), parametrized by unit. A year-start sum over thirty-minute data from
+    # a start hour later than the end hour must not raise.
     # #1772
     start = datetime(1999, 3, 1, 5)
     # end hour is less than start
@@ -1304,6 +1580,11 @@ def test_resample_unequal_times(unit):
 
 
 def test_resample_consistency(unit):
+    # [FUNCTION DOC]
+    # Regression test (GH 6418), parametrized by unit. Backfilling three-times upsampled data
+    # from 30 to 10 minute with and without a limit of two via reindex, reindex-like (a deprecation
+    # warning is asserted) and resample must agree: all the limit-two results equal.
+    # KNOWN ISSUE: the series filled by reindex without a limit is computed but never compared, although the comment says several results should be equal.
     # GH 6418
     # resample with bfill / limit / reindex consistency
 
@@ -1342,6 +1623,11 @@ dates3 = [pd.NaT, *dates1, pd.NaT]
 
 @pytest.mark.parametrize("dates", [dates1, dates2, dates3])
 def test_resample_timegrouper(dates, unit):
+    # [FUNCTION DOC]
+    # Regression test (GH 7227), parametrized by three date lists (without missing, with missing
+    # dates inside, with missing at the ends) and unit. Month-end count of a column of values
+    # indexed by dates, gives counts 1, 0, 2, 2, 1 at July to November 2014 (frequency dropped if
+    # missing dates), and the grouper variant gives the same.
     # GH 7227
     dates = DatetimeIndex(dates).as_unit(unit)
     df = DataFrame({"A": dates, "B": np.arange(len(dates))})
@@ -1362,6 +1648,8 @@ def test_resample_timegrouper(dates, unit):
 
 @pytest.mark.parametrize("dates", [dates1, dates2, dates3])
 def test_resample_timegrouper2(dates, unit):
+    # [FUNCTION DOC]
+    # Same as the previous test but with two value columns B and C both counted.
     dates = DatetimeIndex(dates).as_unit(unit)
 
     df = DataFrame({"A": dates, "B": np.arange(len(dates)), "C": np.arange(len(dates))})
@@ -1386,6 +1674,10 @@ def test_resample_timegrouper2(dates, unit):
 
 
 def test_resample_nunique(unit):
+    # [FUNCTION DOC]
+    # Regression test (GH 12352), parametrized by unit. Unique count of the ID column through
+    # a daily resampler, a daily grouper, and the column resample/groupby equal the apply-based
+    # unique count (named ID).
     # GH 12352
     df = DataFrame(
         {
@@ -1417,6 +1709,9 @@ def test_resample_nunique(unit):
 
 
 def test_resample_nunique_preserves_column_level_names(unit):
+    # [FUNCTION DOC]
+    # Regression test (gh-23222), parametrized by unit. A unique count of a resampled frame with a
+    # two-level named column index keeps the column index.
     # see gh-23222
     df = DataFrame(
         np.random.default_rng(2).standard_normal((5, 4)),
@@ -1441,6 +1736,10 @@ def test_resample_nunique_preserves_column_level_names(unit):
     ids=["nunique", "series_nunique", "nunique_str"],
 )
 def test_resample_nunique_with_date_gap(func, unit):
+    # [FUNCTION DOC]
+    # Regression test (GH 13453), parametrized by three equivalent ways to compute the
+    # number of uniques (method, aggregating the series method, aggregating the string name) and
+    # unit. Since all values are distinct, the result equals the count per month for data with a gap.
     # GH 13453
     # Since all elements are unique, these should all be the same
     index = date_range("1-1-2000", "2-15-2000", freq="h").as_unit(unit)
@@ -1454,6 +1753,10 @@ def test_resample_nunique_with_date_gap(func, unit):
 
 
 def test_resample_group_info(unit):
+    # [FUNCTION DOC]
+    # Regression test (GH10914), parametrized by unit. Unique counts per 30 minute bin on
+    # random integer data with repeated timestamps, equal a manual computation using sorting
+    # and a bin counting approach with a fixed seed.
     # GH10914
 
     # use a fixed seed to always have the same uniques
@@ -1485,6 +1788,9 @@ def test_resample_group_info(unit):
 
 
 def test_resample_size(unit):
+    # [FUNCTION DOC]
+    # Parametrized by unit. The size of seven-minute bins on random timestamps (10000 samples)
+    # equals a manual bin count using a search sorted over the bin edges.
     n = 10000
     dr = date_range("2015-09-19", periods=n, freq="min").as_unit(unit)
     ts = Series(
@@ -1505,6 +1811,10 @@ def test_resample_size(unit):
 
 
 def test_resample_across_dst():
+    # [FUNCTION DOC]
+    # Regression test (issue 14682): hourly sum of a two-row frame whose index points are an
+    # hour apart in Europe/Madrid across the autumn daylight saving change keeps both points as
+    # separate bins at 02:00 with different offsets.
     # The test resamples a DatetimeIndex with values before and after a
     # DST change
     # Issue: 14682
@@ -1537,6 +1847,10 @@ def test_resample_across_dst():
 
 
 def test_groupby_with_dst_time_change(unit):
+    # [FUNCTION DOC]
+    # Regression test (GH 24972), parametrized by unit. Daily grouping of data in Chicago time zone
+    # across a daylight saving change gives last values 1.0 at the start and 2.0 at the end of a
+    # 23 day range, missing in between.
     # GH 24972
     index = (
         DatetimeIndex([1478064900001000000, 1480037118776792000], tz="UTC")
@@ -1556,6 +1870,10 @@ def test_groupby_with_dst_time_change(unit):
 
 
 def test_resample_dst_anchor(unit):
+    # [FUNCTION DOC]
+    # Regression test (5172), parametrized by unit. Daily and month-start sums of one point at
+    # 23:00 on the day the daylight saving ends in US/Eastern give the expected normalized
+    # index.
     # 5172
     dti = DatetimeIndex([datetime(2012, 11, 4, 23)], tz="US/Eastern").as_unit(unit)
     df = DataFrame([5], index=dti)
@@ -1576,6 +1894,13 @@ def test_resample_dst_anchor(unit):
 
 
 def test_resample_dst_anchor2(unit):
+    # [FUNCTION DOC]
+    # Parametrized by unit. A frame of half-hour data in Paris time zone across the autumn
+    # change, aggregated with min, max and count for weekly Monday, two-weekly Monday, month
+    # start, two-month-start and daily (for four days around the change) frequencies, equals
+    # the expected tables. The message text passed as a third argument to the frame
+    # comparison function is meant as a failure label.
+    # KNOWN ISSUE: the strings such as the frequency labels are passed as the third positional argument of the frame comparison helper, which is its dtype-check flag, not an error message; they only act as a truthy flag and the intended label is lost.
     dti = date_range(
         "2013-09-30", "2013-11-02", freq="30Min", tz="Europe/Paris"
     ).as_unit(unit)
@@ -1668,6 +1993,10 @@ def test_resample_dst_anchor2(unit):
 
 
 def test_downsample_across_dst(unit):
+    # [FUNCTION DOC]
+    # Regression test (GH 8531), parametrized by unit. Downsampling data every 2 hours in Berlin
+    # across the daylight saving change to hourly mean gives the original values alternating with
+    # missing.
     # GH 8531
     tz = zoneinfo.ZoneInfo("Europe/Berlin")
     dt = datetime(2014, 10, 26)
@@ -1681,6 +2010,9 @@ def test_downsample_across_dst(unit):
 
 
 def test_downsample_across_dst_weekly(unit):
+    # [FUNCTION DOC]
+    # Regression test (GH 9119, GH 21459), parametrized by unit. Weekly sum for five days in
+    # Amsterdam across the spring change gives 23 and 42.
     # GH 9119, GH 21459
     df = DataFrame(
         index=DatetimeIndex(
@@ -1700,6 +2032,10 @@ def test_downsample_across_dst_weekly(unit):
 
 
 def test_downsample_across_dst_weekly_2(unit):
+    # [FUNCTION DOC]
+    # Regression test (GH 9119, GH 21459), parametrized by unit. Weekly mean of an hourly all-missing
+    # London series across a daylight saving change gives five missing values on a Sunday weekly
+    # index.
     # GH 9119, GH 21459
     idx = date_range("2013-04-01", "2013-05-01", tz="Europe/London", freq="h").as_unit(
         unit
@@ -1716,6 +2052,9 @@ def test_downsample_across_dst_weekly_2(unit):
 
 
 def test_downsample_dst_at_midnight(unit):
+    # [FUNCTION DOC]
+    # Regression test (GH 25758), parametrized by unit. Daily mean in Havana time zone where
+    # midnight changes: values 7.5, 28.0, 44.5, on a daily index with ambiguous times handled.
     # GH 25758
     start = datetime(2018, 11, 3, 12)
     end = datetime(2018, 11, 5, 12)
@@ -1734,6 +2073,9 @@ def test_downsample_dst_at_midnight(unit):
 
 
 def test_resample_with_nat(unit):
+    # [FUNCTION DOC]
+    # Regression test (GH 13020), parametrized by unit. Frames whose index includes not-a-time
+    # values resampled to 1, 2, 3 and 60 seconds give means ignoring those rows.
     # GH 13020
     index = DatetimeIndex(
         [
@@ -1766,6 +2108,10 @@ def test_resample_with_nat(unit):
 
 
 def test_resample_datetime_values(unit):
+    # [FUNCTION DOC]
+    # Regression test (GH 13119), parametrized by unit. Resampling to two days and taking the
+    # first of a datetime column gives datetimes preserved with a not-a-time introduced, for
+    # frame and series.
     # GH 13119
     # check that datetime dtype is preserved when NaT values are
     # introduced by the resampling
@@ -1787,12 +2133,19 @@ def test_resample_datetime_values(unit):
 
 
 def test_resample_apply_with_additional_args(unit):
+    # [FUNCTION DOC]
+    # Regression test (GH 14615), parametrized by unit. Applying a function with an extra
+    # argument on a daily resample, passed positionally or by keyword, equals the mean multiplied by
+    # the argument.
     # GH 14615
     index = date_range("1/1/2000 00:00:00", "1/1/2000 00:13:00", freq="Min")
     series = Series(range(len(index)), index=index)
     series.index.name = "index"
 
     def f(data, add_arg):
+        # [FUNCTION DOC]
+        # HELPER: nested in the extra-arguments test. Takes data and add_arg; returns the mean of
+        # data times add_arg.
         return np.mean(data) * add_arg
 
     series.index = series.index.as_unit(unit)
@@ -1809,8 +2162,14 @@ def test_resample_apply_with_additional_args(unit):
 
 
 def test_resample_apply_with_additional_args2():
+    # [FUNCTION DOC]
+    # Verifies aggregating a group-by with resample on a frame using a function with an
+    # extra positional argument (cast to float) equals the mean multiplied by the multiplier.
     # Testing dataframe
     def f(data, add_arg):
+        # [FUNCTION DOC]
+        # HELPER: nested in the second extra-arguments test. Takes data and add_arg; returns the mean of
+        # data times add_arg.
         return np.mean(data) * add_arg
 
     multiplier = 10
@@ -1838,6 +2197,10 @@ def test_resample_apply_with_additional_args2():
     ],
 )
 def test_resample_equivalent_offsets(n1, freq1, n2, freq2, k, unit):
+    # [FUNCTION DOC]
+    # Regression test (GH 24127), parametrized by (count, frequency) pairs equivalent to another
+    # pair, a multiplier k and unit. Resampling by a multiple of two equivalent rules gives the
+    # same series (the daily result's frequency is converted to a tick for comparison, GH#55502).
     # GH 24127
     n1_ = n1 * k
     n2_ = n2 * k
@@ -1865,6 +2228,10 @@ def test_resample_equivalent_offsets(n1, freq1, n2, freq2, k, unit):
     ],
 )
 def test_get_timestamp_range_edges(first, last, freq, exp_first, exp_last, unit):
+    # [FUNCTION DOC]
+    # Parametrized by first, last, frequency, expected first and last and unit. Tests the private
+    # helper that computes timestamp range edges: given first and last timestamps, an offset and the
+    # nanosecond unit, the returned pair equals the expected pair.
     first = Period(first)
     first = first.to_timestamp(first.freq).as_unit(unit)
     last = Period(last)
@@ -1881,6 +2248,10 @@ def test_get_timestamp_range_edges(first, last, freq, exp_first, exp_last, unit)
 
 @pytest.mark.parametrize("duplicates", [True, False])
 def test_resample_apply_product(duplicates, unit):
+    # [FUNCTION DOC]
+    # Regression test (GH 5586), parametrized by whether columns are duplicated and unit.
+    # Quarter end resample with apply of the numpy product on two columns (second is shifted by 2)
+    # gives the expected products; with duplicate column names the same layout.
     # GH 5586
     index = date_range(start="2012-01-31", freq="ME", periods=12).as_unit(unit)
 
@@ -1938,6 +2309,11 @@ def test_resample_apply_product(duplicates, unit):
 def test_resample_calendar_day_with_dst(
     first: str, last: str, freq_in: str, freq_out: str, exp_last: str, unit
 ):
+    # [FUNCTION DOC]
+    # Regression test (GH 35219), parametrized by first, last, frequencies in and out (day and 24
+    # hours) and expected last (including transitions into and out of daylight saving time) and
+    # unit. Forward-filling the resampled series in the Amsterdam zone equals a series of ones on
+    # a range to the expected last.
     # GH 35219
     ts = Series(
         1.0, date_range(first, last, freq=freq_in, tz="Europe/Amsterdam").as_unit(unit)
@@ -1952,6 +2328,9 @@ def test_resample_calendar_day_with_dst(
 
 @pytest.mark.parametrize("func", ["min", "max", "first", "last"])
 def test_resample_aggregate_functions_min_count(func, unit):
+    # [FUNCTION DOC]
+    # Regression test (GH#37768), parametrized by min, max, first, last and unit. With a minimum
+    # count of two, the quarter result of one valid value in three months is missing.
     # GH#37768
     index = date_range(start="2020", freq="ME", periods=3).as_unit(unit)
     ser = Series([1, np.nan, np.nan], index)
@@ -1964,6 +2343,9 @@ def test_resample_aggregate_functions_min_count(func, unit):
 
 
 def test_resample_unsigned_int(any_unsigned_int_numpy_dtype, unit):
+    # [FUNCTION DOC]
+    # Regression test (gh-43329) with the unsigned integer dtype fixture and unit. Daily max of
+    # 12-hourly values after dropping the second day gives 1, a missing value and 0.
     # gh-43329
     df = DataFrame(
         index=date_range(start="2000-01-01", end="2000-01-03 23", freq="12h").as_unit(
@@ -1988,6 +2370,9 @@ def test_resample_unsigned_int(any_unsigned_int_numpy_dtype, unit):
 
 
 def test_long_rule_non_nano():
+    # [FUNCTION DOC]
+    # Regression test (issue 51024): resampling a second-unit series with 100 year ends from the
+    # year 300 into 200 year end bins gives the expected nine means on the corresponding index.
     # https://github.com/pandas-dev/pandas/issues/51024
     idx = date_range("0300-01-01", "2000-01-01", unit="s", freq="100YE")
     ser = Series([1, 4, 2, 8, 5, 7, 1, 4, 2, 8, 5, 7, 1, 4, 2, 8, 5], index=idx)
@@ -2013,6 +2398,10 @@ def test_long_rule_non_nano():
 
 
 def test_resample_empty_series_with_tz():
+    # [FUNCTION DOC]
+    # Regression test (GH#53664): summing the values column of an empty frame with a
+    # zone-aware timestamp column using two-month-start left-closed left-labeled resample on that
+    # column gives an empty float series on an empty index with the same zone and frequency.
     # GH#53664
     df = DataFrame({"ts": [], "values": []}).astype(
         {"ts": "datetime64[ns, Atlantic/Faroe]"}
@@ -2029,6 +2418,9 @@ def test_resample_empty_series_with_tz():
 
 @pytest.mark.parametrize("freq", ["2M", "2m", "2Q", "2Q-SEP", "2q-sep", "1Y", "2Y-MAR"])
 def test_resample_M_Q_Y_raises(freq):
+    # [FUNCTION DOC]
+    # Parametrized by invalid month, quarter and year aliases (old or lowercase). Resampling
+    # with these raises a value error saying the frequency is invalid.
     msg = f"Invalid frequency: {freq}"
 
     s = Series(range(10), index=date_range("20130101", freq="D", periods=10))
@@ -2038,6 +2430,9 @@ def test_resample_M_Q_Y_raises(freq):
 
 @pytest.mark.parametrize("freq", ["2BM", "1bm", "1BQ", "2BQ-MAR", "2bq=-mar"])
 def test_resample_BM_BQ_raises(freq):
+    # [FUNCTION DOC]
+    # Parametrized by invalid business month and business quarter aliases. Resampling raises a
+    # value error saying the frequency is invalid.
     msg = f"Invalid frequency: {freq}"
 
     s = Series(range(10), index=date_range("20130101", freq="D", periods=10))
@@ -2055,6 +2450,10 @@ def test_resample_BM_BQ_raises(freq):
     ],
 )
 def test_resample_depr_lowercase_frequency(freq, freq_depr, data):
+    # [FUNCTION DOC]
+    # Parametrized by correct alias, its deprecated lowercase form and expected index data.
+    # Resampling with a lowercase alias emits a deprecation warning and returns mean 2.0 on a
+    # single bin, with the frequency not compared (GH#41943).
     msg = f"'{freq_depr[1:]}' is deprecated and will be removed in a future version."
 
     s = Series(range(5), index=date_range("20130101", freq="h", periods=5, unit="ns"))
@@ -2068,6 +2467,10 @@ def test_resample_depr_lowercase_frequency(freq, freq_depr, data):
 
 
 def test_resample_ms_closed_right(unit):
+    # [FUNCTION DOC]
+    # Regression test (issue 55271), parametrized by unit. Month-start resample with right
+    # closing, taking the last, gives two bins with last timestamps 2020-02-01 and 2020-02-04
+    # 03:59.
     # https://github.com/pandas-dev/pandas/issues/55271
     dti = date_range(start="2020-01-31", freq="1min", periods=6000, unit=unit)
     df = DataFrame({"ts": dti}, index=dti)
@@ -2085,6 +2488,9 @@ def test_resample_ms_closed_right(unit):
 
 @pytest.mark.parametrize("freq", ["B", "C"])
 def test_resample_c_b_closed_right(freq: str, unit):
+    # [FUNCTION DOC]
+    # Regression test (issue 55281), parametrized by business day or custom business day and unit.
+    # Right-closed resample with last gives four bins of last timestamps for the weekday dates.
     # https://github.com/pandas-dev/pandas/issues/55281
     dti = date_range(start="2020-01-31", freq="1min", periods=6000, unit=unit)
     df = DataFrame({"ts": dti}, index=dti)
@@ -2115,6 +2521,10 @@ def test_resample_c_b_closed_right(freq: str, unit):
 
 
 def test_resample_b_55282(unit):
+    # [FUNCTION DOC]
+    # Regression test (issue 55282), parametrized by unit. Business day resample with right
+    # closing and labeling of six half-day points gives means 1.0, 2.5, 4.5 and 6.0 on four
+    # business days.
     # https://github.com/pandas-dev/pandas/issues/55282
     dti = date_range("2023-09-26", periods=6, freq="12h", unit=unit)
     ser = Series([1, 2, 3, 4, 5, 6], index=dti)
@@ -2151,6 +2561,10 @@ def test_resample_b_55282(unit):
     ],
 )
 def test_arrow_timestamp_resample(tz):
+    # [FUNCTION DOC]
+    # Regression test (GH 56371), parametrized by no zone or UTC (UTC is expected to fail on
+    # Windows with old pyarrow). Requires pyarrow. Daily mean of a series with a pyarrow timestamp
+    # index equals the original series.
     # GH 56371
     idx = Series(date_range("2020-01-01", periods=5), dtype="timestamp[ns][pyarrow]")
     if tz is not None:
@@ -2162,6 +2576,9 @@ def test_arrow_timestamp_resample(tz):
 
 @td.skip_if_no("pyarrow")
 def test_arrow_timestamp_resample_keep_index_name():
+    # [FUNCTION DOC]
+    # Regression test (issue 61222). Requires pyarrow. The index name is preserved when resampling
+    # a series with a pyarrow timestamp index.
     # https://github.com/pandas-dev/pandas/issues/61222
     idx = Series(date_range("2020-01-01", periods=5), dtype="timestamp[ns][pyarrow]")
     expected = Series(np.arange(5, dtype=np.float64), index=idx)
@@ -2171,6 +2588,10 @@ def test_arrow_timestamp_resample_keep_index_name():
 
 
 def test_resample_unit_second_large_years():
+    # [FUNCTION DOC]
+    # Regression test (GH#57427): resampling a series with a second-unit index at 1000-year
+    # starts into 2000-year starts sums pairs and equals ones doubled on every other index
+    # point.
     # GH#57427
     index = DatetimeIndex(
         date_range(start=Timestamp("1950-01-01"), periods=10, freq="1000YS", unit="s")
@@ -2183,6 +2604,9 @@ def test_resample_unit_second_large_years():
 
 @pytest.mark.parametrize("freq", ["1A", "2A-MAR"])
 def test_resample_A_raises(freq):
+    # [FUNCTION DOC]
+    # Parametrized by obsolete annual aliases. Resampling raises a value error saying the
+    # frequency (without its leading digit) is invalid.
     msg = f"Invalid frequency: {freq[1:]}"
 
     s = Series(range(10), index=date_range("20130101", freq="D", periods=10))
