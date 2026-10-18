@@ -1,3 +1,10 @@
+# [MODULE DOC]
+# Tests for the frame method that shows differences between two identically-labeled
+# frames (compare): alignment axis, keeping shape and equal values, treatment of missing
+# values, multi-level labels, custom result labels, error cases and nullable/extension
+# dtype combinations. Uses only the public package and the testing helpers module. No
+# import-time side effects.
+
 import numpy as np
 import pytest
 
@@ -7,6 +14,12 @@ import pandas._testing as tm
 
 @pytest.mark.parametrize("align_axis", [0, 1, "index", "columns"])
 def test_compare_axis(align_axis):
+    # [FUNCTION DOC]
+    # Parametrized over align_axis values (0, 1, index, columns). Two frames differing
+    # in one string cell and one numeric cell: with columns alignment the result has
+    # self/other pairs side by side as a second column level for the differing columns
+    # and rows only; with index alignment the pairs are stacked in a second row level.
+    # Compared with explicitly built expected frames.
     # GH#30429
     df = pd.DataFrame(
         {"col1": ["a", "b", "c"], "col2": [1.0, 2.0, np.nan], "col3": [1.0, 2.0, 3.0]},
@@ -47,6 +60,10 @@ def test_compare_axis(align_axis):
     ],
 )
 def test_compare_various_formats(keep_shape, keep_equal):
+    # [FUNCTION DOC]
+    # Parametrized over (keep_shape, keep_equal) combinations other than both false.
+    # Verifies the shape (all rows and columns vs only differing ones) and that equal
+    # values are shown instead of missing markers when keep_equal is true.
     df = pd.DataFrame(
         {"col1": ["a", "b", "c"], "col2": [1.0, 2.0, np.nan], "col3": [1.0, 2.0, 3.0]},
         columns=["col1", "col2", "col3"],
@@ -92,6 +109,10 @@ def test_compare_various_formats(keep_shape, keep_equal):
 
 
 def test_compare_with_equal_nulls():
+    # [FUNCTION DOC]
+    # Missing values in the same position in both frames are considered equal, so the
+    # unchanged column and rows containing only such missing values are dropped from the
+    # result.
     # We want to make sure two NaNs are considered the same
     # and dropped where applicable
     df = pd.DataFrame(
@@ -109,6 +130,10 @@ def test_compare_with_equal_nulls():
 
 
 def test_compare_with_non_equal_nulls():
+    # [FUNCTION DOC]
+    # When one frame has a missing value where the other has a number, that position
+    # counts as a difference; the result keeps the row and the missing entry on the self
+    # or other side as appropriate.
     # We want to make sure the relevant NaNs do not get dropped
     # even if the entire row or column are NaNs
     df = pd.DataFrame(
@@ -133,6 +158,10 @@ def test_compare_with_non_equal_nulls():
 
 @pytest.mark.parametrize("align_axis", [0, 1])
 def test_compare_multi_index(align_axis):
+    # [FUNCTION DOC]
+    # Parametrized over align axis (0, 1). Frames with multi-level row and column labels
+    # yield results with the extra self/other level added to rows or columns; labels of
+    # the differing positions are retained.
     df = pd.DataFrame(
         {"col1": ["a", "b", "c"], "col2": [1.0, 2.0, np.nan], "col3": [1.0, 2.0, 3.0]}
     )
@@ -167,6 +196,9 @@ def test_compare_multi_index(align_axis):
 
 
 def test_compare_different_indices():
+    # [FUNCTION DOC]
+    # Frames with different row labels raise a value error saying only
+    # identically-labeled frames can be compared.
     msg = (
         r"Can only compare identically-labeled \(both index and columns\) DataFrame "
         "objects"
@@ -178,6 +210,8 @@ def test_compare_different_indices():
 
 
 def test_compare_different_shapes():
+    # [FUNCTION DOC]
+    # Frames of different shape raise the same value error.
     msg = (
         r"Can only compare identically-labeled \(both index and columns\) DataFrame "
         "objects"
@@ -189,6 +223,9 @@ def test_compare_different_shapes():
 
 
 def test_compare_result_names():
+    # [FUNCTION DOC]
+    # Custom labels for the two sides are used as the second level of the result columns
+    # instead of self and other.
     # GH 44354
     df1 = pd.DataFrame(
         {"col1": ["a", "b", "c"], "col2": [1.0, 2.0, np.nan], "col3": [1.0, 2.0, 3.0]},
@@ -224,6 +261,10 @@ def test_compare_result_names():
     ],
 )
 def test_invalid_input_result_names(result_names):
+    # [FUNCTION DOC]
+    # Parametrized over list, string, dict, int and float. Anything other than a tuple
+    # for the result labels raises a type error telling to use a tuple and naming the
+    # given type.
     # GH 44354
     df1 = pd.DataFrame(
         {"col1": ["a", "b", "c"], "col2": [1.0, 2.0, np.nan], "col3": [1.0, 2.0, 3.0]},
@@ -250,6 +291,14 @@ def test_invalid_input_result_names(result_names):
     [(4, pd.NA), (pd.NA, pd.NA), (pd.NA, 4)],
 )
 def test_compare_ea_and_np_dtype(val1, val2):
+    # [FUNCTION DOC]
+    # Parametrized over pairs of value and missing. Compares a numpy float column with a
+    # nullable integer column, keeping shape. When the first value is a missing marker,
+    # comparing raises a type error about the ambiguous truth value of NA; otherwise the
+    # result matches the expected frame (with an adjustment when both are missing).
+    # KNOWN ISSUE: a comment on the both-missing adjustment asks whether this is really
+    # the desired behavior (TODO), and the raising branch assigns a result that is never
+    # used.
     # GH 48966
     arr = [4.0, val1]
     ser = pd.Series([1, val2], dtype="Int64")
@@ -287,6 +336,10 @@ def test_compare_ea_and_np_dtype(val1, val2):
     ],
 )
 def test_compare_nullable_int64_dtype(df1_val, df2_val, diff_self, diff_other):
+    # [FUNCTION DOC]
+    # Parametrized over value combinations. Comparing frames with nullable integer
+    # columns keeping shape gives nullable-integer self/other columns; equal values and
+    # missing values are shown as NA in the result.
     # GH 48966
     df1 = pd.DataFrame({"a": pd.Series([df1_val, pd.NA], dtype="Int64"), "b": [1.0, 2]})
     df2 = df1.copy()

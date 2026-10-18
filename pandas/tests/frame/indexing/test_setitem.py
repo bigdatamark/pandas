@@ -1,3 +1,14 @@
+# [MODULE DOC]
+# Tests for DataFrame column assignment through the item-setting operator and related
+# label/position setters, as exercised on the frame class. Covers dtype preservation and
+# casting on assignment, extension and datetime-like values, sparse and categorical
+# values, duplicate and multi-level columns, list-like and boolean-mask keys, expansion
+# of new columns, and copy/view semantics (whether assignment writes in place).
+# Public contents: several test classes grouped by theme plus two module-level tests at
+# the end. Uses the shared testing helpers module and fixtures from the frame test
+# conftest (float_frame, timezone_frame, any_numeric_ea_dtype, indexer_si, indexer_sl).
+# No import-time side effects.
+
 from datetime import datetime
 
 import numpy as np
@@ -38,9 +49,23 @@ from pandas.tseries.offsets import BDay
 
 
 class TestDataFrameSetItem:
+    # [CLASS DOC]
+    # Main group of tests for assigning to a frame with the item-setting operator: dtype
+    # handling, error messages, extension dtypes, empty frames, duplicate columns,
+    # categorical/interval values, multi-index columns and list-like keys. Plain pytest
+    # class with no state.
     def test_setitem_str_subclass(self):
+        # [FUNCTION DOC]
+        # Verifies that a column key which is an instance of a string subclass (with no
+        # instance dict) can be used to add a new column to a frame with a tz-aware
+        # datetime index, and that the resulting frame equals one built directly with
+        # that key.
         # GH#37366
         class mystring(str):
+            # [CLASS DOC]
+            # HELPER: local string subclass with empty slots, used only by the enclosing
+            # test to check that string subclasses are accepted as column labels. No
+            # added behavior.
             __slots__ = ()
 
         data = ["2020-10-22 01:21:00+00:00"]
@@ -55,6 +80,11 @@ class TestDataFrameSetItem:
         "dtype", ["int32", "int64", "uint32", "uint64", "float32", "float64"]
     )
     def test_setitem_dtype(self, dtype, float_frame):
+        # [FUNCTION DOC]
+        # Parametrized over six numeric dtype names. Assigns a random integer array cast
+        # to the dtype as a new column of the float frame and asserts the stored column
+        # keeps exactly that dtype name. Integers are used because casting negative
+        # floats to unsigned types is undefined.
         # Use integers since casting negative floats to uints is undefined
         arr = np.random.default_rng(2).integers(1, 10, len(float_frame))
 
@@ -62,11 +92,20 @@ class TestDataFrameSetItem:
         assert float_frame[dtype].dtype.name == dtype
 
     def test_setitem_list_not_dataframe(self, float_frame):
+        # [FUNCTION DOC]
+        # Assigns a two-column random array to a list of two existing column labels of
+        # the float frame and checks the selected columns now equal the array values.
         data = np.random.default_rng(2).standard_normal((len(float_frame), 2))
         float_frame[["A", "B"]] = data
         tm.assert_almost_equal(float_frame[["A", "B"]].values, data)
 
     def test_setitem_error_msmgs(self):
+        # [FUNCTION DOC]
+        # Checks the error messages of invalid column assignment. Expects a value error
+        # about duplicate labels when assigning a series with a duplicated index, a
+        # value error saying a multi-column frame cannot be set to a single column, and
+        # a value error with a distinct message when the assigned frame has zero
+        # columns.
         # GH 7432
         df = DataFrame(
             {"bar": [1, 2, 3], "baz": ["d", "e", "f"]},
@@ -97,6 +136,10 @@ class TestDataFrameSetItem:
             df["gr"] = DataFrame()
 
     def test_setitem_benchmark(self):
+        # [FUNCTION DOC]
+        # Port of an old benchmark: inserts the same random column under five integer
+        # keys into an empty frame of ten rows and checks the result equals a frame
+        # built from the tiled values.
         # from the vb_suite/frame_methods/frame_insert_columns
         N = 10
         K = 5
@@ -108,6 +151,12 @@ class TestDataFrameSetItem:
         tm.assert_frame_equal(df, expected)
 
     def test_setitem_different_dtype(self):
+        # [FUNCTION DOC]
+        # Builds a float frame, inserts columns, then adds and replaces columns with
+        # float32 and int32 data (new item, replacement in a different block, new int
+        # column). After each step the frame dtypes series must match the expected
+        # per-column dtypes, i.e. assignment gives each column the dtype of the assigned
+        # data and keeps column order.
         df = DataFrame(
             np.random.default_rng(2).standard_normal((5, 3)),
             index=np.arange(5),
@@ -145,6 +194,10 @@ class TestDataFrameSetItem:
         tm.assert_series_equal(result, expected)
 
     def test_setitem_overwrite_index(self):
+        # [FUNCTION DOC]
+        # Assigns the frame index as a new column, then overwrites that column with
+        # other values; the index must be unchanged and the column must hold the new
+        # values.
         # GH 13522 - assign the index as a column and then overwrite the values
         # -> should not affect the index
         df = DataFrame(index=["A", "B", "C"])
@@ -156,6 +209,10 @@ class TestDataFrameSetItem:
         tm.assert_frame_equal(df, exp)
 
     def test_setitem_empty_columns(self):
+        # [FUNCTION DOC]
+        # Setting a first column on a frame with no columns (default or empty-index
+        # columns) must produce the same frame as constructing it from a dict, including
+        # the default string dtype of the column labels.
         # Starting from an empty DataFrame and setting a column should result
         # in a default string dtype for the columns' Index
         # https://github.com/pandas-dev/pandas/issues/60338
@@ -171,6 +228,9 @@ class TestDataFrameSetItem:
         tm.assert_frame_equal(df, expected)
 
     def test_setitem_dt64_index_empty_columns(self):
+        # [FUNCTION DOC]
+        # Assigns a nanosecond datetime range to a new column of a frame with an integer
+        # index and no columns; the column dtype must be nanosecond datetime.
         rng = date_range("1/1/2000 00:00:00", "1/1/2000 1:59:50", freq="10s", unit="ns")
         df = DataFrame(index=np.arange(len(rng)))
 
@@ -178,6 +238,9 @@ class TestDataFrameSetItem:
         assert df["A"].dtype == np.dtype("M8[ns]")
 
     def test_setitem_timestamp_empty_columns(self):
+        # [FUNCTION DOC]
+        # Assigns a scalar tz-aware timestamp to a new column of a three-row frame; the
+        # value is broadcast to every row and the column keeps the tz-aware dtype.
         # GH#19843
         df = DataFrame(index=range(3))
         df["now"] = Timestamp("20130101", tz="UTC")
@@ -188,6 +251,10 @@ class TestDataFrameSetItem:
         tm.assert_frame_equal(df, expected)
 
     def test_setitem_wrong_length_categorical_dtype_raises(self):
+        # [FUNCTION DOC]
+        # Assigning a categorical whose length differs from the frame length must raise
+        # a value error stating the length of values does not match the length of the
+        # index.
         # GH#29523
         cat = Categorical.from_codes([0, 1, 1, 0, 1, 2], ["a", "b", "c"])
         df = DataFrame(range(10), columns=["bar"])
@@ -200,6 +267,9 @@ class TestDataFrameSetItem:
             df["foo"] = cat
 
     def test_setitem_with_sparse_value(self):
+        # [FUNCTION DOC]
+        # Assigns a sparse array as a new column and checks the column equals a series
+        # wrapping the same sparse array (sparse dtype retained).
         # GH#8131
         df = DataFrame({"c_1": ["a", "b", "c"], "n_1": [1.0, 2.0, 3.0]})
         sp_array = SparseArray([0, 0, 1])
@@ -209,6 +279,9 @@ class TestDataFrameSetItem:
         tm.assert_series_equal(df["new_column"], expected)
 
     def test_setitem_with_unaligned_sparse_value(self):
+        # [FUNCTION DOC]
+        # Assigns a sparse-backed series with a reversed index; the values must be
+        # aligned to the frame index, giving a sparse series in the reversed order.
         df = DataFrame({"c_1": ["a", "b", "c"], "n_1": [1.0, 2.0, 3.0]})
         sp_series = Series(SparseArray([0, 0, 1]), index=[2, 1, 0])
 
@@ -217,6 +290,9 @@ class TestDataFrameSetItem:
         tm.assert_series_equal(df["new_column"], expected)
 
     def test_setitem_period_preserves_dtype(self):
+        # [FUNCTION DOC]
+        # Assigning a list of period values to a new column of an empty frame yields a
+        # column with period dtype, equal to the frame built from the same data.
         # GH: 26861
         data = [Period("2003-12", "D")]
         result = DataFrame([])
@@ -227,6 +303,10 @@ class TestDataFrameSetItem:
         tm.assert_frame_equal(result, expected)
 
     def test_setitem_dict_preserves_dtypes(self):
+        # [FUNCTION DOC]
+        # Starting from an empty frame with int64, float64, float64 and uint32 columns,
+        # appends three rows by label-based enlargement using a dict per row. The result
+        # must keep each column dtype and equal the expected frame.
         # https://github.com/pandas-dev/pandas/issues/34573
         expected = DataFrame(
             {
@@ -265,6 +345,10 @@ class TestDataFrameSetItem:
         ],
     )
     def test_setitem_extension_types(self, obj, dtype):
+        # [FUNCTION DOC]
+        # Parametrized over a period, an interval and a tz-aware timestamp scalar with
+        # their matching dtypes. Assigns the scalar to a new column and expects a column
+        # of that extension dtype with the value repeated for each row.
         # GH: 34832
         expected = DataFrame({"idx": [1, 2, 3], "obj": Series([obj] * 3, dtype=dtype)})
 
@@ -284,6 +368,10 @@ class TestDataFrameSetItem:
         + ["datetime64[ns, UTC]", "period[D]"],
     )
     def test_setitem_with_ea_name(self, ea_name):
+        # [FUNCTION DOC]
+        # Parametrized over the names of all registered extension dtypes plus a tz-aware
+        # datetime name and a period name. Uses each dtype name string as a column label
+        # for a new column and checks it is treated as a plain label.
         # GH 38386
         result = DataFrame([0])
         result[ea_name] = [1]
@@ -291,6 +379,11 @@ class TestDataFrameSetItem:
         tm.assert_frame_equal(result, expected)
 
     def test_setitem_dt64_ndarray_with_NaT_and_diff_time_units(self):
+        # [FUNCTION DOC]
+        # Assigns a nanosecond datetime array containing a missing value as a new
+        # column, then overwrites it with a second-resolution array. No out-of-bounds
+        # error may occur and the second-resolution unit is preserved in the stored
+        # values.
         # GH#7492
         data_ns = np.array([1, "nat"], dtype="datetime64[ns]")
         result = Series(data_ns).to_frame()
@@ -306,6 +399,11 @@ class TestDataFrameSetItem:
 
     @pytest.mark.parametrize("unit", ["h", "m", "s", "ms", "D", "M", "Y"])
     def test_frame_setitem_datetime64_col_other_units(self, unit):
+        # [FUNCTION DOC]
+        # Parametrized over datetime units from hours to years. Assigns 100 datetime
+        # values of that unit to a not yet existing column. Supported units (seconds,
+        # milliseconds) keep their dtype; others are cast to the nearest supported unit
+        # (seconds). Values must compare equal to the expected ones.
         # Check that non-nano dt64 values get cast to dt64 on setitem
         #  into a not-yet-existing column
         n = 100
@@ -327,6 +425,10 @@ class TestDataFrameSetItem:
 
     @pytest.mark.parametrize("unit", ["h", "m", "s", "ms", "D", "M", "Y"])
     def test_frame_setitem_existing_datetime64_col_other_units(self, unit):
+        # [FUNCTION DOC]
+        # Parametrized over datetime units. Overwrites an existing nanosecond datetime
+        # column with values of another unit and checks the stored values equal the
+        # nanosecond-converted values.
         # Check that non-nano dt64 values get cast to dt64 on setitem
         #  into an already-existing dt64 column
         n = 100
@@ -343,6 +445,11 @@ class TestDataFrameSetItem:
         assert (df["dates"].values == ex_vals).all()
 
     def test_setitem_dt64tz(self, timezone_frame):
+        # [FUNCTION DOC]
+        # Uses the tz-aware frame fixture. Assigns a column by series, overwrites it,
+        # deletes it, and checks the resulting blocks hold equal tz-aware arrays that
+        # share the same base buffer; then sets missing values and checks null detection
+        # and that dtypes are unchanged.
         df = timezone_frame
         idx = df["B"].rename("foo")
 
@@ -374,6 +481,11 @@ class TestDataFrameSetItem:
         tm.assert_series_equal(df2.dtypes, df.dtypes)
 
     def test_setitem_periodindex(self):
+        # [FUNCTION DOC]
+        # Assigns a period index (with a name) as a column of a frame indexed by the
+        # same period index. The column keeps the period values with the column name,
+        # the original index name is untouched, and after reset and set of the index the
+        # index is a period index equal to the original.
         rng = period_range("1/1/2000", periods=5, name="index")
         df = DataFrame(np.random.default_rng(2).standard_normal((5, 3)), index=rng)
 
@@ -388,6 +500,9 @@ class TestDataFrameSetItem:
         tm.assert_index_equal(rs.index, rng)
 
     def test_setitem_complete_column_with_array(self):
+        # [FUNCTION DOC]
+        # Assigns a two-column integer array to two new column labels. The new columns
+        # must have the array dtype and the expected values.
         # GH#37954
         df = DataFrame({"a": ["one", "two", "three"], "b": [1, 2, 3]})
         arr = np.array([[1, 1], [3, 1], [5, 1]])
@@ -407,6 +522,10 @@ class TestDataFrameSetItem:
         tm.assert_frame_equal(df, expected)
 
     def test_setitem_period_d_dtype(self):
+        # [FUNCTION DOC]
+        # Builds a frame from a daily period range, assigns the missing value of the
+        # range to all cells by positional slice, and expects a frame of all-missing
+        # period values with daily period dtype.
         # GH 39763
         rng = period_range("2016-01-01", periods=9, freq="D", name="A")
         result = DataFrame(rng)
@@ -419,6 +538,11 @@ class TestDataFrameSetItem:
 
     @pytest.mark.parametrize("dtype", ["f8", "i8", "u8"])
     def test_setitem_bool_with_numeric_index(self, dtype):
+        # [FUNCTION DOC]
+        # Parametrized over float, signed and unsigned 8-byte dtypes for numeric column
+        # labels. Adds a column keyed by the boolean false; the resulting columns must
+        # be an object index containing the original labels and the boolean (floats for
+        # the float case).
         # GH#36319
         cols = Index([1, 2, 3], dtype=dtype)
         df = DataFrame(np.random.default_rng(2).standard_normal((3, 3)), columns=cols)
@@ -433,6 +557,10 @@ class TestDataFrameSetItem:
 
     @pytest.mark.parametrize("indexer", ["B", ["B"]])
     def test_setitem_frame_length_0_str_key(self, indexer):
+        # [FUNCTION DOC]
+        # Parametrized over a string key and a one-element list key. Assigning a two-row
+        # frame to a frame with columns but no rows must expand rows: column A is object
+        # dtype of missing values, column B holds the assigned values.
         # GH#38831
         df = DataFrame(columns=["A", "B"])
         other = DataFrame({"B": [1, 2]})
@@ -442,6 +570,11 @@ class TestDataFrameSetItem:
         tm.assert_frame_equal(df, expected)
 
     def test_setitem_frame_duplicate_columns(self):
+        # [FUNCTION DOC]
+        # With a frame whose columns are duplicated (A, B, C twice), sets values by
+        # label for a single cell, a column slice and a column key given as tuples. Each
+        # duplicated column receives the tuple elements by position; integer columns
+        # that were fully set are cast to int64, others stay object.
         # GH#15695
         cols = ["A", "B", "C"] * 2
         df = DataFrame(index=range(3), columns=cols)
@@ -465,6 +598,10 @@ class TestDataFrameSetItem:
         tm.assert_frame_equal(df, expected)
 
     def test_setitem_frame_duplicate_columns_size_mismatch(self):
+        # [FUNCTION DOC]
+        # Setting a list key naming a duplicated column with a value of a different
+        # length must raise a value error stating columns must be the same length as the
+        # key, for both duplicated and unique-column frames.
         # GH#39510
         cols = ["A", "B", "C"] * 2
         df = DataFrame(index=range(3), columns=cols)
@@ -477,6 +614,10 @@ class TestDataFrameSetItem:
 
     @pytest.mark.parametrize("cols", [["a", "b", "c"], ["a", "a", "a"]])
     def test_setitem_df_wrong_column_number(self, cols):
+        # [FUNCTION DOC]
+        # Parametrized over unique and fully duplicated column labels. Assigning a
+        # two-column frame to a single existing column key must raise a value error with
+        # the same-length message.
         # GH#38604
         df = DataFrame([[1, 2, 3]], columns=cols)
         rhs = DataFrame([[10, 11]], columns=["d", "e"])
@@ -485,6 +626,10 @@ class TestDataFrameSetItem:
             df["a"] = rhs
 
     def test_setitem_listlike_indexer_duplicate_columns(self):
+        # [FUNCTION DOC]
+        # With duplicated column b, assigning a frame with matching columns via a list
+        # key replaces values positionally; with a list key containing a new label, the
+        # new column is appended and receives the first matching values.
         # GH#38604
         df = DataFrame([[1, 2, 3]], columns=["a", "b", "b"])
         rhs = DataFrame([[10, 11, 12]], columns=["a", "b", "b"])
@@ -497,6 +642,9 @@ class TestDataFrameSetItem:
         tm.assert_frame_equal(df, expected)
 
     def test_setitem_listlike_indexer_duplicate_columns_not_equal_length(self):
+        # [FUNCTION DOC]
+        # Assigning a frame with fewer columns than the targeted duplicated column
+        # labels must raise a value error saying columns must be the same length as key.
         # GH#39403
         df = DataFrame([[1, 2, 3]], columns=["a", "b", "b"])
         rhs = DataFrame([[10, 11]], columns=["a", "b"])
@@ -505,6 +653,11 @@ class TestDataFrameSetItem:
             df[["a", "b"]] = rhs
 
     def test_setitem_intervals(self):
+        # [FUNCTION DOC]
+        # Assigns an interval-categorical series in five forms (series, numpy array,
+        # categorical values, array of values, object-cast series) to new columns.
+        # Checks which columns end up categorical or interval dtype versus object, and
+        # that the contents compare equal as indexes and as series where expected.
         df = DataFrame({"A": range(10)})
         ser = cut(df["A"], 5)
         assert isinstance(ser.cat.categories, IntervalIndex)
@@ -549,6 +702,10 @@ class TestDataFrameSetItem:
         tm.assert_series_equal(df["C"], df["E"], check_names=False)
 
     def test_setitem_categorical(self):
+        # [FUNCTION DOC]
+        # Replaces a categorical column by attribute assignment with its
+        # reordered-categories version; the frame must equal one built with the same
+        # reordered categorical.
         # GH#35369
         df = DataFrame({"h": Series(list("mn")).astype("category")})
         df.h = df.h.cat.reorder_categories(["n", "m"])
@@ -558,6 +715,9 @@ class TestDataFrameSetItem:
         tm.assert_frame_equal(df, expected)
 
     def test_setitem_with_empty_listlike(self):
+        # [FUNCTION DOC]
+        # Assigning an empty list to a column of an empty frame with a named index must
+        # keep the index (including its name) unchanged.
         # GH#17101
         index = Index([], name="idx")
         result = DataFrame(columns=["A"], index=index)
@@ -577,6 +737,11 @@ class TestDataFrameSetItem:
         ],
     )
     def test_setitem_same_column(self, cols, values, expected):
+        # [FUNCTION DOC]
+        # Parametrized over several column layouts (with duplicates, mixed order, other
+        # duplicate labels, no duplicates). Assigns a column to itself and checks the
+        # value read back from that column equals the expected element, i.e.
+        # self-assignment is stable regardless of column position.
         # GH#23239
         df = DataFrame([values], columns=cols)
         df["a"] = df["a"]
@@ -584,6 +749,10 @@ class TestDataFrameSetItem:
         assert result == expected
 
     def test_setitem_multi_index(self):
+        # [FUNCTION DOC]
+        # Frame with three-level column labels and a date index. Assigns sub-frames and
+        # tuple-keyed columns taken from shuffled row and column orders; assignment must
+        # align on both rows and columns so the targets equal their sources.
         # GH#7655, test that assigning to a sub-frame of a frame
         # with multi-index columns aligns both rows and columns
         it = ["jim", "joe", "jolie"], ["first", "last"], ["left", "center", "right"]
@@ -657,12 +826,21 @@ class TestDataFrameSetItem:
         ],
     )
     def test_setitem_list_missing_columns(self, columns, box, expected):
+        # [FUNCTION DOC]
+        # Parametrized over (column list, value box, expected frame). Assigns scalars,
+        # lists, arrays, nested lists and a frame to a list of column labels, some of
+        # which do not yet exist; missing columns are created and existing ones
+        # overwritten. The frame must match the expected result (column order of the key
+        # is respected for arrays).
         # GH#29334
         df = DataFrame([[1, 2], [3, 4], [5, 6]], columns=["A", "B"])
         df[columns] = box
         tm.assert_frame_equal(df, expected)
 
     def test_setitem_list_of_tuples(self, float_frame):
+        # [FUNCTION DOC]
+        # Assigns a list of tuples built from two columns as a new column of the float
+        # frame and checks it is stored as an object column of tuples.
         tuples = list(zip(float_frame["A"], float_frame["B"]))
         float_frame["tuples"] = tuples
 
@@ -671,6 +849,9 @@ class TestDataFrameSetItem:
         tm.assert_series_equal(result, expected)
 
     def test_setitem_iloc_generator(self):
+        # [FUNCTION DOC]
+        # Positional setting with a generator of row positions assigns the scalar to
+        # those rows in all columns.
         # GH#39614
         df = DataFrame({"a": [1, 2, 3], "b": [4, 5, 6]})
         indexer = (x for x in [1, 2])
@@ -679,6 +860,9 @@ class TestDataFrameSetItem:
         tm.assert_frame_equal(df, expected)
 
     def test_setitem_iloc_two_dimensional_generator(self):
+        # [FUNCTION DOC]
+        # Positional setting with a generator for rows and an integer column position
+        # assigns the scalar only to those rows of that column.
         df = DataFrame({"a": [1, 2, 3], "b": [4, 5, 6]})
         indexer = (x for x in [1, 2])
         df.iloc[indexer, 1] = 1
@@ -686,6 +870,10 @@ class TestDataFrameSetItem:
         tm.assert_frame_equal(df, expected)
 
     def test_setitem_dtypes_bytes_type_to_object(self):
+        # [FUNCTION DOC]
+        # Frame indexed by an empty bytes-typed index; assigning empty series of
+        # unsigned ints and bytes strings creates columns, and bytes columns are stored
+        # as object while integer columns keep their dtypes.
         # GH 20734
         index = Series(name="id", dtype="S24")
         df = DataFrame(index=index, columns=Index([], dtype="str"))
@@ -698,6 +886,10 @@ class TestDataFrameSetItem:
         tm.assert_series_equal(result, expected)
 
     def test_boolean_mask_nullable_int64(self):
+        # [FUNCTION DOC]
+        # Using an all-false boolean mask to set a column from itself on a frame with
+        # int64 and nullable Int64 columns leaves the frame unchanged (dtypes
+        # preserved).
         # GH 28928
         result = DataFrame({"a": [3, 4], "b": [5, 6]}).astype(
             {"a": "int64", "b": "Int64"}
@@ -711,6 +903,9 @@ class TestDataFrameSetItem:
         tm.assert_frame_equal(result, expected)
 
     def test_setitem_ea_dtype_rhs_series(self):
+        # [FUNCTION DOC]
+        # Assigning a nullable-integer series to an existing int column replaces the
+        # column and the result has nullable integer dtype.
         # GH#47425
         df = DataFrame({"a": [1, 2]})
         df["a"] = Series([1, 2], dtype="Int64")
@@ -718,6 +913,10 @@ class TestDataFrameSetItem:
         tm.assert_frame_equal(df, expected)
 
     def test_setitem_npmatrix_2d(self):
+        # [FUNCTION DOC]
+        # Assigns a column vector array and a matrix-subclass version of it to new
+        # columns. Both become 1-D float columns of ones. Creating the matrix emits a
+        # pending-deprecation warning that the test asserts.
         # GH#42376
         # for use-case df["x"] = sparse.random((10, 10)).mean(axis=1)
         expected = DataFrame(
@@ -739,6 +938,10 @@ class TestDataFrameSetItem:
 
     @pytest.mark.parametrize("vals", [{}, {"d": "a"}])
     def test_setitem_aligning_dict_with_index(self, vals):
+        # [FUNCTION DOC]
+        # Parametrized over extra column presence. Setting whole columns by label with
+        # dicts keyed by index labels aligns on the index (reversed order, new columns,
+        # partial dict producing missing values).
         # GH#47216
         df = DataFrame({"a": [1, 2], "b": [3, 4], **vals})
         df.loc[:, "a"] = {1: 100, 0: 200}
@@ -750,6 +953,10 @@ class TestDataFrameSetItem:
         tm.assert_frame_equal(df, expected)
 
     def test_setitem_rhs_dataframe(self):
+        # [FUNCTION DOC]
+        # Assigning a single-column frame with a shifted index to a column aligns on the
+        # index, giving a missing value then 10; the positional column setter gives the
+        # same result.
         # GH#47578
         df = DataFrame({"a": [1, 2]})
         df["a"] = DataFrame({"a": [10, 11]}, index=[1, 2])
@@ -761,6 +968,10 @@ class TestDataFrameSetItem:
         tm.assert_frame_equal(df, expected)
 
     def test_setitem_frame_overwrite_with_ea_dtype(self, any_numeric_ea_dtype):
+        # [FUNCTION DOC]
+        # Parametrized over numeric extension dtypes. Overwriting an existing int column
+        # with a frame of that extension dtype changes the column dtype to the extension
+        # dtype while other columns are untouched.
         # GH#46896
         df = DataFrame(columns=["a", "b"], data=[[1, 2], [3, 4]])
         df["a"] = DataFrame({"a": [10, 11]}, dtype=any_numeric_ea_dtype)
@@ -773,6 +984,10 @@ class TestDataFrameSetItem:
         tm.assert_frame_equal(df, expected)
 
     def test_setitem_string_option_object_index(self):
+        # [FUNCTION DOC]
+        # Skipped unless the arrow library is available. With the future string
+        # inference option enabled, assigning an object-dtype index as a column keeps
+        # object dtype instead of inferring string.
         # GH#55638
         pytest.importorskip("pyarrow")
         df = DataFrame({"a": [1, 2]})
@@ -782,6 +997,9 @@ class TestDataFrameSetItem:
         tm.assert_frame_equal(df, expected)
 
     def test_setitem_frame_midx_columns(self):
+        # [FUNCTION DOC]
+        # Assigning a one-column sub-frame back to a tuple key on a frame with
+        # multi-level columns leaves the frame equal to its copy.
         # GH#49121
         df = DataFrame({("a", "b"): [10]})
         expected = df.copy()
@@ -790,6 +1008,10 @@ class TestDataFrameSetItem:
         tm.assert_frame_equal(df, expected)
 
     def test_loc_setitem_ea_dtype(self):
+        # [FUNCTION DOC]
+        # Full-column label-based and positional setting with a nullable Int64 series
+        # into an int64 column keeps the original int64 dtype (values cast to the column
+        # dtype).
         # GH#55604
         df = DataFrame({"a": np.array([10], dtype="i8")})
         df.loc[:, "a"] = Series([11], dtype="Int64")
@@ -801,6 +1023,9 @@ class TestDataFrameSetItem:
         tm.assert_frame_equal(df, expected)
 
     def test_setitem_index_object_dtype_not_inferring(self):
+        # [FUNCTION DOC]
+        # Assigning an object-dtype index of timestamps via label setter and item setter
+        # must keep object dtype in the new columns rather than inferring datetime.
         # GH#56102
         idx = Index([Timestamp("2019-12-31")], dtype=object)
         df = DataFrame({"a": [1]})
@@ -818,19 +1043,32 @@ class TestDataFrameSetItem:
 
 
 class TestSetitemTZAwareValues:
+    # [CLASS DOC]
+    # Group of tests assigning tz-aware datetime data to frame columns. Uses two
+    # fixtures: idx and expected.
     @pytest.fixture
     def idx(self):
+        # [FUNCTION DOC]
+        # HELPER: fixture returning a two-element datetime index named B localized to
+        # the US/Pacific time zone.
         naive = DatetimeIndex(["2013-1-1 13:00", "2013-1-2 14:00"], name="B")
         idx = naive.tz_localize("US/Pacific")
         return idx
 
     @pytest.fixture
     def expected(self, idx):
+        # [FUNCTION DOC]
+        # HELPER: fixture returning an object series of the idx timestamps named B;
+        # asserts its inferred dtype equals the idx dtype and returns it.
         expected = Series(np.array(idx.tolist(), dtype="object"), name="B")
         assert expected.dtype == idx.dtype
         return expected
 
     def test_setitem_dt64series(self, idx, expected):
+        # [FUNCTION DOC]
+        # Assigns the tz-aware index, then overwrites with its series converted to naive
+        # (tz dropped after conversion to UTC). The column must equal the UTC wall times
+        # without tz. The expected fixture is requested but not used.
         # convert to utc
         df = DataFrame(np.random.default_rng(2).standard_normal((2, 1)), columns=["A"])
         df["B"] = idx
@@ -841,6 +1079,9 @@ class TestSetitemTZAwareValues:
         tm.assert_series_equal(result, comp)
 
     def test_setitem_datetimeindex(self, idx, expected):
+        # [FUNCTION DOC]
+        # Assigning a tz-aware datetime index to a new column keeps the tz-aware dtype;
+        # compared to the expected fixture.
         # setting a DataFrame column with a tzaware DTI retains the dtype
         df = DataFrame(np.random.default_rng(2).standard_normal((2, 1)), columns=["A"])
 
@@ -850,6 +1091,9 @@ class TestSetitemTZAwareValues:
         tm.assert_series_equal(result, expected)
 
     def test_setitem_object_array_of_tzaware_datetimes(self, idx, expected):
+        # [FUNCTION DOC]
+        # Assigning an array of python tz-aware datetimes yields a tz-aware column whose
+        # unit is microseconds (the expected fixture is converted to that unit).
         # setting a DataFrame column with a tzaware DTI retains the dtype
         df = DataFrame(np.random.default_rng(2).standard_normal((2, 1)), columns=["A"])
 
@@ -861,7 +1105,13 @@ class TestSetitemTZAwareValues:
 
 
 class TestDataFrameSetItemWithExpansion:
+    # [CLASS DOC]
+    # Tests where setting an item (by label or list) expands the frame with new columns
+    # or rows.
     def test_setitem_listlike_views(self):
+        # [FUNCTION DOC]
+        # Adding columns with a list-like key must not change a previously obtained
+        # column series when the frame is later modified in place (no shared view).
         # GH#38148
         df = DataFrame({"a": [1, 2, 3], "b": [4, 4, 6]})
 
@@ -878,6 +1128,9 @@ class TestDataFrameSetItemWithExpansion:
         tm.assert_series_equal(ser, expected)
 
     def test_setitem_string_column_numpy_dtype_raising(self):
+        # [FUNCTION DOC]
+        # Adding a string-labelled column to a frame with integer labels works and
+        # produces mixed integer/string column labels.
         # GH#39010
         df = DataFrame([[1, 2], [3, 4]])
         df["0 - Name"] = [5, 6]
@@ -885,6 +1138,9 @@ class TestDataFrameSetItemWithExpansion:
         tm.assert_frame_equal(df, expected)
 
     def test_setitem_empty_df_duplicate_columns(self):
+        # [FUNCTION DOC]
+        # Label-based full-column setting on an empty float frame with duplicated column
+        # labels expands rows and fills the other columns with missing values.
         # GH#38521
         df = DataFrame(columns=["a", "b", "b"], dtype="float64")
         df.loc[:, "a"] = list(range(2))
@@ -894,6 +1150,11 @@ class TestDataFrameSetItemWithExpansion:
         tm.assert_frame_equal(df, expected)
 
     def test_setitem_with_expansion_categorical_dtype(self):
+        # [FUNCTION DOC]
+        # Sorts a frame, bins the values into labeled intervals, then assigns the result
+        # as a categorical and as a series. Dtypes must be categorical with the given
+        # ordered=false categories, the stored array equals the categorical, and the
+        # sorted series equal.
         # assignment
         df = DataFrame(
             {
@@ -939,6 +1200,8 @@ class TestDataFrameSetItemWithExpansion:
         tm.assert_series_equal(result2.sort_index(), ser.sort_index())
 
     def test_setitem_scalars_no_index(self):
+        # [FUNCTION DOC]
+        # Setting a scalar on an empty frame creates an empty int64 column.
         # GH#16823 / GH#17894
         df = DataFrame()
         df["foo"] = 1
@@ -946,6 +1209,9 @@ class TestDataFrameSetItemWithExpansion:
         tm.assert_frame_equal(df, expected)
 
     def test_setitem_newcol_tuple_key(self, float_frame):
+        # [FUNCTION DOC]
+        # Setting with a two-element tuple key adds a single column labelled by the
+        # tuple and its content equals the source column.
         assert (
             "A",
             "B",
@@ -958,6 +1224,9 @@ class TestDataFrameSetItemWithExpansion:
         tm.assert_series_equal(result, expected, check_names=False)
 
     def test_frame_setitem_newcol_timestamp(self):
+        # [FUNCTION DOC]
+        # Smoke test: frame whose columns are business-day timestamps; setting a new
+        # timestamp-labelled column to missing works and all values are missing.
         # GH#2155
         columns = date_range(start="1/1/2012", end="2/1/2012", freq=BDay())
         data = DataFrame(columns=columns, index=range(10))
@@ -967,6 +1236,9 @@ class TestDataFrameSetItemWithExpansion:
         assert np.isnan(data[ts]).all()
 
     def test_frame_setitem_rangeindex_into_new_col(self):
+        # [FUNCTION DOC]
+        # Assign the range index as a new column, set one row by boolean list, and
+        # selecting that row yields the new value (no stale cache).
         # GH#47128
         df = DataFrame({"a": ["a", "b"]})
         df["b"] = df.index
@@ -976,6 +1248,9 @@ class TestDataFrameSetItemWithExpansion:
         tm.assert_frame_equal(result, expected)
 
     def test_setitem_frame_keep_ea_dtype(self, any_numeric_ea_dtype):
+        # [FUNCTION DOC]
+        # Parametrized over numeric extension dtypes. Assigning a one-column frame of
+        # that dtype to a new column keeps the extension dtype.
         # GH#46896
         df = DataFrame(columns=["a", "b"], data=[[1, 2], [3, 4]])
         df["c"] = DataFrame({"a": [10, 11]}, dtype=any_numeric_ea_dtype)
@@ -989,6 +1264,10 @@ class TestDataFrameSetItemWithExpansion:
         tm.assert_frame_equal(df, expected)
 
     def test_loc_expansion_with_timedelta_type(self):
+        # [FUNCTION DOC]
+        # Row enlargement with a dict of timedeltas and a string on an empty
+        # three-column frame. The timedelta columns become second-resolution timedeltas
+        # and the string stays an object.
         result = DataFrame(columns=list("abc"))
         result.loc[0] = {
             "a": pd.to_timedelta(5, unit="s"),
@@ -1005,6 +1284,9 @@ class TestDataFrameSetItemWithExpansion:
         tm.assert_frame_equal(result, expected)
 
     def test_setitem_tuple_key_in_empty_frame(self):
+        # [FUNCTION DOC]
+        # Tuple key on an empty frame creates a column labelled by the tuple, with the
+        # column index built without splitting tuples into levels.
         # GH#54385
         df = DataFrame()
         df[(0, 0)] = [1, 2, 3]
@@ -1015,7 +1297,12 @@ class TestDataFrameSetItemWithExpansion:
 
 
 class TestDataFrameSetItemSlicing:
+    # [CLASS DOC]
+    # Tests of setting with slice keys and broadcasting right-hand sides.
     def test_setitem_slice_position(self):
+        # [FUNCTION DOC]
+        # Setting with a negative-start slice on the item operator is positional: the
+        # last four rows become 1.
         # GH#31469
         df = DataFrame(np.zeros((100, 1)))
         df[-4:] = 1
@@ -1027,6 +1314,11 @@ class TestDataFrameSetItemSlicing:
     @pytest.mark.parametrize("box", [Series, np.array, list, pd.array])
     @pytest.mark.parametrize("n", [1, 2, 3])
     def test_setitem_slice_indexer_broadcasting_rhs(self, n, box, indexer_si):
+        # [FUNCTION DOC]
+        # Parametrized over row count (1-3) and the container type of the right-hand
+        # side (series, array, list, extension array), plus the indexer-style fixture
+        # selecting positional or label accessor. Setting all rows after the first with
+        # a three-element row broadcasts it to each row.
         # GH#40440
         df = DataFrame([[1, 3, 5]] + [[2, 4, 6]] * n, columns=["a", "b", "c"])
         indexer_si(df)[1:] = box([10, 11, 12])
@@ -1036,6 +1328,9 @@ class TestDataFrameSetItemSlicing:
     @pytest.mark.parametrize("box", [Series, np.array, list, pd.array])
     @pytest.mark.parametrize("n", [1, 2, 3])
     def test_setitem_list_indexer_broadcasting_rhs(self, n, box):
+        # [FUNCTION DOC]
+        # Same as the slice-indexer test but uses a list of row positions on the
+        # positional accessor; the row values are broadcast to each selected row.
         # GH#40440
         df = DataFrame([[1, 3, 5]] + [[2, 4, 6]] * n, columns=["a", "b", "c"])
         df.iloc[list(range(1, n + 1))] = box([10, 11, 12])
@@ -1045,6 +1340,9 @@ class TestDataFrameSetItemSlicing:
     @pytest.mark.parametrize("box", [Series, np.array, list, pd.array])
     @pytest.mark.parametrize("n", [1, 2, 3])
     def test_setitem_slice_broadcasting_rhs_mixed_dtypes(self, n, box, indexer_si):
+        # [FUNCTION DOC]
+        # Like the slice broadcasting test, but the frame has a row of strings so the
+        # result becomes object dtype; broadcast rows replace all rows after the first.
         # GH#40440
         df = DataFrame(
             [[1, 3, 5], ["x", "y", "z"]] + [[2, 4, 6]] * n, columns=["a", "b", "c"]
@@ -1059,7 +1357,12 @@ class TestDataFrameSetItemSlicing:
 
 
 class TestDataFrameSetItemCallable:
+    # [CLASS DOC]
+    # Tests that callables used as keys or values for the item setter are handled.
     def test_setitem_callable(self):
+        # [FUNCTION DOC]
+        # A callable key is evaluated with the frame and its result used as the column
+        # key.
         # GH#12533
         df = DataFrame({"A": [1, 2, 3, 4], "B": [5, 6, 7, 8]})
         df[lambda x: "A"] = [11, 12, 13, 14]
@@ -1068,8 +1371,14 @@ class TestDataFrameSetItemCallable:
         tm.assert_frame_equal(df, exp)
 
     def test_setitem_other_callable(self):
+        # [FUNCTION DOC]
+        # A callable stored as value with a boolean-frame mask is stored as an object
+        # element (not called).
         # GH#13299
         def inc(x):
+            # [FUNCTION DOC]
+            # HELPER: simple function returning its argument plus one; used only as the
+            # callable value stored by the test.
             return x + 1
 
         # Set dtype object straight away to avoid upcast when setting inc below
@@ -1081,12 +1390,17 @@ class TestDataFrameSetItemCallable:
 
 
 class TestDataFrameSetItemBooleanMask:
+    # [CLASS DOC]
+    # Tests for setting with boolean masks (frame, array, series, nullable boolean).
     @pytest.mark.parametrize(
         "mask_type",
         [lambda df: df > np.abs(df) / 2, lambda df: (df > np.abs(df) / 2).values],
         ids=["dataframe", "array"],
     )
     def test_setitem_boolean_mask(self, mask_type, float_frame):
+        # [FUNCTION DOC]
+        # Parametrized by mask type (frame or array). Setting missing values where a
+        # mask is true gives the same result as applying the mask to the raw array.
         # Test for issue #18582
         df = float_frame.copy()
         mask = mask_type(df)
@@ -1103,6 +1417,10 @@ class TestDataFrameSetItemBooleanMask:
     @pytest.mark.xfail(reason="Currently empty indexers are treated as all False")
     @pytest.mark.parametrize("box", [list, np.array, Series])
     def test_setitem_loc_empty_indexer_raises_with_non_empty_value(self, box):
+        # [FUNCTION DOC]
+        # Expected-failure test: it intends that an empty indexer with a non-empty value
+        # raises a value error, but empty indexers are currently treated as all false
+        # and nothing is raised.
         # GH#37672
         df = DataFrame({"a": ["a"], "b": [1], "c": [1]})
         if box == Series:
@@ -1115,6 +1433,9 @@ class TestDataFrameSetItemBooleanMask:
 
     @pytest.mark.parametrize("box", [list, np.array, Series])
     def test_setitem_loc_only_false_indexer_dtype_changed(self, box):
+        # [FUNCTION DOC]
+        # Parametrized over list, array and series container. A single all-false indexer
+        # assigned from a series or scalar leaves the frame unchanged, including dtypes.
         # GH#37550
         # Dtype is only changed when value to set is a Series and indexer is
         # empty/bool all False
@@ -1128,6 +1449,10 @@ class TestDataFrameSetItemBooleanMask:
         tm.assert_frame_equal(df, expected)
 
     def test_setitem_boolean_mask_aligning(self, indexer_sl):
+        # [FUNCTION DOC]
+        # Assigning a sorted subset back through a boolean mask aligns on the index so
+        # the frame stays unchanged (run for both label and positional accessors via the
+        # fixture).
         # GH#39931
         df = DataFrame({"a": [1, 4, 2, 3], "b": [5, 6, 7, 8]})
         expected = df.copy()
@@ -1136,6 +1461,9 @@ class TestDataFrameSetItemBooleanMask:
         tm.assert_frame_equal(df, expected)
 
     def test_setitem_mask_categorical(self):
+        # [FUNCTION DOC]
+        # Setting row values on a mask over a categorical column keeps all original
+        # categories; compared with the expected frame.
         # assign multiple rows (mixed values) (-> array) -> exp_multi_row
         # changed multiple rows
         cats2 = Categorical(["a", "a", "b", "b", "a", "a", "a"], categories=["a", "b"])
@@ -1161,6 +1489,9 @@ class TestDataFrameSetItemBooleanMask:
     @pytest.mark.parametrize("dtype", ["float", "int64"])
     @pytest.mark.parametrize("kwargs", [{}, {"index": [1]}, {"columns": ["A"]}])
     def test_setitem_empty_frame_with_boolean(self, dtype, kwargs):
+        # [FUNCTION DOC]
+        # Parametrized over dtype and constructor kwargs. A frame-valued mask over an
+        # empty frame does nothing.
         # see GH#10126
         kwargs["dtype"] = dtype
         df = DataFrame(**kwargs)
@@ -1170,6 +1501,9 @@ class TestDataFrameSetItemBooleanMask:
         tm.assert_frame_equal(df, df2)
 
     def test_setitem_boolean_indexing(self):
+        # [FUNCTION DOC]
+        # Sets values where a boolean frame mask is true; a boolean array of wrong
+        # length raises a value error mentioning wrong item length.
         idx = list(range(3))
         cols = ["A", "B", "C"]
         df1 = DataFrame(
@@ -1193,6 +1527,9 @@ class TestDataFrameSetItemBooleanMask:
             df1[df1.index[:-1] > 2] = -1
 
     def test_loc_setitem_all_false_boolean_two_blocks(self):
+        # [FUNCTION DOC]
+        # All-false boolean series with a frame value across two blocks leaves the frame
+        # unchanged.
         # GH#40885
         df = DataFrame({"a": [1, 2], "b": [3, 4], "c": "a"})
         expected = df.copy()
@@ -1201,6 +1538,9 @@ class TestDataFrameSetItemBooleanMask:
         tm.assert_frame_equal(df, expected)
 
     def test_setitem_ea_boolean_mask(self):
+        # [FUNCTION DOC]
+        # A frame of nullable boolean values (with missing entries) as mask: missing
+        # entries are treated as false, true entries are set.
         # GH#47125
         df = DataFrame([[-1, 2], [3, -4]])
         expected = DataFrame([[0, 2], [3, 0]])
@@ -1215,7 +1555,13 @@ class TestDataFrameSetItemBooleanMask:
 
 
 class TestDataFrameSetitemCopyViewSemantics:
+    # [CLASS DOC]
+    # Tests about whether assignment copies data or modifies in place and how that
+    # affects other frames and series.
     def test_setitem_always_copy(self, float_frame):
+        # [FUNCTION DOC]
+        # Assigning a copy of a series as a new column and then changing the frame must
+        # not change the original series.
         assert "E" not in float_frame.columns
         s = float_frame["A"].copy()
         float_frame["E"] = s
@@ -1225,6 +1571,10 @@ class TestDataFrameSetitemCopyViewSemantics:
 
     @pytest.mark.parametrize("consolidate", [True, False])
     def test_setitem_partial_column_inplace(self, consolidate):
+        # [FUNCTION DOC]
+        # Parametrized by whether blocks were consolidated. Partial label-based setting
+        # of one column writes through to the frame column in place, regardless of block
+        # layout (single or multi block asserted).
         # This setting should be in-place, regardless of whether frame is
         #  single-block or multi-block
         # GH#304 this used to be incorrectly not-inplace, in which case
@@ -1246,6 +1596,9 @@ class TestDataFrameSetitemCopyViewSemantics:
         tm.assert_series_equal(df["z"], expected)
 
     def test_setitem_duplicate_columns_not_inplace(self):
+        # [FUNCTION DOC]
+        # Assigning a tuple to a duplicated column label replaces data without altering
+        # a view taken earlier.
         # GH#39510
         cols = ["A", "B"] * 2
         df = DataFrame(0.0, index=[0], columns=cols)
@@ -1261,6 +1614,9 @@ class TestDataFrameSetitemCopyViewSemantics:
         "value", [1, np.array([[1], [1]], dtype="int64"), [[1], [1]]]
     )
     def test_setitem_same_dtype_not_inplace(self, value):
+        # [FUNCTION DOC]
+        # Parametrized over value shapes. Setting a list key with same-dtype values must
+        # not mutate an earlier view of the frame.
         # GH#39510
         cols = ["A", "B"]
         df = DataFrame(0, index=[0, 1], columns=cols)
@@ -1274,6 +1630,9 @@ class TestDataFrameSetitemCopyViewSemantics:
 
     @pytest.mark.parametrize("value", [1.0, np.array([[1.0], [1.0]]), [[1.0], [1.0]]])
     def test_setitem_listlike_key_scalar_value_not_inplace(self, value):
+        # [FUNCTION DOC]
+        # Same, but values are floats so the column is upcast to float; earlier view
+        # unchanged.
         # GH#39510
         cols = ["A", "B"]
         df = DataFrame(0, index=[0, 1], columns=cols)
@@ -1309,6 +1668,10 @@ class TestDataFrameSetitemCopyViewSemantics:
         ],
     )
     def test_setitem_not_operating_inplace(self, value, set_value, indexer):
+        # [FUNCTION DOC]
+        # Parametrized over key forms (label, list, bool list with a non-strict xfail)
+        # and value pairs of several types. Setting must not affect a view taken
+        # earlier.
         # GH#43406
         df = DataFrame({"a": value}, index=[0, 1])
         expected = df.copy()
@@ -1317,6 +1680,9 @@ class TestDataFrameSetitemCopyViewSemantics:
         tm.assert_frame_equal(view, expected)
 
     def test_setitem_column_update_inplace(self):
+        # [FUNCTION DOC]
+        # Chained assignment through a column must emit the chained assignment error and
+        # leave the original block values untouched.
         # https://github.com/pandas-dev/pandas/issues/47172
 
         labels = [f"c{i}" for i in range(10)]
@@ -1330,6 +1696,9 @@ class TestDataFrameSetitemCopyViewSemantics:
         assert np.all(values[np.arange(10), np.arange(10)] == 0)
 
     def test_setitem_column_frame_as_category(self):
+        # [FUNCTION DOC]
+        # Assigning categorical frame and series to new columns keeps categorical dtype
+        # alongside the int column.
         # GH31581
         df = DataFrame([1, 2, 3])
         df["col1"] = DataFrame([1, 2, 3], dtype="category")
@@ -1342,6 +1711,9 @@ class TestDataFrameSetitemCopyViewSemantics:
 
     @pytest.mark.parametrize("dtype", ["int64", "Int64"])
     def test_setitem_iloc_with_numpy_array(self, dtype):
+        # [FUNCTION DOC]
+        # Parametrized over int64 and nullable Int64. Positional setting with array
+        # indexers and a 2-D value sets one element and keeps dtype.
         # GH-33828
         df = DataFrame({"a": np.ones(3)}, dtype=dtype)
         df.iloc[np.array([0]), np.array([0])] = np.array([[2]])
@@ -1350,6 +1722,10 @@ class TestDataFrameSetitemCopyViewSemantics:
         tm.assert_frame_equal(df, expected)
 
     def test_setitem_frame_dup_cols_dtype(self):
+        # [FUNCTION DOC]
+        # Assigning a frame with duplicated columns to a duplicated key sets values
+        # positionally and upcasts only the necessary column(s); checked for two
+        # layouts.
         # GH#53143
         df = DataFrame([[1, 2, 3, 4], [4, 5, 6, 7]], columns=["a", "b", "a", "c"])
         rhs = DataFrame([[0, 1.5], [2, 2.5]], columns=["a", "a"])
@@ -1366,6 +1742,9 @@ class TestDataFrameSetitemCopyViewSemantics:
         tm.assert_frame_equal(df, expected)
 
     def test_frame_setitem_empty_dataframe(self):
+        # [FUNCTION DOC]
+        # Setting None to two new columns on an empty slice of a frame with a named
+        # datetime index keeps the index and gives object columns.
         # GH#28871
         dti = DatetimeIndex(["2000-01-01"], dtype="M8[ns]", name="date")
         df = DataFrame({"date": dti}).set_index("date")
@@ -1382,6 +1761,10 @@ class TestDataFrameSetitemCopyViewSemantics:
         tm.assert_frame_equal(df, expected)
 
     def test_iloc_setitem_view_2dblock(self):
+        # [FUNCTION DOC]
+        # Regression for a two-dimensional block case: positional setting on a column
+        # subset taken from a parent frame must not change the parent and must modify
+        # the subset correctly, also for stepped column slices.
         # https://github.com/pandas-dev/pandas/issues/60309
         df_parent = DataFrame(
             {
@@ -1430,6 +1813,11 @@ class TestDataFrameSetitemCopyViewSemantics:
         ],
     )
     def test_setitem_2dblock_with_ref(self, indexer, value):
+        # [FUNCTION DOC]
+        # Parametrized over eight indexer and value combinations (lists, slices, scalar
+        # numpy ints, boolean arrays). Single-block parent; setting via the positional
+        # accessor on a full slice copy must not alter the parent and must equal the
+        # same operation applied on the raw array.
         # https://github.com/pandas-dev/pandas/issues/60309
         arr = np.arange(12).reshape(3, 4)
 
@@ -1452,6 +1840,9 @@ class TestDataFrameSetitemCopyViewSemantics:
 
 
 def test_full_setter_loc_incompatible_dtype():
+    # [FUNCTION DOC]
+    # Full-column label setting with a bool or float dict in an integer column raises a
+    # type error about an invalid value; an integer dict is accepted.
     # https://github.com/pandas-dev/pandas/issues/55791
     df = DataFrame({"a": [1, 2]})
     with pytest.raises(TypeError, match="Invalid value"):
@@ -1466,6 +1857,9 @@ def test_full_setter_loc_incompatible_dtype():
 
 
 def test_setitem_partial_row_multiple_columns():
+    # [FUNCTION DOC]
+    # Setting two new columns on a boolean row selection with a tuple of mixed types
+    # fills selected rows and leaves missing values elsewhere with no warning.
     # https://github.com/pandas-dev/pandas/issues/56503
     df = DataFrame({"A": [1, 2, 3], "B": [4.0, 5, 6]})
     # should not warn

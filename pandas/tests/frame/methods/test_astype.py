@@ -1,3 +1,12 @@
+# [MODULE DOC]
+# Tests for the dtype-conversion method of the frame class (astype): numeric, string,
+# categorical, extension, datetime-like (all units and time zones), per-column mapping
+# or series of dtypes, error handling modes, duplicate columns, attribute retention and
+# copy behavior. Defines a small private dtype-check helper, two test classes, two
+# helper subclasses used to prove no copy is made, and module-level tests. Uses frame
+# fixtures, the testing helpers module and optional dependency decorators. No
+# import-time side effects.
+
 import re
 
 import numpy as np
@@ -27,6 +36,10 @@ import pandas._testing as tm
 
 
 def _check_cast(df, v):
+    # [FUNCTION DOC]
+    # HELPER: asserts that every column of the frame has a dtype whose name equals the
+    # given name. Parameters: frame, expected dtype name string. Raises assertion error
+    # on mismatch.
     """
     Check if all dtypes of df are equal to v
     """
@@ -34,7 +47,13 @@ def _check_cast(df, v):
 
 
 class TestAstype:
+    # [CLASS DOC]
+    # Main group of astype tests on frames; stateless pytest class.
     def test_astype_float(self, float_frame):
+        # [FUNCTION DOC]
+        # Casting the float frame to int and to 32-bit int equals constructing from the
+        # casted raw values, also when an extra column of numeric strings is present
+        # (strings are parsed).
         casted = float_frame.astype(int)
         expected = DataFrame(
             float_frame.values.astype(int),
@@ -61,6 +80,9 @@ class TestAstype:
         tm.assert_frame_equal(casted, expected)
 
     def test_astype_mixed_float(self, mixed_float_frame):
+        # [FUNCTION DOC]
+        # Takes mixed-float frame. Casting two float columns to float32 and float16
+        # gives frames whose columns all have that dtype.
         # mixed casting
         casted = mixed_float_frame.reindex(columns=["A", "B"]).astype("float32")
         _check_cast(casted, "float32")
@@ -69,6 +91,11 @@ class TestAstype:
         _check_cast(casted, "float16")
 
     def test_astype_mixed_type(self):
+        # [FUNCTION DOC]
+        # Builds a mixed frame, keeps numeric columns and adds float16 and large float64
+        # columns. Casting to float64, int64, float32, int32 and object results in all
+        # columns having the dtype (checked through the private helper). Float16 only
+        # column cast is checked too.
         # mixed casting
         df = DataFrame(
             {
@@ -104,6 +131,10 @@ class TestAstype:
         _check_cast(casted, "object")
 
     def test_astype_with_exclude_string(self, float_frame):
+        # [FUNCTION DOC]
+        # With errors set to ignore, casting a frame with a string column to integer
+        # casts numeric columns and leaves the string column as is. Checked for platform
+        # integer and 32-bit integer.
         df = float_frame.copy()
         expected = float_frame.astype(int)
         df["string"] = "foo"
@@ -121,6 +152,11 @@ class TestAstype:
         tm.assert_frame_equal(casted, expected)
 
     def test_astype_with_view_float(self, float_frame):
+        # [FUNCTION DOC]
+        # Smoke test: casts a rounded int32 frame to float32 and a float64 frame to
+        # int64.
+        # KNOWN ISSUE: the test makes no assertions (a TODO comment asks for
+        # verification), so it can only detect exceptions.
         # this is the only real reason to do it this way
         tf = np.round(float_frame).astype(np.int32)
         tf.astype(np.float32)
@@ -130,6 +166,8 @@ class TestAstype:
         tf.astype(np.int64)
 
     def test_astype_with_view_mixed_float(self, mixed_float_frame):
+        # [FUNCTION DOC]
+        # Smoke test with a mixed-float subset cast to int64 and float32. No assertions.
         tf = mixed_float_frame.reindex(columns=["A", "B", "C"])
 
         tf.astype(np.int64)
@@ -137,6 +175,10 @@ class TestAstype:
 
     @pytest.mark.parametrize("val", [np.nan, np.inf])
     def test_astype_cast_nan_inf_int(self, val, any_int_numpy_dtype):
+        # [FUNCTION DOC]
+        # Parametrized over missing/infinite value and integer numpy dtypes fixture.
+        # Casting a one-value frame to an integer dtype raises a value error saying
+        # non-finite values cannot be converted to integer.
         # see GH#14265
         #
         # Check NaN and inf --> raise error when converting to int.
@@ -147,6 +189,10 @@ class TestAstype:
             df.astype(any_int_numpy_dtype)
 
     def test_astype_str(self):
+        # [FUNCTION DOC]
+        # Casting a frame of datetime, tz-aware datetime, timedelta, integer and float
+        # columns to str gives the expected string representations per column with
+        # string dtype (date-only for midnight datetimes, base repr for timedeltas).
         # see GH#9757
         a = Series(date_range("2010-01-04", periods=5))
         b = Series(date_range("3/6/2012 00:00", periods=5, tz="US/Eastern"))
@@ -173,6 +219,10 @@ class TestAstype:
         tm.assert_frame_equal(result, expected)
 
     def test_astype_str_float(self, using_infer_string):
+        # [FUNCTION DOC]
+        # Takes inferred-string option fixture. A missing float casts to the text nan,
+        # or to missing value when string inference is on; a high-precision float casts
+        # to its shortest round-trip text.
         # see GH#11302
         result = DataFrame([np.nan]).astype(str)
         expected = DataFrame([np.nan if using_infer_string else "nan"], dtype="str")
@@ -186,6 +236,12 @@ class TestAstype:
 
     @pytest.mark.parametrize("dtype_class", [dict, Series])
     def test_astype_dict_like(self, dtype_class):
+        # [FUNCTION DOC]
+        # Parametrized over dtype container (dict or series). Covers partial column
+        # mapping, mixed numpy/str types, full mapping equal to casting all, KeyError
+        # for keys that are not column labels, a mapping equal to the existing dtypes
+        # (no change) and an empty mapping (no change); original frame is never
+        # modified.
         # GH7271 & GH16717
         a = Series(date_range("2010-01-04", periods=5))
         b = Series(range(5))
@@ -256,6 +312,9 @@ class TestAstype:
         tm.assert_frame_equal(df, original)
 
     def test_astype_duplicate_col(self):
+        # [FUNCTION DOC]
+        # With duplicated column labels, casting everything to str or a mapping on the
+        # duplicated label converts all columns that share the label.
         a1 = Series([1, 2, 3, 4, 5], name="a")
         b = Series([0.1, 0.2, 0.4, 0.6, 0.8], name="b")
         a2 = Series([0, 1, 2, 3, 4], name="a")
@@ -273,6 +332,10 @@ class TestAstype:
         tm.assert_frame_equal(result, expected)
 
     def test_astype_duplicate_col_series_arg(self):
+        # [FUNCTION DOC]
+        # Passing a series of dtypes (as taken from frame dtypes with two entries
+        # modified) to a frame with duplicate column labels casts by position, including
+        # a nullable float dtype and string.
         # GH#44417
         vals = np.random.default_rng(2).standard_normal((3, 4))
         df = DataFrame(vals, columns=["A", "B", "C", "A"])
@@ -309,6 +372,11 @@ class TestAstype:
         "ignore:Constructing a Categorical with a dtype and values"
     )
     def test_astype_categorical(self, dtype):
+        # [FUNCTION DOC]
+        # Parametrized over several categorical dtype specs (string alias, with/without
+        # ordering, explicit categories). Casting a string frame yields the same as
+        # building categoricals from each column with that dtype. Filters the warning
+        # about constructing categoricals with a dtype and values.
         # GH#18099
         d = {"A": list("abbc"), "B": list("bccd"), "C": list("cdde")}
         df = DataFrame(d)
@@ -318,6 +386,10 @@ class TestAstype:
 
     @pytest.mark.parametrize("cls", [CategoricalDtype, DatetimeTZDtype, IntervalDtype])
     def test_astype_categoricaldtype_class_raises(self, cls):
+        # [FUNCTION DOC]
+        # Parametrized over categorical, tz-aware datetime and interval dtype classes.
+        # Passing the class rather than an instance raises a type error saying an
+        # instance is expected, for frame mapping and series cast.
         df = DataFrame({"A": ["a", "a", "b", "c"]})
         xpr = f"Expected an instance of {cls.__name__}"
         with pytest.raises(TypeError, match=xpr):
@@ -327,6 +399,11 @@ class TestAstype:
             df["A"].astype(cls)
 
     def test_astype_extension_dtypes(self, any_int_ea_dtype):
+        # [FUNCTION DOC]
+        # Takes integer extension dtype fixture. Casting float frame to the nullable
+        # dtype and round trip via int64 or back to float give the expected frames;
+        # casting a single column works and the frame cast afterwards still equals the
+        # full result.
         # GH#22578
         dtype = any_int_ea_dtype
         df = DataFrame([[1.0, 2.0], [3.0, 4.0], [5.0, 6.0]], columns=["a", "b"])
@@ -352,6 +429,8 @@ class TestAstype:
         tm.assert_frame_equal(df.astype("int64").astype(dtype), expected1)
 
     def test_astype_extension_dtypes_1d(self, any_int_ea_dtype):
+        # [FUNCTION DOC]
+        # Same as the previous one but for a single-column frame.
         # GH#22578
         dtype = any_int_ea_dtype
         df = DataFrame({"a": [1.0, 2.0, 3.0]})
@@ -370,6 +449,11 @@ class TestAstype:
 
     @pytest.mark.parametrize("dtype", ["category", "Int64"])
     def test_astype_extension_dtypes_duplicate_col(self, dtype, using_nan_is_na):
+        # [FUNCTION DOC]
+        # Parametrized over categorical and nullable Int64, with a fixture saying
+        # whether NaN is treated as missing. With duplicated labels and missing floats,
+        # casting equals casting each series; for Int64 without the nan-is-na mode a
+        # value error about casting NaN to integer is expected for frame and series.
         # GH#24704
         a1 = Series([0, np.nan, 4], name="a")
         a2 = Series([np.nan, 3, 5], name="a")
@@ -393,6 +477,9 @@ class TestAstype:
         "dtype", [{100: "float64", 200: "uint64"}, "category", "float64"]
     )
     def test_astype_column_metadata(self, dtype):
+        # [FUNCTION DOC]
+        # Parametrized over dtype mapping, categorical and float. Casting keeps the
+        # unsigned-integer named column index unchanged.
         # GH#19920
         columns = Index([100, 200, 300], dtype=np.uint64, name="foo")
         df = DataFrame(np.arange(15).reshape(5, 3), columns=columns)
@@ -401,6 +488,9 @@ class TestAstype:
 
     @pytest.mark.parametrize("unit", ["Y", "M", "W", "D", "h", "m"])
     def test_astype_from_object_to_datetime_unit(self, unit):
+        # [FUNCTION DOC]
+        # Parametrized over coarse units. Casting object strings to datetime64 with an
+        # unsupported unit raises a value error listing the supported resolutions.
         vals = [
             ["2015-01-01", "2015-01-02", "2015-01-03"],
             ["2017-01-01", "2017-01-02", "2017-02-03"],
@@ -416,6 +506,12 @@ class TestAstype:
 
     @pytest.mark.parametrize("unit", ["Y", "M", "W", "D", "h", "m"])
     def test_astype_from_object_to_timedelta_unit(self, unit):
+        # [FUNCTION DOC]
+        # Parametrized over coarse units. Casting object strings to timedelta64 with an
+        # unsupported unit raises a value error about the resolution conversion.
+        # KNOWN ISSUE: a TODO comment in the test notes that this raises a value error
+        # while the datetime array equivalent raises a type error; the inconsistency is
+        # acknowledged but unresolved.
         vals = [
             ["1 Day", "2 Days", "3 Days"],
             ["4 Days", "5 Days", "6 Days"],
@@ -433,6 +529,9 @@ class TestAstype:
     @pytest.mark.parametrize("dtype", ["M8", "m8"])
     @pytest.mark.parametrize("unit", ["ns", "us", "ms", "s", "h", "m", "D"])
     def test_astype_from_datetimelike_to_object(self, dtype, unit):
+        # [FUNCTION DOC]
+        # Parametrized over datetime/timedelta kind and units. Casting to object gives
+        # object columns holding timestamps or timedeltas with the original unit.
         # tests astype to object dtype
         # GH#19223 / GH#12425
         dtype = f"{dtype}[{unit}]"
@@ -449,6 +548,9 @@ class TestAstype:
     @pytest.mark.parametrize("dtype", ["M8", "m8"])
     @pytest.mark.parametrize("unit", ["ns", "us", "ms", "s", "h", "m", "D"])
     def test_astype_to_datetimelike_unit(self, any_real_numpy_dtype, dtype, unit):
+        # [FUNCTION DOC]
+        # Parametrized over real numpy dtypes fixture, datetime/timedelta kind and unit.
+        # Casting numbers to datetime-like dtype equals casting the raw array.
         # tests all units from numeric origination
         # GH#19223 / GH#12425
         dtype = f"{dtype}[{unit}]"
@@ -461,6 +563,11 @@ class TestAstype:
 
     @pytest.mark.parametrize("unit", ["ns", "us", "ms", "s", "h", "m", "D"])
     def test_astype_to_datetime_unit(self, unit):
+        # [FUNCTION DOC]
+        # Parametrized over units. Casting datetime data to supported units (ns, us, ms,
+        # s) gives matching dtype for frame, series, index and array; for coarser units
+        # a type error stating the array cannot be cast to that dtype is raised in each
+        # container and the test ends.
         # tests all units from datetime origination
         # GH#19223
         dtype = f"M8[{unit}]"
@@ -511,6 +618,8 @@ class TestAstype:
         tm.assert_extension_array_equal(res_dta, exp_dta)
 
     def test_astype_to_timedelta_unit_ns(self):
+        # [FUNCTION DOC]
+        # Casting nanosecond timedelta data to the same dtype equals the raw array cast.
         # preserver the timedelta conversion
         # GH#19223
         dtype = "m8[ns]"
@@ -523,6 +632,14 @@ class TestAstype:
 
     @pytest.mark.parametrize("unit", ["us", "ms", "s", "h", "m", "D"])
     def test_astype_to_timedelta_unit(self, unit):
+        # [FUNCTION DOC]
+        # Parametrized over units. For supported units (us, ms, s) the cast is a no-op
+        # equal copy. For coarser units, the data is stored in seconds and casting
+        # raises a value error about unsupported resolutions in frame, series, index and
+        # array.
+        # KNOWN ISSUE: the comment says the behavior used to coerce to float until a
+        # past major version, which is stale; the test no longer checks any float
+        # coercion.
         # coerce to float
         # GH#19223 until 2.0 used to coerce to float
         dtype = f"m8[{unit}]"
@@ -561,6 +678,9 @@ class TestAstype:
 
     @pytest.mark.parametrize("unit", ["ns", "us", "ms", "s", "h", "m", "D"])
     def test_astype_to_incorrect_datetimelike(self, unit):
+        # [FUNCTION DOC]
+        # Parametrized over units. Casting datetime data to timedelta, or the reverse,
+        # raises a type error stating the array type cannot be cast to the other dtype.
         # trying to astype an m to an M, or vice-versa
         # GH#19224
         dtype = f"M8[{unit}]"
@@ -577,6 +697,9 @@ class TestAstype:
             df.astype(dtype)
 
     def test_astype_arg_for_errors(self):
+        # [FUNCTION DOC]
+        # A non-string value for the errors argument raises a value error listing
+        # allowed values; errors set to ignore works.
         # GH#14878
 
         df = DataFrame([1, 2, 3])
@@ -591,6 +714,9 @@ class TestAstype:
         df.astype(np.int8, errors="ignore")
 
     def test_astype_invalid_conversion(self):
+        # [FUNCTION DOC]
+        # Casting a column with a non-numeric string to integer raises a value error
+        # whose message names the column and the original parse failure.
         # GH#47571
         df = DataFrame({"a": [1, 2, "text"], "b": [1, 2, 3]})
 
@@ -603,6 +729,9 @@ class TestAstype:
             df.astype({"a": int})
 
     def test_astype_arg_for_errors_dictlist(self):
+        # [FUNCTION DOC]
+        # With a mapping and errors set to ignore, columns that fail to cast stay
+        # unchanged and others are cast.
         # GH#25905
         df = DataFrame(
             [
@@ -624,6 +753,10 @@ class TestAstype:
         tm.assert_frame_equal(result, expected)
 
     def test_astype_dt64tz(self, timezone_frame):
+        # [FUNCTION DOC]
+        # Takes tz-aware frame fixture. Casting to object gives timestamps (with their
+        # zones) and NaT; casting to naive datetime64 raises a type error about
+        # converting between time zone aware and naive dtypes.
         # astype
         expected = np.array(
             [
@@ -660,6 +793,11 @@ class TestAstype:
             timezone_frame.astype("datetime64[ns]")
 
     def test_astype_dt64tz_to_str(self, timezone_frame, using_infer_string):
+        # [FUNCTION DOC]
+        # Takes tz-aware frame fixture and string inference fixture. Casting to str
+        # gives formatted dates (missing as the NaT text or missing value when inference
+        # is on), and the string repr of the frame shows the expected aligned rows when
+        # many columns are allowed.
         # str formatting
         result = timezone_frame.astype(str)
         na_value = np.nan if using_infer_string else "NaT"
@@ -695,6 +833,8 @@ class TestAstype:
             ) in result
 
     def test_astype_empty_dtype_dict(self):
+        # [FUNCTION DOC]
+        # Casting an empty frame with an empty mapping returns an equal but new object.
         # issue mentioned further down in the following issue's thread
         # https://github.com/pandas-dev/pandas/issues/33113
         df = DataFrame()
@@ -718,6 +858,11 @@ class TestAstype:
     )
     @pytest.mark.parametrize("errors", ["raise", "ignore"])
     def test_astype_ignores_errors_for_extension_dtypes(self, data, dtype, errors):
+        # [FUNCTION DOC]
+        # Parametrized over data/dtype combos (python string, pyarrow string,
+        # categorical, tz-aware timestamps, intervals) and error mode. With errors
+        # ignore the frame is returned unchanged when casting to float; with raise a
+        # value or type error matching a cast failure message is raised.
         # https://github.com/pandas-dev/pandas/issues/35471
         df = DataFrame(Series(data, dtype=dtype))
         if errors == "ignore":
@@ -730,6 +875,14 @@ class TestAstype:
                 df.astype(float, errors=errors)
 
     def test_astype_tz_conversion(self):
+        # [FUNCTION DOC]
+        # Constructing a daily range using the lowercase day alias emits a
+        # Pandas4Warning about deprecation (asserted). Casting a London tz column to
+        # Berlin dtype equals tz conversion of the column.
+        # KNOWN ISSUE: the expected frame is the same object as the input frame (an
+        # alias, not a copy), so the in-place conversion of the expected column also
+        # mutates the input; the comparison still works only because the result was
+        # computed before.
         # GH 35973, GH#58998
         msg = "'d' is deprecated and will be removed in a future version."
         with tm.assert_produces_warning(Pandas4Warning, match=msg):
@@ -747,6 +900,9 @@ class TestAstype:
 
     @pytest.mark.parametrize("tz", ["UTC", "Europe/Berlin"])
     def test_astype_tz_object_conversion(self, tz):
+        # [FUNCTION DOC]
+        # Parametrized over target zone. Converts a London tz column to another zone, to
+        # object, then back to the London zone dtype; result must equal the original.
         # GH 35973
         val = {
             "tz": date_range(
@@ -764,6 +920,10 @@ class TestAstype:
         tm.assert_frame_equal(result, expected)
 
     def test_astype_dt64_to_string(self, frame_or_series, tz_naive_fixture):
+        # [FUNCTION DOC]
+        # Takes frame-or-series and tz fixtures. Casting datetime data with one NaT to
+        # the nullable string dtype equals casting the array directly, the missing entry
+        # is NA, and other entries equal the plain str cast.
         # GH#41409
         tz = tz_naive_fixture
 
@@ -788,6 +948,9 @@ class TestAstype:
         assert np.all(alt.iloc[1:] == result.iloc[1:])
 
     def test_astype_td64_to_string(self, frame_or_series):
+        # [FUNCTION DOC]
+        # Takes frame-or-series fixture. Casting timedeltas to nullable string gives day
+        # text values.
         # GH#41409
         tdi = pd.timedelta_range("1 Day", periods=3)
         obj = frame_or_series(tdi)
@@ -797,6 +960,8 @@ class TestAstype:
         tm.assert_equal(result, expected)
 
     def test_astype_bytes(self):
+        # [FUNCTION DOC]
+        # Casting string column to bytes gives a three-byte string numpy dtype.
         # GH#39474
         result = DataFrame(["foo", "bar", "baz"]).astype(bytes)
         assert result.dtypes[0] == np.dtype("S3")
@@ -813,6 +978,9 @@ class TestAstype:
         ],
     )
     def test_astype_noncontiguous(self, index_slice):
+        # [FUNCTION DOC]
+        # Parametrized over several slice pairs. Casting a non-contiguous slice of an
+        # integer frame to 16-bit int equals the slice (ignoring dtype).
         # GH#42396
         data = np.arange(16).reshape(4, 4)
         df = DataFrame(data)
@@ -822,6 +990,9 @@ class TestAstype:
         tm.assert_frame_equal(result, expected, check_dtype=False)
 
     def test_astype_retain_attrs(self, any_numpy_dtype):
+        # [FUNCTION DOC]
+        # Takes numpy dtype fixture. The attrs dict of the frame is retained after a
+        # column-wise cast.
         # GH#44414
         df = DataFrame({"a": [0, 1, 2], "b": [3, 4, 5]})
         df.attrs["Location"] = "Michigan"
@@ -833,7 +1004,12 @@ class TestAstype:
 
 
 class TestAstypeCategorical:
+    # [CLASS DOC]
+    # Tests of casting to and from categorical dtype; stateless pytest class.
     def test_astype_from_categorical3(self):
+        # [FUNCTION DOC]
+        # Casting a numeric column to category matches a frame built with the
+        # categorical.
         df = DataFrame({"cats": [1, 2, 3, 4, 5, 6], "vals": [1, 2, 3, 4, 5, 6]})
         cats = Categorical([1, 2, 3, 4, 5, 6])
         exp_df = DataFrame({"cats": cats, "vals": [1, 2, 3, 4, 5, 6]})
@@ -841,6 +1017,8 @@ class TestAstypeCategorical:
         tm.assert_frame_equal(exp_df, df)
 
     def test_astype_from_categorical4(self):
+        # [FUNCTION DOC]
+        # Same, for a string column.
         df = DataFrame(
             {"cats": ["a", "b", "b", "a", "a", "d"], "vals": [1, 2, 3, 4, 5, 6]}
         )
@@ -850,6 +1028,9 @@ class TestAstypeCategorical:
         tm.assert_frame_equal(exp_df, df)
 
     def test_categorical_astype_to_int(self, any_int_dtype):
+        # [FUNCTION DOC]
+        # Takes any integer dtype fixture. Casting a column to category and then to an
+        # integer dtype gives the expected integer column.
         # GH#39402
 
         df = DataFrame(data={"col1": pd.array([2.0, 1.0, 3.0])})
@@ -859,6 +1040,9 @@ class TestAstypeCategorical:
         tm.assert_frame_equal(df, expected)
 
     def test_astype_categorical_to_string_missing(self):
+        # [FUNCTION DOC]
+        # Casting a categorical frame with a missing value to str equals casting the
+        # original object frame to str.
         # https://github.com/pandas-dev/pandas/issues/41797
         df = DataFrame(["a", "b", np.nan])
         expected = df.astype(str)
@@ -868,20 +1052,35 @@ class TestAstypeCategorical:
 
 
 class IntegerArrayNoCopy(pd.core.arrays.IntegerArray):
+    # [CLASS DOC]
+    # HELPER: subclass of the integer extension array whose copy method always raises
+    # not-implemented. Used to verify that astype does not copy arrays unnecessarily.
     # GH 42501
 
     def copy(self):
+        # [FUNCTION DOC]
+        # HELPER: overrides array copy to raise a not-implemented error unconditionally.
         raise NotImplementedError
 
 
 class Int16DtypeNoCopy(pd.Int16Dtype):
+    # [CLASS DOC]
+    # HELPER: 16-bit nullable integer dtype subclass whose array type is the no-copy
+    # array class above.
     # GH 42501
 
     def construct_array_type(self):
+        # [FUNCTION DOC]
+        # HELPER: returns the no-copy integer array class instead of the default array
+        # class.
         return IntegerArrayNoCopy
 
 
 def test_frame_astype_no_copy():
+    # [FUNCTION DOC]
+    # Casting one object column to the no-copy dtype yields that dtype, while the
+    # untouched column shares memory with the original (not copied). No error is raised
+    # since copy is never called.
     # GH 42501
     df = DataFrame({"a": [1, 4, None, 5], "b": [6, 7, 8, 9]}, dtype=object)
     result = df.astype({"a": Int16DtypeNoCopy()})
@@ -892,6 +1091,10 @@ def test_frame_astype_no_copy():
 
 @pytest.mark.parametrize("dtype", ["int64", "Int64"])
 def test_astype_copies(dtype):
+    # [FUNCTION DOC]
+    # Parametrized over int64 and Int64; skipped without pyarrow. Casting to an
+    # arrow-backed int copies: later modification of the source does not alter the
+    # result.
     # GH#50984
     pytest.importorskip("pyarrow")
     df = DataFrame({"a": [1, 2, 3]}, dtype=dtype)
@@ -903,6 +1106,9 @@ def test_astype_copies(dtype):
 
 @pytest.mark.parametrize("val", [None, 1, 1.5, np.nan, NaT])
 def test_astype_to_string_not_modifying_input(string_storage, val):
+    # [FUNCTION DOC]
+    # Parametrized over missing/other values and string storage fixture. Casting to
+    # nullable string under the given storage option must not modify the input frame.
     # GH#51073
     df = DataFrame({"a": ["a", "b", val]})
     expected = df.copy()
@@ -913,6 +1119,8 @@ def test_astype_to_string_not_modifying_input(string_storage, val):
 
 @pytest.mark.parametrize("val", [None, 1, 1.5, np.nan, NaT])
 def test_astype_to_string_dtype_not_modifying_input(any_string_dtype, val):
+    # [FUNCTION DOC]
+    # Same but with explicit string dtype instances from a fixture, no option context.
     # GH#51073 - variant of the above test with explicit dtype instances
     df = DataFrame({"a": ["a", "b", val]})
     expected = df.copy()

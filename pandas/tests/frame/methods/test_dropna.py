@@ -1,3 +1,10 @@
+# [MODULE DOC]
+# Tests for removing rows or columns containing missing values from a frame (dropna):
+# how, thresh, subset and axis arguments, in-place mode, ignore_index, error cases,
+# tz-aware and categorical-interval data, duplicate columns and cache coherence with
+# series. Uses the float frame and axis fixtures plus the testing helpers module. No
+# import-time side effects.
+
 import datetime
 
 import dateutil
@@ -13,7 +20,13 @@ import pandas._testing as tm
 
 
 class TestDataFrameMissingData:
+    # [CLASS DOC]
+    # Stateless pytest class of dropna tests (class name is generic).
     def test_dropEmptyRows(self, float_frame):
+        # [FUNCTION DOC]
+        # Rows that are entirely missing are removed with how all, both with and without
+        # subset and in place; the input frame is unchanged for the non in-place call
+        # and in-place returns none.
         N = len(float_frame.index)
         mat = np.random.default_rng(2).standard_normal(N)
         mat[:5] = np.nan
@@ -38,6 +51,10 @@ class TestDataFrameMissingData:
         assert return_value is None
 
     def test_dropIncompleteRows(self, float_frame):
+        # [FUNCTION DOC]
+        # Default dropna removes rows with any missing value (with a second complete
+        # column present); restricting to a subset of the complete column keeps every
+        # row. In-place variants return none.
         N = len(float_frame.index)
         mat = np.random.default_rng(2).standard_normal(N)
         mat[:5] = np.nan
@@ -65,6 +82,10 @@ class TestDataFrameMissingData:
         assert return_value is None
 
     def test_dropna(self):
+        # [FUNCTION DOC]
+        # Six-by-four random frame with two missing values in one column. Checks
+        # removing columns or rows (and in place), thresh values, subset, how all, and a
+        # value error for an invalid axis number.
         df = DataFrame(np.random.default_rng(2).standard_normal((6, 4)))
         df.iloc[:2, 2] = np.nan
 
@@ -130,6 +151,10 @@ class TestDataFrameMissingData:
             df.dropna(axis=3)
 
     def test_drop_and_dropna_caching(self):
+        # [FUNCTION DOC]
+        # Calling dropna or drop on a column series does not change the frame's column;
+        # in-place on a retrieved series changes only that series object and returns
+        # none.
         # tst that cacher updates
         original = Series([1, 2, np.nan], name="A")
         expected = Series([1, 2], dtype=original.dtype, name="A")
@@ -154,6 +179,9 @@ class TestDataFrameMissingData:
         assert return_value is None
 
     def test_dropna_corner(self, float_frame):
+        # [FUNCTION DOC]
+        # An invalid how value raises a value error; a subset naming a missing column
+        # raises a key error that lists the missing label.
         # bad input
         msg = "invalid how option: foo"
         with pytest.raises(ValueError, match=msg):
@@ -163,6 +191,9 @@ class TestDataFrameMissingData:
             float_frame.dropna(subset=["A", "X"])
 
     def test_dropna_multiple_axes(self):
+        # [FUNCTION DOC]
+        # Passing a list or tuple of axes raises a type error about supplying multiple
+        # axes, also in place.
         df = DataFrame(
             [
                 [1, np.nan, 2, 3],
@@ -183,6 +214,9 @@ class TestDataFrameMissingData:
             inp.dropna(how="all", axis=(0, 1), inplace=True)
 
     def test_dropna_tz_aware_datetime(self):
+        # [FUNCTION DOC]
+        # A column of tz-aware datetimes with None and NaN: only the valid rows remain,
+        # original labels kept.
         # GH13407
         df = DataFrame()
         dt1 = datetime.datetime(2015, 1, 1, tzinfo=dateutil.tz.tzutc())
@@ -199,6 +233,9 @@ class TestDataFrameMissingData:
         tm.assert_frame_equal(result, expected)
 
     def test_dropna_categorical_interval_index(self):
+        # [FUNCTION DOC]
+        # A frame with a categorical interval index and no missing values is returned
+        # equal.
         # GH 25087
         ii = pd.IntervalIndex.from_breaks([0, 2.78, 3.14, 6.28])
         ci = pd.CategoricalIndex(ii)
@@ -209,6 +246,9 @@ class TestDataFrameMissingData:
         tm.assert_frame_equal(result, expected)
 
     def test_dropna_with_duplicate_columns(self):
+        # [FUNCTION DOC]
+        # Frame with duplicated column labels: dropna with a subset naming the
+        # duplicated label and how all considers all columns with that label.
         df = DataFrame(
             {
                 "A": np.random.default_rng(2).standard_normal(5),
@@ -230,6 +270,8 @@ class TestDataFrameMissingData:
         tm.assert_frame_equal(result, expected)
 
     def test_set_single_column_subset(self):
+        # [FUNCTION DOC]
+        # A string (not a list) is accepted as subset and works for one column.
         # GH 41021
         df = DataFrame({"A": [1, 2, 3], "B": list("abc"), "C": [4, np.nan, 5]})
         expected = DataFrame(
@@ -239,6 +281,11 @@ class TestDataFrameMissingData:
         tm.assert_frame_equal(result, expected)
 
     def test_single_column_not_present_in_axis(self):
+        # [FUNCTION DOC]
+        # A string subset naming a column that does not exist raises a key error.
+        # KNOWN ISSUE: the expected message pattern is a regular-expression character
+        # class matching any single quote or the letter D, not the literal text for the
+        # missing label, so it matches loosely.
         # GH 41021
         df = DataFrame({"A": [1, 2, 3]})
 
@@ -247,6 +294,8 @@ class TestDataFrameMissingData:
             df.dropna(subset="D", axis=0)
 
     def test_subset_is_nparray(self):
+        # [FUNCTION DOC]
+        # An array of labels is accepted as subset.
         # GH 41021
         df = DataFrame({"A": [1, 2, np.nan], "B": list("abc"), "C": [4, np.nan, 5]})
         expected = DataFrame({"A": [1.0], "B": ["a"], "C": [4.0]})
@@ -254,6 +303,9 @@ class TestDataFrameMissingData:
         tm.assert_frame_equal(result, expected)
 
     def test_no_nans_in_frame(self, axis):
+        # [FUNCTION DOC]
+        # Takes axis fixture. A frame without missing values is returned equal for
+        # either axis, with a range-typed column index preserved.
         # GH#41965
         df = DataFrame([[1, 2], [3, 4]], columns=pd.RangeIndex(0, 2))
         expected = df.copy()
@@ -261,6 +313,9 @@ class TestDataFrameMissingData:
         tm.assert_frame_equal(result, expected, check_index_type=True)
 
     def test_how_thresh_param_incompatible(self):
+        # [FUNCTION DOC]
+        # Setting both how and thresh (including both none) raises a type error saying
+        # they cannot be set together.
         # GH46575
         df = DataFrame([1, 2, pd.NA])
         msg = "You cannot set both the how and thresh arguments at the same time"
@@ -275,6 +330,9 @@ class TestDataFrameMissingData:
 
     @pytest.mark.parametrize("val", [1, 1.5])
     def test_dropna_ignore_index(self, val):
+        # [FUNCTION DOC]
+        # Parametrized over int and float values. Dropping with ignore_index true resets
+        # the index to a range, both returned and in place.
         # GH#31725
         df = DataFrame({"a": [1, 2, val]}, index=[3, 2, 1])
         result = df.dropna(ignore_index=True)

@@ -1,3 +1,9 @@
+# [MODULE DOC]
+# Tests for the value-limiting method of the frame class (clip): scalar, series,
+# list-like and frame bounds, axis alignment, in-place mode, swapped bounds,
+# missing-value bounds and dtype preservation. Uses the float frame fixture and the
+# testing helpers module. No import-time side effects.
+
 import numpy as np
 import pytest
 
@@ -9,7 +15,12 @@ import pandas._testing as tm
 
 
 class TestDataFrameClip:
+    # [CLASS DOC]
+    # Stateless pytest class of clip tests.
     def test_clip(self, float_frame):
+        # [FUNCTION DOC]
+        # Clipping with equal lower and upper bounds at the global median sets all
+        # values to that median and leaves the input unchanged.
         median = float_frame.median().median()
         original = float_frame.copy()
 
@@ -20,6 +31,8 @@ class TestDataFrameClip:
         assert (float_frame.values == original.values).all()
 
     def test_inplace_clip(self, float_frame):
+        # [FUNCTION DOC]
+        # In-place clip returns the same object and applies the bounds.
         # GH#15388
         median = float_frame.median().median()
         frame_copy = float_frame.copy()
@@ -29,6 +42,10 @@ class TestDataFrameClip:
         assert not (frame_copy.values != median).any()
 
     def test_dataframe_clip(self):
+        # [FUNCTION DOC]
+        # With scalar bounds (also given in swapped order, in which case they are
+        # reordered), values at or below the lower bound become lower, at or above the
+        # upper become upper, others unchanged.
         # GH#2747
         df = DataFrame(np.random.default_rng(2).standard_normal((1000, 2)))
 
@@ -44,6 +61,10 @@ class TestDataFrameClip:
             assert (clipped_df.values[mask] == df.values[mask]).all()
 
     def test_clip_mixed_numeric(self):
+        # [FUNCTION DOC]
+        # Clipping an integer column and a float column with missing value preserves
+        # each column dtype and leaves missing values; clipping only an upper bound
+        # keeps the original dtypes.
         # clip on mixed integer or floats
         # GH#24162, clipping now preserves numeric types per column
         df = DataFrame({"A": [1, 2, 3], "B": [1.0, np.nan, 3.0]})
@@ -58,6 +79,9 @@ class TestDataFrameClip:
 
     @pytest.mark.parametrize("inplace", [True, False])
     def test_clip_against_series(self, inplace):
+        # [FUNCTION DOC]
+        # Parametrized over inplace flag. Series bounds are aligned along rows; clipped
+        # entries equal the bound at that row; in-place returns the same frame.
         # GH#6966
 
         df = DataFrame(np.random.default_rng(2).standard_normal((1000, 2)))
@@ -95,6 +119,10 @@ class TestDataFrameClip:
         ],
     )
     def test_clip_against_list_like(self, inplace, lower, axis, res):
+        # [FUNCTION DOC]
+        # Parametrized over inplace, list or array lower bound, and axis with expected
+        # result. Lower bound list/array and upper list are broadcast along the given
+        # axis; in-place returns the same object; the result matches exactly.
         # GH#15390
         arr = np.array([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0], [7.0, 8.0, 9.0]])
 
@@ -111,6 +139,10 @@ class TestDataFrameClip:
 
     @pytest.mark.parametrize("axis", [0, 1, None])
     def test_clip_against_frame(self, axis):
+        # [FUNCTION DOC]
+        # Parametrized over axis (zero, one, none). Frame bounds are applied
+        # element-wise; entries clipped at each bound equal that bound and others
+        # unchanged.
         df = DataFrame(np.random.default_rng(2).standard_normal((1000, 2)))
         lb = DataFrame(np.random.default_rng(2).standard_normal((1000, 2)))
         ub = lb + 1
@@ -126,6 +158,9 @@ class TestDataFrameClip:
         tm.assert_frame_equal(clipped_df[mask], df[mask])
 
     def test_clip_against_unordered_columns(self):
+        # [FUNCTION DOC]
+        # Frame bounds with columns in a different order are aligned by label before
+        # clipping, for lower only, upper only and both.
         # GH#20911
         df1 = DataFrame(
             np.random.default_rng(2).standard_normal((1000, 4)),
@@ -147,6 +182,10 @@ class TestDataFrameClip:
         tm.assert_frame_equal(result_lower_upper, expected_lower_upper)
 
     def test_clip_with_na_args(self, float_frame):
+        # [FUNCTION DOC]
+        # Missing value as a bound is treated as no bound for scalars; list and series
+        # bounds with missing entries leave the corresponding entries unclipped
+        # (upcasting to float where needed), along either axis.
         """Should process np.nan argument as None"""
         # GH#17276
         tm.assert_frame_equal(float_frame.clip(np.nan), float_frame)
@@ -182,6 +221,8 @@ class TestDataFrameClip:
         tm.assert_frame_equal(result, expected)
 
     def test_clip_int_data_with_float_bound(self):
+        # [FUNCTION DOC]
+        # Clipping integer data with a fractional lower bound produces float values.
         # GH51472
         df = DataFrame({"a": [1, 2, 3]})
         result = df.clip(lower=1.5)
@@ -189,6 +230,9 @@ class TestDataFrameClip:
         tm.assert_frame_equal(result, expected)
 
     def test_clip_with_list_bound(self):
+        # [FUNCTION DOC]
+        # A one-element list is accepted as bound (lower positional, or upper keyword)
+        # and is broadcast to the single column.
         # GH#54817
         df = DataFrame([1, 5])
         expected = DataFrame([3, 5])

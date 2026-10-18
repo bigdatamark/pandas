@@ -1,3 +1,12 @@
+# [MODULE DOC]
+# Tests for the covariance and correlation methods of the frame class: pairwise
+# covariance (cov), pairwise correlation (corr) with pearson, kendall, spearman and
+# callable methods, and correlation against another object (corrwith). Covers
+# min_periods, ddof, numeric_only, missing values, nullable and arrow dtypes, constant
+# and tiny-valued columns, duplicate columns and numerical stability. Several tests
+# require the scientific library for rank-based methods. Uses frame fixtures, optional
+# dependency helpers and the testing helpers module. No import-time side effects.
+
 import numpy as np
 import pytest
 
@@ -15,7 +24,16 @@ import pandas._testing as tm
 
 
 class TestDataFrameCov:
+    # [CLASS DOC]
+    # Stateless pytest class of covariance tests.
     def test_cov(self, float_frame, float_string_frame):
+        # [FUNCTION DOC]
+        # Using the float frame: min_periods equal to the length equals the default;
+        # larger than the length gives all missing; with missing values in two columns
+        # the pair with too few overlapping observations is missing; an entry equals the
+        # series covariance; the mixed string frame raises a value error unless
+        # numeric_only is set (then equals covariance of the numeric columns);
+        # single-column frames match numpy covariance, including with a missing row.
         # min_periods no NAs (corner case)
         expected = float_frame.cov()
         result = float_frame.cov(min_periods=len(float_frame))
@@ -65,6 +83,9 @@ class TestDataFrameCov:
 
     @pytest.mark.parametrize("test_ddof", [None, 0, 1, 2, 3])
     def test_cov_ddof(self, test_ddof):
+        # [FUNCTION DOC]
+        # Parametrized over ddof values (None, 0, 1, 2, 3). Result equals numpy
+        # covariance with the same ddof for a two-column random frame.
         # GH#34611
         np_array1 = np.random.default_rng(2).random(10)
         np_array2 = np.random.default_rng(2).random(10)
@@ -78,6 +99,10 @@ class TestDataFrameCov:
         "other_column", [pd.array([1, 2, 3]), np.array([1.0, 2.0, 3.0])]
     )
     def test_cov_nullable_integer(self, other_column):
+        # [FUNCTION DOC]
+        # Parametrized over a nullable integer array and a float array as second column.
+        # A nullable integer column with a missing value yields the pairwise covariance
+        # matrix computed on available pairs.
         # https://github.com/pandas-dev/pandas/issues/33803
         data = DataFrame({"a": pd.array([1, 2, None]), "b": other_column})
         result = data.cov()
@@ -87,6 +112,10 @@ class TestDataFrameCov:
 
     @pytest.mark.parametrize("numeric_only", [True, False])
     def test_cov_numeric_only(self, numeric_only):
+        # [FUNCTION DOC]
+        # Parametrized over numeric_only. With a string column present, numeric_only
+        # true gives the covariance of the numeric column; false raises a value error
+        # about converting string to float.
         # when dtypes of pandas series are different
         # then ndarray will have dtype=object,
         # so it need to be properly handled
@@ -101,10 +130,18 @@ class TestDataFrameCov:
 
 
 class TestDataFrameCorr:
+    # [CLASS DOC]
+    # Tests of the pairwise correlation method (as opposed to corrwith); stateless
+    # pytest class.
     # DataFrame.corr(), as opposed to DataFrame.corrwith
 
     @pytest.mark.parametrize("method", ["pearson", "kendall", "spearman"])
     def test_corr_scipy_method(self, float_frame, method):
+        # [FUNCTION DOC]
+        # Parametrized over three methods; skipped without scipy. Sets some entries
+        # missing in the float frame (mutating the fixture), then checks the matrix
+        # entry for two columns equals the series-level correlation with the same
+        # method.
         pytest.importorskip("scipy")
         float_frame.loc[float_frame.index[:5], "A"] = np.nan
         float_frame.loc[float_frame.index[5:10], "B"] = np.nan
@@ -117,6 +154,9 @@ class TestDataFrameCorr:
     # ---------------------------------------------------------------------
 
     def test_corr_non_numeric(self, float_string_frame):
+        # [FUNCTION DOC]
+        # Mixed string frame raises a value error on correlation unless numeric_only is
+        # set, in which case the numeric columns are used.
         with pytest.raises(ValueError, match="could not convert string to float"):
             float_string_frame.corr()
         result = float_string_frame.corr(numeric_only=True)
@@ -125,6 +165,10 @@ class TestDataFrameCorr:
 
     @pytest.mark.parametrize("meth", ["pearson", "kendall", "spearman"])
     def test_corr_nooverlap(self, meth):
+        # [FUNCTION DOC]
+        # Parametrized over methods; needs scipy. Columns with no overlapping
+        # observations give missing correlation; self-correlation is one unless the
+        # column is all missing.
         # nothing in common
         pytest.importorskip("scipy")
         df = DataFrame(
@@ -143,6 +187,9 @@ class TestDataFrameCorr:
 
     @pytest.mark.parametrize("meth", ["pearson", "spearman"])
     def test_corr_constant(self, meth):
+        # [FUNCTION DOC]
+        # Parametrized over pearson and spearman. Columns that are constant (and do not
+        # overlap) give an all-missing matrix.
         # constant --> all NA
         df = DataFrame(
             {
@@ -156,6 +203,10 @@ class TestDataFrameCorr:
     @pytest.mark.filterwarnings("ignore::RuntimeWarning")
     @pytest.mark.parametrize("meth", ["pearson", "kendall", "spearman"])
     def test_corr_int_and_boolean(self, meth):
+        # [FUNCTION DOC]
+        # Parametrized over methods; needs scipy; ignores runtime warnings. A boolean
+        # column and an integer column with the same pattern correlate perfectly: the
+        # result is a matrix of ones.
         # when dtypes of pandas series are different
         # then ndarray will have dtype=object,
         # so it need to be properly handled
@@ -168,6 +219,9 @@ class TestDataFrameCorr:
 
     @pytest.mark.parametrize("method", ["cov", "corr"])
     def test_corr_cov_independent_index_column(self, method):
+        # [FUNCTION DOC]
+        # Parametrized over cov and corr. The result's index and columns are equal but
+        # must not be the same object.
         # GH#14617
         df = DataFrame(
             np.random.default_rng(2).standard_normal(4 * 10).reshape(10, 4),
@@ -178,6 +232,9 @@ class TestDataFrameCorr:
         assert result.index.equals(result.columns)
 
     def test_corr_invalid_method(self):
+        # [FUNCTION DOC]
+        # An unknown method name raises a value error listing the allowed methods
+        # (pearson, spearman, kendall, or a callable).
         # GH#22298
         df = DataFrame(np.random.default_rng(2).normal(size=(10, 2)))
         msg = "method must be either 'pearson', 'spearman', 'kendall', or a callable, "
@@ -185,6 +242,9 @@ class TestDataFrameCorr:
             df.corr(method="____")
 
     def test_corr_int(self):
+        # [FUNCTION DOC]
+        # Smoke test: covariance and correlation on integer-only columns do not fail. No
+        # assertions.
         # dtypes other than float64 GH#1761
         df = DataFrame({"a": [1, 2, 3, 4], "b": [1, 2, 3, 4]})
 
@@ -200,6 +260,9 @@ class TestDataFrameCorr:
     )
     @pytest.mark.parametrize("method", ["pearson", "spearman", "kendall"])
     def test_corr_nullable_integer(self, nullable_column, other_column, method):
+        # [FUNCTION DOC]
+        # Parametrized over nullable integer arrays (with and without missing), other
+        # columns and three methods; needs scipy. Result is a two by two matrix of ones.
         # https://github.com/pandas-dev/pandas/issues/33803
         pytest.importorskip("scipy")
         data = DataFrame({"a": nullable_column, "b": other_column})
@@ -209,6 +272,9 @@ class TestDataFrameCorr:
 
     @pytest.mark.parametrize("length", [2, 20, 200, 2000])
     def test_corr_for_constant_columns(self, length):
+        # [FUNCTION DOC]
+        # Parametrized over several lengths. A frame with constant columns gives an
+        # all-missing correlation matrix regardless of length.
         # GH: 37448
         df = DataFrame(length * [[0.4, 0.1]], columns=["A", "B"])
         result = df.corr()
@@ -218,6 +284,8 @@ class TestDataFrameCorr:
         tm.assert_frame_equal(result, expected)
 
     def test_calc_corr_small_numbers(self):
+        # [FUNCTION DOC]
+        # Very small values (order of 1e-20) still correlate perfectly (matrix of ones).
         # GH: 37452
         df = DataFrame(
             {"A": [1.0e-20, 2.0e-20, 3.0e-20], "B": [1.0e-20, 2.0e-20, 3.0e-20]}
@@ -228,6 +296,9 @@ class TestDataFrameCorr:
 
     @pytest.mark.parametrize("method", ["pearson", "spearman", "kendall"])
     def test_corr_min_periods_greater_than_length(self, method):
+        # [FUNCTION DOC]
+        # Parametrized over methods; needs scipy. A min_periods larger than the number
+        # of rows gives all missing.
         pytest.importorskip("scipy")
         df = DataFrame({"A": [1, 2], "B": [1, 2]})
         result = df.corr(method=method, min_periods=3)
@@ -239,6 +310,10 @@ class TestDataFrameCorr:
     @pytest.mark.parametrize("meth", ["pearson", "kendall", "spearman"])
     @pytest.mark.parametrize("numeric_only", [True, False])
     def test_corr_numeric_only(self, meth, numeric_only):
+        # [FUNCTION DOC]
+        # Parametrized over methods and numeric_only; needs scipy. With a string column,
+        # numeric_only true gives a ones matrix for the numeric columns; false raises a
+        # value error.
         # when dtypes of pandas series are different
         # then ndarray will have dtype=object,
         # so it need to be properly handled
@@ -254,6 +329,9 @@ class TestDataFrameCorr:
 
 
 class TestDataFrameCorrWith:
+    # [CLASS DOC]
+    # Tests of correlation against another frame or series (corrwith); stateless pytest
+    # class.
     @pytest.mark.parametrize(
         "dtype",
         [
@@ -263,6 +341,11 @@ class TestDataFrameCorrWith:
         ],
     )
     def test_corrwith(self, datetime_frame, dtype):
+        # [FUNCTION DOC]
+        # Parametrized over numpy float, nullable float and arrow float dtypes. Compares
+        # correlation with a noisy, reordered, partially overlapping frame along columns
+        # and rows (rows equal the transposed computation), and checks that drop removes
+        # non-shared labels.
         datetime_frame = datetime_frame.astype(dtype)
 
         a = datetime_frame
@@ -288,6 +371,9 @@ class TestDataFrameCorrWith:
         assert a.index[-1] not in dropped.index
 
     def test_corrwith_non_timeseries_data(self):
+        # [FUNCTION DOC]
+        # Row-wise correlation between two frames with string row labels, one missing a
+        # row; each shared row equals the series-level correlation.
         index = ["a", "b", "c", "d", "e"]
         columns = ["one", "two", "three", "four"]
         df1 = DataFrame(
@@ -305,6 +391,12 @@ class TestDataFrameCorrWith:
             tm.assert_almost_equal(correls[row], df1.loc[row].corr(df2.loc[row]))
 
     def test_corrwith_with_objects(self, using_infer_string):
+        # [FUNCTION DOC]
+        # Takes the inferred-string fixture. With an object/string column present,
+        # correlation raises a type error (message depends on string inference) unless
+        # numeric_only is set; row-wise correlation raises a type error about
+        # unsupported operand; numeric_only variants equal the computation on the
+        # numeric columns only.
         df1 = DataFrame(
             np.random.default_rng(2).standard_normal((10, 4)),
             columns=Index(list("ABCD"), dtype=object),
@@ -334,12 +426,18 @@ class TestDataFrameCorrWith:
         tm.assert_series_equal(result, expected)
 
     def test_corrwith_series(self, datetime_frame):
+        # [FUNCTION DOC]
+        # Correlating a frame with one of its columns equals applying the series
+        # correlation per column.
         result = datetime_frame.corrwith(datetime_frame["A"])
         expected = datetime_frame.apply(datetime_frame["A"].corr)
 
         tm.assert_series_equal(result, expected)
 
     def test_corrwith_matches_corrcoef(self):
+        # [FUNCTION DOC]
+        # Result equals numpy correlation for a linear versus quadratic sequence and is
+        # below one.
         df1 = DataFrame(np.arange(100), columns=["a"])
         df2 = DataFrame(np.arange(100) ** 2, columns=["a"])
         c1 = df1.corrwith(df2)["a"]
@@ -350,6 +448,9 @@ class TestDataFrameCorrWith:
 
     @pytest.mark.parametrize("numeric_only", [True, False])
     def test_corrwith_mixed_dtypes(self, numeric_only):
+        # [FUNCTION DOC]
+        # Parametrized over numeric_only. With a string column, true restricts to
+        # numeric columns; false raises a value error.
         # GH#18570
         df = DataFrame(
             {"a": [1, 4, 3, 2], "b": [4, 6, 7, 3], "c": ["a", "b", "c", "d"]}
@@ -368,6 +469,8 @@ class TestDataFrameCorrWith:
                 df.corrwith(s, numeric_only=numeric_only)
 
     def test_corrwith_index_intersection(self):
+        # [FUNCTION DOC]
+        # With drop true, the result index is the intersection of the column labels.
         df1 = DataFrame(
             np.random.default_rng(2).random(size=(10, 2)), columns=["a", "b"]
         )
@@ -380,6 +483,8 @@ class TestDataFrameCorrWith:
         tm.assert_index_equal(result, expected)
 
     def test_corrwith_index_union(self):
+        # [FUNCTION DOC]
+        # With drop false, the result index is the union of the column labels.
         df1 = DataFrame(
             np.random.default_rng(2).random(size=(10, 2)), columns=["a", "b"]
         )
@@ -392,6 +497,9 @@ class TestDataFrameCorrWith:
         tm.assert_index_equal(result, expected)
 
     def test_corrwith_dup_cols(self):
+        # [FUNCTION DOC]
+        # Duplicated labels in the other frame produce one result per column, ones for
+        # identical columns, with the duplicated label repeated.
         # GH#21925
         df1 = DataFrame(np.vstack([np.arange(10)] * 3).T)
         df2 = df1.copy()
@@ -402,6 +510,9 @@ class TestDataFrameCorrWith:
         tm.assert_series_equal(result, expected)
 
     def test_corr_numerical_instabilities(self):
+        # [FUNCTION DOC]
+        # Correlation of two anti-correlated columns is within a tiny tolerance of the
+        # exact values (compared after subtracting one to allow absolute tolerance).
         # GH#45640
         df = DataFrame([[0.2, 0.4], [0.4, 0.2]])
         result = df.corr()
@@ -409,6 +520,9 @@ class TestDataFrameCorrWith:
         tm.assert_frame_equal(result - 1, expected - 1, atol=1e-17)
 
     def test_corrwith_spearman(self):
+        # [FUNCTION DOC]
+        # Needs scipy. Spearman rank correlation of data with a monotone transform of
+        # itself is one for every column.
         # GH#21925
         pytest.importorskip("scipy")
         df = DataFrame(np.random.default_rng(2).random(size=(100, 3)))
@@ -417,6 +531,8 @@ class TestDataFrameCorrWith:
         tm.assert_series_equal(result, expected)
 
     def test_corrwith_kendall(self):
+        # [FUNCTION DOC]
+        # Needs scipy. Same for Kendall.
         # GH#21925
         pytest.importorskip("scipy")
         df = DataFrame(np.random.default_rng(2).random(size=(100, 3)))
@@ -425,6 +541,10 @@ class TestDataFrameCorrWith:
         tm.assert_series_equal(result, expected)
 
     def test_corrwith_spearman_with_tied_data(self):
+        # [FUNCTION DOC]
+        # Needs scipy. Spearman correlation with ties against a boolean column gives the
+        # expected values; boolean frame against boolean series gives about 0.577 for
+        # each column.
         # GH#48826
         pytest.importorskip("scipy")
         df1 = DataFrame(
@@ -448,6 +568,9 @@ class TestDataFrameCorrWith:
         tm.assert_series_equal(result, expected)
 
     def test_corrwith_min_periods_method(self):
+        # [FUNCTION DOC]
+        # Needs scipy. Passing min_periods together with spearman gives the same
+        # expected values as without it.
         # GH#9490
         pytest.importorskip("scipy")
         df1 = DataFrame(
@@ -463,6 +586,9 @@ class TestDataFrameCorrWith:
         tm.assert_series_equal(result, expected)
 
     def test_corrwith_min_periods_boolean(self):
+        # [FUNCTION DOC]
+        # Boolean frame against a boolean series with min_periods three gives the
+        # expected correlation values.
         # GH#9490
         df_bool = DataFrame(
             {"A": [True, True, False, False], "B": [True, False, False, True]}
@@ -473,6 +599,10 @@ class TestDataFrameCorrWith:
         tm.assert_series_equal(result, expected)
 
     def test_corr_within_bounds(self):
+        # [FUNCTION DOC]
+        # Correlation values are clipped within minus one and one: a near-perfect pair
+        # yields exactly one at the maximum, and a random matrix has all entries within
+        # bounds.
         df1 = DataFrame({"x": [0, 1], "y": [1.35951, 1.3595100000000007]})
         result1 = df1.corr().max().max()
         expected1 = 1.0
@@ -485,6 +615,9 @@ class TestDataFrameCorrWith:
         assert corr_matrix.max().max() <= 1.0
 
     def test_cov_with_missing_values(self):
+        # [FUNCTION DOC]
+        # Covariance of columns with a missing row equals the covariance of the frame
+        # with that row dropped.
         df = DataFrame({"A": [1, 2, None, 4], "B": [2, 4, None, 9]})
         expected = DataFrame(
             {"A": [2.333333, 5.500000], "B": [5.5, 13.0]}, index=["A", "B"]

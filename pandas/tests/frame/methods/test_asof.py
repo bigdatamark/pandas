@@ -1,3 +1,10 @@
+# [MODULE DOC]
+# Tests for the last-valid-row lookup method of frames and series (asof): looking up
+# values at given labels, optional subset of columns, missing earlier labels,
+# all-missing data, tz-aware and period indexes. Defines a fixture and one test class;
+# uses the testing helpers module and frame-or-series fixture. No import-time side
+# effects.
+
 import numpy as np
 import pytest
 
@@ -17,6 +24,10 @@ import pandas._testing as tm
 
 @pytest.fixture
 def date_range_frame():
+    # [FUNCTION DOC]
+    # HELPER: fixture returning a frame of 50 rows with integer columns A and B (both
+    # counting from zero) indexed by a datetime range with 53-second spacing starting
+    # 1990-01-01.
     """
     Fixture for DataFrame of ints with date_range index
 
@@ -28,7 +39,14 @@ def date_range_frame():
 
 
 class TestFrameAsof:
+    # [CLASS DOC]
+    # Stateless pytest class of asof tests.
     def test_basic(self, date_range_frame):
+        # [FUNCTION DOC]
+        # Sets part of column A to missing, then looks up at a finer set of dates (as
+        # index and as list). Every looked-up row must be fully non-missing and rows
+        # between the gaps boundaries must equal the value at the last valid row before
+        # the gap (14).
         # Explicitly cast to float to avoid implicit cast when setting np.nan
         df = date_range_frame.astype({"A": "float"})
         N = 50
@@ -50,6 +68,10 @@ class TestFrameAsof:
         assert (rs == 14).all(axis=1).all()
 
     def test_subset(self, date_range_frame):
+        # [FUNCTION DOC]
+        # With missing values in A, asof with subset A, with A and B equals the default
+        # lookup; with subset B only, the result equals forward fill of the resampled
+        # frame at the requested dates, with B keeping its integer dtype.
         N = 10
         # explicitly cast to float to avoid implicit upcast when setting to np.nan
         df = date_range_frame.iloc[:N].copy().astype({"A": "float"})
@@ -76,6 +98,10 @@ class TestFrameAsof:
         tm.assert_frame_equal(result, expected)
 
     def test_missing(self, date_range_frame):
+        # [FUNCTION DOC]
+        # Lookup before the first index label returns an all-missing float series named
+        # by the label (or an empty-valued frame for list input); with a period index
+        # the series name is a period object.
         # GH 15118
         # no match found - `where` value before earliest date in index
         N = 10
@@ -102,6 +128,9 @@ class TestFrameAsof:
         assert isinstance(result.name, Period)
 
     def test_asof_all_nans(self, frame_or_series):
+        # [FUNCTION DOC]
+        # Takes frame-or-series fixture. Lookup on an object of one missing value at a
+        # position beyond it returns an object of missing value.
         # GH 15713
         # DataFrame/Series is all nans
         result = frame_or_series([np.nan]).asof([0])
@@ -109,6 +138,10 @@ class TestFrameAsof:
         tm.assert_equal(result, expected)
 
     def test_all_nans(self, date_range_frame):
+        # [FUNCTION DOC]
+        # Frame of only missing values: lookup with dates (one or several columns)
+        # returns missing frame at the dates; scalar lookup returns a series named by
+        # the label.
         # GH 15713
         # DataFrame is all nans
 
@@ -149,6 +182,10 @@ class TestFrameAsof:
         ],
     )
     def test_time_zone_aware_index(self, stamp, expected):
+        # [FUNCTION DOC]
+        # Parametrized over two tz-aware timestamps in different offsets. The lookup
+        # respects absolute time instants and returns a series with the expected value
+        # and name.
         # GH21194
         # Testing awareness of DataFrame index considering different
         # UTC and timezone
@@ -164,6 +201,9 @@ class TestFrameAsof:
         tm.assert_series_equal(result, expected)
 
     def test_asof_periodindex_mismatched_freq(self):
+        # [FUNCTION DOC]
+        # Lookup with a period index of a different frequency than the object's raises
+        # an incompatible-frequency error with message about different freq.
         N = 50
         rng = period_range("1/1/1990", periods=N, freq="h")
         df = DataFrame(np.random.default_rng(2).standard_normal(N), index=rng)
@@ -174,6 +214,9 @@ class TestFrameAsof:
             df.asof(rng.asfreq("D"))
 
     def test_asof_preserves_bool_dtype(self):
+        # [FUNCTION DOC]
+        # Series (not a frame) of booleans indexed by month starts; looking up a later
+        # label returns a bool series, not floats.
         # GH#16063 was casting bools to floats
         dti = date_range("2017-01-01", freq="MS", periods=4)
         ser = Series([True, False, True], index=dti[:-1])

@@ -1,3 +1,10 @@
+# [MODULE DOC]
+# Tests for the label-removal method of frames and series (drop): dropping by label,
+# index/columns keywords, levels of multi-level indexes, error handling modes, duplicate
+# and non-unique indexes, tz-aware and string-parsed datetime labels, in-place mode and
+# extension dtypes. Uses the frame-or-series, multi-level frame and performance warning
+# fixtures plus the testing helpers module. No import-time side effects.
+
 import re
 
 import numpy as np
@@ -23,6 +30,10 @@ import pandas._testing as tm
     ],
 )
 def test_drop_raise_exception_if_labels_not_in_level(msg, labels, level):
+    # [FUNCTION DOC]
+    # Parametrized over (message, label, level). Dropping a label missing from the named
+    # level of a two-level index raises a key error saying the labels are not found in
+    # that level, for both series and frame.
     # GH 8594
     mi = MultiIndex.from_arrays([[1, 2, 3], [4, 5, 6]], names=["a", "b"])
     s = Series([10, 20, 30], index=mi)
@@ -36,6 +47,9 @@ def test_drop_raise_exception_if_labels_not_in_level(msg, labels, level):
 
 @pytest.mark.parametrize("labels,level", [(4, "a"), (7, "b")])
 def test_drop_errors_ignore(labels, level):
+    # [FUNCTION DOC]
+    # Parametrized over (label, level). With errors set to ignore, dropping a missing
+    # label from a level leaves series and frame unchanged.
     # GH 8594
     mi = MultiIndex.from_arrays([[1, 2, 3], [4, 5, 6]], names=["a", "b"])
     s = Series([10, 20, 30], index=mi)
@@ -49,6 +63,9 @@ def test_drop_errors_ignore(labels, level):
 
 
 def test_drop_with_non_unique_datetime_index_and_invalid_keys():
+    # [FUNCTION DOC]
+    # A frame with a non-unique datetime index raises a key error saying the keys are
+    # not found in the axis when dropping labels that do not exist.
     # GH 30399
 
     # define dataframe with unique datetime index
@@ -65,7 +82,13 @@ def test_drop_with_non_unique_datetime_index_and_invalid_keys():
 
 
 class TestDataFrameDrop:
+    # [CLASS DOC]
+    # Main group of drop tests on frames; stateless pytest class.
     def test_drop_names(self):
+        # [FUNCTION DOC]
+        # Dropping rows or columns keeps the axis names, returns none for in-place,
+        # leaves the original unchanged, raises a key error naming missing labels,
+        # honors errors ignore and an empty label list.
         df = DataFrame(
             [[1, 2, 3], [3, 4, 5], [5, 6, 7]],
             index=["a", "b", "c"],
@@ -113,6 +136,11 @@ class TestDataFrameDrop:
         tm.assert_index_equal(dropped.index, expected)
 
     def test_drop(self):
+        # [FUNCTION DOC]
+        # Dropping columns or rows by label, label list and axis aliases; key errors for
+        # missing labels (single, list and several missing labels listed together);
+        # errors ignore; non-unique columns and rows; in-place drop with a
+        # boolean-selected index list matches the filtered frame.
         simple = DataFrame({"A": [1, 2, 3, 4], "B": [0, 1, 2, 3]})
         tm.assert_frame_equal(simple.drop("A", axis=1), simple[["B"]])
         tm.assert_frame_equal(simple.drop(["A", "B"], axis="columns"), simple[[]])
@@ -166,6 +194,10 @@ class TestDataFrameDrop:
         tm.assert_frame_equal(df, expected)
 
     def test_drop_multiindex_not_lexsorted(self, performance_warning):
+        # [FUNCTION DOC]
+        # Takes the performance warning fixture. A frame whose column multi-level index
+        # is not lexsorted (made via pivot) can drop a label; a performance warning is
+        # expected and the result equals the lexsorted version cast to float.
         # GH#11640
 
         # define the lexsorted version
@@ -192,6 +224,10 @@ class TestDataFrameDrop:
         tm.assert_frame_equal(result, expected)
 
     def test_drop_api_equivalence(self):
+        # [FUNCTION DOC]
+        # Dropping with labels plus axis equals dropping with index or columns keywords;
+        # both labels and index/columns together raises a value error; none specified
+        # raises a value error naming the options.
         # equivalence of the labels/axis and index/columns API's (GH#12392)
         df = DataFrame(
             [[1, 2, 3], [3, 4, 5], [5, 6, 7]],
@@ -240,6 +276,10 @@ class TestDataFrameDrop:
         ],
     )
     def test_raise_on_drop_duplicate_index(self, actual):
+        # [FUNCTION DOC]
+        # Parametrized over four frames (duplicate or unique, flat or multi-level
+        # index). Dropping a missing label raises a key error for rows and for columns
+        # (on the transpose); with errors ignore nothing changes.
         # GH#19186
         level = 0 if isinstance(actual.index, MultiIndex) else None
         msg = re.escape("\"['c'] not found in axis\"")
@@ -255,6 +295,10 @@ class TestDataFrameDrop:
     @pytest.mark.parametrize("index", [[1, 2, 3], [1, 1, 2]])
     @pytest.mark.parametrize("drop_labels", [[], [1], [2]])
     def test_drop_empty_list(self, index, drop_labels):
+        # [FUNCTION DOC]
+        # Parametrized over index with or without duplicates and label lists. Dropping
+        # an empty list or existing labels from a frame with only an index works and
+        # keeps the remaining labels.
         # GH#21494
         expected_index = [i for i in index if i not in drop_labels]
         frame = DataFrame(index=index).drop(drop_labels)
@@ -263,6 +307,9 @@ class TestDataFrameDrop:
     @pytest.mark.parametrize("index", [[1, 2, 3], [1, 2, 2]])
     @pytest.mark.parametrize("drop_labels", [[1, 4], [4, 5]])
     def test_drop_non_empty_list(self, index, drop_labels):
+        # [FUNCTION DOC]
+        # Parametrized over index and label lists. Non-existing labels in the list raise
+        # a key error saying not found in axis.
         # GH# 21494
         with pytest.raises(KeyError, match="not found in axis"):
             DataFrame(index=index).drop(drop_labels)
@@ -279,6 +326,10 @@ class TestDataFrameDrop:
         ],
     )
     def test_drop_empty_listlike_non_unique_datetime_index(self, empty_listlike):
+        # [FUNCTION DOC]
+        # Parametrized over empty list-likes of several types. Dropping an empty
+        # list-like from a frame with a non-unique datetime index returns an equal
+        # frame.
         # GH#27994
         data = {"column_a": [5, 10], "column_b": ["one", "two"]}
         index = [Timestamp("2021-01-01"), Timestamp("2021-01-01")]
@@ -290,6 +341,13 @@ class TestDataFrameDrop:
         tm.assert_frame_equal(result, expected)
 
     def test_mixed_depth_drop(self):
+        # [FUNCTION DOC]
+        # Three-level columns with blank labels: dropping by top-level label, by partial
+        # tuple, by full tuple and by level number give the same results as dropping the
+        # explicit full tuples.
+        # KNOWN ISSUE: two statements in the middle of the test assign an expected frame
+        # (a drop of a full tuple, then a drop of the top label) that is overwritten
+        # before use and never compared, so they are dead code.
         arrays = [
             ["a", "top", "top", "routine1", "routine1", "routine2"],
             ["", "OD", "OD", "result1", "result2", "result1"],
@@ -323,6 +381,9 @@ class TestDataFrameDrop:
         tm.assert_frame_equal(expected, result)
 
     def test_drop_multiindex_other_level_nan(self):
+        # [FUNCTION DOC]
+        # Dropping a label on one level of a multi-level index that has missing values
+        # in another level keeps the rows with the missing label.
         # GH#12754
         df = (
             DataFrame(
@@ -347,6 +408,9 @@ class TestDataFrameDrop:
         tm.assert_frame_equal(result, expected)
 
     def test_drop_raise_with_both_axis_and_index(self):
+        # [FUNCTION DOC]
+        # Specifying both an index keyword and a non-default axis raises a value error
+        # saying both cannot be specified.
         # GH#61823
         df = DataFrame(
             [[1, 2, 3], [3, 4, 5], [5, 6, 7]],
@@ -359,6 +423,9 @@ class TestDataFrameDrop:
             df.drop(index="b", axis=1)
 
     def test_drop_nonunique(self):
+        # [FUNCTION DOC]
+        # Dropping groups of labels on level zero of a non-unique multi-level index
+        # works; the result equals a boolean filter.
         df = DataFrame(
             [
                 ["x-a", "x", "a", 1.5],
@@ -388,6 +455,9 @@ class TestDataFrameDrop:
         tm.assert_frame_equal(result, expected)
 
     def test_drop_level(self, multiindex_dataframe_random_data):
+        # [FUNCTION DOC]
+        # Takes multi-level frame fixture. Dropping labels on a named level of rows or
+        # columns (via transpose) equals positional selection of the remaining rows.
         frame = multiindex_dataframe_random_data
 
         result = frame.drop(["bar", "qux"], level="first")
@@ -407,6 +477,9 @@ class TestDataFrameDrop:
         tm.assert_frame_equal(result, expected)
 
     def test_drop_level_nonunique_datetime(self):
+        # [FUNCTION DOC]
+        # Dropping a timestamp on one level of a non-unique multi-level index removes
+        # the rows that match it.
         # GH#12701
         idx = Index([2, 3, 4, 4, 5], name="id")
         idxdt = pd.to_datetime(
@@ -429,6 +502,10 @@ class TestDataFrameDrop:
         tm.assert_frame_equal(result, expected)
 
     def test_drop_tz_aware_timestamp_across_dst(self, frame_or_series):
+        # [FUNCTION DOC]
+        # Takes frame-or-series fixture. Dropping the first timestamp of a Berlin
+        # tz-aware index spanning a daylight saving change works and removes only that
+        # entry.
         # GH#21761
         start = Timestamp("2017-10-29", tz="Europe/Berlin")
         end = Timestamp("2017-10-29 04:00:00", tz="Europe/Berlin")
@@ -441,6 +518,8 @@ class TestDataFrameDrop:
         tm.assert_equal(result, expected)
 
     def test_drop_preserve_names(self):
+        # [FUNCTION DOC]
+        # Dropping a tuple label from a multi-level index preserves the level names.
         index = MultiIndex.from_arrays(
             [[0, 0, 0, 1, 1, 1], [1, 2, 3, 1, 2, 3]], names=["one", "two"]
         )
@@ -455,6 +534,10 @@ class TestDataFrameDrop:
     )
     @pytest.mark.parametrize("inplace", [False, True])
     def test_inplace_drop_and_operation(self, operation, inplace):
+        # [FUNCTION DOC]
+        # Parametrized over four in-place operators and the in-place flag. After
+        # dropping a column (in-place or by reassigning), an in-place operation on a
+        # previously obtained column must not warn and must not affect the frame.
         # GH#30484
         df = DataFrame({"x": range(5)})
         expected = df.copy()
@@ -472,6 +555,9 @@ class TestDataFrameDrop:
             tm.assert_frame_equal(df, expected)
 
     def test_drop_with_non_unique_multiindex(self):
+        # [FUNCTION DOC]
+        # Dropping a first-level key from a non-unique multi-level index removes all
+        # rows with that key.
         # GH#36293
         mi = MultiIndex.from_arrays([["x", "y", "x"], ["i", "j", "i"]])
         df = DataFrame([1, 2, 3], index=mi)
@@ -481,6 +567,12 @@ class TestDataFrameDrop:
 
     @pytest.mark.parametrize("indexer", [("a", "a"), [("a", "a")]])
     def test_drop_tuple_with_non_unique_multiindex(self, indexer):
+        # [FUNCTION DOC]
+        # Parametrized over a tuple and a list of a tuple as indexer. Dropping a
+        # duplicated tuple label removes all matching rows.
+        # KNOWN ISSUE: the parametrized indexer argument is never used; the body always
+        # drops with a hard-coded list holding one tuple, so both parameter values run
+        # the same code.
         # GH#42771
         idx = MultiIndex.from_product([["a", "b"], ["a", "a"]])
         df = DataFrame({"x": range(len(idx))}, index=idx)
@@ -491,6 +583,9 @@ class TestDataFrameDrop:
         tm.assert_frame_equal(result, expected)
 
     def test_drop_with_duplicate_columns(self):
+        # [FUNCTION DOC]
+        # Dropping a duplicated column label (scalar or list) removes all columns with
+        # that label.
         df = DataFrame(
             [[1, 5, 7.0], [1, 5, 7.0], [1, 5, 7.0]], columns=["bar", "a", "a"]
         )
@@ -501,6 +596,9 @@ class TestDataFrameDrop:
         tm.assert_frame_equal(result, expected)
 
     def test_drop_with_duplicate_columns2(self):
+        # [FUNCTION DOC]
+        # Regression for dropping from a frame built by repeated column take: the result
+        # equals the expected take without the dropped column.
         # drop buggy GH#6240
         df = DataFrame(
             {
@@ -517,6 +615,9 @@ class TestDataFrameDrop:
         tm.assert_frame_equal(result, expected)
 
     def test_drop_inplace_no_leftover_column_reference(self):
+        # [FUNCTION DOC]
+        # After in-place column drop, modifying a previously held column series does not
+        # re-add or alter columns.
         # GH 13934
         df = DataFrame({"a": [1, 2, 3]}, columns=Index(["a"], dtype="object"))
         a = df.a
@@ -526,6 +627,9 @@ class TestDataFrameDrop:
         tm.assert_index_equal(df.columns, Index([], dtype="object"))
 
     def test_drop_level_missing_label_multiindex(self):
+        # [FUNCTION DOC]
+        # Dropping a missing label on level zero raises a key error saying the labels
+        # are not found in the level.
         # GH 18561
         df = DataFrame(index=MultiIndex.from_product([range(3), range(3)]))
         with pytest.raises(KeyError, match="labels \\[5\\] not found in level"):
@@ -533,6 +637,10 @@ class TestDataFrameDrop:
 
     @pytest.mark.parametrize("idx, level", [(["a", "b"], 0), (["a"], None)])
     def test_drop_index_ea_dtype(self, any_numeric_ea_dtype, idx, level):
+        # [FUNCTION DOC]
+        # Takes numeric extension dtype fixture, parametrized over (index columns,
+        # level). Dropping labels including NA from a nullable-dtype index (flat or
+        # multi-level) removes matching rows.
         # GH#45860
         df = DataFrame(
             {"a": [1, 2, 2, pd.NA], "b": 100}, dtype=any_numeric_ea_dtype
@@ -544,6 +652,9 @@ class TestDataFrameDrop:
         tm.assert_frame_equal(result, expected)
 
     def test_drop_index_arrow_binary_dtype_na(self):
+        # [FUNCTION DOC]
+        # Requires pyarrow. Dropping a missing marker from an arrow binary-typed index
+        # removes the missing entry and keeps the others.
         # GH#63304
         pytest.importorskip("pyarrow")
 
@@ -556,6 +667,9 @@ class TestDataFrameDrop:
         tm.assert_frame_equal(result, expected)
 
     def test_drop_parse_strings_datetime_index(self):
+        # [FUNCTION DOC]
+        # Dropping a date string from a datetime index parses the string to the matching
+        # timestamp.
         # GH #5355
         df = DataFrame(
             {"a": [1, 2], "b": [1, 2]},

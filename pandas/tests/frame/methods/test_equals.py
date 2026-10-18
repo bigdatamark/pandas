@@ -1,3 +1,9 @@
+# [MODULE DOC]
+# Tests for the frame equality method (equals): dtype and block layout differences,
+# values with missing entries, index and column comparison, multi-level indexes and
+# categorical dtype ordering. Uses the string inference fixture and the testing helpers
+# module. No import-time side effects.
+
 import numpy as np
 
 from pandas import (
@@ -9,13 +15,22 @@ import pandas._testing as tm
 
 
 class TestEquals:
+    # [CLASS DOC]
+    # Stateless pytest class of equals tests.
     def test_dataframe_not_equal(self):
+        # [FUNCTION DOC]
+        # Frames with the same values but swapped column dtypes are not equal.
         # see GH#28839
         df1 = DataFrame({"a": [1, 2], "b": ["s", "d"]})
         df2 = DataFrame({"a": ["s", "d"], "b": [1, 2]})
         assert df1.equals(df2) is False
 
     def test_equals_different_blocks(self, using_infer_string):
+        # [FUNCTION DOC]
+        # Takes string inference fixture. A frame and a column-reordered copy with
+        # different block layout compare equal both ways and in the testing helper;
+        # unless string inference is on, the test asserts the first blocks have
+        # different dtypes to confirm that block rearrangement happened.
         # GH#9330
         df0 = DataFrame({"A": ["x", "y"], "B": [1, 2], "C": ["w", "z"]})
         df1 = df0.reset_index()[["A", "B", "C"]]
@@ -30,6 +45,13 @@ class TestEquals:
         assert df1.equals(df0)
 
     def test_equals(self):
+        # [FUNCTION DOC]
+        # Builds a frame of floats, strings, datetimes, timedeltas and object booleans
+        # with missing rows. A copy is equal (columnwise too) and it is not equal to a
+        # non-frame object. Changing a dtype, index values, or column order makes frames
+        # unequal. Equality also holds with a datetime index, with a multi-level index
+        # including a column with missing labels, and differs when different levels are
+        # appended.
         # Add object dtype column with nans
         index = np.random.default_rng(2).random(10)
         df1 = DataFrame(
@@ -86,6 +108,9 @@ class TestEquals:
         assert df3.equals(df2)
 
     def test_equals_categorical_categories_order(self):
+        # [FUNCTION DOC]
+        # Categoricals that differ only in the order of the categories are equal; with
+        # an extra category they are not.
         cat1 = Categorical(["a", "b", "a"], categories=["a", "b"])
         cat2 = Categorical(["a", "b", "a"], categories=["b", "a"])
         df1 = DataFrame({"c": cat1})

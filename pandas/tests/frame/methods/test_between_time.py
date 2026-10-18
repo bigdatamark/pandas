@@ -1,3 +1,10 @@
+# [MODULE DOC]
+# Tests for the time-window row selection method of frames and series (between_time):
+# start/end given as time objects or strings in many formats, inclusive modes, windows
+# crossing midnight, time zones, axis arguments and error cases. Uses frame-or-series,
+# axis and inclusive-endpoint fixtures, locale decorator and testing helpers. No
+# import-time side effects.
+
 from datetime import (
     datetime,
     time,
@@ -18,8 +25,14 @@ import pandas._testing as tm
 
 
 class TestBetweenTime:
+    # [CLASS DOC]
+    # Stateless pytest class of between_time tests.
     @td.skip_if_not_us_locale
     def test_between_time_formats(self, frame_or_series):
+        # [FUNCTION DOC]
+        # Runs only in a US locale. Eight equivalent spellings of a 2:00 to 2:30 window
+        # (24h/12h, with/without colons, with seconds) each select 28 rows of a 5-minute
+        # index over several days.
         # GH#11818
         rng = date_range("1/1/2000", "1/5/2000", freq="5min")
         ts = DataFrame(
@@ -44,6 +57,10 @@ class TestBetweenTime:
 
     @pytest.mark.parametrize("tzstr", ["US/Eastern", "dateutil/US/Eastern"])
     def test_localized_between_time(self, tzstr, frame_or_series):
+        # [FUNCTION DOC]
+        # Parametrized over a pytz and a dateutil US/Eastern zone with frame-or-series
+        # fixture. Between-time on a localized object equals the naive result localized;
+        # zone preserved.
         tz = timezones.maybe_get_tz(tzstr)
 
         rng = date_range("4/16/2012", "5/1/2012", freq="h")
@@ -60,6 +77,9 @@ class TestBetweenTime:
         assert timezones.tz_compare(result.index.tz, tz)
 
     def test_between_time_types(self, frame_or_series):
+        # [FUNCTION DOC]
+        # Takes frame-or-series fixture. Passing datetime objects (not times) raises a
+        # value error saying the argument cannot be converted to a time.
         # GH11818
         rng = date_range("1/1/2000", "1/5/2000", freq="5min")
         obj = DataFrame({"A": 0}, index=rng)
@@ -70,6 +90,12 @@ class TestBetweenTime:
             obj.between_time(datetime(2010, 1, 2, 1), datetime(2010, 1, 2, 5))
 
     def test_between_time(self, inclusive_endpoints_fixture, frame_or_series):
+        # [FUNCTION DOC]
+        # Takes inclusive-endpoint fixture and frame-or-series. Verifies the number of
+        # rows for a 00:00 to 01:00 window under each inclusive mode and that every
+        # selected time respects the boundaries; string and time-object bounds agree;
+        # repeats for a window across midnight (22:00 to 09:00) with its own expected
+        # counts and boundary checks.
         rng = date_range("1/1/2000", "1/5/2000", freq="5min")
         ts = DataFrame(
             np.random.default_rng(2).standard_normal((len(rng), 2)), index=rng
@@ -135,6 +161,9 @@ class TestBetweenTime:
                 assert (t < etime) or (t >= stime)
 
     def test_between_time_raises(self, frame_or_series):
+        # [FUNCTION DOC]
+        # Takes frame-or-series fixture. Non-datetime index raises a type error saying
+        # the index must be a datetime index.
         # GH#20725
         obj = DataFrame([[1, 2, 3], [4, 5, 6]])
         obj = tm.get_obj(obj, frame_or_series)
@@ -144,6 +173,10 @@ class TestBetweenTime:
             obj.between_time(start_time="00:00", end_time="12:00")
 
     def test_between_time_axis(self, frame_or_series):
+        # [FUNCTION DOC]
+        # Takes frame-or-series fixture. Default and explicit row axis give seven rows
+        # for an hour window of 10-minute data; an axis equal to the object dimension
+        # raises a value error saying no such axis exists.
         # GH#8839
         rng = date_range("1/1/2000", periods=100, freq="10min")
         ts = Series(np.random.default_rng(2).standard_normal(len(rng)), index=rng)
@@ -160,6 +193,9 @@ class TestBetweenTime:
             ts.between_time(stime, etime, axis=ts.ndim)
 
     def test_between_time_axis_aliases(self, axis):
+        # [FUNCTION DOC]
+        # Takes axis fixture. With dates on the rows or the columns of a square frame,
+        # selection along the matching axis (names or numbers) gives seven entries.
         # GH#8839
         rng = date_range("1/1/2000", periods=100, freq="10min")
         ts = DataFrame(np.random.default_rng(2).standard_normal((len(rng), len(rng))))
@@ -177,6 +213,10 @@ class TestBetweenTime:
             assert len(selected) == exp_len
 
     def test_between_time_axis_raises(self, axis):
+        # [FUNCTION DOC]
+        # Takes axis fixture. When the relevant axis is not a datetime index (replaced
+        # by integers), selection on that axis raises a type error about the index being
+        # a datetime index.
         # issue 8839
         rng = date_range("1/1/2000", periods=100, freq="10min")
         mask = np.arange(0, len(rng))
@@ -198,6 +238,9 @@ class TestBetweenTime:
                 ts.between_time(stime, etime, axis=1)
 
     def test_between_time_datetimeindex(self):
+        # [FUNCTION DOC]
+        # A 13:00 to 14:00 window on a half-hourly index gives 12 rows equal to
+        # label-based time slicing and positional selection.
         index = date_range("2012-01-01", "2012-01-05", freq="30min")
         df = DataFrame(
             np.random.default_rng(2).standard_normal((len(index), 5)), index=index
@@ -213,6 +256,8 @@ class TestBetweenTime:
         assert len(result) == 12
 
     def test_between_time_incorrect_arg_inclusive(self):
+        # [FUNCTION DOC]
+        # An unknown inclusive string raises a value error listing the allowed values.
         # GH40245
         rng = date_range("1/1/2000", "1/5/2000", freq="5min")
         ts = DataFrame(

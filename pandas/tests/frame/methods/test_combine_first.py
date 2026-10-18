@@ -1,3 +1,11 @@
+# [MODULE DOC]
+# Tests for the method that fills missing values of one frame with values from another,
+# aligned on index and columns (combine_first). Covers mixed dtypes, disjoint and
+# overlapping frames, empty frames, datetime, tz-aware, timedelta, period, nullable and
+# integer data, multi-level indexes with missing labels, non-unique columns and column
+# order. Uses fixtures from conftest (float frame, unit, nulls, nullable string dtype)
+# and the testing helpers module. No import-time side effects.
+
 from datetime import datetime
 
 import numpy as np
@@ -17,7 +25,12 @@ import pandas._testing as tm
 
 
 class TestDataFrameCombineFirst:
+    # [CLASS DOC]
+    # Main group of combine_first tests; stateless pytest class.
     def test_combine_first_mixed(self):
+        # [FUNCTION DOC]
+        # Two frames with string and integer columns and disjoint indexes combine to the
+        # stacked frame with union index.
         a = Series(["a", "b"], index=range(2))
         b = Series(range(2), index=range(2))
         f = DataFrame({"A": a, "B": b})
@@ -31,6 +44,9 @@ class TestDataFrameCombineFirst:
         tm.assert_frame_equal(combined, exp)
 
     def test_combine_first_disjoint(self, float_frame):
+        # [FUNCTION DOC]
+        # Splitting the float frame into head and tail and combining gives back the
+        # original rows (reordered by the union index), same columns.
         head, tail = float_frame[:5], float_frame[5:]
         combined = head.combine_first(tail)
         reordered_frame = float_frame.reindex(combined.index)
@@ -43,6 +59,9 @@ class TestDataFrameCombineFirst:
         tm.assert_series_equal(combined["A"].reindex(tail.index), tail["A"])
 
     def test_combine_first_same_index(self, float_frame):
+        # [FUNCTION DOC]
+        # Frames over the same index with different columns: result takes the first
+        # frame values where present and fills missing columns from the second.
         fcopy = float_frame.copy()
         fcopy["A"] = 1
         del fcopy["C"]
@@ -59,6 +78,8 @@ class TestDataFrameCombineFirst:
         tm.assert_series_equal(combined["D"], fcopy["D"])
 
     def test_combine_first_overlap(self, float_frame):
+        # [FUNCTION DOC]
+        # Values from the first frame take priority over the second in overlapping rows.
         combined = float_frame[:5].combine_first(float_frame[5:])
         reordered_frame = float_frame.reindex(combined.index)
         head, tail = reordered_frame[:10].copy(), reordered_frame.copy()
@@ -67,6 +88,8 @@ class TestDataFrameCombineFirst:
         assert (combined["A"][:10] == 1).all()
 
     def test_combine_first_reverse_overlap(self, float_frame):
+        # [FUNCTION DOC]
+        # Same priority check with the roles reversed.
         combined = float_frame[:5].combine_first(float_frame[5:])
         reordered_frame = float_frame.reindex(combined.index)
         head, tail = reordered_frame[:10].copy(), reordered_frame
@@ -76,6 +99,9 @@ class TestDataFrameCombineFirst:
         assert (combined["A"][:10] == 0).all()
 
     def test_combine_first_with_empty(self, float_frame):
+        # [FUNCTION DOC]
+        # Combining with an empty frame returns the frame; combining an empty frame with
+        # the float frame returns it sorted by index.
         comb = float_frame.combine_first(DataFrame())
         tm.assert_frame_equal(comb, float_frame)
 
@@ -83,10 +109,16 @@ class TestDataFrameCombineFirst:
         tm.assert_frame_equal(comb, float_frame.sort_index())
 
     def test_combine_first_with_new_index(self, float_frame):
+        # [FUNCTION DOC]
+        # Combining with a frame having new row labels adds those labels to the result
+        # index.
         comb = float_frame.combine_first(DataFrame(index=["faz", "boo"]))
         assert "faz" in comb.index
 
     def test_combine_first_column_union(self):
+        # [FUNCTION DOC]
+        # Combining with a frame that has an extra (empty) column includes that column
+        # in the result.
         # GH#2525
         df = DataFrame({"a": [1]}, index=[datetime(2012, 1, 1)])
         df2 = DataFrame(columns=["b"])
@@ -94,6 +126,9 @@ class TestDataFrameCombineFirst:
         assert "b" in result
 
     def test_combine_first_mixed_bug(self):
+        # [FUNCTION DOC]
+        # Combining frames with partially overlapping indexes and columns of mixed dtype
+        # gives five columns (union).
         idx = Index(["a", "b", "c", "e"])
         ser1 = Series([5.0, -9.0, 4.0, 100.0], index=idx)
         ser2 = Series(["a", "b", "c", "e"], index=idx)
@@ -112,6 +147,9 @@ class TestDataFrameCombineFirst:
         assert len(combined.columns) == 5
 
     def test_combine_first_same_as_in_update(self):
+        # [FUNCTION DOC]
+        # Behaves like update: with an other frame covering one cell, missing values in
+        # the first are filled; boolean columns are retained.
         # gh 3016 (same as in update)
         df = DataFrame(
             [[1.0, 2.0, False, True], [4.0, 5.0, True, False]],
@@ -128,6 +166,9 @@ class TestDataFrameCombineFirst:
         tm.assert_frame_equal(result, df)
 
     def test_combine_first_doc_example(self):
+        # [FUNCTION DOC]
+        # Reproduces the documentation example: missing entries filled from the other
+        # frame, union of index.
         # doc example
         df1 = DataFrame(
             {"A": [1.0, np.nan, 3.0, 5.0, np.nan], "B": [np.nan, 2.0, 3.0, np.nan, 6.0]}
@@ -145,6 +186,9 @@ class TestDataFrameCombineFirst:
         tm.assert_frame_equal(result, expected)
 
     def test_combine_first_return_obj_type_with_bools(self):
+        # [FUNCTION DOC]
+        # Boolean column stays bool in both call orders when combined frames have partly
+        # overlapping rows.
         # GH3552
 
         df1 = DataFrame(
@@ -188,6 +232,10 @@ class TestDataFrameCombineFirst:
     def test_combine_first_convert_datatime_correctly(
         self, data1, data2, data_expected
     ):
+        # [FUNCTION DOC]
+        # Parametrized over four datetime/NaT combinations (data1, data2, expected).
+        # Missing datetimes in the first are filled from the second; datetime dtype is
+        # retained.
         # GH 3593
 
         df1, df2 = DataFrame({"a": data1}), DataFrame({"a": data2})
@@ -196,6 +244,14 @@ class TestDataFrameCombineFirst:
         tm.assert_frame_equal(result, expected)
 
     def test_combine_first_align_nan(self):
+        # [FUNCTION DOC]
+        # Pins current behavior for combining with a frame of fewer columns and with an
+        # empty first frame: datetime stays in second resolution when the first has
+        # data; with an empty first frame the result column dtypes are float and int.
+        # KNOWN ISSUE: comments in the test say the empty-left result for the datetime
+        # column should be datetime and some columns should be int64 (TODO), yet the
+        # assertions pin the current (float64) behavior, so the test encodes behavior it
+        # describes as wrong.
         # GH 7509 (not fixed)
         ts = pd.Timestamp("2011-01-01").as_unit("s")
         dfa = DataFrame([[ts, 2]], columns=["a", "b"])
@@ -222,6 +278,9 @@ class TestDataFrameCombineFirst:
         assert res["b"].dtype == "int64"
 
     def test_combine_first_timezone(self, unit):
+        # [FUNCTION DOC]
+        # Takes unit fixture. Combining tz-aware columns over different indexes keeps
+        # the tz-aware dtype in the shared and new columns, with the unit preserved.
         # see gh-7630
         data1 = pd.to_datetime("20100101 01:01").tz_localize("UTC").as_unit(unit)
         df1 = DataFrame(
@@ -254,6 +313,9 @@ class TestDataFrameCombineFirst:
         tm.assert_frame_equal(res, exp)
 
     def test_combine_first_timezone2(self, unit):
+        # [FUNCTION DOC]
+        # Takes unit fixture. Combining two tz-aware UTC columns where the second only
+        # covers part of the first returns the first unchanged with tz-aware dtype.
         # see gh-10567
         dts1 = pd.date_range("2015-01-01", "2015-01-05", tz="UTC", unit=unit)
         df1 = DataFrame({"DATE": dts1})
@@ -265,6 +327,9 @@ class TestDataFrameCombineFirst:
         assert res["DATE"].dtype == f"datetime64[{unit}, UTC]"
 
     def test_combine_first_timezone3(self, unit):
+        # [FUNCTION DOC]
+        # Takes unit fixture. US/Eastern columns with NaT: missing entries filled from
+        # the other, union of indexes, tz and unit preserved.
         dts1 = pd.DatetimeIndex(
             ["2011-01-01", "NaT", "2011-01-03", "2011-01-04"], tz="US/Eastern"
         ).as_unit(unit)
@@ -290,6 +355,9 @@ class TestDataFrameCombineFirst:
         tm.assert_frame_equal(res, exp)
 
     def test_combine_first_timezone4(self, unit):
+        # [FUNCTION DOC]
+        # Takes unit fixture. When the first frame has no missing values, its tz-aware
+        # dtype is kept even if the other is naive.
         # different tz
         dts1 = pd.date_range("2015-01-01", "2015-01-05", tz="US/Eastern", unit=unit)
         df1 = DataFrame({"DATE": dts1})
@@ -302,6 +370,9 @@ class TestDataFrameCombineFirst:
         assert res["DATE"].dtype == f"datetime64[{unit}, US/Eastern]"
 
     def test_combine_first_timezone5(self, unit):
+        # [FUNCTION DOC]
+        # Takes unit fixture. Mixed tz-aware and naive datetimes with overlapping rows
+        # yield an object column of timestamps.
         dts1 = pd.date_range("2015-01-01", "2015-01-02", tz="US/Eastern", unit=unit)
         df1 = DataFrame({"DATE": dts1})
         dts2 = pd.date_range("2015-01-01", "2015-01-03", unit=unit)
@@ -318,6 +389,9 @@ class TestDataFrameCombineFirst:
         assert res["DATE"].dtype == "object"
 
     def test_combine_first_timedelta(self):
+        # [FUNCTION DOC]
+        # Timedelta columns with missing values are filled from the other; the result
+        # has microsecond-resolution timedelta dtype.
         data1 = pd.TimedeltaIndex(["1 day", "NaT", "3 day", "4day"])
         df1 = DataFrame({"TD": data1}, index=[1, 3, 5, 7])
         data2 = pd.TimedeltaIndex(["10 day", "11 day", "12 day"])
@@ -332,6 +406,9 @@ class TestDataFrameCombineFirst:
         assert res["TD"].dtype == "timedelta64[us]"
 
     def test_combine_first_period(self):
+        # [FUNCTION DOC]
+        # Monthly period columns combine keeping period dtype; if the other has daily
+        # frequency, the result is an object column of period objects.
         data1 = pd.PeriodIndex(["2011-01", "NaT", "2011-03", "2011-04"], freq="M")
         df1 = DataFrame({"P": data1}, index=[1, 3, 5, 7])
         data2 = pd.PeriodIndex(["2012-01-01", "2012-02", "2012-03"], freq="M")
@@ -363,6 +440,9 @@ class TestDataFrameCombineFirst:
         assert res["P"].dtype == "object"
 
     def test_combine_first_int(self):
+        # [FUNCTION DOC]
+        # Combining integer frames with misaligned rows keeps integer dtype and the
+        # first frame values take priority.
         # GH14687 - integer series that do no align exactly
 
         df1 = DataFrame({"a": [0, 1, 3, 5]}, dtype="int64")
@@ -378,6 +458,9 @@ class TestDataFrameCombineFirst:
 
     @pytest.mark.parametrize("val", [1, 1.0])
     def test_combine_first_with_asymmetric_other(self, val):
+        # [FUNCTION DOC]
+        # Parametrized over int and float values. Combining with a frame having a
+        # different column adds that column without changing the value column.
         # see gh-20699
         df1 = DataFrame({"isNum": [val]})
         df2 = DataFrame({"isBool": [True]})
@@ -388,6 +471,9 @@ class TestDataFrameCombineFirst:
         tm.assert_frame_equal(res, exp)
 
     def test_combine_first_string_dtype_only_na(self, nullable_string_dtype):
+        # [FUNCTION DOC]
+        # Takes nullable string dtype fixture. Multi-level index built from columns that
+        # include missing values: combined result equals the first frame.
         # GH: 37519
         df = DataFrame(
             {"a": ["962", "85"], "b": [pd.NA] * 2}, dtype=nullable_string_dtype
@@ -409,6 +495,10 @@ class TestDataFrameCombineFirst:
         ),
     )
     def test_combine_first_preserve_EA_precision(self, wide_val, dtype):
+        # [FUNCTION DOC]
+        # Parametrized over very large values and the matching unsigned or signed
+        # nullable integer dtype. Large integers keep exact precision (no float round
+        # trip).
         # GH#60128
         df1 = DataFrame({"A": [wide_val, 5]}, dtype=dtype)
         df2 = DataFrame({"A": [6, 7, wide_val]}, dtype=dtype)
@@ -417,6 +507,10 @@ class TestDataFrameCombineFirst:
         tm.assert_frame_equal(result, expected)
 
     def test_combine_first_non_unique_columns(self):
+        # [FUNCTION DOC]
+        # Other frame has duplicated column labels; the result has the same duplicated
+        # labels, with the first frame values used where not missing and missing cells
+        # filled positionally from the other.
         # GH#29135
         df1 = DataFrame([[1, np.nan], [3, 4]], columns=["P", "Q"], index=["A", "B"])
         df2 = DataFrame(
@@ -439,6 +533,12 @@ class TestDataFrameCombineFirst:
     ],
 )
 def test_combine_first_timestamp_bug(scalar1, scalar2, nulls_fixture):
+    # [FUNCTION DOC]
+    # Parametrized over scalar pairs (datetime, period, timedelta, interval) and takes
+    # the nulls fixture. Combining a frame of missing values with an other holding
+    # scalars: the shared column takes the scalar only if the common dtype is object, or
+    # dtypes are equal, or both datetime kinds, else it stays missing; the result column
+    # is cast to the common dtype.
     # GH28481
     na_value = nulls_fixture
 
@@ -466,6 +566,9 @@ def test_combine_first_timestamp_bug(scalar1, scalar2, nulls_fixture):
 
 
 def test_combine_first_timestamp_bug_NaT():
+    # [FUNCTION DOC]
+    # Frame of NaT combined with a frame of datetimes: the shared column is filled with
+    # datetimes and the new column is added.
     # GH28481
     frame = DataFrame([[pd.NaT, pd.NaT]], columns=["a", "b"])
     other = DataFrame(
@@ -481,6 +584,9 @@ def test_combine_first_timestamp_bug_NaT():
 
 
 def test_combine_first_with_nan_multiindex():
+    # [FUNCTION DOC]
+    # Multi-level indexes containing a missing label: result index is the sorted union
+    # (missing label last) and values from both frames are placed correctly.
     # gh-36562
 
     mi1 = MultiIndex.from_arrays(
@@ -510,6 +616,9 @@ def test_combine_first_with_nan_multiindex():
 
 
 def test_combine_preserve_dtypes():
+    # [FUNCTION DOC]
+    # Combining frames with string, integer columns and disjoint row labels preserves
+    # integer and object dtypes (missing filled as appropriate).
     # GH7509
     a_column = Series(["a", "b"], index=range(2))
     b_column = Series(range(2), index=range(2))
@@ -532,6 +641,9 @@ def test_combine_preserve_dtypes():
 
 
 def test_combine_first_duplicates_rows_for_nan_index_values():
+    # [FUNCTION DOC]
+    # Multi-level index with missing values must not duplicate rows when combining;
+    # result has the union of rows once each.
     # GH39881
     df1 = DataFrame(
         {"x": [9, 10, 11]},
@@ -557,6 +669,9 @@ def test_combine_first_duplicates_rows_for_nan_index_values():
 
 
 def test_combine_first_int64_not_cast_to_float64():
+    # [FUNCTION DOC]
+    # Integer columns stay int64 when the other frame has an extra column and no value
+    # is missing.
     # GH 28613
     df_1 = DataFrame({"A": [1, 2, 3], "B": [4, 5, 6]})
     df_2 = DataFrame({"A": [1, 20, 30], "B": [40, 50, 60], "C": [12, 34, 65]})
@@ -566,6 +681,9 @@ def test_combine_first_int64_not_cast_to_float64():
 
 
 def test_midx_losing_dtype():
+    # [FUNCTION DOC]
+    # Multi-level index with all-missing second level keeps its structure after
+    # combining; result values are as expected.
     # GH#49830
     midx = MultiIndex.from_arrays([[0, 0], [np.nan, np.nan]])
     midx2 = MultiIndex.from_arrays([[1, 1], [np.nan, np.nan]])
@@ -580,6 +698,9 @@ def test_midx_losing_dtype():
 
 
 def test_combine_first_empty_columns():
+    # [FUNCTION DOC]
+    # Combining two frames with no rows gives an empty frame whose columns are the union
+    # of both column sets.
     left = DataFrame(columns=["a", "b"])
     right = DataFrame(columns=["a", "c"])
     result = left.combine_first(right)
@@ -588,6 +709,9 @@ def test_combine_first_empty_columns():
 
 
 def test_combine_first_preserve_column_order():
+    # [FUNCTION DOC]
+    # The result keeps the column order of the first frame and fills missing entries
+    # from the other.
     # GH#60427
     df1 = DataFrame({"B": [1, 2, 3], "A": [4, None, 6]})
     df2 = DataFrame({"A": [5]}, index=[1])

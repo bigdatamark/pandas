@@ -1,3 +1,9 @@
+# [MODULE DOC]
+# Tests for the frame method that returns a copy with new or replaced columns given as
+# keyword arguments (assign): scalar/array/callable values, order of evaluation,
+# dependent callables and bad arguments. Uses the testing helpers module. No import-time
+# side effects.
+
 import pytest
 
 from pandas import DataFrame
@@ -5,7 +11,13 @@ import pandas._testing as tm
 
 
 class TestAssign:
+    # [CLASS DOC]
+    # Stateless pytest class collecting assign tests.
     def test_assign(self):
+        # [FUNCTION DOC]
+        # Assign of a computed series, a callable and a list creates the new column on a
+        # copy and leaves the original unchanged; assigning to an existing label
+        # replaces the column (series and callable).
         df = DataFrame({"A": [1, 2, 3], "B": [4, 5, 6]})
         original = df.copy()
         result = df.assign(C=df.B / df.A)
@@ -41,6 +53,9 @@ class TestAssign:
         tm.assert_frame_equal(result, expected)
 
     def test_assign_multiple(self):
+        # [FUNCTION DOC]
+        # Several keyword arguments (list, series, callable) in one call add columns in
+        # the given order.
         df = DataFrame([[1, 4], [2, 5], [3, 6]], columns=["A", "B"])
         result = df.assign(C=[7, 8, 9], D=df.A, E=lambda x: x.B)
         expected = DataFrame(
@@ -49,6 +64,8 @@ class TestAssign:
         tm.assert_frame_equal(result, expected)
 
     def test_assign_order(self):
+        # [FUNCTION DOC]
+        # New columns appear in the order of the keyword arguments given.
         # GH 9818
         df = DataFrame([[1, 2], [3, 4]], columns=["A", "B"])
         result = df.assign(D=df.A + df.B, C=df.A - df.B)
@@ -62,6 +79,10 @@ class TestAssign:
         tm.assert_frame_equal(result, expected)
 
     def test_assign_bad(self):
+        # [FUNCTION DOC]
+        # A positional (non-keyword) argument raises a type error about positional
+        # arguments; a series expression referencing a not-yet-existing column raises an
+        # attribute error naming that column.
         df = DataFrame({"A": [1, 2, 3], "B": [4, 5, 6]})
 
         # non-keyword argument
@@ -73,6 +94,9 @@ class TestAssign:
             df.assign(C=df.A, D=df.A + df.C)
 
     def test_assign_dependent(self):
+        # [FUNCTION DOC]
+        # Later callables can use columns created by earlier keyword arguments in the
+        # same call (value expression or callable).
         df = DataFrame({"A": [1, 2], "B": [3, 4]})
 
         result = df.assign(C=df.A, D=lambda x: x["A"] + x["C"])

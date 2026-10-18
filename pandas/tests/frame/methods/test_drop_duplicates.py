@@ -1,3 +1,11 @@
+# [MODULE DOC]
+# Tests for the duplicate-row removal method of the frame class (drop_duplicates):
+# subset selection (single label, list, tuple, array, set), keep modes (first, last,
+# none), missing values, empty frames, in-place mode, ignore_index, duplicate and tuple
+# column labels, and comparison with the series method. Uses the keep and nulls fixtures
+# plus the testing helpers module. All tests are module-level functions. No import-time
+# side effects.
+
 from datetime import datetime
 import re
 
@@ -14,6 +22,10 @@ import pandas._testing as tm
 
 @pytest.mark.parametrize("subset", ["a", ["a"], ["a", "B"]])
 def test_drop_duplicates_with_misspelled_column_name(subset):
+    # [FUNCTION DOC]
+    # Parametrized over a string, a list and a mixed list naming a nonexistent
+    # (lower-case) column. Raises a key error whose message shows the index of missing
+    # labels.
     # GH 19730
     df = DataFrame({"A": [0, 0, 1], "B": [0, 0, 1], "C": [0, 0, 1]})
     msg = re.escape("Index(['a'], dtype=")
@@ -23,6 +35,12 @@ def test_drop_duplicates_with_misspelled_column_name(subset):
 
 
 def test_drop_duplicates():
+    # [FUNCTION DOC]
+    # Large scenario with string and integer columns: single column and multiple column
+    # subsets (given as string, array, list, tuple) with keep first, last and false;
+    # whole-row duplicates; integer subset including a narrow integer column; several
+    # regression frames of numbers (including big integers) that have no duplicates; and
+    # a wide frame verifying that duplicated reports none for all keep modes.
     df = DataFrame(
         {
             "AAA": ["foo", "bar", "foo", "bar", "foo", "bar", "bar", "foo"],
@@ -119,6 +137,9 @@ def test_drop_duplicates():
 
 
 def test_drop_duplicates_with_duplicate_column_names():
+    # [FUNCTION DOC]
+    # With duplicated column labels, dropping duplicates over all columns keeps all
+    # rows, and subset naming the duplicated label compares both columns.
     # GH17836
     df = DataFrame([[1, 2, 5], [3, 4, 6], [3, 4, 7]], columns=["a", "a", "b"])
 
@@ -131,6 +152,9 @@ def test_drop_duplicates_with_duplicate_column_names():
 
 
 def test_drop_duplicates_for_take_all():
+    # [FUNCTION DOC]
+    # Same style of checks as the main test but with data where no group is entirely
+    # duplicated, for single and multi-column subsets and all keep modes.
     df = DataFrame(
         {
             "AAA": ["foo", "bar", "baz", "bar", "foo", "bar", "qux", "foo"],
@@ -167,6 +191,9 @@ def test_drop_duplicates_for_take_all():
 
 
 def test_drop_duplicates_tuple():
+    # [FUNCTION DOC]
+    # Columns labeled by tuples: subset given as a tuple label (single column) and as a
+    # tuple containing a tuple label (multi column) behave as for plain labels.
     df = DataFrame(
         {
             ("AA", "AB"): ["foo", "bar", "foo", "bar", "foo", "bar", "bar", "foo"],
@@ -206,6 +233,9 @@ def test_drop_duplicates_tuple():
     ],
 )
 def test_drop_duplicates_empty(df):
+    # [FUNCTION DOC]
+    # Parametrized over five empty frames (no rows, no columns, only columns, only
+    # index). Result equals the input, both returned and in-place.
     # GH 20516
     result = df.drop_duplicates()
     tm.assert_frame_equal(result, df)
@@ -216,6 +246,9 @@ def test_drop_duplicates_empty(df):
 
 
 def test_drop_duplicates_NA():
+    # [FUNCTION DOC]
+    # Missing values (None and NaN) in the subset are considered equal to each other;
+    # checks single and multi-column subsets with keep first, last and false.
     # none
     df = DataFrame(
         {
@@ -290,6 +323,9 @@ def test_drop_duplicates_NA():
 
 
 def test_drop_duplicates_NA_for_take_all():
+    # [FUNCTION DOC]
+    # Same, with data in which some missing groups are the only elements, checking
+    # expected row selection.
     # none
     df = DataFrame(
         {
@@ -328,6 +364,9 @@ def test_drop_duplicates_NA_for_take_all():
 
 
 def test_drop_duplicates_inplace():
+    # [FUNCTION DOC]
+    # In-place variant of the main scenarios: all calls return none and mutate the frame
+    # to the expected rows, for single and multi-column subsets and whole rows.
     orig = DataFrame(
         {
             "A": ["foo", "bar", "foo", "bar", "foo", "bar", "bar", "foo"],
@@ -425,6 +464,10 @@ def test_drop_duplicates_inplace():
 def test_drop_duplicates_ignore_index(
     inplace, origin_dict, output_dict, ignore_index, output_index
 ):
+    # [FUNCTION DOC]
+    # Parametrized over in-place flag and four (input, expected data, ignore_index,
+    # expected index) cases. With ignore_index true the result gets a fresh range index;
+    # otherwise original labels are kept. The input is never changed when not in place.
     # GH 30114
     df = DataFrame(origin_dict)
     expected = DataFrame(output_dict, index=output_index)
@@ -440,6 +483,9 @@ def test_drop_duplicates_ignore_index(
 
 
 def test_drop_duplicates_null_in_object_column(nulls_fixture):
+    # [FUNCTION DOC]
+    # Takes the nulls fixture. An object frame with a missing marker and a string has no
+    # duplicates, so it is returned unchanged.
     # https://github.com/pandas-dev/pandas/issues/32992
     df = DataFrame([[1, nulls_fixture], [2, "a"]], dtype=object)
     result = df.drop_duplicates()
@@ -447,6 +493,9 @@ def test_drop_duplicates_null_in_object_column(nulls_fixture):
 
 
 def test_drop_duplicates_series_vs_dataframe(keep):
+    # [FUNCTION DOC]
+    # Takes the keep fixture. For each column of a mixed frame, dropping duplicates on
+    # the one-column frame equals the series version converted to a frame.
     # GH#14192
     df = DataFrame(
         {
@@ -471,6 +520,9 @@ def test_drop_duplicates_series_vs_dataframe(keep):
 
 @pytest.mark.parametrize("arg", [[1], 1, "True", [], 0])
 def test_drop_duplicates_non_boolean_ignore_index(arg):
+    # [FUNCTION DOC]
+    # Parametrized over several non-boolean values. Passing them as ignore_index raises
+    # a value error saying a bool was expected.
     # GH#38274
     df = DataFrame({"a": [1, 2, 1, 3]})
     msg = '^For argument "ignore_index" expected type bool, received type .*.$'
@@ -479,6 +531,9 @@ def test_drop_duplicates_non_boolean_ignore_index(arg):
 
 
 def test_drop_duplicates_set():
+    # [FUNCTION DOC]
+    # A set is accepted as subset (single and multi element) with keep first, last and
+    # false, with the same results as list subsets.
     # GH#59237
     df = DataFrame(
         {

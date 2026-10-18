@@ -1,3 +1,11 @@
+# [MODULE DOC]
+# Tests for the summary-statistics method of the frame class (describe): selection of
+# columns by dtype (numeric, boolean, string, categorical, datetime, timedelta,
+# extension and arrow types), include/exclude rules, percentiles, handling of empty and
+# missing data, duplicate columns and column index types. Uses the time zone fixture,
+# numeric extension dtype fixture and the testing helpers module. No import-time side
+# effects.
+
 import numpy as np
 import pytest
 
@@ -13,7 +21,13 @@ import pandas._testing as tm
 
 
 class TestDataFrameDescribe:
+    # [CLASS DOC]
+    # Stateless pytest class of describe tests on frames.
     def test_describe_bool_in_mixed_frame(self):
+        # [FUNCTION DOC]
+        # With string, boolean and integer columns, the default summary includes only
+        # the integer column (count, mean, std, min, quartiles, max). Requesting the
+        # boolean dtype alone gives count, unique, top and freq rows with top False.
         df = DataFrame(
             {
                 "string_data": ["a", "b", "c", "d", "e"],
@@ -40,6 +54,10 @@ class TestDataFrameDescribe:
         tm.assert_frame_equal(result, expected)
 
     def test_describe_empty_object(self):
+        # [FUNCTION DOC]
+        # A frame whose object column holds only missing values gets the
+        # categorical-style summary (count zero, unique zero, missing top and freq); an
+        # empty selection of rows gives the same.
         # GH#27183
         df = DataFrame({"A": [None, None]}, dtype=object)
         result = df.describe()
@@ -54,6 +72,10 @@ class TestDataFrameDescribe:
         tm.assert_frame_equal(result, expected)
 
     def test_describe_bool_frame(self):
+        # [FUNCTION DOC]
+        # Three cases: all-boolean frames give the object-style summary; boolean plus
+        # integer data summarizes only the integer column; boolean plus string columns
+        # give the object-style summary for both.
         # GH#13891
         df = DataFrame(
             {
@@ -92,6 +114,11 @@ class TestDataFrameDescribe:
         tm.assert_frame_equal(result, expected)
 
     def test_describe_categorical(self):
+        # [FUNCTION DOC]
+        # A frame with an integer column and a categorical column describes only the
+        # integer column by default. The remainder checks series-level summaries of an
+        # ordered categorical (count, unique, top, freq) and that in a frame a
+        # categorical column yields the same summary as an equivalent string column.
         df = DataFrame({"value": np.random.default_rng(2).integers(0, 10000, 100)})
         labels = [f"{i} - {i + 499}" for i in range(0, 10000, 500)]
         cat_labels = Categorical(labels, labels)
@@ -123,6 +150,9 @@ class TestDataFrameDescribe:
         tm.assert_numpy_array_equal(result["cat"].values, result["s"].values)
 
     def test_describe_empty_categorical_column(self):
+        # [FUNCTION DOC]
+        # A frame with an empty categorical column yields the object-style summary index
+        # with count zero, unique zero and true NaN (not None) for top and freq.
         # GH#26397
         # Ensure the index of an empty categorical DataFrame column
         # also contains (count, unique, top, freq)
@@ -139,6 +169,10 @@ class TestDataFrameDescribe:
         assert np.isnan(result.iloc[3, 0])
 
     def test_describe_categorical_columns(self):
+        # [FUNCTION DOC]
+        # Frame with an ordered categorical column index and a non-numeric object
+        # column: only numeric columns are summarized, and the result's column index
+        # stays a categorical index with the original categories, order and name.
         # GH#11558
         columns = pd.CategoricalIndex(["int1", "int2", "obj"], ordered=True, name="XXX")
         df = DataFrame(
@@ -170,6 +204,9 @@ class TestDataFrameDescribe:
         tm.assert_categorical_equal(result.columns.values, expected.columns.values)
 
     def test_describe_datetime_columns(self):
+        # [FUNCTION DOC]
+        # Frame with a tz-aware datetime column index: summary keeps only numeric
+        # columns and the result column index retains frequency, zone and name.
         columns = pd.DatetimeIndex(
             ["2011-01-01", "2011-02-01", "2011-03-01"],
             freq="MS",
@@ -202,6 +239,9 @@ class TestDataFrameDescribe:
         assert result.columns.tz == expected.columns.tz
 
     def test_describe_timedelta_values(self):
+        # [FUNCTION DOC]
+        # Timedelta columns are summarized with timedelta mean, std, min, quartiles and
+        # max; the string representation of the result matches an expected text table.
         # GH#6145
         t1 = pd.timedelta_range("1 days", freq="D", periods=5)
         t2 = pd.timedelta_range("1 hours", freq="h", periods=5)
@@ -250,6 +290,10 @@ class TestDataFrameDescribe:
         assert repr(result) == exp_repr
 
     def test_describe_tz_values(self, tz_naive_fixture):
+        # [FUNCTION DOC]
+        # Takes the time zone fixture. A numeric and a (possibly tz-aware) datetime
+        # column described with include all: datetime column has count, mean, min,
+        # quartiles, max and missing std; row order puts std last.
         # GH#21332
         tz = tz_naive_fixture
         s1 = Series(range(5))
@@ -278,6 +322,9 @@ class TestDataFrameDescribe:
         tm.assert_frame_equal(result, expected)
 
     def test_datetime_is_numeric_includes_datetime(self):
+        # [FUNCTION DOC]
+        # By default (no include argument) datetime columns are summarized alongside
+        # numeric ones, with a missing std for the datetime column.
         df = DataFrame({"a": date_range("2012", periods=3), "b": [1, 2, 3]})
         result = df.describe()
         expected = DataFrame(
@@ -299,6 +346,9 @@ class TestDataFrameDescribe:
         tm.assert_frame_equal(result, expected)
 
     def test_describe_tz_values2(self):
+        # [FUNCTION DOC]
+        # For a CET tz-aware column plus numeric column, include all equals
+        # concatenating the series-level summaries reindexed to the expected row order.
         tz = "CET"
         s1 = Series(range(5))
         start = Timestamp(2018, 1, 1)
@@ -324,6 +374,9 @@ class TestDataFrameDescribe:
         tm.assert_frame_equal(result, expected)
 
     def test_describe_percentiles_integer_idx(self):
+        # [FUNCTION DOC]
+        # Custom percentiles from zero to one produce row labels formatted as whole
+        # percents, and a single-value column yields all ones (std missing).
         # GH#26660
         df = DataFrame({"x": [1]})
         pct = np.linspace(0, 1, 10 + 1)
@@ -353,6 +406,9 @@ class TestDataFrameDescribe:
         tm.assert_frame_equal(result, expected)
 
     def test_describe_does_not_raise_error_for_dictlike_elements(self):
+        # [FUNCTION DOC]
+        # A column of dict values is summarized with count, unique, top and freq without
+        # raising.
         # GH#32409
         df = DataFrame([{"test": {"a": "1"}}, {"test": {"a": "2"}}])
         expected = DataFrame(
@@ -363,6 +419,10 @@ class TestDataFrameDescribe:
 
     @pytest.mark.parametrize("exclude", ["x", "y", ["x", "y"], ["x", "z"]])
     def test_describe_when_include_all_exclude_not_allowed(self, exclude):
+        # [FUNCTION DOC]
+        # Parametrized over several exclude values. Passing a non-empty exclude together
+        # with include all raises a value error saying exclude must be none in that
+        # case. (The docstring says the same.)
         """
         When include is 'all', then setting exclude != None is not allowed.
         """
@@ -372,6 +432,9 @@ class TestDataFrameDescribe:
             df.describe(include="all", exclude=exclude)
 
     def test_describe_when_included_dtypes_not_present(self):
+        # [FUNCTION DOC]
+        # Requesting an included dtype that no column has raises a value error saying no
+        # columns match the specified include or exclude types.
         # GH#61863
         df = DataFrame({"a": [1, 2, 3]})
         msg = "No columns match the specified include or exclude data types"
@@ -379,6 +442,9 @@ class TestDataFrameDescribe:
             df.describe(include=["datetime"])
 
     def test_describe_with_duplicate_columns(self):
+        # [FUNCTION DOC]
+        # Duplicated column labels are each summarized; result equals the concatenated
+        # per-column series summaries.
         df = DataFrame(
             [[1, 1, 1], [2, 2, 2], [3, 3, 3]],
             columns=["bar", "a", "a"],
@@ -390,6 +456,10 @@ class TestDataFrameDescribe:
         tm.assert_frame_equal(result, expected)
 
     def test_ea_with_na(self, any_numeric_ea_dtype):
+        # [FUNCTION DOC]
+        # Takes numeric extension dtype fixture. A nullable column with missing values
+        # and an all-missing column get Float64 summaries (count, mean, std ... max)
+        # with NA where undefined.
         # GH#48778
 
         df = DataFrame({"a": [1, pd.NA, pd.NA], "b": pd.NA}, dtype=any_numeric_ea_dtype)
@@ -402,6 +472,9 @@ class TestDataFrameDescribe:
         tm.assert_frame_equal(result, expected)
 
     def test_describe_exclude_pa_dtype(self):
+        # [FUNCTION DOC]
+        # Requires pyarrow. Including one arrow integer dtype and excluding another
+        # selects only the matching column, summarized with arrow float64.
         # GH#52570
         pa = pytest.importorskip("pyarrow")
         df = DataFrame(
@@ -423,6 +496,11 @@ class TestDataFrameDescribe:
 
     @pytest.mark.parametrize("percentiles", [None, [], [0.2]])
     def test_refine_percentiles(self, percentiles):
+        # [FUNCTION DOC]
+        # Parametrized over percentile argument (default, empty list, a single value).
+        # Default gives the 25th, 50th and 75th rows; an empty list gives none; a list
+        # gives exactly those. Expected is built from quantiles of the column and rows
+        # labelled as whole-percent strings.
         """
         Test that the percentiles are returned correctly depending on the `percentiles`
         argument.

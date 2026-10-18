@@ -1,3 +1,10 @@
+# [MODULE DOC]
+# Tests for the discrete-difference method of the frame class (diff): periods argument
+# (negative, zero, float, numpy integer), both axes, integer, float, nullable, sparse,
+# datetime, timedelta and period data, missing values, read-only data and result dtypes.
+# Uses the datetime frame and unit fixtures and the testing helpers module. No
+# import-time side effects.
+
 import numpy as np
 import pytest
 
@@ -12,7 +19,12 @@ import pandas._testing as tm
 
 
 class TestDataFrameDiff:
+    # [CLASS DOC]
+    # Stateless pytest class of diff tests on frames.
     def test_diff_requires_integer(self):
+        # [FUNCTION DOC]
+        # A non-integer fractional periods value raises a value error saying periods
+        # must be an integer.
         df = DataFrame(np.random.default_rng(2).standard_normal((2, 2)))
         with pytest.raises(ValueError, match="periods must be an integer"):
             df.diff(1.5)
@@ -20,6 +32,10 @@ class TestDataFrameDiff:
     # GH#44572 np.int64 is accepted
     @pytest.mark.parametrize("num", [1, np.int64(1)])
     def test_diff(self, datetime_frame, num):
+        # [FUNCTION DOC]
+        # Parametrized over a python int and a numpy int64 as periods (the latter
+        # accepted per an issue). Column difference equals the column minus its shifted
+        # version.
         df = datetime_frame
         the_diff = df.diff(num)
 
@@ -27,6 +43,9 @@ class TestDataFrameDiff:
         tm.assert_series_equal(the_diff["A"], expected)
 
     def test_diff_int_dtype(self):
+        # [FUNCTION DOC]
+        # Large integers near 1e16 keep precision: the difference of consecutive values
+        # is exactly one.
         # int dtype
         a = 10_000_000_000_000_000
         b = a + 1
@@ -36,12 +55,18 @@ class TestDataFrameDiff:
         assert rs.s[1] == 1
 
     def test_diff_mixed_numeric(self, datetime_frame):
+        # [FUNCTION DOC]
+        # For a 32-bit float frame, differences equal the column minus its shift.
         # mixed numeric
         tf = datetime_frame.astype("float32")
         the_diff = tf.diff(1)
         tm.assert_series_equal(the_diff["A"], tf["A"] - tf["A"].shift(1))
 
     def test_diff_axis1_nonconsolidated(self):
+        # [FUNCTION DOC]
+        # A frame built with an inserted column (non-consolidated blocks) differenced
+        # along columns gives missing for the first column and the expected differences
+        # for the rest.
         # GH#10907
         df = DataFrame({"y": Series([2]), "z": Series([3])})
         df.insert(0, "x", 1)
@@ -50,6 +75,10 @@ class TestDataFrameDiff:
         tm.assert_frame_equal(result, expected)
 
     def test_diff_timedelta64_with_nat(self):
+        # [FUNCTION DOC]
+        # Timedelta frame with a column of NaT: diff by one along rows gives NaT for
+        # that column and the expected differences for the other; zero periods equals
+        # frame minus frame; periods minus one along columns gives all missing.
         # GH#32441
         arr = np.arange(6).reshape(3, 2).astype("timedelta64[ns]")
         arr[:, 0] = np.timedelta64("NaT", "ns")
@@ -71,6 +100,10 @@ class TestDataFrameDiff:
 
     @pytest.mark.parametrize("tz", [None, "UTC"])
     def test_diff_datetime_axis0_with_nat(self, tz, unit):
+        # [FUNCTION DOC]
+        # Parametrized over naive and UTC time zones; takes unit fixture. A datetime
+        # column with leading NaT gives timedelta results with NaT for the first two
+        # rows; unit preserved.
         # GH#32441
         dti = pd.DatetimeIndex(["NaT", "2019-01-01", "2019-01-02"], tz=tz).as_unit(unit)
         ser = Series(dti)
@@ -86,6 +119,9 @@ class TestDataFrameDiff:
 
     @pytest.mark.parametrize("tz", [None, "UTC"])
     def test_diff_datetime_with_nat_zero_periods(self, tz):
+        # [FUNCTION DOC]
+        # Parametrized over naive and UTC. With zero periods, differences of NaT are NaT
+        # rather than a zero timedelta, along either axis.
         # diff on NaT values should give NaT, not timedelta64(0)
         dti = date_range("2016-01-01", periods=4, tz=tz)
         ser = Series(dti)
@@ -106,6 +142,9 @@ class TestDataFrameDiff:
 
     @pytest.mark.parametrize("tz", [None, "UTC"])
     def test_diff_datetime_axis0(self, tz):
+        # [FUNCTION DOC]
+        # Parametrized over naive and UTC. Two identical date columns diffed along rows
+        # give NaT then one day in each.
         # GH#18578
         df = DataFrame(
             {
@@ -125,6 +164,9 @@ class TestDataFrameDiff:
 
     @pytest.mark.parametrize("tz", [None, "UTC"])
     def test_diff_datetime_axis1(self, tz):
+        # [FUNCTION DOC]
+        # Parametrized over naive and UTC. Diff along columns yields NaT for the first
+        # column (microsecond timedelta dtype) and zero days for the second.
         # GH#18578
         df = DataFrame(
             {
@@ -143,6 +185,9 @@ class TestDataFrameDiff:
         tm.assert_frame_equal(result, expected)
 
     def test_diff_timedelta(self, unit):
+        # [FUNCTION DOC]
+        # Takes unit fixture. A time column and a value column: diff gives NaT then a
+        # one-minute timedelta, and floats; unit preserved.
         # GH#4533
         df = DataFrame(
             {
@@ -160,6 +205,9 @@ class TestDataFrameDiff:
         tm.assert_frame_equal(res, exp)
 
     def test_diff_mixed_dtype(self):
+        # [FUNCTION DOC]
+        # A frame with an object-dtype column of integers alongside float columns: the
+        # float columns' diff stays float64.
         df = DataFrame(np.random.default_rng(2).standard_normal((5, 3)))
         df["A"] = np.array([1, 2, 3, 4, 5], dtype=object)
 
@@ -167,16 +215,24 @@ class TestDataFrameDiff:
         assert result[0].dtype == np.float64
 
     def test_diff_neg_n(self, datetime_frame):
+        # [FUNCTION DOC]
+        # Negative periods equals frame minus its negative shift.
         rs = datetime_frame.diff(-1)
         xp = datetime_frame - datetime_frame.shift(-1)
         tm.assert_frame_equal(rs, xp)
 
     def test_diff_float_n(self, datetime_frame):
+        # [FUNCTION DOC]
+        # A float periods value that is integral (1.0) is accepted and equals integer
+        # one.
         rs = datetime_frame.diff(1.0)
         xp = datetime_frame.diff(1)
         tm.assert_frame_equal(rs, xp)
 
     def test_diff_axis(self):
+        # [FUNCTION DOC]
+        # Small float frame: diff along columns gives missing first column and ones;
+        # along rows gives missing first row and twos.
         # GH#9727
         df = DataFrame([[1.0, 2.0], [3.0, 4.0]])
         tm.assert_frame_equal(
@@ -187,6 +243,9 @@ class TestDataFrameDiff:
         )
 
     def test_diff_period(self):
+        # [FUNCTION DOC]
+        # A period-dtype column diffed along columns (axis one) gives frame minus NaT
+        # cast to object; no wrong axis is passed to the column method.
         # GH#32995 Don't pass an incorrect axis
         pi = date_range("2016-01-01", periods=3).to_period("D")
         df = DataFrame({"A": pi})
@@ -197,6 +256,10 @@ class TestDataFrameDiff:
         tm.assert_frame_equal(result, expected)
 
     def test_diff_axis1_mixed_dtypes(self):
+        # [FUNCTION DOC]
+        # With integer and float columns, diff along columns operates column-wise: first
+        # column all missing, second the original difference; for float32 and float64
+        # columns the second becomes zero.
         # GH#32995 operate column-wise when we have mixed dtypes and axis=1
         df = DataFrame({"A": range(3), "B": 2 * np.arange(3, dtype=np.float64)})
 
@@ -214,6 +277,8 @@ class TestDataFrameDiff:
         tm.assert_frame_equal(result, expected)
 
     def test_diff_axis1_mixed_dtypes_large_periods(self):
+        # [FUNCTION DOC]
+        # Periods larger than the number of columns along columns gives all missing.
         # GH#32995 operate column-wise when we have mixed dtypes and axis=1
         df = DataFrame({"A": range(3), "B": 2 * np.arange(3, dtype=np.float64)})
 
@@ -223,6 +288,10 @@ class TestDataFrameDiff:
         tm.assert_frame_equal(result, expected)
 
     def test_diff_axis1_mixed_dtypes_negative_periods(self):
+        # [FUNCTION DOC]
+        # Negative periods along columns takes the difference with the following column
+        # (first column result is the negative of itself minus zero here, second column
+        # missing).
         # GH#32995 operate column-wise when we have mixed dtypes and axis=1
         df = DataFrame({"A": range(3), "B": 2 * np.arange(3, dtype=np.float64)})
 
@@ -232,6 +301,9 @@ class TestDataFrameDiff:
         tm.assert_frame_equal(result, expected)
 
     def test_diff_sparse(self):
+        # [FUNCTION DOC]
+        # Sparse integer frame diff returns sparse float frame with fill value zero and
+        # missing first row.
         # GH#28813 .diff() should work for sparse dataframes as well
         sparse_df = DataFrame([[0, 1], [1, 0]], dtype="Sparse[int]")
 
@@ -272,6 +344,10 @@ class TestDataFrameDiff:
         ],
     )
     def test_diff_integer_na(self, axis, expected):
+        # [FUNCTION DOC]
+        # Parametrized over axis zero and one with expected nullable integer frames.
+        # Differences with NA propagate NA where either operand is missing; all-missing
+        # column stays NA.
         # GH#24171 IntegerNA Support for DataFrame.diff()
         df = DataFrame(
             {
@@ -288,6 +364,9 @@ class TestDataFrameDiff:
         tm.assert_frame_equal(result, expected)
 
     def test_diff_readonly(self):
+        # [FUNCTION DOC]
+        # Data with the writeable flag cleared can be differenced; result equals that of
+        # a writable copy.
         # https://github.com/pandas-dev/pandas/issues/35559
         arr = np.random.default_rng(2).standard_normal((5, 2))
         arr.flags.writeable = False
@@ -297,6 +376,10 @@ class TestDataFrameDiff:
         tm.assert_frame_equal(result, expected)
 
     def test_diff_all_int_dtype(self, any_int_numpy_dtype):
+        # [FUNCTION DOC]
+        # Takes the integer numpy dtype fixture. Differences of integer frames are
+        # float32 for 8 and 16 bit integers and float64 for the rest, with leading
+        # missing.
         # GH 14773
         df = DataFrame(range(5))
         df = df.astype(any_int_numpy_dtype)

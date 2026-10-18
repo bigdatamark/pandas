@@ -1,3 +1,8 @@
+# [MODULE DOC]
+# Tests for removing a level from a multi-level index or columns (droplevel) on frames
+# and series. Uses the frame-or-series fixture and the testing helpers module. No
+# import-time side effects.
+
 import pytest
 
 from pandas import (
@@ -9,7 +14,15 @@ import pandas._testing as tm
 
 
 class TestDropLevel:
+    # [CLASS DOC]
+    # Stateless pytest class of droplevel tests.
     def test_droplevel(self, frame_or_series):
+        # [FUNCTION DOC]
+        # Takes frame-or-series fixture. Builds a frame with two-level rows and columns
+        # (reduced to one column for series). Dropping a row level equals resetting that
+        # level with drop; for frames, dropping a column level keeps the other level as
+        # a named column index; for series, dropping on the columns axis raises a value
+        # error since only one axis exists.
         # GH#20342
         cols = MultiIndex.from_tuples(
             [("c", "e"), ("d", "f")], names=["level_1", "level_2"]

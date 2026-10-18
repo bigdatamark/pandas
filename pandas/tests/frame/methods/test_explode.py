@@ -1,3 +1,10 @@
+# [MODULE DOC]
+# Tests for the frame method that turns each element of list-like entries in one or more
+# columns into separate rows (explode): argument validation, scalars of different types
+# as labels, multi-level rows and columns, duplicate index labels, ignore_index, sets,
+# multiple columns with matching lengths and string dtype. All tests are module-level
+# functions using the testing helpers module. No import-time side effects.
+
 import re
 
 import numpy as np
@@ -8,6 +15,11 @@ import pandas._testing as tm
 
 
 def test_error():
+    # [FUNCTION DOC]
+    # A list containing a list as column raises a value error about the column being a
+    # scalar, tuple or list thereof; repeated labels in a column list raise an error
+    # saying the column must be unique; a frame with duplicated column labels raises a
+    # value error naming the duplicates.
     df = pd.DataFrame(
         {"A": pd.Series([[0, 1, 2], np.nan, [], (3, 4)], index=list("abcd")), "B": 1}
     )
@@ -41,6 +53,10 @@ def test_error():
     ],
 )
 def test_error_multi_columns(input_subset, error_message):
+    # [FUNCTION DOC]
+    # Parametrized over (columns, message). Columns with unequal element counts per row
+    # raise a value error about matching element counts; an empty column list raises a
+    # value error saying it must be nonempty.
     # GH 39240
     df = pd.DataFrame(
         {
@@ -59,6 +75,11 @@ def test_error_multi_columns(input_subset, error_message):
     ["a", 0, 1.5, pd.Timedelta("1 days"), pd.Timestamp("2019-12-31")],
 )
 def test_basic(scalar):
+    # [FUNCTION DOC]
+    # Parametrized over scalar label types (string, int, float, timedelta, timestamp).
+    # Exploding a column that holds list, missing, empty list and tuple yields seven
+    # rows with repeated index labels, object dtype and missing values for the empty and
+    # missing entries.
     df = pd.DataFrame(
         {scalar: pd.Series([[0, 1, 2], np.nan, [], (3, 4)], index=list("abcd")), "B": 1}
     )
@@ -75,6 +96,9 @@ def test_basic(scalar):
 
 
 def test_multi_index_rows():
+    # [FUNCTION DOC]
+    # Exploding with a multi-level row index repeats index tuples for each exploded
+    # element.
     df = pd.DataFrame(
         {"A": np.array([[0, 1, 2], np.nan, [], (3, 4)], dtype=object), "B": 1},
         index=pd.MultiIndex.from_tuples([("a", 1), ("a", 2), ("b", 1), ("b", 2)]),
@@ -105,6 +129,9 @@ def test_multi_index_rows():
 
 
 def test_multi_index_columns():
+    # [FUNCTION DOC]
+    # Exploding a column with tuple label (multi-level columns) works and repeats the
+    # integer index; the other column is repeated.
     df = pd.DataFrame(
         {("A", 1): np.array([[0, 1, 2], np.nan, [], (3, 4)], dtype=object), ("A", 2): 1}
     )
@@ -124,6 +151,10 @@ def test_multi_index_columns():
 
 
 def test_usecase():
+    # [FUNCTION DOC]
+    # Two documentation use cases: exploding a range column with another column as
+    # index; splitting strings then exploding the resulting lists to rows keeping other
+    # columns repeated.
     # explode a single column
     # gh-10511
     df = pd.DataFrame(
@@ -198,6 +229,10 @@ def test_usecase():
     ],
 )
 def test_duplicate_index(input_dict, input_index, expected_dict, expected_index):
+    # [FUNCTION DOC]
+    # Parametrized over four index types (duplicate flat, named, two-level, partly-named
+    # two-level). Exploding a frame with duplicated index labels repeats them and keeps
+    # names.
     # GH 28005
     df = pd.DataFrame(input_dict, index=input_index, dtype=object)
     result = df.explode("col1")
@@ -206,6 +241,8 @@ def test_duplicate_index(input_dict, input_index, expected_dict, expected_index)
 
 
 def test_ignore_index():
+    # [FUNCTION DOC]
+    # With ignore_index true the result gets a new range index.
     # GH 34932
     df = pd.DataFrame({"id": range(0, 20, 10), "values": [list("ab"), list("cd")]})
     result = df.explode("values", ignore_index=True)
@@ -216,6 +253,9 @@ def test_ignore_index():
 
 
 def test_explode_sets():
+    # [FUNCTION DOC]
+    # Set values are exploded (order undefined, so the result is sorted before
+    # comparison).
     # https://github.com/pandas-dev/pandas/issues/35614
     df = pd.DataFrame({"a": [{"x", "y"}], "b": [1]}, index=[1])
     result = df.explode(column="a").sort_values(by="a")
@@ -264,6 +304,10 @@ def test_explode_sets():
     ],
 )
 def test_multi_columns(input_subset, expected_dict, expected_index):
+    # [FUNCTION DOC]
+    # Parametrized over column lists. Exploding two columns together aligns elements
+    # positionally and pads shorter or missing entries with missing values; a single
+    # column explode leaves the other column's lists repeated.
     # GH 39240
     df = pd.DataFrame(
         {
@@ -279,6 +323,9 @@ def test_multi_columns(input_subset, expected_dict, expected_index):
 
 
 def test_multi_columns_nan_empty():
+    # [FUNCTION DOC]
+    # Exploding two columns where one row is empty and another missing gives a single
+    # row with missing values for each.
     # GH 46084
     df = pd.DataFrame(
         {
@@ -300,6 +347,9 @@ def test_multi_columns_nan_empty():
 
 
 def test_str_dtype():
+    # [FUNCTION DOC]
+    # Exploding a column of string dtype with scalar values returns an equal but
+    # distinct frame.
     # https://github.com/pandas-dev/pandas/pull/61623
     df = pd.DataFrame({"a": ["x", "y"]}, dtype="str")
     result = df.explode(column="a")

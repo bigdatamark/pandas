@@ -1,3 +1,9 @@
+# [MODULE DOC]
+# Tests for the alignment method of the frame class (align) against another frame or a
+# series: join types, axis choice, fill values, tz-aware indexes, categorical and
+# multi-level indexes, copy semantics and error cases. Uses frame fixtures from the
+# conftest and the testing helpers module. No import-time side effects.
+
 from datetime import timezone
 
 import numpy as np
@@ -14,7 +20,16 @@ import pandas._testing as tm
 
 
 class TestDataFrameAlign:
+    # [CLASS DOC]
+    # Stateless pytest class collecting the alignment tests.
     def test_frame_align_aware(self):
+        # [FUNCTION DOC]
+        # Aligning two frames with tz-aware indexes of the same zone keeps the zone.
+        # Aligning indexes in different zones converts both to UTC, for frame-with-frame
+        # and frame-with-series cases.
+        # KNOWN ISSUE: the final series-with-frame case calls align but does not capture
+        # its result, so the following assertions re-check the variables from the
+        # previous case and do not verify that call.
         idx1 = date_range("2001", periods=5, freq="h", tz="US/Eastern")
         idx2 = date_range("2001", periods=5, freq="2h", tz="US/Eastern")
         df1 = DataFrame(np.random.default_rng(2).standard_normal((len(idx1), 3)), idx1)
@@ -41,6 +56,14 @@ class TestDataFrameAlign:
         assert new2.index.tz is timezone.utc
 
     def test_align_float(self, float_frame):
+        # [FUNCTION DOC]
+        # Float-frame alignment with itself returns a new manager (not shared). With a
+        # truncated other along rows with fill value, checks columns, fill of
+        # non-overlapping rows and right join indexes; along columns checks index/column
+        # results, inner join, and that an invalid axis raises a value error.
+        # KNOWN ISSUE: the first alignment check is duplicated verbatim, and the second
+        # fill-value check follows a call with no fill value but over an empty set of
+        # non-overlapping labels, so it passes vacuously.
         af, bf = float_frame.align(float_frame)
         assert af._mgr is not float_frame._mgr
 
@@ -86,6 +109,9 @@ class TestDataFrameAlign:
             float_frame.align(af.iloc[0, :3], join="inner", axis=2)
 
     def test_align_frame_with_series(self, float_frame):
+        # [FUNCTION DOC]
+        # Aligning a frame with a series on rows returns the frame index for both and
+        # the second result is a series.
         # align dataframe to series with broadcast or not
         idx = float_frame.index
         s = Series(range(len(idx)), index=idx)
@@ -96,6 +122,10 @@ class TestDataFrameAlign:
         assert isinstance(right, Series)
 
     def test_align_series_condition(self):
+        # [FUNCTION DOC]
+        # Does not call align: checks boolean selection with a series condition and
+        # where with a series condition and scalar other produce the expected frames
+        # (regression for an old issue).
         # see gh-9558
         df = DataFrame({"a": [1, 2, 3], "b": [4, 5, 6]})
         result = df[df["a"] == 2]
@@ -107,6 +137,10 @@ class TestDataFrameAlign:
         tm.assert_frame_equal(result, expected)
 
     def test_align_mixed_float(self, mixed_float_frame):
+        # [FUNCTION DOC]
+        # Aligning the mixed-float frame with a column of an empty-valued frame, inner
+        # join along columns with fill value zero, gives an empty row index on the other
+        # result.
         # mixed floats/ints
         other = DataFrame(index=range(5), columns=["A", "B", "C"])
         af, bf = mixed_float_frame.align(
@@ -115,6 +149,8 @@ class TestDataFrameAlign:
         tm.assert_index_equal(bf.index, Index([]))
 
     def test_align_mixed_int(self, mixed_int_frame):
+        # [FUNCTION DOC]
+        # Same as the mixed float case but for the mixed integer frame.
         other = DataFrame(index=range(5), columns=["A", "B", "C"])
         af, bf = mixed_int_frame.align(
             other.iloc[:, 0], join="inner", axis=1, fill_value=0
@@ -131,6 +167,12 @@ class TestDataFrameAlign:
         ],
     )
     def test_align_categorical(self, l_ordered, r_ordered, expected):
+        # [FUNCTION DOC]
+        # Parametrized over ordered flags of left and right categorical indexes and the
+        # expected index class. Aligning two frames indexed by categoricals with the
+        # same categories keeps categorical indexes only if both orderedness flags
+        # agree; otherwise the result index is a plain index. Both results share equal
+        # indexes.
         # GH-28397
         df_1 = DataFrame(
             {
@@ -155,6 +197,10 @@ class TestDataFrameAlign:
         tm.assert_index_equal(aligned_1.index, aligned_2.index)
 
     def test_align_multiindex(self):
+        # [FUNCTION DOC]
+        # Aligns a frame with a three-level index to a frame indexed by a single named
+        # level, for left and right joins in both call orders; flipped calls give equal
+        # results and values are broadcast over shared level labels.
         # GH#10665
         # same test cases as test_align_multiindex in test_series.py
 
@@ -190,6 +236,9 @@ class TestDataFrameAlign:
         tm.assert_frame_equal(expr, res2l)
 
     def test_align_series_combinations(self):
+        # [FUNCTION DOC]
+        # Aligning a frame with a series on rows and a series with a frame yields the
+        # union index with missing values for absent labels, consistent in both orders.
         df = DataFrame({"a": [1, 3, 5], "b": [1, 3, 5]}, index=list("ACE"))
         s = Series([1, 2, 4], index=list("ABD"), name="x")
 
@@ -210,6 +259,9 @@ class TestDataFrameAlign:
         tm.assert_frame_equal(res2, exp1)
 
     def test_multiindex_align_to_series_with_common_index_level(self):
+        # [FUNCTION DOC]
+        # Aligning a frame with two-level index to a series whose index is the shared
+        # inner level broadcasts the series over the other level; left stays the same.
         #  GH-46001
         foo_index = Index([1, 2, 3], name="foo")
         bar_index = Index([1, 2], name="bar")
@@ -227,6 +279,9 @@ class TestDataFrameAlign:
         tm.assert_series_equal(result_r, expected_r)
 
     def test_multiindex_align_to_series_with_common_index_level_missing_in_left(self):
+        # [FUNCTION DOC]
+        # Same, where the series has extra labels not in the frame; result uses only the
+        # frame labels.
         #  GH-46001
         foo_index = Index([1, 2, 3], name="foo")
         bar_index = Index([1, 2], name="bar")
@@ -246,6 +301,8 @@ class TestDataFrameAlign:
         tm.assert_series_equal(result_r, expected_r)
 
     def test_multiindex_align_to_series_with_common_index_level_missing_in_right(self):
+        # [FUNCTION DOC]
+        # Same, where the series lacks some frame labels; those give missing values.
         #  GH-46001
         foo_index = Index([1, 2, 3], name="foo")
         bar_index = Index([1, 2, 3, 4], name="bar")
@@ -265,6 +322,8 @@ class TestDataFrameAlign:
         tm.assert_series_equal(result_r, expected_r)
 
     def test_multiindex_align_to_series_with_common_index_level_missing_in_both(self):
+        # [FUNCTION DOC]
+        # Same, where both sides lack some labels of the shared level.
         #  GH-46001
         foo_index = Index([1, 2, 3], name="foo")
         bar_index = Index([1, 3, 4], name="bar")
@@ -284,6 +343,9 @@ class TestDataFrameAlign:
         tm.assert_series_equal(result_r, expected_r)
 
     def test_multiindex_align_to_series_with_common_index_level_non_unique_cols(self):
+        # [FUNCTION DOC]
+        # Same alignment for a frame with duplicated column labels; series result is as
+        # expected and the left columns are unchanged.
         #  GH-46001
         foo_index = Index([1, 2, 3], name="foo")
         bar_index = Index([1, 2], name="bar")
@@ -302,6 +364,9 @@ class TestDataFrameAlign:
         tm.assert_index_equal(result_left.columns, df.columns)
 
     def test_missing_axis_specification_exception(self):
+        # [FUNCTION DOC]
+        # Aligning a frame with a series without giving an axis raises a value error
+        # telling that axis zero or one must be specified.
         df = DataFrame(np.arange(50).reshape((10, 5)))
         series = Series(np.arange(5))
 
@@ -309,6 +374,11 @@ class TestDataFrameAlign:
             df.align(series)
 
     def test_align_series_check_copy(self):
+        # [FUNCTION DOC]
+        # Aligning a frame with a series along columns returns a copy of the series:
+        # later mutation of the original series does not change the returned one.
+        # KNOWN ISSUE: the issue reference comment is incomplete (no issue number) and
+        # the first returned value is unused.
         # GH#
         df = DataFrame({0: [1, 2]})
         ser = Series([1], name=0)
@@ -318,6 +388,9 @@ class TestDataFrameAlign:
         tm.assert_series_equal(other, expected)
 
     def test_align_identical_different_object(self):
+        # [FUNCTION DOC]
+        # Aligning a frame with a series along rows returns equal but new objects (not
+        # the same identity as inputs).
         # GH#51032
         df = DataFrame({"a": [1, 2]})
         ser = Series([3, 4])
@@ -328,6 +401,8 @@ class TestDataFrameAlign:
         assert ser is not result2
 
     def test_align_identical_different_object_columns(self):
+        # [FUNCTION DOC]
+        # Same, aligning along columns with a series indexed by the column label.
         # GH#51032
         df = DataFrame({"a": [1, 2]})
         ser = Series([1], index=["a"])
