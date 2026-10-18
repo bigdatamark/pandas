@@ -3,6 +3,14 @@ Tests that work on both the Python and C engines but do not have a
 specific classification into the other test modules.
 """
 
+# [MODULE DOC]
+# Parser tests (all engines via the parser fixture) of integer and boolean parsing:
+# float-looking integers, boolean text and custom true/false values, integers beyond
+# floating-point precision or the 64-bit ranges, overflow handling with converters, and
+# precision of large integers in wide rows.
+# Defines two marker aliases: one marks a test as expected to fail for the pyarrow
+# engine and one skips it for that engine.
+
 from io import StringIO
 
 import numpy as np
@@ -23,6 +31,9 @@ skip_pyarrow = pytest.mark.usefixtures("pyarrow_skip")
 
 
 def test_int_conversion(all_parsers):
+    # [FUNCTION DOC]
+    # Verifies a column of values written with a decimal point is read as floats while a
+    # column of plain integers is read as integers.
     data = """A,B
 1.0,1
 2.0,2
@@ -61,6 +72,11 @@ def test_int_conversion(all_parsers):
     ],
 )
 def test_parse_bool(all_parsers, data, kwargs, expected):
+    # [FUNCTION DOC]
+    # Verifies boolean parsing: True/False and TRUE/FALSE text become booleans by
+    # default; custom true-values and false-values lists convert other words (case
+    # variants of yes and no, or arbitrary words) to booleans; the second column stays
+    # integer or becomes boolean as given.
     parser = all_parsers
     result = parser.read_csv(StringIO(data), **kwargs)
     expected = DataFrame(expected, columns=["A", "B"])
@@ -68,6 +84,9 @@ def test_parse_bool(all_parsers, data, kwargs, expected):
 
 
 def test_parse_integers_above_fp_precision(all_parsers):
+    # [FUNCTION DOC]
+    # Verifies ten integers around seventeen digits long, which cannot all be
+    # represented exactly as floats, are read exactly as 64-bit integers.
     data = """Numbers
 17007000002000191
 17007000002000191
@@ -102,6 +121,12 @@ def test_parse_integers_above_fp_precision(all_parsers):
 
 @pytest.mark.parametrize("sep", [" ", r"\s+"])
 def test_integer_overflow_bug(all_parsers, sep):
+    # [FUNCTION DOC]
+    # Verifies that rows of two fields, where the first looks like a huge exponent
+    # number, parse (with a single-space or whitespace-regex separator) into a float and
+    # an integer column with the expected values (regression for an integer overflow).
+    # For pyarrow with the regex separator, verifies the regex separator unsupported
+    # error.
     # see gh-2601
     data = "65248E10 11\n55555E55 22\n"
     parser = all_parsers
@@ -117,6 +142,9 @@ def test_integer_overflow_bug(all_parsers, sep):
 
 
 def test_int64_min_issues(all_parsers):
+    # [FUNCTION DOC]
+    # Verifies a column with integer zero and an empty field is read as floats with NaN,
+    # and the other column stays integer.
     # see gh-2599
     parser = all_parsers
     data = "A,B\n0,0\n0,"
@@ -128,6 +156,12 @@ def test_int64_min_issues(all_parsers):
 
 @pytest.mark.parametrize("conv", [None, np.int64, np.uint64])
 def test_int64_overflow(all_parsers, conv, request):
+    # [FUNCTION DOC]
+    # Uses ID values with leading zeros and more than the maximum unsigned 64-bit
+    # magnitude. With no converter, verifies they are read as Python integers in an
+    # object column (for pyarrow this is expected to fail since it parses floats). With
+    # a signed or unsigned 64-bit converter, verifies an overflow error is raised (a
+    # value error stating converters are unsupported for pyarrow).
     data = """ID
 00013007854817840016671868
 00013007854817840016749251
@@ -184,6 +218,10 @@ def test_int64_overflow(all_parsers, conv, request):
     "val", [np.iinfo(np.uint64).max, np.iinfo(np.int64).max, np.iinfo(np.int64).min]
 )
 def test_int64_uint64_range(all_parsers, val):
+    # [FUNCTION DOC]
+    # Skipped for pyarrow. Verifies the maximum unsigned 64-bit value and the maximum
+    # and minimum signed 64-bit values, given as a single no-header value, are parsed
+    # exactly as integers.
     # These numbers fall right inside the int64-uint64
     # range, so they should be parsed as integer.
     parser = all_parsers
@@ -198,6 +236,10 @@ def test_int64_uint64_range(all_parsers, val):
     "val", [np.iinfo(np.uint64).max + 1, np.iinfo(np.int64).min - 1]
 )
 def test_outside_int64_uint64_range(all_parsers, val, request):
+    # [FUNCTION DOC]
+    # Skipped for pyarrow. Verifies values just beyond the unsigned 64-bit maximum or
+    # below the signed 64-bit minimum are parsed as Python integers in an object column.
+    # The request fixture is accepted but unused.
     # These numbers fall just outside the int64-uint64
     # range, so they should be parsed as object.
     parser = all_parsers
@@ -213,6 +255,9 @@ def test_outside_int64_uint64_range(all_parsers, val, request):
     "val", [np.iinfo(np.uint64).max + 1, np.iinfo(np.int64).min - 1]
 )
 def test_outside_int64_uint64_range_follow_str(all_parsers, val):
+    # [FUNCTION DOC]
+    # Skipped for pyarrow. Verifies that an out-of-range integer followed by a
+    # non-numeric string yields an object column of the strings of both values.
     parser = all_parsers
 
     result = parser.read_csv(StringIO(f"{val}\nabc"), header=None)
@@ -224,6 +269,11 @@ def test_outside_int64_uint64_range_follow_str(all_parsers, val):
 @xfail_pyarrow  # gets float64 dtype instead of object
 @pytest.mark.parametrize("exp_data", [[str(-1), str(2**63)], [str(2**63), str(-1)]])
 def test_numeric_range_too_wide(all_parsers, exp_data):
+    # [FUNCTION DOC]
+    # Marked expected to fail for pyarrow (yields float instead of object). Verifies
+    # that a column holding a negative number and a number above the signed 64-bit
+    # range, in either order, cannot fit one numeric dtype and is returned as an object
+    # column of strings.
     # No numerical dtype can hold both negative and uint64
     # values, so they should be cast as string.
     parser = all_parsers
@@ -235,6 +285,10 @@ def test_numeric_range_too_wide(all_parsers, exp_data):
 
 
 def test_integer_precision(all_parsers):
+    # [FUNCTION DOC]
+    # Verifies that the fifth column of two wide rows (with semicolon-containing fields
+    # and empty fields) is parsed as a series of exact 64-bit integers with name four,
+    # without losing precision.
     # Gh 7072
     s = """1,1;0;0;0;1;1;3844;3844;3844;1;1;1;1;1;1;0;0;1;1;0;0,,,4321583677327450765
 5,1;0;0;0;1;1;843;843;843;1;1;1;1;1;1;0;0;1;1;0;0,64.0,;,4321113141090630389"""

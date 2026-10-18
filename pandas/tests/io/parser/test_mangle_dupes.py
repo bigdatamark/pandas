@@ -4,6 +4,12 @@ CSV engine. In general, the expected result is that they are either thoroughly
 de-duplicated (if mangling requested) or ignored otherwise.
 """
 
+# [MODULE DOC]
+# Parser tests (all engines via the parser fixture) of handling duplicated column names:
+# de-duplication by appending numeric suffixes, collisions with names that already have
+# suffixes, behavior with explicit names, and placeholder names for unnamed columns.
+# Defines a marker alias for expected failures with the pyarrow engine.
+
 from io import StringIO
 
 import pytest
@@ -24,6 +30,9 @@ pytestmark = pytest.mark.filterwarnings(
 
 @xfail_pyarrow  # ValueError: Found non-unique column index
 def test_basic(all_parsers):
+    # [FUNCTION DOC]
+    # Marked expected to fail for pyarrow. Verifies repeated header names get dot-number
+    # suffixes in order of appearance (second a becomes a.1; third b becomes b.2).
     parser = all_parsers
 
     data = "a,a,b,b,b\n1,2,3,4,5"
@@ -35,6 +44,9 @@ def test_basic(all_parsers):
 
 @xfail_pyarrow  # ValueError: Found non-unique column index
 def test_basic_names(all_parsers):
+    # [FUNCTION DOC]
+    # Marked expected to fail for pyarrow. Verifies a duplicate a in the header becomes
+    # a.1 when names are not given.
     # See gh-7160
     parser = all_parsers
 
@@ -46,6 +58,9 @@ def test_basic_names(all_parsers):
 
 
 def test_basic_names_raise(all_parsers):
+    # [FUNCTION DOC]
+    # Verifies explicitly passing duplicate names raises a value error saying there are
+    # duplicate names.
     # See gh-7160
     parser = all_parsers
 
@@ -76,6 +91,10 @@ def test_basic_names_raise(all_parsers):
     ],
 )
 def test_thorough_mangle_columns(all_parsers, data, expected):
+    # [FUNCTION DOC]
+    # Marked expected to fail for pyarrow. Verifies mangling avoids collisions with
+    # header entries that already look mangled (a second a becomes a.2 because a.1
+    # exists; deeper suffix chains and later duplicates get the next free suffix).
     # see gh-17060
     parser = all_parsers
 
@@ -115,6 +134,12 @@ def test_thorough_mangle_columns(all_parsers, data, expected):
     ],
 )
 def test_thorough_mangle_names(all_parsers, data, names, expected):
+    # [FUNCTION DOC]
+    # Verifies that explicit names with duplicates, including ones resembling suffixed
+    # names, raise a value error about duplicate names.
+    # KNOWN ISSUE: the expected frame parameter is never used; the test only checks
+    # that the error is raised, so the expected mangled columns in the parametrization
+    # are dead data.
     # see gh-17095
     parser = all_parsers
 
@@ -124,6 +149,11 @@ def test_thorough_mangle_names(all_parsers, data, names, expected):
 
 @xfail_pyarrow  # AssertionError: DataFrame.columns are different
 def test_mangled_unnamed_placeholders(all_parsers):
+    # [FUNCTION DOC]
+    # Marked expected to fail for pyarrow. Repeatedly writes a frame to CSV text (with
+    # its index as an unnamed column) and reads it back three times, verifying each
+    # round adds another unnamed index column whose placeholder name gains one more
+    # numeric suffix level, so placeholders are mangled consistently.
     # xref gh-13017
     orig_key = "0"
     parser = all_parsers
@@ -147,6 +177,10 @@ def test_mangled_unnamed_placeholders(all_parsers):
 
 @xfail_pyarrow  # ValueError: Found non-unique column index
 def test_mangle_dupe_cols_already_exists(all_parsers):
+    # [FUNCTION DOC]
+    # Marked expected to fail for pyarrow. Verifies mangling of repeated header names
+    # when some mangled forms are already present (a.1, a.3, a.1.1), giving unique names
+    # with the next free numbers.
     # GH#14704
     parser = all_parsers
 
@@ -161,6 +195,9 @@ def test_mangle_dupe_cols_already_exists(all_parsers):
 
 @xfail_pyarrow  # ValueError: Found non-unique column index
 def test_mangle_dupe_cols_already_exists_unnamed_col(all_parsers):
+    # [FUNCTION DOC]
+    # Marked expected to fail for pyarrow. Verifies empty header entries and entries
+    # already named as placeholders are mangled without collisions.
     # GH#14704
     parser = all_parsers
 
@@ -175,6 +212,12 @@ def test_mangle_dupe_cols_already_exists_unnamed_col(all_parsers):
 
 @pytest.mark.parametrize("usecol, engine", [([0, 1, 1], "python"), ([0, 1, 1], "c")])
 def test_mangle_cols_names(all_parsers, usecol, engine):
+    # [FUNCTION DOC]
+    # Verifies explicit duplicate names combined with a column selection that repeats an
+    # index raise a value error about duplicate names.
+    # KNOWN ISSUE: the engine value is passed on as a keyword argument but the parser
+    # fixture's wrapper always overrides the engine with its own, and both
+    # parametrizations differ only in that ignored value.
     # GH 11823
     parser = all_parsers
     data = "1,2,3"

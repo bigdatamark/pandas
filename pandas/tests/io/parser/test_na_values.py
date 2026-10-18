@@ -3,6 +3,19 @@ Tests that NA values are properly handled during
 parsing for all of the parsers defined in parsers.py
 """
 
+# [MODULE DOC]
+# Parser tests (all engines via the parser fixture) of missing-value handling: default
+# missing-value strings, custom missing values (scalar, list, per-column dictionary),
+# keeping or dropping the defaults, the missing-value filter option, interactions with
+# dtypes, index columns, multi-level headers, booleans and large integers.
+# KNOWN ISSUE: the module docstring says the parsers are defined in a file named
+# parsers.py, but no such module exists here; the parser fixtures come from the
+# package's shared fixtures module.
+# Imports the set of default missing-value strings from the parsers extension. Defines
+# two marker aliases: one marks a test as expected to fail for the pyarrow engine and
+# one skips it for that engine. The pyarrow engine requires string missing values and
+# does not accept a per-column dictionary, so several tests expect errors for it.
+
 from io import StringIO
 
 import numpy as np
@@ -26,6 +39,9 @@ skip_pyarrow = pytest.mark.usefixtures("pyarrow_skip")
 
 
 def test_string_nas(all_parsers):
+    # [FUNCTION DOC]
+    # Verifies empty fields in string columns are read as missing values (None for
+    # pyarrow, NaN otherwise).
     parser = all_parsers
     data = """A,B,C
 a,b,c
@@ -44,6 +60,9 @@ d,,f
 
 
 def test_detect_string_na(all_parsers):
+    # [FUNCTION DOC]
+    # Verifies the default missing-value spellings NA, NaN and nan in string columns are
+    # converted to missing values (None for pyarrow).
     parser = all_parsers
     data = """A,B
 foo,bar
@@ -88,6 +107,12 @@ NaN,nan
     ],
 )
 def test_non_string_na_values(all_parsers, data, na_values, request):
+    # [FUNCTION DOC]
+    # Verifies numeric and string custom missing values (-999 given as ints, floats or
+    # strings in various combinations) match -999 in the data written with or without
+    # trailing zeros, producing NaN in a float frame. For pyarrow, non-string values
+    # expect a type error that all values must be strings, and the trailing-zeros data
+    # is marked expected to fail since equivalent floats are not recognized.
     # see gh-3611: with an odd float format, we can't match
     # the string "999.0" exactly but still need float matching
     parser = all_parsers
@@ -112,6 +137,11 @@ def test_non_string_na_values(all_parsers, data, na_values, request):
 
 
 def test_default_na_values(all_parsers):
+    # [FUNCTION DOC]
+    # Verifies the library's default missing-value string set equals a hard-coded list
+    # of nineteen spellings (including NA variants, null, nan, infinity-marker forms and
+    # the empty string), then builds a square block of data where each row has one of
+    # those spellings on the diagonal and verifies every cell is read as NaN.
     _NA_VALUES = {
         "-1.#IND",
         "1.#QNAN",
@@ -139,6 +169,10 @@ def test_default_na_values(all_parsers):
     nv = len(_NA_VALUES)
 
     def f(i, v):
+        # [FUNCTION DOC]
+        # HELPER: builds one CSV row for the default-NA test. Takes the row number and a
+        # missing-value spelling; returns the spelling preceded by that many commas and
+        # followed by commas to fill out the total column count.
         if i == 0:
             buf = ""
         elif i > 0:
@@ -161,6 +195,10 @@ def test_default_na_values(all_parsers):
 
 @pytest.mark.parametrize("na_values", ["baz", ["baz"]])
 def test_custom_na_values(all_parsers, na_values):
+    # [FUNCTION DOC]
+    # Verifies a custom missing value given as a string or a one-element list is applied
+    # together with the defaults, while skipping the second line (a junk row). For
+    # pyarrow, verifies the value error that skiprows must be an integer.
     parser = all_parsers
     data = """A,B,C
 ignore,this,row
@@ -182,6 +220,9 @@ ignore,this,row
 
 
 def test_bool_na_values(all_parsers):
+    # [FUNCTION DOC]
+    # Verifies columns of True/False with NA are read as object columns of booleans and
+    # NaN (None for pyarrow), while a complete column is read as boolean.
     data = """A,B,C
 True,False,True
 NA,True,False
@@ -202,6 +243,10 @@ False,NA,True"""
 
 
 def test_na_value_dict(all_parsers):
+    # [FUNCTION DOC]
+    # Verifies a per-column dictionary of custom missing values makes the listed strings
+    # missing in those columns while the default markers still apply to the others. For
+    # pyarrow, verifies the dictionary-unsupported value error.
     data = """A,B,C
 foo,bar,NA
 bar,foo,foo
@@ -250,6 +295,13 @@ bar,foo,foo"""
     ],
 )
 def test_na_value_dict_multi_index(all_parsers, index_col, expected):
+    # [FUNCTION DOC]
+    # Verifies that, passing an empty set of custom missing values (the default markers
+    # still apply) and index columns given by position or name, the NA entry in column
+    # b is read as NaN and the result is a single-row frame with a plain or two-level
+    # index.
+    # KNOWN ISSUE: the test name mentions a dictionary of missing values, but an empty
+    # set is passed; no dictionary is involved.
     data = """\
 a,b,c,d
 0,NA,1,5
@@ -299,6 +351,13 @@ a,b,c,d
 def test_na_values_keep_default(
     all_parsers, kwargs, expected, request, using_infer_string
 ):
+    # [FUNCTION DOC]
+    # Parametrized over: defaults only; a per-column dictionary of empty lists with the
+    # defaults turned off (empty and nan strings kept); a list of one value with
+    # defaults turned off; a dictionary of empty lists with defaults on. Verifies which
+    # spellings become missing. For pyarrow, dictionary inputs expect the
+    # unsupported-dictionary error and other cases are marked expected to fail depending
+    # on string inference.
     data = """\
 A,B,C
 a,1,one
@@ -326,6 +385,9 @@ g,7,seven
 
 
 def test_no_na_values_no_keep_default(all_parsers):
+    # [FUNCTION DOC]
+    # Verifies that with the default missing values turned off and no custom values, the
+    # strings None, nan and empty stay as strings.
     # see gh-4318: passing na_values=None and
     # keep_default_na=False yields 'None" as a na_value
     data = """\
@@ -352,6 +414,10 @@ g,7,seven
 
 
 def test_no_keep_default_na_dict_na_values(all_parsers):
+    # [FUNCTION DOC]
+    # Verifies a dictionary of custom missing values for one column with defaults turned
+    # off makes only that column's listed value missing and keeps the empty string in
+    # the other column. For pyarrow, verifies the unsupported-dictionary error.
     # see gh-19227
     data = "a,b\n,2"
     parser = all_parsers
@@ -372,6 +438,9 @@ def test_no_keep_default_na_dict_na_values(all_parsers):
 
 
 def test_no_keep_default_na_dict_na_scalar_values(all_parsers):
+    # [FUNCTION DOC]
+    # Verifies a scalar (not list) value inside the per-column dictionary works with
+    # defaults turned off. For pyarrow, verifies the unsupported-dictionary error.
     # see gh-19227
     #
     # Scalar values shouldn't cause the parsing to crash or fail.
@@ -391,6 +460,11 @@ def test_no_keep_default_na_dict_na_scalar_values(all_parsers):
 
 @pytest.mark.parametrize("col_zero_na_values", [113125, "113125"])
 def test_no_keep_default_na_dict_na_values_diff_reprs(all_parsers, col_zero_na_values):
+    # [FUNCTION DOC]
+    # Verifies a per-column dictionary where the same number is given as an integer or
+    # as a string is matched against column values in either representation, along with
+    # string and empty entries, with defaults turned off. For pyarrow, verifies the
+    # unsupported-dictionary error.
     # see gh-19227
     data = """\
 113125,"blah","/blaha",kjsdkj,412.166,225.874,214.008
@@ -439,6 +513,11 @@ def test_no_keep_default_na_dict_na_values_diff_reprs(all_parsers, col_zero_na_v
 def test_na_values_na_filter_override(
     request, all_parsers, na_filter, row_data, using_infer_string
 ):
+    # [FUNCTION DOC]
+    # Verifies that with the missing-value filter on, the nan text and a custom marker B
+    # become NaN; with the filter off nothing is converted and all values remain
+    # strings. For pyarrow, most cases are marked expected to fail (unsupported or
+    # mismatched dtypes).
     parser = all_parsers
     if parser.engine == "pyarrow":
         # mismatched dtypes in both cases, FutureWarning in the True case
@@ -459,6 +538,9 @@ nan,B
 
 @skip_pyarrow  # CSV parse error: Expected 8 columns, got 5:
 def test_na_trailing_columns(all_parsers):
+    # [FUNCTION DOC]
+    # Skipped for pyarrow. Verifies rows shorter than the header have the trailing
+    # columns filled with NaN.
     parser = all_parsers
     data = """Date,Currency,Symbol,Type,Units,UnitPrice,Cost,Tax
 2012-03-14,USD,AAPL,BUY,1000
@@ -493,6 +575,11 @@ def test_na_trailing_columns(all_parsers):
     ],
 )
 def test_na_values_scalar(all_parsers, na_values, row_data):
+    # [FUNCTION DOC]
+    # Verifies a scalar missing value (integer) or a per-column dictionary of scalar
+    # values marks matching numbers as NaN in the named columns. For pyarrow, verifies
+    # the unsupported-dictionary error for the dictionary case and a type error
+    # requiring string values for the scalar case.
     # see gh-12224
     parser = all_parsers
     names = ["a", "b"]
@@ -515,6 +602,10 @@ def test_na_values_scalar(all_parsers, na_values, row_data):
 
 
 def test_na_values_dict_aliasing(all_parsers):
+    # [FUNCTION DOC]
+    # Verifies reading with a dictionary of missing values gives the expected NaNs and
+    # does not modify the dictionary passed in. For pyarrow, verifies the
+    # unsupported-dictionary error.
     parser = all_parsers
     na_values = {"a": 2, "b": 1}
     na_values_copy = na_values.copy()
@@ -537,6 +628,12 @@ def test_na_values_dict_aliasing(all_parsers):
 
 
 def test_na_values_dict_null_column_name(all_parsers):
+    # [FUNCTION DOC]
+    # Regression: with a column whose name is none, names including none, a dictionary
+    # mapping each name to the default missing-value set, explicit dtypes and defaults
+    # turned off, verifies the first column becomes the index and the remaining columns
+    # have NaN for the empty value. For pyarrow, verifies the unsupported-dictionary
+    # error.
     # see gh-57547
     parser = all_parsers
     data = ",x,y\n\nMA,1,2\nNA,2,1\nOA,,3"
@@ -577,6 +674,9 @@ def test_na_values_dict_null_column_name(all_parsers):
 
 
 def test_na_values_dict_col_index(all_parsers):
+    # [FUNCTION DOC]
+    # Verifies a dictionary keyed by column position (zero) applies its missing value to
+    # that column. For pyarrow, verifies the unsupported-dictionary error.
     # see gh-14203
     data = "a\nfoo\n1"
     parser = all_parsers
@@ -606,6 +706,12 @@ def test_na_values_dict_col_index(all_parsers):
     ],
 )
 def test_na_values_uint64(all_parsers, data, kwargs, expected, request):
+    # [FUNCTION DOC]
+    # Verifies handling of numbers at two to the 63rd: as a missing value (given as an
+    # int) it is converted to NaN where it matches, and without custom values a mix of
+    # such strings and empties are kept as object strings. For pyarrow, the custom value
+    # cases expect a type error requiring strings and the other case is marked expected
+    # to fail (float64 result).
     # see gh-14983
     parser = all_parsers
 
@@ -624,6 +730,9 @@ def test_na_values_uint64(all_parsers, data, kwargs, expected, request):
 
 
 def test_empty_na_values_no_default_with_index(all_parsers):
+    # [FUNCTION DOC]
+    # Verifies reading with defaults turned off and the first column as index works for
+    # a two-row input, giving a named string index and integer column.
     # see gh-15835
     data = "a,1\nb,2"
     parser = all_parsers
@@ -637,6 +746,10 @@ def test_empty_na_values_no_default_with_index(all_parsers):
     "na_filter,index_data", [(False, ["", "5"]), (True, [np.nan, 5.0])]
 )
 def test_no_na_filter_on_index(all_parsers, na_filter, index_data, request):
+    # [FUNCTION DOC]
+    # Verifies the index column converts empty values to NaN (float index) only when the
+    # missing-value filter is on; with it off the index keeps the empty string. For
+    # pyarrow with the filter off the test is marked expected to fail.
     # see gh-5239
     #
     # Don't parse NA-values in index unless na_filter=True
@@ -653,6 +766,10 @@ def test_no_na_filter_on_index(all_parsers, na_filter, index_data, request):
 
 
 def test_inf_na_values_with_int_index(all_parsers):
+    # [FUNCTION DOC]
+    # Verifies that infinities declared as missing values do not cause an overflow error
+    # when the index is an integer column (regression), producing NaN in the data
+    # columns.
     # see gh-17128
     parser = all_parsers
     data = "idx,col1,col2\n1,3,4\n2,inf,-inf"
@@ -669,6 +786,10 @@ def test_inf_na_values_with_int_index(all_parsers):
 def test_na_values_with_dtype_str_and_na_filter(
     all_parsers, na_filter, using_infer_string, request
 ):
+    # [FUNCTION DOC]
+    # Verifies reading with string dtype for all columns converts an empty field to NaN
+    # with the filter on and keeps the empty string with the filter off. For pyarrow
+    # most cases are marked expected to fail (mismatched shapes).
     # see gh-20377
     parser = all_parsers
     if parser.engine == "pyarrow" and (na_filter is False or not using_infer_string):
@@ -699,6 +820,11 @@ def test_na_values_with_dtype_str_and_na_filter(
     ],
 )
 def test_cast_NA_to_bool_raises_error(all_parsers, data, na_values):
+    # [FUNCTION DOC]
+    # Marked expected to fail for pyarrow (message mismatch). Verifies that requesting
+    # boolean dtype for a column that has missing values (empty, null, nan or a custom
+    # marker given as scalar, list or dictionary) raises a value error about NA values
+    # in a boolean column.
     parser = all_parsers
     msg = "|".join(
         [
@@ -722,6 +848,13 @@ def test_cast_NA_to_bool_raises_error(all_parsers, data, na_values):
 #  being returned with NaN entries, whereas the pyarrow engine returns "nan"
 @xfail_pyarrow  # mismatched shapes
 def test_str_nan_dropped(all_parsers):
+    # [FUNCTION DOC]
+    # Marked expected to fail for pyarrow (shape mismatch). Verifies that with string
+    # dtype for all columns, rows whose empty fields are read as missing are removed by
+    # dropping missing rows, leaving only complete rows with leading zeros preserved.
+    # KNOWN ISSUE: a comment above the test says it is not really about the
+    # missing-values option but about empty entries being returned as NaN here and as
+    # the text nan by pyarrow.
     # see gh-21131
     parser = all_parsers
 
@@ -750,6 +883,10 @@ foo,,bar
 
 
 def test_nan_multi_index(all_parsers):
+    # [FUNCTION DOC]
+    # Verifies a dictionary of missing values keyed by a tuple (two-level header) marks
+    # the matching value as NaN in that column. For pyarrow, verifies the
+    # unsupported-dictionary error.
     # GH 42446
     parser = all_parsers
     data = "A,B,B\nX,Y,Z\n1,2,inf"
@@ -779,6 +916,10 @@ def test_nan_multi_index(all_parsers):
 
 @xfail_pyarrow  # Failed: DID NOT RAISE <class 'ValueError'>; it casts the NaN to False
 def test_bool_and_nan_to_bool(all_parsers):
+    # [FUNCTION DOC]
+    # Marked expected to fail for pyarrow (it casts the NaN to false instead of
+    # raising). Verifies a column with NaN, True and False requested as boolean raises a
+    # value error mentioning NA values.
     # GH#42808
     parser = all_parsers
     data = """0
@@ -791,6 +932,10 @@ False
 
 
 def test_bool_and_nan_to_int(all_parsers):
+    # [FUNCTION DOC]
+    # Verifies the same column requested as integer raises a value error about NA values
+    # (messages vary by engine: C engine safe-conversion message, python engine
+    # unable-to-convert message, pyarrow integer-conversion message).
     # GH#42808
     parser = all_parsers
     data = """0
@@ -814,6 +959,8 @@ False
 
 
 def test_bool_and_nan_to_float(all_parsers):
+    # [FUNCTION DOC]
+    # Verifies the same column requested as float is read as NaN, 1.0 and 0.0.
     # GH#42808
     parser = all_parsers
     data = """0
@@ -832,6 +979,12 @@ False
     [[-99.0, -99], [-99, -99.0]],
 )
 def test_na_values_dict_without_dtype(all_parsers, na_values):
+    # [FUNCTION DOC]
+    # Marked expected to fail for pyarrow. Verifies that missing values given as a list
+    # of both -99 as float and as int (in either order) mark all four entries (integer
+    # and float spellings) as NaN without specifying a dtype.
+    # KNOWN ISSUE: the name says dict, but the parametrized missing values are lists,
+    # not dictionaries.
     parser = all_parsers
     data = """A
 -99

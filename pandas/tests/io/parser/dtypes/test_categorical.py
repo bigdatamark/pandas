@@ -3,6 +3,17 @@ Tests dtype specification during parsing
 for all of the parsers defined in parsers.py
 """
 
+# [MODULE DOC]
+# Parser tests of categorical dtype handling during CSV reading: requesting categorical
+# dtype for all or some columns, unsorted and missing values, high cardinality with
+# small internal buffers, encodings, chunked reading with inferred and explicit
+# categories, explicit category lists with order, and coercion of parsed values to
+# numeric, datetime, timestamp, timedelta and boolean categories.
+# KNOWN ISSUE: the module docstring says the parsers are defined in a file named
+# parsers.py, but no such module exists here; the parser fixtures come from the
+# package's shared fixtures module.
+# Uses the pyarrow expected-failure marker alias.
+
 from io import StringIO
 import os
 
@@ -39,6 +50,11 @@ xfail_pyarrow = pytest.mark.usefixtures("pyarrow_xfail")
     ],
 )
 def test_categorical_dtype(all_parsers, dtype):
+    # [FUNCTION DOC]
+    # Marked expected to fail for pyarrow. Verifies that requesting category dtype as a
+    # string, as a dtype object, or as a per-column mapping converts every column to a
+    # categorical whose categories are the string values (so even numbers are categories
+    # of strings).
     # see gh-10153
     parser = all_parsers
     data = """a,b,c
@@ -58,6 +74,11 @@ def test_categorical_dtype(all_parsers, dtype):
 
 @pytest.mark.parametrize("dtype", [{"b": "category"}, {1: "category"}])
 def test_categorical_dtype_single(all_parsers, dtype, request):
+    # [FUNCTION DOC]
+    # Verifies that requesting category for only one column (by name or position)
+    # converts just that column to a categorical and leaves the others numeric. For
+    # pyarrow the test is marked as non-strictly expected to fail because it sometimes
+    # yields object dtype.
     # see gh-10153
     parser = all_parsers
     data = """a,b,c
@@ -80,6 +101,9 @@ def test_categorical_dtype_single(all_parsers, dtype, request):
 
 @xfail_pyarrow  # AssertionError: Attributes of DataFrame.iloc[:, 0] are different
 def test_categorical_dtype_unsorted(all_parsers):
+    # [FUNCTION DOC]
+    # Marked expected to fail for pyarrow. Verifies categories are taken from the data
+    # and the unsorted string column keeps its values.
     # see gh-10153
     parser = all_parsers
     data = """a,b,c
@@ -99,6 +123,9 @@ def test_categorical_dtype_unsorted(all_parsers):
 
 @xfail_pyarrow  # AssertionError: Attributes of DataFrame.iloc[:, 0] are different
 def test_categorical_dtype_missing(all_parsers):
+    # [FUNCTION DOC]
+    # Marked expected to fail for pyarrow. Verifies that text nan in a categorical
+    # column becomes a missing value rather than a category.
     # see gh-10153
     parser = all_parsers
     data = """a,b,c
@@ -119,6 +146,12 @@ def test_categorical_dtype_missing(all_parsers):
 @xfail_pyarrow  # AssertionError: Attributes of DataFrame.iloc[:, 0] are different
 @pytest.mark.slow
 def test_categorical_dtype_high_cardinality_numeric(all_parsers, monkeypatch):
+    # [FUNCTION DOC]
+    # Marked slow and expected to fail for pyarrow. Regression for the C parser with
+    # many distinct numeric strings across internal buffer boundaries: patches the
+    # buffer heuristic to thirty-two, reads thirty-three sorted numeric strings as
+    # category, reorders the result's categories to sorted order, and verifies equality
+    # with an ordered categorical.
     # see gh-18186
     # was an issue with C parser, due to DEFAULT_BUFFER_HEURISTIC
     parser = all_parsers
@@ -135,6 +168,9 @@ def test_categorical_dtype_high_cardinality_numeric(all_parsers, monkeypatch):
 
 
 def test_categorical_dtype_utf16(all_parsers, csv_dir_path):
+    # [FUNCTION DOC]
+    # Verifies that reading a UTF-16 tab-separated file with category dtype equals
+    # converting each column of the normal read to categorical.
     # see gh-10153
     pth = os.path.join(csv_dir_path, "utf16_ex.txt")
     parser = all_parsers
@@ -149,6 +185,10 @@ def test_categorical_dtype_utf16(all_parsers, csv_dir_path):
 
 
 def test_categorical_dtype_chunksize_infer_categories(all_parsers):
+    # [FUNCTION DOC]
+    # Verifies chunked reading (size two) with category dtype for one column infers
+    # categories per chunk (first chunk has a and b; second has b and c). For pyarrow,
+    # verifies the unsupported chunk size error.
     # see gh-10153
     parser = all_parsers
     data = """a,b
@@ -175,6 +215,10 @@ def test_categorical_dtype_chunksize_infer_categories(all_parsers):
 
 
 def test_categorical_dtype_chunksize_explicit_categories(all_parsers):
+    # [FUNCTION DOC]
+    # Verifies chunked reading with an explicit categorical dtype (categories a, b, c)
+    # gives each chunk the full category list. For pyarrow, verifies the unsupported
+    # chunk size error.
     # see gh-10153
     parser = all_parsers
     data = """a,b
@@ -204,6 +248,9 @@ def test_categorical_dtype_chunksize_explicit_categories(all_parsers):
 
 
 def test_categorical_dtype_latin1(all_parsers, csv_dir_path):
+    # [FUNCTION DOC]
+    # Verifies reading a latin-1 encoded file with category dtype for the second column
+    # equals converting that column to categorical after a normal read.
     # see gh-10153
     pth = os.path.join(csv_dir_path, "unicode_series.csv")
     parser = all_parsers
@@ -222,6 +269,10 @@ def test_categorical_dtype_latin1(all_parsers, csv_dir_path):
     [["a", "b", "c"], ["a", "c", "b"], ["a", "b", "c", "d"], ["c", "b", "a"]],
 )
 def test_categorical_category_dtype(all_parsers, categories, ordered):
+    # [FUNCTION DOC]
+    # Verifies that explicit categorical dtypes with different category orders,
+    # supersets of the data and the ordered flag on or off are applied exactly to the
+    # column.
     parser = all_parsers
     data = """a,b
 1,a
@@ -243,6 +294,8 @@ def test_categorical_category_dtype(all_parsers, categories, ordered):
 
 
 def test_categorical_category_dtype_unsorted(all_parsers):
+    # [FUNCTION DOC]
+    # Verifies an explicit unsorted list of categories is preserved in that order.
     parser = all_parsers
     data = """a,b
 1,a
@@ -262,6 +315,9 @@ def test_categorical_category_dtype_unsorted(all_parsers):
 
 
 def test_categorical_coerces_numeric(all_parsers):
+    # [FUNCTION DOC]
+    # Verifies string values in the data are coerced to match integer categories given
+    # in the dtype.
     parser = all_parsers
     dtype = {"b": CategoricalDtype([1, 2, 3])}
 
@@ -273,6 +329,8 @@ def test_categorical_coerces_numeric(all_parsers):
 
 
 def test_categorical_coerces_datetime(all_parsers):
+    # [FUNCTION DOC]
+    # Verifies date strings are coerced to match datetime categories given in the dtype.
     parser = all_parsers
     dti = pd.DatetimeIndex(["2017-01-01", "2018-01-01", "2019-01-01"], freq=None)
     dtype = {"b": CategoricalDtype(dti)}
@@ -285,6 +343,8 @@ def test_categorical_coerces_datetime(all_parsers):
 
 
 def test_categorical_coerces_timestamp(all_parsers):
+    # [FUNCTION DOC]
+    # Verifies date strings are coerced to match a single timestamp category.
     parser = all_parsers
     dtype = {"b": CategoricalDtype([Timestamp("2014")])}
 
@@ -296,6 +356,8 @@ def test_categorical_coerces_timestamp(all_parsers):
 
 
 def test_categorical_coerces_timedelta(all_parsers):
+    # [FUNCTION DOC]
+    # Verifies duration strings are coerced to match timedelta categories.
     parser = all_parsers
     dtype = {"b": CategoricalDtype(pd.to_timedelta(["1h", "2h", "3h"]))}
 
@@ -316,6 +378,9 @@ def test_categorical_coerces_timedelta(all_parsers):
     ],
 )
 def test_categorical_dtype_coerces_boolean(all_parsers, data):
+    # [FUNCTION DOC]
+    # Verifies boolean-like text in various case combinations, including NA, is coerced
+    # to booleans with a missing value when the categories are false and true.
     # see gh-20498
     parser = all_parsers
     dtype = {"b": CategoricalDtype([False, True])}
@@ -326,6 +391,10 @@ def test_categorical_dtype_coerces_boolean(all_parsers, data):
 
 
 def test_categorical_unexpected_categories(all_parsers):
+    # [FUNCTION DOC]
+    # Verifies that a value not among the dtype's categories becomes a missing value,
+    # and that a future-change warning (Pandas4Warning) about constructing a categorical
+    # with values not in the dtype is emitted (stack level not checked).
     parser = all_parsers
     dtype = {"b": CategoricalDtype(["a", "b", "d", "e"])}
 

@@ -3,6 +3,18 @@ Tests that work on both the Python and C engines but do not have a
 specific classification into the other test modules.
 """
 
+# [MODULE DOC]
+# Parser tests (run against every engine through the parser fixture) of basic reading
+# behavior: local file URLs, thousands separators, unnamed columns, row limits, trailing
+# delimiters and whitespace handling, escape characters, blank and whitespace-only
+# lines, regex whitespace separators, special characters in file names, equivalence of
+# the csv and table readers, byte-order marks, invalid argument combinations, and seek
+# positions.
+# The module defines two marker aliases: one marks a test as expected to fail for the
+# pyarrow engine and one skips it for that engine. Many tests branch on the pyarrow
+# engine to check that unsupported options raise a value error with the engine-specific
+# message.
+
 from datetime import datetime
 from inspect import signature
 from io import StringIO
@@ -37,6 +49,11 @@ skip_pyarrow = pytest.mark.usefixtures("pyarrow_skip")
 
 
 def test_read_csv_local(all_parsers, csv1):
+    # [FUNCTION DOC]
+    # Reads a sample CSV through a file URL (with the platform-specific prefix), using
+    # the first column as index and date parsing, and verifies the seven-row frame of
+    # floats with a date index named index. The expected index has microsecond datetime
+    # unit, converted to second unit for pyarrow.
     prefix = "file:///" if compat.is_platform_windows() else "file://"
     parser = all_parsers
 
@@ -86,6 +103,14 @@ def test_read_csv_local(all_parsers, csv1):
     ],
 )
 def test_1000_sep(all_parsers, number_csv, expected_number, request):
+    # [FUNCTION DOC]
+    # Verifies the thousands separator option on pipe-separated data with values such as
+    # two thousand three hundred thirty-four (with a negative sign or trailing
+    # separator) and with runs of consecutive separators, which the C engine accepts and
+    # joins into one number; the expected integer is parametrized.
+    # The python engine is marked as expected to fail for the consecutive-separator
+    # cases, and pyarrow is expected to raise a value error saying the thousands option
+    # is unsupported.
     parser = all_parsers
     data = f"""A|B|C
 1|{number_csv}|5
@@ -110,6 +135,10 @@ def test_1000_sep(all_parsers, number_csv, expected_number, request):
 
 @pytest.mark.parametrize("value", ["1 ,", ", 1", ",1"])
 def test_1000_sep_not_stripped_after_whitespace(all_parsers, value):
+    # [FUNCTION DOC]
+    # Verifies that a value consisting of a thousands separator next to whitespace or at
+    # the start (such as a space before a comma) is not converted to a number and
+    # remains a string. For pyarrow, verifies the unsupported thousands error.
     parser = all_parsers
     data = f"a\n{value}\n"
     expected = DataFrame({"a": [value]})
@@ -126,6 +155,10 @@ def test_1000_sep_not_stripped_after_whitespace(all_parsers, value):
 
 @xfail_pyarrow  # ValueError: Found non-unique column index
 def test_unnamed_columns(all_parsers):
+    # [FUNCTION DOC]
+    # Marked as expected to fail for pyarrow (non-unique column index error). Verifies
+    # that empty header fields get the placeholder names Unnamed with their column
+    # position, and values stay int64.
     data = """A,B,C,,
 1,2,3,4,5
 6,7,8,9,10
@@ -142,6 +175,9 @@ def test_unnamed_columns(all_parsers):
 
 
 def test_csv_mixed_type(all_parsers):
+    # [FUNCTION DOC]
+    # Verifies a string column and two integer columns are read with the right inferred
+    # types.
     data = """A,B,C
 a,1,2
 b,3,4
@@ -154,6 +190,12 @@ c,4,5
 
 
 def test_read_csv_low_memory_no_rows_with_index(all_parsers):
+    # [FUNCTION DOC]
+    # Skipped unless the parser fixture has low memory mode on. Verifies that reading
+    # with the first column as index and a row limit of zero returns an empty frame with
+    # the three header columns (regression for an issue with low memory reading), even
+    # though data rows are wider than the header. For pyarrow, verifies the unsupported
+    # row-limit error.
     # see gh-21141
     parser = all_parsers
 
@@ -178,6 +220,10 @@ def test_read_csv_low_memory_no_rows_with_index(all_parsers):
 
 
 def test_read_csv_dataframe(all_parsers, csv1):
+    # [FUNCTION DOC]
+    # Reads the sample CSV file directly (index in first column, dates parsed) and
+    # verifies the same expected seven-row frame as the file URL test, including the
+    # pyarrow second-unit index adjustment.
     parser = all_parsers
     result = parser.read_csv(csv1, index_col=0, parse_dates=True)
     expected = DataFrame(
@@ -212,6 +258,9 @@ def test_read_csv_dataframe(all_parsers, csv1):
 
 @pytest.mark.parametrize("nrows", [3, 3.0])
 def test_read_nrows(all_parsers, nrows):
+    # [FUNCTION DOC]
+    # Verifies a row limit given as an integer or a whole-number float returns only the
+    # first three data rows. For pyarrow, verifies the unsupported row-limit error.
     # see gh-10476
     data = """index,A,B,C,D
 foo,2,3,4,5
@@ -239,6 +288,10 @@ bar2,12,13,14,15
 
 @pytest.mark.parametrize("nrows", [1.2, "foo", -1])
 def test_read_nrows_bad(all_parsers, nrows):
+    # [FUNCTION DOC]
+    # Verifies invalid row limits (non-whole float, string, negative) raise a value
+    # error saying nrows must be an integer of at least zero; pyarrow expects its
+    # unsupported-option message.
     data = """index,A,B,C,D
 foo,2,3,4,5
 bar,7,8,9,10
@@ -257,6 +310,9 @@ bar2,12,13,14,15
 
 
 def test_nrows_skipfooter_errors(all_parsers):
+    # [FUNCTION DOC]
+    # Verifies passing both a footer-skip count and a row limit raises a value error
+    # saying skipfooter is not supported with nrows.
     msg = "'skipfooter' not supported with 'nrows'"
     data = "a\n1\n2\n3\n4\n5\n6"
     parser = all_parsers
@@ -267,6 +323,9 @@ def test_nrows_skipfooter_errors(all_parsers):
 
 @skip_pyarrow
 def test_missing_trailing_delimiters(all_parsers):
+    # [FUNCTION DOC]
+    # Skipped for pyarrow. Verifies rows with fewer fields than the header (missing
+    # trailing delimiters) are padded with missing values.
     parser = all_parsers
     data = """A,B,C,D
 1,2,3,4
@@ -282,6 +341,12 @@ def test_missing_trailing_delimiters(all_parsers):
 
 
 def test_skip_initial_space(all_parsers):
+    # [FUNCTION DOC]
+    # Verifies a single long comma-separated row with spaces after delimiters and quotes
+    # is read with no header, 33 column names, the skip-initial-space option and a
+    # custom missing-value marker, producing numeric columns, string columns and NaN for
+    # the marker values; numbers with leading zeros become integers. For pyarrow,
+    # verifies the unsupported skip-initial-space error.
     data = (
         '"09-Apr-2012", "01:10:18.300", 2456026.548822908, 12849, '
         "1.00361,  1.12551, 330.65659, 0355626618.16711,  73.48821, "
@@ -355,6 +420,10 @@ def test_skip_initial_space(all_parsers):
 
 @skip_pyarrow
 def test_trailing_delimiters(all_parsers):
+    # [FUNCTION DOC]
+    # Skipped for pyarrow. Verifies that data rows with one extra trailing delimiter are
+    # read correctly when the index column option is turned off, giving the three named
+    # columns.
     # see gh-2442
     data = """A,B,C
 1,2,3,
@@ -368,6 +437,10 @@ def test_trailing_delimiters(all_parsers):
 
 
 def test_escapechar(all_parsers):
+    # [FUNCTION DOC]
+    # Verifies that a backslash escape character with a double-quote quote character
+    # lets a quoted field contain escaped quotes and commas, and that the column names
+    # are preserved. Uses long URLs and a non-ASCII word, read with UTF-8 encoding.
     # https://stackoverflow.com/questions/13824840/feature-request-for-
     # pandas-read-csv
     data = '''SEARCH_TERM,ACTUAL_URL
@@ -386,6 +459,10 @@ def test_escapechar(all_parsers):
 
 
 def test_ignore_leading_whitespace(all_parsers):
+    # [FUNCTION DOC]
+    # Verifies that a regex whitespace separator ignores leading whitespace on lines,
+    # giving three integer columns. For pyarrow, verifies the value error that regex
+    # separators are unsupported.
     # see gh-3374, gh-6607
     parser = all_parsers
     data = " a b c\n 1 2 3\n 4 5 6\n 7 8 9"
@@ -404,6 +481,11 @@ def test_ignore_leading_whitespace(all_parsers):
 @skip_pyarrow
 @pytest.mark.parametrize("usecols", [None, [0, 1], ["a", "b"]])
 def test_uneven_lines_with_usecols(all_parsers, usecols):
+    # [FUNCTION DOC]
+    # Skipped for pyarrow. With a ragged row that has too many fields, verifies that
+    # without a column selection a parser error about the expected field count is
+    # raised, while selecting the first two columns (by position or name) works and
+    # returns the selected columns for all rows.
     # see gh-12203
     parser = all_parsers
     data = r"""a,b,c
@@ -445,6 +527,11 @@ def test_uneven_lines_with_usecols(all_parsers, usecols):
     ],
 )
 def test_read_empty_with_usecols(all_parsers, data, kwargs, expected):
+    # [FUNCTION DOC]
+    # Skipped for pyarrow. Verifies empty input raises an empty-data error ("No columns
+    # to parse from file"), with or without column selection, and that input with only
+    # delimiters, given names and a selection, gives a one-row float frame, while empty
+    # input with names and a selection gives an empty frame with the selected column.
     # see gh-12493
     parser = all_parsers
 
@@ -483,6 +570,11 @@ def test_read_empty_with_usecols(all_parsers, data, kwargs, expected):
     ],
 )
 def test_trailing_spaces(all_parsers, kwargs, expected_data):
+    # [FUNCTION DOC]
+    # Verifies that, with whitespace as separator, unwanted lines (including ones with
+    # trailing spaces or tabs and blank lines) can be skipped by row positions, with and
+    # without header, with blank-line skipping on. Input commas are replaced by double
+    # spaces before parsing. For pyarrow, verifies an unsupported-feature value error.
     data = "A B C  \nrandom line with trailing spaces    \nskip\n1,2,3\n1,2.,4.\nrandom line with trailing tabs\t\t\t\n   \n5.1,NaN,10.0\n"  # noqa: E501
     parser = all_parsers
 
@@ -496,6 +588,9 @@ def test_trailing_spaces(all_parsers, kwargs, expected_data):
 
 
 def test_read_filepath_or_buffer(all_parsers):
+    # [FUNCTION DOC]
+    # Verifies that passing a bytes object as the path-or-buffer keyword raises a type
+    # error saying a file path or file-like object was expected.
     # see gh-43366
     parser = all_parsers
 
@@ -504,6 +599,10 @@ def test_read_filepath_or_buffer(all_parsers):
 
 
 def test_single_char_leading_whitespace(all_parsers):
+    # [FUNCTION DOC]
+    # Verifies single-column data with the skip-initial-space option and whitespace
+    # separator is read as one string column of the four values. For pyarrow, verifies
+    # the unsupported skip-initial-space error.
     # see gh-9710
     parser = all_parsers
     data = """\
@@ -546,6 +645,11 @@ b\n"""
     ],
 )
 def test_empty_lines(all_parsers, sep, skip_blank_lines, exp_data, request):
+    # [FUNCTION DOC]
+    # Verifies empty-line handling with comma or whitespace separators and with
+    # blank-line skipping on or off: when on, blank lines are dropped; when off, each
+    # blank line yields a row of NaN. For pyarrow with whitespace separators, verifies
+    # the regex separator error.
     parser = all_parsers
     data = """\
 A,B,C
@@ -575,6 +679,10 @@ A,B,C
 
 @skip_pyarrow
 def test_whitespace_lines(all_parsers):
+    # [FUNCTION DOC]
+    # Skipped for pyarrow. Verifies that leading lines consisting only of whitespace are
+    # ignored and the header is the first real line, and that a data row with leading
+    # whitespace is parsed correctly.
     parser = all_parsers
     data = """
 
@@ -611,6 +719,11 @@ c   1   2   3   4
     ],
 )
 def test_whitespace_regex_separator(all_parsers, data, expected):
+    # [FUNCTION DOC]
+    # Verifies that data with irregular runs of spaces, parsed with a whitespace regex
+    # separator, gives the expected frames: one where the first column becomes the index
+    # because the header has one less field, and one with leading spaces on every line.
+    # For pyarrow, verifies the regex separator error.
     # see gh-6607
     parser = all_parsers
     if parser.engine == "pyarrow":
@@ -624,6 +737,9 @@ def test_whitespace_regex_separator(all_parsers, data, expected):
 
 
 def test_sub_character(all_parsers, csv_dir_path):
+    # [FUNCTION DOC]
+    # Verifies a file containing a substitute control character in a column name is read
+    # with that character retained in the name.
     # see gh-16893
     filename = os.path.join(csv_dir_path, "sub_char.csv")
     expected = DataFrame([[1, 2, 3]], columns=["a", "\x1ab", "c"])
@@ -635,6 +751,9 @@ def test_sub_character(all_parsers, csv_dir_path):
 
 @pytest.mark.parametrize("filename", ["sé-es-vé.csv", "ru-sй.csv", "中文文件名.csv"])
 def test_filename_with_special_chars(all_parsers, filename, tmp_path):
+    # [FUNCTION DOC]
+    # Verifies a frame written to a path with accented, Cyrillic or Chinese characters
+    # in its name can be read back equal.
     # see gh-15086.
     parser = all_parsers
     df = DataFrame({"a": [1, 2, 3]})
@@ -647,6 +766,11 @@ def test_filename_with_special_chars(all_parsers, filename, tmp_path):
 
 
 def test_read_table_same_signature_as_read_csv(all_parsers):
+    # [FUNCTION DOC]
+    # Verifies the signatures of the table reader and the csv reader are identical: same
+    # parameter names and return annotation, and every parameter equal except the
+    # separator, which defaults to a tab for the table reader and a comma for csv, with
+    # identical annotation and kind.
     # GH-34976
     parser = all_parsers
 
@@ -669,6 +793,9 @@ def test_read_table_same_signature_as_read_csv(all_parsers):
 
 
 def test_read_table_equivalency_to_read_csv(all_parsers):
+    # [FUNCTION DOC]
+    # Verifies the table reader on tab-separated text gives the same frame as the csv
+    # reader with an explicit tab separator.
     # see gh-21948
     # As of 0.25.0, read_table is undeprecated
     parser = all_parsers
@@ -680,6 +807,12 @@ def test_read_table_equivalency_to_read_csv(all_parsers):
 
 @pytest.mark.parametrize("read_func", ["read_csv", "read_table"])
 def test_read_csv_and_table_sys_setprofile(all_parsers, read_func):
+    # [FUNCTION DOC]
+    # Verifies that the csv and table readers (parametrized by reader name) work while a
+    # profiling function is installed in the interpreter, returning a single column
+    # named a b with the unsplit value (regression for a profiler crash).
+    # Side effect: installs a no-op profile function and then clears it afterward (not
+    # in a protected cleanup, so a failure in between leaves it installed).
     # GH#41069
     parser = all_parsers
     data = "a b\n0 1"
@@ -694,6 +827,10 @@ def test_read_csv_and_table_sys_setprofile(all_parsers, read_func):
 
 @skip_pyarrow
 def test_first_row_bom(all_parsers):
+    # [FUNCTION DOC]
+    # Skipped for pyarrow. Verifies that a byte-order mark before a quoted header in the
+    # first row is stripped, giving three empty columns named Head1 to Head3 when
+    # reading tab-separated text.
     # see gh-26545
     parser = all_parsers
     data = '''\ufeff"Head1"\t"Head2"\t"Head3"'''
@@ -705,6 +842,8 @@ def test_first_row_bom(all_parsers):
 
 @skip_pyarrow
 def test_first_row_bom_unquoted(all_parsers):
+    # [FUNCTION DOC]
+    # Skipped for pyarrow. Same as the previous test but with an unquoted header.
     # see gh-36343
     parser = all_parsers
     data = """\ufeffHead1\tHead2\tHead3"""
@@ -716,6 +855,11 @@ def test_first_row_bom_unquoted(all_parsers):
 
 @pytest.mark.parametrize("nrows", range(1, 6))
 def test_blank_lines_between_header_and_data_rows(all_parsers, nrows):
+    # [FUNCTION DOC]
+    # Verifies that with header at row three, blank-line skipping off and a row limit
+    # from one to five, the result is the matching leading rows of a reference frame
+    # that includes NaN rows for the blank lines. For pyarrow, verifies the unsupported
+    # row-limit error.
     # GH 28071
     ref = DataFrame(
         [[np.nan, np.nan], [np.nan, np.nan], [1, 2], [np.nan, np.nan], [3, 4]],
@@ -738,6 +882,10 @@ def test_blank_lines_between_header_and_data_rows(all_parsers, nrows):
 
 @skip_pyarrow
 def test_no_header_two_extra_columns(all_parsers):
+    # [FUNCTION DOC]
+    # Skipped for pyarrow. Verifies that with no header, three names, the index column
+    # off, and a row with five fields, a parser warning about the header or names length
+    # not matching the data is emitted and the extra fields are dropped.
     # GH 26218
     column_names = ["one", "two", "three"]
     ref = DataFrame([["foo", "bar", "baz"]], columns=column_names)
@@ -756,6 +904,9 @@ def test_no_header_two_extra_columns(all_parsers):
 
 
 def test_read_csv_names_not_accepting_sets(all_parsers):
+    # [FUNCTION DOC]
+    # Verifies that passing a set as column names raises a value error saying names
+    # should be an ordered collection.
     # GH 34946
     data = """\
     1,2,3
@@ -766,6 +917,9 @@ def test_read_csv_names_not_accepting_sets(all_parsers):
 
 
 def test_read_csv_delimiter_and_sep_no_default(all_parsers):
+    # [FUNCTION DOC]
+    # Verifies specifying both separator and delimiter with different values raises a
+    # value error that only one may be specified.
     # GH#39823
     f = StringIO("a,b\n1,2")
     parser = all_parsers
@@ -776,6 +930,9 @@ def test_read_csv_delimiter_and_sep_no_default(all_parsers):
 
 @pytest.mark.parametrize("kwargs", [{"delimiter": "\n"}, {"sep": "\n"}])
 def test_read_csv_line_break_as_separator(kwargs, all_parsers):
+    # [FUNCTION DOC]
+    # Verifies using a newline as the delimiter or as the separator raises a value error
+    # explaining this forces the python engine which does not accept a line terminator.
     # GH#43528
     parser = all_parsers
     data = """a,b,c
@@ -792,6 +949,9 @@ def test_read_csv_line_break_as_separator(kwargs, all_parsers):
 
 @skip_pyarrow
 def test_dict_keys_as_names(all_parsers):
+    # [FUNCTION DOC]
+    # Skipped for pyarrow. Verifies a dictionary keys view is accepted as names,
+    # creating columns a and b.
     # GH: 36928
     data = "1,2"
 
@@ -806,6 +966,13 @@ def test_dict_keys_as_names(all_parsers):
 @pytest.mark.xfail(using_string_dtype() and HAS_PYARROW, reason="TODO(infer_string)")
 @xfail_pyarrow  # UnicodeDecodeError: 'utf-8' codec can't decode byte 0xed in position 0
 def test_encoding_surrogatepass(all_parsers, tmp_path):
+    # [FUNCTION DOC]
+    # Marked expected to fail when string dtype inference with pyarrow is enabled, and
+    # expected to fail for the pyarrow engine (unicode decode error). Writes bytes that
+    # are an encoded surrogate to a temporary file and verifies reading with the
+    # surrogate-pass error handler yields a frame whose index, column and value are the
+    # decoded surrogate string, while reading without the handler raises a unicode
+    # decode error.
     # GH39017
     parser = all_parsers
     content = b"\xed\xbd\xbf"
@@ -824,6 +991,9 @@ def test_encoding_surrogatepass(all_parsers, tmp_path):
 
 
 def test_malformed_second_line(all_parsers):
+    # [FUNCTION DOC]
+    # Verifies that with blank-line skipping off and header at row one, input with a
+    # blank first line reads the third line as the single data value under column a.
     # see GH14782
     parser = all_parsers
     data = "\na\nb\n"
@@ -834,6 +1004,9 @@ def test_malformed_second_line(all_parsers):
 
 @skip_pyarrow
 def test_short_single_line(all_parsers):
+    # [FUNCTION DOC]
+    # Skipped for pyarrow. Verifies a single short line read with no header and three
+    # names pads the third column with NaN.
     # GH 47566
     parser = all_parsers
     columns = ["a", "b", "c"]
@@ -845,6 +1018,9 @@ def test_short_single_line(all_parsers):
 
 @xfail_pyarrow  # ValueError: Length mismatch: Expected axis has 2 elements
 def test_short_multi_line(all_parsers):
+    # [FUNCTION DOC]
+    # Marked expected to fail for pyarrow (length mismatch). Verifies two short lines
+    # read with no header and three names pad the third column with NaN.
     # GH 47566
     parser = all_parsers
     columns = ["a", "b", "c"]
@@ -855,6 +1031,10 @@ def test_short_multi_line(all_parsers):
 
 
 def test_read_seek(all_parsers, tmp_path):
+    # [FUNCTION DOC]
+    # Verifies that reading from an already-opened file after consuming its first line
+    # starts from the current position (not the beginning), giving the same frame as
+    # reading the content string without the prefix line.
     # GH48646
     parser = all_parsers
     prefix = "### DATA\n"

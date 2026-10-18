@@ -1,3 +1,17 @@
+# [MODULE DOC]
+# HELPER: shared fixtures and parser wrapper classes for the tests in the parser test
+# package and its subpackages.
+# Defines wrapper classes that bind a parsing engine (and C-engine memory mode) to the
+# CSV and table readers, the lists of parsers and their ids, the fixtures that
+# parametrize tests over all engines (all_parsers, the C-only, python-only and
+# pyarrow-only variants, and a combination with float precision), data-location
+# fixtures, encoding-related fixtures, a fixture of numeric strings with decimal marker
+# and digit-separator edge cases, and fixtures that mark pyarrow tests as
+# expected-to-fail or skipped.
+# Import-time side effects: builds module-level lists of parser parameters; the pyarrow
+# parameters are wrapped to skip when pyarrow is not installed and to run on a single
+# cpu.
+
 from __future__ import annotations
 
 import os
@@ -15,17 +29,33 @@ import pandas._testing as tm
 
 
 class BaseParser:
+    # [CLASS DOC]
+    # HELPER: base class for the engine wrappers. Holds three class attributes: the
+    # engine name (none in the base), the low-memory flag (true by default) and the list
+    # of allowed float precision choices (empty). Its methods call the module-level csv
+    # and table readers after injecting the engine and low-memory settings into the
+    # keyword arguments, and offer variants that assert a warning is produced during the
+    # read. Subclasses set the attributes.
     engine: str | None = None
     low_memory = True
     float_precision_choices: list[str | None] = []
 
     def update_kwargs(self, kwargs):
+        # [FUNCTION DOC]
+        # HELPER: takes a keyword-argument dictionary and returns a copy to which the
+        # engine name and the low-memory flag of this wrapper have been added
+        # (overriding any existing entries for those keys). The input dictionary is not
+        # modified.
         kwargs = kwargs.copy()
         kwargs.update({"engine": self.engine, "low_memory": self.low_memory})
 
         return kwargs
 
     def read_csv(self, *args, **kwargs):
+        # [FUNCTION DOC]
+        # HELPER: reads delimited data with the csv reader, passing all positional and
+        # keyword arguments through after adding this wrapper's engine and low-memory
+        # settings. Returns the resulting frame or reader.
         kwargs = self.update_kwargs(kwargs)
         return read_csv(*args, **kwargs)
 
@@ -38,6 +68,16 @@ class BaseParser:
         check_stacklevel: bool = True,
         **kwargs,
     ):
+        # [FUNCTION DOC]
+        # HELPER: reads with the csv reader (with engine settings injected) inside a
+        # context that asserts a warning is produced.
+        # Parameters: the expected warning class, a pattern the warning message must
+        # match, then positional arguments for the reader; keyword-only options control
+        # whether extra unexpected warnings raise (default true) and whether the
+        # warning's stack level is verified (default true); remaining keyword arguments
+        # go to the reader. Returns the reader's result. The stack-level check is done
+        # here because this is the call site that the warning should point to. Fails the
+        # test if the expected warning is not raised.
         # We need to check the stacklevel here instead of in the tests
         # since this is where read_csv is called and where the warning
         # should point to.
@@ -51,6 +91,9 @@ class BaseParser:
             return read_csv(*args, **kwargs)
 
     def read_table(self, *args, **kwargs):
+        # [FUNCTION DOC]
+        # HELPER: same as the csv wrapper but calls the table reader: injects the engine
+        # and low-memory settings and returns the result.
         kwargs = self.update_kwargs(kwargs)
         return read_table(*args, **kwargs)
 
@@ -62,6 +105,16 @@ class BaseParser:
         raise_on_extra_warnings=True,
         **kwargs,
     ):
+        # [FUNCTION DOC]
+        # HELPER: reads with the table reader (with engine settings injected) inside a
+        # context that asserts a warning is produced.
+        # Parameters: the expected warning class, a pattern for the message, positional
+        # arguments for the reader, a keyword-only flag controlling whether extra
+        # warnings raise (default true); remaining keyword arguments go to the reader.
+        # Returns the reader's result.
+        # KNOWN ISSUE: unlike the csv counterpart this method has no stack-level
+        # option and never passes one on, even though the comment in the body speaks of
+        # checking the stack level here.
         # We need to check the stacklevel here instead of in the tests
         # since this is where read_table is called and where the warning
         # should point to.
@@ -73,30 +126,47 @@ class BaseParser:
 
 
 class CParser(BaseParser):
+    # [CLASS DOC]
+    # HELPER: wrapper for the C engine; sets the engine name to c and the allowed float
+    # precision choices to default, high and round-trip.
     engine = "c"
     float_precision_choices = [None, "high", "round_trip"]
 
 
 class CParserHighMemory(CParser):
+    # [CLASS DOC]
+    # HELPER: C engine wrapper with low-memory mode turned off.
     low_memory = False
 
 
 class CParserLowMemory(CParser):
+    # [CLASS DOC]
+    # HELPER: C engine wrapper with low-memory mode turned on (same as the inherited
+    # default).
     low_memory = True
 
 
 class PythonParser(BaseParser):
+    # [CLASS DOC]
+    # HELPER: wrapper for the python engine; the only allowed float precision choice is
+    # the default.
     engine = "python"
     float_precision_choices = [None]
 
 
 class PyArrowParser(BaseParser):
+    # [CLASS DOC]
+    # HELPER: wrapper for the pyarrow engine; the only allowed float precision choice is
+    # the default.
     engine = "pyarrow"
     float_precision_choices = [None]
 
 
 @pytest.fixture
 def csv_dir_path(datapath):
+    # [FUNCTION DOC]
+    # HELPER: fixture returning the path of the directory holding the data files used by
+    # the parser tests, resolved by the data-path fixture.
     """
     The directory path to the data files needed for parser tests.
     """
@@ -105,6 +175,9 @@ def csv_dir_path(datapath):
 
 @pytest.fixture
 def csv1(datapath):
+    # [FUNCTION DOC]
+    # HELPER: fixture returning the path of the sample data file test1 in the shared CSV
+    # data directory.
     """
     The path to the data file "test1.csv" needed for parser tests.
     """
@@ -139,6 +212,11 @@ _all_parser_ids = [*_c_parser_ids, *_py_parser_ids, *_pyarrow_parsers_ids]
 
 @pytest.fixture(params=_all_parsers, ids=_all_parser_ids)
 def all_parsers(request):
+    # [FUNCTION DOC]
+    # HELPER: fixture parametrized over all parser wrappers (two C engine variants,
+    # python, and pyarrow); yields an instance of the wrapper. For pyarrow it skips the
+    # test if the required pyarrow version is not available and sets the pyarrow thread
+    # count to one for more stable runs.
     """
     Fixture all of the CSV parsers.
     """
@@ -155,6 +233,9 @@ def all_parsers(request):
 
 @pytest.fixture(params=_c_parsers_only, ids=_c_parser_ids)
 def c_parser_only(request):
+    # [FUNCTION DOC]
+    # HELPER: fixture parametrized over the two C engine wrapper classes; returns an
+    # instance.
     """
     Fixture all of the CSV parsers using the C engine.
     """
@@ -163,6 +244,8 @@ def c_parser_only(request):
 
 @pytest.fixture(params=_py_parsers_only, ids=_py_parser_ids)
 def python_parser_only(request):
+    # [FUNCTION DOC]
+    # HELPER: fixture returning an instance of the python engine wrapper.
     """
     Fixture all of the CSV parsers using the Python engine.
     """
@@ -171,6 +254,9 @@ def python_parser_only(request):
 
 @pytest.fixture(params=_pyarrow_parsers_only, ids=_pyarrow_parsers_ids)
 def pyarrow_parser_only(request):
+    # [FUNCTION DOC]
+    # HELPER: fixture returning an instance of the pyarrow engine wrapper (parameter
+    # carries the single-cpu and installed-check marks).
     """
     Fixture all of the CSV parsers using the Pyarrow engine.
     """
@@ -178,6 +264,12 @@ def pyarrow_parser_only(request):
 
 
 def _get_all_parser_float_precision_combinations():
+    # [FUNCTION DOC]
+    # HELPER: builds the parametrization for the combined parser-and-precision fixture.
+    # For every parser class and each of its float precision choices, creates one
+    # parameter holding an instance and the precision (wrapping pyarrow with single-cpu
+    # and installed-check marks) and an id made of the parser id and the precision.
+    # Returns a dictionary with the parameter list and the id list.
     """
     Return all allowable parser and float precision
     combinations and corresponding ids.
@@ -212,6 +304,9 @@ def _get_all_parser_float_precision_combinations():
     ids=_get_all_parser_float_precision_combinations()["ids"],
 )
 def all_parsers_all_precisions(request):
+    # [FUNCTION DOC]
+    # HELPER: fixture returning a pair of parser instance and float precision for every
+    # allowed combination.
     """
     Fixture for all allowable combinations of parser
     and float precision
@@ -231,6 +326,9 @@ _encoding_fmts = [
 
 @pytest.fixture(params=_utf_values)
 def utf_value(request):
+    # [FUNCTION DOC]
+    # HELPER: fixture parametrized over the integer values 8, 16 and 32, the widths used
+    # in UTF encoding names.
     """
     Fixture for all possible integer values for a UTF encoding.
     """
@@ -239,6 +337,10 @@ def utf_value(request):
 
 @pytest.fixture(params=_encoding_fmts)
 def encoding_fmt(request):
+    # [FUNCTION DOC]
+    # HELPER: fixture parametrized over format templates for UTF encoding names (upper
+    # and lower case prefix, with no separator, a dash or an underscore); each has a
+    # placeholder for the width.
     """
     Fixture for all possible string formats of a UTF encoding.
     """
@@ -293,6 +395,11 @@ def encoding_fmt(request):
     ]
 )
 def numeric_decimal(request):
+    # [FUNCTION DOC]
+    # HELPER: fixture parametrized over pairs of an input string and its expected parse
+    # result with a comma decimal marker and underscore digit separators. The first
+    # group should parse to a float; the negative cases are malformed numbers whose
+    # expected result is the same string unchanged.
     """
     Fixture for all numeric formats which should get recognized. The first entry
     represents the value to read while the second represents the expected result.
@@ -302,6 +409,12 @@ def numeric_decimal(request):
 
 @pytest.fixture
 def pyarrow_xfail(request):
+    # [FUNCTION DOC]
+    # HELPER: fixture used to mark tests expected to fail for pyarrow. Looks up the
+    # parser (from the all-parsers fixture, or the first element of the combined
+    # fixture) among the test's fixtures; if none is used it does nothing; if the engine
+    # is pyarrow it applies an expected-failure mark with a reason that pyarrow does not
+    # support this.
     """
     Fixture that xfails a test if the engine is pyarrow.
 
@@ -321,6 +434,10 @@ def pyarrow_xfail(request):
 
 @pytest.fixture
 def pyarrow_skip(request):
+    # [FUNCTION DOC]
+    # HELPER: fixture used to skip tests on pyarrow. Same parser lookup as the
+    # expected-failure fixture, but skips the test for the pyarrow engine with a reason
+    # pointing to the upstream arrow issue about csv parse failures.
     """
     Fixture that skips a test if the engine is pyarrow.
 

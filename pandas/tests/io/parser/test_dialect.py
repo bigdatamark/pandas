@@ -3,6 +3,17 @@ Tests that dialects are properly handled during parsing
 for all of the parsers defined in parsers.py
 """
 
+# [MODULE DOC]
+# Parser tests (all engines via the parser fixture) of csv dialect handling: dialect
+# objects and registered dialect names, invalid dialects, and the warnings produced when
+# explicit options conflict with a dialect's settings (for delimiter and for other
+# options).
+# KNOWN ISSUE: the module docstring says the parsers are defined in a file named
+# parsers.py, but no such module exists here; the parser fixtures come from the
+# package's shared fixtures module.
+# The pyarrow engine does not support the dialect option, so tests expect a value error
+# naming the option for that engine.
+
 import csv
 from io import StringIO
 
@@ -20,6 +31,11 @@ pytestmark = pytest.mark.filterwarnings(
 
 @pytest.fixture
 def custom_dialect():
+    # [FUNCTION DOC]
+    # HELPER: fixture returning a pair of a dialect name (weird) and a dictionary of its
+    # settings: double-quote off, tilde escape character, colon delimiter,
+    # skip-initial-space off, backtick quote character, and quoting mode three (no
+    # quoting).
     dialect_name = "weird"
     dialect_kwargs = {
         "doublequote": False,
@@ -33,6 +49,12 @@ def custom_dialect():
 
 
 def test_dialect(all_parsers):
+    # [FUNCTION DOC]
+    # Verifies reading with a dialect object (excel-style with quoting disabled) treats
+    # the stray quote character as ordinary data, so a field beginning with a quote
+    # keeps it and rows are split on commas; the result equals reading the same text
+    # without the quote and then re-adding the quote to the affected value. For pyarrow,
+    # verifies the unsupported dialect option error.
     parser = all_parsers
     data = """\
 label1,label2,label3
@@ -62,6 +84,10 @@ index2,b,d,f
 
 
 def test_dialect_str(all_parsers):
+    # [FUNCTION DOC]
+    # Registers a temporary dialect with a colon delimiter, and verifies a dialect given
+    # by name is used to split colon-separated data into the expected two-column frame.
+    # For pyarrow, verifies the unsupported dialect option error.
     dialect_name = "mydialect"
     parser = all_parsers
     data = """\
@@ -83,7 +109,12 @@ pear:tomato
 
 
 def test_invalid_dialect(all_parsers):
+    # [FUNCTION DOC]
+    # Verifies that passing a class lacking the required dialect attributes raises a
+    # value error saying the dialect is invalid.
     class InvalidDialect:
+        # [CLASS DOC]
+        # HELPER: empty class used as an invalid dialect argument.
         pass
 
     data = "a\n1"
@@ -100,6 +131,13 @@ def test_invalid_dialect(all_parsers):
 )
 @pytest.mark.parametrize("value", ["dialect", "default", "other"])
 def test_dialect_conflict_except_delimiter(all_parsers, custom_dialect, arg, value):
+    # [FUNCTION DOC]
+    # Parametrized over each dialect option (or none) and three kinds of value: the
+    # dialect's own value or the reader's default (no warning), or a conflicting value
+    # (parser warning containing "Conflicting values for"). Verifies, with a registered
+    # custom dialect and colon-separated data, that the frame is read as expected and
+    # the appropriate warning is or is not produced. For pyarrow, verifies the
+    # unsupported dialect option error (no warning is expected since the call raises).
     # see gh-23761.
     dialect_name, dialect_kwargs = custom_dialect
     parser = all_parsers
@@ -165,6 +203,13 @@ def test_dialect_conflict_except_delimiter(all_parsers, custom_dialect, arg, val
     ],
 )
 def test_dialect_conflict_delimiter(all_parsers, custom_dialect, kwargs, warning_klass):
+    # [FUNCTION DOC]
+    # Parametrized over separator and delimiter arguments that conflict or not with the
+    # dialect's colon delimiter (a default separator, a non-default separator, the same
+    # delimiter, a missing delimiter, and two conflicting delimiters). Verifies the
+    # frame is read correctly and a parser warning about conflicting values for the
+    # delimiter is emitted only for the conflicting cases. For pyarrow, verifies the
+    # unsupported dialect option error.
     # see gh-23761.
     dialect_name, dialect_kwargs = custom_dialect
     parser = all_parsers

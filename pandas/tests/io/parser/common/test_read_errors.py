@@ -3,6 +3,16 @@ Tests that work on the Python, C and PyArrow engines but do not have a
 specific classification into the other test modules.
 """
 
+# [MODULE DOC]
+# Parser tests (Python, C and pyarrow engines via the parser fixture) of error
+# conditions in CSV reading: invalid decimal markers, undecodable streams, malformed
+# rows, wrong numbers of names, empty input, unexpected keyword arguments, bad-line
+# handling modes (skip, warn, error), NUL bytes, resource warnings when failing to open
+# files, and invalid option values.
+# Defines two marker aliases: one marks a test as expected to fail for the pyarrow
+# engine and one skips it for that engine. Several pyarrow cases are skipped due to a
+# known upstream parse-error message difference.
+
 import codecs
 import csv
 from io import StringIO
@@ -26,6 +36,10 @@ skip_pyarrow = pytest.mark.usefixtures("pyarrow_skip")
 
 
 def test_empty_decimal_marker(all_parsers):
+    # [FUNCTION DOC]
+    # Verifies an empty-string decimal marker raises a value error saying only
+    # length-one decimal markers are supported (pyarrow: a different message about
+    # converting a length-zero string to a single character).
     data = """A|B|C
 1|2,334|5
 10|13|10.
@@ -45,6 +59,11 @@ def test_empty_decimal_marker(all_parsers):
 
 
 def test_bad_stream_exception(all_parsers, csv_dir_path):
+    # [FUNCTION DOC]
+    # Wraps a binary Shift-JIS file in a stream recoder claiming UTF-8 and verifies
+    # reading it raises a unicode decode error (message: utf-8 codec cannot decode byte)
+    # from both engines, rather than the C engine hiding it as a parser error
+    # (regression).
     # see gh-13652
     #
     # This test validates that both the Python engine and C engine will
@@ -68,6 +87,10 @@ def test_bad_stream_exception(all_parsers, csv_dir_path):
 
 
 def test_malformed(all_parsers):
+    # [FUNCTION DOC]
+    # Verifies a row with five fields where three are expected (header at row one,
+    # comment character set) raises a parser error saying expected three fields in line
+    # four, saw five. For pyarrow, verifies the unsupported comment option value error.
     # see gh-6607
     parser = all_parsers
     data = """ignore
@@ -87,6 +110,10 @@ A,B,C
 
 @pytest.mark.parametrize("nrows", [5, 3, None])
 def test_malformed_chunks(all_parsers, nrows):
+    # [FUNCTION DOC]
+    # Verifies that reading chunk-by-chunk with a given number of rows (five, three, or
+    # all) from malformed data with comment and skiprows raises a parser error naming
+    # line six with five fields. For pyarrow, verifies the unsupported iterator error.
     data = """ignore
 A,B,C
 skip
@@ -120,6 +147,10 @@ skip
 
 @xfail_pyarrow  # does not raise
 def test_catch_too_many_names(all_parsers):
+    # [FUNCTION DOC]
+    # Marked expected to fail for pyarrow (does not raise). Verifies that giving four
+    # names for three columns raises a value error (C engine: too many columns
+    # specified; python engine: number of passed names does not match header fields).
     # see gh-5156
     data = """\
 1,2,3
@@ -140,6 +171,9 @@ def test_catch_too_many_names(all_parsers):
 @skip_pyarrow  # CSV parse error: Empty CSV file or block
 @pytest.mark.parametrize("nrows", [0, 1, 2, 3, 4, 5])
 def test_raise_on_no_columns(all_parsers, nrows):
+    # [FUNCTION DOC]
+    # Skipped for pyarrow. Verifies inputs consisting of zero to five newline characters
+    # raise an empty-data error saying no columns to parse from file.
     parser = all_parsers
     data = "\n" * nrows
 
@@ -149,6 +183,9 @@ def test_raise_on_no_columns(all_parsers, nrows):
 
 
 def test_unexpected_keyword_parameter_exception(all_parsers):
+    # [FUNCTION DOC]
+    # Verifies passing an unknown keyword argument to the csv reader and to the table
+    # reader each raises a type error naming the reader function and the argument.
     # GH-34976
     parser = all_parsers
 
@@ -160,6 +197,9 @@ def test_unexpected_keyword_parameter_exception(all_parsers):
 
 
 def test_suppress_error_output(all_parsers):
+    # [FUNCTION DOC]
+    # Verifies that skipping bad lines mode drops rows with too many fields and returns
+    # the remaining rows.
     # see gh-15925
     parser = all_parsers
     data = "a\n1\n1,2,3\n4\n5,6,7"
@@ -170,6 +210,9 @@ def test_suppress_error_output(all_parsers):
 
 
 def test_error_bad_lines(all_parsers):
+    # [FUNCTION DOC]
+    # Verifies error mode raises a parser error naming line three with three fields
+    # where one is expected. Skipped for pyarrow due to an upstream message difference.
     # see gh-15925
     parser = all_parsers
     data = "a\n1\n1,2,3\n4\n5,6,7"
@@ -185,6 +228,10 @@ def test_error_bad_lines(all_parsers):
 
 
 def test_warn_bad_lines(all_parsers):
+    # [FUNCTION DOC]
+    # Verifies warn mode emits a parser warning ("Skipping line" for C and python
+    # engines, a column-count message for pyarrow) without checking the stack level, and
+    # returns the good rows.
     # see gh-15925
     parser = all_parsers
     data = "a\n1\n1,2,3\n4\n5,6,7"
@@ -203,6 +250,9 @@ def test_warn_bad_lines(all_parsers):
 
 
 def test_read_csv_wrong_num_columns(all_parsers):
+    # [FUNCTION DOC]
+    # Verifies a row with seven fields among six-column rows raises a parser error
+    # naming line three. Skipped for pyarrow due to an upstream message difference.
     # Too few columns.
     data = """A,B,C,D,E,F
 1,2,3,4,5,6
@@ -221,6 +271,13 @@ def test_read_csv_wrong_num_columns(all_parsers):
 
 
 def test_null_byte_char(request, all_parsers):
+    # [FUNCTION DOC]
+    # Verifies handling of an embedded NUL byte: the C engine reads it as NaN, the
+    # python engine is marked as expected to fail (reads an empty character rather than
+    # null); pyarrow is skipped (upstream message difference).
+    # KNOWN ISSUE: the final branch (with a NULL byte detected message) and the
+    # subsequent raises check are unreachable, since the engines are only C, python or
+    # pyarrow and the pyarrow branch skips before reaching them.
     # see gh-2741
     data = "\x00,foo"
     names = ["a", "b"]
@@ -247,6 +304,13 @@ def test_null_byte_char(request, all_parsers):
 
 @pytest.mark.filterwarnings("always::ResourceWarning")
 def test_open_file(all_parsers, temp_file):
+    # [FUNCTION DOC]
+    # Verifies that when the delimiter cannot be sniffed (separator none) on a file with
+    # undecodable bytes, an error is raised (a csv error for python; a value error that
+    # the engine does not support a missing separator for C and pyarrow) and no resource
+    # warning is produced, i.e. the opened file is closed.
+    # Side effect: writes bytes to the temporary file; runs with resource warnings
+    # always shown.
     # GH 39024
     parser = all_parsers
 
@@ -266,6 +330,9 @@ def test_open_file(all_parsers, temp_file):
 
 
 def test_invalid_on_bad_line(all_parsers):
+    # [FUNCTION DOC]
+    # Verifies an invalid value for the bad-lines option raises a value error saying the
+    # argument is invalid.
     parser = all_parsers
     data = "a\n1\n1,2,3\n4\n5,6,7"
     with pytest.raises(ValueError, match="Argument abc is invalid for on_bad_lines"):
@@ -273,6 +340,11 @@ def test_invalid_on_bad_line(all_parsers):
 
 
 def test_bad_header_uniform_error(all_parsers):
+    # [FUNCTION DOC]
+    # Verifies that a first line which is a stray single-field line, combined with an
+    # index column and error mode for bad lines, raises a parser error with the same
+    # expected message for python (fields count) and a different one for the C engine
+    # (could not construct index). Skipped for pyarrow.
     parser = all_parsers
     data = "+++123456789...\ncol1,col2,col3,col4\n1,2,3,4\n"
     msg = "Expected 2 fields in line 2, saw 4"
@@ -290,6 +362,10 @@ def test_bad_header_uniform_error(all_parsers):
 
 
 def test_on_bad_lines_warn_correct_formatting(all_parsers):
+    # [FUNCTION DOC]
+    # Verifies warn mode for bad lines keeps the two-column good rows (with string
+    # column labels from the first line) and emits a parser warning ("Skipping line" or,
+    # for pyarrow, a message about expected two columns but found three).
     # see gh-15925
     parser = all_parsers
     data = """1,2

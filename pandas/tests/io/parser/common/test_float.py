@@ -3,6 +3,13 @@ Tests that work on both the Python and C engines but do not have a
 specific classification into the other test modules.
 """
 
+# [MODULE DOC]
+# Parser tests (all engines, via the parser fixture, and for float tests also all float
+# precision settings via a combined parser-and-precision fixture) of float parsing:
+# special values, scientific notation without exponent digits, extreme exponents, large
+# numbers following small integers, and invalid float-like strings.
+# Defines a marker alias that skips a test for the pyarrow engine.
+
 from io import StringIO
 
 import numpy as np
@@ -19,6 +26,10 @@ skip_pyarrow = pytest.mark.usefixtures("pyarrow_skip")
 
 @skip_pyarrow  # ParserError: CSV parse error: Empty CSV file or block
 def test_float_parser(all_parsers):
+    # [FUNCTION DOC]
+    # Skipped for pyarrow. Verifies that a single row with exponent notation,
+    # trailing-dot, and positive and negative infinity text is read with no header as
+    # five floats matching the built-in float conversion of each field.
     # see gh-9565
     parser = all_parsers
     data = "45e-1,4.5,45.,inf,-inf"
@@ -29,6 +40,11 @@ def test_float_parser(all_parsers):
 
 
 def test_scientific_no_exponent(all_parsers_all_precisions):
+    # [FUNCTION DOC]
+    # Builds a frame of strings that look like scientific notation with the exponent
+    # digits missing (such as a number followed by e or E), writes it to CSV text, reads
+    # it back under each float precision setting, and verifies the values stay as the
+    # original strings.
     # see gh-12215
     df = DataFrame.from_dict({"w": ["2e"], "x": ["3E"], "y": ["42e"], "z": ["632E"]})
     data = df.to_csv(index=False)
@@ -61,6 +77,11 @@ def test_scientific_no_exponent(all_parsers_all_precisions):
     ],
 )
 def test_large_exponent(all_parsers_all_precisions, value, expected_value):
+    # [FUNCTION DOC]
+    # Verifies that values with extremely large positive or negative exponents
+    # (including zero mantissa and signed forms) are parsed under each precision setting
+    # to zero for very negative exponents, positive infinity or negative infinity for
+    # very positive exponents, as parametrized.
     # GH#38753; GH#38794; GH#62740
     parser, precision = all_parsers_all_precisions
 
@@ -86,6 +107,11 @@ def test_large_exponent(all_parsers_all_precisions, value, expected_value):
 def test_small_int_followed_by_float(
     all_parsers_all_precisions, value, expected_value, request
 ):
+    # [FUNCTION DOC]
+    # Verifies a column whose first value is a small integer and second is a float
+    # written in various ways (plain, exponent forms, huge values that lose precision)
+    # is parsed to a float column with the expected values under each precision setting.
+    # The unused request fixture is accepted but not used.
     # GH#51295
     parser, precision = all_parsers_all_precisions
     data = f"""data
@@ -101,6 +127,10 @@ def test_small_int_followed_by_float(
     "value", ["81e31d04049863b72", "d81e31d04049863b72", "81e3104049863b72"]
 )
 def test_invalid_float_number(all_parsers_all_precisions, value):
+    # [FUNCTION DOC]
+    # Verifies strings that resemble floats but are invalid (a stray letter in the
+    # exponent or at the start) are left as string values under each precision setting
+    # rather than failing or being converted.
     # GH#62617
     parser, precision = all_parsers_all_precisions
     data = f"h1,h2,h3\ndata1,{value},data3"

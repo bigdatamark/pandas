@@ -5,6 +5,18 @@ these tests out of this module as soon as the Python parser can accept
 further arguments when parsing.
 """
 
+# [MODULE DOC]
+# Tests that apply specifically to the C parsing engine (using the C-engine-only parser
+# fixture, which covers high and low memory variants): tokenizer buffer handling, custom
+# line terminators, dtype and name interactions, unsupported dtypes, float precision
+# options, thousands/decimal handling, file-like inputs (mmap, tar members, binary mode,
+# objects lacking a next method), large and ragged inputs, null bytes, memory leak
+# checks on decode failure, and the content of mixed-dtype warnings under column
+# selection and index columns.
+# Defines a module constant for a small buffer heuristic and a helper that builds the
+# CSV text for the mixed-dtype tests. Some tests patch internal parser constants through
+# the monkeypatch fixture.
+
 from decimal import Decimal
 from io import (
     BytesIO,
@@ -42,6 +54,10 @@ import pandas._testing as tm
     ids=["words pointer", "stream pointer", "lines pointer"],
 )
 def test_buffer_overflow(c_parser_only, malformed):
+    # [FUNCTION DOC]
+    # Verifies that three malformed carriage-return-delimited inputs (which would
+    # overflow the words, stream or lines pointer in the tokenizer) raise a parser error
+    # saying a buffer overflow was caught.
     # see gh-9205: test certain malformed input files that cause
     # buffer overflows in tokenizer.c
     msg = "Buffer overflow caught - possible malformed input file."
@@ -52,6 +68,9 @@ def test_buffer_overflow(c_parser_only, malformed):
 
 
 def test_delim_whitespace_custom_terminator(c_parser_only):
+    # [FUNCTION DOC]
+    # Verifies that a whitespace regex separator combined with a custom tilde line
+    # terminator yields the expected three-row frame.
     # See gh-12912
     data = "a b c~1 2 3~4 5 6~7 8 9"
     parser = c_parser_only
@@ -62,6 +81,13 @@ def test_delim_whitespace_custom_terminator(c_parser_only):
 
 
 def test_dtype_and_names_error(c_parser_only):
+    # [FUNCTION DOC]
+    # Verifies combinations of dtype and names with whitespace-separated headerless
+    # data: plain read, named columns, and named columns with an integer dtype for one
+    # (fallback casting from float text succeeds). With a NaN in that column and an
+    # integer dtype, verifies a value error saying the values cannot be safely
+    # converted, together with a runtime warning; this last part is skipped on WASM (no
+    # floating-point exception support).
     # see gh-8833: passing both dtype and names
     # resulting in an error reporting issue
     parser = c_parser_only
@@ -135,6 +161,11 @@ nan 2
     ids=["dt64-0", "dt64-1", "td64", f"{tm.ENDIAN}U8"],
 )
 def test_unsupported_dtype(c_parser_only, match, kwargs, temp_file):
+    # [FUNCTION DOC]
+    # Writes a random frame to a temporary CSV and verifies reading with datetime64
+    # (with or without parse_dates), timedelta64 or fixed-width unicode string dtypes
+    # raises a type error saying the dtype is not supported for parsing (suggesting
+    # parse_dates for datetime).
     parser = c_parser_only
     df = DataFrame(
         np.random.default_rng(2).random((5, 2)),
@@ -153,12 +184,22 @@ def test_unsupported_dtype(c_parser_only, match, kwargs, temp_file):
 # test numbers between 1 and 2
 @pytest.mark.parametrize("num", np.linspace(1.0, 2.0, num=21))
 def test_precise_conversion(c_parser_only, num):
+    # [FUNCTION DOC]
+    # Skipped on 32-bit platforms and marked slow. For each of 21 numbers between one
+    # and two written with 25 decimal digits, reads the value with legacy, high and
+    # round-trip precision and verifies the round-trip value equals the built-in float
+    # conversion and that the high-precision error (against the exact decimal value) is
+    # no larger than the legacy error, using sums and maxima over the recorded errors.
     parser = c_parser_only
 
     normal_errors = []
     precise_errors = []
 
     def error(val: float, actual_val: Decimal) -> Decimal:
+        # [FUNCTION DOC]
+        # HELPER: takes a float and the exact decimal value and returns the absolute
+        # difference between the float's exact decimal expansion and the exact value, as
+        # a decimal.
         return abs(Decimal(f"{val:.100}") - actual_val)
 
     # 25 decimal digits of precision
@@ -184,6 +225,11 @@ def test_precise_conversion(c_parser_only, num):
 
 
 def test_usecols_dtypes(c_parser_only, using_infer_string):
+    # [FUNCTION DOC]
+    # Verifies that with column selection (all three columns, or the first and third), a
+    # converter on the first column and dtypes on the others, the result dtypes are
+    # string-or-object, integer and float, where the first dtype is the string dtype
+    # when string inference is enabled and object otherwise.
     parser = c_parser_only
     data = """\
 1,2,3
@@ -217,6 +263,10 @@ def test_usecols_dtypes(c_parser_only, using_infer_string):
 
 
 def test_disable_bool_parsing(c_parser_only):
+    # [FUNCTION DOC]
+    # Verifies that requesting object dtype prevents Yes/No columns from being parsed as
+    # booleans, and that with the missing-value filter turned off an empty field stays
+    # an empty string.
     # see gh-2090
 
     parser = c_parser_only
@@ -234,6 +284,9 @@ No,No,No"""
 
 
 def test_custom_lineterminator(c_parser_only):
+    # [FUNCTION DOC]
+    # Verifies reading with a tilde line terminator equals reading the same text with
+    # newlines.
     parser = c_parser_only
     data = "a,b,c~1,2,3~4,5,6"
 
@@ -244,6 +297,11 @@ def test_custom_lineterminator(c_parser_only):
 
 
 def test_parse_ragged_csv(c_parser_only):
+    # [FUNCTION DOC]
+    # Verifies that rows of unequal lengths read with five names are padded with missing
+    # values to match the explicitly padded text. Also verifies a case with far more
+    # names than fields (fifty names) works and equals the three-column read reindexed
+    # to fifty columns (guards against a crash).
     parser = c_parser_only
     data = """1,2,3
 1,2,3,4
@@ -278,6 +336,9 @@ def test_parse_ragged_csv(c_parser_only):
 
 
 def test_tokenize_CR_with_quoting(c_parser_only):
+    # [FUNCTION DOC]
+    # Verifies that carriage-return line endings with quoted fields are tokenized the
+    # same as newline endings, both with no header and with a header.
     # see gh-3453
     parser = c_parser_only
     data = ' a,b,c\r"a,b","e,d","f,f"'
@@ -294,6 +355,10 @@ def test_tokenize_CR_with_quoting(c_parser_only):
 @pytest.mark.slow
 @pytest.mark.parametrize("count", [3 * 2**n for n in range(6)])
 def test_grow_boundary_at_cap(c_parser_only, count):
+    # [FUNCTION DOC]
+    # Marked slow. Regression for a buffer overflow when the tokenizer buffer is filled
+    # exactly to capacity: for 3 times a power of two commas (counts from 3 up to 96),
+    # verifies the read yields an empty frame with one more unnamed column than commas.
     # See gh-12494
     #
     # Cause of error was that the C parser
@@ -314,6 +379,12 @@ def test_grow_boundary_at_cap(c_parser_only, count):
 @pytest.mark.slow
 @pytest.mark.parametrize("encoding", [None, "utf-8"])
 def test_parse_trim_buffers(c_parser_only, encoding):
+    # [FUNCTION DOC]
+    # Marked slow. Stress test for the tokenizer's buffer trimming (regression for a
+    # memory corruption bug): builds a large mixed-type CSV with 271 copies of a long
+    # record, reads it in chunks of 128 lines as object dtype (with or without explicit
+    # UTF-8 encoding), concatenates the chunks, and verifies the result equals the frame
+    # built by splitting the record on commas, with empty fields as NaN.
     # This test is part of a bugfix for gh-13703. It attempts to
     # to stress the system memory allocator, to cause it to move the
     # stream buffer and either let the OS reclaim the region, or let
@@ -396,6 +467,9 @@ def test_parse_trim_buffers(c_parser_only, encoding):
 
 
 def test_internal_null_byte(c_parser_only):
+    # [FUNCTION DOC]
+    # Verifies that a NUL byte field is read as missing, i.e. it is not treated as a
+    # line terminator, escape or comment character.
     # see gh-14012
     #
     # The null byte ('\x00') should not be used as a
@@ -416,6 +490,10 @@ def test_internal_null_byte(c_parser_only):
 
 
 def test_read_nrows_large(c_parser_only):
+    # [FUNCTION DOC]
+    # Verifies that a row limit works when the input is large (a block of narrow rows
+    # followed by wide rows) and the limit falls inside the narrow block: the frame has
+    # 1010 rows by 10 columns.
     # gh-7626 - Read only nrows of data in for large inputs (>262144b)
     parser = c_parser_only
     header_narrow = "\t".join(["COL_HEADER_" + str(i) for i in range(10)]) + "\n"
@@ -430,6 +508,9 @@ def test_read_nrows_large(c_parser_only):
 
 
 def test_float_precision_round_trip_with_text(c_parser_only):
+    # [FUNCTION DOC]
+    # Verifies that the round-trip float precision setting still reads a non-numeric
+    # string as text.
     # see gh-15140
     parser = c_parser_only
     df = parser.read_csv(StringIO("a"), header=None, float_precision="round_trip")
@@ -437,6 +518,10 @@ def test_float_precision_round_trip_with_text(c_parser_only):
 
 
 def test_large_difference_in_columns(c_parser_only):
+    # [FUNCTION DOC]
+    # Verifies that selecting only the first column works for input where the first row
+    # has ten thousand fields and the others only two, returning the first field of
+    # every row.
     # see gh-14125
     parser = c_parser_only
 
@@ -453,6 +538,9 @@ def test_large_difference_in_columns(c_parser_only):
 
 
 def test_data_after_quote(c_parser_only):
+    # [FUNCTION DOC]
+    # Verifies that characters following a closing quote in a field are appended to the
+    # field value.
     # see gh-15910
     parser = c_parser_only
 
@@ -464,6 +552,10 @@ def test_data_after_quote(c_parser_only):
 
 
 def test_comment_whitespace_delimited(c_parser_only):
+    # [FUNCTION DOC]
+    # Verifies comment handling with a whitespace regex delimiter and warn mode for bad
+    # lines: lines with too many fields are skipped with a warning, comments truncate
+    # lines, and rows with only some fields are padded with NaN.
     parser = c_parser_only
     test_input = """\
 1 2
@@ -492,12 +584,20 @@ def test_comment_whitespace_delimited(c_parser_only):
 
 
 def test_file_like_no_next(c_parser_only):
+    # [FUNCTION DOC]
+    # Verifies the C engine can read an object that supports iteration but whose next
+    # method raises an error (regression; true only for the C engine).
     # gh-16530: the file-like need not have a "next" or "__next__"
     # attribute despite having an "__iter__" attribute.
     #
     # NOTE: This is only true for the C engine, not Python engine.
     class NoNextBuffer(StringIO):
+        # [CLASS DOC]
+        # HELPER: text stream subclass whose next methods (both the dunder and the
+        # legacy name) raise an attribute error.
         def __next__(self):
+            # [FUNCTION DOC]
+            # HELPER: always raises an attribute error saying there is no next method.
             raise AttributeError("No next method")
 
         next = __next__
@@ -512,6 +612,10 @@ def test_file_like_no_next(c_parser_only):
 
 
 def test_buffer_rd_bytes_bad_unicode(c_parser_only):
+    # [FUNCTION DOC]
+    # Verifies that reading a text wrapper around a byte that cannot be decoded
+    # (surrogate-escaped) raises a unicode error stating the utf-8 codec cannot encode
+    # the character.
     # see gh-22748
     t = BytesIO(b"\xb0")
     t = TextIOWrapper(t, encoding="UTF-8", errors="surrogateescape")
@@ -522,6 +626,9 @@ def test_buffer_rd_bytes_bad_unicode(c_parser_only):
 
 @pytest.mark.parametrize("tar_suffix", [".tar", ".tar.gz"])
 def test_read_tarfile(c_parser_only, csv_dir_path, tar_suffix):
+    # [FUNCTION DOC]
+    # Verifies that a CSV member extracted from a tar archive (plain or gzipped) can be
+    # read as a binary file object, giving a one-cell frame.
     # see gh-16530
     #
     # Unfortunately, Python's CSV library can't handle
@@ -539,6 +646,10 @@ def test_read_tarfile(c_parser_only, csv_dir_path, tar_suffix):
 
 
 def test_chunk_whitespace_on_boundary(c_parser_only):
+    # [FUNCTION DOC]
+    # Verifies parsing of a line whose length approaches the tokenizer chunk size plus
+    # following short lines (including one with a leading space) reads three rows,
+    # preserving the leading space; specific to the C engine.
     # see gh-9735: this issue is C parser-specific (bug when
     # parsing whitespace and characters at chunk boundary)
     #
@@ -555,6 +666,9 @@ def test_chunk_whitespace_on_boundary(c_parser_only):
 
 @pytest.mark.skipif(WASM, reason="limited file system access on WASM")
 def test_file_handles_mmap(c_parser_only, csv1):
+    # [FUNCTION DOC]
+    # Skipped on WASM. Verifies that reading from a memory-mapped file object does not
+    # close it.
     # gh-14418
     #
     # Don't close user provided file handles.
@@ -567,6 +681,9 @@ def test_file_handles_mmap(c_parser_only, csv1):
 
 
 def test_file_binary_mode(c_parser_only, temp_file):
+    # [FUNCTION DOC]
+    # Verifies a file opened in binary mode can be read with no header.
+    # Side effect: writes a temporary file.
     # see gh-23779
     parser = c_parser_only
     expected = DataFrame([[1, 2, 3], [4, 5, 6]])
@@ -581,6 +698,10 @@ def test_file_binary_mode(c_parser_only, temp_file):
 
 
 def test_unix_style_breaks(c_parser_only, temp_file):
+    # [FUNCTION DOC]
+    # Writes a file with newline line endings, reads it skipping the first two lines
+    # with explicit UTF-8 encoding, and verifies an empty frame with the three header
+    # names.
     # GH 11020
     parser = c_parser_only
     path = temp_file
@@ -616,6 +737,10 @@ def test_unix_style_breaks(c_parser_only, temp_file):
 def test_1000_sep_with_decimal(
     c_parser_only, data, thousands, decimal, float_precision
 ):
+    # [FUNCTION DOC]
+    # Verifies, for each float precision setting, that pipe-separated data with
+    # thousands and decimal markers in the two common conventions parses to the same
+    # expected numeric frame.
     parser = c_parser_only
     expected = DataFrame({"A": [1, 10], "B": [2334.01, 13], "C": [5, 10.0]})
 
@@ -630,6 +755,10 @@ def test_1000_sep_with_decimal(
 
 
 def test_float_precision_options(c_parser_only):
+    # [FUNCTION DOC]
+    # Verifies the default and high precision settings give the same result, the legacy
+    # setting gives a different value for a given decimal, and an unrecognized precision
+    # string raises a value error naming the option.
     # GH 17154, 36228
     parser = c_parser_only
     s = "foo\n243.164\n"
@@ -650,6 +779,14 @@ def test_float_precision_options(c_parser_only):
 
 @pytest.mark.parametrize("dtype", [None, "category"])
 def test_decode_failure_frees_string_table(c_parser_only, dtype, tmp_path):
+    # [FUNCTION DOC]
+    # Regression for a memory leak when decoding fails midway through a column. Writes a
+    # file with 2000 ASCII rows followed by an invalid byte, then (with default or
+    # category dtype) repeatedly reads it with strict UTF-8 decoding, expecting a
+    # unicode decode error each time. Uses allocation tracing restricted to the hash
+    # table domain: after one warm-up read, fifty more reads must leave the total size
+    # difference at exactly zero.
+    # Side effect: starts and always stops allocation tracing.
     # GH#67931
     # the string columns are interned through a khash table that was freed only
     # on the success path, so a decode failure part-way through a column leaked
@@ -660,6 +797,9 @@ def test_decode_failure_frees_string_table(c_parser_only, dtype, tmp_path):
     path.write_bytes(b"a\n" + rows + b"\n\xff\n")
 
     def read():
+        # [FUNCTION DOC]
+        # HELPER: attempts the failing read from the invalid file and asserts a unicode
+        # decode error is raised.
         # a path plus an explicit encoding is what hands the tokenizer
         # undecoded bytes, so the column is the first thing to decode them
         with pytest.raises(UnicodeDecodeError):
@@ -691,6 +831,13 @@ _MIXED_DTYPE_HEURISTIC = 2**3
 
 
 def _mixed_dtype_data(n_leading_names: int = 3) -> str:
+    # [FUNCTION DOC]
+    # HELPER: for the mixed-dtype warning tests. Takes the number of leading names to
+    # put in the header (default three, up to three) and returns CSV text: a header made
+    # of that many of the names a, b, c, followed by rows of three identical numbers,
+    # with two middle rows whose second field is a letter (so that field is mixed-typed
+    # in its own internal chunk), followed by the numeric rows again, all ending with a
+    # newline. With fewer names than fields the first field becomes an implicit index.
     """
     Build a csv whose middle chunk makes the second of three fields mixed-dtype.
 
@@ -705,6 +852,12 @@ def _mixed_dtype_data(n_leading_names: int = 3) -> str:
 
 @pytest.mark.parametrize("usecols", [["b"], ["b", "c"], [1], [1, 2]])
 def test_mixed_dtype_warning_with_usecols(c_parser_only, monkeypatch, usecols):
+    # [FUNCTION DOC]
+    # Regression: with a patched small buffer heuristic and the column selection
+    # variants for the second or the second and third columns (by name or position),
+    # verifies the low-memory read emits a dtype warning naming the mixed column b at
+    # position one, without an index error, and that the result columns are the selected
+    # ones. Without low-memory mode it just reads and checks the columns.
     # GH#67375: read_low_memory keys its chunks by field position in the source
     # row, so usecols leaves gaps in those keys.  The mixed-dtype warning used
     # them to index the column names directly, which raised IndexError for any
@@ -730,6 +883,10 @@ def test_mixed_dtype_warning_with_usecols(c_parser_only, monkeypatch, usecols):
 
 
 def test_mixed_dtype_warning_with_index_col(c_parser_only, monkeypatch):
+    # [FUNCTION DOC]
+    # Regression: with the first column as index, verifies the dtype warning still names
+    # column b (position one) and the result has columns b and c and index named a.
+    # Non-low-memory mode just reads.
     # GH#67375: an index column shifts the parsed field positions past the data
     # columns, so the same positional lookup named the column after the mixed
     # one instead of naming "b".
@@ -754,6 +911,10 @@ def test_mixed_dtype_warning_with_index_col(c_parser_only, monkeypatch):
 
 
 def test_mixed_dtype_warning_with_implicit_index(c_parser_only, monkeypatch):
+    # [FUNCTION DOC]
+    # Regression: with a header shorter than the rows (implicit index from the first
+    # field), verifies the warning names column a at position one as the mixed column,
+    # and the result has columns a and b. Non-low-memory mode just reads.
     # GH#67375: a header shorter than the rows makes the reader take the first
     # field as an implicit index.  That field has no name, so the parsed
     # positions run one ahead of the column names and the warning named "b"
@@ -777,6 +938,10 @@ def test_mixed_dtype_warning_with_implicit_index(c_parser_only, monkeypatch):
 
 
 def test_mixed_dtype_warning_reports_source_positions(c_parser_only, monkeypatch):
+    # [FUNCTION DOC]
+    # Regression: with two mixed columns at source positions one and three, verifies the
+    # warning lists the names with those source positions rather than a running count,
+    # and that all four columns are kept. Non-low-memory mode just reads.
     # GH#67375: the number before each name is the column's position in the
     # source row -- as GH#58174 asked for and as the pre-GH#58250 message
     # printed -- not a running count of the mixed columns.  With two mixed
@@ -801,6 +966,10 @@ def test_mixed_dtype_warning_reports_source_positions(c_parser_only, monkeypatch
 
 
 def test_mixed_dtype_warning_with_mixed_implicit_index(c_parser_only, monkeypatch):
+    # [FUNCTION DOC]
+    # Regression: when the implicit index column is itself the mixed one, verifies the
+    # warning identifies it by position zero only (without borrowing a name), the
+    # columns are a, b, c and the index has no name. Non-low-memory mode just reads.
     # GH#67375: the implicit index column is parsed like any other field and can
     # itself be mixed, but it has no name to report.  Naming it by position, as
     # the message did before GH#58250 added names, beats borrowing the name of

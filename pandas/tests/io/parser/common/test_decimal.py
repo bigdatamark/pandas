@@ -3,6 +3,10 @@ Tests that work on both the Python and C engines but do not have a
 specific classification into the other test modules.
 """
 
+# [MODULE DOC]
+# Parser tests for the thousands separator and decimal point options, including
+# European-style number formats.
+
 from io import StringIO
 
 import pytest
@@ -37,6 +41,12 @@ pytestmark = pytest.mark.filterwarnings(
     ],
 )
 def test_1000_sep_with_decimal(all_parsers, data, thousands, decimal):
+    # [FUNCTION DOC]
+    # Verifies that pipe-separated data with a thousands separator and decimal marker
+    # (comma-thousands with dot-decimal, and dot-thousands with comma-decimal) parses
+    # into the expected numeric columns, including a trailing decimal mark treated as a
+    # whole number. For pyarrow, verifies a value error that the thousands option is
+    # unsupported.
     parser = all_parsers
     expected = DataFrame({"A": [1, 10], "B": [2334.01, 13], "C": [5, 10.0]})
 
@@ -55,6 +65,9 @@ def test_1000_sep_with_decimal(all_parsers, data, thousands, decimal):
 
 
 def test_euro_decimal_format(all_parsers):
+    # [FUNCTION DOC]
+    # Verifies that semicolon-separated data using a comma as decimal marker is read
+    # with that decimal option into integer, float and string columns as expected.
     parser = all_parsers
     data = """Id;Number1;Number2;Text1;Text2;Number3
 1;1521,1541;187101,9543;ABC;poi;4,738797819

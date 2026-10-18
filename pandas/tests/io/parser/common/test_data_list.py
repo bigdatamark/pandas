@@ -3,6 +3,10 @@ Tests that work on both the Python and C engines but do not have a
 specific classification into the other test modules.
 """
 
+# [MODULE DOC]
+# Parser tests for reading from in-memory lists of rows, via the text-parser class that
+# accepts a list of lists of strings, and for a simple one-column list-like input.
+
 import csv
 from io import StringIO
 
@@ -22,6 +26,11 @@ xfail_pyarrow = pytest.mark.usefixtures("pyarrow_xfail")
 
 @xfail_pyarrow
 def test_read_data_list(all_parsers):
+    # [FUNCTION DOC]
+    # Marked as expected to fail for the pyarrow engine. Verifies that the text parser
+    # fed a list of string rows (header plus two data rows, first column as index, chunk
+    # size two) produces, on a full read, the same frame as reading the equivalent CSV
+    # text.
     parser = all_parsers
     kwargs = {"index_col": 0}
     data = "A,B,C\nfoo,1,2,3\nbar,4,5,6"
@@ -36,6 +45,10 @@ def test_read_data_list(all_parsers):
 
 
 def test_reader_list(all_parsers):
+    # [FUNCTION DOC]
+    # Parses a CSV into a list of rows with the standard csv reader, feeds it to the
+    # text parser with an index column and chunk size two, and verifies the three chunks
+    # equal the corresponding slices of the frame read directly from the text.
     data = """index,A,B,C,D
 foo,2,3,4,5
 bar,7,8,9,10
@@ -59,6 +72,9 @@ bar2,12,13,14,15
 
 
 def test_reader_list_skiprows(all_parsers):
+    # [FUNCTION DOC]
+    # Same as the reader-list test but skipping the row at position one; verifies the
+    # first chunk equals the rows at positions one to three of the directly read frame.
     data = """index,A,B,C,D
 foo,2,3,4,5
 bar,7,8,9,10
@@ -80,6 +96,9 @@ bar2,12,13,14,15
 
 
 def test_read_csv_parse_simple_list(all_parsers):
+    # [FUNCTION DOC]
+    # Verifies that one-column text containing values with spaces, read with no header,
+    # yields a single-column frame of those strings.
     parser = all_parsers
     data = """foo
 bar baz

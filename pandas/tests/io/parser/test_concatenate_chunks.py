@@ -1,3 +1,9 @@
+# [MODULE DOC]
+# Tests of the internal helper that concatenates the per-chunk column arrays produced by
+# the C parser wrapper, covering arrow-backed arrays: numeric widening and the
+# mixed-type warning. Imports the private concatenation function from the C parser
+# wrapper module.
+
 import numpy as np
 import pytest
 
@@ -10,6 +16,10 @@ from pandas.io.parsers.c_parser_wrapper import _concatenate_chunks
 
 
 def test_concatenate_chunks_pyarrow():
+    # [FUNCTION DOC]
+    # Skipped without pyarrow. Verifies concatenating an arrow float chunk with an arrow
+    # integer chunk for one column gives a single arrow float array of four values
+    # (integers widened to floats).
     # GH#51876
     pa = pytest.importorskip("pyarrow")
     chunks = [
@@ -22,6 +32,10 @@ def test_concatenate_chunks_pyarrow():
 
 
 def test_concatenate_chunks_pyarrow_strings():
+    # [FUNCTION DOC]
+    # Skipped without pyarrow. Verifies concatenating an arrow float chunk with an arrow
+    # string chunk emits a dtype warning saying the column has mixed types (naming the
+    # column) and returns a plain object array holding the floats and the strings.
     # GH#51876
     pa = pytest.importorskip("pyarrow")
     chunks = [

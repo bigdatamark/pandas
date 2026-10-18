@@ -3,6 +3,11 @@ Tests that work on both the Python and C engines but do not have a
 specific classification into the other test modules.
 """
 
+# [MODULE DOC]
+# Parser tests for parsing infinity text in numeric columns, with and without the
+# missing-value filter. Defines a marker alias for tests expected to fail for the
+# pyarrow engine.
+
 from io import StringIO
 
 import pytest
@@ -20,6 +25,11 @@ xfail_pyarrow = pytest.mark.usefixtures("pyarrow_xfail")
 @xfail_pyarrow  # AssertionError: DataFrame.index are different
 @pytest.mark.parametrize("na_filter", [True, False])
 def test_inf_parsing(all_parsers, na_filter):
+    # [FUNCTION DOC]
+    # Marked expected to fail for pyarrow. Verifies that spellings of infinity in
+    # different cases and signs (inf, Inf, INF, mixed, with plus or minus) are all
+    # parsed as float infinities alternating positive and negative, with the first
+    # column as index, whether or not the missing-value filter is on.
     parser = all_parsers
     data = """\
 ,A
@@ -44,6 +54,10 @@ j,-inF"""
 @xfail_pyarrow  # AssertionError: DataFrame.index are different
 @pytest.mark.parametrize("na_filter", [True, False])
 def test_infinity_parsing(all_parsers, na_filter):
+    # [FUNCTION DOC]
+    # Marked expected to fail for pyarrow. Verifies that the long spelling of infinity,
+    # with no sign, minus and plus, is parsed to positive and negative infinity,
+    # regardless of the missing-value filter setting.
     parser = all_parsers
     data = """\
 ,A

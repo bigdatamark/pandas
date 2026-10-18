@@ -3,6 +3,16 @@ Tests that work on both the Python and C engines but do not have a
 specific classification into the other test modules.
 """
 
+# [MODULE DOC]
+# Parser tests (run against every engine through the parser fixture) of the different
+# kinds of inputs and of end-of-input states: URLs, local file URLs, path objects,
+# nonexistent and unreadable paths, odd end-of-file situations in the tokenizer,
+# temporary files, embedded end-of-file bytes, ownership and closing of user-provided
+# file handles, invalid buffer objects, memory mapping (also with compression), and
+# reader context managers.
+# Defines two marker aliases: one marks a test as expected to fail for the pyarrow
+# engine and one skips it for that engine.
+
 from io import (
     BytesIO,
     StringIO,
@@ -39,6 +49,10 @@ skip_pyarrow = pytest.mark.usefixtures("pyarrow_skip")
 @pytest.mark.network
 @pytest.mark.single_cpu
 def test_url(all_parsers, csv_dir_path, httpserver):
+    # [FUNCTION DOC]
+    # Marked as a network test, single cpu. Serves a local salaries data file from the
+    # test HTTP server fixture and verifies that reading from the served URL with a tab
+    # separator gives the same frame as reading the local file.
     parser = all_parsers
     kwargs = {"sep": "\t"}
 
@@ -54,6 +68,10 @@ def test_url(all_parsers, csv_dir_path, httpserver):
 
 @pytest.mark.slow
 def test_local_file(all_parsers, csv_dir_path):
+    # [FUNCTION DOC]
+    # Marked slow. Reads a salaries file with a tab separator both by path and through a
+    # localhost file URL and verifies equal frames. If the URL read raises a URL error
+    # (fails on some systems) the test is skipped with the platform description.
     parser = all_parsers
     kwargs = {"sep": "\t"}
 
@@ -71,6 +89,11 @@ def test_local_file(all_parsers, csv_dir_path):
 
 @xfail_pyarrow  # AssertionError: DataFrame.index are different
 def test_path_path_lib(all_parsers, temp_file):
+    # [FUNCTION DOC]
+    # Marked expected to fail for pyarrow (index differs). Round-trips a thirty-row
+    # float frame with string index through writing and reading using a path object in a
+    # temporary location, reading with the first column as index, and verifies the frame
+    # is unchanged.
     parser = all_parsers
     df = DataFrame(
         1.1 * np.arange(120).reshape((30, 4)),
@@ -85,6 +108,10 @@ def test_path_path_lib(all_parsers, temp_file):
 
 @pytest.mark.skipif(WASM, reason="limited file system access on WASM")
 def test_nonexistent_path(all_parsers):
+    # [FUNCTION DOC]
+    # Skipped on WASM. Verifies that reading a randomly named path that does not exist
+    # raises a file-not-found error with the operating system error number two in the
+    # message, and that the error's filename attribute equals the path given.
     # gh-2428: pls no segfault
     # gh-14086: raise more helpful FileNotFoundError
     # GH#29233 "File foo" instead of "File b'foo'"
@@ -100,6 +127,12 @@ def test_nonexistent_path(all_parsers):
 @pytest.mark.skipif(WASM, reason="limited file system access on WASM")
 @td.skip_if_windows  # os.chmod does not work in windows
 def test_no_permission(all_parsers, temp_file):
+    # [FUNCTION DOC]
+    # Skipped on WASM and on Windows. Removes all permissions from a temporary file,
+    # skips the test if the process can nonetheless open it (running with elevated
+    # rights), and otherwise verifies that reading raises a permission error with error
+    # number thirteen and the resolved path as the error's filename.
+    # Side effect: changes permissions of the temporary file.
     # GH 23784
     parser = all_parsers
 
@@ -216,6 +249,18 @@ def test_no_permission(all_parsers, temp_file):
     ],
 )
 def test_eof_states(all_parsers, data, kwargs, expected, msg, request):
+    # [FUNCTION DOC]
+    # Parametrized over inputs that end in each internal tokenizer state (whitespace
+    # line, line comment, carriage return, comment, skipped line, in a field, escape
+    # character, escape inside quoted field, in quoted field). Verifies that either the
+    # expected frame with one data row is returned, or a parser error about end of file
+    # (inside a string or following an escape character) is raised, depending on the
+    # case.
+    # For pyarrow, cases with a comment option expect a value error that the option is
+    # unsupported, and cases without a carriage return are skipped (known upstream
+    # behavior difference).
+    # KNOWN ISSUE: two cases share the id eat-line-comment (the second one also turns
+    # off blank-line skipping), so they cannot be told apart by id.
     # see gh-10728, gh-10548
     parser = all_parsers
 
@@ -240,6 +285,11 @@ def test_eof_states(all_parsers, data, kwargs, expected, msg, request):
 
 
 def test_temporary_file(all_parsers, temp_file):
+    # [FUNCTION DOC]
+    # Writes a line of two zeros to a temporary file opened for reading and writing,
+    # rewinds it, and verifies reading from the open handle with whitespace separator
+    # and no header gives a one-row frame of two zeros. For pyarrow, verifies the regex
+    # separator error.
     # see gh-13398
     parser = all_parsers
     data = "0 0"
@@ -262,6 +312,9 @@ def test_temporary_file(all_parsers, temp_file):
 
 
 def test_internal_eof_byte(all_parsers):
+    # [FUNCTION DOC]
+    # Verifies a control-Z (substitute) character inside a field of text input is
+    # retained as part of the string value.
     # see gh-5500
     parser = all_parsers
     data = "a,b\n1\x1a,2"
@@ -272,6 +325,11 @@ def test_internal_eof_byte(all_parsers):
 
 
 def test_internal_eof_byte_to_file(all_parsers, temp_file):
+    # [FUNCTION DOC]
+    # Writes bytes containing a control-Z character inside a quoted field to a randomly
+    # named file next to the temporary file and verifies reading it returns the string
+    # with the character retained, and the unquoted second field with its leading space.
+    # Side effect: leaves the created file in the temporary file's directory.
     # see gh-16559
     parser = all_parsers
     data = b'c1,c2\r\n"test \x1a    test", test\r\n'
@@ -287,6 +345,8 @@ def test_internal_eof_byte_to_file(all_parsers, temp_file):
 
 
 def test_file_handle_string_io(all_parsers):
+    # [FUNCTION DOC]
+    # Verifies reading from an in-memory text stream does not close the stream.
     # gh-14418
     #
     # Don't close user provided file handles.
@@ -299,6 +359,9 @@ def test_file_handle_string_io(all_parsers):
 
 
 def test_file_handles_with_open(all_parsers, csv1):
+    # [FUNCTION DOC]
+    # Verifies that reading from an opened file handle, in text mode and in binary mode,
+    # does not close the handle.
     # gh-14418
     #
     # Don't close user provided file handles.
@@ -311,8 +374,13 @@ def test_file_handles_with_open(all_parsers, csv1):
 
 
 def test_invalid_file_buffer_class(all_parsers):
+    # [FUNCTION DOC]
+    # Verifies passing an instance of a plain class (no file interface) raises a value
+    # error about an invalid file path or buffer object type.
     # see gh-15337
     class InvalidBuffer:
+        # [CLASS DOC]
+        # HELPER: empty class used as an invalid buffer argument.
         pass
 
     parser = all_parsers
@@ -323,11 +391,18 @@ def test_invalid_file_buffer_class(all_parsers):
 
 
 def test_invalid_file_buffer_mock(all_parsers):
+    # [FUNCTION DOC]
+    # Verifies, as the previous test, that an instance of another plain class raises the
+    # invalid file path or buffer object type value error.
+    # KNOWN ISSUE: despite the name no mock is used; the test is effectively a
+    # duplicate of the invalid buffer class test.
     # see gh-15337
     parser = all_parsers
     msg = "Invalid file path or buffer object type"
 
     class Foo:
+        # [CLASS DOC]
+        # HELPER: empty class used as an invalid buffer argument.
         pass
 
     with pytest.raises(ValueError, match=msg):
@@ -335,6 +410,10 @@ def test_invalid_file_buffer_mock(all_parsers):
 
 
 def test_valid_file_buffer_seems_invalid(all_parsers):
+    # [FUNCTION DOC]
+    # Verifies that a text stream whose position query and reposition methods raise an
+    # attribute error can still be read, proving the reader does not rely on those
+    # methods.
     # gh-16135: we want to ensure that "tell" and "seek"
     # aren't actually being used when we call `read_csv`
     #
@@ -342,10 +421,18 @@ def test_valid_file_buffer_seems_invalid(all_parsers):
     # methods are attributes of the `StringIO` class),
     # it is still a valid file-object for our purposes.
     class NoSeekTellBuffer(StringIO):
+        # [CLASS DOC]
+        # HELPER: text stream subclass whose position-query and seek methods both raise
+        # an attribute error.
         def tell(self):
+            # [FUNCTION DOC]
+            # HELPER: always raises an attribute error saying there is no tell method.
             raise AttributeError("No tell method")
 
         def seek(self, pos, whence=0):
+            # [FUNCTION DOC]
+            # HELPER: takes a position and an optional mode argument and always raises
+            # an attribute error saying there is no seek method.
             raise AttributeError("No seek method")
 
     data = "a\n1"
@@ -359,6 +446,9 @@ def test_valid_file_buffer_seems_invalid(all_parsers):
 @pytest.mark.parametrize("io_class", [StringIO, BytesIO])
 @pytest.mark.parametrize("encoding", [None, "utf-8"])
 def test_read_csv_file_handle(all_parsers, io_class, encoding):
+    # [FUNCTION DOC]
+    # Verifies reading from text or bytes in-memory streams, with or without an explicit
+    # encoding, gives the expected frame and leaves the user-provided stream open.
     """
     Test whether read_csv does not close user-provided file handles.
 
@@ -375,6 +465,10 @@ def test_read_csv_file_handle(all_parsers, io_class, encoding):
 
 
 def test_memory_map_compression(all_parsers, compression, temp_file):
+    # [FUNCTION DOC]
+    # Writes a small frame to a temporary file with the compression fixture value and
+    # verifies reading it with memory mapping enabled and the same compression gives
+    # back the frame. For pyarrow, verifies the unsupported memory-map error.
     """
     Support memory map for compressed files.
 
@@ -401,6 +495,11 @@ def test_memory_map_compression(all_parsers, compression, temp_file):
 
 
 def test_context_manager(all_parsers, datapath):
+    # [FUNCTION DOC]
+    # Verifies the file handle opened by a chunked reader on a path is open before use
+    # and closed after leaving the reader's context manager (an assertion error is
+    # raised deliberately inside to leave the block early). For pyarrow, verifies the
+    # unsupported chunk size error.
     # make sure that opened files are closed
     parser = all_parsers
 
@@ -423,6 +522,12 @@ def test_context_manager(all_parsers, datapath):
 
 
 def test_context_manageri_user_provided(all_parsers, datapath):
+    # [FUNCTION DOC]
+    # Same as the previous test but with a user-provided open file: verifies the handle
+    # stays open after the reader's context is exited. For pyarrow, verifies the
+    # unsupported chunk size error.
+    # KNOWN ISSUE: the function name has a stray trailing letter (manageri) instead of
+    # context_manager_user_provided.
     # make sure that user-provided handles are not closed
     parser = all_parsers
 
@@ -445,6 +550,10 @@ def test_context_manageri_user_provided(all_parsers, datapath):
 
 @skip_pyarrow  # ParserError: Empty CSV file
 def test_file_descriptor_leak(all_parsers, temp_file):
+    # [FUNCTION DOC]
+    # Skipped for pyarrow. Verifies that reading an empty file raises an empty-data
+    # error ("No columns to parse from file"; regression for a descriptor leak on this
+    # error path, though the test itself does not inspect descriptors).
     # GH 31488
     parser = all_parsers
     path = temp_file
@@ -453,6 +562,9 @@ def test_file_descriptor_leak(all_parsers, temp_file):
 
 
 def test_memory_map(all_parsers, csv_dir_path):
+    # [FUNCTION DOC]
+    # Reads a small three-column file with memory mapping enabled and verifies the
+    # expected frame. For pyarrow, verifies the unsupported memory-map error.
     mmap_file = os.path.join(csv_dir_path, "test_mmap.csv")
     parser = all_parsers
 
