@@ -1,3 +1,5 @@
+# [MODULE DOC]
+# Tests for constructing the nullable boolean array: the direct constructor from value and mask arrays, the public array factory with dtype boolean from many inputs, the internal coerce-to-array helper, conversion from strings, and conversion to NumPy (including copy and readonly behavior).
 import numpy as np
 import pytest
 
@@ -8,6 +10,8 @@ from pandas.core.arrays.boolean import coerce_to_array
 
 
 def test_boolean_array_constructor():
+    # [FUNCTION DOC]
+    # Verifies the constructor with a bool values array and a bool mask equals the array factory result with the masked element missing. Verifies type errors ("values should be boolean numpy array" / "mask should be boolean numpy array") for list values, list mask, integer-typed values, and a None mask, and value errors about mismatched shapes when either argument is made two-dimensional.
     values = np.array([True, False, True, False], dtype="bool")
     mask = np.array([False, False, False, True], dtype="bool")
 
@@ -35,6 +39,8 @@ def test_boolean_array_constructor():
 
 
 def test_boolean_array_constructor_copy():
+    # [FUNCTION DOC]
+    # Verifies the constructor stores the given values and mask arrays without copying (identity preserved), and that the copy option makes new arrays for both.
     values = np.array([True, False, True, False], dtype="bool")
     mask = np.array([False, False, False, True], dtype="bool")
 
@@ -48,6 +54,8 @@ def test_boolean_array_constructor_copy():
 
 
 def test_to_boolean_array():
+    # [FUNCTION DOC]
+    # Verifies the array factory with dtype boolean builds the expected array from a list, NumPy bool array, and object array of bools, and with a missing entry from a list and an object array containing None.
     expected = BooleanArray(
         np.array([True, False, True]), np.array([False, False, False])
     )
@@ -71,6 +79,8 @@ def test_to_boolean_array():
 
 
 def test_to_boolean_array_all_none():
+    # [FUNCTION DOC]
+    # Verifies an all-None list or object array becomes a boolean array that is fully masked (the underlying data are true for masked slots).
     expected = BooleanArray(np.array([True, True, True]), np.array([True, True, True]))
 
     result = pd.array([None, None, None], dtype="boolean")
@@ -90,6 +100,8 @@ def test_to_boolean_array_all_none():
     ],
 )
 def test_to_boolean_array_missing_indicators(a, b):
+    # [FUNCTION DOC]
+    # Parametrized over inputs containing different missing indicators (None, NaN, NA, float NaN array) paired with the expected list with None. Verifies all indicators are treated as missing.
     result = pd.array(a, dtype="boolean")
     expected = pd.array(b, dtype="boolean")
     tm.assert_extension_array_equal(result, expected)
@@ -111,6 +123,8 @@ def test_to_boolean_array_missing_indicators(a, b):
     ],
 )
 def test_to_boolean_array_error(values):
+    # [FUNCTION DOC]
+    # Parametrized over inputs that are not bool-like (strings, numeric strings, integers other than 0 and 1 as written lists, floats, datetimes, NumPy string/int/float arrays, a list with a dict). Verifies the factory raises a type error "Need to pass bool-like value".
     # error in converting existing arrays to BooleanArray
     msg = "Need to pass bool-like value"
     with pytest.raises(TypeError, match=msg):
@@ -118,6 +132,8 @@ def test_to_boolean_array_error(values):
 
 
 def test_to_boolean_array_from_integer_array():
+    # [FUNCTION DOC]
+    # Verifies an integer NumPy array of ones and zeros converts to true/false boolean array, and None in an object-dtype integer array becomes missing.
     result = pd.array(np.array([1, 0, 1, 0]), dtype="boolean")
     expected = pd.array([True, False, True, False], dtype="boolean")
     tm.assert_extension_array_equal(result, expected)
@@ -129,6 +145,8 @@ def test_to_boolean_array_from_integer_array():
 
 
 def test_to_boolean_array_from_float_array():
+    # [FUNCTION DOC]
+    # Verifies a float NumPy array of ones and zeros converts to true/false and NaN becomes missing.
     result = pd.array(np.array([1.0, 0.0, 1.0, 0.0]), dtype="boolean")
     expected = pd.array([True, False, True, False], dtype="boolean")
     tm.assert_extension_array_equal(result, expected)
@@ -140,6 +158,8 @@ def test_to_boolean_array_from_float_array():
 
 
 def test_to_boolean_array_integer_like():
+    # [FUNCTION DOC]
+    # Verifies a list of Python integers zero and one converts to booleans, and None becomes missing.
     # integers of 0's and 1's
     result = pd.array([1, 0, 1, 0], dtype="boolean")
     expected = pd.array([True, False, True, False], dtype="boolean")
@@ -152,6 +172,8 @@ def test_to_boolean_array_integer_like():
 
 
 def test_coerce_to_array():
+    # [FUNCTION DOC]
+    # Exercises the internal coerce-to-array helper (not public API) whose output tuple is fed to the constructor. Verifies that values and mask are kept by identity unless copy is requested; that missing values in the values argument (None) combine with a given mask (as an array, an object array, or a list) so the result is masked where either marks it; that two-dimensional values with no mask are accepted; and that a value error "values.shape and mask.shape must match" is raised when only one of them is two-dimensional.
     # TODO this is currently not public API
     values = np.array([True, False, True, False], dtype="bool")
     mask = np.array([False, False, False, True], dtype="bool")
@@ -194,6 +216,8 @@ def test_coerce_to_array():
 
 
 def test_coerce_to_array_from_boolean_array():
+    # [FUNCTION DOC]
+    # Verifies the helper with a boolean array input returns its data and mask by identity (copy only if requested), and raises a value error "cannot pass mask for BooleanArray input" when a mask is also given.
     # passing BooleanArray to coerce_to_array
     values = np.array([True, False, True, False], dtype="bool")
     mask = np.array([False, False, False, True], dtype="bool")
@@ -214,6 +238,9 @@ def test_coerce_to_array_from_boolean_array():
 
 
 def test_coerce_to_numpy_array():
+    # [FUNCTION DOC]
+    # Verifies conversion of a boolean array to a NumPy array: with missing values it gives an object array holding bools and the NA singleton; without missing values it gives a bool array; forcing bool dtype gives the same bool array, and raises a value error about missing values and na_value when the array has missing values.
+    # KNOWN ISSUE: the inline comment for the case without missing values says object dtype, but the expected result is a bool dtype array.
     # with missing values -> object dtype
     arr = pd.array([True, False, None], dtype="boolean")
     result = np.array(arr)
@@ -241,6 +268,8 @@ def test_coerce_to_numpy_array():
 
 
 def test_to_boolean_array_from_strings():
+    # [FUNCTION DOC]
+    # Verifies the private from-sequence-of-strings constructor maps "True", "False", "1", "1.0", "0", "0.0" to true, false, true, true, false, false and NaN to missing.
     result = BooleanArray._from_sequence_of_strings(
         np.array(["True", "False", "1", "1.0", "0", "0.0", np.nan], dtype=object),
         dtype=pd.BooleanDtype(),
@@ -254,12 +283,17 @@ def test_to_boolean_array_from_strings():
 
 
 def test_to_boolean_array_from_strings_invalid_string():
+    # [FUNCTION DOC]
+    # Verifies the from-strings constructor raises a value error "cannot be cast" for an unrecognized string.
     with pytest.raises(ValueError, match="cannot be cast"):
         BooleanArray._from_sequence_of_strings(["donkey"], dtype=pd.BooleanDtype())
 
 
 @pytest.mark.parametrize("box", [True, False], ids=["series", "array"])
 def test_to_numpy(box):
+    # [FUNCTION DOC]
+    # Parametrized over series versus array container (ids series, array). Verifies the to-numpy method: default yields bool when no missing, object with NA when missing; string dtype yields fixed-width unicode; dtype bool works without missing and raises a value error with missing; with na_value, object/bool/int64/float64 conversions fill the missing slot (None, false, -99, NaN); converting to int64 without na_value when missing raises a value error.
+    # KNOWN ISSUE: the comment for the default case claims object dtype with or without missing values, but the first expectation is a bool array.
     con = pd.Series if box else pd.array
     # default (with or without missing values) -> object dtype
     arr = con([True, False, True], dtype="boolean")
@@ -311,6 +345,8 @@ def test_to_numpy(box):
 
 
 def test_to_numpy_copy():
+    # [FUNCTION DOC]
+    # Verifies that to-numpy with bool dtype and no copy shares memory with the array (writing to the result changes the array), while requesting a copy leaves the array unchanged.
     # to_numpy can be zero-copy if no missing values
     arr = pd.array([True, False, True], dtype="boolean")
     result = arr.to_numpy(dtype=bool)
@@ -326,6 +362,8 @@ def test_to_numpy_copy():
 
 
 def test_to_numpy_readonly():
+    # [FUNCTION DOC]
+    # Verifies that when the array is flagged readonly, to-numpy to bool yields a non-writeable NumPy array, while converting to int64 (which copies) yields a writeable one. Sets the private readonly flag on the array.
     arr = pd.array([True, False, True], dtype="boolean")
     arr._readonly = True
     result = arr.to_numpy(dtype=bool)

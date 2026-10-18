@@ -1,3 +1,5 @@
+# [MODULE DOC]
+# Tests for casting the nullable boolean array to other dtypes (NumPy int, bool, float, str, and the nullable boolean and integer extension dtypes).
 import numpy as np
 import pytest
 
@@ -6,6 +8,9 @@ import pandas._testing as tm
 
 
 def test_astype(using_infer_string):
+    # [FUNCTION DOC]
+    # Verifies casts of a boolean array. With missing values: casting to int64 raises a value error about converting NA to integer, casting to bool raises a value error about converting float NaN, casting to float64 yields 1.0, 0.0, NaN, and casting to str yields strings "True", "False", and either "<NA>" in a fixed-width unicode NumPy array or, under the infer-string option (fixture), a string-dtype extension array with a missing entry.
+    # Without missing values: casting to int64 gives 1, 0, 1 and casting to bool gives a bool array of the same truth values.
     # with missing values
     arr = pd.array([True, False, None], dtype="boolean")
 
@@ -41,6 +46,8 @@ def test_astype(using_infer_string):
 
 
 def test_astype_to_boolean_array():
+    # [FUNCTION DOC]
+    # Verifies that casting a boolean array to the boolean dtype, given as a string name or as a dtype instance, returns an array equal to the original.
     # astype to BooleanArray
     arr = pd.array([True, False, None], dtype="boolean")
 
@@ -51,6 +58,8 @@ def test_astype_to_boolean_array():
 
 
 def test_astype_to_integer_array():
+    # [FUNCTION DOC]
+    # Verifies that casting a boolean array with a missing value to the nullable Int64 dtype yields an integer extension array with 1, 0, and missing.
     # astype to IntegerArray
     arr = pd.array([True, False, None], dtype="boolean")
 

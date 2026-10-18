@@ -1,3 +1,6 @@
+# [MODULE DOC]
+# Arithmetic and comparison tests for object-dtype data across series, index, and boxed containers that should behave identically.
+# Contains a comparison test class, an arithmetic test class (string concatenation, invalid operations, Decimal subtraction, timedelta addition, mixed-timezone timestamps, in-place index operators), a small index subclass that counts operator calls, and a test that index operators defer to unknown subclasses. Uses the shared fixtures for comparison operator and box type.
 # Arithmetic tests for DataFrame/Series/Index/Array classes that should
 # behave identically.
 # Specifically for object dtype
@@ -24,7 +27,11 @@ from pandas.core import ops
 
 
 class TestObjectComparisons:
+    # [CLASS DOC]
+    # Test class for comparison operators on object-dtype series.
     def test_comparison_object_numeric_nas(self, comparison_op):
+        # [FUNCTION DOC]
+        # Uses the comparison-operator fixture. Verifies that comparing an object-dtype series of random floats (with NaNs introduced by a shift of two) to its shifted self gives the same result as comparing the float-cast versions.
         ser = Series(np.random.default_rng(2).standard_normal(10), dtype=object)
         shifted = ser.shift(2)
 
@@ -38,6 +45,8 @@ class TestObjectComparisons:
         "infer_string", [False, pytest.param(True, marks=td.skip_if_no("pyarrow"))]
     )
     def test_object_comparisons(self, infer_string):
+        # [FUNCTION DOC]
+        # Parametrized over the future infer-string option being off or on (on requires the pyarrow optional dependency). Within that option context, verifies for a series of strings and NaN that equality with "a" is true only for matches, less-than with "a" is all false, and inequality equals the negation of equality.
         with option_context("future.infer_string", infer_string):
             ser = Series(["a", "b", np.nan, "c", "a"])
 
@@ -55,6 +64,8 @@ class TestObjectComparisons:
 
     @pytest.mark.parametrize("dtype", [None, object])
     def test_more_na_comparisons(self, dtype):
+        # [FUNCTION DOC]
+        # Parametrized over dtype none (inferred) and object. Verifies equality and inequality between two string series with NaN in the same position (NaN never equal), and equality or inequality with a NaN scalar gives all false or all true respectively.
         left = Series(["a", np.nan, "c"], dtype=dtype)
         right = Series(["a", np.nan, "d"], dtype=dtype)
 
@@ -80,7 +91,11 @@ class TestObjectComparisons:
 
 
 class TestArithmetic:
+    # [CLASS DOC]
+    # Test class for arithmetic operators on object-dtype data.
     def test_add_period_to_array_of_offset(self):
+        # [FUNCTION DOC]
+        # Verifies adding a period scalar to an index of offsets (created by subtracting a period range from a period) in either order yields an object index of sums computed elementwise.
         # GH#50162
         per = pd.Period("2012-1-1", freq="D")
         pi = pd.period_range("2012-1-1", periods=10, freq="D")
@@ -95,6 +110,8 @@ class TestArithmetic:
 
     # TODO: parametrize
     def test_pow_ops_object(self):
+        # [FUNCTION DOC]
+        # Regression test for a linked issue about power with missing values. Verifies power of two object-dtype series containing ones and NaN in both operand orders equals applying power to the underlying object arrays, kept as object dtype.
         # GH#22922
         # pow is weird with masking & 1, so testing here
         a = Series([1, np.nan, 1, np.nan], dtype=object)
@@ -111,6 +128,8 @@ class TestArithmetic:
     @pytest.mark.parametrize("op", [operator.add, ops.radd])
     @pytest.mark.parametrize("other", ["category", "Int64"])
     def test_add_extension_scalar(self, other, box_with_array, op):
+        # [FUNCTION DOC]
+        # Parametrized over addition and reflected addition (from the ops module), and over scalar strings "category" and "Int64" which are valid dtype names. Verifies that these string scalars are not mistaken for extension dtypes and dispatched to an extension array operation: the result of the operator on a boxed object series of strings equals the elementwise Python operator result, boxed likewise.
         # GH#22378
         # Check that scalars satisfying is_extension_array_dtype(obj)
         # do not incorrectly try to dispatch to an ExtensionArray operation
@@ -125,6 +144,8 @@ class TestArithmetic:
         tm.assert_equal(result, expected)
 
     def test_objarr_add_str(self, box_with_array):
+        # [FUNCTION DOC]
+        # Uses the box fixture. Verifies adding a string to an object series of strings with a NaN concatenates the string on the right and keeps NaN.
         ser = Series(["x", np.nan, "x"])
         expected = Series(["xa", np.nan, "xa"])
 
@@ -135,6 +156,8 @@ class TestArithmetic:
         tm.assert_equal(result, expected)
 
     def test_objarr_radd_str(self, box_with_array):
+        # [FUNCTION DOC]
+        # Uses the box fixture. Verifies adding an object series to a string on the left (reflected add) prepends the string and keeps NaN.
         ser = Series(["x", np.nan, "x"])
         expected = Series(["ax", np.nan, "ax"])
 
@@ -155,6 +178,8 @@ class TestArithmetic:
     )
     @pytest.mark.parametrize("dtype", [None, object])
     def test_objarr_radd_str_invalid(self, dtype, data, box_with_array):
+        # [FUNCTION DOC]
+        # Parametrized over data lists (integers, floats, timestamps with NaT, and a mixed list) and dtype none or object, plus the box fixture. Verifies a string plus such a boxed series raises a type error matching any of several accepted messages.
         ser = Series(data, dtype=dtype)
 
         ser = tm.box_expected(ser, box_with_array)
@@ -171,6 +196,8 @@ class TestArithmetic:
 
     @pytest.mark.parametrize("op", [operator.add, ops.radd, operator.sub, ops.rsub])
     def test_objarr_add_invalid(self, op, box_with_array):
+        # [FUNCTION DOC]
+        # Parametrized over addition, reflected addition, subtraction, and reflected subtraction, and the box fixture. Verifies each operator with an integer or a NumPy integer scalar against an object series of letters raises an exception matching any of several accepted messages.
         # invalid ops
         box = box_with_array
 
@@ -192,6 +219,8 @@ class TestArithmetic:
 
     # TODO: Moved from tests.series.test_operators; needs cleanup
     def test_operators_na_handling(self):
+        # [FUNCTION DOC]
+        # Moved from the series operator tests (a TODO says it needs cleanup). Verifies adding a string prefix or suffix to a string series with a NaN keeps NaN and concatenates for others.
         ser = Series(["foo", "bar", "baz", np.nan])
         result = "prefix_" + ser
         expected = Series(["prefix_foo", "prefix_bar", "prefix_baz", np.nan])
@@ -204,6 +233,8 @@ class TestArithmetic:
     # TODO: parametrize over box
     @pytest.mark.parametrize("dtype", [None, object])
     def test_series_with_dtype_radd_timedelta(self, dtype):
+        # [FUNCTION DOC]
+        # Parametrized over dtype none (inferred timedelta) and object. Verifies adding a timedelta scalar to a series of timedeltas on either side gives a series of the shifted timedeltas with the same dtype (object is preserved when the input is object).
         # note this test is _not_ aimed at timedelta64-dtyped Series
         # as of 2.0 we retain object dtype when ser.dtype == object
         ser = Series(
@@ -223,6 +254,8 @@ class TestArithmetic:
 
     # TODO: cleanup & parametrize over box
     def test_mixed_timezone_series_ops_object(self):
+        # [FUNCTION DOC]
+        # Verifies arithmetic on object series that hold timestamps with different time zones (so they cannot form a single datetime dtype): adding a timedelta in either order shifts each element keeping its zone and name; subtracting two such series gives an object series of timedeltas and its negation for the reverse order; and an object series of timedeltas supports adding a timedelta in either order.
         # GH#13043
         ser = Series(
             [
@@ -275,6 +308,8 @@ class TestArithmetic:
 
     # TODO: cleanup & parametrize over box
     def test_iadd_preserves_name(self):
+        # [FUNCTION DOC]
+        # Verifies that in-place addition and subtraction on a series index preserve the index name.
         # GH#17067, GH#19723 __iadd__ and __isub__ should preserve index name
         ser = Series([1, 2, 3])
         ser.index.name = "foo"
@@ -286,6 +321,8 @@ class TestArithmetic:
         assert ser.index.name == "foo"
 
     def test_add_string(self):
+        # [FUNCTION DOC]
+        # Verifies that adding a string to an index of strings concatenates it to each element (checked by membership of the old and new values).
         # from bug report
         index = pd.Index(["a", "b", "c"])
         index2 = index + "foo"
@@ -294,6 +331,8 @@ class TestArithmetic:
         assert "afoo" in index2
 
     def test_iadd_string(self):
+        # [FUNCTION DOC]
+        # Verifies in-place addition of a string to an index of strings rebinds it to the concatenated values (membership of the new value is true).
         index = pd.Index(["a", "b", "c"])
         # doesn't fail test unless there is a check before `+=`
         assert "a" in index
@@ -302,6 +341,8 @@ class TestArithmetic:
         assert "a_x" in index
 
     def test_add(self):
+        # [FUNCTION DOC]
+        # Verifies adding an index of strings to itself or to a list (either order) concatenates elementwise, and that adding a string on the right or left appends or prepends it.
         index = pd.Index([str(i) for i in range(10)])
         expected = pd.Index(index.values * 2)
         tm.assert_index_equal(index + index, expected)
@@ -316,6 +357,8 @@ class TestArithmetic:
         tm.assert_index_equal("1" + index, expected)
 
     def test_sub_fail(self):
+        # [FUNCTION DOC]
+        # Verifies that subtracting from an index of strings (a string, itself, or a list in either order) raises a type error matching an unsupported-operand, broadcast, or sub-not-supported message.
         index = pd.Index([str(i) for i in range(10)])
 
         msg = "unsupported operand type|Cannot broadcast|sub' not supported"
@@ -329,6 +372,8 @@ class TestArithmetic:
             index.tolist() - index
 
     def test_sub_object(self):
+        # [FUNCTION DOC]
+        # Verifies subtraction on an index of Decimal objects: subtracting a Decimal or an index of Decimals gives the elementwise difference; subtracting a string or an object array with a string raises a type error about unsupported operand type.
         # GH#19369
         index = pd.Index([Decimal(1), Decimal(2)])
         expected = pd.Index([Decimal(0), Decimal(1)])
@@ -347,6 +392,8 @@ class TestArithmetic:
             index - np.array([2, "foo"], dtype=object)
 
     def test_rsub_object(self, fixed_now_ts):
+        # [FUNCTION DOC]
+        # Uses the fixed-now timestamp fixture. Verifies reflected subtraction with an index of Decimals: a Decimal minus the index or a NumPy array of Decimals minus the index gives the elementwise difference; a string or an array containing a boolean and a timestamp minus the index raises a type error about unsupported operand type.
         # GH#19369
         index = pd.Index([Decimal(1), Decimal(2)])
         expected = pd.Index([Decimal(1), Decimal(0)])
@@ -366,12 +413,16 @@ class TestArithmetic:
 
 
 class MyIndex(pd.Index):
+    # [CLASS DOC]
+    # Simple index subclass used to test that binary operators defer to subclasses. Class attribute: a call counter annotation. It overrides construction through the internal simple-new classmethod, and addition and reflected addition, which increment the counter.
     # Simple index subclass that tracks ops calls.
 
     _calls: int
 
     @classmethod
     def _simple_new(cls, values, name=None, dtype=None):
+        # [FUNCTION DOC]
+        # HELPER: internal constructor for the test subclass. Takes class, values, optional name and dtype (dtype is ignored); creates an instance bypassing normal initialization, stores the values as its data and the name, sets its call counter to zero, and resets its identity. Returns the new instance.
         result = object.__new__(cls)
         result._data = values
         result._name = name
@@ -381,10 +432,14 @@ class MyIndex(pd.Index):
         return result
 
     def __add__(self, other):
+        # [FUNCTION DOC]
+        # HELPER: addition override for the test subclass; increments the call counter and returns a new instance with the same data (the operand is ignored).
         self._calls += 1
         return self._simple_new(self._data)
 
     def __radd__(self, other):
+        # [FUNCTION DOC]
+        # HELPER: reflected addition override; delegates to the addition override.
         return self.__add__(other)
 
 
@@ -399,6 +454,8 @@ class MyIndex(pd.Index):
     ids=["timedelta", "datetime", "period", "object"],
 )
 def test_index_ops_defer_to_unknown_subclasses(other):
+    # [FUNCTION DOC]
+    # Regression test for a linked issue. Parametrized over four lists (timedeltas, datetimes, periods, strings). Verifies that adding a regular index of those values to an instance of the test subclass (on the right) lets the subclass handle the operation: the result is an instance of the subclass and its call counter is exactly one.
     # https://github.com/pandas-dev/pandas/issues/31109
     values = np.array(
         [datetime.date(2000, 1, 1), datetime.date(2000, 1, 2)], dtype=object

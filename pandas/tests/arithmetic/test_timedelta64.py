@@ -1,3 +1,6 @@
+# [MODULE DOC]
+# Arithmetic and comparison tests for timedelta64 dtype across arrays, indexes, series, and frames that should behave identically.
+# Covers comparisons (scalars, invalid operands, NaT, list-likes), arithmetic with datetimes and timestamps, additions and subtractions of timedelta-likes, NaT handling, multiplication and division by scalars and arrays (including numexpr and unit handling), floor division and modulo, divmod, and offset arrays. Uses shared fixtures for box types, timedelta-like scalars, names, and warnings, plus the shared invalid-comparison and invalid-add/subtract helpers.
 # Arithmetic tests for DataFrame/Series/Index/Array classes that should
 # behave identically.
 from datetime import (
@@ -36,6 +39,8 @@ from pandas.tests.arithmetic.common import (
 
 
 def assert_dtype(obj, expected_dtype):
+    # [FUNCTION DOC]
+    # HELPER: asserts the dtype of a series, index, or single-column frame (found through the testing module's dtype lookup) equals the expected dtype.
     """
     Helper to check the dtype for a Series, Index, or single-column DataFrame.
     """
@@ -45,6 +50,8 @@ def assert_dtype(obj, expected_dtype):
 
 
 def get_expected_name(box, names):
+    # [FUNCTION DOC]
+    # HELPER: picks the expected result name when an operation mixes boxes. Takes a box type and a sequence of three names. If the box is a frame the first name is returned (the non-frame operand is cast to a series and its name ignored); if the box is an array type (the array helper or array factory) the second name is returned; otherwise the third.
     if box is DataFrame:
         # Since we are operating with a DataFrame and a non-DataFrame,
         # the non-DataFrame is cast to Series and its name ignored.
@@ -61,11 +68,15 @@ def get_expected_name(box, names):
 
 
 class TestTimedelta64ArrayLikeComparisons:
+    # [CLASS DOC]
+    # Comparison tests for timedelta64 vectors, parametrized over frame, series, timedelta index, and timedelta array boxes. Intended eventually to hold all timedelta comparison tests.
     # Comparison tests for timedelta64[ns] vectors fully parametrized over
     #  DataFrame/Series/TimedeltaIndex/TimedeltaArray.  Ideally all comparison
     #  tests will eventually end up here.
 
     def test_compare_timedelta64_zerodim(self, box_with_array):
+        # [FUNCTION DOC]
+        # Linked to an issue. Verifies a boxed timedelta range compared by less-or-equal with a zero-dimensional NumPy array holding its first element unboxes it: true for the first element only, boxed as an array for index and array boxes.
         # GH#26689 should unbox when comparing with zerodim array
         box = box_with_array
         xbox = box_with_array if box_with_array not in [Index, pd.array] else np.ndarray
@@ -89,6 +100,8 @@ class TestTimedelta64ArrayLikeComparisons:
         ],
     )
     def test_compare_timedeltalike_scalar(self, box_with_array, td_scalar):
+        # [FUNCTION DOC]
+        # Regression test for an issue. Parametrized over equivalent one-day scalars (Python timedelta, Timedelta, NumPy timedelta, hour offset of 24). Verifies a boxed series of one and two days compared greater-than the scalar gives false, true.
         # regression test for GH#5963
         box = box_with_array
         xbox = box if box not in [Index, pd.array] else np.ndarray
@@ -114,6 +127,8 @@ class TestTimedelta64ArrayLikeComparisons:
         ],
     )
     def test_td64_comparisons_invalid(self, box_with_array, invalid):
+        # [FUNCTION DOC]
+        # Parametrized over invalid operands (an integer count of nanoseconds, a string, timestamps in several forms, a date, a zero-dimensional integer array). Verifies the shared invalid-comparison helper's expectations on a boxed ten-day timedelta range (equality false, inequality true, ordering raises).
         # GH#13624 for str
         box = box_with_array
 
@@ -138,6 +153,8 @@ class TestTimedelta64ArrayLikeComparisons:
         ],
     )
     def test_td64arr_cmp_arraylike_invalid(self, other, box_with_array):
+        # [FUNCTION DOC]
+        # Parametrized over list-likes of integers, floats, objects, datetimes (aware and naive, various containers), and periods. Verifies the invalid-comparison helper on a boxed timedelta array; not parametrized over lists in other boxes because list-likes interact poorly with the helper's reversed checks.
         # We don't parametrize this over box_with_array because listlike
         #  other plays poorly with assert_invalid_comparison reversed checks
 
@@ -146,6 +163,8 @@ class TestTimedelta64ArrayLikeComparisons:
         assert_invalid_comparison(rng, other, box_with_array)
 
     def test_td64arr_cmp_mixed_invalid(self):
+        # [FUNCTION DOC]
+        # Verifies comparing a timedelta array with an object array holding integers, a matching timedelta, and a timestamp: equality is true only at the matching element, inequality is the negation, and ordering comparisons raise a type error ("Invalid comparison", "Cannot compare type", or "not supported between").
         rng = timedelta_range("1 days", periods=5)._data
         other = np.array([0, 1, 2, rng[3], Timestamp("2021-01-01")])
 
@@ -168,10 +187,14 @@ class TestTimedelta64ArrayLikeComparisons:
 
 
 class TestTimedelta64ArrayComparisons:
+    # [CLASS DOC]
+    # Test class for comparisons of timedelta vectors; a TODO says all need parametrization over boxes.
     # TODO: All of these need to be parametrized over box
 
     @pytest.mark.parametrize("dtype", [None, object])
     def test_comp_nat(self, dtype):
+        # [FUNCTION DOC]
+        # Parametrized over dtype none or object. Verifies equality, inequality and ordering between timedelta indexes with NaT in different places, and against the NaT scalar on either side: NaT is never equal and always unequal, ordering with NaT is all false.
         left = TimedeltaIndex([Timedelta("1 days"), NaT, Timedelta("3 days")])
         right = TimedeltaIndex([NaT, NaT, Timedelta("3 days")])
 
@@ -218,6 +241,8 @@ class TestTimedelta64ArrayComparisons:
         ],
     )
     def test_comparisons_nat(self, idx2):
+        # [FUNCTION DOC]
+        # Parametrized over a timedelta index and a NumPy timedelta array containing NaT. Verifies all six comparison operators (including reversed forms) between a timedelta index with NaT and such an operand give the expected boolean arrays, with NaT handled like NaN (comparisons false, inequality true).
         idx1 = TimedeltaIndex(
             [
                 "1 day",
@@ -255,6 +280,8 @@ class TestTimedelta64ArrayComparisons:
 
     # TODO: better name
     def test_comparisons_coverage(self):
+        # [FUNCTION DOC]
+        # A TODO says to find a better name. Verifies a ten-day timedelta range compared less-than its fourth element gives three true then false, and equality with the same values as a list equals equality with the range.
         rng = timedelta_range("1 days", periods=10)
 
         result = rng < rng[3]
@@ -271,10 +298,14 @@ class TestTimedelta64ArrayComparisons:
 
 
 class TestTimedelta64ArithmeticUnsorted:
+    # [CLASS DOC]
+    # Test class for timedelta arithmetic tests moved from type-specific files but not yet sorted, parametrized, or de-duplicated.
     # Tests moved from type-specific test files but not
     #  yet sorted/parametrized/de-duplicated
 
     def test_td64_op_with_list(self, box_with_array):
+        # [FUNCTION DOC]
+        # Linked to an issue. Uses the box fixture. Verifies adding a list of timestamps to a boxed timedelta index (either order) gives a boxed microsecond-unit datetime index of the sums.
         # GH#62353
         box = box_with_array
 
@@ -292,6 +323,8 @@ class TestTimedelta64ArithmeticUnsorted:
         tm.assert_equal(result2, expected)
 
     def test_ufunc_coercions(self):
+        # [FUNCTION DOC]
+        # Verifies that multiplying a timedelta index by two (operator and NumPy multiply), dividing by two (operator and NumPy divide), negating (operator and NumPy negative), and absolute value (built-in and NumPy) return timedelta indexes with the expected values and name, and the frequency scaled accordingly: four hours, one hour, minus two hours, and none for absolute value.
         # normal ops are also tested in tseries/test_timedeltas.py
         idx = TimedeltaIndex(["2h", "4h", "6h", "8h", "10h"], freq="2h", name="x")
 
@@ -323,6 +356,8 @@ class TestTimedelta64ArithmeticUnsorted:
             assert result.freq is None
 
     def test_subtraction_ops(self):
+        # [FUNCTION DOC]
+        # Verifies subtraction rules among timedelta index, datetime index, timedelta scalar, and timestamp: timedelta index minus a timestamp or datetime index raises a type error about subtracting a datelike from a timedelta array; a timedelta minus a timestamp raises an unsupported-operand error; a timedelta minus a datetime index raises "cannot subtract DatetimeArray from Timedelta"; a timestamp minus a datetime index and the reverse give the timedelta indexes with the datetime index's name; timedelta index minus or minus from a timedelta keeps the first operand's name and NaT; datetime index minus a timedelta gives a daily-frequency datetime index; a timestamp minus a timedelta index gives a datetime index with NaT.
         # with datetimes/timedelta and tdi/dti
         tdi = TimedeltaIndex(["1 days", NaT, "2 days"], name="foo")
         dti = pd.date_range("20130101", periods=3, name="bar")
@@ -372,6 +407,8 @@ class TestTimedelta64ArithmeticUnsorted:
         tm.assert_index_equal(result, expected)
 
     def test_subtraction_ops_with_tz(self, box_with_array):
+        # [FUNCTION DOC]
+        # Uses the box fixture. Verifies timezone validation in subtraction: scalar subtractions among naive and aware timestamps and Python datetimes give zero timedeltas when the awareness matches and raise type errors (with several messages for Timestamp versus datetime) when it differs or the zones differ; subtracting an aware timestamp from a naive boxed datetime index and the reverse raises a type error; aware index minus aware datetime or timestamp (and the reverse) gives boxed timedelta indexes of zero, one, two days (or negated); timedelta minus timedelta gives zero; aware index minus a timedelta shifts back a day keeping the zone.
         # check that dt/dti subtraction ops with tz are validated
         dti = pd.date_range("20130101", periods=3)
         dti = tm.box_expected(dti, box_with_array)
@@ -385,6 +422,8 @@ class TestTimedelta64ArithmeticUnsorted:
         td = Timedelta("1 days")
 
         def _check(result, expected):
+            # [FUNCTION DOC]
+            # HELPER: nested assertion helper that checks a scalar result equals the expected timedelta and is an instance of the Timedelta class.
             assert result == expected
             assert isinstance(result, Timedelta)
 
@@ -456,6 +495,8 @@ class TestTimedelta64ArithmeticUnsorted:
         tm.assert_equal(result, expected)
 
     def test_dti_tdi_numeric_ops(self):
+        # [FUNCTION DOC]
+        # Verifies that adding, subtracting two timedelta indexes (with NaT) is elementwise arithmetic keeping the name, not set operations, and that a datetime index minus a timedelta index gives a datetime index with NaT in the matching place and no name (names differ so it is reset).
         # These are normally union/diff set-like ops
         tdi = TimedeltaIndex(["1 days", NaT, "2 days"], name="foo")
         dti = pd.date_range("20130101", periods=3, name="bar")
@@ -473,6 +514,8 @@ class TestTimedelta64ArithmeticUnsorted:
         tm.assert_index_equal(result, expected)
 
     def test_addition_ops(self):
+        # [FUNCTION DOC]
+        # Verifies addition among timedelta index (with NaT, named), datetime index, timestamp, and timedelta: tdi plus timestamp (either order) gives a microsecond-unit datetime index with the tdi's name and NaT; timedelta plus tdi gives a timedelta index keeping name; adding indexes of unequal length raises a value error "cannot add indices of unequal length"; adding an integer index raises a type error about integer addition/subtraction; tdi plus dti (either order) gives a datetime index with name reset; timestamp plus timedelta (either order) gives the shifted timestamp.
         # with datetimes/timedelta and tdi/dti
         tdi = TimedeltaIndex(["1 days", NaT, "2 days"], name="foo")
         dti = pd.date_range("20130101", periods=3, name="bar")
@@ -535,6 +578,8 @@ class TestTimedelta64ArithmeticUnsorted:
     # more targeted tests
     @pytest.mark.parametrize("freq", ["D", "B"])
     def test_timedelta(self, freq):
+        # [FUNCTION DOC]
+        # A comment says it needs a more informative name. Parametrized over frequencies D and B. For a 50-element nanosecond-unit date range, adding then subtracting a one-day timedelta returns the original (after re-inferring the frequency); for D the frequency is a day throughout; for B the shifted index has no frequency and the original and round-tripped have a business-day frequency; subtracting a timedelta equals adding its negation.
         index = pd.date_range("1/1/2000", periods=50, freq=freq, unit="ns")
 
         shifted = index + timedelta(1)
@@ -557,6 +602,8 @@ class TestTimedelta64ArithmeticUnsorted:
         tm.assert_index_equal(result, expected)
 
     def test_timedelta_tick_arithmetic(self):
+        # [FUNCTION DOC]
+        # Linked to an issue. Verifies subtraction of a one-hour offset or a 100-million-nanosecond timedelta from a daily date range or from a series of it: results from the range keep its frequency, and after clearing it equal the results built from the series.
         # GH#4134, buggy with timedeltas
         rng = pd.date_range("2013", "2014")
         s = Series(rng)
@@ -574,6 +621,8 @@ class TestTimedelta64ArithmeticUnsorted:
         tm.assert_index_equal(result2, result3)
 
     def test_tda_add_sub_index(self):
+        # [FUNCTION DOC]
+        # Verifies a timedelta array defers to the index operation: adding a datetime index, adding a timedelta index, and subtracting a timedelta index from a timedelta array equal the corresponding index operations.
         # Check that TimedeltaArray defers to Index on arithmetic ops
         tdi = TimedeltaIndex(["1 days", NaT, "2 days"])
         tda = tdi.array
@@ -595,6 +644,8 @@ class TestTimedelta64ArithmeticUnsorted:
     def test_tda_add_dt64_object_array(
         self, performance_warning, box_with_array, tz_naive_fixture
     ):
+        # [FUNCTION DOC]
+        # Uses the performance-warning, box and naive-timezone fixtures. Builds a timedelta object as the difference of a datetime index (with no frequency) with itself and adds the datetimes cast to object; verifies a performance warning is emitted and the result equals the object-cast datetimes.
         # Result should be cast back to DatetimeArray
         box = box_with_array
 
@@ -613,6 +664,8 @@ class TestTimedelta64ArithmeticUnsorted:
     # Binary operations TimedeltaIndex and timedelta-like
 
     def test_tdi_iadd_timedeltalike(self, two_hours, box_with_array):
+        # [FUNCTION DOC]
+        # Uses the two-hours fixture and box fixture. Verifies in-place addition of the timedelta-like to a boxed daily timedelta range gives the expected shifted range (nanosecond unit if the scalar is a nanosecond Timedelta and the box is not the array factory, because an extension array operates truly in place and keeps its dtype); and that for non-index boxes the original object itself changed.
         # only test adding/sub offsets as + is now numeric
         rng = timedelta_range("1 days", "10 days")
         expected = timedelta_range("1 days 02:00:00", "10 days 02:00:00", freq="D")
@@ -637,6 +690,8 @@ class TestTimedelta64ArithmeticUnsorted:
             tm.assert_equal(orig_rng, expected)
 
     def test_tdi_isub_timedeltalike(self, two_hours, box_with_array):
+        # [FUNCTION DOC]
+        # Uses the two-hours fixture and box fixture. Same as the in-place add test but with in-place subtraction: two hours earlier, same unit rules, original object modified for non-index boxes.
         # only test adding/sub offsets as - is now numeric
         rng = timedelta_range("1 days", "10 days")
         expected = timedelta_range("0 days 22:00:00", "9 days 22:00:00")
@@ -663,6 +718,8 @@ class TestTimedelta64ArithmeticUnsorted:
     # -------------------------------------------------------------
 
     def test_tdi_ops_attributes(self):
+        # [FUNCTION DOC]
+        # Verifies attributes after timedelta index operations on a two-day-frequency range named x: adding one frequency unit keeps two-day frequency; subtracting two units keeps it; multiplying by two doubles the frequency to four days; dividing by two halves it to one day; negation gives frequency minus two days; absolute value of a range from minus two days drops the frequency to none.
         rng = timedelta_range("2 days", periods=5, freq="2D", name="x")
 
         result = rng + 1 * rng.freq
@@ -701,10 +758,14 @@ class TestTimedelta64ArithmeticUnsorted:
 
 
 class TestAddSubNaTMasking:
+    # [CLASS DOC]
+    # Test class for NaT masking and overflow handling in timedelta/timestamp addition and subtraction; a TODO says to parametrize over boxes.
     # TODO: parametrize over boxes
 
     @pytest.mark.parametrize("str_ts", ["1950-01-01", "1980-01-01"])
     def test_tdarr_add_timestamp_nat_masking(self, box_with_array, str_ts):
+        # [FUNCTION DOC]
+        # Linked to an issue. Parametrized over two date strings; uses the box fixture. Adds to a boxed timedelta pair (24658 days 11:15 and NaT) each of four variants of a timestamp (timestamp, Python datetime, NumPy nanosecond and day datetimes) and verifies the NaT element stays NaT (checking the frame cell for frames) without overflow wraparound.
         # GH#17991 checking for overflow-masking with NaT
         tdinat = pd.to_timedelta(["24658 days 11:15:00", "NaT"])
         tdobj = tm.box_expected(tdinat, box_with_array)
@@ -725,6 +786,8 @@ class TestAddSubNaTMasking:
                 assert res[1] is NaT
 
     def test_tdi_add_overflow(self):
+        # [FUNCTION DOC]
+        # Linked to an issue. Verifies overflow handling: adding a 106580-day timedelta to a nanosecond timestamp in either order raises an out-of-bounds-datetime error naming the overflowed integer; a vector of that size plus a timestamp, and subtraction of timedeltas involving the internal NaT integer plus one, raise an overflow error "Overflow in int64 addition"; but operations with real NaT do not overflow and give expected NaT-containing timedelta indexes.
         # See GH#14068
         # preliminary test scalar analogue of vectorized tests below
         # TODO: Make raised error message more informative and test
@@ -768,9 +831,13 @@ class TestAddSubNaTMasking:
 
 
 class TestTimedeltaArraylikeAddSubOps:
+    # [CLASS DOC]
+    # Test class for addition and subtraction on timedelta64 vectors (operators and reflected forms).
     # Tests for timedelta64[ns] __add__, __sub__, __radd__, __rsub__
 
     def test_sub_nat_retain_unit(self):
+        # [FUNCTION DOC]
+        # Verifies that subtracting NaT from a series of second-unit timedeltas yields a series of NaT retaining the second unit.
         ser = pd.to_timedelta(Series(["00:00:01"])).astype("m8[s]")
 
         result = ser - NaT
@@ -780,6 +847,8 @@ class TestTimedeltaArraylikeAddSubOps:
     # TODO: moved from tests.indexes.timedeltas.test_arithmetic; needs
     #  parametrization+de-duplication
     def test_timedelta_ops_with_missing_values(self):
+        # [FUNCTION DOC]
+        # Moved from the timedelta index tests; a TODO says it needs parametrization and de-duplication. Checks arithmetic among scalar timedeltas, series, frames, NaT, and NaN: scalar add and subtract; series with series, with scalars, in both orders and with unary negation; series with a timedelta NaT or NaT gives an all-NaT series of microsecond unit; adding or subtracting NaN raises a type error for unsupported operand; series with frames in both orders; frames with frames and scalars; frame plus or minus a timedelta NaT or NaT gives an all-NaT frame; frame with NaN raises a type error.
         # setup
         s1 = pd.to_timedelta(Series(["00:00:01"]))
         s2 = pd.to_timedelta(Series(["00:00:02"]))
@@ -876,6 +945,8 @@ class TestTimedeltaArraylikeAddSubOps:
     # TODO: moved from tests.series.test_operators, needs splitting, cleanup,
     # de-duplication, box-parametrization...
     def test_operators_timedelta64(self):
+        # [FUNCTION DOC]
+        # Moved from the series operator tests; a TODO says it needs splitting, cleanup, de-duplication, and box parametrization. Checks datetime/timedelta series arithmetic dtypes and values: the difference of two datetime series is a timedelta64 series of one day; frame column minus its shifted self is timedelta64; column plus a timedelta series is datetime64; column minus its max is timedelta64; that result plus the column gives expected datetimes; column minus a Python datetime gives expected day timedeltas and the round trip adding it back restores the column; adding and subtracting Python timedeltas round-trips the datetime column; and an in-place add on one element of the difference series stores the expected value.
         # series ops
         v1 = pd.date_range("2012-1-1", periods=3, freq="D", unit="ns")
         v2 = pd.date_range("2012-1-2", periods=3, freq="D", unit="ns")
@@ -944,6 +1015,9 @@ class TestTimedeltaArraylikeAddSubOps:
         assert rs[2] == value
 
     def test_timedelta64_ops_nat(self):
+        # [FUNCTION DOC]
+        # Linked to an issue. Verifies NaT handling in timedelta series: subtracting NaT or a one-element NaT timedelta series (also reflected forms) from a series [NaT, one second] gives an all-NaT microsecond-unit series; addition with NaT or NaT series in both orders likewise; multiplication of NaT series by one float, of the series by one, one and a half, and NaN; and division by two, two float, and NaN.
+        # KNOWN ISSUE: some addition assertions with the NaT series appear twice with identical operands.
         # GH 11349
         timedelta_series = Series([NaT, Timedelta("1s")])
         nat_series_dtype_timedelta = Series([NaT, NaT], dtype="timedelta64[us]")
@@ -1032,6 +1106,8 @@ class TestTimedeltaArraylikeAddSubOps:
     def test_td64arr_add_sub_datetimelike_scalar(
         self, cls, box_with_array, tz_naive_fixture
     ):
+        # [FUNCTION DOC]
+        # Linked to issues. Parametrized over scalar type (Timestamp, Python datetime, NumPy datetime64); uses the box and naive-timezone fixtures (NumPy datetime64 skipped for tz-aware). Verifies a three-day timedelta range plus the datetime-like scalar in either order gives the boxed expected date range starting the day after; frequency is dropped for non-UTC zones because day is now calendar-day; datetime minus the timedelta range gives dates counting backwards (equal to adding the negation); timedelta range minus the datetime raises a type error "cannot subtract a datelike".
         # GH#11925, GH#29558, GH#23215
         tz = tz_naive_fixture
 
@@ -1074,6 +1150,8 @@ class TestTimedeltaArraylikeAddSubOps:
 
     @pytest.mark.filterwarnings("ignore:.*generic.*unit.*:DeprecationWarning")
     def test_td64arr_add_datetime64_nat(self, box_with_array):
+        # [FUNCTION DOC]
+        # Linked to an issue. Ignores a deprecation warning about generic units. Verifies that adding the bare NumPy datetime64 NaT (with generic unit) to a boxed timedelta range in either order gives a microsecond-unit all-NaT datetime index; the bare form is needed so the expected unit comes from NumPy's default promotion.
         # GH#23215
         # The bare np.datetime64("NaT") is load-bearing here: the expected
         # M8[us] dtype comes from numpy's default unit promotion from the
@@ -1091,6 +1169,8 @@ class TestTimedeltaArraylikeAddSubOps:
         tm.assert_equal(other + tdser, expected)
 
     def test_td64arr_sub_dt64_array(self, box_with_array):
+        # [FUNCTION DOC]
+        # Uses the box fixture. Verifies subtracting a NumPy datetime64 array from a boxed timedelta index raises a type error "cannot subtract a datelike from", while the reverse (datetime array minus timedelta index) equals the datetime index minus the timedelta index.
         dti = pd.date_range("2016-01-01", periods=3)
         tdi = TimedeltaIndex(["-1 Day"] * 3)
         dtarr = dti.values
@@ -1108,6 +1188,8 @@ class TestTimedeltaArraylikeAddSubOps:
         tm.assert_equal(result, expected)
 
     def test_td64arr_add_dt64_array(self, box_with_array):
+        # [FUNCTION DOC]
+        # Uses the box fixture. Verifies adding a NumPy datetime64 array to a boxed timedelta index, in either order, equals the datetime index plus the timedelta index, boxed.
         dti = pd.date_range("2016-01-01", periods=3)
         tdi = TimedeltaIndex(["-1 Day"] * 3)
         dtarr = dti.values
@@ -1129,6 +1211,8 @@ class TestTimedeltaArraylikeAddSubOps:
     def test_td64arr_sub_periodlike(
         self, box_with_array, box_with_array2, tdi_freq, pi_freq
     ):
+        # [FUNCTION DOC]
+        # Linked to issues. Parametrized over timedelta index frequency (none or hourly) and period frequency (D, W, Q, h); uses two box fixtures. Verifies subtracting a boxed period index or a Period scalar from a boxed timedelta index raises a type error matching one of several messages.
         # GH#20049 subtracting PeriodIndex should raise TypeError
         tdi = TimedeltaIndex(["1 hours", "2 hours"], freq=tdi_freq)
         dti = Timestamp("2018-03-07 17:16:40") + tdi
@@ -1165,6 +1249,8 @@ class TestTimedeltaArraylikeAddSubOps:
         ],
     )
     def test_td64arr_addsub_numeric_scalar_invalid(self, box_with_array, other):
+        # [FUNCTION DOC]
+        # Parametrized over invalid scalar operands (string, integer, float, zero-dimensional integer array); uses the box fixture. Verifies the shared invalid-add/subtract helper's expectations for a boxed timedelta series with a missing value (add and subtract in both orders raise). Vector-like operands are tested in the next test.
         # vector-like others are tested in test_td64arr_add_sub_numeric_arr_invalid
         tdser = Series(["59 Days", "59 Days", "NaT"], dtype="m8[ns]")
         tdarr = tm.box_expected(tdser, box_with_array)
@@ -1184,6 +1270,8 @@ class TestTimedeltaArraylikeAddSubOps:
     def test_td64arr_addsub_numeric_arr_invalid(
         self, box_with_array, vec, any_real_numpy_dtype
     ):
+        # [FUNCTION DOC]
+        # Parametrized over numeric vectors (NumPy array, index, series, frame) and the any-real-dtype fixture; uses the box fixture. Casts each vector to the dtype and verifies the invalid-add/subtract helper's expectations for a boxed timedelta series.
         tdser = Series(["59 Days", "59 Days", "NaT"], dtype="m8[ns]")
         tdarr = tm.box_expected(tdser, box_with_array)
 
@@ -1191,6 +1279,8 @@ class TestTimedeltaArraylikeAddSubOps:
         assert_invalid_addsub_type(tdarr, vector)
 
     def test_td64arr_add_sub_int(self, box_with_array, one):
+        # [FUNCTION DOC]
+        # Uses the box fixture and the one-fixture of integer representations (deprecated behavior, linked to issues). Verifies adding or subtracting the integer to a boxed timedelta range raises a type error "Addition/subtraction of integers", including in-place forms. A TODO notes the in-place operators are not yet covered by the helper.
         # Variants of `one` for #19012, deprecated GH#22535
         rng = timedelta_range("1 days 09:00:00", freq="h", periods=10)
         tdarr = tm.box_expected(rng, box_with_array)
@@ -1205,6 +1295,8 @@ class TestTimedeltaArraylikeAddSubOps:
             tdarr -= one
 
     def test_td64arr_add_sub_integer_array(self, box_with_array):
+        # [FUNCTION DOC]
+        # Linked to issues. Uses the box fixture. Verifies adding or subtracting a boxed integer array to a boxed timedelta range raises a type error "Addition/subtraction of integers and integer-arrays", and that frames do not dispatch to NumPy's implementation that would treat int64 as timedelta.
         # GH#19959, deprecated GH#22535
         # GH#22696 for DataFrame case, check that we don't dispatch to numpy
         #  implementation, which treats int64 as m8[ns]
@@ -1219,6 +1311,8 @@ class TestTimedeltaArraylikeAddSubOps:
         assert_invalid_addsub_type(tdarr, other, msg)
 
     def test_td64arr_addsub_integer_array_no_freq(self, box_with_array):
+        # [FUNCTION DOC]
+        # Linked to an issue. Same as the integer array test but with a timedelta index that has NaT and no frequency, and a different integer array; expects the integer addition/subtraction type error.
         # GH#19959
         box = box_with_array
         xbox = np.ndarray if box is pd.array else box
@@ -1234,6 +1328,8 @@ class TestTimedeltaArraylikeAddSubOps:
     # Operations with timedelta-like others
 
     def test_td64arr_add_sub_td64_array(self, box_with_array):
+        # [FUNCTION DOC]
+        # Uses the box fixture. Verifies adding a NumPy timedelta array to a boxed timedelta index (either order) doubles it, and subtracting (either order) gives all zeros.
         box = box_with_array
         dti = pd.date_range("2016-01-01", periods=3)
         tdi = dti - dti.shift(1)
@@ -1255,6 +1351,8 @@ class TestTimedeltaArraylikeAddSubOps:
         tm.assert_equal(result, expected_sub)
 
     def test_td64arr_add_sub_tdi(self, box_with_array, names):
+        # [FUNCTION DOC]
+        # Linked to issues. Uses the box and names fixtures (three names). Verifies timedelta index plus/minus a series in either order, with result names given by the expected-name helper, dtype timedelta64[ns], and the expected values (sum of hours and days; differences and the negation for the reversed order).
         # GH#17250 make sure result dtype is correct
         # GH#19043 make sure names are propagated correctly
         box = box_with_array
@@ -1299,6 +1397,8 @@ class TestTimedeltaArraylikeAddSubOps:
 
     @pytest.mark.parametrize("tdnat", [np.timedelta64("NaT", "us"), NaT])
     def test_td64arr_add_sub_td64_nat(self, box_with_array, tdnat):
+        # [FUNCTION DOC]
+        # Linked to issues. Parametrized over NumPy timedelta NaT with microsecond unit and the NaT singleton; uses the box fixture. Verifies add and subtract in all operand orders between a boxed timedelta index (NaT, one second) and the NaT scalar give an all-NaT microsecond-unit result.
         # GH#18808, GH#23320 special handling for timedelta64("NaT")
         box = box_with_array
         tdi = TimedeltaIndex([NaT, Timedelta("1s")])
@@ -1317,6 +1417,8 @@ class TestTimedeltaArraylikeAddSubOps:
         tm.assert_equal(result, expected)
 
     def test_td64arr_add_timedeltalike(self, two_hours, box_with_array):
+        # [FUNCTION DOC]
+        # Linked to an issue. Uses the two-hours and box fixtures. Verifies adding the timedelta-like to a boxed daily timedelta range, in either order, shifts by two hours (nanosecond unit if the scalar is a nanosecond Timedelta).
         # only test adding/sub offsets as + is now numeric
         # GH#10699 for Tick cases
         box = box_with_array
@@ -1335,6 +1437,8 @@ class TestTimedeltaArraylikeAddSubOps:
         tm.assert_equal(result, expected)
 
     def test_td64arr_sub_timedeltalike(self, two_hours, box_with_array):
+        # [FUNCTION DOC]
+        # Linked to an issue. Uses the two-hours and box fixtures. Verifies subtracting the timedelta-like from a boxed daily timedelta range shifts back by two hours, and the reversed subtraction gives the negation, with nanosecond unit for a nanosecond Timedelta scalar.
         # only test adding/sub offsets as - is now numeric
         # GH#10699 for Tick cases
         box = box_with_array
@@ -1358,6 +1462,8 @@ class TestTimedeltaArraylikeAddSubOps:
     def test_td64arr_add_sub_offset_index(
         self, performance_warning, names, box_with_array
     ):
+        # [FUNCTION DOC]
+        # Linked to issues. Uses the performance-warning, names, and box fixtures. Starts from a timedelta index (named) and an index of an hour offset and minus-two-minutes offset (converted to a NumPy array for array boxes). Verifies adding (either order) and subtracting produce object-dtype results equal to the elementwise sums or differences with the expected name, and that each emits the performance warning.
         # GH#18849, GH#19744
         box = box_with_array
         exname = get_expected_name(box, names)
@@ -1390,6 +1496,8 @@ class TestTimedeltaArraylikeAddSubOps:
         tm.assert_equal(res_sub, expected_sub)
 
     def test_td64arr_add_sub_offset_array(self, performance_warning, box_with_array):
+        # [FUNCTION DOC]
+        # Linked to issues. Uses the performance-warning and box fixtures. Same as the offset-index test but with an unnamed NumPy array of offsets: addition (either order) and subtraction give boxed object-dtype elementwise results, each with the performance warning.
         # GH#18849, GH#18824
         box = box_with_array
         tdi = TimedeltaIndex(["1 days 00:00:00", "3 days 04:00:00"])
@@ -1421,6 +1529,8 @@ class TestTimedeltaArraylikeAddSubOps:
     def test_td64arr_with_offset_series(
         self, performance_warning, names, box_with_array
     ):
+        # [FUNCTION DOC]
+        # Linked to an issue. Uses the performance-warning, names, and box fixtures. Adds and subtracts a series of offsets to a boxed timedelta index (index, array, and array-factory boxes expect a series result): results are object-dtype elementwise sums or differences with expected name, each emitting the performance warning.
         # GH#18849
         box = box_with_array
         box2 = Series if box in [Index, tm.to_array, pd.array] else box
@@ -1456,6 +1566,8 @@ class TestTimedeltaArraylikeAddSubOps:
     def test_td64arr_addsub_anchored_offset_arraylike(
         self, performance_warning, obox, box_with_array
     ):
+        # [FUNCTION DOC]
+        # Linked to an issue. Parametrized over offset container (array, index, series); uses the performance-warning and box fixtures. Verifies that adding or subtracting (both orders) an anchored month-end offset and a two-day offset to a boxed timedelta index emits the performance warning and then raises a type error ("has incorrect type" or cannot add the month-end type).
         # GH#18824
         tdi = TimedeltaIndex(["1 days 00:00:00", "3 days 04:00:00"])
         tdi = tm.box_expected(tdi, box_with_array)
@@ -1482,6 +1594,8 @@ class TestTimedeltaArraylikeAddSubOps:
     # Unsorted
 
     def test_td64arr_add_sub_object_array(self, performance_warning, box_with_array):
+        # [FUNCTION DOC]
+        # Uses the performance-warning and box fixtures. With an object array of a timedelta, a day offset, and a timestamp: adding it to a boxed timedelta range emits the warning and gives object results (two days, four days, and a timestamp); subtracting it from the range raises a type error (unsupported operand or datelike) after the warning; subtracting the range from the object array gives zero, zero and the timestamp.
         box = box_with_array
         xbox = np.ndarray if box is pd.array else box
 
@@ -1513,6 +1627,8 @@ class TestTimedeltaArraylikeAddSubOps:
 
 
 class TestTimedeltaArraylikeMulDivOps:
+    # [CLASS DOC]
+    # Test class for multiplication, division, and floor division on timedelta64 vectors.
     # Tests for timedelta64[ns]
     # __mul__, __rmul__, __div__, __rdiv__, __floordiv__, __rfloordiv__
 
@@ -1521,6 +1637,8 @@ class TestTimedeltaArraylikeMulDivOps:
     # organized with scalar others first, then array-like
 
     def test_td64arr_mul_int(self, box_with_array):
+        # [FUNCTION DOC]
+        # Uses the box fixture. Verifies multiplying a boxed timedelta index of zero to four nanoseconds by integer one on either side returns the same values.
         idx = TimedeltaIndex(np.arange(5, dtype="int64"))
         idx = tm.box_expected(idx, box_with_array)
 
@@ -1531,6 +1649,8 @@ class TestTimedeltaArraylikeMulDivOps:
         tm.assert_equal(result, idx)
 
     def test_td64arr_mul_tdlike_scalar_raises(self, two_hours, box_with_array):
+        # [FUNCTION DOC]
+        # Uses the two-hours and box fixtures. Verifies multiplying a boxed timedelta range by a timedelta-like scalar raises a type error matching one of several messages.
         rng = timedelta_range("1 days", "10 days", name="foo")
         rng = tm.box_expected(rng, box_with_array)
         msg = "|".join(
@@ -1545,6 +1665,8 @@ class TestTimedeltaArraylikeMulDivOps:
             rng * two_hours
 
     def test_tdi_mul_int_array_zerodim(self, box_with_array):
+        # [FUNCTION DOC]
+        # Uses the box fixture. Verifies multiplying a boxed timedelta index by a zero-dimensional int64 array of five multiplies each value by five.
         rng5 = np.arange(5, dtype="int64")
         idx = TimedeltaIndex(rng5)
         expected = TimedeltaIndex(rng5 * 5)
@@ -1556,6 +1678,8 @@ class TestTimedeltaArraylikeMulDivOps:
         tm.assert_equal(result, expected)
 
     def test_tdi_mul_int_array(self, box_with_array):
+        # [FUNCTION DOC]
+        # Uses the box fixture. Verifies multiplying a boxed timedelta index of zero to four by the NumPy integer array zero to four squares each value.
         rng5 = np.arange(5, dtype="int64")
         idx = TimedeltaIndex(rng5)
         expected = TimedeltaIndex(rng5**2)
@@ -1567,6 +1691,8 @@ class TestTimedeltaArraylikeMulDivOps:
         tm.assert_equal(result, expected)
 
     def test_tdi_mul_int_series(self, box_with_array):
+        # [FUNCTION DOC]
+        # Uses the box fixture. Verifies multiplying a boxed timedelta index of zero to four by an int64 series zero to four gives a series (for index and array boxes) of the squares.
         box = box_with_array
         xbox = Series if box in [Index, tm.to_array, pd.array] else box
 
@@ -1580,6 +1706,8 @@ class TestTimedeltaArraylikeMulDivOps:
         tm.assert_equal(result, expected)
 
     def test_tdi_mul_float_series(self, box_with_array):
+        # [FUNCTION DOC]
+        # Uses the box fixture. Verifies multiplying a boxed timedelta index of zero to four by a float series of one to five gives a series of the products as timedeltas.
         box = box_with_array
         xbox = Series if box in [Index, tm.to_array, pd.array] else box
 
@@ -1606,6 +1734,8 @@ class TestTimedeltaArraylikeMulDivOps:
         ids=lambda x: type(x).__name__,
     )
     def test_tdi_rmul_arraylike(self, other, box_with_array):
+        # [FUNCTION DOC]
+        # A TODO asks about including series and frames. Parametrized over five numeric array-likes one to ten (NumPy array, int64, uint64, float64 indexes, range index); uses the box fixture. Verifies multiplying the array-like by a boxed timedelta index of ten one-day values, in either order, gives one-day to ten-day timedeltas without a frequency, boxed in the upcast box.
         box = box_with_array
 
         tdi = TimedeltaIndex(["1 Day"] * 10)
@@ -1622,6 +1752,8 @@ class TestTimedeltaArraylikeMulDivOps:
         tm.assert_equal(commute, expected)
 
     def test_td64arr_mul_bool_scalar_raises(self, box_with_array):
+        # [FUNCTION DOC]
+        # Linked to an issue. Uses the box fixture. Verifies multiplying a boxed timedelta by a Python or NumPy bool scalar, in either order, raises a type error "Cannot multiply 'timedelta64[ns]' by bool".
         # GH#58054
         ser = Series(np.arange(5) * timedelta(hours=1), dtype="m8[ns]")
         obj = tm.box_expected(ser, box_with_array)
@@ -1645,6 +1777,9 @@ class TestTimedeltaArraylikeMulDivOps:
         ],
     )
     def test_td64arr_mul_bool_raises(self, dtype, box_with_array):
+        # [FUNCTION DOC]
+        # Linked to an issue. Parametrized over boolean dtypes (NumPy bool, nullable boolean, pyarrow bool when installed); uses the box fixture. Verifies multiplying a boxed timedelta by a boxed boolean series raises a type error "Cannot multiply timedelta64[ns] by bool"; the reflected form raises the same error, except for pyarrow booleans which raise an error saying the multiply operation is not supported for the pyarrow bool dtype with timedelta64.
+        # KNOWN ISSUE: the variable for the reflected-case message is derived from the first message by replacing the text "rmul" with "mul", but that text never occurs in it, so the replacement is a no-op and both messages are identical (outside the pyarrow case).
         # GH#58054
         ser = Series(np.arange(5) * timedelta(hours=1), dtype="m8[ns]")
         obj = tm.box_expected(ser, box_with_array)
@@ -1675,6 +1810,8 @@ class TestTimedeltaArraylikeMulDivOps:
         ],
     )
     def test_td64arr_mul_masked(self, dtype, box_with_array):
+        # [FUNCTION DOC]
+        # Parametrized over Int64, Float64, and pyarrow int64 (when installed); uses the box fixture. Verifies multiplying a boxed timedelta series of zero to four hours by a masked-integer or masked-float series of zero to four, in either order, gives timedeltas of squares of hours (duration pyarrow dtype for pyarrow input).
         ser = Series(np.arange(5) * timedelta(hours=1), dtype="m8[ns]")
         obj = tm.box_expected(ser, box_with_array)
 
@@ -1695,6 +1832,8 @@ class TestTimedeltaArraylikeMulDivOps:
     # __div__, __rdiv__
 
     def test_td64arr_div_nat_invalid(self, box_with_array):
+        # [FUNCTION DOC]
+        # Uses the box fixture. Verifies dividing a boxed timedelta by NaT raises a type error (unsupported operand), NaT divided by it raises "Cannot divide NaTType by", and division by or of a NumPy datetime64 NaT raises a type error with one of several messages.
         # don't allow division by NaT (maybe could in the future)
         rng = timedelta_range("1 days", "10 days", name="foo")
         rng = tm.box_expected(rng, box_with_array)
@@ -1719,6 +1858,8 @@ class TestTimedeltaArraylikeMulDivOps:
             dt64nat / rng
 
     def test_td64arr_div_td64nat(self, box_with_array):
+        # [FUNCTION DOC]
+        # Linked to an issue. Uses the box fixture. Verifies dividing a boxed timedelta range by a NumPy timedelta NaT, and the reverse, gives an all-NaN float result.
         # GH#23829
         box = box_with_array
         xbox = np.ndarray if box is pd.array else box
@@ -1738,6 +1879,8 @@ class TestTimedeltaArraylikeMulDivOps:
         tm.assert_equal(result, expected)
 
     def test_td64arr_div_int(self, box_with_array):
+        # [FUNCTION DOC]
+        # Uses the box fixture. Verifies dividing a boxed timedelta index by integer one returns the same values, and integer one divided by the index raises a type error "Cannot divide".
         idx = TimedeltaIndex(np.arange(5, dtype="int64"))
         idx = tm.box_expected(idx, box_with_array)
 
@@ -1749,6 +1892,8 @@ class TestTimedeltaArraylikeMulDivOps:
             1 / idx
 
     def test_td64arr_div_tdlike_scalar(self, two_hours, box_with_array):
+        # [FUNCTION DOC]
+        # Linked to issues (ensures frames return the correct dtype). Uses the two-hours and box fixtures. Verifies a boxed ten-day timedelta range divided by two hours gives float values 12, 24, ..., 120 with the name kept (array factory boxes give a NumPy array), and the reversed division gives the reciprocal.
         # GH#20088, GH#22163 ensure DataFrame returns correct dtype
         box = box_with_array
         xbox = np.ndarray if box is pd.array else box
@@ -1769,6 +1914,8 @@ class TestTimedeltaArraylikeMulDivOps:
     @pytest.mark.parametrize("m", [1, 3, 10])
     @pytest.mark.parametrize("unit", ["D", "h", "m", "s", "ms", "us", "ns"])
     def test_td64arr_div_td64_scalar(self, m, unit, box_with_array):
+        # [FUNCTION DOC]
+        # Parametrized over multiples one, three, ten and units D, h, m, s, ms, us, ns; uses the box fixture. Verifies dividing a series of 59-day timedeltas (last value NaN) by a NumPy timedelta scalar gives the elementwise float quotients, and the reflected division gives the elementwise reverse quotient.
         box = box_with_array
         xbox = np.ndarray if box is pd.array else box
 
@@ -1790,6 +1937,8 @@ class TestTimedeltaArraylikeMulDivOps:
         tm.assert_equal(result, expected)
 
     def test_td64arr_div_tdlike_scalar_with_nat(self, two_hours, box_with_array):
+        # [FUNCTION DOC]
+        # Uses the two-hours and box fixtures. Verifies dividing a timedelta index with NaT by two hours gives twelve, NaN, twenty-four as float with the name, and the reversed division gives the reciprocal.
         box = box_with_array
         xbox = np.ndarray if box is pd.array else box
 
@@ -1807,6 +1956,8 @@ class TestTimedeltaArraylikeMulDivOps:
         tm.assert_equal(result, expected)
 
     def test_td64arr_div_td64_ndarray(self, box_with_array):
+        # [FUNCTION DOC]
+        # Linked to an issue. Uses the box fixture. Verifies dividing a boxed timedelta index with NaT by a NumPy timedelta array (hours), a boxed version, an object-dtype version (object result), and a list gives twelve, NaN, twenty-four as floats; the reversed division gives the reciprocal.
         # GH#22631
         box = box_with_array
         xbox = np.ndarray if box is pd.array else box
@@ -1845,6 +1996,8 @@ class TestTimedeltaArraylikeMulDivOps:
         tm.assert_equal(result, expected)
 
     def test_tdarr_div_length_mismatch(self, box_with_array):
+        # [FUNCTION DOC]
+        # Uses the box fixture. For a boxed timedelta index of three, verifies dividing by (or being divided by) a list, NumPy array, or index of the wrong length (four elements, or two) raises a value error saying vectors cannot be divided or cannot be coerced to a series.
         rng = TimedeltaIndex(["1 days", NaT, "2 days"])
         mismatched = [1, 2, 3, 4]
 
@@ -1859,6 +2012,8 @@ class TestTimedeltaArraylikeMulDivOps:
                     other / rng
 
     def test_td64_div_object_mixed_result(self, box_with_array):
+        # [FUNCTION DOC]
+        # Uses the box fixture. Verifies division and floor division of a boxed timedelta index (with NaT) by an object array of a timedelta, floats, and a timedelta gives an object result whose NaT is a microsecond NumPy timedelta NaT (not the NaT singleton): quotient values one, NaT, a timedelta, one and a half for division, and one, NaT, a timedelta, one for floor division; for frames it also checks the element type.
         # Case where we having a NaT in the result inseat of timedelta64("NaT")
         #  is misleading
         orig = timedelta_range("1 Day", periods=3).insert(1, NaT)
@@ -1894,6 +2049,8 @@ class TestTimedeltaArraylikeMulDivOps:
 
     @pytest.mark.skipif(WASM, reason="no fp exception support in wasm")
     def test_td64arr_floordiv_td64arr_with_nat(self, box_with_array):
+        # [FUNCTION DOC]
+        # Linked to an issue. Skipped on WebAssembly (no floating-point exceptions). Uses the box fixture. Verifies floor dividing a timedelta series by one with NaT gives one, one, NaN as floats (a runtime warning is expected for the array-factory box), including the reflected path through a NumPy array of the left side.
         # GH#35529
         box = box_with_array
         xbox = np.ndarray if box is pd.array else box
@@ -1923,6 +2080,8 @@ class TestTimedeltaArraylikeMulDivOps:
 
     @pytest.mark.filterwarnings("ignore:invalid value encountered:RuntimeWarning")
     def test_td64arr_floordiv_tdscalar(self, box_with_array, scalar_td):
+        # [FUNCTION DOC]
+        # Linked to issues. Ignores a runtime warning about invalid values. Uses the box and timedelta-scalar fixtures. For a series of 5 minutes 3 seconds (twice) and NaT, floor dividing by the scalar gives zero, zero, NaN, the reflected division gives two, two, NaN (the scalar being about twice the value plus one second), and calling the reflected method explicitly gives the same.
         # GH#18831, GH#19125
         box = box_with_array
         xbox = np.ndarray if box is pd.array else box
@@ -1949,6 +2108,8 @@ class TestTimedeltaArraylikeMulDivOps:
         tm.assert_equal(result, expected)
 
     def test_td64arr_floordiv_int(self, box_with_array):
+        # [FUNCTION DOC]
+        # Uses the box fixture. Verifies floor dividing a boxed timedelta index by integer one returns the same values, and one floor-divided by the index raises a type error ("floor_divide cannot use operands" or cannot divide int by Timedelta).
         idx = TimedeltaIndex(np.arange(5, dtype="int64"))
         idx = tm.box_expected(idx, box_with_array)
         result = idx // 1
@@ -1966,6 +2127,9 @@ class TestTimedeltaArraylikeMulDivOps:
     def test_td64arr_mod_tdscalar(
         self, performance_warning, box_with_array, three_days
     ):
+        # [FUNCTION DOC]
+        # A TODO says operations with timedelta-like arrays, numeric arrays, and reversed ops are untested. Uses the performance-warning, box, and three-days fixtures. For a range of one to nine days: if the scalar is a Day offset, modulo, divmod, and floor division raise a type error about unsupported operand; otherwise modulo by the scalar gives one, two, zero days repeating; divmod's remainder equals that (frames with a date offset expect object dtype) and its quotient equals the floor division, with the performance warning expected only in the frame and date-offset case.
+        # KNOWN ISSUE: a TODO in the body notes that making the expected result object dtype for frames is an artifact of the frame divmod method being implemented naively without dispatching to the underlying array.
         tdi = timedelta_range("1 Day", "9 days")
         tdarr = tm.box_expected(tdi, box_with_array)
 
@@ -2000,6 +2164,8 @@ class TestTimedeltaArraylikeMulDivOps:
         tm.assert_equal(result[0], tdarr // three_days)
 
     def test_td64arr_mod_int(self, box_with_array):
+        # [FUNCTION DOC]
+        # Uses the box fixture. Verifies a nanosecond timedelta range modulo 2 gives one, zero nanoseconds repeating; integer modulo timedelta raises a type error "Cannot divide int by"; divmod by 2 gives remainder as above and quotient equal to floor division.
         tdi = timedelta_range("1 ns", "10 ns", periods=10)
         tdarr = tm.box_expected(tdi, box_with_array)
 
@@ -2018,6 +2184,8 @@ class TestTimedeltaArraylikeMulDivOps:
         tm.assert_equal(result[0], tdarr // 2)
 
     def test_td64arr_rmod_tdscalar(self, box_with_array, three_days):
+        # [FUNCTION DOC]
+        # Uses the box and three-days fixtures. For a range of one to nine days, three-days scalar modulo the range gives zero, one, zero days then three days six times; a Day offset instead raises a type error "Cannot divide Day by TimedeltaArray"; the divmod remainder equals the modulo and the quotient equals the floor division.
         tdi = timedelta_range("1 Day", "9 days")
         tdarr = tm.box_expected(tdi, box_with_array)
 
@@ -2042,6 +2210,8 @@ class TestTimedeltaArraylikeMulDivOps:
     # Operations with invalid others
 
     def test_td64arr_mul_tdscalar_invalid(self, box_with_array, scalar_td):
+        # [FUNCTION DOC]
+        # Uses the box and timedelta-scalar fixtures. Verifies multiplying a boxed timedelta series (with NaN) by a timedelta-like scalar in either order raises a type error matching operate/unsupported/cannot/not supported.
         td1 = Series([timedelta(minutes=5, seconds=3)] * 3)
         td1.iloc[2] = np.nan
 
@@ -2057,6 +2227,8 @@ class TestTimedeltaArraylikeMulDivOps:
             scalar_td * td1
 
     def test_td64arr_mul_too_short_raises(self, box_with_array):
+        # [FUNCTION DOC]
+        # Uses the box fixture. Verifies multiplying a boxed timedelta index of five by an index of three raises a type error (length check happens before dtype check), and by a two-element NumPy array raises a value error; the messages come from a set of accepted alternatives.
         idx = TimedeltaIndex(np.arange(5, dtype="int64"))
         idx = tm.box_expected(idx, box_with_array)
         msg = "|".join(
@@ -2073,6 +2245,8 @@ class TestTimedeltaArraylikeMulDivOps:
             idx * np.array([1, 2])
 
     def test_td64arr_mul_td64arr_raises(self, box_with_array):
+        # [FUNCTION DOC]
+        # Uses the box fixture. Verifies multiplying a boxed timedelta index by itself raises a type error "cannot use operands with types dtype".
         idx = TimedeltaIndex(np.arange(5, dtype="int64"))
         idx = tm.box_expected(idx, box_with_array)
         msg = "cannot use operands with types dtype"
@@ -2083,6 +2257,8 @@ class TestTimedeltaArraylikeMulDivOps:
     # Operations with numeric others
 
     def test_td64arr_mul_numeric_scalar(self, box_with_array, one):
+        # [FUNCTION DOC]
+        # Linked to an issue. Uses the box fixture and the one-fixture of integer representations. Verifies multiplying a boxed timedelta series (59 days twice and NaT) by minus one and by two (either order) gives minus 59 days and 118 days with NaT preserved.
         # GH#4521
         # divide/multiply by integers
         tdser = Series(["59 Days", "59 Days", "NaT"], dtype="m8[ns]")
@@ -2106,6 +2282,8 @@ class TestTimedeltaArraylikeMulDivOps:
 
     @pytest.mark.parametrize("two", [2, 2.0, np.array(2), np.array(2.0)])
     def test_td64arr_div_numeric_scalar(self, box_with_array, two):
+        # [FUNCTION DOC]
+        # Linked to an issue. Parametrized over two as an integer, float, and zero-dimensional arrays of each; uses the box fixture. Verifies dividing a boxed series of 59 days twice and NaT by two gives 29.5 days twice and NaT, while the scalar divided by the series raises a type error "Cannot divide".
         # GH#4521
         # divide/multiply by integers
         tdser = Series(["59 Days", "59 Days", "NaT"], dtype="m8[ns]")
@@ -2122,6 +2300,8 @@ class TestTimedeltaArraylikeMulDivOps:
 
     @pytest.mark.parametrize("two", [2, 2.0, np.array(2), np.array(2.0)])
     def test_td64arr_floordiv_numeric_scalar(self, box_with_array, two):
+        # [FUNCTION DOC]
+        # Parametrized over two as an integer, float, and zero-dimensional arrays. Verifies floor dividing the 59-day series by two gives 29.5 days twice and NaT (same result as true division), and two floor-divided by the series raises a type error "Cannot divide".
         tdser = Series(["59 Days", "59 Days", "NaT"], dtype="m8[ns]")
         expected = Series(["29.5D", "29.5D", "NaT"], dtype="timedelta64[ns]")
 
@@ -2145,6 +2325,8 @@ class TestTimedeltaArraylikeMulDivOps:
         klass,
         any_real_numpy_dtype,
     ):
+        # [FUNCTION DOC]
+        # Linked to an issue. Parametrized over vector container (array, index, series) and the any-real-dtype fixture; uses the box fixture. Verifies multiplying the boxed 59-day series by the vector of twenty, thirty, forty (cast to the dtype), in either order, gives 1180, 1770 days and NaT in the upcast box.
         # GH#4521
         # divide/multiply by integers
 
@@ -2173,6 +2355,8 @@ class TestTimedeltaArraylikeMulDivOps:
     def test_td64arr_div_numeric_array(
         self, box_with_array, klass, any_real_numpy_dtype
     ):
+        # [FUNCTION DOC]
+        # Linked to an issue. Parametrized over vector container and the any-real-dtype fixture; uses the box fixture. Verifies dividing the 59-day series (with NaT) by the vector gives 2.95 days, 1 day 23:12, and NaT; vector divided by the series raises a type error from several accepted messages; dividing by an object-dtype version gives an object result of elementwise quotients with a NumPy NaT; and an object vector divided by the series raises a type error.
         # GH#4521
         # divide/multiply by integers
 
@@ -2223,6 +2407,8 @@ class TestTimedeltaArraylikeMulDivOps:
             vector.astype(object) / tdser
 
     def test_td64arr_mul_int_series(self, box_with_array, names):
+        # [FUNCTION DOC]
+        # Linked to an issue about correct name attachment. Uses the box and names fixtures. Multiplies a named timedelta index (zero to four days) by a named int64 series zero to four, in either order; verifies the result equals the expected microsecond-unit timedelta series of squares in days with the name given by the name helper, in the upcast box. A TODO asks about parametrizing over series types.
         # GH#19042 test for correct name attachment
         box = box_with_array
         exname = get_expected_name(box, names)
@@ -2252,6 +2438,8 @@ class TestTimedeltaArraylikeMulDivOps:
 
     # TODO: Should we be parametrizing over types for `ser` too?
     def test_float_series_rdiv_td64arr(self, box_with_array, names):
+        # [FUNCTION DOC]
+        # Linked to an issue. A TODO asks about parametrizing over series types. Uses the box and names fixtures. Verifies that the series reflected true-division method applied to a boxed timedelta index gives not-implemented for frames, otherwise the expected series of timedelta divided by float elements with microsecond unit and the name chosen by box (the series' name for array boxes, else the third name).
         # GH#19042 test for correct name attachment
         box = box_with_array
         tdi = TimedeltaIndex(
@@ -2277,6 +2465,8 @@ class TestTimedeltaArraylikeMulDivOps:
             tm.assert_equal(result, expected)
 
     def test_td64arr_all_nat_div_object_dtype_numeric(self, box_with_array):
+        # [FUNCTION DOC]
+        # Linked to an issue. Uses the box fixture. Verifies dividing and floor dividing a boxed all-NaT timedelta index by an object array of an integer and a float gives an object result of NumPy timedelta NaT values (inferred as timedelta results; filled in for series and frames).
         # GH#39750 make sure we infer the result as td64
         tdi = TimedeltaIndex([NaT, NaT], dtype="m8[ns]")
 
@@ -2298,11 +2488,15 @@ class TestTimedeltaArraylikeMulDivOps:
 
 
 class TestTimedelta64ArrayLikeArithmetic:
+    # [CLASS DOC]
+    # Arithmetic tests for timedelta64 vectors fully parametrized over frame, series, timedelta index, and timedelta array; intended to eventually hold all arithmetic tests.
     # Arithmetic tests for timedelta64[ns] vectors fully parametrized over
     #  DataFrame/Series/TimedeltaIndex/TimedeltaArray.  Ideally all arithmetic
     #  tests will eventually end up here.
 
     def test_td64arr_pow_invalid(self, scalar_td, box_with_array):
+        # [FUNCTION DOC]
+        # Uses the timedelta-scalar and box fixtures. Verifies raising a timedelta-like scalar to the boxed timedelta series, and the series to the scalar, raises a type error matching operate/unsupported/cannot/not supported.
         td1 = Series([timedelta(minutes=5, seconds=3)] * 3)
         td1.iloc[2] = np.nan
 
@@ -2320,6 +2514,8 @@ class TestTimedelta64ArrayLikeArithmetic:
 
 
 def test_add_timestamp_to_timedelta():
+    # [FUNCTION DOC]
+    # Linked to an issue. Verifies adding a timestamp to a timedelta range of 31 periods between zero and one second gives a datetime index equal to adding to the timestamp an expected timedelta per position (about a thirty-third of a second per step plus a microsecond added once every three steps), i.e. rounding of the stepped durations is handled consistently.
     # GH: 35897
     timestamp = Timestamp("2021-01-01")
     result = timestamp + timedelta_range("0s", "1s", periods=31)

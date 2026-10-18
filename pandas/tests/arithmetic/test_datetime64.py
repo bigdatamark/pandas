@@ -1,3 +1,6 @@
+# [MODULE DOC]
+# Arithmetic and comparison tests for datetime64 and timezone-aware datetime64 dtypes across arrays, indexes, series, and frames that should behave identically.
+# Covers comparisons (scalars, invalid operands, NaT, arrays, tz mismatches), date range and index arithmetic with integers, timedelta-likes, offsets and periods, subtraction semantics (including time zone and unit rules), reflected operations, NumPy datetime64 arrays, DST handling, offset-array operations with performance warnings, business offsets, and Timestamp-specific behaviors. Uses shared fixtures for timezones (naive and aware), box types, performance warnings, and names, plus shared helper functions for invalid comparison and invalid add/subtract assertions.
 # Arithmetic tests for DataFrame/Series/Index/Array classes that should
 # behave identically.
 # Specifically for datetime64 and datetime64tz dtypes
@@ -44,11 +47,15 @@ from pandas.tests.arithmetic.common import (
 
 
 class TestDatetime64ArrayLikeComparisons:
+    # [CLASS DOC]
+    # Comparison tests for datetime64 vectors fully parametrized over frame, series, datetime index, and datetime array boxes. Intended eventually to hold all datetime comparison tests.
     # Comparison tests for datetime64 vectors fully parametrized over
     #  DataFrame/Series/DatetimeIndex/DatetimeArray.  Ideally all comparison
     #  tests will eventually end up here.
 
     def test_compare_zerodim(self, tz_naive_fixture, box_with_array):
+        # [FUNCTION DOC]
+        # Uses the timezone fixture (naive and aware) and the box fixture. Verifies a boxed three-day date range compared by less-or-equal with a zero-dimensional NumPy array holding its first element unboxes the array: true only for the first element.
         # Test comparison with zero-dimensional array is unboxed
         tz = tz_naive_fixture
         box = box_with_array
@@ -82,6 +89,8 @@ class TestDatetime64ArrayLikeComparisons:
         ],
     )
     def test_dt64arr_cmp_scalar_invalid(self, other, tz_naive_fixture, box_with_array):
+        # [FUNCTION DOC]
+        # Linked to issues. Parametrized over invalid scalars: a string, integers, a float, a plain object, a timedelta, a date (comparison with a stdlib date raises to match timestamps), None and NaN (which are not cast to NaT for comparison). Uses the timezone and box fixtures. Verifies the shared invalid-comparison helper's expectations for a boxed ten-day date range (equality false, inequality true, ordering raises).
         # GH#22074, GH#15966
         tz = tz_naive_fixture
 
@@ -108,6 +117,8 @@ class TestDatetime64ArrayLikeComparisons:
     def test_dt64arr_cmp_arraylike_invalid(
         self, other, tz_naive_fixture, box_with_array
     ):
+        # [FUNCTION DOC]
+        # Parametrized over invalid list-likes (integer lists and arrays, float and object arrays, timedelta arrays in several containers, period arrays and objects). Uses the timezone and box fixtures. Verifies the invalid-comparison helper's expectations on a boxed nanosecond-frequency datetime array.
         tz = tz_naive_fixture
 
         dta = date_range("2000-01-01", freq="ns", periods=10, tz=tz)._data
@@ -115,6 +126,8 @@ class TestDatetime64ArrayLikeComparisons:
         assert_invalid_comparison(obj, other, box_with_array)
 
     def test_dt64arr_cmp_mixed_invalid(self, tz_naive_fixture):
+        # [FUNCTION DOC]
+        # Uses the timezone fixture. Verifies comparing an hourly datetime array to an object array holding integers, a matching timestamp, and a timedelta: equality true only at the matching element, inequality the negation, and ordering comparisons raise a type error (Invalid comparison, cannot compare type, or not supported between).
         tz = tz_naive_fixture
 
         dta = date_range("2000-01-01", freq="h", periods=5, tz=tz)._data
@@ -137,6 +150,8 @@ class TestDatetime64ArrayLikeComparisons:
             dta >= other
 
     def test_dt64arr_nat_comparison(self, tz_naive_fixture, box_with_array):
+        # [FUNCTION DOC]
+        # Linked to issues (frames once wrongly considered NaT equal to a timestamp). Uses the timezone and box fixtures. Verifies equality of a boxed series of a timestamp and NaT with the timestamp is true then false.
         # GH#22242, GH#22163 DataFrame considered NaT == ts incorrectly
         tz = tz_naive_fixture
         box = box_with_array
@@ -155,6 +170,8 @@ class TestDatetime64ArrayLikeComparisons:
 
 
 class TestDatetime64SeriesComparison:
+    # [CLASS DOC]
+    # Test class for comparison tests moved from the series operator tests; a TODO says it needs cleanup.
     # TODO: moved from tests.series.test_operators; needs cleanup
 
     @pytest.mark.parametrize(
@@ -196,6 +213,8 @@ class TestDatetime64SeriesComparison:
         op,
         expected,
     ):
+        # [FUNCTION DOC]
+        # Parametrized over three kinds of pairs (timestamps, timedeltas, periods, each with NaT), reverse flag, dtype none or object, the six comparison operators with expected booleans, and the index-or-series fixture for the right side. Verifies the operator on a left series and a right container gives the expected booleans, where NaT is never equal and compares false for ordering, and is unequal to everything.
         box = index_or_series
         lhs, rhs = pair
         if reverse:
@@ -219,6 +238,8 @@ class TestDatetime64SeriesComparison:
     )
     @pytest.mark.parametrize("dtype", [None, object])
     def test_nat_comparisons_scalar(self, dtype, data, box_with_array):
+        # [FUNCTION DOC]
+        # Parametrized over data kinds (timestamps, timedeltas, periods, with NaT) and dtype none or object; uses the box fixture. Verifies comparing a boxed series to the NaT scalar on either side: equality false, inequality true, all ordering comparisons false in both directions; for the array factory with object dtype the expected is a plain bool array.
         box = box_with_array
 
         left = Series(data, dtype=dtype)
@@ -256,6 +277,8 @@ class TestDatetime64SeriesComparison:
 
     @pytest.mark.parametrize("val", [datetime(2000, 1, 4), datetime(2000, 1, 5)])
     def test_series_comparison_scalars(self, val):
+        # [FUNCTION DOC]
+        # Parametrized over two datetime scalars. Verifies a ten-day date series compared greater-than the scalar equals the elementwise comparison of each element.
         series = Series(date_range("1/1/2000", periods=10))
 
         result = series > val
@@ -266,6 +289,8 @@ class TestDatetime64SeriesComparison:
         "left,right", [("lt", "gt"), ("le", "ge"), ("eq", "eq"), ("ne", "ne")]
     )
     def test_timestamp_compare_series(self, left, right):
+        # [FUNCTION DOC]
+        # See an issue about comparing timestamps on both sides. Parametrized over operator name pairs (less/greater, less-or-equal/greater-or-equal, equal, not equal). Verifies a series with NaT compared with a timestamp or NaT on the left gives the same result as the mirrored operator with the scalar on the right, for a series with and without NaT in the first and fourth positions.
         # see gh-4982
         # Make sure we can compare Timestamps on the right AND left hand side.
         ser = Series(date_range("20010101", periods=10), name="dates")
@@ -298,6 +323,8 @@ class TestDatetime64SeriesComparison:
         tm.assert_series_equal(result, expected)
 
     def test_dt64arr_timestamp_equality(self, box_with_array):
+        # [FUNCTION DOC]
+        # Linked to an issue. Uses the box fixture. Verifies that comparing a boxed series of two timestamps and NaT with itself gives not-equal false, false, true and equal true, true, false; comparisons with a single element of the series (a timestamp, or NaT) give the expected broadcast results, except for frames where comparing with a series raises a value error "not aligned".
         # GH#11034
         box = box_with_array
 
@@ -372,6 +399,8 @@ class TestDatetime64SeriesComparison:
         ],
     )
     def test_dt64_compare_datetime_scalar(self, datetimelike, op, expected):
+        # [FUNCTION DOC]
+        # Linked to an issue. Parametrized over the scalar kinds (Timestamp, Python datetime, NumPy datetime64) and operators (less, less-or-equal, equal, greater) with expected booleans. Verifies comparison of a named datetime series (with a missing value) with the scalar gives the expected named boolean series.
         # GH#17965, test for ability to compare datetime64[ns] columns
         #  to datetimelike
         ser = Series(
@@ -388,6 +417,8 @@ class TestDatetime64SeriesComparison:
         tm.assert_series_equal(result, expected)
 
     def test_ts_series_numpy_maximum(self):
+        # [FUNCTION DOC]
+        # Linked to an issue. Verifies the NumPy maximum of a timestamp and a microsecond-unit datetime series works and gives the elementwise maximum series.
         # GH#50864, test numpy.maximum does not fail
         # given a TimeStamp and Series(with dtype datetime64) comparison
         ts = Timestamp("2024-07-01")
@@ -405,8 +436,12 @@ class TestDatetime64SeriesComparison:
 
 
 class TestDatetimeIndexComparisons:
+    # [CLASS DOC]
+    # Test class for comparisons of datetime indexes; a TODO says it holds tests moved from the index tests needing parametrization and de-duplication.
     # TODO: moved from tests.indexes.test_base; parametrize and de-duplicate
     def test_comparators(self, comparison_op):
+        # [FUNCTION DOC]
+        # Uses the comparison-operator fixture. Verifies comparing a date range and the equivalent NumPy datetime array with the NumPy datetime64 middle element gives equal NumPy boolean arrays (the index result is a NumPy array).
         index = date_range("2020-01-01", periods=10)
         element = index[len(index) // 2]
         element = Timestamp(element).to_datetime64()
@@ -423,6 +458,8 @@ class TestDatetimeIndexComparisons:
         [datetime(2016, 1, 1), Timestamp("2016-01-01"), np.datetime64("2016-01-01")],
     )
     def test_dti_cmp_datetimelike(self, other, tz_naive_fixture):
+        # [FUNCTION DOC]
+        # Parametrized over a Python datetime, a Timestamp, and a NumPy datetime64; uses the timezone fixture (NumPy scalar skipped for aware zones; others localized to the index's zone). Verifies the five comparison operators between a two-element date range and the scalar give the expected arrays.
         tz = tz_naive_fixture
         dti = date_range("2016-01-01", periods=2, tz=tz)
         if tz is not None:
@@ -452,6 +489,8 @@ class TestDatetimeIndexComparisons:
 
     @pytest.mark.parametrize("dtype", [None, object])
     def test_dti_cmp_nat(self, dtype, box_with_array):
+        # [FUNCTION DOC]
+        # Parametrized over dtype none or object; uses the box fixture. Verifies equality and inequality between two datetime vectors with NaT (NaT never equal), and against the NaT scalar on either side, boxed in the upcast box.
         left = DatetimeIndex([Timestamp("2011-01-01"), NaT, Timestamp("2011-01-03")])
         right = DatetimeIndex([NaT, NaT, Timestamp("2011-01-03")])
 
@@ -489,6 +528,8 @@ class TestDatetimeIndexComparisons:
         tm.assert_equal(NaT > lhs, expected)
 
     def test_dti_cmp_nat_behaves_like_float_cmp_nan(self):
+        # [FUNCTION DOC]
+        # Verifies NaT behaves like NaN in comparisons: for float indexes, datetime indexes, and datetime index versus NumPy datetime array with NaT in different places, the six comparison operators (including reflected) give the same expected arrays (NaT/NaN positions false except for not-equal); comparing with the scalar NaN or NaT gives all false (all true for not-equal); and comparing with a number three or a datetime of March first gives the expected arrays. Each block asserts no warnings are emitted.
         fidx1 = pd.Index([1.0, np.nan, 3.0, np.nan, 5.0, 7.0])
         fidx2 = pd.Index([2.0, 3.0, np.nan, np.nan, 6.0, 7.0])
 
@@ -584,6 +625,8 @@ class TestDatetimeIndexComparisons:
                 tm.assert_numpy_array_equal(result, expected)
 
     def test_comparison_tzawareness_compat(self, comparison_op, box_with_array):
+        # [FUNCTION DOC]
+        # Linked to an issue. Uses the comparison-operator and box fixtures. Verifies that comparing naive and aware date ranges (boxed) with an ordering operator raises a type error "Invalid comparison between dtype=datetime64" for the vector, for lists of timestamps, and for object arrays in either order; equality and inequality do not raise. Aware compared to aware and naive to naive (vector, list, object array, any order) must all compare equal.
         # GH#18162
         op = comparison_op
         box = box_with_array
@@ -633,6 +676,8 @@ class TestDatetimeIndexComparisons:
         assert np.all(dz == np.array(tolist(dz), dtype=object))
 
     def test_comparison_tzawareness_compat_scalars(self, comparison_op, box_with_array):
+        # [FUNCTION DOC]
+        # Linked to an issue. Uses the comparison-operator and box fixtures. Verifies a naive boxed range is greater than a naive timestamp and an aware range greater than an aware timestamp, and that ordering operators between mixed awareness (range with timestamp, either order) raise a type error "Invalid comparison between dtype=datetime64 and Timestamp".
         # GH#18162
         op = comparison_op
 
@@ -673,6 +718,8 @@ class TestDatetimeIndexComparisons:
     def test_scalar_comparison_tzawareness(
         self, comparison_op, other, tz_aware_fixture, box_with_array
     ):
+        # [FUNCTION DOC]
+        # Parametrized over a Python datetime, Timestamp, and NumPy datetime64 as naive scalars; uses the comparison-operator, aware-timezone, and box fixtures. Ignores a NumPy deprecation warning about elementwise comparison (NumPy falls back and warns when the first attempt raises). Verifies an aware boxed date range compared to the naive scalar: equality is false and inequality true (either operand order); ordering raises a type error naming the scalar's type.
         op = comparison_op
         tz = tz_aware_fixture
         dti = date_range("2016-01-01", periods=2, tz=tz, unit="ns")
@@ -700,6 +747,8 @@ class TestDatetimeIndexComparisons:
                 op(other, dtarr)
 
     def test_nat_comparison_tzawareness(self, comparison_op):
+        # [FUNCTION DOC]
+        # Linked to an issue. Uses the comparison-operator fixture. Verifies comparing a datetime index (naive and tz-localized) with NaT does not raise and gives all false (all true for not-equal).
         # GH#19276
         # tzaware DatetimeIndex should not raise when compared to NaT
         op = comparison_op
@@ -715,6 +764,8 @@ class TestDatetimeIndexComparisons:
         tm.assert_numpy_array_equal(result, expected)
 
     def test_dti_cmp_str(self, tz_naive_fixture):
+        # [FUNCTION DOC]
+        # Linked to an issue. Uses the timezone fixture. Verifies a ten-day range compared with the string "1/1/2000" is valid regardless of zone: equality true only for the first, inequality the opposite, and ordering operators as expected.
         # GH#22074
         # regardless of tz, we expect these comparisons are valid
         tz = tz_naive_fixture
@@ -746,6 +797,8 @@ class TestDatetimeIndexComparisons:
         tm.assert_numpy_array_equal(result, expected)
 
     def test_dti_cmp_list(self):
+        # [FUNCTION DOC]
+        # Verifies a date range compared for equality to a list of its own values equals the comparison with itself (all true).
         rng = date_range("1/1/2000", periods=10)
 
         result = rng == list(rng)
@@ -762,6 +815,8 @@ class TestDatetimeIndexComparisons:
         ids=lambda x: type(x).__name__,
     )
     def test_dti_cmp_tdi_tzawareness(self, other):
+        # [FUNCTION DOC]
+        # Linked to an issue (a reversion test that the timezone-awareness check is not run against timedeltas). Parametrized over a timedelta index, a series of one, and a timedelta64 NumPy array. Verifies a tz-aware date range equals none (all false) and differs from all (all true), with series index preserved; ordering comparisons raise a type error "Invalid comparison between".
         # GH#22074
         # reversion test that we _don't_ call _assert_tzawareness_compat
         # when comparing against TimedeltaIndex
@@ -792,6 +847,8 @@ class TestDatetimeIndexComparisons:
             dti >= other
 
     def test_dti_cmp_object_dtype(self):
+        # [FUNCTION DOC]
+        # Linked to an issue. Verifies an aware date range compared with its object-cast version is all equal; with its naive version is all unequal; and with an object array of five of its elements plus five timedeltas, equality is true for the first five, false for the rest, and greater-or-equal raises a type error (not supported between Timestamp and Timedelta).
         # GH#22074
         dti = date_range("2000-01-01", periods=10, tz="Asia/Tokyo")
 
@@ -819,6 +876,8 @@ class TestDatetimeIndexComparisons:
 
 
 class TestDatetime64Arithmetic:
+    # [CLASS DOC]
+    # Test class for datetime arithmetic; "finished" tests fully parametrized over frame, series, index, and datetime array.
     # This class is intended for "finished" tests that are fully parametrized
     #  over DataFrame/Series/Index/DatetimeArray
 
@@ -829,6 +888,8 @@ class TestDatetime64Arithmetic:
     def test_dt64arr_add_timedeltalike_scalar(
         self, tz_naive_fixture, two_hours, box_with_array
     ):
+        # [FUNCTION DOC]
+        # Marked slow on ARM. Linked to issues. Uses the timezone, two-hours, and box fixtures. Verifies adding the timedelta-like scalar to a boxed month-long hourly-unit date range (and the reflected form and in-place add) shifts all by two hours; for aware ranges the frequency is dropped.
         # GH#22005, GH#22163 check DataFrame doesn't raise TypeError
         tz = tz_naive_fixture
 
@@ -852,6 +913,8 @@ class TestDatetime64Arithmetic:
     def test_dt64arr_sub_timedeltalike_scalar(
         self, tz_naive_fixture, two_hours, box_with_array
     ):
+        # [FUNCTION DOC]
+        # Uses the timezone, two-hours, and box fixtures. Verifies subtracting the timedelta-like from a boxed month-long nanosecond date range, and in-place subtraction, shifts everything two hours earlier; aware ranges lose the frequency.
         tz = tz_naive_fixture
 
         rng = date_range("2000-01-01", "2000-02-01", tz=tz, unit="ns")
@@ -869,6 +932,8 @@ class TestDatetime64Arithmetic:
         tm.assert_equal(rng, expected)
 
     def test_dt64_array_sub_dt_with_different_timezone(self, box_with_array):
+        # [FUNCTION DOC]
+        # Uses the box fixture. Verifies subtracting an aware timestamp in another zone (CET) from a boxed aware range (US/Eastern) gives timedelta indexes of six hours plus whole days (and the negated order gives negative values); subtracting a naive timestamp from an aware range (either order) raises a type error "Cannot subtract tz-naive and tz-aware datetime-like objects".
         t1 = date_range("20130101", periods=3).tz_localize("US/Eastern")
         t1 = tm.box_expected(t1, box_with_array)
         t2 = Timestamp("20130101").tz_localize("CET")
@@ -896,6 +961,8 @@ class TestDatetime64Arithmetic:
             tnaive - t1
 
     def test_dt64_array_sub_dt64_array_with_different_timezone(self, box_with_array):
+        # [FUNCTION DOC]
+        # Uses the box fixture. Verifies subtracting two boxed aware date ranges in different zones gives six hours for each element (and negative eighteen-hour-offset values for the reverse); subtracting a naive range from an aware one (either order) raises a type error about tz-naive and tz-aware objects.
         t1 = date_range("20130101", periods=3).tz_localize("US/Eastern")
         t1 = tm.box_expected(t1, box_with_array)
         t2 = date_range("20130101", periods=3).tz_localize("CET")
@@ -924,6 +991,8 @@ class TestDatetime64Arithmetic:
             tnaive - t1
 
     def test_dt64arr_add_sub_td64_nat(self, box_with_array, tz_naive_fixture):
+        # [FUNCTION DOC]
+        # Linked to an issue. Uses the box and timezone fixtures. Verifies a NumPy timedelta NaT with nanosecond unit added to (either order) or subtracted from a boxed quarterly date range gives an all-NaT datetime result in the same zone, and subtracting the datetimes from the NaT raises a type error "cannot subtract".
         # GH#23320 special handling for timedelta64("NaT")
         tz = tz_naive_fixture
 
@@ -945,6 +1014,8 @@ class TestDatetime64Arithmetic:
             other - obj
 
     def test_dt64arr_add_sub_td64ndarray(self, tz_naive_fixture, box_with_array):
+        # [FUNCTION DOC]
+        # Uses the timezone and box fixtures. Verifies adding a NumPy timedelta array of minus one day to a boxed datetime range (either order) shifts one day earlier; subtracting shifts one day later; and subtracting the datetime from the timedelta array raises a type error with one of several messages.
         tz = tz_naive_fixture
         dti = date_range("2016-01-01", periods=3, tz=tz)
         tdi = TimedeltaIndex(["-1 Day", "-1 Day", "-1 Day"])
@@ -990,6 +1061,9 @@ class TestDatetime64Arithmetic:
         ],
     )
     def test_dt64arr_sub_dtscalar(self, box_with_array, ts):
+        # [FUNCTION DOC]
+        # Linked to issues. Parametrized over four equivalent datetime scalars (Timestamp, Python datetime, NumPy nanosecond datetime64, and NumPy day-unit datetime64, which must be converted to nanosecond for frame operations); uses the box fixture. Verifies a boxed three-day range without frequency minus the scalar gives a boxed timedelta index of zero, one, two days (not a datetime dtype), and the scalar minus the range gives the negation.
+        # KNOWN ISSUE: the final equality assertion for the reflected subtraction is written twice.
         # GH#8554, GH#22163 DataFrame op should _not_ return dt64 dtype
         idx = date_range("2013-01-01", periods=3)._with_freq(None)
         idx = tm.box_expected(idx, box_with_array)
@@ -1005,6 +1079,8 @@ class TestDatetime64Arithmetic:
         tm.assert_equal(result, -expected)
 
     def test_dt64arr_sub_timestamp_tzaware(self, box_with_array):
+        # [FUNCTION DOC]
+        # Uses the box fixture. Verifies subtracting the first element (an aware timestamp) from a boxed aware two-day range gives timedeltas of zero and one day, and the reverse the negation.
         ser = date_range("2014-03-17", periods=2, freq="D", tz="US/Eastern", unit="ns")
         ser = ser._with_freq(None)
         ts = ser[0]
@@ -1020,6 +1096,8 @@ class TestDatetime64Arithmetic:
         tm.assert_equal(ts - ser, -expected)
 
     def test_dt64arr_sub_NaT(self, box_with_array, unit):
+        # [FUNCTION DOC]
+        # Linked to an issue. Uses the box and datetime-unit fixtures. Verifies subtracting NaT from a boxed datetime vector (naive and tz-aware) gives an all-NaT timedelta series in the same unit.
         # GH#18808
         dti = DatetimeIndex([NaT, Timestamp("19900315")]).as_unit(unit)
         ser = tm.box_expected(dti, box_with_array)
@@ -1043,6 +1121,8 @@ class TestDatetime64Arithmetic:
     def test_dt64arr_sub_dt64object_array(
         self, performance_warning, box_with_array, tz_naive_fixture
     ):
+        # [FUNCTION DOC]
+        # Uses the performance-warning, box, and naive-timezone fixtures. Verifies subtracting an object-cast copy of a boxed datetime range from itself emits the performance warning and returns the zero timedeltas as object dtype.
         dti = date_range("2016-01-01", periods=3, tz=tz_naive_fixture)
         expected = dti - dti
 
@@ -1054,6 +1134,8 @@ class TestDatetime64Arithmetic:
         tm.assert_equal(result, expected)
 
     def test_dt64arr_naive_sub_dt64ndarray(self, box_with_array):
+        # [FUNCTION DOC]
+        # Uses the box fixture. Verifies subtracting a naive NumPy datetime64 array from a boxed naive datetime range, and the reverse, equals the range minus itself.
         dti = date_range("2016-01-01", periods=3, tz=None)
         dt64vals = dti.values
 
@@ -1068,6 +1150,8 @@ class TestDatetime64Arithmetic:
     def test_dt64arr_aware_sub_dt64ndarray_raises(
         self, tz_aware_fixture, box_with_array
     ):
+        # [FUNCTION DOC]
+        # Uses the aware-timezone and box fixtures. Verifies subtracting a naive NumPy datetime array from a boxed aware range, and the reverse, raises a type error about subtracting tz-naive and tz-aware datetimes.
         tz = tz_aware_fixture
         dti = date_range("2016-01-01", periods=3, tz=tz)
         dt64vals = dti.values
@@ -1083,6 +1167,8 @@ class TestDatetime64Arithmetic:
     # Addition of datetime-like others (invalid)
 
     def test_dt64arr_add_dtlike_raises(self, tz_naive_fixture, box_with_array):
+        # [FUNCTION DOC]
+        # Linked to issues (frames must not cast a timestamp to its integer value). Uses the naive-timezone and box fixtures. Verifies the shared cannot-add helper for adding a boxed datetime range to NumPy datetime arrays, indexes, itself, timestamps (naive and aware), Python datetimes, and NumPy day datetimes, all of which must raise.
         # GH#22163 ensure DataFrame doesn't cast Timestamp to i8
         # GH#9631
         tz = tz_naive_fixture
@@ -1115,6 +1201,8 @@ class TestDatetime64Arithmetic:
     def test_dt64arr_addsub_intlike(
         self, dtype, index_or_series_or_array, freq, tz_naive_fixture
     ):
+        # [FUNCTION DOC]
+        # Linked to issues. Parametrized over frequencies (hourly, daily, weekly, 2ME, MS, QE, B, none) with dtype none or uint8 for the integer values; uses the index-series-or-array and timezone fixtures (not frame, because frame alignment makes it inapplicable). Verifies that adding or subtracting integers (python, NumPy scalar, zero-dimensional array, integer arrays in many container types) to a datetime container raises a type error matching one of several messages, via the shared invalid-add/subtract helper.
         # GH#19959, GH#19123, GH#19012
         # GH#55860 use index_or_series_or_array instead of box_with_array
         #  bc DataFrame alignment makes it inapplicable
@@ -1163,6 +1251,8 @@ class TestDatetime64Arithmetic:
     )
     @pytest.mark.parametrize("dti_freq", [None, "D"])
     def test_dt64arr_add_sub_invalid(self, dti_freq, other, box_with_array):
+        # [FUNCTION DOC]
+        # Parametrized over frequency none or daily and invalid operands: a float, a float array, a Period (invalid), and a time of day. Uses the box fixture. Verifies the invalid-add/subtract helper's expectations for a boxed two-date datetime index.
         dti = DatetimeIndex(["2011-01-01", "2011-01-02"], freq=dti_freq)
         dtarr = tm.box_expected(dti, box_with_array)
         msg = "|".join(
@@ -1181,6 +1271,8 @@ class TestDatetime64Arithmetic:
     def test_dt64arr_add_sub_parr(
         self, dti_freq, pi_freq, box_with_array, box_with_array2
     ):
+        # [FUNCTION DOC]
+        # Parametrized over the datetime index's frequency (none or daily) and the period frequency (D, W, Q, h); uses two box fixtures. Linked to an issue about subtracting period indexes. Verifies adding or subtracting a boxed period index to a boxed datetime index raises a type error matching one of several messages.
         # GH#20049 subtracting PeriodIndex should raise TypeError
         dti = DatetimeIndex(["2011-01-01", "2011-01-02"], freq=dti_freq)
         pi = dti.to_period(pi_freq)
@@ -1199,6 +1291,8 @@ class TestDatetime64Arithmetic:
 
     @pytest.mark.filterwarnings("ignore::pandas.errors.PerformanceWarning")
     def test_dt64arr_addsub_time_objects_raises(self, box_with_array, tz_naive_fixture):
+        # [FUNCTION DOC]
+        # Linked to an issue. Ignores the performance warning. Uses the box and naive-timezone fixtures. Verifies adding or subtracting a boxed list of time-of-day objects to a boxed datetime range raises a type error matching unsupported-operand or cannot-subtract messages, per the shared helper.
         # https://github.com/pandas-dev/pandas/issues/10329
 
         tz = tz_naive_fixture
@@ -1233,6 +1327,8 @@ class TestDatetime64Arithmetic:
     )
     @pytest.mark.parametrize("one", [1, 1.0, np.array(1)])
     def test_dt64_mul_div_numeric_invalid(self, one, dt64_series, box_with_array):
+        # [FUNCTION DOC]
+        # Parametrized over three datetime series (valid, with NaT, all NaT) and numeric one (integer, float, zero-dimensional array); uses the box fixture. Verifies multiplying and dividing a boxed datetime series by one, in either order, raises a type error "cannot perform ... with this index type".
         obj = tm.box_expected(dt64_series, box_with_array)
 
         msg = "cannot perform .* with this index type"
@@ -1251,11 +1347,15 @@ class TestDatetime64Arithmetic:
 
 
 class TestDatetime64DateOffsetArithmetic:
+    # [CLASS DOC]
+    # Test class for datetime arithmetic with date offsets (tick, relative-delta, and calendar offsets).
     # -------------------------------------------------------------
     # Tick DateOffsets
 
     # TODO: parametrize over timezone?
     def test_dt64arr_series_add_tick_DateOffset(self, box_with_array, unit):
+        # [FUNCTION DOC]
+        # A TODO asks about parametrizing over timezone. Linked to an issue. Uses the box and datetime-unit fixtures. Verifies adding a five-second offset to a boxed series of two timestamps shifts them by five seconds, in either order, preserving the unit.
         # GH#4532
         # operate with pd.offsets
         ser = Series(
@@ -1275,6 +1375,8 @@ class TestDatetime64DateOffsetArithmetic:
         tm.assert_equal(result2, expected)
 
     def test_dt64arr_series_sub_tick_DateOffset(self, box_with_array):
+        # [FUNCTION DOC]
+        # Linked to an issue. Uses the box fixture. Verifies subtracting a five-second offset from a boxed timestamp series shifts back five seconds; negated offset plus series gives the same; and the offset minus the series raises a type error "cannot subtract DatetimeArray from Second".
         # GH#4532
         # operate with pd.offsets
         ser = Series([Timestamp("20130101 9:01"), Timestamp("20130101 9:02")])
@@ -1298,6 +1400,8 @@ class TestDatetime64DateOffsetArithmetic:
         "cls_name", ["Day", "Hour", "Minute", "Second", "Milli", "Micro", "Nano"]
     )
     def test_dt64arr_add_sub_tick_DateOffset_smoke(self, cls_name, box_with_array):
+        # [FUNCTION DOC]
+        # Linked to an issue. Parametrized over offset class names (Day, Hour, Minute, Second, Milli, Micro, Nano); uses the box fixture. Smoke test: applies addition (both orders) and subtraction of the offset with value five to a boxed timestamp series; asserts nothing about the results.
         # GH#4532
         # smoke tests for valid DateOffsets
         ser = Series([Timestamp("20130101 9:01"), Timestamp("20130101 9:02")])
@@ -1309,6 +1413,8 @@ class TestDatetime64DateOffsetArithmetic:
         ser - offset_cls(5)
 
     def test_dti_add_tick_tzaware(self, tz_aware_fixture, box_with_array):
+        # [FUNCTION DOC]
+        # Linked to issues (frames must not return object dtype). Uses the aware-timezone and box fixtures. For the Pacific zone checks that adding an hour offset to the whole range matches adding it to the first element. Then, for an hourly range, verifies adding or reverse-adding a five-hour offset, NumPy timedelta, or Python timedelta gives the expected hourly range in the zone (nanosecond unit), the round trip by subtraction restores the range, and scalar minus range raises a type error "cannot subtract DatetimeArray from".
         # GH#21610, GH#22163 ensure DataFrame doesn't return object-dtype
         tz = tz_aware_fixture
         if tz == "US/Pacific":
@@ -1343,6 +1449,8 @@ class TestDatetime64DateOffsetArithmetic:
     # RelativeDelta DateOffsets
 
     def test_dt64arr_add_sub_relativedelta_offsets(self, box_with_array, unit):
+        # [FUNCTION DOC]
+        # Linked to an issue. Uses the box and datetime-unit fixtures. For eight datetimes, tries relative-delta date offsets with years, months, days, hours, minutes, seconds, and microseconds (single and cumulative combinations). Verifies adding and subtracting each offset to the boxed vector equals the pointwise operation on each element, with unit rule that microsecond offsets upgrade non-nanosecond units to microseconds, and that offset minus vector raises a type error "cannot subtract DatetimeArray from". A TODO notes the unit conversion in the expectation should become unnecessary.
         # GH#10699
         vec = DatetimeIndex(
             [
@@ -1455,6 +1563,8 @@ class TestDatetime64DateOffsetArithmetic:
     def test_dt64arr_add_sub_DateOffsets(
         self, box_with_array, n, normalize, cls_and_kwargs, unit, tz
     ):
+        # [FUNCTION DOC]
+        # A TODO says it may be redundant with the next-named generic offset test, which includes aware cases this one lacks. Ignores the performance warning. Parametrized over about thirty offset kinds (with optional constructor keyword arguments), normalize flag, multiple n of zero or five, timezone (naive or US/Central), and uses the box and unit fixtures. Skips combinations where n zero is invalid for the offset (week-of-month, last-week-of-month, and the fiscal calendars). Builds eight datetimes (localized if requested), then verifies that vector plus offset (both orders) and vector minus offset equal the pointwise results in the same unit, and that offset minus vector raises a type error "cannot subtract DatetimeArray from".
         # GH#10699
         # assert vectorized operation matches pointwise operations
 
@@ -1527,6 +1637,8 @@ class TestDatetime64DateOffsetArithmetic:
     def test_dt64arr_add_sub_offset_array(
         self, performance_warning, tz_naive_fixture, box_with_array, op, other
     ):
+        # [FUNCTION DOC]
+        # Linked to issues. Parametrized over three arrays of two offsets (month-end and two-day; year and month-end offsets; matching year offsets) and add, reflected add, and subtract; uses the performance-warning, naive-timezone, and box fixtures. Verifies operating a boxed two-date range with the array of offsets (both as NumPy array and as a boxed array) gives an object result equal to the pointwise operation and emits the performance warning; for the array factory with reflected add the expected is a NumPy-extension object array.
         # GH#18849
         # GH#10699 array of offsets
 
@@ -1602,6 +1714,8 @@ class TestDatetime64DateOffsetArithmetic:
     def test_dti_add_sub_nonzero_mth_offset(
         self, op, offset, exp, exp_freq, tz_aware_fixture, box_with_array
     ):
+        # [FUNCTION DOC]
+        # Linked to an issue. Parametrized over add/subtract special-method names with month-based offsets (three months plus ten days, and three months alone) and the expected dates with the expected frequency (none for mixed offsets, anchored-year-starting-April or October for month-only); uses the aware-timezone and box fixtures. Verifies a yearly-start aware nanosecond range operated with the offset gives the expected datetime index (frequency check performed by the boxed comparison).
         # GH 26258
         tz = tz_aware_fixture
         date = date_range(
@@ -1616,6 +1730,8 @@ class TestDatetime64DateOffsetArithmetic:
         tm.assert_equal(result, expected)
 
     def test_dt64arr_series_add_DateOffset_with_milli(self):
+        # [FUNCTION DOC]
+        # Linked to an issue. Verifies adding a four-millisecond offset, and a one-day-plus-four-milliseconds offset, to a nanosecond datetime index with sub-millisecond fractions adds exactly 4 ms (preserving the nanosecond remainder) and days correctly across month ends.
         # GH 57529
         dti = DatetimeIndex(
             [
@@ -1649,9 +1765,13 @@ class TestDatetime64DateOffsetArithmetic:
 
 
 class TestDatetime64OverflowHandling:
+    # [CLASS DOC]
+    # Test class for overflow handling in datetime arithmetic; a TODO says to box and de-duplicate.
     # TODO: box + de-duplicate
 
     def test_dt64_overflow_masking(self, box_with_array):
+        # [FUNCTION DOC]
+        # Linked to an issue. Uses the box fixture. Verifies a boxed datetime near the epoch minus a boxed NaT series gives a boxed timedelta NaT without overflow.
         # GH#25317
         left = Series([Timestamp("1969-12-31")], dtype="M8[ns]")
         right = Series([NaT])
@@ -1666,6 +1786,8 @@ class TestDatetime64OverflowHandling:
         tm.assert_equal(result, expected)
 
     def test_dt64_series_arith_overflow(self):
+        # [FUNCTION DOC]
+        # Linked to issues. Verifies that for a series of 100-year-end dates spanning large ranges, subtracting or being subtracted from a far-past timestamp, and adding a 20000-day timedelta in either order, raises an overflow error "Overflow in int64 addition"; with the last element set to NaT the sums succeed with expected dates and NaT; with all but the first set to NaT, the differences with the timestamp give 91279 days and NaT and the reverse is the negation.
         # GH#12534, fixed by GH#19024
         dt = Timestamp("1700-01-31")
         td = Timedelta("20000 Days")
@@ -1698,6 +1820,8 @@ class TestDatetime64OverflowHandling:
         tm.assert_series_equal(res, -expected)
 
     def test_datetimeindex_sub_timestamp_overflow(self):
+        # [FUNCTION DOC]
+        # Verifies for datetime indexes with the maximum or minimum timestamp that subtracting far-past or far-future timestamps (in several scalar forms) either raises an overflow error "Overflow in int64 addition" or produces a result whose last element's integer value equals the expected difference of the integer representations.
         dtimax = pd.to_datetime(["2021-12-28 17:19", Timestamp.max]).as_unit("ns")
         dtimin = pd.to_datetime(["2021-12-28 17:19", Timestamp.min]).as_unit("ns")
 
@@ -1736,6 +1860,8 @@ class TestDatetime64OverflowHandling:
                 dtimin - variant
 
     def test_datetimeindex_sub_datetimeindex_overflow(self):
+        # [FUNCTION DOC]
+        # Linked to issues. Verifies subtraction of datetime indexes at the extreme timestamps: the regular combinations produce the exact integer differences, the overflowing combinations raise an overflow error, and two edge cases (the minimum timestamp plus the maximum timedelta plus a microsecond, and the maximum minus the minimum timedelta plus a microsecond) also raise.
         # GH#22492, GH#22508
         dtimax = pd.to_datetime(["2021-12-28 17:19", Timestamp.max]).as_unit("ns")
         dtimin = pd.to_datetime(["2021-12-28 17:19", Timestamp.min]).as_unit("ns")
@@ -1771,7 +1897,11 @@ class TestDatetime64OverflowHandling:
 
 
 class TestTimestampSeriesArithmetic:
+    # [CLASS DOC]
+    # Test class for arithmetic on series of timestamps, containing tests moved from the series operator tests.
     def test_empty_series_add_sub(self, box_with_array):
+        # [FUNCTION DOC]
+        # Linked to an issue. Verifies that, for empty datetime and timedelta containers built by the box fixture, addition of a timedelta to the datetime in either order, and subtraction, return the datetime container unchanged, while timedelta minus datetime raises a type error "cannot subtract".
         # GH#13844
         a = Series(dtype="M8[ns]")
         b = Series(dtype="m8[ns]")
@@ -1785,6 +1915,8 @@ class TestTimestampSeriesArithmetic:
             b - a
 
     def test_operators_datetimelike(self):
+        # [FUNCTION DOC]
+        # Smoke test (no assertions): evaluates differences of two datetime series, and addition and subtraction of a timedelta series with a datetime series (including a missing value), merely checking that none of them raise.
         # ## timedelta64 ###
         td1 = Series([timedelta(minutes=5, seconds=3)] * 3)
         td1.iloc[2] = np.nan
@@ -1818,6 +1950,8 @@ class TestTimestampSeriesArithmetic:
         dt1 + td1
 
     def test_dt64ser_sub_datetime_dtype(self, unit):
+        # [FUNCTION DOC]
+        # Uses the datetime-unit fixture. Verifies the dtype of a series of a timestamp minus a Python datetime is timedelta64 in the finer of the series unit and microseconds (the unit imputed to the Python datetime).
         ts = Timestamp(datetime(1993, 1, 7, 13, 30, 00))
         dt = datetime(1993, 6, 22, 13, 30)
         ser = Series([ts], dtype=f"M8[{unit}]")
@@ -1859,6 +1993,8 @@ class TestTimestampSeriesArithmetic:
     def test_operators_datetimelike_invalid(
         self, left, right, op_fail, all_arithmetic_operators
     ):
+        # [FUNCTION DOC]
+        # A TODO says this block of tests was moved from the series tests and needs de-duplication and box parametrization. Parametrized over three datetime-like pairs of series with the list of operator names that are expected to be valid for each, and the all-arithmetic-operators fixture. Applies the named operator of the first series to the second: for names not in the valid list expects a type error matching "operate", "cannot", or unsupported operand; for names in the list it is a smoke test (no raise expected).
         # these are all TypeError ops
         op_str = all_arithmetic_operators
         arg1 = Series(left)
@@ -1879,6 +2015,8 @@ class TestTimestampSeriesArithmetic:
             op(arg2)
 
     def test_sub_single_tz(self, unit):
+        # [FUNCTION DOC]
+        # Linked to an issue. Uses the unit fixture. Verifies subtracting two single-element tz-aware series in the same zone gives a timedelta series of two days (or minus two days reversed) in the same unit.
         # GH#12290
         s1 = Series([Timestamp("2016-02-10", tz="America/Sao_Paulo")]).dt.as_unit(unit)
         s2 = Series([Timestamp("2016-02-08", tz="America/Sao_Paulo")]).dt.as_unit(unit)
@@ -1890,6 +2028,8 @@ class TestTimestampSeriesArithmetic:
         tm.assert_series_equal(result, expected)
 
     def test_dt64tz_series_sub_dtitz(self):
+        # [FUNCTION DOC]
+        # Linked to an issue (subtracting a tz-aware index from a tz-aware series in the same zone used to raise). Verifies the datetime index minus the series and the series minus the index both give a series of zero timedeltas.
         # GH#19071 subtracting tzaware DatetimeIndex from tzaware Series
         # (with same tz) raises, fixed by #19024
         dti = date_range("1999-09-30", periods=10, tz="US/Pacific")
@@ -1902,6 +2042,8 @@ class TestTimestampSeriesArithmetic:
         tm.assert_series_equal(res, expected)
 
     def test_sub_datetime_compat(self, unit):
+        # [FUNCTION DOC]
+        # Linked to an issue. Uses the unit fixture. Verifies a UTC-aware series with NaT minus an aware Python datetime (and minus the equivalent Timestamp) gives a one-day timedelta and NaT in the finer of the series unit and microseconds.
         # see GH#14088
         ser = Series([datetime(2016, 8, 23, 12, tzinfo=timezone.utc), NaT]).dt.as_unit(
             unit
@@ -1916,6 +2058,8 @@ class TestTimestampSeriesArithmetic:
         tm.assert_series_equal(result2, exp)
 
     def test_dt64_series_add_mixed_tick_DateOffset(self):
+        # [FUNCTION DOC]
+        # Linked to an issue. Verifies a timestamp series plus (either order) a five-millisecond offset shifts by five milliseconds, and adding a five-minute offset and a five-millisecond offset in sequence gives the cumulative shift.
         # GH#4532
         # operate with pd.offsets
         s = Series([Timestamp("20130101 9:01"), Timestamp("20130101 9:02")])
@@ -1935,6 +2079,9 @@ class TestTimestampSeriesArithmetic:
         tm.assert_series_equal(result, expected)
 
     def test_datetime64_ops_nat(self, unit):
+        # [FUNCTION DOC]
+        # Linked to an issue. Uses the unit fixture. Verifies arithmetic with NaT: negated NaT plus a datetime series (with NaT) gives an all-NaT datetime series in the same unit; negating a NaT datetime series raises a type error about unary minus on DatetimeArray; and NaT added to or from an all-NaT series gives all NaT.
+        # KNOWN ISSUE: the two addition assertions are repeated verbatim.
         # GH#11349
         datetime_series = Series([NaT, Timestamp("19900315")]).dt.as_unit(unit)
         nat_series_dtype_timestamp = Series([NaT, NaT], dtype=f"datetime64[{unit}]")
@@ -1971,6 +2118,8 @@ class TestTimestampSeriesArithmetic:
     # Timezone-Centric Tests
 
     def test_operators_datetimelike_with_timezones(self):
+        # [FUNCTION DOC]
+        # Verifies datetime-with-timezone series arithmetic with timedeltas: a US/Eastern series plus or minus a scalar timedelta, plus the scalar on the left, and plus a timedelta series (including a copy with a missing value) all equal the tz-naive operation relocalized to the zone; timedelta scalar minus a datetime series raises a type error "cannot subtract DatetimeArray from". Also asserts the timedelta copy with a missing value has no frequency.
         tz = "US/Eastern"
         dt1 = Series(date_range("2000-01-01 09:00:00", periods=5, tz=tz), name="foo")
         dt2 = dt1.copy()
@@ -2034,10 +2183,14 @@ class TestTimestampSeriesArithmetic:
 
 
 class TestDatetimeIndexArithmetic:
+    # [CLASS DOC]
+    # Test class for arithmetic between datetime indexes and timedelta indexes, arrays, Series, and offset array-likes.
     # -------------------------------------------------------------
     # Binary operations DatetimeIndex and TimedeltaIndex/array
 
     def test_dti_add_tdi(self, tz_naive_fixture):
+        # [FUNCTION DOC]
+        # Linked to an issue. Uses the timezone fixture. Verifies adding a timedelta index of zero to nine days to a datetime index of ten copies of one date (naive or aware), in either order, and adding the equivalent timedelta64 NumPy array in either order, gives a ten-day date range without frequency.
         # GH#17558
         tz = tz_naive_fixture
         dti = DatetimeIndex([Timestamp("2017-01-01", tz=tz)] * 10)
@@ -2060,6 +2213,9 @@ class TestDatetimeIndexArithmetic:
         tm.assert_index_equal(result, expected)
 
     def test_dti_iadd_tdi(self, tz_naive_fixture):
+        # [FUNCTION DOC]
+        # Linked to an issue. Uses the timezone fixture. Verifies in-place addition: a datetime index plus-equals a timedelta index or timedelta64 array gives the ten-day range without frequency; a timedelta index plus-equals a datetime index likewise gives that datetime index.
+        # KNOWN ISSUE: the block for the timedelta64 array repeats the timedelta-index-plus-datetime-index in-place addition rather than testing the array on the left.
         # GH#17558
         tz = tz_naive_fixture
         dti = DatetimeIndex([Timestamp("2017-01-01", tz=tz)] * 10)
@@ -2086,6 +2242,8 @@ class TestDatetimeIndexArithmetic:
         tm.assert_index_equal(result, expected)
 
     def test_dti_sub_tdi(self, tz_naive_fixture):
+        # [FUNCTION DOC]
+        # Linked to an issue. Uses the timezone fixture. Verifies a datetime index minus a timedelta index (or its timedelta64 values) gives dates counting backwards without frequency; the reverse subtractions (timedelta index minus datetime index, array minus datetime index) raise type errors about subtracting from TimedeltaArray or a datelike.
         # GH#17558
         tz = tz_naive_fixture
         dti = DatetimeIndex([Timestamp("2017-01-01", tz=tz)] * 10)
@@ -2110,6 +2268,8 @@ class TestDatetimeIndexArithmetic:
             tdi.values - dti
 
     def test_dti_isub_tdi(self, tz_naive_fixture, unit):
+        # [FUNCTION DOC]
+        # Linked to issues. Uses the timezone and datetime-unit fixtures. Verifies in-place subtraction of a timedelta index (and timedelta64 values) from a datetime index in the given unit gives dates counting backwards; also checks the in-place subtraction on the underlying datetime array and the NumPy subtract ufunc with an output argument match the expectation; and in-place subtraction of the datetime index from the timedelta index or values raises a type error about subtracting a datelike from TimedeltaArray.
         # GH#17558
         tz = tz_naive_fixture
         dti = DatetimeIndex([Timestamp("2017-01-01", tz=tz)] * 10).as_unit(unit)
@@ -2154,6 +2314,8 @@ class TestDatetimeIndexArithmetic:
     # -------------------------------------------------------------
 
     def test_dta_add_sub_index(self, tz_naive_fixture):
+        # [FUNCTION DOC]
+        # Uses the timezone fixture. Verifies the datetime array defers to the index implementation: array minus index equals the index difference; array plus or minus the resulting timedelta index equals the corresponding index operation.
         # Check that DatetimeArray defers to Index classes
         dti = date_range("20130101", periods=3, tz=tz_naive_fixture)
         dta = dti.array
@@ -2171,6 +2333,8 @@ class TestDatetimeIndexArithmetic:
         tm.assert_index_equal(result, expected)
 
     def test_sub_dti_dti(self, unit):
+        # [FUNCTION DOC]
+        # Uses the datetime-unit fixture. Verifies subtraction of datetime indexes: naive minus naive and aware minus aware give zero timedeltas in the unit; mixing awareness raises a type error about tz-naive and tz-aware objects; in-place subtraction of itself gives zeros; different lengths raise a value error "cannot add indices of unequal length"; NaN/NaT propagate in the elementwise difference. A comment notes that this operation used to be a set operation.
         # previously performed setop (deprecated in 0.16.0), now changed to
         # return subtraction -> TimeDeltaIndex (GH ...)
 
@@ -2214,6 +2378,8 @@ class TestDatetimeIndexArithmetic:
 
     @pytest.mark.parametrize("op", [operator.add, operator.sub])
     def test_timedelta64_equal_timedelta_supported_ops(self, op, box_with_array):
+        # [FUNCTION DOC]
+        # A TODO says most of this block was moved from series or frame tests and needs cleanup, box parametrization, and de-duplication. Parametrized over add and subtract; uses the box fixture. For all 32 combinations of zero or one in each of day, hour, minute, second, microsecond, builds equivalent NumPy and Python timedeltas and verifies the operator on a boxed series of four timestamps gives equal results for both.
         ser = Series(
             [
                 Timestamp("20130301"),
@@ -2227,6 +2393,8 @@ class TestDatetimeIndexArithmetic:
         intervals = ["D", "h", "m", "s", "us"]
 
         def timedelta64(*args):
+            # [FUNCTION DOC]
+            # HELPER: nested function that builds a single NumPy timedelta by summing the per-unit NumPy timedeltas for the given tuple of values (days, hours, minutes, seconds, microseconds). Sums element types as the NumPy casting note requires.
             # see casting notes in NumPy gh-12927
             return np.sum(list(map(np.timedelta64, args, intervals)))
 
@@ -2239,6 +2407,8 @@ class TestDatetimeIndexArithmetic:
             tm.assert_equal(lhs, rhs)
 
     def test_ops_nat_mixed_datetime64_timedelta64(self):
+        # [FUNCTION DOC]
+        # Linked to an issue. Verifies NaT arithmetic mixing datetime and timedelta series: datetime series minus an NaT datetime series gives an all-NaT timedelta series; minus an NaT timedelta series gives all-NaT datetimes; negation of an NaT timedelta series plus a datetime series likewise; an all-NaT datetime series minus a single NaT datetime series gives timedelta NaT (the ambiguous bare case defaults to timedelta); a timedelta series minus an NaT datetime series raises a type error "cannot subtract a datelike"; and additions of NaT timedelta or datetime series give NaT datetimes (with repeated assertions).
         # GH#11349
         timedelta_series = Series([NaT, Timedelta("1s")])
         datetime_series = Series([NaT, Timestamp("19900315")])
@@ -2308,6 +2478,8 @@ class TestDatetimeIndexArithmetic:
         )
 
     def test_ufunc_coercions(self, unit):
+        # [FUNCTION DOC]
+        # Uses the datetime-unit fixture. Verifies adding or subtracting a day NumPy timedelta (operator and ufunc) on a named two-day-frequency range returns a datetime index with the expected values and the same frequency; with a NumPy array of three timedeltas on a frequency-less index, addition and subtraction (operator and ufunc) give the expected dates and no inferred frequency.
         idx = date_range("2011-01-01", periods=3, freq="2D", name="x", unit=unit)
 
         delta = np.timedelta64(1, "D")
@@ -2347,6 +2519,8 @@ class TestDatetimeIndexArithmetic:
             assert result.freq == exp.freq
 
     def test_dti_add_series(self, tz_naive_fixture, names):
+        # [FUNCTION DOC]
+        # Linked to an issue. Uses the timezone and names fixtures. Verifies a datetime index plus a series of five-second timedeltas (indexed by the same index), in either order, returns a series of shifted datetimes with index preserved and name chosen by the names fixture, in the index's dtype; adding the series' raw values returns an index of shifted datetimes.
         # GH#13905
         tz = tz_naive_fixture
         index = DatetimeIndex(
@@ -2373,6 +2547,8 @@ class TestDatetimeIndexArithmetic:
     def test_dti_addsub_offset_arraylike(
         self, performance_warning, tz_naive_fixture, names, op, index_or_series
     ):
+        # [FUNCTION DOC]
+        # Linked to issues. Parametrized over add, reflected add, and subtract; uses the performance-warning, timezone, names, and index-or-series fixtures. Operates a named two-date range with an index or series of a month-end offset and a two-day offset. Verifies the result is an object container (index or series per the upcast rule) of the pointwise results with inferred frequency and the expected name, and the performance warning is emitted.
         # GH#18849, GH#19744
         other_box = index_or_series
 
@@ -2395,6 +2571,8 @@ class TestDatetimeIndexArithmetic:
     def test_dti_addsub_object_arraylike(
         self, performance_warning, tz_naive_fixture, box_with_array, other_box
     ):
+        # [FUNCTION DOC]
+        # Parametrized over index or NumPy array holding a month-end offset and a four-day timedelta; uses the performance-warning, timezone, and box fixtures. Verifies adding it to a boxed two-day range gives the object results January 31 and January 6, and subtracting gives December 31 and December 29, each with a performance warning.
         tz = tz_naive_fixture
 
         dti = date_range("2017-01-01", periods=2, tz=tz)
@@ -2420,6 +2598,8 @@ class TestDatetimeIndexArithmetic:
 @pytest.mark.parametrize("years", [-1, 0, 1])
 @pytest.mark.parametrize("months", [-2, 0, 2])
 def test_shift_months(years, months, unit):
+    # [FUNCTION DOC]
+    # Parametrized over years minus one, zero, one and months minus two, zero, two; uses the datetime-unit fixture. Verifies the internal month-shifting helper, given the integer representation of five dates (including month ends and a leap day) and the combined shift in months with the resolution of the index, produces dates equal to adding the equivalent date offset to each date, in the same unit.
     dti = DatetimeIndex(
         [
             Timestamp("2000-01-05 00:15:00"),
@@ -2439,6 +2619,8 @@ def test_shift_months(years, months, unit):
 
 
 def test_dt64arr_addsub_object_dtype_2d(performance_warning):
+    # [FUNCTION DOC]
+    # Uses the performance-warning fixture. Verifies two-dimensional datetime arrays (required for block-wise frame operations) work with object arrays: adding a column array of day offsets gives the same as the one-dimensional result reshaped (with a warning); subtracting the same array cast to object gives a two-dimensional result of zero timedeltas, also with a warning.
     # block-wise DataFrame operations will require operating on 2D
     #  DatetimeArray/TimedeltaArray, so check that specifically.
     dti = date_range("1994-02-13", freq="2W", periods=4)
@@ -2463,6 +2645,8 @@ def test_dt64arr_addsub_object_dtype_2d(performance_warning):
 
 
 def test_non_nano_dt64_addsub_np_nat_scalars():
+    # [FUNCTION DOC]
+    # Linked to an issue. Verifies subtracting a NumPy millisecond datetime NaT from a millisecond-unit datetime series gives an all-NaT millisecond timedelta series, and adding a millisecond timedelta NaT gives an all-NaT millisecond datetime series.
     # GH 52295
     ser = Series([1233242342344, 232432434324, 332434242344], dtype="datetime64[ms]")
     result = ser - np.datetime64("nat", "ms")
@@ -2475,6 +2659,10 @@ def test_non_nano_dt64_addsub_np_nat_scalars():
 
 
 def test_non_nano_dt64_addsub_np_nat_scalars_unitless():
+    # [FUNCTION DOC]
+    # Linked to an issue. A TODO asks whether the unit of the series could be the default.
+    # KNOWN ISSUE: despite the name mentioning a unitless scalar, the test uses the same millisecond-unit NaT scalars as the previous test (only the case of the timedelta NaT string differs).
+    # Verifies the same results as the previous test: all-NaT millisecond timedelta for datetime NaT subtraction, all-NaT millisecond datetime for timedelta NaT addition.
     # GH 52295
     # TODO: Can we default to the ser unit?
     ser = Series([1233242342344, 232432434324, 332434242344], dtype="datetime64[ms]")
@@ -2488,6 +2676,8 @@ def test_non_nano_dt64_addsub_np_nat_scalars_unitless():
 
 
 def test_non_nano_dt64_addsub_np_nat_scalars_unsupported_unit():
+    # [FUNCTION DOC]
+    # Linked to an issue. Verifies subtracting a day-unit NumPy datetime NaT from a second-unit datetime series gives an all-NaT second-unit timedelta series, and adding a day-unit timedelta NaT gives an all-NaT second-unit datetime series (the finer unit is kept for the unsupported coarser unit).
     # GH 52295
     ser = Series([12332, 23243, 33243], dtype="datetime64[s]")
     result = ser - np.datetime64("nat", "D")
