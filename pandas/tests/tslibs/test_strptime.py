@@ -1,3 +1,7 @@
+# [MODULE DOC]
+# Tests for resolution inference in the compiled array string-parsing routine (the array strptime function): all-missing inputs, homogeneous strings,
+# mixed datetimes and timestamps, today/now sentinels, and strings outside the nanosecond range. Defines a module constant for the generic-resolution code that requests inference.
+
 from datetime import (
     datetime,
     timezone,
@@ -19,7 +23,11 @@ creso_infer = NpyDatetimeUnit.NPY_FR_GENERIC.value
 
 
 class TestArrayStrptimeResolutionInference:
+    # [CLASS DOC]
+    # Tests that the array parsing routine infers the output unit when the generic resolution is requested.
     def test_array_strptime_resolution_all_nat(self):
+        # [FUNCTION DOC]
+        # An object array of NaT and NaN parsed with a format yields second-unit datetime64, both when UTC is false and true.
         arr = np.array([NaT, np.nan], dtype=object)
 
         fmt = "%Y-%m-%d %H:%M:%S"
@@ -31,6 +39,8 @@ class TestArrayStrptimeResolutionInference:
 
     @pytest.mark.parametrize("tz", [None, timezone.utc])
     def test_array_strptime_resolution_inference_homogeneous_strings(self, tz):
+        # [FUNCTION DOC]
+        # Parametrized over no timezone and UTC. Three identical strings made from a datetime with 678900 microseconds: with a seconds-only format the result is microsecond-unit with the microsecond field dropped; with a format including fractional seconds, and with the ISO8601 format keyword, the result is microsecond-unit with full precision (timezone info stripped in the expectation). UTC flag is false.
         dt = datetime(2016, 1, 2, 3, 4, 5, 678900, tzinfo=tz)
         dt0 = dt.replace(microsecond=0)
 
@@ -56,6 +66,8 @@ class TestArrayStrptimeResolutionInference:
 
     @pytest.mark.parametrize("tz", [None, timezone.utc])
     def test_array_strptime_resolution_mixed(self, tz):
+        # [FUNCTION DOC]
+        # Parametrized over no timezone and UTC. An object array holding a datetime and a nanosecond timestamp parsed with a seconds format, and with the ISO8601 keyword, yields a nanosecond-unit array of the two values.
         dt = datetime(2016, 1, 2, 3, 4, 5, 678900, tzinfo=tz)
 
         ts = Timestamp(dt).as_unit("ns")
@@ -75,6 +87,8 @@ class TestArrayStrptimeResolutionInference:
         tm.assert_numpy_array_equal(res, expected)
 
     def test_array_strptime_resolution_todaynow(self):
+        # [FUNCTION DOC]
+        # The today sentinel as the first item, or last (reversed array), with a datetime64 microsecond value: result is microsecond-unit; the today element is within a tolerance (one second, doubled for the reversed case) of the current time and the other element is unchanged.
         # specifically case where today/now is the *first* item
         vals = np.array(["today", np.datetime64("2017-01-01", "us")], dtype=object)
 
@@ -97,6 +111,8 @@ class TestArrayStrptimeResolutionInference:
         assert res2[0] == vals[1]
 
     def test_array_strptime_str_outside_nano_range(self):
+        # [FUNCTION DOC]
+        # A year 2401 date string parses to microsecond unit with the ISO8601 keyword and also via a non-ISO format (month name, day, year), which uses a different code path.
         vals = np.array(["2401-09-15"], dtype=object)
         expected = np.array(["2401-09-15"], dtype="M8[us]")
         fmt = "ISO8601"

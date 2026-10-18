@@ -1,3 +1,6 @@
+# [MODULE DOC]
+# Tests for the function that reports installed versions and system information, in console and JSON forms (to a file path or to standard output).
+
 import json
 import os
 import re
@@ -11,6 +14,8 @@ import pandas as pd
 
 
 def test_show_versions(tmpdir):
+    # [FUNCTION DOC]
+    # GH39701. Writes JSON output to a file in a temporary directory, loads it (which verifies valid JSON), and checks that it equals a dictionary of the system information and dependency information helpers' results.
     # GH39701
     as_json = os.path.join(tmpdir, "test_output.json")
 
@@ -30,6 +35,8 @@ def test_show_versions(tmpdir):
 
 
 def test_show_versions_console_json(capsys):
+    # [FUNCTION DOC]
+    # GH39701. With JSON output requested to the console, captured standard output parses as JSON equal to the dictionary of system and dependency information.
     # GH39701
     pd.show_versions(as_json=True)
     stdout = capsys.readouterr().out
@@ -47,6 +54,8 @@ def test_show_versions_console_json(capsys):
 
 
 def test_show_versions_console(capsys):
+    # [FUNCTION DOC]
+    # gh-32041. Console output includes the installed versions header, a 40-hex-digit commit hash line, a required dependency line for numpy with a version beginning with digits and a dot (development versions vary), and an optional dependency line for pyarrow showing a version or none.
     # gh-32041
     # gh-32041
     pd.show_versions(as_json=False)
@@ -69,6 +78,8 @@ def test_show_versions_console(capsys):
 
 
 def test_json_output_match(capsys, tmpdir):
+    # [FUNCTION DOC]
+    # GH39701. The JSON text printed to the console equals the text written to a file when a path is given.
     # GH39701
     pd.show_versions(as_json=True)
     result_console = capsys.readouterr().out

@@ -1,3 +1,6 @@
+# [MODULE DOC]
+# Tests for the testing-utility function that asserts two numpy arrays are equal: shape and class mismatches, many value mismatch message formats (floats with missing values, integers, 2-D arrays, unicode, objects), custom object labels, the same-or-copy memory check, and handling of NA and other missing values in object arrays.
+
 import copy
 
 import numpy as np
@@ -9,6 +12,8 @@ import pandas._testing as tm
 
 
 def test_assert_numpy_array_equal_shape_mismatch():
+    # [FUNCTION DOC]
+    # Arrays of length 2 and 3 raise an assertion error saying the numpy array shapes differ, showing both shapes.
     msg = """numpy array are different
 
 numpy array shapes are different
@@ -20,6 +25,8 @@ numpy array shapes are different
 
 
 def test_assert_numpy_array_equal_bad_type():
+    # [FUNCTION DOC]
+    # Passing two plain integers instead of arrays raises an assertion error saying an array type was expected.
     expected = "Expected type"
 
     with pytest.raises(AssertionError, match=expected):
@@ -31,6 +38,8 @@ def test_assert_numpy_array_equal_bad_type():
     [(np.array([1]), 1, "ndarray", "int"), (1, np.array([1]), "int", "ndarray")],
 )
 def test_assert_numpy_array_equal_class_mismatch(a, b, klass1, klass2):
+    # [FUNCTION DOC]
+    # Parametrized over an array versus an integer in both orders. Raises an assertion error saying the classes differ, naming the array and integer classes on the correct sides.
     msg = f"""numpy array are different
 
 numpy array classes are different
@@ -42,6 +51,8 @@ numpy array classes are different
 
 
 def test_assert_numpy_array_equal_value_mismatch1():
+    # [FUNCTION DOC]
+    # Float arrays with NaN in different positions raise an assertion error saying 66.67 percent of values differ, listing both arrays.
     msg = """numpy array are different
 
 numpy array values are different \\(66\\.66667 %\\)
@@ -53,6 +64,8 @@ numpy array values are different \\(66\\.66667 %\\)
 
 
 def test_assert_numpy_array_equal_value_mismatch2():
+    # [FUNCTION DOC]
+    # Integer arrays differing in one of two values raise an assertion error with 50 percent differing and both listings.
     msg = """numpy array are different
 
 numpy array values are different \\(50\\.0 %\\)
@@ -64,6 +77,8 @@ numpy array values are different \\(50\\.0 %\\)
 
 
 def test_assert_numpy_array_equal_value_mismatch3():
+    # [FUNCTION DOC]
+    # Two-dimensional integer arrays differing in one of six values raise an assertion error with 16.67 percent differing and nested listings.
     msg = """numpy array are different
 
 numpy array values are different \\(16\\.66667 %\\)
@@ -77,6 +92,8 @@ numpy array values are different \\(16\\.66667 %\\)
 
 
 def test_assert_numpy_array_equal_value_mismatch4():
+    # [FUNCTION DOC]
+    # Float arrays differing in the sixth decimal place raise an assertion error (50 percent) because the comparison is exact.
     msg = """numpy array are different
 
 numpy array values are different \\(50\\.0 %\\)
@@ -88,6 +105,9 @@ numpy array values are different \\(50\\.0 %\\)
 
 
 def test_assert_numpy_array_equal_value_mismatch5():
+    # [FUNCTION DOC]
+    # Same data and expected message as the third mismatch test.
+    # KNOWN ISSUE: this test duplicates the third value-mismatch test exactly (same arrays, same message), so it adds no coverage.
     msg = """numpy array are different
 
 numpy array values are different \\(16\\.66667 %\\)
@@ -101,6 +121,8 @@ numpy array values are different \\(16\\.66667 %\\)
 
 
 def test_assert_numpy_array_equal_value_mismatch6():
+    # [FUNCTION DOC]
+    # Two-by-two integer arrays differing in one of four values raise an assertion error with 25 percent differing.
     msg = """numpy array are different
 
 numpy array values are different \\(25\\.0 %\\)
@@ -114,6 +136,8 @@ numpy array values are different \\(25\\.0 %\\)
 
 
 def test_assert_numpy_array_equal_shape_mismatch_override():
+    # [FUNCTION DOC]
+    # With the object label passed as Index, a shape mismatch message begins with that label and says Index shapes are different.
     msg = """Index are different
 
 Index shapes are different
@@ -125,6 +149,8 @@ Index shapes are different
 
 
 def test_numpy_array_equal_unicode():
+    # [FUNCTION DOC]
+    # Regression test (gh-20503): string arrays with differing unicode characters raise an assertion error showing 33.33 percent differing and the unicode values.
     # see gh-20503
     #
     # Test ensures that `tm.assert_numpy_array_equals` raises the right
@@ -142,6 +168,8 @@ numpy array values are different \\(33\\.33333 %\\)
 
 
 def test_numpy_array_equal_object():
+    # [FUNCTION DOC]
+    # Object arrays of timestamps differing in one element raise an assertion error with 50 percent differing and the timestamp listings.
     a = np.array([Timestamp("2011-01-01"), Timestamp("2011-01-01")])
     b = np.array([Timestamp("2011-01-01"), Timestamp("2011-01-02")])
 
@@ -158,6 +186,8 @@ numpy array values are different \\(50\\.0 %\\)
 @pytest.mark.parametrize("other_type", ["same", "copy"])
 @pytest.mark.parametrize("check_same", ["same", "copy"])
 def test_numpy_array_equal_copy_flag(other_type, check_same):
+    # [FUNCTION DOC]
+    # Parametrized over how the other array is made (a view of the same data, or a copy) and which relation is required by the check-same option (same or copy). When the actual relation differs from the required one, an assertion error says the arrays are not the same object, or are the same object, respectively (the message shows the array representation); otherwise the assertion passes.
     a = np.array([1, 2, 3])
     msg = None
 
@@ -181,6 +211,8 @@ def test_numpy_array_equal_copy_flag(other_type, check_same):
 
 
 def test_numpy_array_equal_contains_na():
+    # [FUNCTION DOC]
+    # Issue 31881. A boolean array versus an object array containing a missing-value marker raises an assertion error with 50 percent differing, listing the NA marker.
     # https://github.com/pandas-dev/pandas/issues/31881
     a = np.array([True, False])
     b = np.array([True, pd.NA], dtype=object)
@@ -196,6 +228,8 @@ numpy array values are different \\(50.0 %\\)
 
 
 def test_numpy_array_equal_identical_na(nulls_fixture):
+    # [FUNCTION DOC]
+    # Parametrized over missing-value scalars from a fixture. An object array holding the scalar equals itself; an array holding an equal but non-identical copy of the scalar (made through its own copy method if it has one, otherwise a standard copy) also compares equal.
     a = np.array([nulls_fixture], dtype=object)
 
     tm.assert_numpy_array_equal(a, a)
@@ -210,6 +244,8 @@ def test_numpy_array_equal_identical_na(nulls_fixture):
 
 
 def test_numpy_array_equal_different_na():
+    # [FUNCTION DOC]
+    # An object array with NaN versus one with NA raises an assertion error with 100 percent differing.
     a = np.array([np.nan], dtype=object)
     b = np.array([pd.NA], dtype=object)
 

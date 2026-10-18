@@ -1,3 +1,6 @@
+# [MODULE DOC]
+# Tests for the testing-utility function that asserts two objects are approximately equal: numbers (with absolute and relative tolerance, complex values, zeros, mixed types), strings, sets, dicts and dict-like objects, iterables, null-like values (including mismatched kinds of missing values), infinities, pandas objects, error message formats for value, class, shape and length mismatches, unicode, timestamps, and nested object arrays. Defines private helper assertion functions, a module-level list of missing-value kinds and a table of nested array cases.
+
 import numpy as np
 import pytest
 
@@ -13,6 +16,9 @@ import pandas._testing as tm
 
 
 def _assert_almost_equal_both(a, b, **kwargs):
+    # [FUNCTION DOC]
+    # HELPER: asserts approximate equality in both directions.
+    # Parameters a and b are the objects to compare; extra keyword arguments are forwarded to the almost-equal assertion. Calls the assertion for (a, b) then (b, a). Raises an assertion error if either direction fails; returns nothing.
     """
     Check that two objects are approximately equal.
 
@@ -32,6 +38,9 @@ def _assert_almost_equal_both(a, b, **kwargs):
 
 
 def _assert_not_almost_equal(a, b, **kwargs):
+    # [FUNCTION DOC]
+    # HELPER: asserts that two objects are not approximately equal.
+    # Parameters a and b are the objects; extra keyword arguments are forwarded. Calls the almost-equal assertion; if it succeeds, fails the test with a message saying the objects were approximately equal; if it raises an assertion error, that is swallowed (the expected outcome). The test-failure exception from pytest is not an assertion error and so is not swallowed. Returns nothing.
     """
     Check that two objects are not approximately equal.
 
@@ -53,6 +62,8 @@ def _assert_not_almost_equal(a, b, **kwargs):
 
 
 def _assert_not_almost_equal_both(a, b, **kwargs):
+    # [FUNCTION DOC]
+    # HELPER: asserts the objects are not approximately equal in both directions, by calling the single-direction helper for (a, b) and (b, a) with the forwarded keyword arguments.
     """
     Check that two objects are not approximately equal.
 
@@ -82,6 +93,8 @@ def _assert_not_almost_equal_both(a, b, **kwargs):
     ],
 )
 def test_assert_almost_equal_numbers(a, b):
+    # [FUNCTION DOC]
+    # Parametrized over number pairs (equal floats, close floats, numpy integer versus close float, numpy float, unsigned integer) that are approximately equal under default tolerances, in both directions.
     _assert_almost_equal_both(a, b)
 
 
@@ -98,6 +111,8 @@ def test_assert_almost_equal_numbers(a, b):
     ],
 )
 def test_assert_not_almost_equal_numbers(a, b):
+    # [FUNCTION DOC]
+    # Parametrized over number pairs that differ beyond default tolerance (including float versus boolean, and values like 0.1 versus 0.1001); not approximately equal in both directions.
     _assert_not_almost_equal_both(a, b)
 
 
@@ -114,12 +129,16 @@ def test_assert_not_almost_equal_numbers(a, b):
     ],
 )
 def test_assert_almost_equal_numbers_atol(a, b):
+    # [FUNCTION DOC]
+    # Parametrized over pairs that are within a relative and absolute tolerance of 0.5e-3 (the equivalent of the removed less-precise option); approximately equal in both directions. Includes the case from issue 13357.
     # Equivalent to the deprecated check_less_precise=True, enforced in 2.0
     _assert_almost_equal_both(a, b, rtol=0.5e-3, atol=0.5e-3)
 
 
 @pytest.mark.parametrize("a,b", [(1.1, 1.11), (0.1, 0.101), (0.000011, 0.001012)])
 def test_assert_not_almost_equal_numbers_atol(a, b):
+    # [FUNCTION DOC]
+    # Parametrized over pairs that differ more than an absolute tolerance of 1e-3 (with default relative tolerance); not equal in both directions.
     _assert_not_almost_equal_both(a, b, atol=1e-3)
 
 
@@ -135,11 +154,15 @@ def test_assert_not_almost_equal_numbers_atol(a, b):
     ],
 )
 def test_assert_almost_equal_numbers_rtol(a, b):
+    # [FUNCTION DOC]
+    # Parametrized over pairs equal within a relative tolerance of 0.05; equal in both directions.
     _assert_almost_equal_both(a, b, rtol=0.05)
 
 
 @pytest.mark.parametrize("a,b", [(0.000011, 0.000012), (0.000001, 0.000005)])
 def test_assert_not_almost_equal_numbers_rtol(a, b):
+    # [FUNCTION DOC]
+    # Parametrized over very small values that differ by more than 5 percent relatively; not equal with relative tolerance 0.05.
     _assert_not_almost_equal_both(a, b, rtol=0.05)
 
 
@@ -153,6 +176,8 @@ def test_assert_not_almost_equal_numbers_rtol(a, b):
     ],
 )
 def test_assert_almost_equal_complex_numbers(a, b, rtol):
+    # [FUNCTION DOC]
+    # Parametrized over complex pairs with relative tolerances. Equal in both directions as Python complex numbers, as 64-bit complex and as 128-bit complex numpy scalars.
     _assert_almost_equal_both(a, b, rtol=rtol)
     _assert_almost_equal_both(np.complex64(a), np.complex64(b), rtol=rtol)
     _assert_almost_equal_both(np.complex128(a), np.complex128(b), rtol=rtol)
@@ -169,6 +194,8 @@ def test_assert_almost_equal_complex_numbers(a, b, rtol):
     ],
 )
 def test_assert_not_almost_equal_complex_numbers(a, b, rtol):
+    # [FUNCTION DOC]
+    # Parametrized over complex pairs differing beyond the given tolerance; not equal in all three representations in both directions.
     _assert_not_almost_equal_both(a, b, rtol=rtol)
     _assert_not_almost_equal_both(np.complex64(a), np.complex64(b), rtol=rtol)
     _assert_not_almost_equal_both(np.complex128(a), np.complex128(b), rtol=rtol)
@@ -176,16 +203,22 @@ def test_assert_not_almost_equal_complex_numbers(a, b, rtol):
 
 @pytest.mark.parametrize("a,b", [(0, 0), (0, 0.0), (0, np.float64(0)), (0.00000001, 0)])
 def test_assert_almost_equal_numbers_with_zeros(a, b):
+    # [FUNCTION DOC]
+    # Parametrized over zero pairs of different types and a tiny value versus zero; approximately equal.
     _assert_almost_equal_both(a, b)
 
 
 @pytest.mark.parametrize("a,b", [(0.001, 0), (1, 0)])
 def test_assert_not_almost_equal_numbers_with_zeros(a, b):
+    # [FUNCTION DOC]
+    # Parametrized over 0.001 versus zero and one versus zero; not approximately equal.
     _assert_not_almost_equal_both(a, b)
 
 
 @pytest.mark.parametrize("a,b", [(1, "abc"), (1, [1]), (1, object())])
 def test_assert_not_almost_equal_numbers_with_mixed(a, b):
+    # [FUNCTION DOC]
+    # A number versus a string, a list, or a plain object is not approximately equal.
     _assert_not_almost_equal_both(a, b)
 
 
@@ -196,6 +229,8 @@ def test_assert_not_almost_equal_numbers_with_mixed(a, b):
     "right_dtype", ["M8[ns]", "m8[ns]", "float64", "int64", "object"]
 )
 def test_assert_almost_equal_edge_case_ndarrays(left_dtype, right_dtype):
+    # [FUNCTION DOC]
+    # Parametrized over all pairs of five dtypes (datetime, timedelta, float, integer, object). Two empty arrays of those dtypes compare approximately equal with the dtype check off.
     # Empty compare.
     _assert_almost_equal_both(
         np.array([], dtype=left_dtype),
@@ -205,11 +240,15 @@ def test_assert_almost_equal_edge_case_ndarrays(left_dtype, right_dtype):
 
 
 def test_assert_almost_equal_sets():
+    # [FUNCTION DOC]
+    # GH#51727. Equal sets are approximately equal.
     # GH#51727
     _assert_almost_equal_both({1, 2, 3}, {1, 2, 3})
 
 
 def test_assert_almost_not_equal_sets():
+    # [FUNCTION DOC]
+    # GH#51727. Sets differing in one element raise an assertion error whose message shows both sets.
     # GH#51727
     msg = r"{1, 2, 3} != {1, 2, 4}"
     with pytest.raises(AssertionError, match=msg):
@@ -217,6 +256,8 @@ def test_assert_almost_not_equal_sets():
 
 
 def test_assert_almost_equal_dicts():
+    # [FUNCTION DOC]
+    # Equal dicts are approximately equal.
     _assert_almost_equal_both({"a": 1, "b": 2}, {"a": 1, "b": 2})
 
 
@@ -231,19 +272,29 @@ def test_assert_almost_equal_dicts():
     ],
 )
 def test_assert_not_almost_equal_dicts(a, b):
+    # [FUNCTION DOC]
+    # Parametrized over dicts with different values, extra keys, or compared with a number, string or list; not approximately equal.
     _assert_not_almost_equal_both(a, b)
 
 
 @pytest.mark.parametrize("val", [1, 2])
 def test_assert_almost_equal_dict_like_object(val):
+    # [FUNCTION DOC]
+    # Parametrized over a value of 1 or 2. Compares a real dict holding that value against an object that exposes a keys method and item access returning 1 for the key a. Uses the equal helper when the value is 1 and the not-equal helper otherwise, with the dtype check off.
     dict_val = 1
     real_dict = {"a": val}
 
     class DictLikeObj:
+        # [CLASS DOC]
+        # HELPER: minimal dict-like class (keys and item access only) for the dict-like comparison test.
         def keys(self):
+            # [FUNCTION DOC]
+            # HELPER: returns a tuple holding the single key a.
             return ("a",)
 
         def __getitem__(self, item):
+            # [FUNCTION DOC]
+            # HELPER: returns the enclosing test's fixed value (1) for the key a; for any other key returns none.
             if item == "a":
                 return dict_val
 
@@ -254,16 +305,22 @@ def test_assert_almost_equal_dict_like_object(val):
 
 
 def test_assert_almost_equal_strings():
+    # [FUNCTION DOC]
+    # Equal strings are approximately equal.
     _assert_almost_equal_both("abc", "abc")
 
 
 @pytest.mark.parametrize("b", ["abcd", "abd", 1, [1]])
 def test_assert_not_almost_equal_strings(b):
+    # [FUNCTION DOC]
+    # Parametrized over a longer string, a different string, an integer and a list; none is approximately equal to the string abc.
     _assert_not_almost_equal_both("abc", b)
 
 
 @pytest.mark.parametrize("box", [list, np.array])
 def test_assert_almost_equal_iterables(box):
+    # [FUNCTION DOC]
+    # Parametrized over list and numpy array; equal contents are approximately equal.
     _assert_almost_equal_both(box([1, 2, 3]), box([1, 2, 3]))
 
 
@@ -282,15 +339,21 @@ def test_assert_almost_equal_iterables(box):
     ],
 )
 def test_assert_not_almost_equal_iterables(a, b):
+    # [FUNCTION DOC]
+    # Parametrized over pairs: array versus list (class differs), integer versus float arrays (dtype differs), generator versus list, differing values, differing lengths, and list versus number. Not equal (single-direction check).
     _assert_not_almost_equal(a, b)
 
 
 def test_assert_almost_equal_null():
+    # [FUNCTION DOC]
+    # None equals None.
     _assert_almost_equal_both(None, None)
 
 
 @pytest.mark.parametrize("a,b", [(None, np.nan), (None, 0), (np.nan, 0)])
 def test_assert_not_almost_equal_null(a, b):
+    # [FUNCTION DOC]
+    # None versus NaN, None versus zero, NaN versus zero are not equal (single-direction check).
     _assert_not_almost_equal(a, b)
 
 
@@ -303,6 +366,8 @@ def test_assert_not_almost_equal_null(a, b):
     ],
 )
 def test_assert_almost_equal_inf(a, b):
+    # [FUNCTION DOC]
+    # Equal infinities (numpy and Python) and arrays containing infinities and NaN compare equal.
     _assert_almost_equal_both(a, b)
 
 
@@ -312,6 +377,8 @@ objs = [NA, np.nan, NaT, None, np.datetime64("NaT", "ns"), np.timedelta64("NaT",
 @pytest.mark.parametrize("left", objs)
 @pytest.mark.parametrize("right", objs)
 def test_mismatched_na_assert_almost_equal(left, right):
+    # [FUNCTION DOC]
+    # Parametrized over all pairs of six missing-value kinds (NA, NaN, NaT, None, numpy datetime NaT, numpy timedelta NaT). When both are the same object, almost-equal, numpy array, index, series and frame assertions of object-dtype wrappers all pass. When different kinds, the almost-equal assertion raises an assertion error about mismatched null-like values, and the series and frame equality assertions raise assertion errors; numpy array and index assertions are not checked (see the TODOs in the source about the stricter NaN handling needed).
     left_arr = np.array([left], dtype=object)
     right_arr = np.array([right], dtype=object)
 
@@ -350,6 +417,8 @@ def test_mismatched_na_assert_almost_equal(left, right):
 
 
 def test_assert_not_almost_equal_inf():
+    # [FUNCTION DOC]
+    # Infinity versus zero is not approximately equal in both directions.
     _assert_not_almost_equal_both(np.inf, 0)
 
 
@@ -363,16 +432,22 @@ def test_assert_not_almost_equal_inf():
     ],
 )
 def test_assert_almost_equal_pandas(a, b):
+    # [FUNCTION DOC]
+    # Parametrized over an index, series, numpy array and data frame of floats differing by tiny amounts; approximately equal.
     _assert_almost_equal_both(a, b)
 
 
 def test_assert_almost_equal_object():
+    # [FUNCTION DOC]
+    # Lists of identical timestamps are approximately equal.
     a = [Timestamp("2011-01-01"), Timestamp("2011-01-01")]
     b = [Timestamp("2011-01-01"), Timestamp("2011-01-01")]
     _assert_almost_equal_both(a, b)
 
 
 def test_assert_almost_equal_value_mismatch():
+    # [FUNCTION DOC]
+    # Comparing 1 and 2 raises an assertion error stating the expected and actual value with the default relative and absolute tolerances.
     msg = "expected 2\\.00000 but got 1\\.00000, with rtol=1e-05, atol=1e-08"
 
     with pytest.raises(AssertionError, match=msg):
@@ -384,6 +459,8 @@ def test_assert_almost_equal_value_mismatch():
     [(np.array([1]), 1, "ndarray", "int"), (1, np.array([1]), "int", "ndarray")],
 )
 def test_assert_almost_equal_class_mismatch(a, b, klass1, klass2):
+    # [FUNCTION DOC]
+    # Parametrized over an array versus an integer (both orders). Raises an assertion error saying the numpy array classes differ with the class names on each side.
     msg = f"""numpy array are different
 
 numpy array classes are different
@@ -395,6 +472,8 @@ numpy array classes are different
 
 
 def test_assert_almost_equal_value_mismatch1():
+    # [FUNCTION DOC]
+    # Float arrays with NaN in different positions: assertion error with 66.67 percent differing and both listings.
     msg = """numpy array are different
 
 numpy array values are different \\(66\\.66667 %\\)
@@ -406,6 +485,8 @@ numpy array values are different \\(66\\.66667 %\\)
 
 
 def test_assert_almost_equal_value_mismatch2():
+    # [FUNCTION DOC]
+    # Integer arrays differing in one of two values: 50 percent differing.
     msg = """numpy array are different
 
 numpy array values are different \\(50\\.0 %\\)
@@ -417,6 +498,8 @@ numpy array values are different \\(50\\.0 %\\)
 
 
 def test_assert_almost_equal_value_mismatch3():
+    # [FUNCTION DOC]
+    # Two-dimensional arrays (3 by 2) differing in one value: 16.67 percent differing, nested listings.
     msg = """numpy array are different
 
 numpy array values are different \\(16\\.66667 %\\)
@@ -430,6 +513,8 @@ numpy array values are different \\(16\\.66667 %\\)
 
 
 def test_assert_almost_equal_value_mismatch4():
+    # [FUNCTION DOC]
+    # Two-by-two arrays differing in one value: 25 percent differing.
     msg = """numpy array are different
 
 numpy array values are different \\(25\\.0 %\\)
@@ -441,6 +526,8 @@ numpy array values are different \\(25\\.0 %\\)
 
 
 def test_assert_almost_equal_shape_mismatch_override():
+    # [FUNCTION DOC]
+    # With the object label Index, arrays of lengths 2 and 3 raise an assertion error whose message begins with Index and says shapes differ.
     msg = """Index are different
 
 Index shapes are different
@@ -451,6 +538,8 @@ Index shapes are different
 
 
 def test_assert_almost_equal_unicode():
+    # [FUNCTION DOC]
+    # Regression test (gh-20503): string arrays with different unicode characters raise an assertion error showing 33.33 percent differing.
     # see gh-20503
     msg = """numpy array are different
 
@@ -463,6 +552,8 @@ numpy array values are different \\(33\\.33333 %\\)
 
 
 def test_assert_almost_equal_timestamp():
+    # [FUNCTION DOC]
+    # Timestamp object arrays differing in one element raise an assertion error with 50 percent differing and the timestamp listings.
     a = np.array([Timestamp("2011-01-01"), Timestamp("2011-01-01")])
     b = np.array([Timestamp("2011-01-01"), Timestamp("2011-01-02")])
 
@@ -477,6 +568,8 @@ numpy array values are different \\(50\\.0 %\\)
 
 
 def test_assert_almost_equal_iterable_length_mismatch():
+    # [FUNCTION DOC]
+    # Lists of lengths 2 and 3 raise an assertion error saying the iterable lengths differ (2 versus 3).
     msg = """Iterable are different
 
 Iterable length are different
@@ -488,6 +581,8 @@ Iterable length are different
 
 
 def test_assert_almost_equal_iterable_values_mismatch():
+    # [FUNCTION DOC]
+    # Lists differing in one value raise an assertion error with 50 percent of iterable values differing.
     msg = """Iterable are different
 
 Iterable values are different \\(50\\.0 %\\)
@@ -583,4 +678,6 @@ NESTED_CASES = [
 @pytest.mark.filterwarnings("ignore:elementwise comparison failed:DeprecationWarning")
 @pytest.mark.parametrize("a,b", NESTED_CASES)
 def test_assert_almost_equal_array_nested(a, b):
+    # [FUNCTION DOC]
+    # Ignores a numpy elementwise comparison deprecation warning. Parametrized over a table of nested object arrays (nested arrays, deeper nesting, lists, mixed arrays and lists, empty subarrays with none, same-length sublists, dicts with array or list values, and arrays or lists of dicts); each pair compares approximately equal in both directions.
     _assert_almost_equal_both(a, b)

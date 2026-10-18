@@ -2,6 +2,14 @@
 Tests for Fiscal Year and Fiscal Quarter offset classes
 """
 
+# [MODULE DOC]
+# Tests for the 52-53 week fiscal calendar offsets (the fiscal year offset and the fiscal quarter offset).
+# Covers frequency string names, equality, year end computation, on-offset checks, addition and
+# subtraction of offsets, extra-week detection, week counts per quarter, and regression cases for
+# bunched year ends and non-midnight timestamps.
+# Uses shared helpers from the offsets common test module. No import-time side effects other than
+# building module-level and class-level case tables.
+
 from datetime import datetime
 
 from dateutil.relativedelta import relativedelta
@@ -21,22 +29,40 @@ from pandas.tseries.offsets import (
 
 
 def makeFY5253LastOfMonthQuarter(*args, **kwds):
+    # [FUNCTION DOC]
+    # HELPER: factory used by the tests in this module.
+    # Builds a fiscal quarter offset with the variation fixed to "last" (year ends on the last matching
+    # weekday of the starting month). Positional and keyword arguments are forwarded unchanged; returns the offset.
     return FY5253Quarter(*args, variation="last", **kwds)
 
 
 def makeFY5253NearestEndMonthQuarter(*args, **kwds):
+    # [FUNCTION DOC]
+    # HELPER: factory used by the tests in this module.
+    # Builds a fiscal quarter offset with the variation fixed to "nearest" (year ends on the matching
+    # weekday nearest the end of the month). Arguments are forwarded unchanged; returns the offset.
     return FY5253Quarter(*args, variation="nearest", **kwds)
 
 
 def makeFY5253NearestEndMonth(*args, **kwds):
+    # [FUNCTION DOC]
+    # HELPER: factory used by the tests in this module.
+    # Builds a fiscal year offset with the variation fixed to "nearest". Arguments are forwarded; returns the offset.
     return FY5253(*args, variation="nearest", **kwds)
 
 
 def makeFY5253LastOfMonth(*args, **kwds):
+    # [FUNCTION DOC]
+    # HELPER: factory used by the tests in this module.
+    # Builds a fiscal year offset with the variation fixed to "last". Arguments are forwarded; returns the offset.
     return FY5253(*args, variation="last", **kwds)
 
 
 def test_get_offset_name():
+    # [FUNCTION DOC]
+    # Verifies the frequency string of quarter offsets: the "last" variation with starting month March,
+    # Tuesday and extra-week quarter 4 yields a name ending in L-MAR-TUE-4, and the "nearest" variation
+    # with extra-week quarter 3 yields the N-MAR-TUE-3 form, both with the REQ prefix.
     assert (
         makeFY5253LastOfMonthQuarter(
             weekday=1, startingMonth=3, qtr_with_extra_week=4
@@ -52,6 +78,10 @@ def test_get_offset_name():
 
 
 class TestFY5253LastOfMonth:
+    # [CLASS DOC]
+    # Tests for the fiscal year offset using the "last" variation (year ends on the last given weekday of
+    # the starting month). Class attributes hold two reference offsets (August and September, Saturday)
+    # and a table of (offset, date, expected) on-offset cases.
     offset_lom_sat_aug = makeFY5253LastOfMonth(1, startingMonth=8, weekday=WeekDay.SAT)
     offset_lom_sat_sep = makeFY5253LastOfMonth(1, startingMonth=9, weekday=WeekDay.SAT)
 
@@ -95,10 +125,18 @@ class TestFY5253LastOfMonth:
 
     @pytest.mark.parametrize("case", on_offset_cases)
     def test_is_on_offset(self, case):
+        # [FUNCTION DOC]
+        # Parametrized over the on-offset case table. Unpacks the offset, date and expected flag and asserts
+        # that the offset's on-offset check agrees with the expected value (via the shared helper).
         offset, dt, expected = case
         assert_is_on_offset(offset, dt, expected)
 
     def test_apply(self):
+        # [FUNCTION DOC]
+        # Builds a sequence of known August/Saturday fiscal year ends. Starting from the first element of each
+        # test sequence, repeatedly adds the offset (forward for positive n, backward for n of minus one on a
+        # reversed sequence) and asserts each result equals the next element, including starting from a date
+        # that is not itself a year end.
         offset_lom_aug_sat = makeFY5253LastOfMonth(startingMonth=8, weekday=WeekDay.SAT)
         offset_lom_aug_sat_1 = makeFY5253LastOfMonth(
             n=1, startingMonth=8, weekday=WeekDay.SAT
@@ -137,7 +175,14 @@ class TestFY5253LastOfMonth:
 
 
 class TestFY5253NearestEndMonth:
+    # [CLASS DOC]
+    # Tests for the fiscal year offset using the "nearest" variation (year ends on the given weekday
+    # nearest the end of the starting month). Class attributes hold reference offsets and the on-offset case table.
     def test_get_year_end(self):
+        # [FUNCTION DOC]
+        # Checks the year end computation for several weekday/starting-month combinations (August with
+        # Saturday, Sunday and Friday, and December with Tuesday and Sunday), for various dates in a year,
+        # asserting the exact expected year-end datetimes, including cases that spill into the adjacent calendar year.
         assert makeFY5253NearestEndMonth(
             startingMonth=8, weekday=WeekDay.SAT
         ).get_year_end(datetime(2013, 1, 1)) == datetime(2013, 8, 31)
@@ -220,10 +265,17 @@ class TestFY5253NearestEndMonth:
 
     @pytest.mark.parametrize("case", on_offset_cases)
     def test_is_on_offset(self, case):
+        # [FUNCTION DOC]
+        # Parametrized over the on-offset table (Wikipedia, Micron and December/Tuesday cases); asserts the
+        # on-offset check matches the expected boolean.
         offset, dt, expected = case
         assert_is_on_offset(offset, dt, expected)
 
     def test_apply(self):
+        # [FUNCTION DOC]
+        # Walks sequences of known year ends (August Saturday, and a December Sunday sequence for a retailer)
+        # by repeatedly adding the offset, forward and backward, asserting each step lands on the next known
+        # year end, including starting from non-year-end dates and a December Saturday negative offset.
         date_seq_nem_8_sat = [
             datetime(2006, 9, 2),
             datetime(2007, 9, 1),
@@ -295,7 +347,13 @@ class TestFY5253NearestEndMonth:
 
 
 class TestFY5253LastOfMonthQuarter:
+    # [CLASS DOC]
+    # Tests for the fiscal quarter offset with the "last" variation and a given quarter that carries the
+    # extra week. Class attributes define reference quarter offsets and the on-offset case table.
     def test_equality(self):
+        # [FUNCTION DOC]
+        # Asserts two quarter offsets with identical parameters compare equal, and that offsets differing in
+        # weekday or in starting month compare unequal.
         assert makeFY5253LastOfMonthQuarter(
             startingMonth=1, weekday=WeekDay.SAT, qtr_with_extra_week=4
         ) == makeFY5253LastOfMonthQuarter(
@@ -313,6 +371,11 @@ class TestFY5253LastOfMonthQuarter:
         )
 
     def test_offset(self):
+        # [FUNCTION DOC]
+        # Uses a list of known quarter end dates for a September/Saturday fiscal year. Checks that offsets of
+        # one, two, four, minus one and minus two quarters move from a base date to the expected quarter end,
+        # that a day before a quarter end rolls forward to it, and that iterating through the list by repeated
+        # addition (and reversed with a negative offset) reproduces every quarter end.
         offset = makeFY5253LastOfMonthQuarter(
             1, startingMonth=9, weekday=WeekDay.SAT, qtr_with_extra_week=4
         )
@@ -447,10 +510,17 @@ class TestFY5253LastOfMonthQuarter:
 
     @pytest.mark.parametrize("case", on_offset_cases)
     def test_is_on_offset(self, case):
+        # [FUNCTION DOC]
+        # Parametrized over the on-offset case table (Wikipedia, GMCR and Intel extra-week-in-first-quarter
+        # cases); asserts the on-offset check matches the expected boolean.
         offset, dt, expected = case
         assert_is_on_offset(offset, dt, expected)
 
     def test_year_has_extra_week(self):
+        # [FUNCTION DOC]
+        # Checks the extra-week detection for a December/Saturday offset with the extra week in quarter one:
+        # true at the end and the start of a long first quarter and for the known long years, false for the
+        # year before and for the other years in a range, evaluated at early April dates.
         # End of long Q1
         assert makeFY5253LastOfMonthQuarter(
             1, startingMonth=12, weekday=WeekDay.SAT, qtr_with_extra_week=1
@@ -487,6 +557,9 @@ class TestFY5253LastOfMonthQuarter:
         ).year_has_extra_week(datetime(1994, 4, 2))
 
     def test_get_weeks(self):
+        # [FUNCTION DOC]
+        # Checks the list of week counts per quarter: with the extra week in quarter one the first quarter has
+        # 14 weeks, with it in quarter four the last has 14, and in a year without an extra week all four have 13.
         sat_dec_1 = makeFY5253LastOfMonthQuarter(
             1, startingMonth=12, weekday=WeekDay.SAT, qtr_with_extra_week=1
         )
@@ -500,6 +573,9 @@ class TestFY5253LastOfMonthQuarter:
 
 
 class TestFY5253NearestEndMonthQuarter:
+    # [CLASS DOC]
+    # Tests for the fiscal quarter offset with the "nearest" variation. Class attributes define August
+    # Saturday and Thursday quarter offsets, a December Tuesday year offset, and the on-offset case table.
     offset_nem_sat_aug_4 = makeFY5253NearestEndMonthQuarter(
         1, startingMonth=8, weekday=WeekDay.SAT, qtr_with_extra_week=4
     )
@@ -551,10 +627,17 @@ class TestFY5253NearestEndMonthQuarter:
 
     @pytest.mark.parametrize("case", on_offset_cases)
     def test_is_on_offset(self, case):
+        # [FUNCTION DOC]
+        # Parametrized over the on-offset case table; asserts the on-offset check matches the expected boolean.
         offset, dt, expected = case
         assert_is_on_offset(offset, dt, expected)
 
     def test_offset(self):
+        # [FUNCTION DOC]
+        # Checks that iterating a one-quarter offset from the day before a known quarter end visits the listed
+        # Micron quarter ends in order, that adding it to a quarter end moves to the next one, that a day
+        # before rolls to the quarter end, and that a "last" variation December/Saturday offset moves a mid
+        # January date to the end of March.
         offset = makeFY5253NearestEndMonthQuarter(
             1, startingMonth=8, weekday=WeekDay.THU, qtr_with_extra_week=4
         )
@@ -583,6 +666,10 @@ class TestFY5253NearestEndMonthQuarter:
 
 
 def test_bunched_yearends():
+    # [FUNCTION DOC]
+    # Regression test (GH#14774) for two fiscal year ends in one calendar year. For a December/Saturday
+    # nearest-variation offset, verifies rollback, rollforward, negation and addition/subtraction with a
+    # timestamp near the boundary give the expected year ends, from both January and late December starts.
     # GH#14774 cases with two fiscal year-ends in the same calendar-year
     fy = FY5253(n=1, weekday=5, startingMonth=12, variation="nearest")
     dt = Timestamp("2004-01-01")
@@ -603,6 +690,10 @@ def test_bunched_yearends():
 
 
 def test_fy5253_last_onoffset():
+    # [FUNCTION DOC]
+    # Regression test (GH#18877): for a timestamp with nanoseconds and a timezone that is not normalized
+    # to midnight, the fast on-offset check must agree with the slow definition (adding then subtracting
+    # the offset returns the original) for the "last" variation.
     # GH#18877 dates on the year-end but not normalized to midnight
     offset = FY5253(n=-5, startingMonth=5, variation="last", weekday=0)
     ts = Timestamp("1984-05-28 06:29:43.955911354+0200", tz="Europe/San_Marino")
@@ -612,6 +703,9 @@ def test_fy5253_last_onoffset():
 
 
 def test_fy5253_nearest_onoffset():
+    # [FUNCTION DOC]
+    # Regression test (GH#18877): same fast-versus-slow on-offset agreement check as the previous test, for
+    # the "nearest" variation with a timezone-aware nanosecond timestamp.
     # GH#18877 dates on the year-end but not normalized to midnight
     offset = FY5253(n=3, startingMonth=7, variation="nearest", weekday=2)
     ts = Timestamp("2032-07-28 00:12:59.035729419+0000", tz="Africa/Dakar")
@@ -621,6 +715,9 @@ def test_fy5253_nearest_onoffset():
 
 
 def test_fy5253qtr_onoffset_nearest():
+    # [FUNCTION DOC]
+    # Regression test (GH#19036): the fast on-offset check on a quarter offset ("nearest" variation, with
+    # timezone-aware nanosecond timestamp) agrees with the slow add-then-subtract definition.
     # GH#19036
     ts = Timestamp("1985-09-02 23:57:46.232550356-0300", tz="Atlantic/Bermuda")
     offset = FY5253Quarter(
@@ -632,6 +729,8 @@ def test_fy5253qtr_onoffset_nearest():
 
 
 def test_fy5253qtr_onoffset_last():
+    # [FUNCTION DOC]
+    # Regression test (GH#19036): same agreement check for a quarter offset with the "last" variation and negative n.
     # GH#19036
     offset = FY5253Quarter(
         n=-2, qtr_with_extra_week=1, startingMonth=7, variation="last", weekday=2

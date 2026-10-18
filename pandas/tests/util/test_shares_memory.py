@@ -1,3 +1,6 @@
+# [MODULE DOC]
+# Tests for the testing-utility function that reports whether two array-like objects share memory, across interval arrays, string extension arrays, numpy arrays and range indexes.
+
 import numpy as np
 
 import pandas.util._test_decorators as td
@@ -7,6 +10,8 @@ import pandas._testing as tm
 
 
 def test_shares_memory_interval():
+    # [FUNCTION DOC]
+    # For an interval range: the object shares memory with itself, its underlying array, a reversed slice and a sliced view; it does not share memory with a copy of its underlying array.
     obj = pd.interval_range(1, 5)
 
     assert tm.shares_memory(obj, obj)
@@ -19,6 +24,8 @@ def test_shares_memory_interval():
 
 @td.skip_if_no("pyarrow")
 def test_shares_memory_string():
+    # [FUNCTION DOC]
+    # GH#55823. Requires pyarrow. Arrow-backed string arrays with a missing-value marker of NA, of NaN, and the arrow string dtype each share memory with themselves.
     # GH#55823
     import pyarrow as pa
 
@@ -33,6 +40,8 @@ def test_shares_memory_string():
 
 
 def test_shares_memory_numpy():
+    # [FUNCTION DOC]
+    # A numpy array shares memory with a slice view of itself and not with an independently created equal array.
     arr = np.arange(10)
     view = arr[:5]
     assert tm.shares_memory(arr, view)
@@ -41,6 +50,8 @@ def test_shares_memory_numpy():
 
 
 def test_shares_memory_rangeindex():
+    # [FUNCTION DOC]
+    # A range index does not share memory with a numpy array of the same values.
     idx = pd.RangeIndex(10)
     arr = np.arange(10)
     assert not tm.shares_memory(idx, arr)

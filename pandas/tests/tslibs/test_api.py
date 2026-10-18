@@ -1,9 +1,19 @@
 """Tests that the tslibs API is locked down"""
 
+# [MODULE DOC]
+# Locks down the public namespace of the internal time-series library package: verifies the set of names exposed
+# by that package is exactly the expected set of submodules and API names. Imports the package at import time.
+
 from pandas._libs import tslibs
 
 
 def test_namespace():
+    # [FUNCTION DOC]
+    # Builds the expected set from a list of submodule names (base, ccalendar, conversion, dtypes, fields, nattype, np_datetime, offsets,
+    # parsing, period, strptime, vectorized, timedeltas, timestamps, timezones, tzconversion) plus a list of API names (offset base classes,
+    # missing-time types and sentinels, error types, period and timedelta/timestamp classes, conversion, resolution, timezone and unit helper
+    # functions, and format guessing helpers). Takes all attributes of the package whose name does not start with a double underscore and asserts
+    # the set equals the expected set, so any addition or removal of an exported name fails the test.
     submodules = [
         "base",
         "ccalendar",

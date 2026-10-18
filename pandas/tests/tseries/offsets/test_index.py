@@ -2,6 +2,10 @@
 Tests for offset behavior with indices.
 """
 
+# [MODULE DOC]
+# Tests for adding calendar-anchored offsets (month, business month, quarter, business quarter, year,
+# business year; begin and end variants) to a datetime index and to a series. No import-time side effects.
+
 import pytest
 
 from pandas import (
@@ -44,6 +48,11 @@ from pandas.tseries.offsets import (
     ],
 )
 def test_apply_index(cls, n):
+    # [FUNCTION DOC]
+    # Parametrized over twelve offset classes and n of minus two or one. Builds a minute-frequency range of
+    # 100000 periods and a series of it. Adds the offset to the index: asserts the result has no retained
+    # frequency and that its first and last elements equal the corresponding input elements plus the offset.
+    # Also adds the offset to the series and checks the first and last elements the same way.
     offset = cls(n=n)
     rng = date_range(start="1/1/2000", periods=100000, freq="min")
     ser = Series(rng)

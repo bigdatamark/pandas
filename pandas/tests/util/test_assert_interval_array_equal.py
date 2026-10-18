@@ -1,3 +1,6 @@
+# [MODULE DOC]
+# Tests for the testing-utility function that asserts two interval arrays are equal: identical arrays, differing closed side, differing lengths, differing left bounds, differing right bounds.
+
 import pytest
 
 from pandas import (
@@ -17,11 +20,15 @@ from pandas.arrays import IntervalArray
     ],
 )
 def test_interval_array_equal(kwargs):
+    # [FUNCTION DOC]
+    # Parametrized over three keyword sets for building an interval range. An interval array compared with itself passes.
     arr = interval_range(**kwargs).values
     tm.assert_interval_array_equal(arr, arr)
 
 
 def test_interval_array_equal_closed_mismatch():
+    # [FUNCTION DOC]
+    # Interval arrays identical except for the closed side (left versus right) raise an assertion error saying the closed attribute differs.
     kwargs = {"start": 0, "periods": 5}
     arr1 = interval_range(closed="left", **kwargs).values
     arr2 = interval_range(closed="right", **kwargs).values
@@ -38,6 +45,8 @@ Attribute "closed" are different
 
 
 def test_interval_array_equal_periods_mismatch():
+    # [FUNCTION DOC]
+    # Interval arrays with five versus six periods raise an assertion error saying the left bounds have different shapes (5 versus 6).
     kwargs = {"start": 0}
     arr1 = interval_range(periods=5, **kwargs).values
     arr2 = interval_range(periods=6, **kwargs).values
@@ -54,6 +63,8 @@ IntervalArray.left shapes are different
 
 
 def test_interval_array_equal_end_mismatch():
+    # [FUNCTION DOC]
+    # Ranges with the same start and period count but different ends (10 versus 20) raise an assertion error saying 80 percent of the left bounds differ, listing them.
     kwargs = {"start": 0, "periods": 5}
     arr1 = interval_range(end=10, **kwargs).values
     arr2 = interval_range(end=20, **kwargs).values
@@ -70,6 +81,8 @@ IntervalArray.left values are different \\(80.0 %\\)
 
 
 def test_interval_array_equal_start_mismatch():
+    # [FUNCTION DOC]
+    # Ranges with different starts raise an assertion error saying all left bounds (100 percent) differ.
     kwargs = {"periods": 4}
     arr1 = interval_range(start=0, **kwargs).values
     arr2 = interval_range(start=1, **kwargs).values
@@ -86,6 +99,8 @@ IntervalArray.left values are different \\(100.0 %\\)
 
 
 def test_interval_array_equal_end_mismatch_only():
+    # [FUNCTION DOC]
+    # Interval arrays with equal left bounds but differing right bounds raise an assertion error naming the right bounds with 50 percent differing.
     arr1 = IntervalArray([Interval(0, 1), Interval(0, 5)])
     arr2 = IntervalArray([Interval(0, 1), Interval(0, 6)])
 

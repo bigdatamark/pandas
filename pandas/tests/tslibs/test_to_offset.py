@@ -1,3 +1,7 @@
+# [MODULE DOC]
+# Tests for the function converting frequency strings and other objects (offsets, time deltas, tuples) to offset objects: compound strings, negative and signed counts,
+# invalid strings, whitespace handling, leading zeros, anchored shortcuts, conversion from timedeltas, and the rejected or deprecated lowercase and uppercase aliases.
+
 import re
 
 import pytest
@@ -36,6 +40,8 @@ import pandas._testing as tm
     ],
 )
 def test_to_offset(freq_input, expected):
+    # [FUNCTION DOC]
+    # Parametrized over inputs (an already-built offset, an offset instance, many compound and fractional strings such as hours with minutes, seconds with milliseconds, semi-monthly strings with day suffixes, and last-week-of-month) and the expected offset. The converted result equals the expected offset (combining units into the finest unit needed).
     result = to_offset(freq_input)
     assert result == expected
 
@@ -44,6 +50,8 @@ def test_to_offset(freq_input, expected):
     "freqstr,expected", [("-1s", -1), ("-2SME", -2), ("-1SMS", -1), ("-5min10s", -310)]
 )
 def test_to_offset_negative(freqstr, expected):
+    # [FUNCTION DOC]
+    # Parametrized over strings with negative counts, simple or compound; the resulting offset's count equals the expected integer (compound negatives are totaled in the finest unit).
     result = to_offset(freqstr)
     assert result.n == expected
 
@@ -86,6 +94,8 @@ def test_to_offset_negative(freqstr, expected):
     ],
 )
 def test_to_offset_invalid(freqstr):
+    # [FUNCTION DOC]
+    # Regression test (gh-13930), ignoring the deprecation warning about the minute alias. Parametrized over malformed strings (bad unit order, repeated suffixes, bad anchors, bad signs, unknown units, invalid semi-month anchors). Raises a value error with the invalid frequency message quoting the string (escaped for regex).
     # see gh-13930
 
     # We escape string because some of our
@@ -96,12 +106,16 @@ def test_to_offset_invalid(freqstr):
 
 
 def test_to_offset_no_evaluate():
+    # [FUNCTION DOC]
+    # Passing a pair of empty strings raises a type error whose message is the string form of that tuple.
     msg = str(("", ""))
     with pytest.raises(TypeError, match=msg):
         to_offset(("", ""))
 
 
 def test_to_offset_tuple_unsupported():
+    # [FUNCTION DOC]
+    # Passing a tuple of count and unit raises a type error telling the caller to pass a string instead.
     with pytest.raises(TypeError, match="pass as a string instead"):
         to_offset((5, "T"))
 
@@ -118,6 +132,8 @@ def test_to_offset_tuple_unsupported():
     ],
 )
 def test_to_offset_whitespace(freqstr, expected):
+    # [FUNCTION DOC]
+    # Parametrized over strings with various embedded and surrounding whitespace; the result equals the expected hour offset (days converted to hours).
     result = to_offset(freqstr)
     assert result == expected
 
@@ -126,6 +142,8 @@ def test_to_offset_whitespace(freqstr, expected):
     "freqstr,expected", [("00h 00min 01s", 1), ("-00h 03min 14s", -194)]
 )
 def test_to_offset_leading_zero(freqstr, expected):
+    # [FUNCTION DOC]
+    # Parametrized over strings with zero-padded components; the offset's count equals the expected total in seconds (positive or negative).
     result = to_offset(freqstr)
     assert result.n == expected
 
@@ -134,6 +152,8 @@ def test_to_offset_leading_zero(freqstr, expected):
     "freqstr,expected,wrn", [("+1d", 1, Pandas4Warning), ("+2h30min", 150, None)]
 )
 def test_to_offset_leading_plus(freqstr, expected, wrn):
+    # [FUNCTION DOC]
+    # Parametrized over a plus-signed day string (which warns with the future-removal warning that the lowercase d alias is deprecated) and a plus-signed hours-minutes string (no warning). The count equals the expected value; the warning is asserted via the warning helper.
     msg = "'d' is deprecated and will be removed in a future version."
 
     with tm.assert_produces_warning(wrn, match=msg):
@@ -156,6 +176,8 @@ def test_to_offset_leading_plus(freqstr, expected, wrn):
     ],
 )
 def test_to_offset_pd_timedelta(kwargs, expected):
+    # [FUNCTION DOC]
+    # Regression test (gh-9064). Parametrized over keyword arguments for a Timedelta and the expected offset; converting the timedelta gives an offset in the largest unit that represents it exactly (zero microseconds gives a zero nano tick).
     # see gh-9064
     td = Timedelta(**kwargs)
     result = to_offset(td)
@@ -179,6 +201,8 @@ def test_to_offset_pd_timedelta(kwargs, expected):
     ],
 )
 def test_anchored_shortcuts(shortcut, expected):
+    # [FUNCTION DOC]
+    # Parametrized over shortcut strings (weekly, quarter end with and without month, semi-month end and begin with day numbers) and expected offsets; the converted result equals the expected one.
     result = to_offset(shortcut)
     assert result == expected
 
@@ -199,6 +223,8 @@ def test_anchored_shortcuts(shortcut, expected):
     ],
 )
 def test_to_offset_lowercase_frequency_raises(freq_depr):
+    # [FUNCTION DOC]
+    # Parametrized over lowercase aliases of year, quarter, business quarter, semi-month, business month and custom business month frequencies; each raises a value error with the invalid frequency message.
     msg = f"Invalid frequency: {freq_depr}"
 
     with pytest.raises(ValueError, match=msg):
@@ -207,6 +233,8 @@ def test_to_offset_lowercase_frequency_raises(freq_depr):
 
 @pytest.mark.parametrize("freq_depr", ["2MIN", "2Us", "2NS"])
 def test_to_offset_uppercase_frequency_deprecated(freq_depr):
+    # [FUNCTION DOC]
+    # GH#54939. Parametrized over uppercase minute, microsecond and nanosecond aliases (with a count). Conversion emits the future-removal warning saying the string (without the count) is deprecated and suggesting the lowercase form.
     # GH#54939
     depr_msg = (
         f"'{freq_depr[1:]}' is deprecated and will be removed in a "
@@ -226,6 +254,8 @@ def test_to_offset_uppercase_frequency_deprecated(freq_depr):
     ],
 )
 def test_to_offset_lowercase_frequency_deprecated(freq_depr, expected):
+    # [FUNCTION DOC]
+    # GH#54939, GH#58998. Parametrized over lowercase week, business day, and day aliases with expected offsets. Conversion emits the future-removal warning that the unit is deprecated, and returns the expected offset.
     # GH#54939, GH#58998
     msg = f"'{freq_depr[1:]}' is deprecated and will be removed in a future version."
 
@@ -236,6 +266,8 @@ def test_to_offset_lowercase_frequency_deprecated(freq_depr, expected):
 
 @pytest.mark.parametrize("freq", ["2H", "2BH", "2S"])
 def test_to_offset_uppercase_frequency_raises(freq):
+    # [FUNCTION DOC]
+    # Parametrized over removed uppercase aliases for hour, business hour, second; raises a value error with the invalid frequency message.
     msg = f"Invalid frequency: {freq}"
 
     with pytest.raises(ValueError, match=msg):

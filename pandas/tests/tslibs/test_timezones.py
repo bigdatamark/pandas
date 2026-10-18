@@ -1,3 +1,9 @@
+# [MODULE DOC]
+# Tests for the compiled timezone helper library and timezone-aware behavior across timezone implementations: error messages when timezone data is missing,
+# UTC detection and comparison, cache keys, local-timezone handling, timezone inference from datetimes, argument parsing of timezone specifiers, fixed-offset
+# detection, and many zoneinfo regression tests (daylight saving rules after the year 2037 and 2100, far-future dates, cached-transition boundaries, nonexistent and
+# ambiguous times, dates before the first transition, out-of-range years, odd transition files, and the transition cache). Uses fixtures for UTC aliases supplied elsewhere in the test suite.
+
 from datetime import (
     UTC,
     datetime,
@@ -36,6 +42,8 @@ import pandas._testing as tm
 
 @pytest.mark.single_cpu
 def test_no_timezone_data():
+    # [FUNCTION DOC]
+    # Marked single-process. Runs a small Python program in a subprocess in which the time zone data package is blocked and the zone search path is empty; localizing a timestamp to Europe/Brussels must raise the zone-not-found error whose message is exactly the expected key message. The subprocess exits with a failure (check_call raises) if its assertion fails. Regression for pull request 63335.
     # https://github.com/pandas-dev/pandas/pull/63335
     # Test error message when timezone data is not available.
     msg = "'No time zone found with key Europe/Brussels'"
@@ -54,11 +62,16 @@ def test_no_timezone_data():
 
 
 def test_is_utc(utc_fixture):
+    # [FUNCTION DOC]
+    # For a UTC alias supplied by a fixture, the timezone obtained by the lookup function is recognized as UTC.
     tz = timezones.maybe_get_tz(utc_fixture)
     assert timezones.is_utc(tz)
 
 
 def test_cache_keys_are_distinct_for_pytz_vs_dateutil():
+    # [FUNCTION DOC]
+    # Skips if pytz is missing. Intended to check that the cache keys for the pytz and dateutil versions of each common timezone differ.
+    # KNOWN ISSUE: the skip check and the assertion are dedented outside the loop, so only the last timezone name in the list is ever examined (and the skip applies to just that one).
     pytz = pytest.importorskip("pytz")
     for tz_name in pytz.common_timezones:
         tz_p = timezones.maybe_get_tz(tz_name)
@@ -73,6 +86,8 @@ def test_cache_keys_are_distinct_for_pytz_vs_dateutil():
 
 
 def test_tzlocal_repr():
+    # [FUNCTION DOC]
+    # Regression test (gh-13583): a timestamp with the local dateutil timezone keeps it as its timezone and its representation shows a tzlocal timezone.
     # see gh-13583
     ts = Timestamp("2011-01-01", tz=dateutil.tz.tzlocal())
     assert ts.tz == dateutil.tz.tzlocal()
@@ -80,12 +95,16 @@ def test_tzlocal_repr():
 
 
 def test_tzlocal_maybe_get_tz():
+    # [FUNCTION DOC]
+    # Regression test (gh-13583): the lookup of the string for the local timezone gives the local dateutil timezone.
     # see gh-13583
     tz = timezones.maybe_get_tz("tzlocal()")
     assert tz == dateutil.tz.tzlocal()
 
 
 def test_tzlocal_offset():
+    # [FUNCTION DOC]
+    # Regression test (gh-13583): the integer value of a second-unit timestamp localized to the local timezone plus the local UTC offset (computed from a plain datetime) equals the value of the naive timestamp.
     # see gh-13583
     #
     # Get offset using normal datetime for test.
@@ -98,6 +117,8 @@ def test_tzlocal_offset():
 
 
 def test_tzlocal_is_not_utc():
+    # [FUNCTION DOC]
+    # Even when the machine is in UTC, the local timezone object is not treated as UTC and does not compare equal to the dateutil UTC timezone.
     # even if the machine running the test is localized to UTC
     tz = dateutil.tz.tzlocal()
     assert not timezones.is_utc(tz)
@@ -106,6 +127,8 @@ def test_tzlocal_is_not_utc():
 
 
 def test_tz_compare_utc(utc_fixture, utc_fixture2):
+    # [FUNCTION DOC]
+    # Two UTC aliases from fixtures, after lookup, compare as the same timezone with the compare function.
     tz = timezones.maybe_get_tz(utc_fixture)
     tz2 = timezones.maybe_get_tz(utc_fixture2)
     assert timezones.tz_compare(tz, tz2)
@@ -118,6 +141,8 @@ def test_tz_compare_utc(utc_fixture, utc_fixture2):
     ]
 )
 def infer_setup(request):
+    # [FUNCTION DOC]
+    # HELPER: fixture parametrized over a pytz (skipped if unavailable) and a dateutil US/Eastern timezone, each with its localize function. Yields a tuple of the timezone, the localize function, aware start (2001-01-01) and end (2009-01-01) datetimes, and the naive start and end.
     eastern, localize = request.param
     if isinstance(eastern, str) and eastern.startswith("pytz/"):
         pytz = pytest.importorskip("pytz")
@@ -133,6 +158,8 @@ def infer_setup(request):
 
 
 def test_infer_tz_compat(infer_setup):
+    # [FUNCTION DOC]
+    # Inferring the timezone from two aware datetimes, or from one with the other missing, returns the same timezone object as localizing the corresponding naive datetime.
     eastern, _, start, end, start_naive, end_naive = infer_setup
 
     assert (
@@ -150,6 +177,8 @@ def test_infer_tz_compat(infer_setup):
 
 
 def test_infer_tz_utc_localize(infer_setup):
+    # [FUNCTION DOC]
+    # The start and end naive datetimes converted to UTC (with astimezone) infer to the standard UTC timezone.
     _, _, start, end, start_naive, end_naive = infer_setup
     utc = timezone.utc
 
@@ -161,6 +190,8 @@ def test_infer_tz_utc_localize(infer_setup):
 
 @pytest.mark.parametrize("ordered", [True, False])
 def test_infer_tz_mismatch(infer_setup, ordered):
+    # [FUNCTION DOC]
+    # Parametrized over argument order. Inferring from a UTC datetime and a differently-zoned datetime raises an assertion error saying inputs must both have the same timezone.
     eastern, _, _, _, start_naive, end_naive = infer_setup
     msg = "Inputs must both have the same timezone"
 
@@ -175,6 +206,8 @@ def test_infer_tz_mismatch(infer_setup, ordered):
 
 
 def test_maybe_get_tz_invalid_types():
+    # [FUNCTION DOC]
+    # The lookup raises type errors that mention the offending class for a float, a module, and a timestamp.
     with pytest.raises(TypeError, match="<class 'float'>"):
         timezones.maybe_get_tz(44.0)
 
@@ -188,6 +221,8 @@ def test_maybe_get_tz_invalid_types():
 
 @pytest.mark.parametrize("tz_name", ["UTC", "GMT", "Etc/GMT+1", "Etc/GMT-5"])
 def test_zoneinfo_fixed_offset(tz_name):
+    # [FUNCTION DOC]
+    # GH#64363. Parametrized over zone names UTC, GMT and fixed-offset Etc zones; the fixed-offset check returns true for the corresponding zoneinfo timezone.
     # GH#64363
     zoneinfo = pytest.importorskip("zoneinfo")
     tz = zoneinfo.ZoneInfo(tz_name)
@@ -195,6 +230,8 @@ def test_zoneinfo_fixed_offset(tz_name):
 
 
 def test_zoneinfo_not_fixed_offset_with_historical_transition():
+    # [FUNCTION DOC]
+    # GH#64363. A zone with a historical transition (Africa/Lusaka) is not a fixed offset.
     # GH#64363
     zoneinfo = pytest.importorskip("zoneinfo")
     tz = zoneinfo.ZoneInfo("Africa/Lusaka")
@@ -202,6 +239,8 @@ def test_zoneinfo_not_fixed_offset_with_historical_transition():
 
 
 def test_maybe_get_tz_offset_only():
+    # [FUNCTION DOC]
+    # Regression test (gh-36004). Lookup of the standard UTC object, offset-only strings (with and without a UTC sign prefix, positive and negative) gives fixed-offset timezones equal to the expected ones.
     # see gh-36004
 
     # timezone.utc
@@ -224,6 +263,8 @@ def test_maybe_get_tz_offset_only():
 
 
 def test_zoneinfo_utc_to_local_post_2037():
+    # [FUNCTION DOC]
+    # GH#64363. A 24-hour UTC range on July 1 2040 converted to US/Pacific gives hours equal to those computed with the standard library per element (verifying DST transitions after 2037 from POSIX rule strings).
     # GH#64363 - verify that ZoneInfo DST transitions after 2037
     # (generated from POSIX TZ string rules) produce correct local times.
     tz = zoneinfo.ZoneInfo("US/Pacific")
@@ -244,6 +285,8 @@ def test_zoneinfo_utc_to_local_post_2037():
     "tz_name", ["America/New_York", "Australia/Melbourne", "Europe/Kaliningrad"]
 )
 def test_zoneinfo_utc_to_local_post_2100(tz_name):
+    # [FUNCTION DOC]
+    # GH#65712. Parametrized over three zones (including Europe/Kaliningrad, which has no future DST rule and is not fixed offset). UTC datetimes in 2038, 2100 and 2200 (January and July) converted to the zone equal the standard library conversions as Python datetimes and have equal UTC offsets.
     # GH#65712 - verify zoneinfo-generated future DST transitions are used
     # beyond year 2100 for both hemispheres.
     # Europe/Kaliningrad is a special case because it has no rule for future DST
@@ -269,6 +312,8 @@ def test_zoneinfo_utc_to_local_post_2100(tz_name):
 
 
 def test_zoneinfo_utc_to_local_far_future_seconds_resolution():
+    # [FUNCTION DOC]
+    # GH#65712. Second-resolution UTC values in year 3000 converted to Europe/Brussels have dtype second with that zone and equal the standard library conversion (falling back to the zone API beyond cached transitions).
     # GH#65712 - for dates beyond cached transition data, we should fall back
     # to zoneinfo's API and preserve correct DST offsets.
     utc_times = to_datetime(
@@ -288,6 +333,8 @@ def test_zoneinfo_utc_to_local_far_future_seconds_resolution():
 
 
 def test_zoneinfo_local_to_utc_far_future_seconds_resolution():
+    # [FUNCTION DOC]
+    # GH#65712. Localizing second-resolution naive values in year 3000 to Europe/Brussels and converting to UTC gives a UTC second dtype and values equal to the standard library conversion.
     # GH#65712 - localize should also preserve future DST rules when converting
     # from local wall times to UTC beyond cached transition data.
     local_times = to_datetime(
@@ -315,6 +362,8 @@ def test_zoneinfo_local_to_utc_far_future_seconds_resolution():
     ["America/New_York", "America/Santiago", "Australia/Melbourne", "Europe/Brussels"],
 )
 def test_zoneinfo_boundary_at_last_cached_transition(tz_name):
+    # [FUNCTION DOC]
+    # GH#65733. Skipped on 32-bit platforms. Parametrized over four zones. Uses a private attribute of the standard library zone implementation to find the 2099 transition instant, builds half-hour UTC values for two days around it, converts to expected local values, then localizes the string forms back with ambiguous times inferred and checks: local to UTC equals the expected UTC datetimes, the string form equals expected strings, and the Python datetimes equal expected local values.
     # GH#65733 - target the boundary where UTC is beyond the cached transition
     # range while local wall time can still compare below that UTC cutoff.
     tz = zoneinfo.ZoneInfo(tz_name)
@@ -347,6 +396,8 @@ def test_zoneinfo_boundary_at_last_cached_transition(tz_name):
     ["America/New_York", "America/Santiago", "Australia/Melbourne", "Europe/Brussels"],
 )
 def test_zoneinfo_nonexistent_at_last_cached_transition(tz_name):
+    # [FUNCTION DOC]
+    # GH#65733, parametrized over four zones. Using the private transition information for 2099: if the first transition is later than the second (spring forward), takes a timestamp half an hour after it; localizing raises a value error for a nonexistent time, nonexistent=NaT gives NaT, shift forward moves half an hour, shift backward moves back to just before the gap (minus one microsecond). Otherwise (fall back), takes a timestamp half an hour before the second transition: localizing raises a value error that the dst time cannot be inferred, ambiguous=NaT gives NaT, ambiguous true and false give the fold 0 and fold 1 datetimes respectively.
     # GH#65733 - target the boundary where UTC is beyond the cached transition
     # range while local wall time can still compare below that UTC cutoff.
     tz = zoneinfo.ZoneInfo(tz_name)
@@ -395,6 +446,8 @@ def test_zoneinfo_nonexistent_at_last_cached_transition(tz_name):
 
 @pytest.mark.parametrize("key", ["US/Eastern", "Africa/Lusaka", "Asia/Qyzylorda"])
 def test_zoneinfo_utc_to_local_pre_first_transition(key):
+    # [FUNCTION DOC]
+    # GH#64363. Parametrized over three zones. A UTC timestamp in 1850 (before the first transition) converted to the zone has the same minute as the standard library conversion, which means the pre-first-transition offset is the first offset in the data, not the first standard-time transition offset.
     # GH#64363 - verify that ZoneInfo offsets before the first historical
     # transition (LMT era) match what ZoneInfo itself returns. The "before"
     # offset must be utcoff[0] from the TZ data (matching CPython's C
@@ -407,6 +460,8 @@ def test_zoneinfo_utc_to_local_pre_first_transition(key):
 
 
 def test_zoneinfo_conversion_outside_range_stdlib():
+    # [FUNCTION DOC]
+    # GH#65733. A timestamp in year 10000 (outside the standard datetime range): localizing it, and constructing a timestamp with a timezone from its value, each raise a not-implemented error that localizing timestamps outside the Python range is unsupported.
     # GH#65733 - verify that datetimes outside the range of Python's standard
     # library (year > 9999) raises a proper error message
     ts = Timestamp(np.datetime64("10000-01-01T09:00:00", "us"))
@@ -420,6 +475,8 @@ def test_zoneinfo_conversion_outside_range_stdlib():
 
 
 def test_normalize_pytz_timezone():
+    # [FUNCTION DOC]
+    # Skips without pytz. The io helper that normalizes pytz timezones maps the pytz UTC to the standard UTC, a pytz fixed offset to a standard fixed-offset timezone, and named pytz zones to the same-named zoneinfo zones.
     pytz = pytest.importorskip("pytz")
 
     from pandas.io._util import _normalize_pytz_timezone
@@ -435,6 +492,9 @@ def test_normalize_pytz_timezone():
 
 
 def _write_big_bang_tzif(path):
+    # [FUNCTION DOC]
+    # HELPER: for the big bang transition test.
+    # Parameter path is a path object to write. Writes a binary timezone data file in version 2 format with an empty version-1 block and a 64-bit block whose first transition is the extreme big bang minus 2 to the 59 seconds (as zic produced between 2013 and 2018f), followed by local mean time until 1883, standard time, and the 1918 and 1919 daylight saving transitions; footer string EST5. Creates parent directories. Side effect: writes the file.
     """
     Write a TZif file opening with the -2**59 "big bang" transition, as zic
     did between 2013 and 2018f.
@@ -453,6 +513,8 @@ def _write_big_bang_tzif(path):
     ]
 
     def block(timecnt):
+        # [FUNCTION DOC]
+        # HELPER: nested function that returns the binary header for a data block: the magic text and version, 15 reserved zero bytes, then six big-endian 32-bit counts (three zeros, the given transition count, the number of local time types, the abbreviation byte length).
         return (
             b"TZif2"
             + b"\x00" * 15
@@ -460,6 +522,8 @@ def _write_big_bang_tzif(path):
         )
 
     def types():
+        # [FUNCTION DOC]
+        # HELPER: nested function that returns the binary local time type records (offset, daylight flag, abbreviation index) followed by the abbreviation bytes.
         return b"".join(struct.pack(">iBB", *info) for info in ttinfos) + abbrs
 
     # v1 block, kept empty; the v2 block below carries the 64-bit transitions
@@ -475,6 +539,8 @@ def _write_big_bang_tzif(path):
 
 
 def test_zoneinfo_big_bang_transition(tmp_path):
+    # [FUNCTION DOC]
+    # GH#67066. Writes the big bang data file in a temporary directory and points the zone search path at it. Converts UTC dates in 1850, 1900, 1918, 1920 to that zone and checks they match the standard library conversions (previously the 1883 to 1918 dates wrongly came out as local mean time), and that the cached transition array for that zone is strictly increasing. Always removes the cache entry and resets the search path afterwards.
     # GH#67066 - the "big bang" transition wrapped into the middle of the cached
     # transition array, so 1883-1918 dates came out as LMT instead of EST.
     _write_big_bang_tzif(tmp_path / "Test" / "BigBang")
@@ -499,6 +565,8 @@ def test_zoneinfo_big_bang_transition(tmp_path):
 
 
 def test_zoneinfo_posix_rule_transitions_cached():
+    # [FUNCTION DOC]
+    # GH#67826. Creating a timestamp with a US/Eastern zoneinfo timezone populates the transition cache; the last cached transition is later than 2038-01-01 (the future transitions from the POSIX rule survive validation on 32-bit platforms; no-op on 64-bit).
     # GH#67826 - the POSIX-rule transitions must survive validation on 32-bit,
     # where the platform time_t overflows past 2038. A no-op on 64-bit.
     tz = zoneinfo.ZoneInfo("US/Eastern")

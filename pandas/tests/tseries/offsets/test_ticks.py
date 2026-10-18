@@ -2,6 +2,12 @@
 Tests for offsets.Tick and subclasses
 """
 
+# [MODULE DOC]
+# Tests for the fixed-duration tick offsets (hour, minute, second, millisecond, microsecond, nanosecond): arithmetic between
+# ticks, conversion from time deltas, equality and ordering, division and multiplication (including type promotion to
+# finer or coarser tick classes), comparison with strings and time-delta-like values, and application to datetimes and timestamps.
+# Defines a module-level list of the six tick classes used for parametrization. Some tests use Hypothesis and are marked slow.
+
 from datetime import (
     datetime,
     timedelta,
@@ -45,12 +51,16 @@ tick_classes = [Hour, Minute, Second, Milli, Micro, Nano]
 
 
 def test_apply_ticks():
+    # [FUNCTION DOC]
+    # Adding an hour tick of 3 to an hour tick of 4 equals an hour tick of 7.
     result = offsets.Hour(3) + offsets.Hour(4)
     exp = offsets.Hour(7)
     assert result == exp
 
 
 def test_delta_to_tick():
+    # [FUNCTION DOC]
+    # The conversion helper maps a three-day timedelta to an hour tick of 72 and a time delta of five nanoseconds to a nanosecond tick of 5.
     delta = timedelta(3)
 
     tick = delta_to_tick(delta)
@@ -68,6 +78,8 @@ def test_delta_to_tick():
 @example(n=1000, m=5)
 @given(n=INT_NEG_999_TO_POS_999, m=INT_NEG_999_TO_POS_999)
 def test_tick_add_sub(cls, n, m):
+    # [FUNCTION DOC]
+    # Property test (slow) over each tick class and integers from minus 999 to 999 (plus three explicit examples): sum of ticks n and m equals the tick of n plus m, and difference equals the tick of n minus m.
     # For all Tick subclasses and all integers n, m, we should have
     # tick(n) + tick(m) == tick(n+m)
     # tick(n) - tick(m) == tick(n-m)
@@ -87,6 +99,8 @@ def test_tick_add_sub(cls, n, m):
 @example(n=2, m=3)
 @given(n=INT_NEG_999_TO_POS_999, m=INT_NEG_999_TO_POS_999)
 def test_tick_equality(cls, n, m):
+    # [FUNCTION DOC]
+    # Property test (slow) over each tick class and distinct integers n and m: ticks with different counts are unequal; ticks of equal count are equal (and not unequal); for nonzero n a tick differs from its negation.
     assume(m != n)
     # tick == tock iff tick.n == tock.n
     left = cls(n)
@@ -105,6 +119,8 @@ def test_tick_equality(cls, n, m):
 
 
 def test_Hour():
+    # [FUNCTION DOC]
+    # Applying hour ticks (positive, negative, scaled by a multiplier on either side) to datetimes shifts by the expected hours; hour ticks add and subtract like counts, and different counts are unequal.
     assert_offset_equal(Hour(), datetime(2010, 1, 1), datetime(2010, 1, 1, 1))
     assert_offset_equal(Hour(-1), datetime(2010, 1, 1, 1), datetime(2010, 1, 1))
     assert_offset_equal(2 * Hour(), datetime(2010, 1, 1), datetime(2010, 1, 1, 2))
@@ -117,6 +133,8 @@ def test_Hour():
 
 
 def test_Minute():
+    # [FUNCTION DOC]
+    # Same checks as the hour test for minute ticks: shifting datetimes by minutes with positive, negative and scaled forms, tick addition and subtraction, and inequality of different counts.
     assert_offset_equal(Minute(), datetime(2010, 1, 1), datetime(2010, 1, 1, 0, 1))
     assert_offset_equal(Minute(-1), datetime(2010, 1, 1, 0, 1), datetime(2010, 1, 1))
     assert_offset_equal(2 * Minute(), datetime(2010, 1, 1), datetime(2010, 1, 1, 0, 2))
@@ -128,6 +146,8 @@ def test_Minute():
 
 
 def test_Second():
+    # [FUNCTION DOC]
+    # Same checks as the hour test for second ticks: shifting datetimes, scaled forms, and tick addition and subtraction.
     assert_offset_equal(Second(), datetime(2010, 1, 1), datetime(2010, 1, 1, 0, 0, 1))
     assert_offset_equal(Second(-1), datetime(2010, 1, 1, 0, 0, 1), datetime(2010, 1, 1))
     assert_offset_equal(
@@ -142,6 +162,8 @@ def test_Second():
 
 
 def test_Millisecond():
+    # [FUNCTION DOC]
+    # Same checks for millisecond ticks (shift datetimes by thousands of microseconds, scaling by multiplier or count, tick addition and subtraction).
     assert_offset_equal(
         Milli(), datetime(2010, 1, 1), datetime(2010, 1, 1, 0, 0, 0, 1000)
     )
@@ -163,6 +185,8 @@ def test_Millisecond():
 
 
 def test_MillisecondTimestampArithmetic():
+    # [FUNCTION DOC]
+    # A one-millisecond tick shifts timestamps forward one millisecond, and its negative shifts back, verified with the shared offset assertion helper.
     assert_offset_equal(
         Milli(), Timestamp("2010-01-01"), Timestamp("2010-01-01 00:00:00.001")
     )
@@ -172,6 +196,8 @@ def test_MillisecondTimestampArithmetic():
 
 
 def test_Microsecond():
+    # [FUNCTION DOC]
+    # Same checks for microsecond ticks: datetime shifts of one and two microseconds, negative and scaled forms, tick addition and subtraction.
     assert_offset_equal(Micro(), datetime(2010, 1, 1), datetime(2010, 1, 1, 0, 0, 0, 1))
     assert_offset_equal(
         Micro(-1), datetime(2010, 1, 1, 0, 0, 0, 1), datetime(2010, 1, 1)
@@ -189,6 +215,8 @@ def test_Microsecond():
 
 
 def test_NanosecondGeneric():
+    # [FUNCTION DOC]
+    # Adding a 10 nanosecond tick to a timestamp (either operand order) sets the nanosecond field of the result to 10 starting from zero.
     timestamp = Timestamp(datetime(2010, 1, 1))
     assert timestamp.nanosecond == 0
 
@@ -200,6 +228,8 @@ def test_NanosecondGeneric():
 
 
 def test_Nanosecond():
+    # [FUNCTION DOC]
+    # Shifting a timestamp by nanosecond ticks (positive, negative, scaled) matches adding a numpy timedelta; tick addition and subtraction; and regression cases (GH9284) where mixed nanosecond and microsecond ticks sum to a nanosecond tick of the combined count.
     timestamp = Timestamp(datetime(2010, 1, 1))
     assert_offset_equal(Nano(), timestamp, timestamp + np.timedelta64(1, "ns"))
     assert_offset_equal(Nano(-1), timestamp + np.timedelta64(1, "ns"), timestamp)
@@ -227,6 +257,8 @@ def test_Nanosecond():
     ],
 )
 def test_tick_addition(kls, expected):
+    # [FUNCTION DOC]
+    # Parametrized over tick class and the expected total with a time delta of two hours. For a tick of count 3 and for the timedelta given as a pandas timedelta, a Python timedelta and a numpy timedelta, adding in either order returns a pandas timedelta equal to the expected sum.
     offset = kls(3)
     td = Timedelta(hours=2)
 
@@ -242,6 +274,8 @@ def test_tick_addition(kls, expected):
 
 @pytest.mark.parametrize("cls", tick_classes)
 def test_tick_division(cls):
+    # [FUNCTION DOC]
+    # Parametrized over tick classes. For a tick of 10: dividing by a tick of 5 gives 2; by integer or float 2 gives a tick of 5; dividing by its own timedelta (or numpy form) gives 1; dividing by a nanosecond tick equals the ratio of timedeltas. For non-nanosecond classes dividing by 1000 gives a tick of a different, finer class with the correct duration. For classes finer than one second dividing by 0.001 gives a different, coarser tick class with the correct duration.
     off = cls(10)
 
     assert off / cls(5) == 2
@@ -269,6 +303,8 @@ def test_tick_division(cls):
 
 
 def test_tick_mul_float():
+    # [FUNCTION DOC]
+    # Multiplying a two-microsecond tick by 1.5 gives a microsecond tick of 3 (type retained); by 1.25 gives a nanosecond tick of 2500 (promoted to the finer class).
     off = Micro(2)
 
     # Case where we retain type
@@ -286,6 +322,8 @@ def test_tick_mul_float():
 
 @pytest.mark.parametrize("cls", tick_classes)
 def test_tick_rdiv(cls):
+    # [FUNCTION DOC]
+    # Parametrized over tick classes. Dividing an int or float by a tick raises a type error about unsupported operand types naming the tick's qualified class. A numpy timedelta scaled by 2.5 divided by the tick gives 2.5; for non-nanosecond classes a Python timedelta doubled divided by the tick gives 2; an array of two numpy timedeltas divided by the tick gives the float array of ratios.
     off = cls(10)
     delta = off._as_pd_timedelta
     td64 = delta.to_timedelta64()
@@ -313,6 +351,8 @@ def test_tick_rdiv(cls):
 @pytest.mark.parametrize("cls1", tick_classes)
 @pytest.mark.parametrize("cls2", tick_classes)
 def test_tick_zero(cls1, cls2):
+    # [FUNCTION DOC]
+    # Parametrized over all pairs of tick classes. Zero ticks of any classes are equal, their sum equals the zero tick of the first class; adding a zero tick of any class to a count-2 tick of a non-nano first class keeps it unchanged; for the nanosecond class adding a nano zero keeps it unchanged.
     assert cls1(0) == cls2(0)
     assert cls1(0) + cls2(0) == cls1(0)
 
@@ -325,11 +365,15 @@ def test_tick_zero(cls1, cls2):
 
 @pytest.mark.parametrize("cls", tick_classes)
 def test_tick_equalities(cls):
+    # [FUNCTION DOC]
+    # A default tick of any class equals the same class with count 1.
     assert cls() == cls(1)
 
 
 @pytest.mark.parametrize("cls", tick_classes)
 def test_compare_ticks(cls):
+    # [FUNCTION DOC]
+    # Ordering and equality comparisons between ticks of the same class (3 versus 4) behave as for the counts.
     three = cls(3)
     four = cls(4)
 
@@ -343,6 +387,8 @@ def test_compare_ticks(cls):
 
 @pytest.mark.parametrize("cls", tick_classes)
 def test_compare_ticks_to_strs(cls):
+    # [FUNCTION DOC]
+    # Regression test (GH#23524). A tick compared for equality with an arbitrary string is never equal (either operand order). Ordering comparisons (less, less-equal, greater, greater-equal) between a tick and a string, in either order, raise a type error mentioning the unsupported comparison between the str and the tick type.
     # GH#23524
     off = cls(19)
 
@@ -371,6 +417,8 @@ def test_compare_ticks_to_strs(cls):
 
 @pytest.mark.parametrize("cls", tick_classes)
 def test_compare_ticks_to_timedeltalike(cls):
+    # [FUNCTION DOC]
+    # A tick of 19 compared to its equivalent pandas timedelta and numpy timedelta (and a Python timedelta for non-nano classes) is equal, not unequal, neither less nor greater, and both less-or-equal and greater-or-equal.
     off = cls(19)
 
     td = off._as_pd_timedelta

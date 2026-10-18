@@ -1,3 +1,6 @@
+# [MODULE DOC]
+# Tests for the context manager that rewrites the category and/or message of a warning raised within its block when the original warning matches a target category and message substring.
+
 import warnings
 
 import pytest
@@ -25,6 +28,8 @@ import pandas._testing as tm
     ],
 )
 def test_rewrite_warning(target_category, target_message, hit, new_category):
+    # [FUNCTION DOC]
+    # Parametrized over five (target category, target message, hit) cases (matching category and message or substring, missed message, different category) and over the new category being none or deprecation. Inside the rewrite context a future warning with the message "Target message" is emitted. If the target matched, the expected warning has the new category (or the original if none given) and the message "Rewritten message"; otherwise the original future warning and message pass through unchanged. Verified with the warning assertion helper.
     new_message = "Rewritten message"
     if hit:
         expected_category = new_category if new_category else target_category

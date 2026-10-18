@@ -6,6 +6,14 @@ Tests for the following offsets:
 - MonthEnd
 """
 
+# [MODULE DOC]
+# Tests for the semi-monthly offsets (begin and end, with a configurable day of month) and the
+# monthly offsets (month begin and month end). Covers walking through a whole year, table-driven
+# application of offsets with many counts, vectorized addition to indexes and series (including
+# timezone-aware values and absence of warnings), on-offset checks, and normalization.
+# Uses shared helpers from the offsets common test module; no import-time side effects other than
+# building case tables on the test classes.
+
 from __future__ import annotations
 
 from datetime import datetime
@@ -32,7 +40,13 @@ from pandas.tests.tseries.offsets.common import (
 
 
 class TestSemiMonthEnd:
+    # [CLASS DOC]
+    # Tests for the semi-monthly end offset, which anchors on a configurable mid-month day (default the 15th) and the last day of the month.
     def test_offset_whole_year(self):
+        # [FUNCTION DOC]
+        # Checks that applying the default offset to each date in a hand-written chronological series of mid-month
+        # and month-end dates for 2008 gives the next date in the series. Then adds the offset to an index of all but
+        # the last date and asserts, with no warning emitted (GH#22535), that the result equals an index of all but the first date.
         dates = (
             datetime(2007, 12, 31),
             datetime(2008, 1, 15),
@@ -201,12 +215,18 @@ class TestSemiMonthEnd:
 
     @pytest.mark.parametrize("case", offset_cases)
     def test_offset(self, case):
+        # [FUNCTION DOC]
+        # Parametrized over the class-level case table (default, custom day of month, n of 0, 2, minus 1, minus 2 and
+        # combinations). For each base date in the mapping, asserts the offset gives the expected date.
         offset, cases = case
         for base, expected in cases.items():
             assert_offset_equal(offset, base, expected)
 
     @pytest.mark.parametrize("case", offset_cases)
     def test_apply_index(self, case):
+        # [FUNCTION DOC]
+        # Parametrized over the same case table. Builds an index from the base dates, adds the offset to it
+        # (no warning allowed), and asserts the result equals the index of expected dates.
         # https://github.com/pandas-dev/pandas/issues/34580
         offset, cases = case
         shift = DatetimeIndex(cases.keys())
@@ -228,11 +248,17 @@ class TestSemiMonthEnd:
 
     @pytest.mark.parametrize("case", on_offset_cases)
     def test_is_on_offset(self, case):
+        # [FUNCTION DOC]
+        # Parametrized over (date, expected) pairs; asserts the default semi-month-end offset's on-offset check matches.
         dt, expected = case
         assert_is_on_offset(SemiMonthEnd(), dt, expected)
 
     @pytest.mark.parametrize("klass", [Series, DatetimeIndex])
     def test_vectorized_offset_addition(self, klass):
+        # [FUNCTION DOC]
+        # Parametrized over series and datetime index. For two timezone-aware named inputs (mid-month and
+        # early-month values with and without a time of day), adds the offset on either side (no warning
+        # allowed) and asserts both orders give the expected shifted values (to month end, or to mid month) with the name preserved.
         shift = klass(
             [
                 Timestamp("2000-01-15 00:15:00", tz="US/Central"),
@@ -283,7 +309,12 @@ class TestSemiMonthEnd:
 
 
 class TestSemiMonthBegin:
+    # [CLASS DOC]
+    # Tests for the semi-monthly begin offset, which anchors on the first of the month and a configurable day (default the 15th).
     def test_offset_whole_year(self):
+        # [FUNCTION DOC]
+        # Same structure as the end-offset version: stepping through a chronological series of first-of-month and
+        # mid-month dates for 2008 one step at a time, and then checking vectorized addition to an index without warnings.
         dates = (
             datetime(2007, 12, 15),
             datetime(2008, 1, 1),
@@ -434,12 +465,17 @@ class TestSemiMonthBegin:
 
     @pytest.mark.parametrize("case", offset_cases)
     def test_offset(self, case):
+        # [FUNCTION DOC]
+        # Parametrized over the class-level case table (default, day of month 20, n of 0 with day 16, n of 2, minus 1,
+        # minus 1 with day 4, minus 2); asserts each base date maps to the expected date.
         offset, cases = case
         for base, expected in cases.items():
             assert_offset_equal(offset, base, expected)
 
     @pytest.mark.parametrize("case", offset_cases)
     def test_apply_index(self, case):
+        # [FUNCTION DOC]
+        # Parametrized over the case table; adds the offset to an index of base dates (no warning allowed) and asserts the expected index.
         offset, cases = case
         shift = DatetimeIndex(cases.keys())
 
@@ -461,11 +497,16 @@ class TestSemiMonthBegin:
 
     @pytest.mark.parametrize("case", on_offset_cases)
     def test_is_on_offset(self, case):
+        # [FUNCTION DOC]
+        # Parametrized over (date, expected) pairs; asserts the default semi-month-begin offset's on-offset check matches.
         dt, expected = case
         assert_is_on_offset(SemiMonthBegin(), dt, expected)
 
     @pytest.mark.parametrize("klass", [Series, DatetimeIndex])
     def test_vectorized_offset_addition(self, klass):
+        # [FUNCTION DOC]
+        # Parametrized over series and datetime index. Adds the offset on either side to timezone-aware named
+        # inputs (no warning allowed) and asserts both orders give the expected next anchor dates with name preserved.
         shift = klass(
             [
                 Timestamp("2000-01-15 00:15:00", tz="US/Central"),
@@ -514,6 +555,8 @@ class TestSemiMonthBegin:
 
 
 class TestMonthBegin:
+    # [CLASS DOC]
+    # Tests for the month-begin offset. Class attribute holds the case table (n of 1, 0, 2, minus 1).
     offset_cases = []
     # NOTE: I'm not entirely happy with the logic here for Begin -ss
     # see thread 'offset conventions' on the ML
@@ -571,13 +614,19 @@ class TestMonthBegin:
 
     @pytest.mark.parametrize("case", offset_cases)
     def test_offset(self, case):
+        # [FUNCTION DOC]
+        # Parametrized over the case table; asserts each base date maps to the expected month start.
         offset, cases = case
         for base, expected in cases.items():
             assert_offset_equal(offset, base, expected)
 
 
 class TestMonthEnd:
+    # [CLASS DOC]
+    # Tests for the month-end offset. Class attributes hold the case table and the on-offset table.
     def test_day_of_month(self):
+        # [FUNCTION DOC]
+        # Adding the default offset to the first of January 2007 gives January 31, and adding it again gives February 28.
         dt = datetime(2007, 1, 1)
         offset = MonthEnd()
 
@@ -588,6 +637,9 @@ class TestMonthEnd:
         assert result == Timestamp(2007, 2, 28)
 
     def test_normalize(self):
+        # [FUNCTION DOC]
+        # Adding an offset with normalization enabled to a datetime with a time of day equals adding the plain
+        # offset to the same datetime with the hour reset to midnight.
         dt = datetime(2007, 1, 1, 3)
 
         result = dt + MonthEnd(normalize=True)
@@ -652,6 +704,8 @@ class TestMonthEnd:
 
     @pytest.mark.parametrize("case", offset_cases)
     def test_offset(self, case):
+        # [FUNCTION DOC]
+        # Parametrized over the case table (n of 1, 0, 2, minus 1); asserts each base date maps to the expected month end.
         offset, cases = case
         for base, expected in cases.items():
             assert_offset_equal(offset, base, expected)
@@ -663,5 +717,7 @@ class TestMonthEnd:
 
     @pytest.mark.parametrize("case", on_offset_cases)
     def test_is_on_offset(self, case):
+        # [FUNCTION DOC]
+        # Parametrized over (offset, date, expected); asserts the on-offset check matches the expected boolean.
         offset, dt, expected = case
         assert_is_on_offset(offset, dt, expected)

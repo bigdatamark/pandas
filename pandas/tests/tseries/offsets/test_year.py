@@ -4,6 +4,12 @@ Tests for the following offsets:
 - YearEnd
 """
 
+# [MODULE DOC]
+# Tests for the year offsets (year begin and year end): argument validation, table-driven application of offsets with
+# varied counts and anchor months, on-offset checks, and a regression test for adding a year end to a timestamp outside
+# the range of the standard datetime type. Uses shared helpers from the offsets common test module; no import-time side
+# effects other than building case tables on the test classes.
+
 from __future__ import annotations
 
 from datetime import datetime
@@ -24,7 +30,11 @@ from pandas.tseries.offsets import (
 
 
 class TestYearBegin:
+    # [CLASS DOC]
+    # Tests for the year-begin offset. Class attributes hold the offset application case table and the on-offset table.
     def test_misspecified(self):
+        # [FUNCTION DOC]
+        # Constructing with month 13 raises a value error saying the month must go from 1 to 12.
         with pytest.raises(ValueError, match="Month must go from 1 to 12"):
             YearBegin(month=13)
 
@@ -158,6 +168,8 @@ class TestYearBegin:
 
     @pytest.mark.parametrize("case", offset_cases)
     def test_offset(self, case):
+        # [FUNCTION DOC]
+        # Parametrized over the case table (default anchor January with n of 1, 0, 3, minus 1, minus 2, and anchor April with n of 1, 0, 4, minus 1, minus 3). For each base date asserts the offset gives the expected date.
         offset, cases = case
         for base, expected in cases.items():
             assert_offset_equal(offset, base, expected)
@@ -171,12 +183,18 @@ class TestYearBegin:
 
     @pytest.mark.parametrize("case", on_offset_cases)
     def test_is_on_offset(self, case):
+        # [FUNCTION DOC]
+        # Parametrized over (offset, date, expected); asserts the on-offset check matches.
         offset, dt, expected = case
         assert_is_on_offset(offset, dt, expected)
 
 
 class TestYearEnd:
+    # [CLASS DOC]
+    # Tests for the year-end offset (default anchor December). Class attributes hold the case table and the on-offset table.
     def test_misspecified(self):
+        # [FUNCTION DOC]
+        # Constructing with month 13 raises a value error saying the month must go from 1 to 12.
         with pytest.raises(ValueError, match="Month must go from 1 to 12"):
             YearEnd(month=13)
 
@@ -233,6 +251,8 @@ class TestYearEnd:
 
     @pytest.mark.parametrize("case", offset_cases)
     def test_offset(self, case):
+        # [FUNCTION DOC]
+        # Parametrized over the case table (n of 1, 0, minus 1, minus 2); asserts each base date maps to the expected year end.
         offset, cases = case
         for base, expected in cases.items():
             assert_offset_equal(offset, base, expected)
@@ -246,11 +266,15 @@ class TestYearEnd:
 
     @pytest.mark.parametrize("case", on_offset_cases)
     def test_is_on_offset(self, case):
+        # [FUNCTION DOC]
+        # Parametrized over (offset, date, expected); asserts the on-offset check matches.
         offset, dt, expected = case
         assert_is_on_offset(offset, dt, expected)
 
 
 class TestYearEndDiffMonth:
+    # [CLASS DOC]
+    # Tests for the year-end offset with a non-December anchor month (March). Class attributes hold the case table and the on-offset table.
     offset_cases = []
     offset_cases.append(
         (
@@ -305,6 +329,8 @@ class TestYearEndDiffMonth:
 
     @pytest.mark.parametrize("case", offset_cases)
     def test_offset(self, case):
+        # [FUNCTION DOC]
+        # Parametrized over the case table (March anchor with n of 1, 0, minus 1, minus 2); asserts each base date maps to the expected date.
         offset, cases = case
         for base, expected in cases.items():
             assert_offset_equal(offset, base, expected)
@@ -318,11 +344,17 @@ class TestYearEndDiffMonth:
 
     @pytest.mark.parametrize("case", on_offset_cases)
     def test_is_on_offset(self, case):
+        # [FUNCTION DOC]
+        # Parametrized over (offset, date, expected); asserts the on-offset check matches.
         offset, dt, expected = case
         assert_is_on_offset(offset, dt, expected)
 
 
 def test_add_out_of_pydatetime_range():
+    # [FUNCTION DOC]
+    # Regression test (GH#50348): adding a year end to a timestamp built from a numpy datetime at the year minus 20000 must not raise. Asserts the
+    # result is December 31, with a year that is either minus 19999 or 1973 (the latter accepting a platform where the year wraps).
+    # KNOWN ISSUE: the commented-out text about a future Cython version in the source describes an exact-equality assertion that is disabled, so the year check is deliberately loosened to accept two values.
     # GH#50348 don't raise in Timestamp.replace
     ts = Timestamp(np.datetime64("-20000-12-31"))
     off = YearEnd()

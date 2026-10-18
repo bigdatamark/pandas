@@ -8,6 +8,12 @@ You may wish to consult the previous version for inspiration on further
 tests, or when trying to pin down the bugs exposed by the tests below.
 """
 
+# [MODULE DOC]
+# Property-based (Hypothesis) tests of offsets: agreement of class-specific on-offset implementations
+# with the generic definition, and preservation of wall-clock hour when shifting a timezone-aware range across
+# a daylight saving transition. Uses strategies for datetimes from 1900 with optional time zones and for
+# year/quarter/month offsets from the pandas testing hypothesis module. Both tests are marked slow.
+
 import zoneinfo
 
 from hypothesis import (
@@ -32,6 +38,12 @@ from pandas._testing._hypothesis import (
 @pytest.mark.arm_slow
 @given(DATETIME_JAN_1_1900_OPTIONAL_TZ, YQM_OFFSET)
 def test_on_offset_implementations(dt, offset):
+    # [FUNCTION DOC]
+    # Property test over a datetime (1900 onward, optional time zone) and a year/quarter/month offset. Rejects
+    # normalizing offsets, and a known flaky combination (WASM builds, the Indian/Cocos zone, month begin offset).
+    # Computes the value obtained by adding then subtracting the offset; if that raises a value error (nonexistent
+    # or ambiguous local time, GH41906) the example is discarded as invalid. Asserts the offset's on-offset check
+    # equals whether that round trip returns the original datetime. Marked slow and slow-on-ARM.
     assume(not offset.normalize)
     # This case is flaky in CI 2024-11-04
     assume(
@@ -61,6 +73,10 @@ def test_on_offset_implementations(dt, offset):
 @pytest.mark.slow
 @given(YQM_OFFSET)
 def test_shift_across_dst(offset):
+    # [FUNCTION DOC]
+    # Regression test (GH#18319) as a property test over year/quarter/month offsets (non-normalizing only). Builds a daily
+    # US/Eastern range at noon from 2017-10-30 to 2017-11-06 crossing the DST end, asserts all hours are 12, then adds the offset
+    # and asserts all resulting hours are still 12 (timezone correctly normalized, hour not changed). Marked slow.
     # GH#18319 check that 1) timezone is correctly normalized and
     # 2) that hour is not incorrectly changed by this normalization
     assume(not offset.normalize)
