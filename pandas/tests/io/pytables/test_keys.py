@@ -1,3 +1,5 @@
+# [MODULE DOC]
+# Tests for HDFStore key listing: the keys method and iteration over a store, native (non-pandas) PyTables nodes via the include argument, argument validation, and that soft links are ignored. Skipped if tables is missing; module marked single_cpu.
 import numpy as np
 import pytest
 
@@ -15,6 +17,8 @@ pytestmark = [pytest.mark.single_cpu]
 
 
 def test_keys(temp_hdfstore):
+    # [FUNCTION DOC]
+    # Stores two series and a frame under keys a, b, c; asserts the store length is three and that both the keys method and iteration produce the set of slash-prefixed keys.
     temp_hdfstore["a"] = Series(
         np.arange(10, dtype=np.float64), index=date_range("2020-01-01", periods=10)
     )
@@ -34,13 +38,21 @@ def test_keys(temp_hdfstore):
 
 
 def test_non_pandas_keys(temp_h5_path):
+    # [FUNCTION DOC]
+    # Builds a file directly with PyTables containing a group with three tables, each described by a locally defined description class. Opening it as a store, asserts that keys restricted to native nodes lists the three paths, keys restricted to pandas objects is empty, and each native table can be fetched as a frame with one column.
     class Table1(tables.IsDescription):
+        # [CLASS DOC]
+        # HELPER: PyTables row description with one 32-bit float column, used to create the first native table.
         value1 = tables.Float32Col()
 
     class Table2(tables.IsDescription):
+        # [CLASS DOC]
+        # HELPER: PyTables row description with one 32-bit float column named value2, used to create the second native table.
         value2 = tables.Float32Col()
 
     class Table3(tables.IsDescription):
+        # [CLASS DOC]
+        # HELPER: PyTables row description with one 32-bit float column named value3, used to create the third native table.
         value3 = tables.Float32Col()
 
     with tables.open_file(temp_h5_path, mode="w") as h5file:
@@ -59,6 +71,8 @@ def test_non_pandas_keys(temp_h5_path):
 
 
 def test_keys_illegal_include_keyword_value(temp_hdfstore):
+    # [FUNCTION DOC]
+    # Calling keys with an include value other than pandas or native raises a value error stating the allowed values and the illegal one.
     with pytest.raises(
         ValueError,
         match="`include` should be either 'pandas' or 'native' but is 'illegal'",
@@ -67,6 +81,8 @@ def test_keys_illegal_include_keyword_value(temp_hdfstore):
 
 
 def test_keys_ignore_hdf_softlink(temp_hdfstore):
+    # [FUNCTION DOC]
+    # GH 20523. After storing a frame, creates a soft link at the file root through the PyTables handle and asserts the keys listing still contains only the single real key.
     # GH 20523
     # Puts a softlink into HDF file and rereads
     df = DataFrame({"A": range(5), "B": range(5)})

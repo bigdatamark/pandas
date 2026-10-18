@@ -1,3 +1,6 @@
+# [MODULE DOC]
+# Tests for storing timezone-aware data in HDF5 (as columns, as indexes, in fixed and table format, empty and non-empty, fixed offsets, daylight saving transitions, and reading with where on a timezone-aware multi-index).
+# Module-level state: two zone-getter callables used for parametrization: one returns a dateutil zone object for a zone name via the library's zone lookup (avoids Windows file-name issues), the other returns the name unchanged. Unlike most pytables test modules, no single_cpu mark is applied and tables is not explicitly imported (the fixtures import it).
 from datetime import (
     date,
     timedelta,
@@ -21,6 +24,8 @@ import pandas._testing as tm
 
 
 def _compare_with_tz(a, b):
+    # [FUNCTION DOC]
+    # HELPER: asserts two frames are equal and additionally compares the timezone of every element, column by column and row by row; raises an assertion error describing the first element whose value or timezone differs.
     tm.assert_frame_equal(a, b)
 
     # compare the zones on each element
@@ -43,6 +48,8 @@ gettz_pytz = lambda x: x
 )
 @pytest.mark.parametrize("gettz", [gettz_dateutil, gettz_pytz])
 def test_append_with_timezones(temp_hdfstore, gettz):
+    # [FUNCTION DOC]
+    # Parametrized over dateutil-style and string zone getters. Appends a frame of eastern-time stamps with a data column, round-trips it and selects with a comparison against an element; appends a frame that crosses a daylight-saving boundary within one zone; asserts a value error when appending a frame whose second column has a different zone from the existing block (message names the conflicting zones); stores a mixed-zone frame when its columns are data columns; asserts a value error for appending a column whose zone differs from the stored zone of that data column. A numpy all-true deprecation warning is ignored.
     # as columns
 
     # Single-tzinfo, no DST transition
@@ -126,6 +133,8 @@ def test_append_with_timezones(temp_hdfstore, gettz):
 
 @pytest.mark.parametrize("gettz", [gettz_dateutil, gettz_pytz])
 def test_append_with_timezones_as_index(temp_hdfstore, gettz):
+    # [FUNCTION DOC]
+    # GH#4098. Parametrized over zone getters. A frame indexed by hourly eastern-time stamps (frequency removed since it does not round-trip) round-trips through put and through append.
     # GH#4098 example
 
     dti = date_range("2000-1-1", periods=3, freq="h", tz=gettz("US/Eastern"))
@@ -144,6 +153,8 @@ def test_append_with_timezones_as_index(temp_hdfstore, gettz):
 
 
 def test_roundtrip_tz_aware_index(temp_hdfstore, unit):
+    # [FUNCTION DOC]
+    # GH 17618. Parametrized unit. A one-row frame with an eastern-time index round-trips in fixed format, and the underlying integer value of the retrieved timestamp equals the expected UTC epoch value scaled to the unit.
     # GH 17618
     ts = Timestamp("2000-01-01 01:00:00", tz="US/Eastern")
     dti = DatetimeIndex([ts]).as_unit(unit)
@@ -159,6 +170,8 @@ def test_roundtrip_tz_aware_index(temp_hdfstore, unit):
 
 
 def test_store_index_name_with_tz(temp_hdfstore):
+    # [FUNCTION DOC]
+    # GH 13884. A UTC-localized datetime index with nanosecond precision and a name is stored in table format and round-trips including the name.
     # GH 13884
     df = DataFrame({"A": [1, 2]})
     df.index = DatetimeIndex([1234567890123456787, 1234567890123456788])
@@ -171,6 +184,8 @@ def test_store_index_name_with_tz(temp_hdfstore):
 
 
 def test_tseries_select_index_column(temp_hdfstore):
+    # [FUNCTION DOC]
+    # GH7777. select_column on the index returns timezone information consistently: unchanged for a naive index, and the same zone for a UTC index and for an eastern-time index.
     # GH7777
     # selecting a UTC datetimeindex column did
     # not preserve UTC tzinfo set before storing
@@ -209,6 +224,8 @@ def test_tseries_select_index_column(temp_hdfstore):
 
 
 def test_timezones_fixed_format_frame_non_empty(temp_hdfstore):
+    # [FUNCTION DOC]
+    # A frame with an eastern-time index (without frequency) round-trips in fixed format.
     # index
     rng = date_range("1/1/2000", "1/30/2000", tz="US/Eastern")
     rng = rng._with_freq(None)  # freq doesn't round-trip
@@ -219,6 +236,8 @@ def test_timezones_fixed_format_frame_non_empty(temp_hdfstore):
 
 
 def test_timezones_fixed_format_frame_non_empty_as_data(temp_hdfstore):
+    # [FUNCTION DOC]
+    # GH11411. A frame with columns of eastern, naive-converted-from-UTC and CET timestamps and an integer column, indexed by the eastern index, round-trips in fixed format.
     # GH11411
     rng = date_range("1/1/2000", "1/30/2000", tz="US/Eastern")
     rng = rng._with_freq(None)  # freq doesn't round-trip
@@ -237,6 +256,8 @@ def test_timezones_fixed_format_frame_non_empty_as_data(temp_hdfstore):
 
 
 def test_timezones_fixed_format_empty(temp_hdfstore, tz_aware_fixture, frame_or_series):
+    # [FUNCTION DOC]
+    # GH 20594. Parametrized over timezone fixtures and frame or series (fixture). An empty series with a timezone-aware dtype (or its frame form) round-trips.
     # GH 20594
 
     dtype = pd.DatetimeTZDtype(tz=tz_aware_fixture)
@@ -251,6 +272,8 @@ def test_timezones_fixed_format_empty(temp_hdfstore, tz_aware_fixture, frame_or_
 
 
 def test_timezones_fixed_format_series_nonempty(temp_hdfstore, tz_aware_fixture):
+    # [FUNCTION DOC]
+    # GH 20594. A one-element series with a timezone-aware dtype from the timezone fixture round-trips in fixed format.
     # GH 20594
 
     dtype = pd.DatetimeTZDtype(tz=tz_aware_fixture)
@@ -262,6 +285,8 @@ def test_timezones_fixed_format_series_nonempty(temp_hdfstore, tz_aware_fixture)
 
 
 def test_fixed_offset_tz(temp_hdfstore):
+    # [FUNCTION DOC]
+    # A frame indexed by dates with a fixed minus-seven-hour offset round-trips; asserts the index equals the original and keeps the same timezone.
     rng = date_range("1/1/2000 00:00:00-07:00", "1/30/2000 00:00:00-07:00")
     frame = DataFrame(
         np.random.default_rng(2).standard_normal((len(rng), 4)), index=rng
@@ -275,6 +300,8 @@ def test_fixed_offset_tz(temp_hdfstore):
 
 @td.skip_if_windows
 def test_store_timezone(temp_hdfstore):
+    # [FUNCTION DOC]
+    # GH2852. Skipped on Windows. A frame indexed by plain date objects round-trips; storing one while the process timezone is set to eastern and reading it while set to central still returns the original dates.
     # GH2852
     # issue storing datetime.date with a timezone as it resets when read
     # back in a new timezone
@@ -299,6 +326,8 @@ def test_store_timezone(temp_hdfstore):
 
 
 def test_dst_transitions(temp_hdfstore):
+    # [FUNCTION DOC]
+    # Checks that appending and selecting does not fail across a London daylight-saving ambiguity (with inferred ambiguous times) for both the index and a shifted copy; each frame is appended, selected, compared and removed.
     # make sure we are not failing on transitions
     times = date_range(
         "2013-10-26 23:00",
@@ -321,6 +350,8 @@ def test_dst_transitions(temp_hdfstore):
     "ignore:`alltrue` is deprecated as of NumPy 1.25.0:DeprecationWarning"
 )
 def test_read_with_where_tz_aware_index(temp_hdfstore):
+    # [FUNCTION DOC]
+    # GH 11926. A frame with a two-level index (UTC dates and numbers) is appended through an HDFStore constructed from the store fixture's path; read_hdf with a where condition on the date level returns the whole frame. Numpy all-true deprecation warning ignored.
     # GH 11926
     periods = 10
     dts = date_range("20151201", periods=periods, freq="D", tz="UTC", unit="ns")

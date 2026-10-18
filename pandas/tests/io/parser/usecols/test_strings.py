@@ -2,6 +2,8 @@
 Tests the usecols functionality during parsing
 for all of the parsers defined in parsers.py
 """
+# [MODULE DOC]
+# Tests of the usecols option with unicode, single-byte, mixed-encoding and multi-byte (Japanese) column names across all parsers. Module-level filter ignores the BlockManager deprecation warning.
 
 from io import StringIO
 
@@ -16,6 +18,8 @@ pytestmark = pytest.mark.filterwarnings(
 
 
 def test_usecols_with_unicode_strings(all_parsers):
+    # [FUNCTION DOC]
+    # See gh-13219. Selecting two named columns of four with usecols returns a frame with only those columns and their parsed values (float and integer).
     # see gh-13219
     data = """AAA,BBB,CCC,DDD
 0.056674973,8,True,a
@@ -38,6 +42,8 @@ def test_usecols_with_unicode_strings(all_parsers):
 
 
 def test_usecols_with_single_byte_unicode_strings(all_parsers):
+    # [FUNCTION DOC]
+    # See gh-13219. Same as the unicode-strings test but with single-letter column names; asserts only the selected two columns are returned.
     # see gh-13219
     data = """A,B,C,D
 0.056674973,8,True,a
@@ -61,6 +67,8 @@ def test_usecols_with_single_byte_unicode_strings(all_parsers):
 
 @pytest.mark.parametrize("usecols", [["AAA", b"BBB"], [b"AAA", "BBB"]])
 def test_usecols_with_mixed_encoding_strings(all_parsers, usecols):
+    # [FUNCTION DOC]
+    # Parametrized over usecols lists mixing a text string and a bytes object. Asserts read_csv raises a value error saying usecols must be list-like of all strings, all unicode, all integers or a callable.
     data = """AAA,BBB,CCC,DDD
 0.056674973,8,True,a
 2.613230982,2,False,b
@@ -76,6 +84,8 @@ def test_usecols_with_mixed_encoding_strings(all_parsers, usecols):
 
 
 def test_usecols_with_multi_byte_characters(all_parsers):
+    # [FUNCTION DOC]
+    # Header names are Japanese characters; selecting two of them with usecols returns a frame with those columns and the parsed values.
     data = """あああ,いい,ううう,ええええ
 0.056674973,8,True,a
 2.613230982,2,False,b

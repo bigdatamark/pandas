@@ -1,3 +1,6 @@
+# [MODULE DOC]
+# Round-trip tests for the HDF5 store: write an object (series or frame) and read it back, checking equality, across API spellings of format/append, index types, dtypes, empty objects, hierarchical data, unicode and compression. Module marked single_cpu.
+# Contains two private helpers (generic round trip through item assignment, and a table-format variant) used by many tests; both write to the supplied path in write mode.
 import datetime
 import re
 
@@ -25,7 +28,11 @@ pytestmark = [pytest.mark.single_cpu]
 
 
 def test_conv_read_write(temp_h5_path):
+    # [FUNCTION DOC]
+    # Uses a nested helper that writes with to_hdf under a key and reads with read_hdf. Series with datetime and string indexes and a frame round-trip equal. A frame written with append through to_hdf then read with a where condition on the index returns just the matching rows.
     def roundtrip(key, obj, **kwargs):
+        # [FUNCTION DOC]
+        # HELPER: writes obj to the enclosing test's temp path under key (extra keyword arguments passed to the writer) and returns the object read back from that key.
         obj.to_hdf(temp_h5_path, key=key, **kwargs)
         return read_hdf(temp_h5_path, key)
 
@@ -52,6 +59,8 @@ def test_conv_read_write(temp_h5_path):
 
 
 def test_long_strings(temp_hdfstore):
+    # [FUNCTION DOC]
+    # GH6166. Fifty-character strings used as data column values and as index round-trip through a table.
     # GH6166
     data = ["a" * 50] * 10
     df = DataFrame({"a": data}, index=data)
@@ -63,6 +72,8 @@ def test_long_strings(temp_hdfstore):
 
 
 def test_api(temp_h5_path):
+    # [FUNCTION DOC]
+    # GH4584. to_hdf must accept both append and format arguments: two appended halves in table format reproduce the full frame; with append false for the first half and true for the second also reproduces it.
     # GH4584
     # API issue when to_hdf doesn't accept append AND format args
     path = temp_h5_path
@@ -79,6 +90,8 @@ def test_api(temp_h5_path):
 
 
 def test_api_append(temp_h5_path):
+    # [FUNCTION DOC]
+    # to_hdf appends where the first call omits the format (table inferred from the append flag) and the second specifies table format, and the reverse; both reconstruct the full frame.
     path = temp_h5_path
 
     df = DataFrame(range(20))
@@ -93,6 +106,8 @@ def test_api_append(temp_h5_path):
 
 
 def test_api_2(temp_h5_path):
+    # [FUNCTION DOC]
+    # to_hdf with append false and format fixed, short format code f, default format, and no arguments all write a frame that reads back equal.
     df = DataFrame(range(20))
     df.to_hdf(temp_h5_path, key="df", append=False, format="fixed")
     tm.assert_frame_equal(read_hdf(temp_h5_path, "df"), df)
@@ -108,6 +123,8 @@ def test_api_2(temp_h5_path):
 
 
 def test_api_3(temp_hdfstore):
+    # [FUNCTION DOC]
+    # Store-level append with append flag and table format, with append false for the first half then true, and with the format omitted (none) on the second append; each variant reproduces the full frame (the removal between variants resets state).
     df = DataFrame(range(20))
 
     temp_hdfstore.append("df", df.iloc[:10], append=True, format="table")
@@ -133,6 +150,8 @@ def test_api_3(temp_hdfstore):
 
 
 def test_api_invalid(temp_h5_path):
+    # [FUNCTION DOC]
+    # Appending in fixed format (long or short name) raises a value error that only tables can be appended to; an unknown format raises a type error saying the format is invalid, for append true or false. Reading from an empty path raises a file-not-found error.
     path = temp_h5_path
     # Invalid.
     df = DataFrame(
@@ -166,6 +185,8 @@ def test_api_invalid(temp_h5_path):
 
 
 def test_get(temp_hdfstore):
+    # [FUNCTION DOC]
+    # The get method and item access return equal series for plain and slash-prefixed keys; getting a missing key raises a key error saying no object with that name.
     temp_hdfstore["a"] = Series(
         np.arange(10, dtype=np.float64), index=date_range("2020-01-01", periods=10)
     )
@@ -182,12 +203,16 @@ def test_get(temp_hdfstore):
 
 
 def test_put_integer(temp_h5_path):
+    # [FUNCTION DOC]
+    # Round-trips a 50 by 100 frame with default integer labels using the shared helper.
     # non-date, non-string index
     df = DataFrame(np.random.default_rng(2).standard_normal((50, 100)))
     _check_roundtrip(df, tm.assert_frame_equal, temp_h5_path)
 
 
 def test_table_values_dtypes_roundtrip(temp_hdfstore, using_infer_string):
+    # [FUNCTION DOC]
+    # Appending float64, int64 and float32 frames preserves dtypes. Appending a float frame to the existing integer table raises a value error stating the contents are not float but integer. A frame with many numeric widths, string, boolean and second/millisecond/nanosecond timestamp columns is appended and the counts of resulting dtypes (string as str under infer-string mode, else object) are asserted.
     df1 = DataFrame({"a": [1, 2, 3]}, dtype="f8")
     temp_hdfstore.append("df_f8", df1)
     tm.assert_series_equal(df1.dtypes, temp_hdfstore["df_f8"].dtypes)
@@ -255,6 +280,8 @@ def test_table_values_dtypes_roundtrip(temp_hdfstore, using_infer_string):
 
 @pytest.mark.filterwarnings("ignore::pandas.errors.PerformanceWarning")
 def test_series(temp_h5_path):
+    # [FUNCTION DOC]
+    # Series with string, datetime, and datetime-valued index (two ways) round-trip using the helper; the last with index type checking disabled. Performance warnings ignored.
     s = Series(range(10), dtype="float64", index=[f"i_{i}" for i in range(10)])
     _check_roundtrip(s, tm.assert_series_equal, path=temp_h5_path)
 
@@ -273,6 +300,8 @@ def test_series(temp_h5_path):
 
 
 def test_float_index(temp_h5_path):
+    # [FUNCTION DOC]
+    # GH #454. A series with a random float index round-trips.
     # GH #454
     index = np.random.default_rng(2).standard_normal(10)
     s = Series(np.random.default_rng(2).standard_normal(10), index=index)
@@ -280,6 +309,8 @@ def test_float_index(temp_h5_path):
 
 
 def test_tuple_index(temp_h5_path, performance_warning):
+    # [FUNCTION DOC]
+    # GH #492. A frame indexed by tuples round-trips while emitting the performance warning (expected-warning fixture).
     # GH #492
     col = np.arange(10)
     idx = [(0.0, 1.0), (2.0, 3.0), (4.0, 5.0)]
@@ -292,6 +323,9 @@ def test_tuple_index(temp_h5_path, performance_warning):
 
 @pytest.mark.filterwarnings("ignore::pandas.errors.PerformanceWarning")
 def test_index_types(temp_h5_path):
+    # [FUNCTION DOC]
+    # Round-trips series with a wide range of mixed-type indexes (integer and string, today's datetime and date with other types, float and string, mixed number types, integers, nanosecond datetimes and the same converted to second unit) using a comparator that checks index type. Performance warnings ignored.
+    # KNOWN ISSUE: four of the mixed-index cases (integer and string, datetime and integer, string and integer, date and string) appear twice in succession, which is redundant.
     values = np.random.default_rng(2).standard_normal(2)
 
     func = lambda lhs, rhs: tm.assert_series_equal(lhs, rhs, check_index_type=True)
@@ -338,6 +372,9 @@ def test_index_types(temp_h5_path):
 
 
 def test_timeseries_preepoch(temp_h5_path, request):
+    # [FUNCTION DOC]
+    # Round-trips a business-day series from 1940 to 1960. An overflow error on Windows platforms is converted into an expected failure via the request fixture and then re-raised.
+    # KNOWN ISSUE: the expected-failure marker is created with the message string as its first (positional) argument, which pytest treats as the condition rather than the reason.
     dr = bdate_range("1/1/1940", "1/1/1960")
     ts = Series(np.random.default_rng(2).standard_normal(len(dr)), index=dr)
     try:
@@ -354,6 +391,8 @@ def test_timeseries_preepoch(temp_h5_path, request):
     "compression", [False, pytest.param(True, marks=td.skip_if_windows)]
 )
 def test_frame(compression, temp_h5_path):
+    # [FUNCTION DOC]
+    # Parametrized over compression off and on (on skipped for Windows). Frame with random missing values is round-tripped in table format and fixed format; a datetime-indexed frame round-trips; a frame with a newly added column stored with item assignment comes back consolidated; and an empty slice of the frame (with an empty index) round-trips.
     df = DataFrame(
         1.1 * np.arange(120).reshape((30, 4)),
         columns=Index(list("ABCD")),
@@ -395,6 +434,8 @@ def test_frame(compression, temp_h5_path):
 
 
 def test_empty_series_frame(temp_h5_path):
+    # [FUNCTION DOC]
+    # Empty series (unnamed and named), empty frame, frame with only index and frame with only columns each round-trip.
     s0 = Series(dtype=object)
     s1 = Series(name="myseries", dtype=object)
     df0 = DataFrame()
@@ -410,11 +451,15 @@ def test_empty_series_frame(temp_h5_path):
 
 @pytest.mark.parametrize("dtype", [np.int64, np.float64, object, "m8[ns]", "M8[ns]"])
 def test_empty_series(dtype, temp_h5_path):
+    # [FUNCTION DOC]
+    # Parametrized over int64, float64, object, timedelta and datetime dtypes: an empty series of the dtype round-trips.
     s = Series(dtype=dtype)
     _check_roundtrip(s, tm.assert_series_equal, path=temp_h5_path)
 
 
 def test_can_serialize_dates(temp_h5_path):
+    # [FUNCTION DOC]
+    # A frame indexed by plain date objects (business days of one month) round-trips.
     rng = [x.date() for x in bdate_range("1/1/2000", "1/30/2000")]
     frame = DataFrame(
         np.random.default_rng(2).standard_normal((len(rng), 4)), index=rng
@@ -426,6 +471,8 @@ def test_can_serialize_dates(temp_h5_path):
 def test_store_hierarchical(
     temp_h5_path, using_infer_string, multiindex_dataframe_random_data
 ):
+    # [FUNCTION DOC]
+    # Uses the multi-index frame fixture. The frame, its transpose and a column series round-trip; storing the frame with item assignment returns an equal frame (names stored). The infer-string fixture is unused.
     frame = multiindex_dataframe_random_data
 
     _check_roundtrip(frame, tm.assert_frame_equal, path=temp_h5_path)
@@ -443,7 +490,11 @@ def test_store_hierarchical(
     "compression", [False, pytest.param(True, marks=td.skip_if_windows)]
 )
 def test_store_mixed(compression, temp_h5_path):
+    # [FUNCTION DOC]
+    # Parametrized over compression off and on (on skipped for Windows). Two consolidated frames with object, boolean and integer columns round-trip; overwriting the same key in a store returns the latest frame; and a string series, boolean series and integer series taken from the first frame round-trip with the compression setting applied.
     def _make_one():
+        # [FUNCTION DOC]
+        # HELPER: builds a 30 by 4 float frame (columns A to D, string row labels) plus two string columns, two boolean columns and two integer columns, and returns it consolidated.
         df = DataFrame(
             1.1 * np.arange(120).reshape((30, 4)),
             columns=Index(list("ABCD")),
@@ -491,6 +542,8 @@ def test_store_mixed(compression, temp_h5_path):
 
 
 def _check_roundtrip(obj, comparator, path, compression=False, **kwargs):
+    # [FUNCTION DOC]
+    # HELPER: parameters obj (object to store), comparator (assertion function taking retrieved and original), path, compression (default off; when on uses the blosc library) and extra keyword arguments passed to the comparator. Opens a store at path in write mode (truncating it), stores obj via item assignment under a fixed key, reads it back and invokes the comparator. Returns nothing.
     options = {}
     if compression:
         options["complib"] = "blosc"
@@ -502,6 +555,8 @@ def _check_roundtrip(obj, comparator, path, compression=False, **kwargs):
 
 
 def _check_roundtrip_table(obj, comparator, path, compression=False):
+    # [FUNCTION DOC]
+    # HELPER: like the generic round-trip helper but stores with put in table format and does not forward extra comparator keywords. Parameters: obj, comparator, path, compression (default off; blosc when on). Opens the store in write mode, stores, reads back and calls the comparator.
     options = {}
     if compression:
         options["complib"] = "blosc"
@@ -514,6 +569,8 @@ def _check_roundtrip_table(obj, comparator, path, compression=False):
 
 
 def test_unicode_index(temp_h5_path):
+    # [FUNCTION DOC]
+    # A series indexed by non-ascii characters round-trips.
     unicode_values = ["\u03c3", "\u03c3\u03c3"]
 
     s = Series(
@@ -524,6 +581,8 @@ def test_unicode_index(temp_h5_path):
 
 
 def test_unicode_longer_encoded(temp_hdfstore):
+    # [FUNCTION DOC]
+    # GH 11234. Strings whose utf-8 encoding is longer than their character count (a single Greek character, and mixed with ascii strings) are put in table format with utf-8 encoding and read back equal.
     # GH 11234
     char = "\u0394"
     df = DataFrame({"A": [char]})
@@ -539,6 +598,8 @@ def test_unicode_longer_encoded(temp_hdfstore):
 
 
 def test_store_datetime_mixed(temp_h5_path):
+    # [FUNCTION DOC]
+    # A frame with integer, float, string and datetime columns round-trips.
     df = DataFrame({"a": [1, 2, 3], "b": [1.0, 2.0, 3.0], "c": ["a", "b", "c"]})
     ts = Series(
         np.arange(10, dtype=np.float64), index=date_range("2020-01-01", periods=10)
@@ -548,6 +609,8 @@ def test_store_datetime_mixed(temp_h5_path):
 
 
 def test_round_trip_equals(temp_h5_path):
+    # [FUNCTION DOC]
+    # GH 9330. A table-format round trip returns a frame that is equal to the original under the frame comparator and in both directions under the equality method.
     # GH 9330
     df = DataFrame({"B": [1, 2], "A": ["x", "y"]})
 
@@ -559,6 +622,9 @@ def test_round_trip_equals(temp_h5_path):
 
 
 def test_infer_string_columns(temp_h5_path):
+    # [FUNCTION DOC]
+    # Requires pyarrow. Under the future infer-string option, a frame with a two-level index created from string columns round-trips in table format.
+    # KNOWN ISSUE: the issue-number comment above the body is truncated (only the GH prefix, no number).
     # GH#
     pytest.importorskip("pyarrow")
     with pd.option_context("future.infer_string", True):

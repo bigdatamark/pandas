@@ -1,3 +1,6 @@
+# [MODULE DOC]
+# Tests for HDFStore file handling: open modes, reopening, in-memory stores, flushing, compression library and level defaults and overrides, text encodings, multiple and nested open/close behavior including the table file open policy, errors on closed stores, and path-like conversion.
+# Skipped if tables is missing; module marked single_cpu.
 import os
 import uuid
 
@@ -33,6 +36,8 @@ pytestmark = [pytest.mark.single_cpu]
 
 @pytest.mark.parametrize("mode", ["r", "r+", "a", "w"])
 def test_mode(temp_h5_path, mode, using_infer_string):
+    # [FUNCTION DOC]
+    # Parametrized over modes read, read-plus, append and write. For read modes, constructing a store (directly, as a context manager, or through to_hdf) on a nonexistent file raises an OS error saying it does not exist; for write/append the store handle reports the requested mode. read_hdf with mode write raises a value error that mode w is not allowed for reading (allowed: r, r+, a); otherwise it returns the frame (column index converted to string when the infer-string mode is on).
     df = DataFrame(
         np.random.default_rng(2).standard_normal((10, 4)),
         columns=Index(list("ABCD"), dtype=object),
@@ -83,6 +88,8 @@ def test_mode(temp_h5_path, mode, using_infer_string):
 
 
 def test_default_mode(temp_h5_path, using_infer_string):
+    # [FUNCTION DOC]
+    # read_hdf with no mode argument works on a file just written; asserts equality (adjusting column dtype under infer-string).
     # read_hdf uses default mode
     df = DataFrame(
         np.random.default_rng(2).standard_normal((10, 4)),
@@ -98,6 +105,8 @@ def test_default_mode(temp_h5_path, using_infer_string):
 
 
 def test_reopen_handle(temp_h5_path):
+    # [FUNCTION DOC]
+    # Opens a store in append mode with one series. Reopening it in write mode while open raises a possible-data-loss error about deleting the current file. After closing, reopening in write mode truncates it (length zero). Reopening in read mode and then append mode (twice) keeps the one stored item and reports the new mode; each time the store is closed and reports not open.
     store = HDFStore(temp_h5_path, mode="a")
     store["a"] = Series(
         np.arange(10, dtype=np.float64), index=date_range("2020-01-01", periods=10)
@@ -152,6 +161,8 @@ def test_reopen_handle(temp_h5_path):
 
 
 def test_open_args(using_infer_string):
+    # [FUNCTION DOC]
+    # Creates a store with the in-memory core driver and no backing store; puts and appends a frame, asserts both retrieve equal (string index types adjusted under infer-string), then closes and asserts no file was written.
     not_written = f"{uuid.uuid4()}.h5"
     df = DataFrame(
         1.1 * np.arange(120).reshape((30, 4)),
@@ -181,6 +192,8 @@ def test_open_args(using_infer_string):
 
 
 def test_flush(temp_h5_path):
+    # [FUNCTION DOC]
+    # Opens a store in write mode, stores a series and calls flush plainly and with fsync; passes if no exception is raised.
     with HDFStore(temp_h5_path, mode="w") as store:
         store["a"] = Series(range(5))
         store.flush()
@@ -188,6 +201,8 @@ def test_flush(temp_h5_path):
 
 
 def test_complibs_default_settings(temp_h5_path, using_infer_string):
+    # [FUNCTION DOC]
+    # GH15943. Setting only a compression level writes with the default library (zlib) at that level; setting only complib leaves compression disabled (level zero, no library); setting neither also disables compression. Each time, reads back with read_hdf (equality asserted) and inspects the leaf nodes' filter settings via PyTables.
     # GH15943
     df = DataFrame(
         1.1 * np.arange(120).reshape((30, 4)),
@@ -240,6 +255,8 @@ def test_complibs_default_settings(temp_h5_path, using_infer_string):
 
 
 def test_complibs_default_settings_override(temp_h5_path):
+    # [FUNCTION DOC]
+    # A store appends one table with explicit level nine and blosc and another with defaults; asserts the leaf nodes of the first have level nine/blosc and the second level zero with no library.
     # Check if file-defaults can be overridden on a per table basis
     df = DataFrame(
         1.1 * np.arange(120).reshape((30, 4)),
@@ -264,6 +281,9 @@ def test_complibs_default_settings_override(temp_h5_path):
 @pytest.mark.parametrize("lib", tables.filters.all_complibs)
 @pytest.mark.filterwarnings("ignore:object name is not a valid")
 def test_complibs(tmp_path, lvl, lib, request):
+    # [FUNCTION DOC]
+    # GH14478. Parametrized over levels zero to nine and all compression libraries known to tables. Writes and reads a constant frame with that library and level, asserting round trip and that every leaf node reports the level and library (library none at level zero; on macOS blosc2 may report a blosc2-prefixed variant). blosc2 at a nonzero level on Linux is marked as an expected failure. Warning about invalid object names is ignored.
+    # KNOWN ISSUE: the lzo and bzip2 availability checks skip the test whenever either is missing, regardless of which library is being tested, although the comments say they only remove those libraries.
     # GH14478
     if is_platform_linux() and lib == "blosc2" and lvl != 0:
         request.applymarker(pytest.mark.xfail(reason=f"Fails for {lib} on Linux"))
@@ -305,6 +325,8 @@ def test_complibs(tmp_path, lvl, lib, request):
     not is_platform_little_endian(), reason="reason platform is not little endian"
 )
 def test_encoding(temp_hdfstore):
+    # [FUNCTION DOC]
+    # Only runs on little-endian platforms. Appends a frame with missing values using ascii encoding, asserts round trip, and selects one column with a Term specifying the same encoding.
     df = DataFrame({"A": "foo", "B": "bar"}, index=range(5))
     df.loc[2, "A"] = np.nan
     df.loc[3, "B"] = np.nan
@@ -332,6 +354,8 @@ def test_encoding(temp_hdfstore):
 )
 @pytest.mark.parametrize("dtype", ["category", None])
 def test_latin_encoding(temp_h5_path, dtype, val):
+    # [FUNCTION DOC]
+    # Parametrized over many byte-string value lists (accented latin-1 bytes, empty strings, missing values) and dtype category or default. Decodes bytes with latin-1, writes the series in table format with that encoding and an empty-string missing representation, rereads, and asserts equality with the series where the missing representation is treated as missing (removed from categories for categorical).
     enc = "latin-1"
     nan_rep = ""
     key = "data"
@@ -356,6 +380,8 @@ def test_latin_encoding(temp_h5_path, dtype, val):
 
 
 def test_multiple_open_close(temp_h5_path):
+    # [FUNCTION DOC]
+    # gh-4409. Opening and closing a store shows or hides a closed marker in its info text and updates the open flag. If the table file open policy is strict, opening the same file twice raises a value error that it is already open. Otherwise opens two handles, closes them independently, checks nested closes (a write handle plus an append handle) and double closing. Finally, on a closed store, asserts that keys, membership, length, item access, select, get, append, put, get_storer and remove each raise a closed-file error saying the file is not open, and attribute access to a key raises an attribute error.
     # gh-4409: open & close multiple times
 
     df = DataFrame(
@@ -485,5 +511,7 @@ def test_multiple_open_close(temp_h5_path):
 
 
 def test_fspath(temp_h5_path):
+    # [FUNCTION DOC]
+    # A store used as a path-like object converts to the string of its file path.
     with HDFStore(temp_h5_path) as store:
         assert os.fspath(store) == str(temp_h5_path)

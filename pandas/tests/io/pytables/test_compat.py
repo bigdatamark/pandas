@@ -1,3 +1,6 @@
+# [MODULE DOC]
+# Tests for reading HDF5 files not written by pandas' own writer: files created directly with PyTables, and legacy files written by older pandas versions that are stored in the test data directory.
+# Import-time behavior: skipped if tables is missing; builds a list of legacy file paths by globbing the legacy_hdf data directory (one subdirectory per pandas version).
 from pathlib import Path
 
 import pytest
@@ -14,6 +17,8 @@ tables = pytest.importorskip("tables")
 
 @pytest.fixture
 def pytables_hdf5_file(temp_h5_path):
+    # [FUNCTION DOC]
+    # Fixture: uses PyTables directly to create an HDF5 table named pandas_test_timeseries at the temp path with a 64-bit time column, a five-byte string column and a 64-bit integer column, filled with four rows. Returns a tuple of (path, table name, expected frame built from the same sample dictionaries).
     """
     Use PyTables to create a simple HDF5 file.
     """
@@ -45,6 +50,8 @@ def pytables_hdf5_file(temp_h5_path):
 
 
 class TestReadPyTablesHDF5:
+    # [CLASS DOC]
+    # Regression tests (issue 11188) for reading a plain PyTables file with read_hdf, including start and stop row bounds.
     """
     A group of tests which covers reading HDF5 files written by plain PyTables
     (not written by pandas).
@@ -53,12 +60,16 @@ class TestReadPyTablesHDF5:
     """
 
     def test_read_complete(self, pytables_hdf5_file):
+        # [FUNCTION DOC]
+        # Reads the whole table; asserts equality with the expected frame including index type.
         path, objname, df = pytables_hdf5_file
         result = pd.read_hdf(path, key=objname)
         expected = df
         tm.assert_frame_equal(result, expected, check_index_type=True)
 
     def test_read_with_start(self, pytables_hdf5_file):
+        # [FUNCTION DOC]
+        # Reads with a start row of one; asserts the remaining rows with a reset index. Regression test for issue 11188.
         path, objname, df = pytables_hdf5_file
         # This is a regression test for pandas-dev/pandas/issues/11188
         result = pd.read_hdf(path, key=objname, start=1)
@@ -66,6 +77,8 @@ class TestReadPyTablesHDF5:
         tm.assert_frame_equal(result, expected, check_index_type=True)
 
     def test_read_with_stop(self, pytables_hdf5_file):
+        # [FUNCTION DOC]
+        # Reads with a stop row of one; asserts only the first row with a reset index. Regression test for issue 11188.
         path, objname, df = pytables_hdf5_file
         # This is a regression test for pandas-dev/pandas/issues/11188
         result = pd.read_hdf(path, key=objname, stop=1)
@@ -73,6 +86,8 @@ class TestReadPyTablesHDF5:
         tm.assert_frame_equal(result, expected, check_index_type=True)
 
     def test_read_with_startstop(self, pytables_hdf5_file):
+        # [FUNCTION DOC]
+        # Reads with start one and stop two; asserts only the second row with a reset index. Regression test for issue 11188.
         path, objname, df = pytables_hdf5_file
         # This is a regression test for pandas-dev/pandas/issues/11188
         result = pd.read_hdf(path, key=objname, start=1, stop=2)
@@ -85,6 +100,9 @@ _legacy_files = list(Path(__file__).parent.parent.glob("data/legacy_hdf/*/*.h5")
 
 @pytest.mark.parametrize("legacy_file", _legacy_files, ids=lambda x: x.name)
 def test_legacy_files(datapath, legacy_file, using_infer_string, request):
+    # [FUNCTION DOC]
+    # Parametrized over every legacy HDF file found (ids are the file names). The directory name gives the pandas version that wrote the file. Reads the file with read_hdf and compares to the all-types test frame generator output. Fixed-format files lack the integer categorical column, so it is dropped from the expectation. Files for older numpy are skipped for fixed-format files when numpy is older than two (pickled object columns cannot be loaded). For files written before version 2.2 (or before 3.0 for fixed format) timedelta columns were stored incorrectly in nanoseconds: asserts the columns differ from expected, then drops them from both before comparing; for files before 2.2 the same is done for the non-nanosecond datetime columns. Remaining columns must match exactly.
+    # KNOWN ISSUE: a large commented-out block of conversions for the infer-string setting remains in the body, so the infer-string and request fixtures are accepted but unused.
     legacy_version = Version(legacy_file.parent.name)
     legacy_file = datapath(legacy_file)
 

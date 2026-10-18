@@ -2,6 +2,10 @@
 Tests the TextReader class in parsers.pyx, which
 is integral to the C engine in parsers.py
 """
+# [MODULE DOC]
+# Tests for the low-level compiled TextReader class that powers the C parser engine, plus a few read_csv/TextFileReader behaviors it underlies.
+# Module-level state: a dictionary of keyword arguments supplying empty sets for the missing-value options, because the reader's constructor defaults them to none while production code always passes sets or dicts; every direct TextReader construction in this file spreads it in.
+# Contents: one test class, and a module-level helper that compares dictionaries of arrays.
 
 from io import (
     BytesIO,
@@ -32,22 +36,33 @@ _na_value_kwargs: dict[str, set] = {"na_values": set(), "na_fvalues": set()}
 
 
 class TestTextReader:
+    # [CLASS DOC]
+    # Tests that construct TextReader directly on small in-memory or on-disk inputs and inspect the arrays returned by its read method (a mapping from column position to numpy array), plus tokenizer-level behaviors (quoting, escapes, thousands, decimals, bad lines, carriage-return line ends, dtypes, usecols).
     @pytest.fixture
     def csv_path(self, datapath):
+        # [FUNCTION DOC]
+        # Fixture (method on the class) returning the path of the bundled test1.csv data file via the datapath fixture.
         return datapath("io", "data", "csv", "test1.csv")
 
     def test_file_handle(self, csv_path):
+        # [FUNCTION DOC]
+        # Constructs a TextReader on an open binary file handle and reads it; passes if no exception is raised.
         with open(csv_path, "rb") as f:
             reader = TextReader(f, **_na_value_kwargs)
             reader.read()
 
     def test_file_handle_mmap(self, csv_path):
+        # [FUNCTION DOC]
+        # Constructs a TextReader with no header on an open binary file handle and reads it; passes if no exception is raised.
+        # KNOWN ISSUE: the inline note says this was never using memory mapping, and the body indeed opens a plain handle, so the test name does not describe what is exercised.
         # this was never using memory_map=True
         with open(csv_path, "rb") as f:
             reader = TextReader(f, header=None, **_na_value_kwargs)
             reader.read()
 
     def test_StringIO(self, csv_path):
+        # [FUNCTION DOC]
+        # Reads the bundled file's bytes into an in-memory binary buffer, constructs a TextReader with no header on it and reads; passes if no exception is raised.
         with open(csv_path, "rb") as f:
             text = f.read()
         src = BytesIO(text)
@@ -55,6 +70,9 @@ class TestTextReader:
         reader.read()
 
     def test_encoding_mismatch_warning(self, csv_path):
+        # [FUNCTION DOC]
+        # GH-57954. Opens the bundled file as a text handle with UTF-8 encoding and calls read_csv with a latin1 encoding; asserts a value error whose message says latin1 differs from the handle's encoding.
+        # KNOWN ISSUE: the name says warning but the test asserts an exception.
         # GH-57954
         with open(csv_path, encoding="UTF-8") as f:
             msg = "latin1 is different from the encoding"
@@ -62,6 +80,8 @@ class TestTextReader:
                 read_csv(f, encoding="latin1")
 
     def test_string_factorize(self):
+        # [FUNCTION DOC]
+        # Reading a column of repeated strings with no header returns an object column in which equal strings share the same object, so only two distinct object identities exist for five rows.
         # should this be optional?
         data = "a\nb\na\nb\na"
         reader = TextReader(StringIO(data), header=None, **_na_value_kwargs)
@@ -69,6 +89,8 @@ class TestTextReader:
         assert len(set(map(id, result[0]))) == 2
 
     def test_skipinitialspace(self):
+        # [FUNCTION DOC]
+        # With skipinitialspace enabled, leading spaces after delimiters are dropped; asserts both columns equal object arrays of the stripped values.
         data = "a,   b\na,   b\na,   b\na,   b"
 
         reader = TextReader(
@@ -84,6 +106,8 @@ class TestTextReader:
         )
 
     def test_parse_booleans(self):
+        # [FUNCTION DOC]
+        # Reading a column of true/false words with no header produces a boolean dtype column.
         data = "True\nFalse\nTrue\nTrue"
 
         reader = TextReader(StringIO(data), header=None, **_na_value_kwargs)
@@ -92,6 +116,8 @@ class TestTextReader:
         assert result[0].dtype == np.bool_
 
     def test_delimit_whitespace(self):
+        # [FUNCTION DOC]
+        # With whitespace delimiting enabled (mixed spaces and tabs, some quoted fields), asserts two object columns with the unquoted values.
         data = 'a  b\na\t\t "b"\n"a"\t \t b'
 
         reader = TextReader(
@@ -107,6 +133,8 @@ class TestTextReader:
         )
 
     def test_embedded_newline(self):
+        # [FUNCTION DOC]
+        # A quoted field containing a newline is kept as one value; asserts the first column holds the three expected strings including the embedded newline.
         data = 'a\n"hello\nthere"\nthis'
 
         reader = TextReader(StringIO(data), header=None, **_na_value_kwargs)
@@ -116,6 +144,8 @@ class TestTextReader:
         tm.assert_numpy_array_equal(result[0], expected)
 
     def test_euro_decimal(self):
+        # [FUNCTION DOC]
+        # With a colon delimiter and comma as the decimal mark, asserts the column is parsed as floats approximately equal to the expected values.
         data = "12345,67\n345,678"
 
         reader = TextReader(
@@ -127,6 +157,8 @@ class TestTextReader:
         tm.assert_almost_equal(result[0], expected)
 
     def test_integer_thousands(self):
+        # [FUNCTION DOC]
+        # With a comma thousands separator and colon delimiter, asserts the column parses as 64-bit integers 123456 and 12500.
         data = "123,456\n12,500"
 
         reader = TextReader(
@@ -142,6 +174,8 @@ class TestTextReader:
         tm.assert_almost_equal(result[0], expected)
 
     def test_integer_thousands_alt(self):
+        # [FUNCTION DOC]
+        # Uses the higher-level TextFileReader with a period as the thousands separator and colon delimiter, reads, and asserts a one-column integer frame equals the expected values.
         data = "123.456\n12.500"
 
         reader = TextFileReader(
@@ -153,6 +187,8 @@ class TestTextReader:
         tm.assert_frame_equal(result, expected)
 
     def test_skip_bad_lines(self):
+        # [FUNCTION DOC]
+        # See issue 2430. Data has two rows with an extra field. Default behavior raises a parser error naming line four with three fields expected and four seen. With the on_bad_lines code for skip, asserts only the well-formed rows are returned as column arrays. With the code for warn, asserts a parser warning mentioning skipped lines is emitted while reading.
         # too many lines, see #2430 for why
         data = "a:b:c\nd:e:f\ng:h:i\nj:k:l:m\nl:m:n\no:p:q:r"
 
@@ -189,6 +225,8 @@ class TestTextReader:
             reader.read()
 
     def test_header_not_enough_lines(self):
+        # [FUNCTION DOC]
+        # With header row index two (after two junk lines), asserts the reader's header attribute is a list holding one list of the column names and the data read are three 64-bit integer columns of the two remaining rows.
         data = "skip this\nskip this\na,b,c\n1,2,3\n4,5,6"
 
         reader = TextReader(StringIO(data), delimiter=",", header=2, **_na_value_kwargs)
@@ -205,6 +243,8 @@ class TestTextReader:
         assert_array_dicts_equal(recs, expected)
 
     def test_escapechar(self):
+        # [FUNCTION DOC]
+        # With a backslash escape character and a comma delimiter, an escaped quote at the start of each field is retained literally; asserts one object column of three identical strings with the quote characters preserved.
         data = '\\"hello world"\n\\"hello world"\n\\"hello world"'
 
         reader = TextReader(
@@ -219,13 +259,21 @@ class TestTextReader:
         assert_array_dicts_equal(result, expected)
 
     def test_eof_has_eol(self):
+        # [FUNCTION DOC]
+        # Empty placeholder for end-of-file newline handling.
+        # KNOWN ISSUE: the body is a no-op, so nothing is verified.
         # handling of new line at EOF
         pass
 
     def test_na_substitution(self):
+        # [FUNCTION DOC]
+        # Empty placeholder for missing-value substitution.
+        # KNOWN ISSUE: the body is a no-op, so nothing is verified.
         pass
 
     def test_numpy_string_dtype(self):
+        # [FUNCTION DOC]
+        # Reads five rows of increasingly long strings plus an integer column using numpy-style dtype specifications. With a fixed-width five-byte string and 32-bit integer spec, asserts the dtypes and the string values. With a single four-byte string dtype for all columns, asserts values are truncated to four bytes and both columns have that dtype.
         data = """\
 a,1
 aa,2
@@ -234,6 +282,8 @@ aaaa,4
 aaaaa,5"""
 
         def _make_reader(**kwds):
+            # [FUNCTION DOC]
+            # HELPER: builds a TextReader over the enclosing test's data with comma delimiter and no header, extra keyword arguments passed through; if a dtype keyword is present it is first normalized to dtype objects using the C parser wrapper's conversion function.
             if "dtype" in kwds:
                 kwds["dtype"] = ensure_dtype_objs(kwds["dtype"])
             return TextReader(
@@ -257,6 +307,8 @@ aaaaa,5"""
         assert result[1].dtype == "S4"
 
     def test_pass_dtype(self):
+        # [FUNCTION DOC]
+        # Verifies different ways to specify per-column dtypes by name or position: strings (unsigned byte, one-byte string), numpy scalar types and object, and numpy dtype instances. Asserts the resulting arrays' dtypes (unsigned 8-bit and byte-string or object).
         data = """\
 one,two
 1,a
@@ -265,6 +317,8 @@ one,two
 4,d"""
 
         def _make_reader(**kwds):
+            # [FUNCTION DOC]
+            # HELPER: builds a TextReader over the enclosing test's data with comma delimiter, normalizing a dtype keyword to dtype objects first, and passing other keywords through.
             if "dtype" in kwds:
                 kwds["dtype"] = ensure_dtype_objs(kwds["dtype"])
             return TextReader(StringIO(data), delimiter=",", **kwds, **_na_value_kwargs)
@@ -285,6 +339,8 @@ one,two
         assert result[1].dtype == "O"
 
     def test_usecols(self):
+        # [FUNCTION DOC]
+        # Selecting columns one and two of a four-row, three-column file with the reader's usecols returns a mapping of just those two columns whose values equal the same columns from an unrestricted read.
         data = """\
 a,b,c
 1,2,3
@@ -293,6 +349,8 @@ a,b,c
 10,11,12"""
 
         def _make_reader(**kwds):
+            # [FUNCTION DOC]
+            # HELPER: builds a TextReader over the enclosing test's data with comma delimiter and any extra keyword arguments.
             return TextReader(StringIO(data), delimiter=",", **kwds, **_na_value_kwargs)
 
         reader = _make_reader(usecols=(1, 2))
@@ -325,12 +383,16 @@ a,b,c
         ],
     )
     def test_cr_delimited(self, text, kwargs):
+        # [FUNCTION DOC]
+        # Parametrized over several inputs that use bare carriage returns as row ends (comma and whitespace delimited, with empty and short fields). Asserts reading the text is identical to reading the same text with carriage-return-line-feed row ends.
         nice_text = text.replace("\r", "\r\n")
         result = TextReader(StringIO(text), **kwargs, **_na_value_kwargs).read()
         expected = TextReader(StringIO(nice_text), **kwargs, **_na_value_kwargs).read()
         assert_array_dicts_equal(result, expected)
 
     def test_empty_field_eof(self):
+        # [FUNCTION DOC]
+        # Rows ending in empty fields at end of input: asserts the first column is integer and the other two are object columns with empty strings for the missing last values.
         data = "a,b,c\n1,2,3\n4,,"
 
         result = TextReader(StringIO(data), delimiter=",", **_na_value_kwargs).read()
@@ -344,6 +406,8 @@ a,b,c
 
     @pytest.mark.parametrize("repeat", range(10))
     def test_empty_field_eof_mem_access_bug(self, repeat):
+        # [FUNCTION DOC]
+        # GH5664. Parametrized with a repeat index of ten so the same case runs repeatedly to catch non-deterministic memory-access errors. Using read_csv with the C engine on three odd inputs (a short last row, trailing blank lines, ragged rows), asserts frames equal the expected ones with missing values filled and the expected indexes.
         # GH5664
         a = DataFrame([["b"], [np.nan]], columns=["a"], index=["a", "c"])
         b = DataFrame([[1, 1, 1, 0], [1, 1, 1, 0]], columns=list("abcd"), index=[1, 1])
@@ -374,6 +438,8 @@ a,b,c
         tm.assert_frame_equal(df, c)
 
     def test_empty_csv_input(self):
+        # [FUNCTION DOC]
+        # GH14867. read_csv on an empty text stream with chunk size twenty returns a reader that, used as a context manager, is a text file reader instance.
         # GH14867
         with read_csv(
             StringIO(), chunksize=20, header=None, names=["a", "b", "c"]
@@ -382,5 +448,7 @@ a,b,c
 
 
 def assert_array_dicts_equal(left, right):
+    # [FUNCTION DOC]
+    # HELPER: asserts that for every key in the left mapping, the corresponding arrays in left and right are equal (after converting to numpy arrays). Keys only present in the right mapping are not checked.
     for k, v in left.items():
         tm.assert_numpy_array_equal(np.asarray(v), np.asarray(right[k]))

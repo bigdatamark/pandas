@@ -1,3 +1,5 @@
+# [MODULE DOC]
+# Tests that complex-valued data (64- and 128-bit) round-trips through HDF5 in fixed and table formats, in mixed-dtype frames, series and frames, and with appends; and that indexing complex columns as data columns is rejected with a clear error. Uses the temp_h5_path and temp_hdfstore fixtures and read_hdf.
 import numpy as np
 import pytest
 
@@ -12,6 +14,8 @@ from pandas.io.pytables import read_hdf
 
 
 def test_complex_fixed(temp_h5_path):
+    # [FUNCTION DOC]
+    # Writes a random 4 by 5 complex64 frame, then a complex128 frame, in fixed format to the same key (default mode), rereads each and asserts equality.
     df = DataFrame(
         np.random.default_rng(2).random((4, 5)).astype(np.complex64),
         index=list("abcd"),
@@ -33,6 +37,8 @@ def test_complex_fixed(temp_h5_path):
 
 
 def test_complex_table(temp_h5_path):
+    # [FUNCTION DOC]
+    # Same as the fixed test but in table format; the second write uses write mode to replace the file. Asserts both round trips.
     df = DataFrame(
         np.random.default_rng(2).random((4, 5)).astype(np.complex64),
         index=list("abcd"),
@@ -55,6 +61,8 @@ def test_complex_table(temp_h5_path):
 
 
 def test_complex_mixed_fixed(temp_h5_path):
+    # [FUNCTION DOC]
+    # Frame with integer, string, complex64, complex128 and float columns written in fixed format; asserts round trip.
     complex64 = np.array(
         [1.0 + 1.0j, 1.0 + 1.0j, 1.0 + 1.0j, 1.0 + 1.0j], dtype=np.complex64
     )
@@ -80,6 +88,8 @@ def test_complex_mixed_fixed(temp_h5_path):
     "ignore:`alltrue` is deprecated as of NumPy 1.25.0:DeprecationWarning"
 )
 def test_complex_mixed_table_store_select(temp_hdfstore):
+    # [FUNCTION DOC]
+    # Appends the same mixed frame as a table with data columns A and B and selects with a condition on A; asserts the result equals the corresponding rows. A numpy deprecation warning about the old all-true function is ignored.
     complex64 = np.array(
         [1.0 + 1.0j, 1.0 + 1.0j, 1.0 + 1.0j, 1.0 + 1.0j], dtype=np.complex64
     )
@@ -106,6 +116,8 @@ def test_complex_mixed_table_store_select(temp_hdfstore):
     "ignore:`alltrue` is deprecated as of NumPy 1.25.0:DeprecationWarning"
 )
 def test_complex_mixed_table_store_to_path(temp_h5_path):
+    # [FUNCTION DOC]
+    # Writes the mixed frame in table format with to_hdf and rereads; asserts equality. Deprecation warning about the old all-true function is ignored.
     complex64 = np.array(
         [1.0 + 1.0j, 1.0 + 1.0j, 1.0 + 1.0j, 1.0 + 1.0j], dtype=np.complex64
     )
@@ -129,6 +141,8 @@ def test_complex_mixed_table_store_to_path(temp_h5_path):
 
 
 def test_complex_across_dimensions_fixed(temp_h5_path):
+    # [FUNCTION DOC]
+    # A complex series and a two-column complex frame are each written in fixed format and reread; asserts equality using the series or frame comparator respectively.
     complex128 = np.array([1.0 + 1.0j, 1.0 + 1.0j, 1.0 + 1.0j, 1.0 + 1.0j])
     s = Series(complex128, index=list("abcd"))
     df = DataFrame({"A": s, "B": s})
@@ -142,6 +156,8 @@ def test_complex_across_dimensions_fixed(temp_h5_path):
 
 
 def test_complex_across_dimensions(temp_h5_path):
+    # [FUNCTION DOC]
+    # A two-column complex frame written in table format and reread; asserts equality.
     complex128 = np.array([1.0 + 1.0j, 1.0 + 1.0j, 1.0 + 1.0j, 1.0 + 1.0j])
     s = Series(complex128, index=list("abcd"))
     df = DataFrame({"A": s, "B": s})
@@ -152,6 +168,8 @@ def test_complex_across_dimensions(temp_h5_path):
 
 
 def test_complex_indexing_error(temp_hdfstore):
+    # [FUNCTION DOC]
+    # Appending a frame with a complex column listed as a data column raises a type error saying complex columns can be stored but not indexed in table format and suggesting alternatives.
     complex128 = np.array(
         [1.0 + 1.0j, 1.0 + 1.0j, 1.0 + 1.0j, 1.0 + 1.0j], dtype=np.complex128
     )
@@ -173,6 +191,8 @@ def test_complex_indexing_error(temp_hdfstore):
 
 
 def test_complex_series_error(temp_h5_path):
+    # [FUNCTION DOC]
+    # Writing a complex series in table format (short format code) raises the same type error about indexing complex values; writing it with index disabled succeeds and the series round-trips.
     complex128 = np.array([1.0 + 1.0j, 1.0 + 1.0j, 1.0 + 1.0j, 1.0 + 1.0j])
     s = Series(complex128, index=list("abcd"))
 
@@ -193,6 +213,8 @@ def test_complex_series_error(temp_h5_path):
 
 
 def test_complex_append(temp_hdfstore):
+    # [FUNCTION DOC]
+    # Appends a frame with a complex column and a float data column twice (second time without specifying data columns) and asserts the selected result equals the concatenation of the frame with itself.
     df = DataFrame(
         {
             "a": np.random.default_rng(2).standard_normal(100).astype(np.complex128),

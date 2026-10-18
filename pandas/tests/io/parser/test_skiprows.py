@@ -2,6 +2,8 @@
 Tests that skipped rows are properly handled during
 parsing for all of the parsers defined in parsers.py
 """
+# [MODULE DOC]
+# Tests of the skiprows option of read_csv across all parsers: integer, list and callable forms, interaction with quoted fields containing newlines, line terminators, nrows and chunked reading. The pyarrow engine is mostly expected to fail because it requires integer skiprows. Module-level filter ignores the BlockManager deprecation warning.
 
 from datetime import datetime
 from io import StringIO
@@ -26,6 +28,8 @@ pytestmark = pytest.mark.filterwarnings(
 @xfail_pyarrow  # ValueError: skiprows argument must be an integer
 @pytest.mark.parametrize("skiprows", [list(range(6)), 6])
 def test_skip_rows_bug(all_parsers, skiprows):
+    # [FUNCTION DOC]
+    # See gh-505. Parametrized over an integer count and an explicit list of the first six row positions: skipping six comment lines, then parsing with no header, first column as a date index, yields a three-row float frame with a microsecond datetime index named zero.
     # see gh-505
     parser = all_parsers
     text = """#foo,a,b,c
@@ -55,6 +59,8 @@ def test_skip_rows_bug(all_parsers, skiprows):
 
 @xfail_pyarrow  # ValueError: skiprows argument must be an integer
 def test_deep_skip_rows(all_parsers):
+    # [FUNCTION DOC]
+    # See gh-4382. Skipping rows six and eight of ten data rows gives the same frame as reading data that was built without those rows.
     # see gh-4382
     parser = all_parsers
     data = "a,b,c\n" + "\n".join(
@@ -71,6 +77,8 @@ def test_deep_skip_rows(all_parsers):
 
 @xfail_pyarrow  # AssertionError: DataFrame are different
 def test_skip_rows_blank(all_parsers):
+    # [FUNCTION DOC]
+    # See gh-9832. Skipping the first six physical lines (including blank lines inside the comment block) leaves only the three data rows, parsed with a datetime index named zero.
     # see gh-9832
     parser = all_parsers
     text = """#foo,a,b,c
@@ -133,6 +141,8 @@ line 22",2
 )
 @xfail_pyarrow  # ValueError: skiprows argument must be an integer
 def test_skip_row_with_newline(all_parsers, data, kwargs, expected):
+    # [FUNCTION DOC]
+    # See gh-12775 and gh-10911. Parametrized over three inputs where quoted fields contain embedded newlines (default quote, and a tilde quote character) with different skiprows lists. Asserts that skipping counts logical records rather than physical lines, so the expected record(s) remain with embedded newlines intact.
     # see gh-12775 and gh-10911
     parser = all_parsers
     result = parser.read_csv(StringIO(data), **kwargs)
@@ -141,6 +151,8 @@ def test_skip_row_with_newline(all_parsers, data, kwargs, expected):
 
 @xfail_pyarrow  # ValueError: skiprows argument must be an integer
 def test_skip_row_with_quote(all_parsers):
+    # [FUNCTION DOC]
+    # See gh-12775 and gh-10911. Skips the first data record when fields contain single quotes inside double-quoted text; asserts the remaining two records.
     # see gh-12775 and gh-10911
     parser = all_parsers
     data = """id,text,num_lines
@@ -183,6 +195,8 @@ def test_skip_row_with_quote(all_parsers):
 )
 @xfail_pyarrow  # ValueError: skiprows argument must be an integer
 def test_skip_row_with_newline_and_quote(all_parsers, data, exp_data):
+    # [FUNCTION DOC]
+    # See gh-12775 and gh-10911. Parametrized over three inputs with combinations of embedded newline, single quotes, carriage return and tab; skipping the first record leaves the last two with their original text.
     # see gh-12775 and gh-10911
     parser = all_parsers
     result = parser.read_csv(StringIO(data), skiprows=[1])
@@ -197,6 +211,8 @@ def test_skip_row_with_newline_and_quote(all_parsers, data, exp_data):
     ["\n", "\r\n", "\r"],  # "LF"  # "CRLF"  # "CR"
 )
 def test_skiprows_lineterminator(all_parsers, lineterminator, request):
+    # [FUNCTION DOC]
+    # See gh-9079. Parametrized over line feed, CRLF and carriage-return terminators: whitespace-separated data with a one-line header skipped and given column names parses to a three-row frame. The python engine with a bare carriage-return is marked as an expected failure. The pyarrow engine is expected to fail (no regex separators).
     # see gh-9079
     parser = all_parsers
     data = "\n".join(
@@ -233,6 +249,8 @@ def test_skiprows_lineterminator(all_parsers, lineterminator, request):
 
 @xfail_pyarrow  # AssertionError: DataFrame are different
 def test_skiprows_infield_quote(all_parsers):
+    # [FUNCTION DOC]
+    # See gh-14459. Skipping two lines where the skipped lines contain unbalanced quote characters yields a single-column frame with the one remaining value. Expected to fail on pyarrow.
     # see gh-14459
     parser = all_parsers
     data = 'a"\nb"\na\n1'
@@ -251,6 +269,8 @@ def test_skiprows_infield_quote(all_parsers):
     ],
 )
 def test_skip_rows_callable(all_parsers, kwargs, expected):
+    # [FUNCTION DOC]
+    # Parametrized over default header handling and an explicit header plus single name. A predicate skipping even row numbers leaves the odd data rows, so asserts the values three and five under a column named either "1" or the supplied name.
     parser = all_parsers
     data = "a\n1\n2\n3\n4\n5"
 
@@ -261,6 +281,8 @@ def test_skip_rows_callable(all_parsers, kwargs, expected):
 
 @xfail_pyarrow  # ValueError: skiprows argument must be an integer
 def test_skip_rows_callable_not_in(all_parsers):
+    # [FUNCTION DOC]
+    # A predicate that skips every row not in a given set (rows one and three), with no header, yields two rows holding those records.
     parser = all_parsers
     data = "0,a\n1,b\n2,c\n3,d\n4,e"
     expected = DataFrame([[1, "b"], [3, "d"]])
@@ -273,6 +295,8 @@ def test_skip_rows_callable_not_in(all_parsers):
 
 @xfail_pyarrow  # ValueError: skiprows argument must be an integer
 def test_skip_rows_skip_all(all_parsers):
+    # [FUNCTION DOC]
+    # A predicate that skips every row makes read_csv raise an empty-data error saying there are no columns to parse.
     parser = all_parsers
     data = "a\n1\n2\n3\n4\n5"
     msg = "No columns to parse from file"
@@ -283,6 +307,8 @@ def test_skip_rows_skip_all(all_parsers):
 
 @xfail_pyarrow  # ValueError: skiprows argument must be an integer
 def test_skip_rows_bad_callable(all_parsers):
+    # [FUNCTION DOC]
+    # A predicate that raises division by zero has its exception propagate unchanged out of read_csv.
     msg = "by zero"
     parser = all_parsers
     data = "a\n1\n2\n3\n4\n5"
@@ -293,6 +319,8 @@ def test_skip_rows_bad_callable(all_parsers):
 
 @xfail_pyarrow  # ValueError: skiprows argument must be an integer
 def test_skip_rows_and_n_rows(all_parsers):
+    # [FUNCTION DOC]
+    # GH#44021. Skipping three specific rows while limiting nrows to five returns five rows counted after skipping, i.e. the rows that remain, not the first five physical rows.
     # GH#44021
     data = """a,b
 1,a
@@ -312,6 +340,9 @@ def test_skip_rows_and_n_rows(all_parsers):
 
 @xfail_pyarrow
 def test_skip_rows_with_chunks(all_parsers):
+    # [FUNCTION DOC]
+    # GH 55677. Reads in chunks of four rows with a predicate skipping three rows; asserts the first chunk has four values and the second chunk the remaining three values with the continued index.
+    # KNOWN ISSUE: the call passes the parser helper object itself as the engine argument; the helper's wrapper overrides the engine keyword with its own engine name, so this argument has no effect.
     # GH 55677
     data = """col_a
 10

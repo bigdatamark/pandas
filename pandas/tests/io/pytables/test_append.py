@@ -1,3 +1,6 @@
+# [MODULE DOC]
+# Tests for appending to HDF5 tables through HDFStore.append, covering table format creation, mixed dtypes, nan handling and dropna, string sizing (min_itemsize), data columns and queries on them, chunk sizes, error messages for invalid appends, timedeltas, and the multi-table helpers append_to_multiple and select_as_multiple.
+# Import-time behavior: the module is marked single_cpu and is skipped if the tables library is not installed. Tests use the temp_hdfstore fixture (an open store on a temp file).
 import datetime
 from datetime import timedelta
 import re
@@ -26,6 +29,8 @@ tables = pytest.importorskip("tables")
 
 @pytest.mark.filterwarnings("ignore::tables.NaturalNameWarning")
 def test_append(temp_hdfstore):
+    # [FUNCTION DOC]
+    # Appends a frame in two halves to a new table key, to an existing fixed-to-table key (put in table format then append), to a key with a leading slash, and to a key containing a space (natural-name warnings ignored); asserts the retrieved frame equals the original each time. Also appends a frame with a mixed-type object column containing a missing value, and frames of 8-, 16-, 32- and 64-bit unsigned integers, both plain and with the first three as data columns after removal, asserting round trip.
     # this is allowed by almost always don't want to do it
     # tables.NaturalNameWarning):
     df = DataFrame(
@@ -91,6 +96,8 @@ def test_append(temp_hdfstore):
 
 
 def test_append_series(temp_hdfstore):
+    # [FUNCTION DOC]
+    # Appends series with string, datetime and default integer indexes (named and unnamed), asserting equality and that the name round-trips. Selects by value condition and by combined value/index condition (RangeIndex converted to plain index in the expectation since RangeIndex info is not stored), then appends a series with a two-level index created by stacking and asserts round trip.
     # basic
     ss = Series(range(20), dtype=np.float64, index=[f"i_{i}" for i in range(20)])
     ts = Series(
@@ -139,6 +146,8 @@ def test_append_series(temp_hdfstore):
 
 
 def test_append_some_nans(temp_hdfstore):
+    # [FUNCTION DOC]
+    # Frame with int, float, string and datetime columns and some missing values, appended in two halves; asserts round trip. Repeats with the first float column, a second float column, and a datetime column entirely missing.
     df = DataFrame(
         {
             "A": Series(np.random.default_rng(2).standard_normal(20)).astype("int32"),
@@ -181,6 +190,9 @@ def test_append_some_nans(temp_hdfstore):
 
 
 def test_append_all_nans(temp_hdfstore, using_infer_string):
+    # [FUNCTION DOC]
+    # Appends frames whose first sixteen rows are entirely missing. With dropna true the all-missing rows are dropped (only the last four remain); with dropna false all rows are kept. Also checks the io.hdf.dropna_table option for both settings. Within the dropna_table true block, further frames with string columns or with datetime columns show rows that still contain strings or dates are written.
+    # KNOWN ISSUE: a TODO in the code states the string-column case is incorrect when the infer-string mode is off (the expectation should always take the last four rows unconditionally); the expectation is currently only trimmed when infer-string is on.
     df = DataFrame(
         {
             "A1": np.random.default_rng(2).standard_normal(20),
@@ -268,6 +280,8 @@ def test_append_all_nans(temp_hdfstore, using_infer_string):
 
 
 def test_append_frame_column_oriented(temp_hdfstore, request):
+    # [FUNCTION DOC]
+    # Appends columns in two steps using the columns axis; asserts round trip and selecting by column. Selecting with a row-based condition on the non-indexable axis is expected to fail with a value error on Python 3.12 or later (AST change; marked xfail via the request fixture). Also asserts a type error stating that a filterable condition cannot be passed to a non-table indexer when combining a column condition with an index condition.
     # column oriented
     df = DataFrame(
         np.random.default_rng(2).standard_normal((10, 4)),
@@ -306,6 +320,8 @@ def test_append_frame_column_oriented(temp_hdfstore, request):
 
 
 def test_append_with_different_block_ordering(temp_hdfstore):
+    # [FUNCTION DOC]
+    # GH 4096. Appends ten frames with the same columns but differing internal block ordering (dropped and re-added columns, moved column) and a shifting index; passes if no exception is raised. Then removes the table, appends a fresh frame, and asserts value errors when an additional column of an existing dtype (cannot match existing table structure for the int16 field) or several additional columns (cannot match structure for A,B) are appended.
     # GH 4096; using same frames, but different block orderings
     for i in range(10):
         df = DataFrame(
@@ -355,7 +371,11 @@ def test_append_with_different_block_ordering(temp_hdfstore):
 
 
 def test_append_with_strings(temp_hdfstore):
+    # [FUNCTION DOC]
+    # Checks string column sizing. A nested helper compares the on-disk itemsize of a column. Asserts string columns are sized to the longest value (15), that appending shorter strings keeps that size, that min_itemsize for values sets the block size (50), and that appending a longer string raises a value error recommending min_itemsize. Also covers min_itemsize on a series index (GH 11412), with data columns, and when putting in table format then appending a longer index value (GH 10381), including series. Finally a frame with several string columns containing missing values round-trips.
     def check_col(key, name, size):
+        # [FUNCTION DOC]
+        # HELPER: asserts that the named column of the stored table for the given key has the given item size in bytes. Parameters: key (store key), name (column name in the table description), size (expected item size). Returns nothing; reads from the enclosing test's store.
         assert (
             getattr(temp_hdfstore.get_storer(key).table.description, name).itemsize
             == size
@@ -439,7 +459,11 @@ def test_append_with_strings(temp_hdfstore):
 
 
 def test_append_with_strings2(temp_hdfstore):
+    # [FUNCTION DOC]
+    # Checks that min_itemsize on a column name makes it a data column (200 bytes, data_columns equal to that name), that it is added after explicitly given data columns, that min_itemsize for values applies to block and data column sizes, that an integer min_itemsize is accepted on repeated appends, and that unknown min_itemsize keys raise a value error naming the key that is not an axis or data column.
     def check_col(key, name, size):
+        # [FUNCTION DOC]
+        # HELPER: asserts that the named column of the stored table for the given key has the given item size in bytes. Parameters: key (store key), name (column name in the table description), size (expected item size). Returns nothing; reads from the enclosing test's store.
         assert (
             getattr(temp_hdfstore.get_storer(key).table.description, name).itemsize
             == size
@@ -482,6 +506,8 @@ def test_append_with_strings2(temp_hdfstore):
 
 
 def test_append_with_empty_string(temp_hdfstore):
+    # [FUNCTION DOC]
+    # GH 12242. Appends frames containing a single-byte string column with an empty string as the final value in a second append; asserts the full frame round-trips.
     # with all empty strings (GH 12242)
     df = DataFrame({"x": ["a", "b", "c", "d", "e", "f", ""]})
     temp_hdfstore.append("df", df[:-1], min_itemsize={"x": 1})
@@ -490,6 +516,9 @@ def test_append_with_empty_string(temp_hdfstore):
 
 
 def test_append_with_data_columns(temp_hdfstore):
+    # [FUNCTION DOC]
+    # Extensive data column checks: appending with a data column creates indexes on the index and that column; selecting by value, by value and index condition, by string equality; min_itemsize forms (dict by name, integer, by values) sizing the string data column and block columns; multiple data columns combined in one query; an empty result; and the documentation examples for data columns with several column types, including list queries and quoted strings.
+    # KNOWN ISSUE: two inline FIXME notes record that the frequency check is disabled (check_freq false) in two assertions because it fails intermittently in CI.
     df = DataFrame(
         np.random.default_rng(2).standard_normal((10, 4)),
         columns=Index(list("ABCD")),
@@ -528,6 +557,8 @@ def test_append_with_data_columns(temp_hdfstore):
 
     # using min_itemsize and a data column
     def check_col(key, name, size):
+        # [FUNCTION DOC]
+        # HELPER: asserts that the named column of the stored table for the given key has the given item size in bytes. Parameters: key (store key), name (column name in the table description), size (expected item size). Returns nothing; reads from the enclosing test's store.
         assert (
             getattr(temp_hdfstore.get_storer(key).table.description, name).itemsize
             == size
@@ -645,6 +676,8 @@ def test_append_with_data_columns(temp_hdfstore):
 
 
 def test_append_hierarchical(temp_hdfstore, multiindex_dataframe_random_data):
+    # [FUNCTION DOC]
+    # Uses the multi-index frame fixture with unnamed columns. Appends and selects it (full and with column subset, GH 3748), and writes it with to_hdf in table format then reads back selected columns with read_hdf; asserts the expected frames.
     df = multiindex_dataframe_random_data
     df.columns.name = None
 
@@ -664,6 +697,8 @@ def test_append_hierarchical(temp_hdfstore, multiindex_dataframe_random_data):
 
 
 def test_append_misc(temp_hdfstore):
+    # [FUNCTION DOC]
+    # Appends a thirty-row frame with a chunk size of one row and with an expectedrows hint of ten; asserts both round-trip.
     df = DataFrame(
         1.1 * np.arange(120).reshape((30, 4)),
         columns=Index(list("ABCD")),
@@ -680,6 +715,8 @@ def test_append_misc(temp_hdfstore):
 
 @pytest.mark.parametrize("chunksize", [10, 200, 1000])
 def test_append_misc_chunksize(temp_hdfstore, chunksize):
+    # [FUNCTION DOC]
+    # Parametrized over chunk sizes ten, two hundred and one thousand. Appends a frame with float, string, 32-bit float, boolean and datetime columns using the chunk size; asserts round trip.
     # more chunksize in append tests
     df = DataFrame(
         1.1 * np.arange(120).reshape((30, 4)),
@@ -698,6 +735,8 @@ def test_append_misc_chunksize(temp_hdfstore, chunksize):
 
 
 def test_append_misc_empty_frame(temp_hdfstore):
+    # [FUNCTION DOC]
+    # GH4273. Appending a zero-length frame creates no object, so selecting raises a key error saying no object with that name; repeated appends of empty and non-empty frames keep the data; putting an empty frame stores and returns an empty frame.
     # empty frame, GH4273
     # 0 len
     df_empty = DataFrame(columns=list("ABC"))
@@ -719,6 +758,8 @@ def test_append_misc_empty_frame(temp_hdfstore):
 
 
 def test_append_raise(temp_hdfstore, using_infer_string):
+    # [FUNCTION DOC]
+    # Checks error messages on invalid appends: object columns holding lists (type error saying the contents are mixed rather than string, also with multiple invalid columns), an object column of datetimes with missing values (too many timezones), a numpy array (value must be none, series or frame), a series appended to a frame key, appending a frame with an additional column to an existing table (value error on incompatible non_index_axes), and appending strings to a column that was stored as datetimes (GH 41897).
     # test append with invalid input to get good error messages
 
     # list in column
@@ -802,6 +843,8 @@ because its data contents are not [string] but [mixed] object dtype"""
 
 
 def test_append_with_timedelta(temp_hdfstore, unit):
+    # [FUNCTION DOC]
+    # GH 3577. Appends a frame with a timedelta column (parametrized unit, some missing) as a table with data columns and selects with several timedelta-valued conditions (numeric, string forms); the NaT handling is acknowledged as hacky so some results are post-filtered. Also stores the frame in fixed format and round-trips it.
     # GH 3577
     # append timedelta
 
@@ -847,6 +890,8 @@ def test_append_with_timedelta(temp_hdfstore, unit):
 
 
 def test_append_to_multiple(temp_hdfstore):
+    # [FUNCTION DOC]
+    # Splits a combined frame into two tables with append_to_multiple (first table gets columns A and B, second the rest, selector first table). Asserts value errors when the selector is not among the table names or when the splitting spec is not a dictionary; then selects with select_as_multiple using conditions and asserts the rows matching.
     df1 = DataFrame(
         np.random.default_rng(2).standard_normal((10, 4)),
         columns=Index(list("ABCD")),
@@ -885,6 +930,8 @@ def test_append_to_multiple(temp_hdfstore):
 
 
 def test_append_to_multiple_dropna(temp_hdfstore):
+    # [FUNCTION DOC]
+    # With rows that contain missing values in the selector table's columns, append_to_multiple with dropna true keeps the tables synchronized: select_as_multiple returns the frame with missing rows dropped and both tables have the same index.
     df1 = DataFrame(
         np.random.default_rng(2).standard_normal((10, 4)),
         columns=Index(list("ABCD")),
@@ -911,6 +958,8 @@ def test_append_to_multiple_dropna(temp_hdfstore):
 
 
 def test_append_to_multiple_dropna_false(temp_hdfstore):
+    # [FUNCTION DOC]
+    # Within the dropna_table option set true, append_to_multiple with dropna false does not synchronize rows: selecting both tables together raises a value error that all tables must have the same number of rows, and their indexes differ.
     df1 = DataFrame(
         np.random.default_rng(2).standard_normal((10, 4)),
         columns=Index(list("ABCD")),
@@ -936,6 +985,8 @@ def test_append_to_multiple_dropna_false(temp_hdfstore):
 
 
 def test_append_to_multiple_min_itemsize(temp_hdfstore):
+    # [FUNCTION DOC]
+    # GH 11238. Appends a single row split across three tables with min_itemsize for several columns; asserts select_as_multiple returns the original row with a plain integer index.
     # GH 11238
     df = DataFrame(
         {
@@ -965,6 +1016,8 @@ def test_append_to_multiple_min_itemsize(temp_hdfstore):
 
 
 def test_append_string_nan_rep(temp_hdfstore):
+    # [FUNCTION DOC]
+    # GH 16300. Appending missing strings to a column too small for the nan representation, or to a column created with an oversized custom nan_rep, raises a value error about the NaN representation being too large; a smaller custom nan_rep allows the append and the concatenated series round-trips.
     # GH 16300
     df = DataFrame({"A": "a", "B": "foo"}, index=np.arange(10))
     df_nan = df.copy()

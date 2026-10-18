@@ -2,6 +2,8 @@
 Tests the usecols functionality during parsing
 for all of the parsers defined in parsers.py
 """
+# [MODULE DOC]
+# Tests of the usecols option combined with date parsing, across all parsers. Contains two tests and a shared pyarrow-specific error message constant (defined but not used in this module) plus xfail and skip markers.
 
 from io import StringIO
 
@@ -28,6 +30,8 @@ _msg_pyarrow_requires_names = (
 
 @skip_pyarrow  # pyarrow.lib.ArrowKeyError: Column 'fdate' in include_columns
 def test_usecols_with_parse_dates2(all_parsers):
+    # [FUNCTION DOC]
+    # See gh-13604. Reads headerless two-column data with explicit names, selecting all columns, parsing the first as dates and using it as the index. Asserts a frame indexed by named timestamps with the remaining values column. Skipped for pyarrow (column-not-found error).
     # see gh-13604
     parser = all_parsers
     data = """2008-02-07 09:40,1032.43
@@ -61,6 +65,8 @@ def test_usecols_with_parse_dates2(all_parsers):
 
 
 def test_usecols_with_parse_dates3(all_parsers):
+    # [FUNCTION DOC]
+    # See gh-14792. Reads a ten-column file with usecols naming every column and parsing the first column as a date; asserts the first column becomes a timestamp and the remaining are integer columns in the usecols order.
     # see gh-14792
     parser = all_parsers
     data = """a,b,c,d,e,f,g,h,i,j

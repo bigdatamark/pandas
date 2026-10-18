@@ -2,6 +2,10 @@
 Tests the usecols functionality during parsing
 for all of the parsers defined in parsers.py
 """
+# [MODULE DOC]
+# Core tests of the usecols option of read_csv across all parsers: validation of invalid forms, selection by name, position, callable, numpy array and set, interaction with names, header, index_col, regex separators and dtype, and error messages for missing columns.
+# Module-level constants: expected error message for invalid usecols argument, a format template for mismatched usecols names, the message for pyarrow rejecting integer positions, and xfail/skip markers for pyarrow.
+# KNOWN ISSUE: the module-level filter-warnings mark is assigned twice (the second assignment, with a longer message pattern, replaces the first), so only the second applies.
 
 from io import StringIO
 
@@ -43,6 +47,8 @@ pytestmark = pytest.mark.filterwarnings(
 
 
 def test_raise_on_mixed_dtype_usecols(all_parsers):
+    # [FUNCTION DOC]
+    # See gh-12678. usecols mixing an integer and a string raises a value error with the invalid-argument message.
     # See gh-12678
     data = """a,b,c
         1000,2000,3000
@@ -57,6 +63,8 @@ def test_raise_on_mixed_dtype_usecols(all_parsers):
 
 @pytest.mark.parametrize("usecols", [(1, 2), ("b", "c")])
 def test_usecols(all_parsers, usecols, request):
+    # [FUNCTION DOC]
+    # Parametrized over positional (one, two) and name-based usecols. Asserts a frame containing only the two selected columns. For pyarrow with integer positions, instead asserts a value error that integer positions are not allowed, then returns.
     data = """\
 a,b,c
 1,2,3
@@ -76,6 +84,8 @@ a,b,c
 
 
 def test_usecols_with_names(all_parsers):
+    # [FUNCTION DOC]
+    # Header row 0 is replaced by two supplied names while usecols picks positions one and two; asserts the resulting columns carry the supplied names. For pyarrow asserts the integer-position value error instead.
     data = """\
 a,b,c
 1,2,3
@@ -100,6 +110,8 @@ a,b,c
     "names,usecols", [(["b", "c"], [1, 2]), (["a", "b", "c"], ["b", "c"])]
 )
 def test_usecols_relative_to_names(all_parsers, names, usecols):
+    # [FUNCTION DOC]
+    # Parametrized over (names, usecols) pairs: two names with positional usecols, and three names with name-based usecols. With no header, asserts the selected columns b and c. Name-based selection is skipped on pyarrow (upstream key error).
     data = """\
 1,2,3
 4,5,6
@@ -117,6 +129,8 @@ def test_usecols_relative_to_names(all_parsers, names, usecols):
 
 
 def test_usecols_relative_to_names2(all_parsers):
+    # [FUNCTION DOC]
+    # See gh-5766. Two supplied names, no header, usecols positions zero and one; asserts first two columns returned with those names.
     # see gh-5766
     data = """\
 1,2,3
@@ -136,6 +150,8 @@ def test_usecols_relative_to_names2(all_parsers):
 # regex mismatch: "Length mismatch: Expected axis has 1 elements"
 @xfail_pyarrow
 def test_usecols_name_length_conflict(all_parsers):
+    # [FUNCTION DOC]
+    # Supplying two names with a single usecols entry on three-column data raises a value error that the number of passed names did not match the number of header fields. Expected to fail on pyarrow (message mismatch).
     data = """\
 1,2,3
 4,5,6
@@ -148,6 +164,8 @@ def test_usecols_name_length_conflict(all_parsers):
 
 
 def test_usecols_single_string(all_parsers):
+    # [FUNCTION DOC]
+    # See gh-20558. A plain string for usecols (not a list) raises a value error with the invalid-argument message.
     # see gh-20558
     parser = all_parsers
     data = """foo, bar, baz
@@ -164,6 +182,8 @@ def test_usecols_single_string(all_parsers):
     "data", ["a,b,c,d\n1,2,3,4\n5,6,7,8", "a,b,c,d\n1,2,3,4,\n5,6,7,8,"]
 )
 def test_usecols_index_col_false(all_parsers, data):
+    # [FUNCTION DOC]
+    # See gh-9082. Parametrized over data with and without trailing delimiters. With index_col disabled and three named columns selected, asserts those columns are returned with a default integer index. Skipped on pyarrow.
     # see gh-9082
     parser = all_parsers
     usecols = ["a", "c", "d"]
@@ -176,6 +196,8 @@ def test_usecols_index_col_false(all_parsers, data):
 @pytest.mark.parametrize("index_col", ["b", 0])
 @pytest.mark.parametrize("usecols", [["b", "c"], [1, 2]])
 def test_usecols_index_col_conflict(all_parsers, usecols, index_col, request):
+    # [FUNCTION DOC]
+    # See gh-4201. Parametrized over name/position usecols and index_col given by name or position. Asserts the column b becomes the index and only column c remains, i.e. integer index_col is interpreted relative to usecols. For pyarrow with integer positions asserts the position-related value error.
     # see gh-4201: test that index_col as integer reflects usecols
     parser = all_parsers
     data = "a,b,c,d\nA,a,1,one\nB,b,2,two"
@@ -192,6 +214,8 @@ def test_usecols_index_col_conflict(all_parsers, usecols, index_col, request):
 
 
 def test_usecols_index_col_conflict2(all_parsers):
+    # [FUNCTION DOC]
+    # See gh-4201. usecols of three names with a two-column index_col list produces a frame indexed by a multi-index of columns b and c with column d remaining.
     # see gh-4201: test that index_col as integer reflects usecols
     parser = all_parsers
     data = "a,b,c,d\nA,a,1,one\nB,b,2,two"
@@ -207,6 +231,8 @@ def test_usecols_index_col_conflict2(all_parsers):
 
 @skip_pyarrow  # CSV parse error: Expected 3 columns, got 4
 def test_usecols_implicit_index_col(all_parsers):
+    # [FUNCTION DOC]
+    # See gh-2654. Rows have more fields than the header, so the leading field becomes an implicit index; selecting two names returns those columns indexed by the first values. Skipped on pyarrow.
     # see gh-2654
     parser = all_parsers
     data = "a,b,c\n4,apple,bat,5.7\n8,orange,cow,10"
@@ -217,6 +243,8 @@ def test_usecols_implicit_index_col(all_parsers):
 
 
 def test_usecols_index_col_middle(all_parsers):
+    # [FUNCTION DOC]
+    # GH#9098. index_col naming a middle column among the selected columns yields that column as the named index and the other selected columns as data.
     # GH#9098
     parser = all_parsers
     data = """a,b,c,d
@@ -228,6 +256,8 @@ def test_usecols_index_col_middle(all_parsers):
 
 
 def test_usecols_index_col_end(all_parsers):
+    # [FUNCTION DOC]
+    # GH#9098. Same as the middle case but index_col names the last selected column.
     # GH#9098
     parser = all_parsers
     data = """a,b,c,d
@@ -239,6 +269,8 @@ def test_usecols_index_col_end(all_parsers):
 
 
 def test_usecols_regex_sep(all_parsers):
+    # [FUNCTION DOC]
+    # See gh-2733. With a whitespace regex separator and two names selected, asserts the selected columns with an implicit index from the first field. For pyarrow asserts a value error that regex separators are unsupported.
     # see gh-2733
     parser = all_parsers
     data = "a  b  c\n4  apple  bat  5.7\n8  orange  cow  10"
@@ -257,6 +289,8 @@ def test_usecols_regex_sep(all_parsers):
 
 @skip_pyarrow  # Column 'a' in include_columns does not exist in CSV file
 def test_usecols_with_whitespace(all_parsers):
+    # [FUNCTION DOC]
+    # Whitespace-separated data parsed with a regex separator and a tuple of names for usecols returns the two selected columns with an implicit index. Skipped on pyarrow.
     parser = all_parsers
     data = "a  b  c\n4  apple  bat  5.7\n8  orange  cow  10"
 
@@ -278,6 +312,8 @@ def test_usecols_with_whitespace(all_parsers):
     ],
 )
 def test_usecols_with_integer_like_header(all_parsers, usecols, expected, request):
+    # [FUNCTION DOC]
+    # Parametrized over positional usecols and name-based usecols on a header consisting of numeric strings. Positional selection returns columns named "2" and "0"; name-based selection returns columns "0" and "1". For pyarrow with integer positions asserts the position value error.
     parser = all_parsers
     data = """2,0,1
 1000,2000,3000
@@ -294,6 +330,8 @@ def test_usecols_with_integer_like_header(all_parsers, usecols, expected, reques
 
 @xfail_pyarrow  # mismatched shape
 def test_empty_usecols(all_parsers):
+    # [FUNCTION DOC]
+    # An empty set for usecols returns an empty frame with an empty column index. Expected to fail on pyarrow (shape mismatch).
     data = "a,b,c\n1,2,3\n4,5,6"
     expected = DataFrame(columns=Index([]))
     parser = all_parsers
@@ -303,6 +341,8 @@ def test_empty_usecols(all_parsers):
 
 
 def test_np_array_usecols(all_parsers):
+    # [FUNCTION DOC]
+    # See gh-12546. A numpy array of names is accepted as usecols and selects those columns.
     # see gh-12546
     parser = all_parsers
     data = "a,b,c\n1,2,3"
@@ -334,6 +374,8 @@ def test_np_array_usecols(all_parsers):
     ],
 )
 def test_callable_usecols(all_parsers, usecols, expected):
+    # [FUNCTION DOC]
+    # See gh-14154. Parametrized over a case-insensitive name predicate (selects three of four columns, preserving original header case) and a predicate that rejects everything (empty frame). For pyarrow asserts a value error that callable usecols are not allowed.
     # see gh-14154
     data = """AaA,bBb,CCC,ddd
 0.056674973,8,True,a
@@ -355,6 +397,8 @@ def test_callable_usecols(all_parsers, usecols, expected):
 @skip_pyarrow
 @pytest.mark.parametrize("usecols", [["a", "c"], lambda x: x in ["a", "c"]])
 def test_incomplete_first_row(all_parsers, usecols):
+    # [FUNCTION DOC]
+    # See gh-6710. Parametrized over a name list and an equivalent predicate; with three names given and a short first row, asserts the selected columns a and c with missing values filled for the short row. Skipped on pyarrow.
     # see gh-6710
     data = "1,2\n1,2,3"
     parser = all_parsers
@@ -390,6 +434,8 @@ def test_incomplete_first_row(all_parsers, usecols):
     ],
 )
 def test_uneven_length_cols(all_parsers, data, usecols, kwargs, expected):
+    # [FUNCTION DOC]
+    # See gh-8985 and gh-9549. Parametrized over data whose later rows have extra fields: header-less numeric rows with positional usecols, and named columns with a long row. Asserts the extra fields are dropped and the frame has the selected columns. Skipped on pyarrow.
     # see gh-8985
     parser = all_parsers
     result = parser.read_csv(StringIO(data), usecols=usecols, **kwargs)
@@ -443,6 +489,8 @@ def test_uneven_length_cols(all_parsers, data, usecols, kwargs, expected):
 def test_raises_on_usecols_names_mismatch(
     all_parsers, usecols, kwargs, expected, msg, request
 ):
+    # [FUNCTION DOC]
+    # Parametrized over usecols/keyword/expected/message cases: all valid names (frame returned), names including one or two missing ones (value error naming the missing columns), and cases using supplied names with or without header (gh-14671). Mutates the parametrized keyword dictionary by adding the usecols entry before the call. For pyarrow, everything except the first (valid) case is skipped due to an upstream key error. Asserts either the value error message or the expected frame.
     data = "a,b,c,d\n1,2,3,4\n5,6,7,8"
     kwargs.update(usecols=usecols)
     parser = all_parsers
@@ -464,6 +512,8 @@ def test_raises_on_usecols_names_mismatch(
 
 @pytest.mark.parametrize("usecols", [["A", "C"], [0, 2]])
 def test_usecols_subset_names_mismatch_orig_columns(all_parsers, usecols, request):
+    # [FUNCTION DOC]
+    # Parametrized over name-based and positional usecols with supplied names replacing the header: selection by the new names or by position returns columns A and C. For pyarrow, positional selection asserts the position value error; name-based selection is skipped.
     data = "a,b,c,d\n1,2,3,4\n5,6,7,8"
     names = ["A", "B", "C", "D"]
     parser = all_parsers
@@ -483,6 +533,8 @@ def test_usecols_subset_names_mismatch_orig_columns(all_parsers, usecols, reques
 
 @pytest.mark.parametrize("names", [None, ["a", "b"]])
 def test_usecols_indices_out_of_bounds(all_parsers, names):
+    # [FUNCTION DOC]
+    # GH#25623 and GH 41130 (enforced in 2.0). Parametrized over names None or two names: a positional usecols entry beyond the available columns raises a parser error about out-of-bounds usecols, or for pyarrow a value error that integer positions are unsupported.
     # GH#25623 & GH 41130; enforced in 2.0
     parser = all_parsers
     data = """
@@ -501,6 +553,8 @@ a,b
 
 
 def test_usecols_additional_columns(all_parsers):
+    # [FUNCTION DOC]
+    # GH#46997. A callable that strips whitespace from header names, applied to a header with fewer fields than a data row and with no index column, selects columns a and b and returns one row. For pyarrow asserts the callable-unsupported value error.
     # GH#46997
     parser = all_parsers
     usecols = lambda header: header.strip() in ["a", "b", "c"]
@@ -516,6 +570,8 @@ def test_usecols_additional_columns(all_parsers):
 
 
 def test_usecols_additional_columns_integer_columns(all_parsers):
+    # [FUNCTION DOC]
+    # GH#46997. Same as the additional-columns test but with numeric-string headers; returns columns "0" and "1" with one row. For pyarrow asserts the callable-unsupported value error.
     # GH#46997
     parser = all_parsers
     usecols = lambda header: header.strip() in ["0", "1"]
@@ -530,6 +586,8 @@ def test_usecols_additional_columns_integer_columns(all_parsers):
 
 
 def test_usecols_dtype(all_parsers):
+    # [FUNCTION DOC]
+    # Reading with usecols of two columns and a dtype mapping that also includes the unselected third column; asserts the result has just the two selected columns with the requested string and unsigned 8-bit integer dtypes (the unselected column's dtype is ignored).
     parser = all_parsers
     data = """
 col1,col2,col3

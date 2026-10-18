@@ -2,6 +2,9 @@
 Tests date parsing functionality for all of the
 parsers defined in parsers.py
 """
+# [MODULE DOC]
+# Tests for date parsing in read_csv (parse_dates, date_format, dayfirst, cache_dates, index_col interplay, time zones) across all parsers, with pyarrow differences marked via xfail/skip markers or inline conditionals.
+# Uses the start_caching_at threshold from the datetime tools module to build inputs large enough to trigger the date cache. Module-level filter ignores the BlockManager deprecation warning.
 
 from datetime import (
     datetime,
@@ -39,6 +42,8 @@ skip_pyarrow = pytest.mark.usefixtures("pyarrow_skip")
 
 
 def test_date_col_as_index_col(all_parsers):
+    # [FUNCTION DOC]
+    # Headerless data with a date-time column parsed as dates and used as the index (with named columns); asserts a microsecond datetime index named X1 and remaining columns. For pyarrow, the time-only column X2 is expected as time objects (pyarrow infers time type, issue 44231).
     data = """\
 KORD,19990127 19:00:00, 18:56:00, 0.8100, 2.8100, 7.2000, 0.0000, 280.0000
 KORD,19990127 20:00:00, 19:56:00, 0.0100, 2.2100, 7.2000, 0.0000, 260.0000
@@ -87,6 +92,8 @@ KORD,19990127 22:00:00, 21:56:00, -0.5900, 1.7100, 5.1000, 0.0000, 290.0000
 
 @xfail_pyarrow
 def test_nat_parse(all_parsers, temp_file):
+    # [FUNCTION DOC]
+    # See gh-3062. Round-trips a frame containing missing numeric and timestamp values through a csv file and back with date parsing for column B; asserts equality with the original. Expected to fail on pyarrow.
     # see gh-3062
     parser = all_parsers
     df = DataFrame(
@@ -106,6 +113,8 @@ def test_nat_parse(all_parsers, temp_file):
 
 @skip_pyarrow
 def test_parse_dates_implicit_first_col(all_parsers):
+    # [FUNCTION DOC]
+    # Header with fewer names than data fields makes the first column an implicit index; asserts that enabling parse_dates as true gives the same result as explicitly using index_col zero with parse_dates true. Skipped on pyarrow.
     data = """A,B,C
 20090101,a,1,2
 20090102,b,3,4
@@ -120,6 +129,8 @@ def test_parse_dates_implicit_first_col(all_parsers):
 
 @xfail_pyarrow
 def test_parse_dates_string(all_parsers):
+    # [FUNCTION DOC]
+    # Parses a date column named in parse_dates and also used as the index; asserts a microsecond datetime index named date without frequency (frequency does not round-trip). Expected to fail on pyarrow.
     data = """date,A,B,C
 20090101,a,1,2
 20090102,b,3,4
@@ -139,6 +150,8 @@ def test_parse_dates_string(all_parsers):
 @xfail_pyarrow
 @pytest.mark.parametrize("parse_dates", [[0, 2], ["a", "c"]])
 def test_parse_dates_column_list(all_parsers, parse_dates):
+    # [FUNCTION DOC]
+    # Parametrized over column positions and column names. Two date columns (dayfirst day/month/year) with a two-level index_col; asserts a frame indexed by a and b with microsecond datetimes and column c a datetime. Expected to fail on pyarrow.
     data = "a,b,c\n01/01/2010,1,15/02/2010"
     parser = all_parsers
 
@@ -158,6 +171,8 @@ def test_parse_dates_column_list(all_parsers, parse_dates):
 @xfail_pyarrow
 @pytest.mark.parametrize("index_col", [[0, 1], [1, 0]])
 def test_multi_index_parse_dates(all_parsers, index_col):
+    # [FUNCTION DOC]
+    # Parametrized over index_col orderings (zero then one, and one then zero). With parse_dates true, asserts a multi-index of a date level and a string level (swapped for the reversed order) and that a user warning about being unable to infer the format is emitted. Expected to fail on pyarrow.
     data = """index1,index2,A,B,C
 20090101,one,a,1,2
 20090101,two,b,3,4
@@ -209,6 +224,8 @@ def test_multi_index_parse_dates(all_parsers, index_col):
 
 
 def test_parse_tz_aware(all_parsers):
+    # [FUNCTION DOC]
+    # See gh-1693. A UTC-suffixed timestamp parsed as the index yields a timezone-aware UTC timestamp index named Date (second unit for pyarrow).
     # See gh-1693
     parser = all_parsers
     data = "Date,x\n2012-06-13T01:39:00Z,0.5"
@@ -224,6 +241,8 @@ def test_parse_tz_aware(all_parsers):
 
 @pytest.mark.parametrize("kwargs", [{}, {"index_col": "C"}])
 def test_read_with_parse_dates_scalar_non_bool(all_parsers, kwargs):
+    # [FUNCTION DOC]
+    # See gh-5636. Parametrized over no extra keywords and an index column. A scalar string for parse_dates raises a type error saying only booleans and lists are accepted.
     # see gh-5636
     parser = all_parsers
     msg = "Only booleans and lists are accepted for the 'parse_dates' parameter"
@@ -236,6 +255,8 @@ def test_read_with_parse_dates_scalar_non_bool(all_parsers, kwargs):
 
 @pytest.mark.parametrize("parse_dates", [(1,), np.array([4, 5]), {1, 3}])
 def test_read_with_parse_dates_invalid_type(all_parsers, parse_dates):
+    # [FUNCTION DOC]
+    # Parametrized over a tuple, numpy array and set for parse_dates; each raises a type error saying only booleans and lists are accepted.
     parser = all_parsers
     msg = "Only booleans and lists are accepted for the 'parse_dates' parameter"
     data = """A,B,C
@@ -247,6 +268,8 @@ def test_read_with_parse_dates_invalid_type(all_parsers, parse_dates):
 
 @pytest.mark.parametrize("value", ["nan", ""])
 def test_bad_date_parse(all_parsers, cache, value):
+    # [FUNCTION DOC]
+    # Parametrized over invalid date values (the string nan and empty) and the cache_dates flag (fixture). Builds input with more rows than the caching threshold and parses the first column as dates; passes if no exception is raised (no assertions).
     # if we have an invalid date make sure that we handle this with
     # and w/o the cache properly
     parser = all_parsers
@@ -262,6 +285,8 @@ def test_bad_date_parse(all_parsers, cache, value):
 
 
 def test_bad_date_parse_with_warning(all_parsers, cache):
+    # [FUNCTION DOC]
+    # Rows of the single value zero exceeding the cache threshold are parsed as dates with caching on or off. Expects a could-not-infer-format user warning only when the cache is off and the engine is not pyarrow (pyarrow reads integers; with the cache there is a single unique value so no inconsistent parsing risk). Extra warnings are tolerated.
     # if we have an invalid date make sure that we handle this with
     # and w/o the cache properly.
     parser = all_parsers
@@ -292,6 +317,8 @@ def test_bad_date_parse_with_warning(all_parsers, cache):
 
 
 def test_parse_dates_empty_string(all_parsers):
+    # [FUNCTION DOC]
+    # See gh-2263. With missing-value filtering disabled, an empty date field becomes NaT; asserts a frame with a datetime and a missing timestamp.
     # see gh-2263
     parser = all_parsers
     data = "Date,test\n2012-01-01,1\n,2"
@@ -348,6 +375,8 @@ def test_parse_dates_empty_string(all_parsers):
     ],
 )
 def test_parse_dates_no_convert_thousands(all_parsers, data, kwargs, expected):
+    # [FUNCTION DOC]
+    # See gh-14066. Parametrized over four cases of dotted dates (single column list, index, two columns, multi-index) with a period thousands separator; asserts that dates are parsed as microsecond datetimes and the dots are not treated as thousands separators. Expected to fail on pyarrow.
     # see gh-14066
     parser = all_parsers
 
@@ -356,6 +385,8 @@ def test_parse_dates_no_convert_thousands(all_parsers, data, kwargs, expected):
 
 
 def test_parse_date_column_with_empty_string(all_parsers):
+    # [FUNCTION DOC]
+    # See gh-6428. A date column containing a whitespace-only entry cannot be parsed, so the column stays as strings; asserts the original text including the blank.
     # see gh-6428
     parser = all_parsers
     data = "case,opdate\n7,10/18/2006\n7,10/18/2008\n621, "
@@ -381,6 +412,8 @@ def test_parse_date_column_with_empty_string(all_parsers):
 )
 @pytest.mark.parametrize("parse_dates", [True, False])
 def test_parse_date_float(all_parsers, data, expected, parse_dates):
+    # [FUNCTION DOC]
+    # See gh-2697. Parametrized over inputs with very large numbers and exponent notation, and over parse_dates true/false. Date parsing fails so values are left as floats with unchanged precision; asserts a float64 column.
     # see gh-2697
     #
     # Date parsing should fail, so we leave the data untouched
@@ -393,6 +426,8 @@ def test_parse_date_float(all_parsers, data, expected, parse_dates):
 
 
 def test_parse_timezone(all_parsers):
+    # [FUNCTION DOC]
+    # See gh-22256. Timestamps with a fixed +09:00 offset parse into a timezone-aware microsecond column with that offset; asserts equality with a date range of five minutes without frequency.
     # see gh-22256
     parser = all_parsers
     data = """dt,val
@@ -422,6 +457,8 @@ def test_parse_timezone(all_parsers):
     ["32/32/2019", "02/30/2019", "13/13/2019", "13/2019", "a3/11/2018", "10/11/2o17"],
 )
 def test_invalid_parse_delimited_date(all_parsers, date_string):
+    # [FUNCTION DOC]
+    # Parametrized over invalid date strings (impossible day or month values, wrong format, letters). A single-cell input with no header and date parsing requested stays as a string column with no conversion; asserts a string-typed frame. Skipped on pyarrow.
     parser = all_parsers
     expected = DataFrame({0: [date_string]}, dtype="str")
     result = parser.read_csv(
@@ -446,6 +483,8 @@ def test_invalid_parse_delimited_date(all_parsers, date_string):
 def test_parse_delimited_date_swap_no_warning(
     all_parsers, date_string, dayfirst, expected, request
 ):
+    # [FUNCTION DOC]
+    # Parametrized over (date string, dayfirst, expected) cases where the dayfirst setting matches the data or a swap is unambiguous; asserts the expected microsecond datetime with no warning. For pyarrow with dayfirst true asserts a value error that the option is unsupported; pyarrow with dayfirst false is skipped.
     parser = all_parsers
     expected = DataFrame({0: [expected]}, dtype="datetime64[us]")
     if parser.engine == "pyarrow":
@@ -479,6 +518,8 @@ def test_parse_delimited_date_swap_no_warning(
 def test_parse_delimited_date_swap_with_warning(
     all_parsers, date_string, dayfirst, expected
 ):
+    # [FUNCTION DOC]
+    # Parametrized over cases where dayfirst conflicts with the data; asserts a user warning that dates were parsed in a different format than dayfirst specified, and the expected parsed datetime. Skipped on pyarrow.
     parser = all_parsers
     expected = DataFrame({0: [expected]}, dtype="datetime64[us]")
     warning_msg = (
@@ -497,6 +538,9 @@ def test_parse_delimited_date_swap_with_warning(
 
 
 def test_parse_multiple_delimited_dates_with_swap_warnings():
+    # [FUNCTION DOC]
+    # GH46210. Passes a list of mixed day-first and month-first date strings straight to the datetime conversion function (not read_csv) and asserts a value error stating the data does not match the inferred format and suggesting an alternative.
+    # KNOWN ISSUE: the name refers to swap warnings and delimited-date parsing from csv, but the body asserts an error from the conversion function directly and does not exercise the csv reader.
     # GH46210
     with pytest.raises(
         ValueError,
@@ -527,6 +571,8 @@ def test_parse_multiple_delimited_dates_with_swap_warnings():
 def test_missing_parse_dates_column_raises(
     all_parsers, names, usecols, parse_dates, missing_cols
 ):
+    # [FUNCTION DOC]
+    # gh-31251. Parametrized over combinations of supplied names, usecols and parse_dates entries that reference nonexistent columns; asserts a value error naming the missing columns provided to parse_dates. Skipped on pyarrow.
     # gh-31251 column names provided in parse_dates could be missing.
     parser = all_parsers
     content = StringIO("date,time,val\n2020-01-31,04:20:32,32\n")
@@ -540,6 +586,8 @@ def test_missing_parse_dates_column_raises(
 
 @xfail_pyarrow  # mismatched shape
 def test_date_parser_and_names(all_parsers):
+    # [FUNCTION DOC]
+    # GH#33699. A single supplied name equal to the parse_dates column on two-line data: asserts the frame with header values as data and a could-not-infer-format user warning (pyarrow may also emit a Pandas4Warning). Expected to fail on pyarrow.
     # GH#33699
     parser = all_parsers
     data = StringIO("""x,y\n1,2""")
@@ -560,6 +608,8 @@ def test_date_parser_and_names(all_parsers):
 
 @xfail_pyarrow  # TypeError: an integer is required
 def test_date_parser_multiindex_columns(all_parsers):
+    # [FUNCTION DOC]
+    # Two-row header with a tuple column parsed as date from a multi-level header; asserts a frame with timestamp column keyed by a tuple and an integer column. Expected to fail on pyarrow.
     parser = all_parsers
     data = """a,b
 1,2
@@ -570,6 +620,9 @@ def test_date_parser_multiindex_columns(all_parsers):
 
 
 def test_date_parser_usecols_thousands(all_parsers):
+    # [FUNCTION DOC]
+    # GH#39365. Combines parse_dates, usecols and a hyphen thousands separator. pyarrow asserts a value error that thousands is unsupported. Otherwise asserts a could-not-infer-format user warning and a frame with the integer column and a timestamp column.
+    # KNOWN ISSUE: an inline comment in the pyarrow branch mentions a deprecation warning for passing a manager object, but that branch asserts the thousands-unsupported value error instead.
     # GH#39365
     data = """A,B,C
     1,3,20-09-01-01
@@ -603,6 +656,8 @@ def test_date_parser_usecols_thousands(all_parsers):
 
 
 def test_dayfirst_warnings():
+    # [FUNCTION DOC]
+    # GH 12585. Case one with consistent day-first strings: correct dayfirst gives the parsed index without warning; incorrect dayfirst gives a user warning but the same index. Case two with mixed formats: the strings cannot be parsed with one format and are returned unaltered as a string index, with a warning when dayfirst is false and none when true.
     # GH 12585
 
     # CASE 1: valid input
@@ -666,6 +721,8 @@ def test_dayfirst_warnings():
     ],
 )
 def test_dayfirst_warnings_no_leading_zero(date_string, dayfirst):
+    # [FUNCTION DOC]
+    # GH47880. Parametrized over single-digit-day and single-digit-month dates with the opposite dayfirst setting; asserts the dayfirst-mismatch user warning and the parsed January date index.
     # GH47880
     initial_value = f"date\n{date_string}"
     expected = DatetimeIndex(
@@ -687,6 +744,8 @@ def test_dayfirst_warnings_no_leading_zero(date_string, dayfirst):
 
 @skip_pyarrow  # CSV parse error: Expected 3 columns, got 4
 def test_infer_first_column_as_index(all_parsers):
+    # [FUNCTION DOC]
+    # GH#11019. A data row with one more field than the header makes the first field the index while the named a column is also requested in parse_dates; asserts the string index and constant columns. Skipped on pyarrow.
     # GH#11019
     parser = all_parsers
     data = "a,b,c\n1970-01-01,2,3,4"
@@ -700,6 +759,8 @@ def test_infer_first_column_as_index(all_parsers):
 
 @xfail_pyarrow  # pyarrow engine doesn't support passing a dict for na_values
 def test_replace_nans_before_parsing_dates(all_parsers):
+    # [FUNCTION DOC]
+    # GH#26203. Per-column na_values (dict) are applied before date parsing with an explicit format, so the values marked as missing become NaT; asserts a microsecond datetime column. Expected to fail on pyarrow (no dict na_values).
     # GH#26203
     parser = all_parsers
     data = """Test
@@ -732,6 +793,8 @@ def test_replace_nans_before_parsing_dates(all_parsers):
 
 @xfail_pyarrow  # string[python] instead of dt64[ns]
 def test_parse_dates_and_string_dtype(all_parsers):
+    # [FUNCTION DOC]
+    # GH#34066. A string dtype for all columns combined with parse_dates on one column: asserts the other column is string dtype and the parsed column is datetime. Expected to fail on pyarrow.
     # GH#34066
     parser = all_parsers
     data = """a,b
@@ -744,6 +807,8 @@ def test_parse_dates_and_string_dtype(all_parsers):
 
 
 def test_parse_dot_separated_dates(all_parsers):
+    # [FUNCTION DOC]
+    # Issue 2586. Dot-separated day.month.year timestamps as the index with parse_dates true. Non-pyarrow engines parse to a microsecond datetime index and emit a user warning about dayfirst being false; pyarrow leaves them as strings without a warning. Asserts the corresponding frame.
     # https://github.com/pandas-dev/pandas/issues/2586
     parser = all_parsers
     data = """a,b
@@ -777,6 +842,8 @@ def test_parse_dot_separated_dates(all_parsers):
 
 
 def test_parse_dates_dict_format(all_parsers):
+    # [FUNCTION DOC]
+    # GH#51240. Per-column date_format mapping with day-first and year-first formats for two parsed columns; asserts both columns equal the same microsecond timestamps.
     # GH#51240
     parser = all_parsers
     data = """a,b
@@ -800,6 +867,8 @@ def test_parse_dates_dict_format(all_parsers):
 
 @xfail_pyarrow  # object dtype index
 def test_parse_dates_dict_format_index(all_parsers):
+    # [FUNCTION DOC]
+    # GH#51240. Per-column date_format only for column a with parse_dates true and index_col zero; asserts a datetime index named a and column b left as strings. Expected to fail on pyarrow (object-dtype index).
     # GH#51240
     parser = all_parsers
     data = """a,b
@@ -819,6 +888,8 @@ def test_parse_dates_dict_format_index(all_parsers):
 
 
 def test_parse_dates_arrow_engine(all_parsers):
+    # [FUNCTION DOC]
+    # GH#53295. Parses a datetime column; asserts timestamps and a constant integer column, with the datetime column cast to second unit when the engine is pyarrow.
     # GH#53295
     parser = all_parsers
     data = """a,b
@@ -842,6 +913,8 @@ def test_parse_dates_arrow_engine(all_parsers):
 
 @xfail_pyarrow  # object dtype index
 def test_from_csv_with_mixed_offsets(all_parsers):
+    # [FUNCTION DOC]
+    # Timestamps with different UTC offsets in one column cannot be a single timezone-aware dtype, so the series remains strings; asserts equality with the original strings. Expected to fail on pyarrow (object-dtype index).
     parser = all_parsers
     data = "a\n2020-01-01T00:00:00+01:00\n2020-01-01T00:00:00+00:00"
     result = parser.read_csv(StringIO(data), parse_dates=["a"])["a"]

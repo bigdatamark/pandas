@@ -1,3 +1,5 @@
+# [MODULE DOC]
+# Tests for storing categorical data in HDF5 tables: round trips of ordered and unordered categoricals, nullable and integer categories, metadata layout, queries on categorical data columns, category mismatch on append, and regressions for filtering and all-missing columns. Marked single_cpu. Uses the temp_hdfstore and temp_h5_path fixtures.
 import numpy as np
 import pytest
 
@@ -14,6 +16,8 @@ pytestmark = [pytest.mark.single_cpu]
 
 
 def test_categorical(temp_hdfstore):
+    # [FUNCTION DOC]
+    # Walks through categorical storage with a store: appends unordered and ordered categorical series and a frame in table format and asserts round trip; integer-valued categories with and without missing values; a frame with two categorical columns, asserting the store listing shows the metadata nodes for the two categorical blocks; queries on a categorical data column using membership and equality-with-list conditions (including categories with no matches and values absent from categories); appending with the same categories works while appending with removed unused categories raises a value error; removing the table also removes its categorical metadata nodes so selecting them raises a key error.
     # Basic
     s = Series(
         Categorical(
@@ -124,6 +128,8 @@ def test_categorical(temp_hdfstore):
 
 
 def test_categorical_conversion(temp_h5_path):
+    # [FUNCTION DOC]
+    # GH13322. A where condition on a string column that matches nothing returns an empty frame of the same dtypes, both for plain string columns and for the same columns converted to categorical. Writes in table format with all columns as data columns to the temp path and reads with read_hdf.
     # GH13322
     # Check that read_hdf with categorical columns doesn't return rows if
     # where criteria isn't met.
@@ -152,6 +158,9 @@ def test_categorical_conversion(temp_h5_path):
 
 
 def test_categorical_nan_only_columns(temp_h5_path):
+    # [FUNCTION DOC]
+    # GH18413. A frame with categorical columns whose values are all missing, plus an integer column, is written as a table with data columns and read back; asserts equality.
+    # KNOWN ISSUE: the fourth column d is first defined as an object column of missing values but is then overwritten with a categorical built from column b, so the intended object-column input is never tested.
     # GH18413
     # Check that read_hdf with categorical columns with NaN-only values can
     # be read back.
@@ -174,6 +183,8 @@ def test_categorical_nan_only_columns(temp_h5_path):
 
 @pytest.mark.parametrize("where, expected", [["q", []], ["a", ["a"]]])
 def test_convert_value(temp_h5_path, where: str, expected):
+    # [FUNCTION DOC]
+    # GH39420. Parametrized over filter values q (no match, empty result) and a (one match). Stores a categorical column with a one-byte string width and reads with a where equality condition; asserts the result is an empty or one-row categorical frame whose categories are still all three original categories.
     # GH39420
     # Check that read_hdf with categorical columns can filter by where condition.
     df = DataFrame({"col": ["a", "b", "s"]})

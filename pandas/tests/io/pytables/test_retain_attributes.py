@@ -1,3 +1,5 @@
+# [MODULE DOC]
+# Tests that index attributes (frequency, timezone, name) are retained or reset when appending to HDF5 tables, including conflict warnings and datetime with timezone round-trips. Module marked single_cpu.
 import pytest
 
 from pandas import (
@@ -14,6 +16,8 @@ pytestmark = pytest.mark.single_cpu
 
 
 def test_retain_index_attributes(temp_hdfstore, unit):
+    # [FUNCTION DOC]
+    # GH 3499. After putting a table with an hourly frequency index (parametrized unit fixture), the retrieved frame and its index and columns have the same frequency, timezone and name. Appending a frame with a different frequency emits an attribute-conflict warning and the stored frequency becomes none. Appending frames that have no conflict (irregular dates, then a daily index to a new key) works.
     # GH 3499, losing frequency info on index recreation
     dti = date_range("2000-1-1", periods=3, freq="h", unit=unit)
     df = DataFrame({"A": Series(range(3), index=dti)})
@@ -56,6 +60,8 @@ def test_retain_index_attributes(temp_hdfstore, unit):
 
 
 def test_retain_index_attributes2(temp_h5_path):
+    # [FUNCTION DOC]
+    # Writing with append through to_hdf: appending frames with a different frequency and then a different index name emits attribute-conflict warnings; the stored index name remains the first name after the conflict handling and is none after a conflicting name append.
     with tm.assert_produces_warning(errors.AttributeConflictWarning):
         df = DataFrame(
             {"A": Series(range(3), index=date_range("2000-1-1", periods=3, freq="h"))}
@@ -84,6 +90,8 @@ def test_retain_index_attributes2(temp_h5_path):
 
 
 def test_retain_datetime_attribute(temp_h5_path):
+    # [FUNCTION DOC]
+    # A frame of microsecond UTC datetimes written and read back equals the original (dtype including timezone is retained).
     ser = Series(
         ["2024-08-26 15:13:14", "2024-08-26 15:14:14"],
         dtype="datetime64[us, UTC]",

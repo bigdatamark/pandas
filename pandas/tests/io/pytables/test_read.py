@@ -1,3 +1,5 @@
+# [MODULE DOC]
+# Tests for reading from HDF5: read_hdf and HDFStore reading behavior including error cleanup of file handles, select_column, native PyTables files, iterators, key-less reads, pathlib paths, series modes, the infer-string option and non-nanosecond datetimes. Module marked single_cpu.
 from contextlib import closing
 import re
 
@@ -23,6 +25,8 @@ pytestmark = [pytest.mark.single_cpu]
 
 
 def test_read_missing_key_close_store(temp_h5_path):
+    # [FUNCTION DOC]
+    # GH 25766. Reading a missing key from a path raises a key error (no object with that name); then writing to the same file succeeds, proving the file handle was closed after the error.
     # GH 25766
     df = DataFrame({"a": range(2), "b": range(2)})
     df.to_hdf(temp_h5_path, key="k1")
@@ -36,6 +40,8 @@ def test_read_missing_key_close_store(temp_h5_path):
 
 
 def test_read_index_error_close_store(temp_h5_path):
+    # [FUNCTION DOC]
+    # GH 25766. Reading an empty table with a stop of zero raises an index error (list index out of range); a following write to the same file succeeds, proving the file handle was closed.
     # GH 25766
     df = DataFrame({"A": [], "B": []}, index=[])
     df.to_hdf(temp_h5_path, key="k1")
@@ -49,6 +55,8 @@ def test_read_index_error_close_store(temp_h5_path):
 
 
 def test_read_missing_key_opened_store(temp_h5_path):
+    # [FUNCTION DOC]
+    # GH 28699. With a read-only open store passed to read_hdf, a missing key raises a key error, and the store remains open and readable for an existing key afterwards.
     # GH 28699
     df = DataFrame({"a": range(2), "b": range(2)})
     df.to_hdf(temp_h5_path, key="k1")
@@ -63,6 +71,8 @@ def test_read_missing_key_opened_store(temp_h5_path):
 
 
 def test_read_column(temp_hdfstore):
+    # [FUNCTION DOC]
+    # Exercises HDFStore.select_column. Asserts key error for a missing table or missing column, a type error for an unsupported where argument, a series of index values for a valid column, a value error for a block that is not data-indexable, data column retrieval (NaNs present in the stored values are compared as stored), start and stop slicing with positive and negative values, and (GH 10392) that the column name is preserved.
     df = DataFrame(
         np.random.default_rng(2).standard_normal((10, 4)),
         columns=Index(list("ABCD")),
@@ -142,6 +152,8 @@ def test_read_column(temp_hdfstore):
 
 
 def test_pytables_native_read(datapath):
+    # [FUNCTION DOC]
+    # Opens the bundled native PyTables test file read-only, reads the detector/readout node and asserts it is a frame.
     with HDFStore(
         datapath("io", "data", "legacy_hdf/pytables_native.h5"), mode="r"
     ) as store:
@@ -151,6 +163,8 @@ def test_pytables_native_read(datapath):
 
 @pytest.mark.skipif(is_platform_windows(), reason="native2 read fails oddly on windows")
 def test_pytables_native2_read(datapath):
+    # [FUNCTION DOC]
+    # Skipped on Windows (reads fail oddly). Opens the second bundled native file read-only, takes the string representation of the store (smoke), reads the detector node and asserts it is a frame.
     with HDFStore(
         datapath("io", "data", "legacy_hdf", "pytables_native2.h5"), mode="r"
     ) as store:
@@ -160,6 +174,8 @@ def test_pytables_native2_read(datapath):
 
 
 def test_read_hdf_open_store(temp_h5_path, using_infer_string):
+    # [FUNCTION DOC]
+    # GH10330. A frame with a two-level index is written; reading by path and through an already-open read-only store give equal frames, and the store stays open afterwards. The infer-string fixture is unused.
     # GH10330
     # No check for non-string path_or-buf, and no test of open store
     df = DataFrame(
@@ -179,6 +195,8 @@ def test_read_hdf_open_store(temp_h5_path, using_infer_string):
 
 
 def test_read_hdf_index_not_view(temp_h5_path):
+    # [FUNCTION DOC]
+    # GH 37441. After reading a table, asserts the returned index's underlying array owns its data (is not a view onto the raw array that PyTables returns) and the frame equals the original.
     # GH 37441
     # Ensure that the index of the DataFrame is not a view
     # into the original recarray that pytables reads in
@@ -196,6 +214,8 @@ def test_read_hdf_index_not_view(temp_h5_path):
 
 
 def test_read_hdf_iterator(temp_h5_path):
+    # [FUNCTION DOC]
+    # Reading with the iterator option returns a table iterator; takes the first chunk (closing the iterator's store) and asserts it equals the full read.
     df = DataFrame(
         np.random.default_rng(2).random((4, 5)),
         index=list("abcd"),
@@ -214,6 +234,8 @@ def test_read_hdf_iterator(temp_h5_path):
 
 
 def test_read_nokey(temp_h5_path):
+    # [FUNCTION DOC]
+    # GH10443. read_hdf without a key works for a single-dataset fixed-format file and returns the frame; after adding a second dataset it raises a value error that a key must be provided when the file contains multiple datasets.
     # GH10443
     df = DataFrame(
         np.random.default_rng(2).random((4, 5)),
@@ -234,6 +256,8 @@ def test_read_nokey(temp_h5_path):
 
 
 def test_read_nokey_table(temp_h5_path):
+    # [FUNCTION DOC]
+    # GH13231. Same as the no-key test but with table format and a categorical column.
     # GH13231
     df = DataFrame({"i": range(5), "c": Series(list("abacd"), dtype="category")})
 
@@ -248,6 +272,8 @@ def test_read_nokey_table(temp_h5_path):
 
 
 def test_read_nokey_empty(temp_h5_path):
+    # [FUNCTION DOC]
+    # Reading with no key from a file that contains no datasets raises a value error saying datasets are incompatible with pandas types, not a table, or none found.
     store = HDFStore(temp_h5_path)
     store.close()
     msg = re.escape(
@@ -259,6 +285,8 @@ def test_read_nokey_empty(temp_h5_path):
 
 
 def test_read_from_pathlib_path(temp_h5_path):
+    # [FUNCTION DOC]
+    # GH11773. A frame written to a path-like object (temp path) is read back with read_hdf and equals the original.
     # GH11773
     expected = DataFrame(
         np.random.default_rng(2).random((4, 5)),
@@ -274,6 +302,8 @@ def test_read_from_pathlib_path(temp_h5_path):
 
 @pytest.mark.parametrize("format", ["fixed", "table"])
 def test_read_hdf_series_mode_r(temp_h5_path, format):
+    # [FUNCTION DOC]
+    # GH 16583. Parametrized over fixed and table formats: reading a series with the explicit read-only mode works and equals the original.
     # GH 16583
     # Tests that reading a Series saved to an HDF file
     # still works if a mode='r' argument is supplied
@@ -284,6 +314,8 @@ def test_read_hdf_series_mode_r(temp_h5_path, format):
 
 
 def test_read_infer_string(temp_h5_path):
+    # [FUNCTION DOC]
+    # GH#54431. Under the future infer-string option, reading a table with a string column with a missing value returns string dtype with NaN as missing for both values and column labels.
     # GH#54431
     df = DataFrame({"a": ["a", "b", None]})
     df.to_hdf(temp_h5_path, key="data", format="table")
@@ -298,6 +330,8 @@ def test_read_infer_string(temp_h5_path):
 
 
 def test_hdfstore_read_datetime64_unit_s(temp_hdfstore):
+    # [FUNCTION DOC]
+    # GH 59004. A frame of second-unit datetimes put in the store is retrieved equal, keeping the unit.
     # GH 59004
     df_s = DataFrame(["2001-01-01", "2002-02-02"], dtype="datetime64[s]")
     temp_hdfstore.put("df_s", df_s)

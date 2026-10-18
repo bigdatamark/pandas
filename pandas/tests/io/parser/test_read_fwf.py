@@ -3,6 +3,9 @@ Tests the 'read_fwf' function in parsers.py. This
 test suite is independent of the others because the
 engine is set to 'python-fwf' internally.
 """
+# [MODULE DOC]
+# Tests for read_fwf (fixed-width formatted reader), which always uses the python-fwf engine; independent of the all_parsers fixture. Covers column specs and widths, inference of column boundaries, delimiter/filler characters, comments, thousands, blank lines, skiprows/nrows/iteration, encodings and compression, usecols/names/index_col interplay, nullable dtype backends and URL input.
+# Many tests compare inferred-width reading with explicit column specs on the same text, or against read_csv with a whitespace regex separator.
 
 from io import (
     BytesIO,
@@ -29,6 +32,8 @@ from pandas.io.parsers import (
 
 
 def test_basic():
+    # [FUNCTION DOC]
+    # Reads whitespace-aligned text with an inferred layout; asserts an integer column and three float columns named from the header.
     data = """\
 A         B            C            D
 201158    360.242940   149.910199   11950.7
@@ -52,6 +57,8 @@ A         B            C            D
 
 
 def test_colspecs():
+    # [FUNCTION DOC]
+    # Explicit column specs (start, end pairs) split the first column into two parts and the rest as given; asserts five columns with the first two numeric pieces of the first field.
     data = """\
 A   B     C            D            E
 201158    360.242940   149.910199   11950.7
@@ -77,6 +84,8 @@ A   B     C            D            E
 
 
 def test_widths():
+    # [FUNCTION DOC]
+    # Explicit widths list produces the same five-column frame as the colspecs case on differently aligned text.
     data = """\
 A    B    C            D            E
 2011 58   360.242940   149.910199   11950.7
@@ -101,6 +110,8 @@ A    B    C            D            E
 
 
 def test_non_space_filler():
+    # [FUNCTION DOC]
+    # Data padded with tilde characters, read with colspecs and the tilde as delimiter (filler); asserts the same five-column frame (sourced from a user report on non-space fillers).
     # From Thomas Kluyver:
     #
     # Apparently, some non-space filler characters can be seen, this is
@@ -132,6 +143,8 @@ A~~~~B~~~~C~~~~~~~~~~~~D~~~~~~~~~~~~E
 
 
 def test_over_specified():
+    # [FUNCTION DOC]
+    # Passing both colspecs and widths raises a value error saying only one may be specified.
     data = """\
 A   B     C            D            E
 201158    360.242940   149.910199   11950.7
@@ -147,6 +160,8 @@ A   B     C            D            E
 
 
 def test_under_specified():
+    # [FUNCTION DOC]
+    # Passing neither colspecs nor widths explicitly (both none) raises a value error saying one of them must be specified. (Note that the normal default of inferring colspecs is a separate sentinel, so explicit none is invalid.)
     data = """\
 A   B     C            D            E
 201158    360.242940   149.910199   11950.7
@@ -160,6 +175,8 @@ A   B     C            D            E
 
 
 def test_read_csv_compat():
+    # [FUNCTION DOC]
+    # Asserts that reading fixed-width text with colspecs gives the same frame as reading the equivalent comma-separated text with read_csv (python engine).
     csv_data = """\
 A,B,C,D,E
 2011,58,360.242940,149.910199,11950.7
@@ -184,6 +201,8 @@ A   B     C            D            E
 
 
 def test_bytes_io_input():
+    # [FUNCTION DOC]
+    # Reads a binary buffer containing Hebrew text with width two columns and utf8 encoding; asserts the header names and the single row are the two-character pieces.
     data = BytesIO("שלום\nשלום".encode())  # noqa: RUF001
     result = read_fwf(data, widths=[2, 2], encoding="utf8")
     expected = DataFrame([["של", "ום"]], columns=["של", "ום"])
@@ -191,6 +210,8 @@ def test_bytes_io_input():
 
 
 def test_fwf_colspecs_is_list_or_tuple():
+    # [FUNCTION DOC]
+    # Passing a mapping as colspecs raises a type error saying column specifications must be a list or tuple.
     data = """index,A,B,C,D
 foo,2,3,4,5
 bar,7,8,9,10
@@ -207,6 +228,8 @@ bar2,12,13,14,15
 
 
 def test_fwf_colspecs_is_list_or_tuple_of_two_element_tuples():
+    # [FUNCTION DOC]
+    # A colspecs list whose element is not a pair of integers raises a type error saying each column specification must be of the right form.
     data = """index,A,B,C,D
 foo,2,3,4,5
 bar,7,8,9,10
@@ -232,6 +255,8 @@ bar2,12,13,14,15
     ],
 )
 def test_fwf_colspecs_none(colspecs, exp_data):
+    # [FUNCTION DOC]
+    # See gh-7079. Parametrized over colspecs using open-ended (none) start or end positions; asserts that open ends extend to the start/end of the line and the resulting integer columns, with no header.
     # see gh-7079
     data = """\
 123456
@@ -253,6 +278,8 @@ def test_fwf_colspecs_none(colspecs, exp_data):
     ],
 )
 def test_fwf_colspecs_infer_nrows(infer_nrows, exp_data):
+    # [FUNCTION DOC]
+    # See gh-15138. Parametrized over infer_nrows one (inference uses only the first line, giving narrower specs and truncated values) and ten (greater than the row count, so the whole file is used); asserts the corresponding two-column frames.
     # see gh-15138
     data = """\
   1  2
@@ -265,6 +292,8 @@ def test_fwf_colspecs_infer_nrows(infer_nrows, exp_data):
 
 
 def test_fwf_regression():
+    # [FUNCTION DOC]
+    # See gh-3594. Fixed-width timestamp-like first column plus seven float columns, with explicit widths, names, first column as index, date parsing and a day-of-year based date format; asserts a microsecond datetime index and float columns. The comment upstream notes a name such as T060 can be mistaken for a datetime slice.
     # see gh-3594
     #
     # Turns out "T060" is parsable as a datetime slice!
@@ -311,6 +340,9 @@ def test_fwf_regression():
 
 
 def test_fwf_for_uint8():
+    # [FUNCTION DOC]
+    # Parses car-bus style log lines with colspecs, names and converters that convert hexadecimal fields to integers and count space-separated tokens; asserts the frame with a missing destination in the second row kept as an object column.
+    # KNOWN ISSUE: the name refers to unsigned 8-bit integers but no such dtype is specified or asserted; the test checks converters and a missing field instead.
     data = """1421302965.213420    PRI=3 PGN=0xef00      DST=0x17 SRC=0x28    04 154 00 00 00 00 00 127
 1421302964.226776    PRI=6 PGN=0xf002               SRC=0x47    243 00 00 255 247 00 00 71"""  # noqa: E501
     df = read_fwf(
@@ -338,6 +370,8 @@ def test_fwf_for_uint8():
 
 @pytest.mark.parametrize("comment", ["#", "~", "!"])
 def test_fwf_comment(comment):
+    # [FUNCTION DOC]
+    # Parametrized over comment characters. Replaces the comment marker in the data, reads with colspecs, no header and the comment option; asserts comment text is ignored giving a frame with a missing value.
     data = """\
   1   2.   4  #hello world
   5  NaN  10.0
@@ -352,6 +386,8 @@ def test_fwf_comment(comment):
 
 
 def test_fwf_skip_blank_lines():
+    # [FUNCTION DOC]
+    # With skipping of blank lines enabled, blank lines before the header and between rows are dropped; asserts three rows. With skipping disabled, blank lines in the body become rows of missing values; asserts five rows.
     data = """
 
 A         B            C            D
@@ -398,6 +434,8 @@ A         B            C            D
 
 @pytest.mark.parametrize("thousands", [",", "#", "~"])
 def test_fwf_thousands(thousands):
+    # [FUNCTION DOC]
+    # Parametrized over thousands separators. Replaces the comma in the data by the separator, reads with explicit colspecs, no header and the thousands option; asserts the grouped number is parsed as a float 2334.0.
     data = """\
  1 2,334.0    5
 10   13     10.
@@ -415,6 +453,8 @@ def test_fwf_thousands(thousands):
 
 @pytest.mark.parametrize("header", [True, False])
 def test_bool_header_arg(header):
+    # [FUNCTION DOC]
+    # See gh-6114. Parametrized over true and false: passing a boolean for header raises a type error saying that passing a bool to header is invalid.
     # see gh-6114
     data = """\
 MyColumn
@@ -429,6 +469,8 @@ MyColumn
 
 
 def test_full_file():
+    # [FUNCTION DOC]
+    # Fixed-width file with all values present: asserts inferred column boundaries give the same frame as the explicit colspecs.
     # File with all values.
     test = """index                             A    B    C
 2000-01-03T00:00:00  0.980268513777    3  foo
@@ -446,6 +488,8 @@ def test_full_file():
 
 
 def test_full_file_with_missing():
+    # [FUNCTION DOC]
+    # File with some missing values in the fields: asserts inference matches explicit colspecs.
     # File with missing values.
     test = """index                             A    B    C
 2000-01-03T00:00:00  0.980268513777    3  foo
@@ -463,6 +507,8 @@ def test_full_file_with_missing():
 
 
 def test_full_file_with_spaces():
+    # [FUNCTION DOC]
+    # File whose values contain embedded spaces (names): asserts inference matches explicit colspecs.
     # File with spaces in columns.
     test = """
 Account                 Name  Balance     CreditLimit   AccountCreated
@@ -480,6 +526,8 @@ Account                 Name  Balance     CreditLimit   AccountCreated
 
 
 def test_full_file_with_spaces_and_missing():
+    # [FUNCTION DOC]
+    # File with both embedded spaces and missing values: asserts inference matches explicit colspecs.
     # File with spaces and missing values in columns.
     test = """
 Account               Name    Balance     CreditLimit   AccountCreated
@@ -497,6 +545,8 @@ Account               Name    Balance     CreditLimit   AccountCreated
 
 
 def test_messed_up_data():
+    # [FUNCTION DOC]
+    # Irregularly indented file with a blank line and uneven columns: asserts inference matches the explicit colspecs.
     # Completely messed up file.
     test = """
    Account          Name             Balance     Credit Limit   Account Created
@@ -514,6 +564,8 @@ def test_messed_up_data():
 
 
 def test_multiple_delimiters():
+    # [FUNCTION DOC]
+    # Text padded with a mix of several filler characters (space, plus, tilde, period, backslash) given together as the delimiter string; asserts that inference with the delimiter matches explicit colspecs with the same delimiter.
     test = r"""
 col1~~~~~col2  col3++++++++++++++++++col4
 ~~22.....11.0+++foo~~~~~~~~~~Keanu Reeves
@@ -531,6 +583,8 @@ col1~~~~~col2  col3++++++++++++++++++col4
 
 
 def test_variable_width_unicode():
+    # [FUNCTION DOC]
+    # Hebrew text with variable-width characters read with no header, from utf8 bytes: asserts the inferred layout matches the explicit colspecs.
     data = """
 שלום שלום
 ום   שלל
@@ -548,6 +602,8 @@ def test_variable_width_unicode():
 
 @pytest.mark.parametrize("dtype", [{}, {"a": "float64", "b": str, "c": "int32"}])
 def test_dtype(dtype):
+    # [FUNCTION DOC]
+    # Parametrized over no dtype and a mapping of floating, string and 32-bit integer dtypes. Reading with explicit colspecs; builds the expected frame from numbers and casts the mapped columns, and asserts equality.
     data = """ a    b    c
 1    2    3.2
 3    4    5.2
@@ -566,6 +622,8 @@ def test_dtype(dtype):
 
 
 def test_skiprows_inference():
+    # [FUNCTION DOC]
+    # See gh-11256. Skipping two header lines before inferring widths gives the same frame as read_csv with the same skiprows and a whitespace separator.
     # see gh-11256
     data = """
 Text contained in the file header
@@ -582,6 +640,8 @@ DataCol1   DataCol2
 
 
 def test_skiprows_by_index_inference():
+    # [FUNCTION DOC]
+    # skiprows as a list of line indexes (zero and two) before inferring widths gives the same frame as read_csv with the same skiprows and whitespace separator.
     data = """
 To be skipped
 Not  To  Be  Skipped
@@ -597,6 +657,8 @@ Once more to be skipped
 
 
 def test_skiprows_inference_empty():
+    # [FUNCTION DOC]
+    # Skipping all lines raises an empty-data error saying there are no rows from which to infer column width.
     data = """
 AA   BBB  C
 12   345  6
@@ -609,6 +671,8 @@ AA   BBB  C
 
 
 def test_whitespace_preservation():
+    # [FUNCTION DOC]
+    # See gh-16772. Fixed-width text with surrounding spaces, explicit widths, tab and newline as delimiters and the first line skipped keeps the spaces in values; asserts equality with the equivalent comma-separated data read by read_csv.
     # see gh-16772
     header = None
     csv_data = """
@@ -626,6 +690,8 @@ def test_whitespace_preservation():
 
 
 def test_default_delimiter():
+    # [FUNCTION DOC]
+    # Fixed-width data with a tab inside a field: using default delimiters (space and tab) with explicit widths and the first line skipped, asserts equality with the equivalent comma-separated data read by read_csv.
     header = None
     csv_data = """
 a,bbb
@@ -641,6 +707,9 @@ cc\tdd """
 
 @pytest.mark.parametrize("infer", [True, False])
 def test_fwf_compression(compression_only, infer, compression_to_extension, temp_file):
+    # [FUNCTION DOC]
+    # Parametrized over inferring compression from the extension or giving it explicitly, and over each compression format (fixtures). Writes the data compressed to a file in the temp directory (extension chosen from the format), reads with widths and names, and asserts equality with uncompressed reading.
+    # KNOWN ISSUE: the check that the infer flag is not none is always true because the parametrization only supplies true or false, so the condition is redundant.
     data = """1111111111
     2222222222
     3333333333""".strip()
@@ -664,6 +733,8 @@ def test_fwf_compression(compression_only, infer, compression_to_extension, temp
 
 
 def test_binary_mode(temp_file):
+    # [FUNCTION DOC]
+    # GH 18035. Writes a small file and opens it in binary mode; read_fwf on the handle returns a frame with duplicated header names made unique with numeric suffixes. Asserts equality with the reference.
     """
     read_fwf supports opening files in binary mode.
 
@@ -684,6 +755,8 @@ bba bab b a"""
 
 @pytest.mark.parametrize("memory_map", [True, False])
 def test_encoding_mmap(memory_map, temp_file):
+    # [FUNCTION DOC]
+    # GH 23254. Parametrized over memory mapping on/off: a latin-1 encoded file with a non-ascii character read with the encoding and four widths; asserts the character is decoded properly.
     """
     encoding should be working, even when using a memory-mapped file.
 
@@ -745,6 +818,8 @@ def test_encoding_mmap(memory_map, temp_file):
     ],
 )
 def test_len_colspecs_len_names(colspecs, names, widths, index_col):
+    # [FUNCTION DOC]
+    # GH#40830. Parametrized over colspecs or widths with a name list of mismatching length, and index_col true, false or unset; asserts a value error that length of colspecs must match length of names.
     # GH#40830
     data = """col1  col2  col3  col4
     bab   ba    2"""
@@ -833,6 +908,8 @@ def test_len_colspecs_len_names(colspecs, names, widths, index_col):
 def test_len_colspecs_len_names_with_index_col(
     colspecs, names, widths, index_col, expected
 ):
+    # [FUNCTION DOC]
+    # GH#40830. Parametrized over colspecs or widths and index_col as a column or list of columns (names shorter than the number of columns, with the leading columns consumed as the index); asserts the expected frame with a single or multi-level index and missing values filling the short row.
     # GH#40830
     data = """col1  col2  col3  col4
     bab   ba    2"""
@@ -847,6 +924,8 @@ def test_len_colspecs_len_names_with_index_col(
 
 
 def test_colspecs_with_comment():
+    # [FUNCTION DOC]
+    # GH 14135. A comment-only first line with colspecs and no header; asserts a one-row frame with parsed integer and string fields.
     # GH 14135
     result = read_fwf(
         StringIO("#\nA1K\n"), colspecs=[(1, 2), (2, 3)], comment="#", header=None
@@ -856,6 +935,8 @@ def test_colspecs_with_comment():
 
 
 def test_skip_rows_and_n_rows():
+    # [FUNCTION DOC]
+    # GH#44021. Skipping rows two and four while limiting nrows to four returns the four rows that remain after skipping, with header taken from the first line.
     # GH#44021
     data = """a\tb
 1\t a
@@ -871,6 +952,8 @@ def test_skip_rows_and_n_rows():
 
 
 def test_skiprows_with_iterator():
+    # [FUNCTION DOC]
+    # GH#10261 and GH#56323. Chunked iteration (chunk size two) with a list of skipped rows; asserts three chunks of the remaining values with a continuing row index.
     # GH#10261, GH#56323
     data = """0
 1
@@ -901,6 +984,8 @@ def test_skiprows_with_iterator():
 
 
 def test_names_and_infer_colspecs():
+    # [FUNCTION DOC]
+    # GH#45337. With inferred colspecs, one skipped row, usecols zero and two and two supplied names; asserts the two selected columns carry the supplied names.
     # GH#45337
     data = """X   Y   Z
       959.0    345   22.2
@@ -911,6 +996,8 @@ def test_names_and_infer_colspecs():
 
 
 def test_widths_and_usecols():
+    # [FUNCTION DOC]
+    # GH#46580. Explicit widths of five fields, no header, usecols selecting three of them, names and no index column; asserts the selected columns with their values (constant zero, integers, floats).
     # GH#46580
     data = """0  1    n -0.4100.1
 0  2    p  0.2 90.1
@@ -934,6 +1021,8 @@ def test_widths_and_usecols():
 
 
 def test_dtype_backend(string_storage, dtype_backend):
+    # [FUNCTION DOC]
+    # GH#50289. Parametrized over string storage and dtype backend (fixtures). Reads columns of integer, float, boolean, string and missing-heavy columns and asserts nullable extension dtypes (or pyarrow-backed arrays, with the all-missing column null-typed), ignoring column index type because string storage also affects it.
     # GH#50289
     data = """a  b    c      d  e     f  g    h  i
 1  2.5  True  a
@@ -978,6 +1067,8 @@ def test_dtype_backend(string_storage, dtype_backend):
 
 
 def test_invalid_dtype_backend():
+    # [FUNCTION DOC]
+    # dtype_backend of numpy raises a value error that only numpy_nullable and pyarrow are allowed.
     msg = (
         "dtype_backend numpy is invalid, only 'numpy_nullable' and "
         "'pyarrow' are allowed."
@@ -989,6 +1080,8 @@ def test_invalid_dtype_backend():
 @pytest.mark.network
 @pytest.mark.single_cpu
 def test_url_urlopen(httpserver):
+    # [FUNCTION DOC]
+    # Marked network and single_cpu. Serves the fixed-width text from a local HTTP server fixture, opens the URL with the library's urlopen helper and reads it; asserts the column labels are the four header letters.
     data = """\
 A         B            C            D
 201158    360.242940   149.910199   11950.7

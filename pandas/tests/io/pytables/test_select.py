@@ -1,3 +1,5 @@
+# [MODULE DOC]
+# Tests for HDFStore.select, read_hdf with where/columns, and select_as_multiple: column selection, duplicate column labels, dtype-specific conditions (timestamps, booleans, integer/float indexes, NaN handling), large selector lists, iterators and chunked reading (including GH 8014 range cases), complex boolean query expressions, scope resolution of local variables, invalid filters, string comparisons, nested special characters, float literal precision, column type comparisons, empty where arguments, large integers and non-nanosecond datetime indexes. Module marked single_cpu.
 import numpy as np
 import pytest
 
@@ -25,6 +27,8 @@ pytestmark = [pytest.mark.single_cpu]
 
 
 def test_select_columns_in_where(temp_hdfstore):
+    # [FUNCTION DOC]
+    # GH 6169. A frame and a series with a two-level row index stored as tables: selecting columns via the columns argument or via a columns condition inside where returns the same single-column frame; for the series, the column condition returns the whole series with its multi-index recreated.
     # GH 6169
     # recreate multi-indexes when columns is passed
     # in the `where` argument
@@ -55,6 +59,8 @@ def test_select_columns_in_where(temp_hdfstore):
 
 
 def test_select_with_dups(temp_hdfstore):
+    # [FUNCTION DOC]
+    # A frame with duplicate column labels appended as a table: selecting everything, selecting by the full column index, and selecting a duplicated label all return matching frames (compared by blocks where applicable).
     # single dtypes
     df = DataFrame(
         np.random.default_rng(2).standard_normal((10, 4)), columns=["A", "A", "B", "B"]
@@ -77,6 +83,8 @@ def test_select_with_dups(temp_hdfstore):
 
 
 def test_select_with_dups_across_dtypes(temp_hdfstore):
+    # [FUNCTION DOC]
+    # Duplicate float column labels combined with an integer frame that repeats label A: selecting all, by full columns, by one repeated label and by an out-of-order pair returns the expected column subsets (compared by blocks).
     df = concat(
         [
             DataFrame(
@@ -112,6 +120,8 @@ def test_select_with_dups_across_dtypes(temp_hdfstore):
 
 
 def test_select_with_dups_across_index_and_columns(temp_hdfstore):
+    # [FUNCTION DOC]
+    # The same duplicate-label frame appended twice (doubling the rows): selecting two columns returns the doubled rows with those columns, compared by blocks.
     df = concat(
         [
             DataFrame(
@@ -136,6 +146,8 @@ def test_select_with_dups_across_index_and_columns(temp_hdfstore):
 
 
 def test_select(temp_hdfstore):
+    # [FUNCTION DOC]
+    # Selecting with the columns argument, with an equivalent columns condition, with a data column condition and column subset, with all columns as data columns, and with a condition on a data column but different returned columns; each matches the expected reindexed frame.
     # select with columns=
     df = DataFrame(
         np.random.default_rng(2).standard_normal((10, 4)),
@@ -175,6 +187,8 @@ def test_select(temp_hdfstore):
 
 
 def test_select_dtypes_timestamp(temp_hdfstore):
+    # [FUNCTION DOC]
+    # GH #2637. A timestamp data column filtered with a timestamp comparison returns the matching rows.
     # with a Timestamp data column (GH #2637)
     df = DataFrame(
         {
@@ -190,6 +204,8 @@ def test_select_dtypes_timestamp(temp_hdfstore):
 
 
 def test_select_dtypes_bools(temp_hdfstore):
+    # [FUNCTION DOC]
+    # GH #2849. A boolean data column filtered by equality with true/false, their lowercase string forms and numeric 1/0 returns the matching rows restricted to two columns.
     # bool columns (GH #2849)
     df = DataFrame(np.random.default_rng(2).standard_normal((5, 2)), columns=["A", "B"])
     df["object"] = "foo"
@@ -209,6 +225,8 @@ def test_select_dtypes_bools(temp_hdfstore):
 
 
 def test_select_dtypes_integer_index(temp_hdfstore):
+    # [FUNCTION DOC]
+    # A condition on an integer index combined with a column restriction returns the first ten rows and one column.
     df = DataFrame(
         {
             "A": np.random.default_rng(2).random(20),
@@ -222,6 +240,8 @@ def test_select_dtypes_integer_index(temp_hdfstore):
 
 
 def test_select_dtypes_float_index(temp_hdfstore):
+    # [FUNCTION DOC]
+    # A frame with a float column literally named index: a condition comparing it with a float literal combined with a column restriction returns the first ten rows and one column.
     df = DataFrame(
         {
             "A": np.random.default_rng(2).random(20),
@@ -236,6 +256,8 @@ def test_select_dtypes_float_index(temp_hdfstore):
 
 
 def test_select_dtypes_floats_without_nan(temp_hdfstore):
+    # [FUNCTION DOC]
+    # String column and float data columns: a numeric condition on the float data column returns the matching rows.
     df = DataFrame({"cols": range(11), "values": range(11)}, dtype="float64")
     df["cols"] = (df["cols"] + 10).apply(str)
 
@@ -246,6 +268,8 @@ def test_select_dtypes_floats_without_nan(temp_hdfstore):
 
 
 def test_select_dtypes_floats_with_nan(temp_hdfstore):
+    # [FUNCTION DOC]
+    # Same as above with the first row entirely missing and the table written without an index; the condition still returns the correct rows.
     df = DataFrame({"cols": range(11), "values": range(11)}, dtype="float64")
     df["cols"] = (df["cols"] + 10).apply(str)
     df.iloc[0] = np.nan
@@ -257,6 +281,8 @@ def test_select_dtypes_floats_with_nan(temp_hdfstore):
 
 
 def test_select_dtypes_floats_with_nan_not_first_position(temp_hdfstore):
+    # [FUNCTION DOC]
+    # Same as above with the missing row in second position; the condition still returns the correct rows.
     df = DataFrame({"cols": range(11), "values": range(11)}, dtype="float64")
     df["cols"] = (df["cols"] + 10).apply(str)
 
@@ -269,6 +295,8 @@ def test_select_dtypes_floats_with_nan_not_first_position(temp_hdfstore):
 
 
 def test_select_dtypes_comparison_with_numpy_scalar(temp_hdfstore, request):
+    # [FUNCTION DOC]
+    # GH 11283. A condition comparing a data column with a numpy scalar variable from the local scope returns the matching rows. Expected to fail with a value error on Python 3.12 or later (AST change; marked via the request fixture). The scalar variable is defined only to be resolved by name in the query.
     # GH 11283
     df = DataFrame(
         1.1 * np.arange(120).reshape((30, 4)),
@@ -292,6 +320,8 @@ def test_select_dtypes_comparison_with_numpy_scalar(temp_hdfstore, request):
 
 
 def test_select_with_many_inputs(temp_hdfstore):
+    # [FUNCTION DOC]
+    # Data columns for timestamp, float, integer and user (string) values. Asserts a timestamp condition, a combination with a small literal list of users, a combination with a long list given by a local variable, an integer column compared with a range of values (exactly 100 rows), and a timestamp column compared with an index of values (exactly 100 rows).
     df = DataFrame(
         {
             "ts": bdate_range("2012-01-01", periods=300, unit="ns"),
@@ -340,6 +370,8 @@ def test_select_with_many_inputs(temp_hdfstore):
 
 
 def test_select_iterator(temp_hdfstore):
+    # [FUNCTION DOC]
+    # Selecting with the iterator option and with a chunk size of two (five chunks) both concatenate to the full result; asserts equality.
     # single table
     df = DataFrame(
         np.random.default_rng(2).standard_normal((10, 4)),
@@ -365,6 +397,8 @@ def test_select_iterator(temp_hdfstore):
 
 
 def test_select_iterator2(temp_h5_path):
+    # [FUNCTION DOC]
+    # read_hdf on a fixed-format (non-table) key with chunksize or iterator raises a type error that iterators and chunk sizes need a table.
     df = DataFrame(
         np.random.default_rng(2).standard_normal((10, 4)),
         columns=Index(list("ABCD")),
@@ -381,6 +415,8 @@ def test_select_iterator2(temp_h5_path):
 
 
 def test_select_iterator3(temp_h5_path):
+    # [FUNCTION DOC]
+    # Chunked read_hdf of a table gives five chunks that concatenate to the original frame and to a non-chunked read.
     df = DataFrame(
         np.random.default_rng(2).standard_normal((10, 4)),
         columns=Index(list("ABCD")),
@@ -397,6 +433,8 @@ def test_select_iterator3(temp_h5_path):
 
 
 def test_select_iterator_multiple(temp_hdfstore):
+    # [FUNCTION DOC]
+    # select_as_multiple with a chunk size returns chunks whose concatenation equals the unchunked multiple select.
     df1 = DataFrame(
         np.random.default_rng(2).standard_normal((10, 4)),
         columns=Index(list("ABCD")),
@@ -417,6 +455,8 @@ def test_select_iterator_multiple(temp_hdfstore):
 
 
 def test_select_iterator_complete_8014(temp_hdfstore):
+    # [FUNCTION DOC]
+    # GH 8014. For a 100064-row second-frequency frame, selecting with no where clause and with where clauses covering the start, the end and the complete index range (no iterator) each return the whole frame.
     # GH 8014
     # using iterator and where clause
     # no iterator
@@ -454,6 +494,8 @@ def test_select_iterator_complete_8014(temp_hdfstore):
 
 
 def test_select_iterator_complete_8014_full_range(temp_hdfstore):
+    # [FUNCTION DOC]
+    # GH 8014. Same where clauses as the complete case but using chunked iteration (chunk size 10000, a float); the concatenated chunks equal the whole frame.
     # GH 8014
     chunksize = 1e4
     expected = DataFrame(
@@ -491,6 +533,8 @@ def test_select_iterator_complete_8014_full_range(temp_hdfstore):
 
 
 def test_select_iterator_non_complete_8014(temp_hdfstore):
+    # [FUNCTION DOC]
+    # GH 8014. Chunked iteration with where clauses covering partial ranges (from the second row, to the second-to-last row, and between them); the concatenated chunks equal the corresponding slices.
     # GH 8014
     # using iterator and where clause
     chunksize = 1e4
@@ -529,6 +573,8 @@ def test_select_iterator_non_complete_8014(temp_hdfstore):
 
 
 def test_select_iterator_non_complete_8014_empty_where(temp_hdfstore):
+    # [FUNCTION DOC]
+    # A chunked select whose where clause matches nothing (after the last timestamp) yields no chunks at all.
     chunksize = 1e4
     expected = DataFrame(
         np.random.default_rng(2).standard_normal((100064, 4)),
@@ -546,6 +592,9 @@ def test_select_iterator_non_complete_8014_empty_where(temp_hdfstore):
 
 
 def test_select_iterator_many_empty_frames(temp_hdfstore):
+    # [FUNCTION DOC]
+    # GH 8014. A where clause can match only the first chunk of a chunked scan; asserts that concatenated results equal the expected slices, that a range limited to the first chunk yields a single chunk, and that a clause selecting nothing yields no chunks.
+    # KNOWN ISSUE: two comments say the chunk count "should be 1, is 10" and "should be []" but the assertions already require one chunk and zero chunks respectively, so the comments are stale or misleading.
     # GH 8014
     # using iterator and where clause can return many empty
     # frames.
@@ -603,6 +652,9 @@ def test_select_iterator_many_empty_frames(temp_hdfstore):
 
 
 def test_frame_select(temp_hdfstore, request):
+    # [FUNCTION DOC]
+    # A Term on the index referencing a local variable has that variable in its scope. Selecting with the index term and a column list, and with a single column, returns the expected slices (expected to fail with a type error on Python 3.12 or later). A comparison of the index with an integer raises a value error about a day out of range.
+    # KNOWN ISSUE: a trailing block of commented-out code (selecting from a non-table store) is left in the body and is never executed.
     df = DataFrame(
         np.random.default_rng(2).standard_normal((10, 4)),
         columns=Index(list("ABCD")),
@@ -651,6 +703,8 @@ def test_frame_select(temp_hdfstore, request):
 
 
 def test_frame_select_complex(temp_hdfstore):
+    # [FUNCTION DOC]
+    # Complex boolean where expressions combining index comparisons and a string data column using and, or and grouping; negation of a data column comparison works for filters but raises a not-implemented error when handed to numexpr for a condition; membership in a column list works.
     # select via complex criteria
 
     df = DataFrame(
@@ -707,6 +761,8 @@ def test_frame_select_complex(temp_hdfstore):
 
 
 def test_frame_select_complex2(tmp_path):
+    # [FUNCTION DOC]
+    # Uses two files in the temp directory: a parameter table and a multi-index history table. Selecting history rows with conditions that reference local variables and expressions (a list, an index, an attribute, a method call and a conversion call) in both read_hdf and a store, asserting each equals the expected rows.
     pp = tmp_path / "params.hdf"
     hh = tmp_path / "hist.hdf"
 
@@ -766,6 +822,8 @@ def test_frame_select_complex2(tmp_path):
 
 
 def test_invalid_filtering(temp_hdfstore):
+    # [FUNCTION DOC]
+    # Combining more than one column filter with or or and raises a not-implemented error saying joint filters cannot be collapsed.
     # can't use more than one filter (atm)
 
     df = DataFrame(
@@ -787,6 +845,8 @@ def test_invalid_filtering(temp_hdfstore):
 
 
 def test_string_select(temp_hdfstore):
+    # [FUNCTION DOC]
+    # GH 2973. String data column equality and inequality against a literal (including the empty string and missing values), and integer equality and inequality conditions on data columns.
     # GH 2973
     df = DataFrame(
         np.random.default_rng(2).standard_normal((10, 4)),
@@ -832,6 +892,9 @@ def test_string_select(temp_hdfstore):
 
 
 def test_select_as_multiple(temp_hdfstore):
+    # [FUNCTION DOC]
+    # Validates select_as_multiple: keys that are not a list or tuple raise a type error (including a list containing none); unknown table keys or an unknown selector raise key errors; a single-key list or plain string behaves like a normal select; multiple tables with the same selector or a different selector return the joined columns of the rows matching; tables with different row counts raise a value error.
+    # KNOWN ISSUE: a FIXME comment records that the frequency check is disabled (check_freq false) on one assertion because the frequency intermittently differs on some builds; also the first type-error check with a none key is repeated verbatim after the tables are appended.
     df1 = DataFrame(
         np.random.default_rng(2).standard_normal((10, 4)),
         columns=Index(list("ABCD")),
@@ -908,6 +971,8 @@ def test_select_as_multiple(temp_hdfstore):
 
 
 def test_nan_selection_bug_4858(temp_hdfstore):
+    # [FUNCTION DOC]
+    # A table written with an index only on the string column and the first row missing: a numeric condition on the values data column returns the expected three rows.
     df = DataFrame({"cols": range(6), "values": range(6)}, dtype="float64")
     df["cols"] = (df["cols"] + 10).apply(str)
     df.iloc[0] = np.nan
@@ -924,6 +989,8 @@ def test_nan_selection_bug_4858(temp_hdfstore):
 
 
 def test_query_with_nested_special_character(temp_hdfstore):
+    # [FUNCTION DOC]
+    # A string data value containing an ampersand can be matched with a quoted equality condition.
     df = DataFrame(
         {
             "a": ["a", "a", "c", "b", "test & test", "c", "b", "e"],
@@ -937,6 +1004,8 @@ def test_query_with_nested_special_character(temp_hdfstore):
 
 
 def test_query_long_float_literal(temp_hdfstore):
+    # [FUNCTION DOC]
+    # GH 14241. Float literals with four decimals compared against values of magnitude one billion: a lower bound below all values returns nothing, a bound between values returns the last two rows, and an exact equality matches one row.
     # GH 14241
     df = DataFrame({"A": [1000000000.0009, 1000000000.0011, 1000000000.0015]})
 
@@ -958,6 +1027,8 @@ def test_query_long_float_literal(temp_hdfstore):
 
 
 def test_query_compare_column_type(temp_hdfstore):
+    # [FUNCTION DOC]
+    # GH 15492. For each comparison operator, comparing the string column with non-string values (float, boolean, timestamp, timedelta) raises a type error that the value cannot be compared to a string column; comparing integer, float and date columns with a non-convertible string raises a value error (date-specific message for the date column); comparing them with convertible strings returns the expected rows depending on the operator. A timestamp variable comparison with the date column also works.
     # GH 15492
     df = DataFrame(
         {
@@ -1010,6 +1081,8 @@ def test_query_compare_column_type(temp_hdfstore):
 
 @pytest.mark.parametrize("where", ["", (), (None,), [], [None]])
 def test_select_empty_where(temp_hdfstore, where):
+    # [FUNCTION DOC]
+    # GH26610. Parametrized over empty strings, empty tuples/lists and ones containing none: read_hdf with such a where argument on a table returns the entire frame.
     # GH26610
 
     df = DataFrame([1, 2, 3])
@@ -1019,6 +1092,8 @@ def test_select_empty_where(temp_hdfstore, where):
 
 
 def test_select_large_integer(temp_hdfstore):
+    # [FUNCTION DOC]
+    # A table with a large negative 64-bit integer data column written without index: an equality condition on the large literal returns the matching row and its value equals the original.
     df = DataFrame(
         zip(
             ["a", "b", "c", "d"],
@@ -1037,6 +1112,8 @@ def test_select_large_integer(temp_hdfstore):
 
 @pytest.mark.parametrize("unit", ["us", "ns", "ms", "s"])
 def test_select_where_datetime_index_with_non_ns_resolution(temp_hdfstore, unit):
+    # [FUNCTION DOC]
+    # GH#64310. Parametrized over datetime units (us, ns, ms, s): a where clause with an inclusive string date range on an hourly index of that unit returns the expected rows.
     # GH#64310
     idx = date_range("2020-01-01", periods=10, freq="h", unit=unit)
     df = DataFrame({"value": range(10)}, index=idx)
