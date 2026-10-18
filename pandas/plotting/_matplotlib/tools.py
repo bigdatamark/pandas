@@ -1,4 +1,10 @@
 # being a bit too dynamic
+# [MODULE DOC]
+# HELPER: matplotlib helper utilities for the pandas plotting backend: figure layout adjustment, tables,
+# subplot grid sizing and creation (adapted from matplotlib's subplot creation), shared-axis label hiding,
+# flattening of axes containers, tick property setting and line/limit queries. Used by core, hist, misc and
+# timeseries plotting modules. Imports matplotlib at import time; no other side effects.
+
 from __future__ import annotations
 
 from math import ceil
@@ -36,6 +42,9 @@ if TYPE_CHECKING:
 
 
 def do_adjust_figure(fig: Figure) -> bool:
+    # [FUNCTION DOC]
+    # Returns whether the figure's layout may be adjusted manually: false when the figure lacks the constrained-layout
+    # getter, otherwise true exactly when constrained layout is not enabled.
     """Whether fig has constrained_layout enabled."""
     if not hasattr(fig, "get_constrained_layout"):
         return False
@@ -43,12 +52,19 @@ def do_adjust_figure(fig: Figure) -> bool:
 
 
 def maybe_adjust_figure(fig: Figure, *args, **kwargs) -> None:
+    # [FUNCTION DOC]
+    # Calls the figure's subplot adjustment with the given positional and keyword arguments, but only when manual
+    # adjustment is allowed (see the previous function). Returns nothing.
     """Call fig.subplots_adjust unless fig has constrained_layout enabled."""
     if do_adjust_figure(fig):
         fig.subplots_adjust(*args, **kwargs)
 
 
 def format_date_labels(ax: Axes, rot) -> None:
+    # [FUNCTION DOC]
+    # HELPER: mini version of the automatic date label formatting. For each x tick label of ax, sets right horizontal alignment
+    # and the rotation rot. If the axes has a figure, shrinks the bottom margin to 0.2 when manual adjustment is allowed.
+    # Returns nothing.
     # mini version of autofmt_xdate
     for label in ax.get_xticklabels():
         label.set_horizontalalignment("right")
@@ -62,6 +78,10 @@ def format_date_labels(ax: Axes, rot) -> None:
 def table(
     ax, data: DataFrame | Series, rowLabels=None, colLabels=None, **kwargs
 ) -> Table:
+    # [FUNCTION DOC]
+    # Builds a matplotlib table on ax from data. data must be a DataFrame or Series (a Series is converted to a one-column
+    # frame); anything else raises a value error. rowLabels and colLabels default to the index and columns of the data; extra
+    # keyword arguments go to the matplotlib table function. The cell text is the data's values. Returns the table object.
     if isinstance(data, ABCSeries):
         data = data.to_frame()
     elif isinstance(data, ABCDataFrame):
@@ -93,6 +113,16 @@ def _get_layout(
     layout: tuple[int, int] | None = None,
     layout_type: str = "box",
 ) -> tuple[int, int]:
+    # [FUNCTION DOC]
+    # HELPER: computes the (rows, columns) subplot grid for nplots plots. layout is an optional tuple or list of two
+    # integers; layout_type (default box) selects the shape when no layout is given.
+    # With a layout: it must be a two-element tuple or list, else a value error. A minus one in one dimension is filled in as the ceiling of
+    # nplots divided by the other (positive) dimension; if both dimensions are non-positive and not the above, a value error is
+    # raised (at least one dimension must be positive); if the grid is smaller than nplots a value error is raised. The (possibly
+    # list-typed) layout is returned.
+    # Without a layout: single gives one by one, horizontal gives one row, vertical gives one column; box gives a fixed grid for one to
+    # four plots (one by one, one by two, two by two, two by two) and otherwise the smallest near-square grid: k by k where k is the
+    # smallest integer whose square is at least nplots, reduced to k by k minus one when that still fits.
     if layout is not None:
         if not isinstance(layout, (tuple, list)) or len(layout) != 2:
             raise ValueError("Layout must be a tuple of (rows, columns)")
@@ -150,6 +180,23 @@ def create_subplots(
     layout_type: str = "box",
     **fig_kw,
 ):
+    # [FUNCTION DOC]
+    # Creates a figure with a grid of subplots (adapted from matplotlib's pyplot function). naxes is the number of axes needed
+    # (extra grid cells are hidden); sharex and sharey share axes with the first subplot; squeeze says whether to drop length-one
+    # dimensions of the returned axes; subplot_kw are keywords for each add-subplot call; ax is an optional existing axes or
+    # sequence of axes to reuse; layout and layout_type determine the grid; fig_kw go to the figure creation.
+    # Returns a tuple of figure and axes (a single axes, a one-dimensional or a two-dimensional object array).
+    # If ax is a list-like of axes: when squeeze is true it is flattened to a one-dimensional object array; warnings (user warning)
+    # are emitted when layout is given or sharex/sharey are set because they are ignored; the number of axes must equal naxes,
+    # else a value error is raised; the existing figure and axes are returned as is.
+    # If ax is a single axes: when naxes is one the axes is returned directly (or as a flat object array when squeeze is false);
+    # when naxes is greater than one a user warning is emitted and the figure is cleared so that new subplots can be added.
+    # Otherwise a new figure is created. Subplots are created one by one (grid cells beyond naxes get no shared axes and are hidden),
+    # then the shared-axis label handling runs, and the result is reshaped according to squeeze.
+    # KNOWN ISSUE: the docstring says naxes defaults to rows times columns, but it is a required parameter with no default.
+    # KNOWN ISSUE: the docstring lists only box, horizontal and vertical for layout_type but the layout helper also accepts single.
+    # KNOWN ISSUE: the docstring promises a two-dimensional array when squeeze is false, but the existing-single-axes path returns a flat one-dimensional array.
+    # KNOWN ISSUE: when a list of axes is passed and squeeze is false, the list is not converted to an array and the size attribute lookup that follows would fail for a plain list.
     """
     Create a figure with a set of subplots already made.
 
@@ -324,6 +371,10 @@ def create_subplots(
 
 
 def _remove_labels_from_axis(axis: Axis) -> None:
+    # [FUNCTION DOC]
+    # HELPER: hides the tick labels and axis label of the given axis. Hides major tick labels; ensures minor tick labels can be
+    # hidden by replacing a null minor locator with an automatic one and a null minor formatter with an empty-format formatter;
+    # hides minor tick labels and the axis label. Mutates the axis; returns nothing.
     for t in axis.get_majorticklabels():
         t.set_visible(False)
 
@@ -340,6 +391,10 @@ def _remove_labels_from_axis(axis: Axis) -> None:
 
 
 def _has_externally_shared_axis(ax1: Axes, compare_axis: str) -> bool:
+    # [FUNCTION DOC]
+    # HELPER: returns true when axis ax1 shares the x or y axis (compare_axis must be the letter x or y, otherwise a value error is
+    # raised) with another axes at a different position (external sharing, as opposed to twinning, where the position is identical).
+    # Looks at the group of sibling axes of the chosen shared axis and compares position corner points.
     """
     Return whether an axis is externally shared.
 
@@ -398,6 +453,13 @@ def handle_shared_axes(
     sharex: bool,
     sharey: bool,
 ) -> None:
+    # [FUNCTION DOC]
+    # HELPER: hides tick labels on shared axes so only the outer subplots show labels. axarr is the iterable of axes in the grid,
+    # nplots the number of grid cells, naxes the number of visible plots, nrows and ncols the grid shape, sharex and sharey the
+    # sharing flags. Does nothing for a single plot. When there is more than one row: builds a layout map of visible axes and removes x
+    # labels of every axes that has a visible subplot directly below it, if x is shared (by flag or externally); if the map indexing
+    # fails (grid specs that do not match) falls back to hiding x labels on every axes that is not in the last row. When there is more than
+    # one column: removes y labels from every axes not in the first column if y is shared. Mutates the axes; returns nothing.
     if nplots > 1:
         row_num = lambda x: x.get_subplotspec().rowspan.start
         col_num = lambda x: x.get_subplotspec().colspan.start
@@ -443,6 +505,9 @@ def handle_shared_axes(
 
 
 def flatten_axes(axes: Axes | Iterable[Axes]) -> Generator[Axes]:
+    # [FUNCTION DOC]
+    # HELPER: generator that yields individual axes. A scalar (non list-like) is yielded as is; numpy arrays and indexes are flattened
+    # and their elements yielded; any other iterable has its elements yielded directly.
     if not is_list_like(axes):
         yield axes  # type: ignore[misc]
     elif isinstance(axes, (np.ndarray, ABCIndex)):
@@ -458,6 +523,9 @@ def set_ticks_props(
     ylabelsize: int | None = None,
     yrot=None,
 ):
+    # [FUNCTION DOC]
+    # Sets tick label properties on all axes in axes (a single axes or iterable, flattened). xlabelsize and ylabelsize are font sizes
+    # for x and y tick labels; xrot and yrot are rotations; each is applied only when not none. Returns the original axes argument.
     for ax in flatten_axes(axes):
         if xlabelsize is not None:
             mpl.artist.setp(ax.get_xticklabels(), fontsize=xlabelsize)  # type: ignore[arg-type]
@@ -471,6 +539,9 @@ def set_ticks_props(
 
 
 def get_all_lines(ax: Axes) -> list[Line2D]:
+    # [FUNCTION DOC]
+    # HELPER: returns the lines of ax; if it has right-axis or left-axis companions (secondary y handling), their lines are appended,
+    # extending the list obtained from the primary axes. Returns the combined list of line objects.
     lines = ax.get_lines()
 
     if hasattr(ax, "right_ax"):
@@ -483,6 +554,9 @@ def get_all_lines(ax: Axes) -> list[Line2D]:
 
 
 def get_xlim(lines: Iterable[Line2D]) -> tuple[float, float]:
+    # [FUNCTION DOC]
+    # HELPER: returns the minimum and maximum x data over all given lines as a pair, ignoring NaN. Uses the original (non-transformed)
+    # x data. If there are no lines returns positive infinity and negative infinity.
     left, right = np.inf, -np.inf
     for line in lines:
         x = line.get_xdata(orig=False)

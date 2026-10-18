@@ -1,3 +1,11 @@
+# [MODULE DOC]
+# Matplotlib implementations of the pandas plotting helpers that are re-exported through the
+# public plotting module: scatter matrix, radviz, andrews curves, bootstrap plot, parallel coordinates,
+# lag plot and autocorrelation plot, plus a small helper for unpacking single-element label lists.
+# Each function takes pandas objects and optional matplotlib axes or figures and returns matplotlib objects.
+# Depends on the style module for colors and the tools module for subplot creation and layout helpers.
+# Imports matplotlib at import time.
+
 from __future__ import annotations
 
 import random
@@ -43,6 +51,19 @@ def scatter_matrix(
     range_padding: float = 0.05,
     **kwds,
 ):
+    # [FUNCTION DOC]
+    # Draws a matrix of scatter plots of all numeric columns of frame. alpha is the point transparency (default
+    # 0.5); figsize is an optional size tuple; ax is an optional axes used to find the figure; grid is accepted but not
+    # used; diagonal chooses the plot on the diagonal: histogram (default) or kernel density (the names kde or density);
+    # any other value draws nothing on the diagonal; marker is the scatter marker (default a dot, replaced by a circle if
+    # not a valid marker); density_kwds and hist_kwds are extra arguments for the density line and histogram; range_padding
+    # (default 0.05) widens the axis ranges by that fraction of the data range, half on each side; kwds go to the scatter
+    # (edge colors default to none). Missing values are masked per pair. Each axes gets x and y labels from the
+    # column names; only the left column shows y axis and only the bottom row shows x axis. With more than one column the
+    # first diagonal axes' y ticks are replaced by the tick positions of its neighbor mapped into its own range, labeled
+    # as integers when all are whole numbers. Tick label sizes and rotations are set. Subplot gaps are removed.
+    # Returns the two-dimensional array of axes. The density option imports scipy lazily.
+    # KNOWN ISSUE: the grid parameter is accepted but never used.
     df = frame._get_numeric_data()
     n = df.columns.size
     naxes = n * n
@@ -128,6 +149,8 @@ def scatter_matrix(
 
 
 def _get_marker_compat(marker):
+    # [FUNCTION DOC]
+    # HELPER: returns the marker unchanged if it is a valid matplotlib line marker, else the circle marker.
     if marker not in mpl.lines.lineMarkers:
         return "o"
     return marker
@@ -141,9 +164,19 @@ def radviz(
     colormap=None,
     **kwds,
 ) -> Axes:
+    # [FUNCTION DOC]
+    # Draws a radviz plot: each row is projected into the plane using the columns (other than class_column) as anchor
+    # points equally spaced on the unit circle. frame is the data, class_column the name of the column holding classes,
+    # ax an optional axes (if none, the current axes is used and its limits set to the range minus one to one),
+    # color and colormap choose class colors, kwds are passed to the scatter calls. Columns are scaled to the zero-one
+    # range first; each point is the weighted mean of the anchors with weights equal to the scaled row values divided by
+    # their sum. One scatter call per class with a label; a legend, a unit circle, anchor markers and column name labels
+    # (placed by quadrant) are added and the axes aspect set to equal. Returns the axes.
     import matplotlib.pyplot as plt
 
     def normalize(series):
+        # [FUNCTION DOC]
+        # HELPER: scales a series to the zero-one range by subtracting its minimum and dividing by the range.
         a = min(series)
         b = max(series)
         return (series - a) / (b - a)
@@ -229,10 +262,24 @@ def andrews_curves(
     colormap=None,
     **kwds,
 ) -> Axes:
+    # [FUNCTION DOC]
+    # Draws Andrews curves: each row is rendered as a Fourier-style function (first coefficient divided by the
+    # square root of two plus sine and cosine terms of the remaining coefficients) sampled at samples evenly spaced
+    # points between minus pi and pi. frame is the data, class_column names the class column, ax an optional axes (if none,
+    # the current axes with the x limits set), samples the number of points (default 200), color and colormap pick the
+    # class colors, kwds go to each line plot. Each class is labeled once in the legend. A legend placed upper right and a
+    # grid are added. Returns the axes.
     import matplotlib.pyplot as plt
 
     def function(amplitudes):
+        # [FUNCTION DOC]
+        # HELPER: returns a function of t for the given row of amplitudes (coefficients); see the Andrews curves description.
         def f(t):
+            # [FUNCTION DOC]
+            # HELPER: evaluates the curve at the points t: the first amplitude divided by the square root of two plus the sum
+            # over harmonics of sine terms with the odd-position coefficients and cosine terms with the even-position
+            # coefficients (coefficients are resized into pairs, padding by repeating values if the count is odd).
+            # Returns an array of the curve values.
             x1 = amplitudes[0]
             result = x1 / np.sqrt(2.0)
 
@@ -294,6 +341,13 @@ def bootstrap_plot(
     samples: int = 500,
     **kwds,
 ) -> Figure:
+    # [FUNCTION DOC]
+    # Draws a bootstrap plot of a series: draws samples random subsamples (default 500), each of size elements (default 50)
+    # without replacement from the series values, and plots the mean, median and midrange of each as three line plots (top row)
+    # and three histograms (bottom row) in a two-by-three grid on fig (a new figure when none is given). kwds go to both
+    # the line and histogram calls. Tick label font sizes are reduced to eight. The layout is tightened when the figure
+    # allows it. Returns the figure. Uses the standard library random module, so results are random unless seeded.
+    # KNOWN ISSUE: the comment about a Python 3.3 failure of the sampling call is stale and flagged in a TODO as possibly no longer relevant.
     import matplotlib.pyplot as plt
 
     # TODO: is the failure mentioned below still relevant?
@@ -356,6 +410,16 @@ def parallel_coordinates(
     sort_labels: bool = False,
     **kwds,
 ) -> Axes:
+    # [FUNCTION DOC]
+    # Draws parallel coordinates for each row of frame. class_column names the class column; cols optionally selects the
+    # columns to plot (default all other columns); ax an optional axes; color and colormap choose class colors;
+    # use_columns says to use the column labels as the x positions (they must be numeric, otherwise a value error is raised);
+    # xticks gives explicit x positions (must be numeric and match the number of columns in length, else value errors are
+    # raised); otherwise positions are integers. sort_labels sorts the classes and the colors. axvlines (default true) draws
+    # vertical lines at the x positions using axvlines_kwds (default black width one). kwds go to the line plots. Each class
+    # is labeled once. Sets x ticks and tick labels to the column names, x limits to the first and last position, adds a legend
+    # (upper right) and grid. Returns the axes.
+    # KNOWN ISSUE: when sort_labels is true the color list is sorted too, which changes the class-to-color pairing instead of only sorting the class order.
     import matplotlib.pyplot as plt
 
     if axvlines_kwds is None:
@@ -424,6 +488,10 @@ def parallel_coordinates(
 
 
 def lag_plot(series: Series, lag: int = 1, ax: Axes | None = None, **kwds) -> Axes:
+    # [FUNCTION DOC]
+    # Draws a lag plot of a series: scatter of each value against the value lag steps later. series is the data, lag
+    # the shift (default 1), ax an optional axes (current axes if none), kwds go to the scatter (the color defaults to the patch
+    # face color since matplotlib hardcodes a default). Labels axes y(t) and y(t + lag). Returns the axes.
     # workaround because `c='b'` is hardcoded in matplotlib's scatter method
     import matplotlib.pyplot as plt
 
@@ -441,6 +509,12 @@ def lag_plot(series: Series, lag: int = 1, ax: Axes | None = None, **kwds) -> Ax
 
 
 def autocorrelation_plot(series: Series, ax: Axes | None = None, **kwds) -> Axes:
+    # [FUNCTION DOC]
+    # Draws an autocorrelation plot. series is the data, ax an optional axes (if none, the current axes with limits one to n for x and
+    # minus one to one for y), kwds go to the line plot. Computes the autocorrelation for lags one through n and plots it, adding
+    # horizontal lines at zero and at plus and minus the 95 percent (solid grey) and 99 percent (dashed grey) confidence bounds
+    # (z values divided by the square root of the length). Labels axes Lag and Autocorrelation; shows a legend only if a label keyword was
+    # given; adds a grid. Returns the axes.
     import matplotlib.pyplot as plt
 
     n = len(series)
@@ -453,6 +527,9 @@ def autocorrelation_plot(series: Series, ax: Axes | None = None, **kwds) -> Axes
     c0 = np.sum((data - mean) ** 2) / n
 
     def r(h):
+        # [FUNCTION DOC]
+        # HELPER: computes the autocorrelation at lag h from the data and mean of the enclosing function: the sum of products of
+        # the mean-centered data shifted by h, divided by n and by the variance term.
         return ((data[: n - h] - mean) * (data[h:] - mean)).sum() / n / c0
 
     x = np.arange(n) + 1
@@ -474,6 +551,8 @@ def autocorrelation_plot(series: Series, ax: Axes | None = None, **kwds) -> Axes
 
 
 def unpack_single_str_list(keys):
+    # [FUNCTION DOC]
+    # HELPER: GH 42795. If keys is a list with exactly one element returns that element; otherwise returns keys unchanged.
     # GH 42795
     if isinstance(keys, list) and len(keys) == 1:
         keys = keys[0]

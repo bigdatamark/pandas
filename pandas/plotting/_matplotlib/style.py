@@ -1,3 +1,11 @@
+# [MODULE DOC]
+# HELPER: internal color-selection logic for the matplotlib plotting backend.
+# Public entry point is get_standard_colors (with typing overloads), which turns a colormap, a color
+# specification or a color type into a list (or dict) of colors. Private helpers derive colors from a
+# colormap, a single color or a sequence of colors, or a color type (default property cycle or random),
+# validate colors, and cycle the result. Used by the core, misc and hist plotting modules.
+# Imports matplotlib and numpy at import time; no other side effects (a warning may be emitted at call time).
+
 from __future__ import annotations
 
 from collections.abc import (
@@ -63,6 +71,22 @@ def get_standard_colors(
     *,
     color: dict[str, Color] | Color | Sequence[Color] | None = None,
 ) -> dict[str, Color] | list[Color]:
+    # [FUNCTION DOC]
+    # Returns the colors to use for a plot. num_colors is the number of colors needed (ignored for dict colors);
+    # colormap is an optional matplotlib colormap (or its name); color_type is the default or random mode used when
+    # neither color nor colormap is given; color is a dict, a single color, or a sequence of colors (keyword-only).
+    # If color is a dict it is returned as is. Otherwise colors are derived (color wins over colormap with a user warning
+    # when both are given) and then cycled so that the result has at least num_colors entries (it is the maximum of
+    # num_colors and the number of derived colors long). Returns a list. Raises value errors from the helpers for
+    # invalid input.
+    # [FUNCTION DOC]
+    # Typing overload stub for get_standard_colors with the full color union: returns a dict or a list. See the
+    # implementation below.
+    # [FUNCTION DOC]
+    # Typing overload stub for get_standard_colors when color is a single color, a sequence of colors or none: returns
+    # a list. See the implementation below.
+    # [FUNCTION DOC]
+    # Typing overload stub for get_standard_colors when color is a dict: returns a dict. See the implementation below.
     """
     Get standard colors based on `colormap`, `color_type` or `color` inputs.
 
@@ -115,6 +139,11 @@ def _derive_colors(
     color_type: str,
     num_colors: int,
 ) -> list[Color]:
+    # [FUNCTION DOC]
+    # HELPER: derives a list of colors from the first applicable input. If color is none and a colormap is given, colors come
+    # from the colormap; if a color is given they come from the color (and a user warning is emitted when a colormap is also
+    # given, since the color takes precedence); otherwise they come from the color type. Keyword-only parameters:
+    # color, colormap (name or object), color_type, num_colors. Returns a list of colors.
     """
     Derive colors from either `colormap`, `color_type` or `color` inputs.
 
@@ -161,6 +190,9 @@ def _derive_colors(
 
 
 def _cycle_colors(colors: list[Color], num_colors: int) -> Iterator[Color]:
+    # [FUNCTION DOC]
+    # HELPER: generator yielding colors from the list, repeated cyclically, until the larger of num_colors and the list
+    # length is reached. Extra colors are harmless because matplotlib ignores unused ones.
     """Cycle colors until achieving max of `num_colors` or length of `colors`.
 
     Extra colors will be ignored by matplotlib if there are more colors
@@ -174,12 +206,19 @@ def _get_colors_from_colormap(
     colormap: str | Colormap,
     num_colors: int,
 ) -> list[Color]:
+    # [FUNCTION DOC]
+    # HELPER: samples num_colors evenly spaced colors from the colormap (a name or object, resolved by the next helper)
+    # across the range zero to one and returns them as a list.
     """Get colors from colormap."""
     cmap = _get_cmap_instance(colormap)
     return [cmap(num) for num in np.linspace(0, 1, num=num_colors)]
 
 
 def _get_cmap_instance(colormap: str | Colormap) -> Colormap:
+    # [FUNCTION DOC]
+    # HELPER: resolves a colormap given as a name to the registered matplotlib colormap, or returns a colormap object
+    # unchanged. Unknown names are intended to raise a value error that the colormap is not recognized.
+    # KNOWN ISSUE: the lookup in the matplotlib colormap registry raises a key error for unknown names rather than returning none, so the check for none (and its value error) is effectively unreachable.
     """Get instance of matplotlib colormap."""
     if isinstance(colormap, str):
         cmap = colormap
@@ -192,6 +231,10 @@ def _get_cmap_instance(colormap: str | Colormap) -> Colormap:
 def _get_colors_from_color(
     color: Color | Collection[Color],
 ) -> list[Color]:
+    # [FUNCTION DOC]
+    # HELPER: converts a user color argument to a list of colors. An empty argument raises a value error (invalid color
+    # argument). A single color (see the single-color helper) becomes a one-element list; otherwise each element is validated
+    # via the iterable helper and returned in a list.
     """Get colors from user input color."""
     if len(color) == 0:
         raise ValueError(f"Invalid color argument: {color}")
@@ -205,6 +248,9 @@ def _get_colors_from_color(
 
 
 def _is_single_color(color: Color | Collection[Color]) -> bool:
+    # [FUNCTION DOC]
+    # HELPER: returns true when color is a single color: a named or alias color string accepted by matplotlib (GH #36972)
+    # or a sequence of three or four numbers; false otherwise.
     """Check if `color` is a single color, not a sequence of colors.
 
     Single color is of these kinds:
@@ -227,6 +273,9 @@ def _is_single_color(color: Color | Collection[Color]) -> bool:
 
 
 def _gen_list_of_colors_from_iterable(color: Collection[Color]) -> Iterator[Color]:
+    # [FUNCTION DOC]
+    # HELPER: generator that yields each element of a collection of colors, raising a value error naming the first element
+    # that is not a single color.
     """
     Yield colors from string of several letters or from collection of colors.
     """
@@ -238,6 +287,9 @@ def _gen_list_of_colors_from_iterable(color: Collection[Color]) -> Iterator[Colo
 
 
 def _is_floats_color(color: Color | Collection[Color]) -> bool:
+    # [FUNCTION DOC]
+    # HELPER: returns true if color is list-like of length three or four with every element an int or float (an RGB or
+    # RGBA tuple).
     """Check if color comprises a sequence of floats representing color."""
     return bool(
         is_list_like(color)
@@ -247,6 +299,11 @@ def _is_floats_color(color: Color | Collection[Color]) -> bool:
 
 
 def _get_colors_from_color_type(color_type: str, num_colors: int) -> list[Color]:
+    # [FUNCTION DOC]
+    # HELPER: gets colors from a color type. For default, returns the colors of matplotlib's property cycle, at most
+    # num_colors of them (and at most the cycle length). For random, returns num_colors random RGB triples as lists,
+    # generated by a random generator seeded with num_colors, so the result is deterministic for a given count.
+    # Any other value raises a value error saying color_type must be default or random.
     """Get colors from user input color type."""
     if color_type == "default":
         prop_cycle = mpl.rcParams["axes.prop_cycle"]
@@ -261,6 +318,9 @@ def _get_colors_from_color_type(color_type: str, num_colors: int) -> list[Color]
 
 
 def _is_single_string_color(color: Color) -> bool:
+    # [FUNCTION DOC]
+    # HELPER: returns true if the string or value can be converted to RGBA by matplotlib's color converter, false if the
+    # conversion raises a value error.
     """Check if `color` is a single string color.
 
     Examples of single string colors:

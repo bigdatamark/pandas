@@ -1,3 +1,9 @@
+# [MODULE DOC]
+# Tests that apply, agg and transform accept string function names and numpy/builtin function
+# objects consistently with the equivalent named methods, for both Series and DataFrame.
+# Includes the table of functions that map to cythonized reductions/transforms (with a FutureWarning
+# for non-string callables) and the group-by transformation kernels.
+
 from itertools import chain
 import operator
 
@@ -33,12 +39,19 @@ from pandas.tests.apply.common import (
 )
 @pytest.mark.parametrize("how", ["agg", "apply"])
 def test_apply_with_string_funcs(float_frame, func, kwds, how):
+    # [FUNCTION DOC]
+    # Parametrized by func (sum, mean, min, max, std), kwds (none, axis, numeric_only, both) and how
+    # (agg or apply). Calling the named string via agg or apply on the float_frame fixture must equal calling
+    # the frame's method of that name with the same keywords; compared as series.
     result = getattr(float_frame, how)(func, **kwds)
     expected = getattr(float_frame, func)(**kwds)
     tm.assert_series_equal(result, expected)
 
 
 def test_with_string_args(datetime_series, all_numeric_reductions):
+    # [FUNCTION DOC]
+    # Applying each numeric reduction name (all_numeric_reductions fixture) by string to the datetime
+    # series fixture must give the same scalar as calling the named method directly.
     result = datetime_series.apply(all_numeric_reductions)
     expected = getattr(datetime_series, all_numeric_reductions)()
     assert result == expected
@@ -47,6 +60,10 @@ def test_with_string_args(datetime_series, all_numeric_reductions):
 @pytest.mark.parametrize("op", ["mean", "median", "std", "var"])
 @pytest.mark.parametrize("how", ["agg", "apply"])
 def test_apply_np_reducer(op, how):
+    # [FUNCTION DOC]
+    # GH 39116: agg or apply with a reducer name (mean, median, std, var) on a 2x2 frame must equal the
+    # numpy function applied along axis zero, using a sample standard deviation/variance degrees of freedom
+    # of one for std and var (pandas defaults to 1, numpy to 0), as a series indexed by the columns.
     # GH 39116
     float_frame = DataFrame({"a": [1, 2], "b": [3, 4]})
     result = getattr(float_frame, how)(op)
@@ -64,6 +81,10 @@ def test_apply_np_reducer(op, how):
 )
 @pytest.mark.parametrize("how", ["transform", "apply"])
 def test_apply_np_transformer(float_frame, op, how):
+    # [FUNCTION DOC]
+    # GH 39116: transform or apply with a numpy-like function name must equal the numpy function applied to the
+    # frame. Skipped under WASM (no floating point exception support). One element is set to -1 so log and sqrt
+    # emit a RuntimeWarning, which is expected for those two ops only (stacklevel is not checked).
     # GH 39116
 
     # float_frame will _usually_ have negative values, which will
@@ -127,6 +148,12 @@ def test_apply_np_transformer(float_frame, op, how):
     ),
 )
 def test_agg_cython_table_series(series, func, expected):
+    # [FUNCTION DOC]
+    # GH21224: reducing functions from the cython table. Parametrized by series, func and expected,
+    # built from three series (empty float, floats with NaN, strings) and the table helper which yields both
+    # the name and the corresponding callable. A callable produces a FutureWarning about the Series
+    # implementation being used; a string produces none. Numeric expected values are compared with isclose
+    # (NaN equal) and others with equality.
     # GH21224
     # test reducing functions in
     # pandas.core.base.SelectionMixin._cython_table
@@ -162,6 +189,10 @@ def test_agg_cython_table_series(series, func, expected):
     ),
 )
 def test_agg_cython_table_transform_series(series, func, expected):
+    # [FUNCTION DOC]
+    # GH21224: transforming functions (cumulative product and sum) from the cython table applied by agg
+    # to series (empty, with NaN, strings). Callables warn with FutureWarning, strings do not.
+    # Result must equal the expected series.
     # GH21224
     # test transforming functions in
     # pandas.core.base.SelectionMixin._cython_table (cumprod, cumsum)
@@ -207,6 +238,10 @@ def test_agg_cython_table_transform_series(series, func, expected):
     ),
 )
 def test_agg_cython_table_frame(df, func, expected, axis):
+    # [FUNCTION DOC]
+    # GH 21224: reducing functions from the cython table through frame agg along the axis fixture, for an
+    # empty frame and a 2x2 frame with NaN. Callables warn with FutureWarning (GH#53425), strings do not.
+    # Result must equal the expected series.
     # GH 21224
     # test reducing functions in
     # pandas.core.base.SelectionMixin._cython_table
@@ -233,6 +268,10 @@ def test_agg_cython_table_frame(df, func, expected, axis):
     ),
 )
 def test_agg_cython_table_transform_frame(df, func, expected, axis):
+    # [FUNCTION DOC]
+    # GH 21224: transforming functions (cumulative product and sum) through frame agg along the axis
+    # fixture. When the axis is columns the expected frame is first cast to float64 since blockwise
+    # operation does not preserve dtypes. Callables warn with FutureWarning, strings do not.
     # GH 21224
     # test transforming functions in
     # pandas.core.base.SelectionMixin._cython_table (cumprod, cumsum)
@@ -249,6 +288,11 @@ def test_agg_cython_table_transform_frame(df, func, expected, axis):
 
 @pytest.mark.parametrize("op", series_transform_kernels)
 def test_transform_groupby_kernel_series(request, string_series, op):
+    # [FUNCTION DOC]
+    # GH 35964: for each series group-by transformation kernel, transform on the string series with
+    # axis zero (plus an argument of zero for fillna) must equal the same kernel on a group-by over a single
+    # group. The ngroup kernel is marked an expected failure (ValueError) as it is not valid for non-grouped
+    # objects. The fillna kernel emits a deprecation FutureWarning on the group-by side.
     # GH 35964
     if op == "ngroup":
         request.applymarker(
@@ -267,6 +311,11 @@ def test_transform_groupby_kernel_series(request, string_series, op):
 
 @pytest.mark.parametrize("op", frame_transform_kernels)
 def test_transform_groupby_kernel_frame(request, float_frame, op):
+    # [FUNCTION DOC]
+    # GH 35964: same as the series variant but for frames: transform of each kernel must equal the
+    # group-by transform over one group, with the fillna deprecation warning expected. The ngroup kernel is an
+    # expected failure. Then the test adds a copy of column A as a new column to guarantee multiple internal
+    # blocks and repeats the comparison with a fresh grouping.
     if op == "ngroup":
         request.applymarker(
             pytest.mark.xfail(raises=ValueError, reason="ngroup not valid for NDFrame")
@@ -300,6 +349,9 @@ def test_transform_groupby_kernel_frame(request, float_frame, op):
 
 @pytest.mark.parametrize("method", ["abs", "shift", "pct_change", "cumsum", "rank"])
 def test_transform_method_name(method):
+    # [FUNCTION DOC]
+    # GH 19760: DataFrame transform by method name (abs, shift, pct_change, cumsum, rank) on a
+    # two-row frame must equal calling that method on the frame via a method caller.
     # GH 19760
     df = DataFrame({"A": [-1, 2]})
     result = df.transform(method)

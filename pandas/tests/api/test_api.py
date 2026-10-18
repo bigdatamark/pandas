@@ -1,3 +1,11 @@
+# [MODULE DOC]
+# Tests that the public API of pandas (top-level namespace, api subpackages, errors, util, testing)
+# exposes exactly the expected names, and that public objects report the correct module of origin.
+# Public contents: a Base class with a namespace-comparison helper (also reused by the types tests),
+# test classes per namespace, a helper that collects pandas objects from a module, and a slow test of the
+# module attribute of public objects. Hard-coded name lists in these classes must be updated whenever
+# the public API changes.
+
 from __future__ import annotations
 
 import importlib
@@ -22,7 +30,15 @@ from pandas.api.typing import aliases as api_aliases
 
 
 class Base:
+    # [CLASS DOC]
+    # Base class for API tests; provides the check helper that compares a namespace's public names to an
+    # expected collection. Holds no state.
     def check(self, namespace, expected, ignored=None):
+        # [FUNCTION DOC]
+        # Compares the names found in a namespace against an expected list. namespace is a module or object;
+        # expected is an iterable of names; ignored is an optional collection of names to remove from what is found.
+        # Names starting with a double underscore and the name annotations are excluded from the found names. Both
+        # sides are sorted and compared with the almost-equal assertion; raises an assertion error on any difference.
         # see which names are in the namespace, minus optional
         # ignored ones
         # compare vs the expected
@@ -38,6 +54,11 @@ class Base:
 
 
 class TestPDApi(Base):
+    # [CLASS DOC]
+    # Verifies the top-level pandas namespace. Class attributes list the names expected by category:
+    # public subpackages, private libraries, misc objects, classes, functions, option functions, read functions,
+    # json and to functions, deprecated lists (all empty) and private modules (with a version module included
+    # only when not built with meson), and names to ignore that appear depending on test setup.
     # these are optionally imported based on testing
     # & need to be ignored
     ignored = ["tests", "locale", "conftest", "_version_meson"]
@@ -204,6 +225,9 @@ class TestPDApi(Base):
         private_modules.append("_version")
 
     def test_api(self):
+        # [FUNCTION DOC]
+        # Checks that the names in the pandas namespace equal the union of all expected categories (public
+        # and private), ignoring the optional names.
         checkthese = (
             self.public_lib
             + self.private_lib
@@ -220,6 +244,10 @@ class TestPDApi(Base):
         self.check(namespace=pd, expected=checkthese, ignored=self.ignored)
 
     def test_api_all(self):
+        # [FUNCTION DOC]
+        # Checks the explicit export list of pandas: it must equal the union of public categories (public
+        # subpackages, misc, modules, classes, functions, option, read, json, to) minus deprecated classes; reports
+        # failure for any extra and for any missing name.
         expected = set(
             self.public_lib
             + self.misc
@@ -240,6 +268,9 @@ class TestPDApi(Base):
         assert not missing
 
     def test_depr(self):
+        # [FUNCTION DOC]
+        # For each name in the deprecated classes, functions and future-deprecation lists, accessing it on pandas
+        # must emit a FutureWarning. All of these lists are currently empty, so nothing is exercised.
         deprecated_list = (
             self.deprecated_classes
             + self.deprecated_funcs
@@ -251,6 +282,9 @@ class TestPDApi(Base):
 
 
 class TestApi(Base):
+    # [CLASS DOC]
+    # Verifies the contents of the public api subpackages. Class attributes list the allowed names of: the api
+    # package itself, typing, types, interchange, indexers, extensions, executors and typing aliases.
     allowed_api_dirs = [
         "executors",
         "types",
@@ -425,38 +459,64 @@ class TestApi(Base):
     ]
 
     def test_api(self):
+        # [FUNCTION DOC]
+        # Checks the names inside the api package equal the allowed subpackage list.
         self.check(api, self.allowed_api_dirs)
 
     def test_api_typing(self):
+        # [FUNCTION DOC]
+        # Checks the names in the api typing namespace.
         self.check(api_typing, self.allowed_typing)
 
     def test_api_types(self):
+        # [FUNCTION DOC]
+        # Checks the names in the api types namespace.
         self.check(api_types, self.allowed_api_types)
 
     def test_api_interchange(self):
+        # [FUNCTION DOC]
+        # Checks the names in the api interchange namespace.
         self.check(api_interchange, self.allowed_api_interchange)
 
     def test_api_indexers(self):
+        # [FUNCTION DOC]
+        # Checks the names in the api indexers namespace.
         self.check(api_indexers, self.allowed_api_indexers)
 
     def test_api_extensions(self):
+        # [FUNCTION DOC]
+        # Checks the names in the api extensions namespace.
         self.check(api_extensions, self.allowed_api_extensions)
 
     def test_api_executors(self):
+        # [FUNCTION DOC]
+        # Checks the names in the api executors namespace.
         self.check(api_executors, self.allowed_api_executors)
 
     def test_api_typing_aliases(self):
+        # [FUNCTION DOC]
+        # Checks the names in the api typing aliases namespace.
         self.check(api_aliases, self.allowed_api_aliases)
 
 
 class TestErrors(Base):
+    # [CLASS DOC]
+    # Verifies the errors namespace.
     def test_errors(self):
+        # [FUNCTION DOC]
+        # Checks that the public names of the errors module equal its explicit export list, ignoring a
+        # deprecated warning name and a few imported module names.
         ignored = ["_CurrentDeprecationWarning", "abc", "ctypes", "cow"]
         self.check(pd.errors, pd.errors.__all__, ignored=ignored)
 
 
 class TestUtil(Base):
+    # [CLASS DOC]
+    # Verifies the util namespace.
     def test_util(self):
+        # [FUNCTION DOC]
+        # Checks that the util namespace publicly exposes only the two hashing functions (array hash and
+        # pandas-object hash), ignoring a list of private or helper submodules and functions.
         self.check(
             pd.util,
             ["hash_array", "hash_pandas_object"],
@@ -474,6 +534,8 @@ class TestUtil(Base):
 
 
 class TestTesting(Base):
+    # [CLASS DOC]
+    # Verifies the public testing module; the class attribute lists the four assertion functions.
     funcs = [
         "assert_frame_equal",
         "assert_series_equal",
@@ -482,11 +544,16 @@ class TestTesting(Base):
     ]
 
     def test_testing(self):
+        # [FUNCTION DOC]
+        # Imports the public testing module and checks that it contains exactly the four assertion functions.
         from pandas import testing
 
         self.check(testing, self.funcs)
 
     def test_util_in_top_level(self):
+        # [FUNCTION DOC]
+        # Checks that accessing an unknown attribute on the util namespace raises an attribute error whose message
+        # mentions the missing name. (The name suggests a check about the top level but it exercises the util namespace.)
         with pytest.raises(AttributeError, match="foo"):
             pd.util.foo
 
@@ -494,6 +561,13 @@ class TestTesting(Base):
 def get_pandas_objects(
     module_name: str, recurse: bool
 ) -> list[tuple[str, str, object]]:
+    # [FUNCTION DOC]
+    # HELPER: returns a list of triples of (module name, attribute name, object) for every object
+    # in the named module whose module-of-origin attribute is a string starting with pandas.
+    # module_name is the dotted module to import; recurse says whether to also descend into submodules.
+    # Recursion walks packages found next to the module's file (asserting that file path is a string),
+    # skips names starting with an underscore and the internals subpackage, and recurses into packages only.
+    # KNOWN ISSUE: the docstring's Returns section gives no type and the description does not mention the triple structure.
     """
     Get all pandas objects within a module.
 
@@ -549,6 +623,12 @@ def get_pandas_objects(
     ],
 )
 def test_attributes_module(module_name):
+    # [FUNCTION DOC]
+    # Slow test over the public modules (pandas, api, arrays, errors, io, plotting, testing) where io
+    # is an expected failure for private imports. Recursion is used for all but pandas and testing.
+    # First checks that each public object reports its own public module as its origin, with exceptions
+    # for dtype names and Categorical which may report pandas. Then checks that every object can be fetched by
+    # name from the module it reports. Fails with a listing of offenders.
     """
     Ensures that all public objects have their __module__ set to the public import path.
     """

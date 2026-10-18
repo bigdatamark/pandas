@@ -1,3 +1,7 @@
+# [MODULE DOC]
+# Tests for named aggregation (keyword relabeling) on DataFrame.agg, plus a check on the helper
+# that reconstructs aggregation arguments.
+
 import numpy as np
 
 import pandas as pd
@@ -5,6 +9,9 @@ import pandas._testing as tm
 
 
 def test_agg_relabel():
+    # [FUNCTION DOC]
+    # GH 26513: named aggregation with tuples of column and function. A single column and function
+    # yields a one-row frame; two functions on the same column yield two rows indexed by the new names.
     # GH 26513
     df = pd.DataFrame({"A": [1, 2, 1, 2], "B": [1, 2, 3, 4], "C": [3, 4, 5, 6]})
 
@@ -21,6 +28,9 @@ def test_agg_relabel():
 
 
 def test_agg_relabel_multi_columns_multi_methods():
+    # [FUNCTION DOC]
+    # GH 26513: many names across several columns and methods. Expected is a frame with an
+    # index of the new names, with missing values wherever a name does not apply to a column.
     # GH 26513, test on multiple columns with multiple methods
     df = pd.DataFrame({"A": [1, 2, 1, 2], "B": [1, 2, 3, 4], "C": [3, 4, 5, 6]})
     result = df.agg(
@@ -43,6 +53,9 @@ def test_agg_relabel_multi_columns_multi_methods():
 
 
 def test_agg_relabel_partial_functions():
+    # [FUNCTION DOC]
+    # GH 26513: named aggregation using numpy functions, builtins, strings and a lambda for the
+    # function element; results for each column are checked, with missing values where not applicable.
     # GH 26513, test on partial, functools or more complex cases
     df = pd.DataFrame({"A": [1, 2, 1, 2], "B": [1, 2, 3, 4], "C": [3, 4, 5, 6]})
     result = df.agg(foo=("A", np.mean), bar=("A", "mean"), cat=("A", min))
@@ -71,6 +84,9 @@ def test_agg_relabel_partial_functions():
 
 
 def test_agg_namedtuple():
+    # [FUNCTION DOC]
+    # GH 26513: named aggregation using the NamedAgg helper, with positional and keyword forms, over
+    # one column and then over two columns. Expected frames have missing values where not applicable.
     # GH 26513
     df = pd.DataFrame({"A": [0, 1], "B": [1, 2]})
     result = df.agg(
@@ -98,6 +114,10 @@ def test_agg_namedtuple():
 
 
 def test_reconstruct_func():
+    # [FUNCTION DOC]
+    # GH 28472: ensures the reconstruct_func helper in the core apply module stays importable at that
+    # location since other libraries use it. For the string min it must return a tuple of: relabeling flag
+    # false, the function unchanged, no columns and no order.
     # GH 28472, test to ensure reconstruct_func isn't moved;
     # This method is used by other libraries (e.g. dask)
     result = pd.core.apply.reconstruct_func("min")

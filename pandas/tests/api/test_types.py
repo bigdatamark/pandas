@@ -1,3 +1,7 @@
+# [MODULE DOC]
+# Tests that the public types namespace exposes exactly the expected names.
+# Reuses the Base checker from the api test module. Contains one test class.
+
 from __future__ import annotations
 
 import pandas._testing as tm
@@ -6,6 +10,10 @@ from pandas.tests.api.test_api import Base
 
 
 class TestTypes(Base):
+    # [CLASS DOC]
+    # Test class verifying the contents of the public types namespace; inherits the name-checking
+    # helper from the shared Base class. Class attributes hold the allowed function names, an empty list
+    # of deprecated names, and the four dtype class names.
     allowed = [
         "is_any_real_numeric_dtype",
         "is_bool",
@@ -53,9 +61,15 @@ class TestTypes(Base):
     dtypes = ["CategoricalDtype", "DatetimeTZDtype", "PeriodDtype", "IntervalDtype"]
 
     def test_types(self):
+        # [FUNCTION DOC]
+        # Checks that the types namespace contains exactly the allowed names plus the dtype names plus the
+        # deprecated names (none), via the inherited check helper, ignoring private names.
         self.check(types, self.allowed + self.dtypes + self.deprecated)
 
     def test_deprecated_from_api_types(self):
+        # [FUNCTION DOC]
+        # Iterates over the deprecated names (currently empty, so nothing is exercised) and for each expects
+        # a FutureWarning when it is called with a scalar argument.
         for t in self.deprecated:
             with tm.assert_produces_warning(FutureWarning):
                 getattr(types, t)(1)

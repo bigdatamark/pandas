@@ -5,6 +5,11 @@
 #     3. incompatible ops/dtype/args/kwargs
 #     4. invalid result shape/type
 # If your test does not fit into one of these categories, add to this list.
+# [MODULE DOC]
+# Tests that apply, agg, map and transform raise the right exceptions for bad arguments.
+# Organized by reason: always-invalid values, missing columns, incompatible ops/dtypes/args,
+# and invalid result shapes or types. Tests use only public DataFrame and Series methods.
+
 
 from itertools import chain
 import re
@@ -24,6 +29,9 @@ import pandas._testing as tm
 
 @pytest.mark.parametrize("result_type", ["foo", 1])
 def test_result_type_error(result_type):
+    # [FUNCTION DOC]
+    # Parametrized by an invalid result_type (a bad string and an integer). Row-wise apply with that result_type
+    # on a 6x3 integer frame must raise a value error listing the allowed values (none, reduce, broadcast, expand).
     # allowed result_type
     df = DataFrame(
         np.tile(np.arange(3, dtype="int64"), 6).reshape(6, -1) + 1,
@@ -39,6 +47,8 @@ def test_result_type_error(result_type):
 
 
 def test_apply_invalid_axis_value():
+    # [FUNCTION DOC]
+    # Frame apply with axis value 2 must raise a value error saying no axis named 2 exists for DataFrame.
     df = DataFrame([[1, 2, 3], [4, 5, 6], [7, 8, 9]], index=["a", "a", "c"])
     msg = "No axis named 2 for object type DataFrame"
     with pytest.raises(ValueError, match=msg):
@@ -46,6 +56,9 @@ def test_apply_invalid_axis_value():
 
 
 def test_agg_raises():
+    # [FUNCTION DOC]
+    # GH 26513: agg called with no function and no keywords must raise a type error with a message that
+    # something must be provided.
     # GH 26513
     df = DataFrame({"A": [0, 1], "B": [1, 2]})
     msg = "Must provide"
@@ -55,6 +68,9 @@ def test_agg_raises():
 
 
 def test_map_with_invalid_na_action_raises():
+    # [FUNCTION DOC]
+    # Issue 32815: Series map with an invalid na_action string must raise a value error that
+    # na_action must be ignore or none.
     # https://github.com/pandas-dev/pandas/issues/32815
     s = Series([1, 2, 3])
     msg = "na_action must either be 'ignore' or None"
@@ -64,6 +80,9 @@ def test_map_with_invalid_na_action_raises():
 
 @pytest.mark.parametrize("input_na_action", ["____", True])
 def test_map_arg_is_dict_with_invalid_na_action_raises(input_na_action):
+    # [FUNCTION DOC]
+    # Issue 46588: Series map with a dict mapper and invalid na_action (a bad string or a boolean true)
+    # must raise a value error that includes the passed value in its message.
     # https://github.com/pandas-dev/pandas/issues/46588
     s = Series([1, 2, 3])
     msg = f"na_action must either be 'ignore' or None, {input_na_action} was passed"
@@ -74,6 +93,10 @@ def test_map_arg_is_dict_with_invalid_na_action_raises(input_na_action):
 @pytest.mark.parametrize("method", ["apply", "agg", "transform"])
 @pytest.mark.parametrize("func", [{"A": {"B": "sum"}}, {"A": {"B": ["sum"]}}])
 def test_nested_renamer(frame_or_series, method, func):
+    # [FUNCTION DOC]
+    # GH 35964: nested renaming (dict of dict) is rejected by apply, agg and transform on frames and series
+    # (parametrized by method and two forms of nested dict). Expects a specification error saying nested
+    # renamer is not supported.
     # GH 35964
     obj = frame_or_series({"A": [1]})
     match = "nested renamer is not supported"
@@ -86,6 +109,9 @@ def test_nested_renamer(frame_or_series, method, func):
     [{"foo": ["min", "max"]}, {"foo": ["min", "max"], "bar": ["sum", "mean"]}],
 )
 def test_series_nested_renamer(renamer):
+    # [FUNCTION DOC]
+    # Series agg with a dict whose values are lists of functions (one and two keys) raises a specification
+    # error stating nested renamer is not supported.
     s = Series(range(6), dtype="int64", name="series")
     msg = "nested renamer is not supported"
     with pytest.raises(SpecificationError, match=msg):
@@ -93,6 +119,9 @@ def test_series_nested_renamer(renamer):
 
 
 def test_apply_dict_depr():
+    # [FUNCTION DOC]
+    # Series agg of a time-indexed frame column with a dict of a name to a list of functions raises a
+    # specification error for nested renamer. (The name mentions deprecation but the behavior tested is an error.)
     tsdf = DataFrame(
         np.random.default_rng(2).standard_normal((10, 3)),
         columns=["A", "B", "C"],
@@ -105,6 +134,9 @@ def test_apply_dict_depr():
 
 @pytest.mark.parametrize("method", ["agg", "transform"])
 def test_dict_nested_renaming_depr(method):
+    # [FUNCTION DOC]
+    # Frame agg or transform (parametrized by method) with a dict of dicts raises a specification error
+    # stating nested renamer is not supported.
     df = DataFrame({"A": range(5), "B": 5})
 
     # nested renaming
@@ -116,6 +148,9 @@ def test_dict_nested_renaming_depr(method):
 @pytest.mark.parametrize("method", ["apply", "agg", "transform"])
 @pytest.mark.parametrize("func", [{"B": "sum"}, {"B": ["sum"]}])
 def test_missing_column(method, func):
+    # [FUNCTION DOC]
+    # GH 40004: apply, agg or transform with a dict that names a column not in the frame (string or list
+    # of strings as the function) must raise a key error listing the missing label.
     # GH 40004
     obj = DataFrame({"A": [1]})
     msg = r"Label\(s\) \['B'\] do not exist"
@@ -124,6 +159,9 @@ def test_missing_column(method, func):
 
 
 def test_transform_mixed_column_name_dtypes():
+    # [FUNCTION DOC]
+    # GH39025: transform with a dict that has labels of mixed types (string and integer) where two
+    # labels are missing must raise a key error listing the missing labels, including the integer one.
     # GH39025
     df = DataFrame({"a": ["1"]})
     msg = r"Label\(s\) \[1, 'b'\] do not exist"
@@ -135,6 +173,10 @@ def test_transform_mixed_column_name_dtypes():
     "how, args", [("pct_change", ()), ("nsmallest", (1, ["a", "b"])), ("tail", 1)]
 )
 def test_apply_str_axis_1_raises(how, args):
+    # [FUNCTION DOC]
+    # GH 39211: some string-named operations do not support axis one. Parametrized by operation and its
+    # extra arguments (percent change, n-smallest, tail). Frame apply with that string on axis one with those
+    # args must raise a value error stating the operation does not support axis=1.
     # GH 39211 - some ops don't support axis=1
     df = DataFrame({"a": [1, 2], "b": [3, 4]})
     msg = f"Operation {how} does not support axis=1"
@@ -143,6 +185,9 @@ def test_apply_str_axis_1_raises(how, args):
 
 
 def test_transform_axis_1_raises():
+    # [FUNCTION DOC]
+    # GH 35964: Series transform of sum with axis one raises a value error that no axis named 1 exists
+    # for Series.
     # GH 35964
     msg = "No axis named 1 for object type Series"
     with pytest.raises(ValueError, match=msg):
@@ -150,6 +195,10 @@ def test_transform_axis_1_raises():
 
 
 def test_apply_modify_traceback():
+    # [FUNCTION DOC]
+    # Builds an 11-row frame of string columns plus random numbers, sets one entry in a text column to
+    # NaN, then applies a row function (that calls a string method on that column) across rows. The float
+    # missing value has no such method, so an attribute error must propagate with the original message.
     data = DataFrame(
         {
             "A": [
@@ -200,6 +249,9 @@ def test_apply_modify_traceback():
     data.loc[4, "C"] = np.nan
 
     def transform(row):
+        # [FUNCTION DOC]
+        # HELPER: row function setting column D to 7 when column C starts with a given prefix and column A is foo;
+        # returns the row. Raises an attribute error for the NaN entry since a float has no startswith method.
         if row["C"].startswith("shin") and row["A"] == "foo":
             row["D"] = 7
         return row
@@ -216,6 +268,11 @@ def test_apply_modify_traceback():
     ),
 )
 def test_agg_cython_table_raises_frame(df, func, expected, axis, using_infer_string):
+    # [FUNCTION DOC]
+    # GH 21224: parametrized over the cumulative product function (name and callable) on a frame of strings
+    # and the axis fixture. Expected error is a type error, or a type or not-implemented error when the
+    # infer-string option is on. Message matches several backend-specific texts. A callable yields a
+    # FutureWarning mentioning DataFrame; a string yields no warning.
     # GH 21224
     if using_infer_string:
         expected = (expected, NotImplementedError)
@@ -248,6 +305,11 @@ def test_agg_cython_table_raises_frame(df, func, expected, axis, using_infer_str
     ),
 )
 def test_agg_cython_table_raises_series(series, func, expected, using_infer_string):
+    # [FUNCTION DOC]
+    # GH21224: parametrized over reductions and cumulative product on a string series (name and callable):
+    # each is expected to raise a type error (or a type or not-implemented error for cumulative product when
+    # infer-string is on). The message varies by function (the median uses a distinct conversion message) and
+    # is extended with several fallback alternatives. Callables emit a FutureWarning, strings do not.
     # GH21224
     msg = r"[Cc]ould not convert|can't multiply sequence by non-int of type"
     if func == "median" or func is np.nanmedian or func is np.median:
@@ -268,6 +330,9 @@ def test_agg_cython_table_raises_series(series, func, expected, using_infer_stri
 
 
 def test_agg_none_to_type():
+    # [FUNCTION DOC]
+    # GH 40543: frame agg with a dict whose function converts the first element to int, applied to a column
+    # holding None, must raise a type error that int needs a string among its arguments.
     # GH 40543
     df = DataFrame({"a": [None]})
     msg = re.escape("int() argument must be a string")
@@ -276,6 +341,9 @@ def test_agg_none_to_type():
 
 
 def test_transform_none_to_type():
+    # [FUNCTION DOC]
+    # GH#34377: frame transform with the same int-converting function on a None column must raise a type error
+    # whose message says an argument must be a certain type.
     # GH#34377
     df = DataFrame({"a": [None]})
     msg = "argument must be a"
@@ -292,6 +360,10 @@ def test_transform_none_to_type():
     ],
 )
 def test_apply_broadcast_error(func):
+    # [FUNCTION DOC]
+    # Parametrized over three functions returning wrongly shaped results (a two-dimensional array, a list and
+    # a series with mismatching length). Row-wise apply with result_type broadcast on a 6x3 frame must raise a
+    # value error about too many dims or being unable to broadcast.
     df = DataFrame(
         np.tile(np.arange(3, dtype="int64"), 6).reshape(6, -1) + 1,
         columns=["A", "B", "C"],
@@ -304,6 +376,9 @@ def test_apply_broadcast_error(func):
 
 
 def test_transform_and_agg_err_agg(axis, float_frame):
+    # [FUNCTION DOC]
+    # Frame agg combining a reducer (max) and a transformer (sqrt) in a list, along the axis fixture, raises a
+    # value error that transform and aggregation cannot be combined.
     # cannot both transform and agg
     msg = "cannot combine transform and aggregation operations"
     with pytest.raises(ValueError, match=msg):
@@ -323,6 +398,9 @@ def test_transform_and_agg_err_agg(axis, float_frame):
     ],
 )
 def test_transform_and_agg_err_series(string_series, func, msg):
+    # [FUNCTION DOC]
+    # GH53325 warnings ignored. Series agg with mixed reducer/transformer list, or dict mixing a transformer and
+    # a reducer, raises a value error with the parametrized message about combining transform and aggregation.
     # we are trying to transform with an aggregator
     with pytest.raises(ValueError, match=msg):
         with np.errstate(all="ignore"):
@@ -331,6 +409,9 @@ def test_transform_and_agg_err_series(string_series, func, msg):
 
 @pytest.mark.parametrize("func", [["max", "min"], ["max", "sqrt"]])
 def test_transform_wont_agg_frame(axis, float_frame, func):
+    # [FUNCTION DOC]
+    # GH 35964: frame transform with a list containing reducers (two reducers, or a transformer and reducer)
+    # along the axis fixture raises a value error that the function did not transform.
     # GH 35964
     # cannot both transform and agg
     msg = "Function did not transform"
@@ -340,6 +421,9 @@ def test_transform_wont_agg_frame(axis, float_frame, func):
 
 @pytest.mark.parametrize("func", [["min", "max"], ["sqrt", "max"]])
 def test_transform_wont_agg_series(string_series, func):
+    # [FUNCTION DOC]
+    # GH 35964: Series transform with a list containing reducers raises a value error that the function
+    # did not transform.
     # GH 35964
     # we are trying to transform with an aggregator
     msg = "Function did not transform"
@@ -352,6 +436,10 @@ def test_transform_wont_agg_series(string_series, func):
     "op_wrapper", [lambda x: x, lambda x: [x], lambda x: {"A": x}, lambda x: {"A": [x]}]
 )
 def test_transform_reducer_raises(all_reductions, frame_or_series, op_wrapper):
+    # [FUNCTION DOC]
+    # GH 35964: any reduction from the all_reductions fixture, wrapped as bare, in a list, in a dict, or in a dict
+    # of lists (parametrized by wrapper), passed to transform on a one-column frame or series must raise a value
+    # error that the function did not transform.
     # GH 35964
     op = op_wrapper(all_reductions)
 
@@ -364,6 +452,10 @@ def test_transform_reducer_raises(all_reductions, frame_or_series, op_wrapper):
 
 
 def test_transform_missing_labels_raises():
+    # [FUNCTION DOC]
+    # GH 58474: transform with a dict whose labels are absent from the axis must raise a key error that lists the
+    # missing labels (sorted as shown in the message), for axis zero with unknown index labels and axis one with
+    # unknown column labels.
     # GH 58474
     df = DataFrame({"foo": [2, 4, 6], "bar": [1, 2, 3]}, index=["A", "B", "C"])
     msg = r"Label\(s\) \['A', 'B'\] do not exist"

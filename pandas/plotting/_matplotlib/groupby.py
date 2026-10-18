@@ -1,3 +1,9 @@
+# [MODULE DOC]
+# HELPER: internal module with data-reshaping helpers used by the matplotlib histogram and box plot
+# code when the by (group-by) option is given. Provides: building a mapping of group (or column) label to a
+# sub-frame for iteration, regrouping a frame into a MultiIndex-column frame, and reformatting histogram
+# values. Imports the single-string-list unpacking helper from the misc plotting module. No import-time side effects.
+
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
@@ -27,6 +33,12 @@ if TYPE_CHECKING:
 def create_iter_data_given_by(
     data: DataFrame, kind: str = "hist"
 ) -> dict[Hashable, DataFrame | Series]:
+    # [FUNCTION DOC]
+    # HELPER: builds the per-iteration data for hist and box plots. data is a frame with MultiIndex columns (asserted)
+    # produced by the regrouping helper; kind is the plot kind (default hist). For hist the grouping values are in
+    # level zero of the columns; for any other kind (box) the column names to show are in level one. Returns a mapping
+    # from each distinct label of that level to the sub-frame holding the columns with that label.
+    # Raises an assertion error when the columns are not a MultiIndex.
     """
     Create data for iteration given `by` is assigned or not, and it is only
     used in both hist and boxplot.
@@ -87,6 +99,13 @@ def create_iter_data_given_by(
 def reconstruct_data_with_by(
     data: DataFrame, by: IndexLabel, cols: IndexLabel
 ) -> DataFrame:
+    # [FUNCTION DOC]
+    # HELPER: groups data by the by key(s) and rebuilds a single frame with MultiIndex columns whose first level
+    # is the group key and second level the selected columns. data is the original frame, by is a label or list of labels
+    # (a single-element list is unpacked to the single label first), cols is the list of columns to keep.
+    # Each group contributes its selected columns relabelled with the product of the key and the columns; groups are
+    # concatenated side by side (aligning rows by index, so non-members are missing). Returns the new frame.
+    # Does not modify the input frame beyond the temporary sub-frames.
     """
     Internal function to group data, and reassign multiindex column names onto the
     result in order to let grouped data be used in _compute_plot_data method.
@@ -131,6 +150,10 @@ def reconstruct_data_with_by(
 
 
 def reformat_hist_y_given_by(y: np.ndarray, by: IndexLabel | None) -> np.ndarray:
+    # [FUNCTION DOC]
+    # HELPER: reshapes y for histogram plotting. y is a numpy array; by is the by option or none. When by is given
+    # and y has more than one dimension, missing values are removed separately from each column and the result is
+    # transposed back into an array; otherwise missing values are removed from y as a whole. Returns the resulting array.
     """Internal function to reformat y given `by` is applied or not for hist plot.
 
     If by is None, input y is 1-d with NaN removed; and if by is not None, groupby

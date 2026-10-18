@@ -1,4 +1,12 @@
 # TODO: Use the fact that axis can have units to simplify the process
+# [MODULE DOC]
+# HELPER: internal support for plotting regular-frequency time series (datetime, period and timedelta
+# indexes) with the matplotlib backend. Provides frequency resolution for data and axes, resampling of
+# a series to the frequency already on an axes (with replotting of other lines when the new data is
+# coarser), decoration of axes with frequency info, and date axis formatting through the converter
+# module's locators and formatters. Used by the core plotting classes. Axes are given dynamic
+# attributes (freq, plot data list) that are stored directly on matplotlib objects. No import-time side effects.
+
 
 from __future__ import annotations
 
@@ -56,6 +64,15 @@ if TYPE_CHECKING:
 
 
 def maybe_resample(series: Series, ax: Axes, kwargs: dict[str, Any]):
+    # [FUNCTION DOC]
+    # Resamples a series to the axes frequency when needed. series is the data, ax the target axes, kwargs the plotting keywords
+    # (modified through a helper that may replot others). Raises a value error if the keywords contain a how entry, or if no
+    # frequency can be found. Determines the data frequency and axes frequency; a datetime index is converted to periods. If the
+    # axes already has a different frequency: when the data frequency is finer (a superperiod of the axes frequency) the index is
+    # converted to the axes frequency (start of period) in a shallow copy; for the weekly special case the data is resampled to daily
+    # then to the axes frequency taking the last value and dropping missing; when the data is coarser the existing lines on
+    # the axes are replotted at the new frequency; any other combination raises a value error (incompatible frequency conversion).
+    # Returns the pair of the resulting period frequency string and the (possibly converted) series.
     # resample against axes freq if necessary
 
     if "how" in kwargs:
@@ -94,18 +111,30 @@ def maybe_resample(series: Series, ax: Axes, kwargs: dict[str, Any]):
 
 
 def _is_sub(f1: str, f2: str) -> bool:
+    # [FUNCTION DOC]
+    # HELPER: true when exactly one of the two frequency strings is weekly and the other relation holds as a subperiod via daily:
+    # the first is weekly and daily is a subperiod of the second, or the second is weekly and the first is a subperiod of daily.
     return (f1.startswith("W") and is_subperiod("D", f2)) or (
         f2.startswith("W") and is_subperiod(f1, "D")
     )
 
 
 def _is_sup(f1: str, f2: str) -> bool:
+    # [FUNCTION DOC]
+    # HELPER: true when the weekly special case holds in the superperiod direction: the first is weekly and daily is a
+    # superperiod of the second, or the second is weekly and the first is a superperiod of daily.
     return (f1.startswith("W") and is_superperiod("D", f2)) or (
         f2.startswith("W") and is_superperiod(f1, "D")
     )
 
 
 def _upsample_others(ax: Axes, freq: BaseOffset, kwargs: dict[str, Any]) -> None:
+    # [FUNCTION DOC]
+    # HELPER: replots the lines on ax (and its left or right secondary companion) at the new frequency freq, used when the new data
+    # has a coarser frequency than existing lines. kwargs is the plotting keywords; its legend entry (default true) controls whether the
+    # legend is rebuilt. The legend, if present, is recreated with the replotted lines and labels, location best and the same title
+    # (the string None becomes no title). Mutates the axes; returns nothing.
+    # KNOWN ISSUE: the axes is replotted twice in a row (the second result is discarded), which is redundant.
     legend = ax.get_legend()
     lines, labels = _replot_ax(ax, freq)
     _replot_ax(ax, freq)
@@ -129,6 +158,11 @@ def _upsample_others(ax: Axes, freq: BaseOffset, kwargs: dict[str, Any]) -> None
 
 
 def _replot_ax(ax: Axes, freq: BaseOffset):
+    # [FUNCTION DOC]
+    # HELPER: clears ax and redraws its stored plot data at frequency freq. The stored data is a list of triples of series, plot function
+    # (or the name of a plot class) and keywords; each series is shallow-copied and its index converted to freq (start of period), re-stored
+    # on the axes, and replotted. Returns the list of first lines created and the list of labels (the printed series names).
+    # Resets the axes plot data and decorates the axes with freq.
     data = getattr(ax, "_plot_data", None)
 
     # clear current axes and data
@@ -161,6 +195,9 @@ def _replot_ax(ax: Axes, freq: BaseOffset):
 
 
 def decorate_axes(ax: Axes, freq: BaseOffset) -> None:
+    # [FUNCTION DOC]
+    # Initializes ax for time-series plotting: ensures a plot data list attribute exists, stores the frequency freq on the axes and on its
+    # x axis. Mutates the axes; returns nothing.
     """Initialize axes for time-series plotting"""
     if not hasattr(ax, "_plot_data"):
         # TODO #54485
@@ -174,6 +211,9 @@ def decorate_axes(ax: Axes, freq: BaseOffset) -> None:
 
 
 def _get_ax_freq(ax: Axes):
+    # [FUNCTION DOC]
+    # HELPER: returns the frequency stored on ax, or if none, on its left or right secondary companion, or if still none, on the
+    # first of the axes sharing the x axis that has one. Returns none when no frequency is found.
     """
     Get the freq attribute of the ax object if set.
     Also checks shared axes (eg when using secondary yaxis, sharex=True
@@ -198,6 +238,9 @@ def _get_ax_freq(ax: Axes):
 
 
 def _get_period_alias(freq: timedelta | BaseOffset | str) -> str | None:
+    # [FUNCTION DOC]
+    # HELPER: converts freq (a timedelta, offset or string) into a period alias string. An offset uses its name, anything else is
+    # converted to an offset (period mode) and its rule code is used. Returns the alias or none when there is no alias.
     if isinstance(freq, BaseOffset):
         freqstr = freq.name
     else:
@@ -207,6 +250,10 @@ def _get_period_alias(freq: timedelta | BaseOffset | str) -> str | None:
 
 
 def _get_freq(ax: Axes, series: Series):
+    # [FUNCTION DOC]
+    # HELPER: resolves the frequency for a series on ax. Uses the index freq, else the inferred frequency converted to a period offset;
+    # falls back to the axes frequency when the data has none. Returns a pair of the period alias string (possibly none) and the axes
+    # frequency (possibly none).
     # get frequency from data
     freq = getattr(series.index, "freq", None)
     if freq is None:
@@ -225,6 +272,13 @@ def _get_freq(ax: Axes, series: Series):
 
 
 def use_dynamic_x(ax: Axes, index: Index) -> bool:
+    # [FUNCTION DOC]
+    # Decides whether the dynamic date axis should be used for index on ax. Uses the index frequency (inferred if not set), falling
+    # back to the axes frequency; returns false when the axes has lines but no frequency while the index has one (irregular was plotted first),
+    # when no frequency is available or when no period alias exists. For a datetime index, the frequency is normalized and: for daily or
+    # coarser base frequencies the index must be normalized (midnight); for finer ones, the first timestamp must equal the start of its period
+    # (timezone-aware). For other index types returns true.
+    # KNOWN ISSUE: the code carries a comment calling the datetime handling a hack for an old release that adds technical debt.
     freq = _get_index_freq(index)
     ax_freq = _get_ax_freq(ax)
 
@@ -256,6 +310,9 @@ def use_dynamic_x(ax: Axes, index: Index) -> bool:
 
 
 def get_period_offset(ax: Axes, index: Index) -> BaseOffset | None:
+    # [FUNCTION DOC]
+    # Resolves the period offset with which to plot index on ax, using the same rules as the previous function: index frequency (or
+    # inferred), else axes frequency. Returns the period offset for the alias, or none when no frequency or alias is available.
     """
     Resolve the period frequency to plot `index` with on `ax`, or None.
 
@@ -280,6 +337,8 @@ def get_period_offset(ax: Axes, index: Index) -> BaseOffset | None:
 
 
 def _get_index_freq(index: Index) -> BaseOffset | None:
+    # [FUNCTION DOC]
+    # HELPER: returns the index's freq attribute; if absent, the inferred frequency converted to an offset (possibly none).
     freq = getattr(index, "freq", None)
     if freq is None:
         freq = getattr(index, "inferred_freq", None)
@@ -288,6 +347,12 @@ def _get_index_freq(index: Index) -> BaseOffset | None:
 
 
 def maybe_convert_index(ax: Axes, data: NDFrameT) -> NDFrameT:
+    # [FUNCTION DOC]
+    # Converts the index of data to a period index for plotting when it is a datetime or period index; otherwise returns data unchanged.
+    # Takes the index frequency, else the axes frequency, and raises a value error if neither exists. For a datetime index returns a
+    # new object made timezone-naive and converted to periods at the alias frequency; for a period index the data's index is
+    # replaced in place (mutating the input) with the same index converted to that frequency at period start. A future warning
+    # about the business-day period dtype is suppressed during conversion. Returns the data.
     # tsplot converts automatically, but don't want to convert index
     # over and over for DataFrames
     if isinstance(data.index, (ABCDatetimeIndex, ABCPeriodIndex)):
@@ -322,6 +387,9 @@ def maybe_convert_index(ax: Axes, data: NDFrameT) -> NDFrameT:
 
 
 def _format_coord(freq: BaseOffset, t, y) -> str:
+    # [FUNCTION DOC]
+    # HELPER: formats the cursor position text for the date axis: converts the ordinal t into a period of the given frequency and returns
+    # the text with the period and y value (eight decimal places format).
     time_period = Period(ordinal=int(t), freq=freq)
     return f"t = {time_period}  y = {y:8f}"
 
@@ -329,6 +397,11 @@ def _format_coord(freq: BaseOffset, t, y) -> str:
 def format_dateaxis(
     subplot, freq: BaseOffset, index: DatetimeIndex | PeriodIndex
 ) -> None:
+    # [FUNCTION DOC]
+    # Formats the x (date) axis of subplot for the given frequency and index. For a period index sets major and minor dynamic
+    # date locators and formatters from the converter module and the coordinate formatting function. For a timedelta index sets only the
+    # major timedelta formatter using the index's time unit. Any other index type raises a type error (index type not supported).
+    # Redraws if interactive. Returns nothing.
     """
     Pretty-formats the date axis (x-axis).
 
@@ -375,6 +448,9 @@ def format_dateaxis(
 def prepare_ts_data(
     series: Series, ax: Axes, kwargs: dict[str, Any]
 ) -> tuple[BaseOffset | str, Series]:
+    # [FUNCTION DOC]
+    # Prepares a series for time series plotting on ax: resamples it (see the resampling function) and marks the axes, and its left and right
+    # secondary companions when present, with the frequency. Returns the pair of the frequency and the resulting data.
     freq, data = maybe_resample(series, ax, kwargs)
 
     # Set ax with freq info

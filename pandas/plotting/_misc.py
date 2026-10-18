@@ -1,3 +1,11 @@
+# [MODULE DOC]
+# Backend-agnostic public wrappers for pandas plotting helper functions (exposed in the public plotting module through
+# the module-name decorator): table, register and deregister of matplotlib converters, scatter_matrix, radviz, andrews_curves,
+# bootstrap_plot, parallel_coordinates, lag_plot and autocorrelation_plot. Each function looks up the matplotlib plotting backend
+# and forwards its arguments unchanged to the same-named function there. It also defines the options store class and the module-level
+# plot_params instance holding global plotting options (currently only the x-axis compatibility flag). Imports the backend lookup function
+# from the core plotting module; matplotlib types are only imported for type checking. Import-time effect: creates the options instance and sets its module attribute to the public plotting module.
+
 from __future__ import annotations
 
 from contextlib import contextmanager
@@ -30,6 +38,9 @@ if TYPE_CHECKING:
 
 @set_module("pandas.plotting")
 def table(ax: Axes, data: DataFrame | Series, **kwargs) -> Table:
+    # [FUNCTION DOC]
+    # Public wrapper: builds a matplotlib table on ax from a frame or series by forwarding to the matplotlib backend. Extra keyword arguments go to matplotlib's table function. Returns the table.
+    # KNOWN ISSUE: the row and column labels are always passed explicitly as none, so a caller supplying them in the keyword arguments gets a duplicate-keyword type error, contradicting the docstring which says they may be specified.
     """
     Helper function to convert DataFrame and Series to matplotlib.table.
 
@@ -84,6 +95,8 @@ def table(ax: Axes, data: DataFrame | Series, **kwargs) -> Table:
 
 @set_module("pandas.plotting")
 def register() -> None:
+    # [FUNCTION DOC]
+    # Public wrapper: registers pandas date/time converters and formatters with matplotlib's unit registry by calling the matplotlib backend. Global side effect on matplotlib state. Returns nothing.
     """
     Register pandas formatters and converters with matplotlib.
 
@@ -131,6 +144,8 @@ def register() -> None:
 
 @set_module("pandas.plotting")
 def deregister() -> None:
+    # [FUNCTION DOC]
+    # Public wrapper: removes the pandas converters from matplotlib's registry (restoring those it overwrote) by calling the matplotlib backend. Global side effect. Returns nothing.
     """
     Remove pandas formatters and converters.
 
@@ -188,6 +203,9 @@ def scatter_matrix(
     range_padding: float = 0.05,
     **kwargs,
 ) -> np.ndarray:
+    # [FUNCTION DOC]
+    # Public wrapper forwarding all arguments (frame, alpha, figsize, ax, grid, diagonal, marker, density and histogram keyword mappings, range_padding and extra scatter keywords) to the matplotlib scatter matrix. Returns the array of axes.
+    # KNOWN ISSUE: the docstring says the grid argument shows the grid, but the backend implementation never uses it.
     """
     Draw a matrix of scatter plots.
 
@@ -279,6 +297,8 @@ def radviz(
     colormap: Colormap | str | None = None,
     **kwds,
 ) -> Axes:
+    # [FUNCTION DOC]
+    # Public wrapper forwarding frame, class_column, ax, color, colormap and scatter keywords to the matplotlib radviz function. Returns the axes.
     """
     Plot a multidimensional dataset in 2D.
 
@@ -369,6 +389,8 @@ def andrews_curves(
     colormap: Colormap | str | None = None,
     **kwargs,
 ) -> Axes:
+    # [FUNCTION DOC]
+    # Public wrapper forwarding frame, class_column, ax, samples, color, colormap and plotting keywords to the matplotlib Andrews curves function. Returns the axes.
     """
     Generate a matplotlib plot for visualizing clusters of multivariate data.
 
@@ -443,6 +465,9 @@ def bootstrap_plot(
     samples: int = 500,
     **kwds,
 ) -> Figure:
+    # [FUNCTION DOC]
+    # Public wrapper forwarding series, fig, size, samples and keywords to the matplotlib bootstrap plot function. Returns the figure.
+    # KNOWN ISSUE: the docstring describes sampling with replacement, but the backend draws each sample without replacement (which is why size must not exceed the series length).
     """
     Bootstrap plot on mean, median and mid-range statistics.
 
@@ -511,6 +536,8 @@ def parallel_coordinates(
     sort_labels: bool = False,
     **kwargs,
 ) -> Axes:
+    # [FUNCTION DOC]
+    # Public wrapper forwarding all arguments (frame, class_column, cols, ax, color, use_columns, xticks, colormap, axvlines, axvlines_kwds, sort_labels, keywords) to the matplotlib parallel coordinates function. Returns the axes.
     """
     Parallel coordinates plotting.
 
@@ -585,6 +612,8 @@ def parallel_coordinates(
 
 @set_module("pandas.plotting")
 def lag_plot(series: Series, lag: int = 1, ax: Axes | None = None, **kwds) -> Axes:
+    # [FUNCTION DOC]
+    # Public wrapper forwarding series, lag, ax and keywords to the matplotlib lag plot function. Returns the axes.
     """
     Lag plot for time series.
 
@@ -641,6 +670,8 @@ def lag_plot(series: Series, lag: int = 1, ax: Axes | None = None, **kwds) -> Ax
 
 @set_module("pandas.plotting")
 def autocorrelation_plot(series: Series, ax: Axes | None = None, **kwargs) -> Axes:
+    # [FUNCTION DOC]
+    # Public wrapper forwarding series, ax and keywords to the matplotlib autocorrelation plot function. Returns the axes.
     """
     Autocorrelation plot for time series.
 
@@ -690,6 +721,9 @@ def autocorrelation_plot(series: Series, ax: Axes | None = None, **kwargs) -> Ax
 
 
 class _Options(dict):
+    # [CLASS DOC]
+    # Dictionary subclass storing pandas plotting options (the single default key is the x-axis compatibility flag, initially false). Keys may be given by alias (the name x_compat maps to the canonical key), and all dictionary access
+    # (get, set, delete, contains) canonicalizes keys first. Reading an unknown key raises a value error; the default key cannot be deleted. Provides reset and a context manager to set an option temporarily. A single module-level instance is the global store.
     """
     Stores pandas plotting options.
 
@@ -726,29 +760,42 @@ class _Options(dict):
     _DEFAULT_KEYS = ["xaxis.compat"]
 
     def __init__(self) -> None:
+        # [FUNCTION DOC]
+        # Initializes the dictionary with the default option: the x-axis compatibility flag set to false (set through the base class so aliases are not involved).
         super().__setitem__("xaxis.compat", False)
 
     def __getitem__(self, key):
+        # [FUNCTION DOC]
+        # Returns the value for a key after canonicalization; raises a value error naming the key if it is not a valid option.
         key = self._get_canonical_key(key)
         if key not in self:
             raise ValueError(f"{key} is not a valid pandas plotting option")
         return super().__getitem__(key)
 
     def __setitem__(self, key, value) -> None:
+        # [FUNCTION DOC]
+        # Stores a value under the canonical form of the key.
         key = self._get_canonical_key(key)
         super().__setitem__(key, value)
 
     def __delitem__(self, key) -> None:
+        # [FUNCTION DOC]
+        # Deletes the option under the canonical key; deleting a default key raises a value error.
         key = self._get_canonical_key(key)
         if key in self._DEFAULT_KEYS:
             raise ValueError(f"Cannot remove default parameter {key}")
         super().__delitem__(key)
 
     def __contains__(self, key) -> bool:
+        # [FUNCTION DOC]
+        # Membership test using the canonical key.
         key = self._get_canonical_key(key)
         return super().__contains__(key)
 
     def reset(self) -> None:
+        # [FUNCTION DOC]
+        # Resets the store to its initial state by re-running the initializer, which re-sets the default option to false. Returns nothing.
+        # KNOWN ISSUE: the initializer only sets the default key and does not clear the dictionary, so any other option that was added keeps its value after a reset.
         """
         Reset the option store to its initial state
 
@@ -760,10 +807,14 @@ class _Options(dict):
         self.__init__()  # type: ignore[misc]
 
     def _get_canonical_key(self, key: str) -> str:
+        # [FUNCTION DOC]
+        # HELPER: maps an alias to its canonical key (for example x_compat to xaxis.compat); unknown keys are returned unchanged.
         return self._ALIASES.get(key, key)
 
     @contextmanager
     def use(self, key, value) -> Generator[_Options]:
+        # [FUNCTION DOC]
+        # Context manager that temporarily sets option key to value (aliases allowed). Reads the old value first (an invalid key raises a value error), sets the new value, yields the store, and restores the old value on exit even if an exception occurs.
         """
         Temporarily set a parameter value using the with statement.
         Aliasing allowed.
