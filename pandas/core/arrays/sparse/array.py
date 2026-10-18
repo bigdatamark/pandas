@@ -2,6 +2,23 @@
 SparseArray data structure
 """
 
+# [MODULE DOC]
+# Sparse extension array implementation. Public contents: the sparse array class
+# (exposed in the arrays namespace) plus re-exports of the compiled sparse index
+# classes (block layout and integer layout, with the common base) and the index
+# factory function. Private helpers: a function giving the fill value as a 0-
+# dimensional array, the binary-operation engine for two sparse arrays, the
+# result wrapper, the sparse construction routine from dense data, and the
+# sparse index builder.
+# Storage model: an array stores only the values that differ from a fill value
+# (kept in a dense array of stored values), plus a sparse index recording the
+# positions of those values within the full length; everything else is implicit.
+# Relationships: the sparse dtype (carrying subtype and fill value) lives in the
+# dtypes module; compiled sparse algorithms live in the sparse library module
+# (operations named by operator and subtype); the sibling accessor module
+# exposes the series/frame accessors and the scipy module converts to scipy
+# matrices. Operator dispatch uses the operator mixin and the ufunc protocol.
+# No import-time side effects beyond decorator application.
 from __future__ import annotations
 
 from collections import abc
@@ -106,9 +123,22 @@ if TYPE_CHECKING:
 
     @type_check_only
     class _SparseMatrixLike(Protocol):
+        # [CLASS DOC]
+        # HELPER: typing-only protocol (exists only for static type checking,
+        # never at run time) describing the minimal scipy sparse matrix interface
+        # needed by the matrix-import constructor: a two-element shape and a
+        # conversion to a compressed-column matrix.
         @property
-        def shape(self, /) -> tuple[int, int]: ...
-        def tocsc(self, /) -> csc_array | csc_matrix: ...
+        def shape(self, /) -> tuple[int, int]:
+            # [FUNCTION DOC]
+            # HELPER: typing-only protocol member: (rows, columns) of the matrix.
+            ...
+
+        def tocsc(self, /) -> csc_array | csc_matrix:
+            # [FUNCTION DOC]
+            # HELPER: typing-only protocol member: convert to a compressed
+            # sparse column matrix or array.
+            ...
 
     from pandas._typing import NumpySorter
 
@@ -138,6 +168,12 @@ _sparray_doc_kwargs = {"klass": "SparseArray"}
 
 
 def _get_fill(arr: SparseArray) -> np.ndarray:
+    # [FUNCTION DOC]
+    # HELPER: gives the fill value of a sparse array as a zero-dimensional numpy
+    # array. arr is the sparse array. Tries to cast the fill value to the subtype
+    # (so e.g. integer data can still carry a NaN fill value only when the cast
+    # fails with a value error, in which case the fill value is converted without
+    # a target dtype). Used by the binary-operation engine.
     """
     Create a 0-dim ndarray containing the fill value
 
@@ -164,6 +200,30 @@ def _get_fill(arr: SparseArray) -> np.ndarray:
 def _sparse_array_op(
     left: SparseArray, right: SparseArray, op: Callable, name: str
 ) -> SparseArray:
+    # [FUNCTION DOC]
+    # HELPER: binary-operation engine for two sparse arrays. left and right are
+    # sparse arrays; op is the operator function; name is the operator name
+    # (dunder names are stripped to the bare name, e.g. "add", "rsub", "eq",
+    # "divmod").
+    # Steps: if the stored subtypes differ, both are cast to their common type
+    # (keeping their own fill values). Then three cases, in this order: (1) one
+    # side has no gaps (is fully dense): the operation is done densely on the full
+    # arrays, the fill is the operation on the two fill values, and the result
+    # index is the dense side's index; (2) both have identical index: the
+    # operation is applied directly to the stored values and fill values; (3)
+    # otherwise the compiled sparse routine matching the operator and subtype is
+    # called (reflected names swap the operands; logical operators on booleans use
+    # an unsigned 8-bit routine and force boolean results; integer floor division
+    # and modulo by zero fall back to the 64-bit float routine to mimic the dense
+    # behavior), returning values, index and fill value. Numpy floating-point
+    # warnings are suppressed.
+    # Output: wrapped result array (comparisons forced to boolean); for the
+    # paired quotient-and-remainder operation a tuple of two wrapped arrays.
+    # KNOWN ISSUE: the docstring says the operands may be plain numpy arrays, but
+    # the code reads sparse-only attributes (stored values, index, fill value),
+    # so both must be sparse arrays; the declared return type also omits the
+    # tuple result of the paired operation. The docstring also has a typo in the
+    # parameter list for the name.
     """
     Perform a binary operation between two arrays.
 
@@ -272,6 +332,14 @@ def _sparse_array_op(
 def _wrap_result(
     name: str, data, sparse_index, fill_value, dtype: Dtype | None = None
 ) -> SparseArray:
+    # [FUNCTION DOC]
+    # HELPER: builds the sparse array result of an operation. name is the
+    # operator name (dunder stripped); data the stored values; sparse_index the
+    # result index; fill_value the fill (possibly a 0-dimensional array, which is
+    # unwrapped to a scalar); dtype (default none) the requested value dtype.
+    # Comparison operators force a boolean dtype; a boolean dtype converts the
+    # fill value to a plain boolean. Returns a new sparse array built with the
+    # public constructor (so inputs are re-validated).
     """
     wrap op result to have correct dtype
     """
@@ -294,6 +362,20 @@ def _wrap_result(
 
 @set_module("pandas.arrays")
 class SparseArray(OpsMixin, PandasObject, ExtensionArray):
+    # [CLASS DOC]
+    # Extension array holding data in sparse form. Inherits the operator mixin
+    # (binary operators), the base object for pandas objects (hidden attributes,
+    # display helpers) and the generic extension array. State: the array of
+    # stored values (the elements different from the fill value), the sparse index
+    # (positions of those values; either block layout or integer layout) and the
+    # sparse dtype (subtype of the stored values plus the fill value). Invariants:
+    # the number of stored values equals the number of points in the index; the
+    # array length is the length recorded by the index; the dtype subtype equals
+    # the stored values dtype. The array is immutable for element assignment
+    # (assignment always raises). Key members: the constructors, conversion to
+    # dense/numpy, indexing and slicing, take, fill/unique/factorize/value counts,
+    # shifting, cast, reductions, cumulative sum, arithmetic and comparison
+    # dispatch, universal-function support, formatting and density properties.
     """
     An ExtensionArray for storing sparse data.
 
@@ -389,6 +471,32 @@ class SparseArray(OpsMixin, PandasObject, ExtensionArray):
         dtype: Dtype | None = None,
         copy: bool = False,
     ) -> None:
+        # [FUNCTION DOC]
+        # Constructor from dense data or from stored values plus an index.
+        # data: array-like (or another sparse array, or none for an empty float or
+        # given-dtype array); scalar data raises a type error. sparse_index
+        # (default none): when given, data is taken as the stored values and its
+        # length must equal the index's number of points (assertion error
+        # otherwise). fill_value (default none): resolved by precedence from the
+        # argument, then a sparse dtype argument, then a sparse input array, then
+        # the natural missing value of the data dtype. kind (default "integer"; or
+        # "block"): layout of the index to build from dense data. dtype (default
+        # none): numpy dtype, sparse dtype, or text for either; for a sparse dtype
+        # its subtype becomes the dtype and its fill value the default fill.
+        # copy (default false): copy dense input.
+        # Behavior: input is sanitized to an array (retrying as object dtype if
+        # numpy cannot build it and no dtype was given); with no index given,
+        # time-zone aware datetime extension data is converted to naive datetime
+        # with a user warning, then the dense data is sparsified around the fill
+        # value; with an index given the values are simply cast. The final dtype is
+        # a sparse dtype of the stored values dtype and the (possibly adjusted)
+        # fill value.
+        # KNOWN ISSUE: the branch that copies a sparse-array input into new
+        # storage (data being an instance of the class after sanitizing) is
+        # effectively unreachable when the input was a sparse array, because the
+        # constructor unwraps such inputs to their stored values earlier; and when
+        # copy is requested together with a dtype that forces a cast, data may be
+        # copied twice (a source TODO).
         if fill_value is None and isinstance(dtype, SparseDtype):
             fill_value = dtype.fill_value
 
@@ -512,6 +620,11 @@ class SparseArray(OpsMixin, PandasObject, ExtensionArray):
         sparse_index: SparseIndex,
         dtype: SparseDtype,
     ) -> Self:
+        # [FUNCTION DOC]
+        # HELPER: fast internal constructor without validation or copying.
+        # sparse_array is the numpy array of stored values, sparse_index the
+        # index describing their positions and the length, dtype the sparse
+        # dtype. Returns the new instance with the three private attributes set.
         new = object.__new__(cls)
         new._sparse_index = sparse_index
         new._sparse_values = sparse_array
@@ -520,6 +633,15 @@ class SparseArray(OpsMixin, PandasObject, ExtensionArray):
 
     @classmethod
     def from_spmatrix(cls, data: _SparseMatrixLike) -> Self:
+        # [FUNCTION DOC]
+        # Class method building a sparse array from a single-column scipy sparse
+        # matrix. data must have exactly one column (value error otherwise). The
+        # matrix is converted to compressed-column form and its stored indices
+        # are sorted in place (mutating the converted matrix, which is the
+        # caller's object if already in that format) because the integer sparse
+        # index requires strictly increasing positions. The fill value is the
+        # zero of the matrix dtype; the stored values are the matrix data array.
+        # Returns the new array of the matrix's number of rows.
         """
         Create a SparseArray from a scipy.sparse matrix.
 
@@ -565,6 +687,19 @@ class SparseArray(OpsMixin, PandasObject, ExtensionArray):
     def __array__(
         self, dtype: NpDtype | None = None, copy: bool | None = None
     ) -> np.ndarray:
+        # [FUNCTION DOC]
+        # Numpy array protocol: densifies the array. dtype is the requested numpy
+        # dtype (default none: inferred); copy is none, true or false.
+        # With no gaps (fully stored), returns the stored values (a copy when copy
+        # is true, otherwise the shared array as a non-writeable view for read-only
+        # arrays). With gaps, copy=false raises a value error. Otherwise the dtype
+        # defaults to the result type of the stored dtype and the fill value type
+        # (not-a-time fill with datetime data is turned into a numpy not-a-time;
+        # object when numpy cannot represent the combination); a dense array of the
+        # fill value is allocated and the stored values are scattered into it.
+        # Returns the dense numpy array.
+        # KNOWN ISSUE: in the fully-stored case the requested dtype is ignored and
+        # the stored values are returned as they are.
         if self.sp_index.ngaps == 0:
             # Compat for na dtype and int values.
             if copy is True:
@@ -604,6 +739,10 @@ class SparseArray(OpsMixin, PandasObject, ExtensionArray):
         return out
 
     def __setitem__(self, key, value) -> None:
+        # [FUNCTION DOC]
+        # Item assignment is not supported. Raises a value error if the array is
+        # read-only, otherwise always raises a type error stating that sparse
+        # arrays do not support item assignment. key and value are ignored.
         if self._readonly:
             raise ValueError("Cannot modify read-only array")
         # I suppose we could allow setting of non-fill_value elements.
@@ -616,13 +755,31 @@ class SparseArray(OpsMixin, PandasObject, ExtensionArray):
     def _from_sequence(
         cls, scalars, *, dtype: Dtype | None = None, copy: bool = False
     ) -> Self:
+        # [FUNCTION DOC]
+        # HELPER: class-method constructor used by the generic array factory.
+        # scalars is a sequence; keyword-only dtype (default none) is passed on;
+        # copy (default false) is accepted but ignored.
+        # KNOWN ISSUE: the copy argument is not forwarded to the constructor.
         return cls(scalars, dtype=dtype)
 
     @classmethod
     def _from_factorized(cls, values, original) -> Self:
+        # [FUNCTION DOC]
+        # HELPER: rebuilds an array from factorized unique values: values is the
+        # array of uniques; original supplies the (sparse) dtype. Returns a new
+        # array with that dtype.
         return cls(values, dtype=original.dtype)
 
     def _cast_pointwise_result(self, values):
+        # [FUNCTION DOC]
+        # HELPER: post-processes the sequence of results of an element-wise
+        # mapping. The values are converted to an object array and a better dtype
+        # is inferred (including non-numeric types). If the inferred kind equals
+        # this array's kind, the result is built with this array's sparse dtype and
+        # accepted only if it round-trips equal to the inferred values (missing
+        # values matching); otherwise (or if construction fails with a value or
+        # type error) it is built with an inferred sparse dtype. A different kind
+        # also gives the inferred dtype. Returns a sparse array.
         values = np.asarray(values, dtype=object)
         result = lib.maybe_convert_objects(values, convert_non_numeric=True)
         if result.dtype.kind == self.dtype.kind:
@@ -645,6 +802,9 @@ class SparseArray(OpsMixin, PandasObject, ExtensionArray):
     # ------------------------------------------------------------------------
     @property
     def sp_index(self) -> SparseIndex:
+        # [FUNCTION DOC]
+        # Property returning the sparse index object describing the positions of
+        # the stored (non-fill) values and the total length.
         """
         The SparseIndex containing the location of non- ``fill_value`` points.
         """
@@ -652,6 +812,9 @@ class SparseArray(OpsMixin, PandasObject, ExtensionArray):
 
     @property
     def sp_values(self) -> np.ndarray:
+        # [FUNCTION DOC]
+        # Property returning the numpy array of stored values (those not equal to
+        # the fill value); the actual internal array, not a copy.
         """
         An ndarray containing the non- ``fill_value`` values.
 
@@ -678,10 +841,15 @@ class SparseArray(OpsMixin, PandasObject, ExtensionArray):
 
     @property
     def dtype(self) -> SparseDtype:
+        # [FUNCTION DOC]
+        # Property returning the sparse dtype (stored subtype plus fill value).
         return self._dtype
 
     @property
     def fill_value(self):
+        # [FUNCTION DOC]
+        # Property returning the fill value from the dtype. The setter below
+        # replaces the dtype with one that has the new fill value.
         """
         Elements in `data` that are `fill_value` are not stored.
 
@@ -707,10 +875,19 @@ class SparseArray(OpsMixin, PandasObject, ExtensionArray):
 
     @fill_value.setter
     def fill_value(self, value) -> None:
+        # [FUNCTION DOC]
+        # Setter for the fill value property: replaces the dtype with a sparse
+        # dtype of the same subtype and the new fill value. The stored values and
+        # index are NOT adjusted, so positions equal to the new fill value that
+        # are stored stay stored and positions previously implicit now represent
+        # the new fill value. Mutates this array.
         self._dtype = SparseDtype(self.dtype.subtype, value)
 
     @property
     def kind(self) -> SparseIndexKind:
+        # [FUNCTION DOC]
+        # Property: the layout of the sparse index as text, "integer" for the
+        # integer index class and "block" for any other (block) index.
         """
         The kind of sparse index for this array. One of {'integer', 'block'}.
         """
@@ -721,23 +898,38 @@ class SparseArray(OpsMixin, PandasObject, ExtensionArray):
 
     @property
     def _valid_sp_values(self) -> np.ndarray:
+        # [FUNCTION DOC]
+        # HELPER: property returning the stored values with missing entries
+        # removed (a new array).
         sp_vals = self.sp_values
         mask = notna(sp_vals)
         return sp_vals[mask]
 
     def __len__(self) -> int:
+        # [FUNCTION DOC]
+        # Total length of the array including implicit fill positions, taken from
+        # the sparse index.
         return self.sp_index.length
 
     @property
     def _null_fill_value(self) -> bool:
+        # [FUNCTION DOC]
+        # HELPER: property telling whether the fill value is a missing marker
+        # (NaN, none or not-a-time), taken from the dtype.
         return self._dtype._is_na_fill_value
 
     @property
     def nbytes(self) -> int:
+        # [FUNCTION DOC]
+        # Property: memory in bytes of the stored values plus the sparse index.
         return self.sp_values.nbytes + self.sp_index.nbytes
 
     @property
     def density(self) -> float:
+        # [FUNCTION DOC]
+        # Property: fraction of positions that are stored (number of stored points
+        # divided by the length). An empty array divides by zero (floating result
+        # not-a-number or error depending on the index types).
         """
         The percent of non- ``fill_value`` points, as decimal.
 
@@ -757,6 +949,9 @@ class SparseArray(OpsMixin, PandasObject, ExtensionArray):
 
     @property
     def npoints(self) -> int:
+        # [FUNCTION DOC]
+        # Property: the number of stored points, i.e. entries different from the
+        # fill value, taken from the sparse index.
         """
         The number of non- ``fill_value`` points.
 
@@ -784,6 +979,13 @@ class SparseArray(OpsMixin, PandasObject, ExtensionArray):
     # error: Return type "SparseArray" of "isna" incompatible with return type
     # "ndarray[Any, Any] | ExtensionArraySupportsAnyAll" in supertype "ExtensionArray"
     def isna(self) -> Self:  # type: ignore[override]
+        # [FUNCTION DOC]
+        # Returns a SPARSE boolean array (not a numpy array) marking missing
+        # entries. If the fill value is missing, the result is sparse with a true
+        # fill value and stores the missing flags of the stored values (same
+        # index), preserving memory use. Otherwise the result has a false fill
+        # value, and is built from a dense boolean array with the stored positions
+        # flagged by their missingness.
         # If null fill value, we want SparseDtype[bool, true]
         # to preserve the same memory usage.
         dtype = SparseDtype(bool, self._null_fill_value)
@@ -799,6 +1001,14 @@ class SparseArray(OpsMixin, PandasObject, ExtensionArray):
         limit: int | None = None,
         copy: bool = True,
     ) -> Self:
+        # [FUNCTION DOC]
+        # Fills missing values. value is the replacement scalar (not validated);
+        # limit (default none) must be none (value error otherwise); copy
+        # (default true) is ignored. Missing stored values are replaced by value.
+        # If the fill value is itself missing, the result dtype's fill value
+        # becomes value (so the implicit positions are filled too); otherwise the
+        # dtype is unchanged. The index is shared with this array. Returns a new
+        # sparse array.
         """
         Fill missing values with `value`.
 
@@ -839,6 +1049,14 @@ class SparseArray(OpsMixin, PandasObject, ExtensionArray):
         return self._simple_new(new_values, self._sparse_index, new_dtype)
 
     def shift(self, periods: int = 1, fill_value=None) -> Self:
+        # [FUNCTION DOC]
+        # Shifts entries by periods positions (default one; positive moves toward
+        # the end). fill_value (default none, meaning the dtype's missing value)
+        # fills vacated slots. An empty array or zero shift returns a copy.
+        # If the fill value does not fit the stored subtype, the array is first
+        # cast to the common numpy subtype (keeping its fill value). A block of
+        # fill entries (at most the array length) is built and concatenated with
+        # the retained slice. Returns a new sparse array.
         if not len(self) or periods == 0:
             return self.copy()
 
@@ -866,6 +1084,14 @@ class SparseArray(OpsMixin, PandasObject, ExtensionArray):
         return arr._concat_same_type([a, b])
 
     def _first_fill_value_loc(self):
+        # [FUNCTION DOC]
+        # HELPER: position of the first implicit (fill value) element. Returns
+        # minus one if the array is empty or fully stored (no fill positions).
+        # Returns zero if there are no stored points or the first stored point is
+        # not at position zero. Otherwise finds the first gap between consecutive
+        # stored positions (a sentinel gap is appended so that a fill region at the
+        # tail is found) and returns the position right after the stored position
+        # preceding that gap.
         """
         Get the location of the first fill value.
 
@@ -890,11 +1116,23 @@ class SparseArray(OpsMixin, PandasObject, ExtensionArray):
     def duplicated(
         self, keep: Literal["first", "last", False] = "first"
     ) -> npt.NDArray[np.bool_]:
+        # [FUNCTION DOC]
+        # Marks repeated values (documentation is inherited from the base class
+        # through a decorator). keep (default first) says which occurrence is not
+        # marked: first, last, or false meaning all repeats are marked. The array
+        # is fully densified and missing values (from the sparse missing-flag
+        # array) are treated as equal. Returns a boolean numpy array.
         values = np.asarray(self)
         mask = np.asarray(self.isna())
         return algos.duplicated(values, keep=keep, mask=mask)
 
     def unique(self) -> Self:
+        # [FUNCTION DOC]
+        # Returns a new sparse array of the distinct values in order of first
+        # appearance. The stored values are de-duplicated; if the array has any
+        # implicit positions, the fill value is inserted at the position
+        # corresponding to the first fill element (computed by de-duplicating the
+        # stored values that precede it). The result is built with this dtype.
         uniques = algos.unique(self.sp_values)
         if len(self.sp_values) != len(self):
             fill_loc = self._first_fill_value_loc()
@@ -909,6 +1147,9 @@ class SparseArray(OpsMixin, PandasObject, ExtensionArray):
         return type(self)._from_sequence(uniques, dtype=self.dtype)
 
     def _values_for_factorize(self):
+        # [FUNCTION DOC]
+        # HELPER: hook used by hashing/factorizing. Returns the pair of the fully
+        # densified numpy array and the fill value (as the missing marker).
         # Still override this for hash_pandas_object
         return np.asarray(self), self.fill_value
 
@@ -916,6 +1157,13 @@ class SparseArray(OpsMixin, PandasObject, ExtensionArray):
         self,
         use_na_sentinel: bool = True,
     ) -> tuple[np.ndarray, SparseArray]:
+        # [FUNCTION DOC]
+        # Encodes values as integer codes plus the distinct values. use_na_sentinel
+        # (default true) gives missing values code minus one and leaves them out of
+        # the uniques; false gives them a code of their own. The array is
+        # densified and the generic factorizer is used (no sparse efficiency).
+        # Returns the pair (dense integer code array, sparse array of uniques with
+        # this dtype).
         # Currently, ExtensionArray.factorize -> Tuple[ndarray, EA]
         # The sparsity on this is backwards from what Sparse would want. Want
         # ExtensionArray.factorize -> Tuple[EA, EA]
@@ -928,6 +1176,14 @@ class SparseArray(OpsMixin, PandasObject, ExtensionArray):
         return codes, uniques_sp
 
     def value_counts(self, dropna: bool = True) -> Series:
+        # [FUNCTION DOC]
+        # Counts occurrences of each distinct value. dropna (default true) leaves
+        # out missing values. Counts are computed on the stored values only; the
+        # number of implicit positions is then added to the count of the fill
+        # value (when the fill value is already among the keys), or inserted as a
+        # new first entry (fill value, number of gaps) when it is absent. This is
+        # skipped when the fill value is missing and dropna is true. Returns a
+        # series of counts indexed by value.
         """
         Returns a Series containing counts of unique values.
 
@@ -971,18 +1227,42 @@ class SparseArray(OpsMixin, PandasObject, ExtensionArray):
     # Indexing
     # --------
     @overload
-    def __getitem__(self, key: ScalarIndexer) -> Any: ...
+    def __getitem__(self, key: ScalarIndexer) -> Any:
+        # [FUNCTION DOC]
+        # Typing stub only: scalar position gives a scalar. See implementation.
+        ...
 
     @overload
     def __getitem__(
         self,
         key: SequenceIndexer | tuple[int | EllipsisType, ...],
-    ) -> Self: ...
+    ) -> Self:
+        # [FUNCTION DOC]
+        # Typing stub only: sequence, slice, mask or tuple key gives an array. See
+        # implementation.
+        ...
 
     def __getitem__(
         self,
         key: PositionalIndexer | tuple[int | EllipsisType, ...],
     ) -> Self | Any:
+        # [FUNCTION DOC]
+        # Positional indexing. key is an integer, slice, ellipsis-containing
+        # tuple, list-like of positions, or boolean mask (sparse masks too).
+        # Tuples are unpacked of ellipses (a bare ellipsis raises a value error).
+        # An integer returns the scalar (fill value for implicit positions). A
+        # full slice returns a new array sharing the stored values and index and
+        # the read-only flag. A unit-step slice is done without densifying: the
+        # stored points inside the range are kept, their positions shifted to the
+        # new origin, and an index of the same kind is built for the new length. A
+        # stepped slice is converted to explicit positions and goes through take.
+        # A remaining tuple form is applied to the dense array and the result
+        # re-sparsified with the same kind. A non-list-like key raises an index
+        # error. Sparse boolean masks use fast paths by their fill value (missing
+        # fill: positions of true values; false fill: positions of stored points;
+        # true fill: all positions except the stored ones, which are false); other
+        # keys are validated as array indexers, boolean masks and integer arrays
+        # go through take; anything else without a length raises a value error.
         if isinstance(key, tuple):
             key = unpack_tuple_and_ellipses(key)
             if key is ...:
@@ -1072,6 +1352,12 @@ class SparseArray(OpsMixin, PandasObject, ExtensionArray):
         return type(self)(data_slice, kind=self.kind)
 
     def _get_val_at(self, loc):
+        # [FUNCTION DOC]
+        # HELPER: scalar lookup. loc is an integer position, negative counting from
+        # the end; out-of-range positions raise an index error (via the location
+        # validator). Returns the fill value if the position is not stored,
+        # otherwise the stored value boxed as a pandas scalar for datetime-like
+        # types.
         loc = validate_insert_loc(loc, len(self))
 
         sp_loc = self.sp_index.lookup(loc)
@@ -1083,6 +1369,16 @@ class SparseArray(OpsMixin, PandasObject, ExtensionArray):
             return val
 
     def take(self, indices, *, allow_fill: bool = False, fill_value=None) -> Self:
+        # [FUNCTION DOC]
+        # Positional take. indices is an integer sequence (a scalar raises a value
+        # error); keyword-only allow_fill (default false: negatives count from the
+        # end; true: minus one marks positions to fill) and fill_value (default
+        # none, the dtype's missing value). Indices are converted to 32-bit
+        # integers. Empty indices give an empty array of this dtype. With fill, the
+        # dense taken values are computed by the fill helper and re-sparsified
+        # with this fill value and kind; without fill, the fast sparse path is
+        # used. Out-of-range positions raise an index error; invalid negative
+        # values raise a value error when filling.
         if is_scalar(indices):
             raise ValueError(f"'indices' must be an array, not a scalar '{indices}'.")
         indices = np.asarray(indices, dtype=np.int32)
@@ -1101,6 +1397,18 @@ class SparseArray(OpsMixin, PandasObject, ExtensionArray):
         )
 
     def _take_with_fill(self, indices, fill_value=None) -> np.ndarray:
+        # [FUNCTION DOC]
+        # HELPER: take with fill semantics, returning a DENSE numpy array. indices
+        # is a 32-bit integer array where minus one means "insert a fill"; fill_value
+        # (default none, the dtype's missing value) is the value used there.
+        # Raises a value error for indices below minus one, an index error for
+        # indices at or beyond the length, and (for an empty source) allows only
+        # all-minus-one requests, giving an array of the fill value. Positions
+        # are looked up in the sparse index; the taken array starts from the
+        # stored values (or from the fill values for an all-gap source) and is
+        # widened to a common type when the original fill value or the new fill
+        # value does not fit, then both kinds of fill are written. Returns the
+        # dense array.
         if fill_value is None:
             fill_value = self.dtype.na_value
 
@@ -1167,6 +1475,14 @@ class SparseArray(OpsMixin, PandasObject, ExtensionArray):
         return taken
 
     def _take_without_fill(self, indices) -> Self:
+        # [FUNCTION DOC]
+        # HELPER: take with plain numpy semantics, staying sparse. indices is a
+        # non-empty 32-bit integer array; negatives count from the end. Raises an
+        # index error when any position is out of bounds (a distinct message for
+        # an empty source). The positions are looked up in the sparse index; the
+        # stored values at found positions are kept and a new index of the same
+        # kind is built from the output positions that hit stored points. Returns
+        # a new sparse array with this dtype.
         to_shift = indices < 0
 
         n = len(self)
@@ -1195,6 +1511,12 @@ class SparseArray(OpsMixin, PandasObject, ExtensionArray):
         side: Literal["left", "right"] = "left",
         sorter: NumpySorter | None = None,
     ) -> npt.NDArray[np.intp] | np.intp:
+        # [FUNCTION DOC]
+        # Binary search for insertion points. v is a scalar or array-like; side is
+        # left or right (default left); sorter (default none) is an integer array
+        # sorting the data. Emits a performance warning (if the global performance
+        # warnings option is on) because the array is fully densified to the stored
+        # subtype. Returns an integer array, or a single integer for a scalar.
         if get_option("performance_warnings"):
             msg = "searchsorted requires high memory usage."
             warnings.warn(msg, PerformanceWarning, stacklevel=find_stack_level())
@@ -1202,11 +1524,27 @@ class SparseArray(OpsMixin, PandasObject, ExtensionArray):
         return np.asarray(self, dtype=self.dtype.subtype).searchsorted(v, side, sorter)
 
     def copy(self) -> Self:
+        # [FUNCTION DOC]
+        # Returns a new array with a copy of the stored values; the (immutable)
+        # sparse index object and dtype are shared with this array.
         values = self.sp_values.copy()
         return self._simple_new(values, self.sp_index, self.dtype)
 
     @classmethod
     def _concat_same_type(cls, to_concat: Sequence[Self]) -> Self:
+        # [FUNCTION DOC]
+        # HELPER: class-method used by concatenation. to_concat is a sequence of
+        # sparse arrays; the result takes the fill value and index kind of the
+        # first. Integer kind: positions are shifted by the running length and
+        # joined into one integer index. Block kind: each array is converted to a
+        # block index, block starts are shifted by the running length and all
+        # blocks are joined (adjacent blocks across arrays are not merged, so the
+        # result may have more blocks than a fresh construction). Stored values are
+        # joined. Returns the new array via the public constructor.
+        # KNOWN ISSUE: the first element is read before the emptiness check, so an
+        # empty sequence fails with an index error and the later default of
+        # "integer" for an empty sequence is unreachable; also a source TODO notes
+        # the shifted integer positions can wrap around for very large totals.
         fill_value = to_concat[0].fill_value
 
         values = []
@@ -1259,6 +1597,19 @@ class SparseArray(OpsMixin, PandasObject, ExtensionArray):
         return cls(data, sparse_index=sp_index, fill_value=fill_value)
 
     def astype(self, dtype: AstypeArg | None = None, copy: bool = True):
+        # [FUNCTION DOC]
+        # Casts the array. dtype (default none) is a numpy dtype or a sparse dtype;
+        # copy (default true) forces copying.
+        # Same dtype: copy or self. A non-sparse target: the array is densified,
+        # datetime-like data is wrapped, and the generic array cast is applied; the
+        # result is a DENSE array of the target type (the docstring's claim that the
+        # output is always sparse is not accurate). A sparse target: the dtype is
+        # merged with the current one (a missing subtype or fill value is taken from
+        # the current dtype), the stored values are cast to the new subtype and the
+        # index is kept; the fill value comes from the merged dtype. Returns the new
+        # array.
+        # KNOWN ISSUE: the docstring says the output is always a SparseArray, but
+        # casting to a non-sparse dtype returns a dense array.
         """
         Change the dtype of a SparseArray.
 
@@ -1338,6 +1689,18 @@ class SparseArray(OpsMixin, PandasObject, ExtensionArray):
         return self._simple_new(sp_values, self.sp_index, dtype)
 
     def map(self, mapper, na_action: Literal["ignore"] | None = None) -> Self:
+        # [FUNCTION DOC]
+        # Maps the values through a function or mapping, keeping the sparse
+        # structure. mapper is a function, mapping or series; na_action (default
+        # none; or "ignore") skips mapping a missing fill value. The new fill value
+        # is the mapped old fill value (not mapped when na_action is "ignore" and
+        # the fill value is missing). Every stored value is mapped (missing keys of
+        # a mapping give none); if a mapped stored value equals the new fill value
+        # (identity or equality) a value error is raised since it would break the
+        # sparse representation. Returns a new array with the same index and the
+        # mapped stored values.
+        # KNOWN ISSUE: the na_action setting only affects the fill value; stored
+        # missing values are always passed to the mapper.
         """
         Map categories using an input mapping or function.
 
@@ -1385,6 +1748,11 @@ class SparseArray(OpsMixin, PandasObject, ExtensionArray):
             fill_val = mapper.get(fill_val, fill_val) if is_map else mapper(fill_val)
 
         def func(sp_val):
+            # [FUNCTION DOC]
+            # HELPER: nested function of the mapping method. Maps one stored value
+            # with the mapper (dictionary-style lookup with none for missing keys,
+            # or a call). Raises a value error if the mapped value is the same
+            # object as, or equal to, the new fill value. Returns the mapped value.
             new_sp_val = mapper.get(sp_val, None) if is_map else mapper(sp_val)
             # check identity and equality because nans are not equal to each other
             if new_sp_val is fill_val or new_sp_val == fill_val:
@@ -1397,6 +1765,10 @@ class SparseArray(OpsMixin, PandasObject, ExtensionArray):
         return type(self)(sp_values, sparse_index=self.sp_index, fill_value=fill_val)
 
     def to_dense(self) -> np.ndarray:
+        # [FUNCTION DOC]
+        # Returns the dense numpy array of the stored subtype, with the fill value
+        # written at every implicit position (a new array, except that a fully
+        # stored array may return its stored values directly).
         """
         Convert SparseArray to a NumPy array.
 
@@ -1407,6 +1779,12 @@ class SparseArray(OpsMixin, PandasObject, ExtensionArray):
         return np.asarray(self, dtype=self.sp_values.dtype)
 
     def _where(self, mask, value):
+        # [FUNCTION DOC]
+        # HELPER: conditional replacement hook. mask is a boolean array (true keeps
+        # this array's element); value is the replacement. The work is done densely
+        # with numpy and the result is re-sparsified with a sparse dtype made of the
+        # result dtype and this array's fill value, so the subtype may change (e.g.
+        # integer to float).
         # NB: may not preserve dtype, e.g. result may be Sparse[float64]
         #  while self is Sparse[int64]
         naive_implementation = np.where(mask, self, value)
@@ -1418,6 +1796,12 @@ class SparseArray(OpsMixin, PandasObject, ExtensionArray):
     # IO
     # ------------------------------------------------------------------------
     def __setstate__(self, state) -> None:
+        # [FUNCTION DOC]
+        # Unpickling support. state is either a tuple (format from versions before
+        # 0.24: a numpy array state for the stored values plus a pair of fill value
+        # and sparse index), in which case the three private attributes are rebuilt
+        # from it, or a dictionary of attributes that is merged into the instance
+        # dictionary. Mutates this instance.
         """Necessary for making this object picklable"""
         if isinstance(state, tuple):
             # Compat for pandas < 0.24.0
@@ -1432,6 +1816,12 @@ class SparseArray(OpsMixin, PandasObject, ExtensionArray):
             self.__dict__.update(state)
 
     def nonzero(self) -> tuple[npt.NDArray[np.int32]]:
+        # [FUNCTION DOC]
+        # Positions of non-zero elements (numpy-style, a one-element tuple of an
+        # integer array). If the fill value is zero, these are the stored
+        # positions; otherwise the stored positions whose value is not zero.
+        # KNOWN ISSUE: when the fill value is not zero, implicit positions (which
+        # hold a non-zero fill value) are omitted from the result.
         if self.fill_value == 0:
             return (self.sp_index.indices,)
         else:
@@ -1444,6 +1834,18 @@ class SparseArray(OpsMixin, PandasObject, ExtensionArray):
     def _reduce(
         self, name: str, *, skipna: bool = True, keepdims: bool = False, **kwargs
     ):
+        # [FUNCTION DOC]
+        # Generic reduction entry point. name is the name of a method of this class
+        # (otherwise a type error naming the dtype is raised); skipna (keyword-only,
+        # default true); keepdims (default false) returns a one-element sparse
+        # array; extra keywords go to the method.
+        # The method is called on this array, or, when skipna is false, on a copy
+        # with missing values removed. Returns the scalar result or the wrapped
+        # one-element array.
+        # KNOWN ISSUE: the skipna handling looks inverted: missing values are
+        # dropped when skipna is false, and left in place when it is true (relying
+        # on the called method's own default handling); skipna is never forwarded
+        # to the method.
         method = getattr(self, name, None)
 
         if method is None:
@@ -1462,6 +1864,12 @@ class SparseArray(OpsMixin, PandasObject, ExtensionArray):
             return result
 
     def all(self, axis=None, *args, **kwargs):
+        # [FUNCTION DOC]
+        # True if all elements are truthy. axis (default none) and extra
+        # positional/keyword arguments exist for numpy compatibility (extra ones
+        # validated; axis unused). If there are implicit positions and the fill
+        # value is not truthy, returns false; otherwise reduces the stored values.
+        # Returns a numpy boolean (or a plain false).
         """
         Tests whether all elements evaluate True
 
@@ -1483,6 +1891,11 @@ class SparseArray(OpsMixin, PandasObject, ExtensionArray):
         return values.all()
 
     def any(self, axis: AxisInt = 0, *args, **kwargs) -> bool:
+        # [FUNCTION DOC]
+        # True if any element is truthy. axis (default zero) and extra arguments are
+        # for numpy compatibility (extra ones validated; axis unused). If there are
+        # implicit positions and the fill value is truthy, returns true; otherwise
+        # reduces the stored values. Returns a plain boolean.
         """
         Tests whether at least one of elements evaluate True
 
@@ -1511,6 +1924,21 @@ class SparseArray(OpsMixin, PandasObject, ExtensionArray):
         *args,
         **kwargs,
     ) -> Scalar:
+        # [FUNCTION DOC]
+        # Sum of values. axis (default zero) is unused; min_count (default zero) is
+        # the minimum number of valid values required, else the missing value of the
+        # subtype is returned; skipna (default true) controls whether missing data
+        # makes the result missing; extra arguments are validated for numpy
+        # compatibility.
+        # The stored non-missing values are summed. With a non-missing fill value the
+        # fill value times the number of implicit positions is added (and those
+        # positions count toward the minimum). If the fill value is missing the
+        # minimum count applies to the stored valid values only.
+        # KNOWN ISSUE: the "has missing data" test is true for a non-missing fill
+        # value with implicit positions, so with skipna false such an array returns
+        # the missing value although it holds no missing entries; and with skipna
+        # false, missing stored values are still ignored. The docstring also omits
+        # the skipna parameter.
         """
         Sum of non-NA/null values
 
@@ -1548,6 +1976,13 @@ class SparseArray(OpsMixin, PandasObject, ExtensionArray):
             return sp_sum + self.fill_value * nsparse
 
     def cumsum(self, axis: AxisInt = 0, *args, **kwargs) -> SparseArray:
+        # [FUNCTION DOC]
+        # Cumulative sum. axis (default zero; none means flattened) must be less
+        # than the number of dimensions (value error otherwise); extra arguments are
+        # validated for numpy compatibility. If the fill value is not missing, the
+        # array is densified and re-sparsified with a NaN fill value, then summed. If
+        # the fill value is missing, the stored values are accumulated and the same
+        # index and fill value kept. Returns a new sparse array.
         """
         Cumulative sum of non-NA/null values.
 
@@ -1580,6 +2015,13 @@ class SparseArray(OpsMixin, PandasObject, ExtensionArray):
         )
 
     def mean(self, axis: Axis = 0, *args, **kwargs):
+        # [FUNCTION DOC]
+        # Mean of the non-missing values. axis (default zero) is unused; extra
+        # arguments validated for numpy compatibility. With a missing fill value,
+        # the stored valid values are averaged; otherwise the implicit fill positions
+        # contribute the fill value and count. Returns a float scalar; an empty
+        # valid set gives a division result (not-a-number with a warning, or an
+        # error).
         """
         Mean of non-NA/null values
 
@@ -1599,6 +2041,10 @@ class SparseArray(OpsMixin, PandasObject, ExtensionArray):
             return (sp_sum + self.fill_value * nsparse) / (ct + nsparse)
 
     def max(self, *, axis: AxisInt | None = None, skipna: bool = True):
+        # [FUNCTION DOC]
+        # Maximum value. Keyword-only axis (default none; validated: only none or
+        # zero allowed, else error) and skipna (default true). Delegates to the
+        # shared min/max helper. Returns the scalar or the missing value.
         """
         Max of array values, ignoring NA values if specified.
 
@@ -1617,6 +2063,8 @@ class SparseArray(OpsMixin, PandasObject, ExtensionArray):
         return self._min_max("max", skipna=skipna)
 
     def min(self, *, axis: AxisInt | None = None, skipna: bool = True):
+        # [FUNCTION DOC]
+        # Minimum value; same parameters and behavior as the maximum.
         """
         Min of array values, ignoring NA values if specified.
 
@@ -1635,6 +2083,16 @@ class SparseArray(OpsMixin, PandasObject, ExtensionArray):
         return self._min_max("min", skipna=skipna)
 
     def _min_max(self, kind: Literal["min", "max"], skipna: bool) -> Scalar:
+        # [FUNCTION DOC]
+        # HELPER: shared implementation of minimum and maximum. kind is "min" or
+        # "max"; skipna says whether missing data may be ignored.
+        # If there are stored valid values: take their extreme; if there is a
+        # non-missing fill value with implicit positions, return the more extreme of
+        # that and the stored extreme; else with skipna or no implicit positions
+        # return the stored extreme; otherwise (implicit missing positions and not
+        # skipping) return the missing value. With no stored valid values: return
+        # the fill value if it is non-missing and present at implicit positions,
+        # else the missing value of the subtype.
         """
         Min/max of non-NA/null values
 
@@ -1670,6 +2128,15 @@ class SparseArray(OpsMixin, PandasObject, ExtensionArray):
             return na_value_for_dtype(self.dtype.subtype, compat=False)
 
     def _argmin_argmax(self, kind: Literal["argmin", "argmax"]) -> int:
+        # [FUNCTION DOC]
+        # HELPER: shared implementation of position-of-minimum/maximum. kind is
+        # "argmin" or "argmax". Finds the best stored non-missing value and its
+        # position in the full array. If the fill value is missing, that is the
+        # answer. Otherwise, if the stored candidate beats the fill value strictly
+        # it is returned; if not, the position of the first implicit element (the
+        # fill value) is returned, or the candidate when no implicit elements
+        # exist. Returns an integer position. When there are no stored non-missing
+        # values the underlying numpy call fails with a value error.
         values = self._sparse_values
         index = self._sparse_index.indices
         mask = np.asarray(isna(values))
@@ -1696,12 +2163,19 @@ class SparseArray(OpsMixin, PandasObject, ExtensionArray):
             return _loc
 
     def argmax(self, skipna: bool = True) -> int:
+        # [FUNCTION DOC]
+        # Position of the maximum. skipna (default true; must be a boolean) says
+        # whether missing values may be ignored; with false and any missing value a
+        # value error is raised. Returns the integer position from the shared
+        # helper.
         validate_bool_kwarg(skipna, "skipna")
         if not skipna and self._hasna:
             raise ValueError("Encountered an NA value with skipna=False")
         return self._argmin_argmax("argmax")
 
     def argmin(self, skipna: bool = True) -> int:
+        # [FUNCTION DOC]
+        # Position of the minimum; same parameters and behavior as the argmax.
         validate_bool_kwarg(skipna, "skipna")
         if not skipna and self._hasna:
             raise ValueError("Encountered an NA value with skipna=False")
@@ -1714,6 +2188,20 @@ class SparseArray(OpsMixin, PandasObject, ExtensionArray):
     _HANDLED_TYPES = (np.ndarray, numbers.Number)
 
     def __array_ufunc__(self, ufunc: np.ufunc, method: str, *inputs, **kwargs):
+        # [FUNCTION DOC]
+        # Numpy universal-function protocol. ufunc is the function, method the call
+        # style, inputs the operands, kwargs the options (possibly output arrays).
+        # Returns the not-implemented marker if any operand or output is not a
+        # sparse array, a numpy array or a number. Binary operators are first
+        # dispatched to the dunder methods; calls with outputs and reductions have
+        # dedicated dispatchers. A single-input call is applied only to the stored
+        # values and to the fill value, keeping the sparse index: multiple outputs
+        # give a tuple of sparse arrays; a reduce returns the stored-values result
+        # directly; otherwise a new sparse array with a sparse dtype of the result
+        # dtype and the transformed fill value. Calls with several operands densify
+        # all operands, apply the ufunc, and return the output argument if one was
+        # given, a tuple of sparse arrays for multiple outputs, nothing for the
+        # at method, or a new sparse array built from the dense result.
         out = kwargs.get("out", ())
 
         for x in inputs + out:
@@ -1784,6 +2272,16 @@ class SparseArray(OpsMixin, PandasObject, ExtensionArray):
     # ------------------------------------------------------------------------
 
     def _arith_method(self, other, op):
+        # [FUNCTION DOC]
+        # HELPER: implementation of arithmetic operators. other is a sparse array, a
+        # scalar or an array-like; op is the operator function.
+        # Sparse operand: the binary engine is used. Scalar operand: the operator is
+        # applied to the stored values and to the fill value (numpy warnings
+        # suppressed), keeping the index; the paired quotient-and-remainder
+        # operation returns a pair. Other operands are converted to a numpy array (a
+        # length mismatch raises an assertion error), turned into a sparse array
+        # using this array's fill value and the operand's dtype, and the binary
+        # engine is used. Returns the sparse result (or a pair).
         op_name = op.__name__
 
         if isinstance(other, SparseArray):
@@ -1817,6 +2315,15 @@ class SparseArray(OpsMixin, PandasObject, ExtensionArray):
                 return _sparse_array_op(self, other, op, op_name)
 
     def _cmp_method(self, other, op) -> SparseArray:
+        # [FUNCTION DOC]
+        # HELPER: implementation of comparison operators (also bound as the logical
+        # operator implementation). other is a scalar, array-like or sparse array;
+        # op is the operator function. Non-scalar, non-sparse operands become numpy
+        # arrays and then sparse arrays with this array's fill value. Sparse
+        # operands must have equal length (value error otherwise) and go through the
+        # binary engine using the operator name. Scalars: the fill value is compared
+        # to compute the new fill, the stored values are compared, and the dense
+        # boolean result is built and sparsified. Returns a sparse boolean array.
         if not is_scalar(other) and not isinstance(other, type(self)):
             # convert list-like to ndarray
             other = np.asarray(other)
@@ -1848,6 +2355,12 @@ class SparseArray(OpsMixin, PandasObject, ExtensionArray):
     _logical_method = _cmp_method
 
     def _unary_method(self, op) -> SparseArray:
+        # [FUNCTION DOC]
+        # HELPER: shared implementation of the unary operators. op is the operator
+        # function. The operator is applied to the fill value; if the fill value is
+        # missing or unchanged, only the stored values are transformed and the index
+        # and dtype are kept. Otherwise the array is densified, transformed and
+        # re-sparsified around the new fill value. Returns a new sparse array.
         fill_value = op(np.array(self.fill_value)).item()
         dtype = SparseDtype(self.dtype.subtype, fill_value)
         # NOTE: if fill_value doesn't change
@@ -1859,21 +2372,34 @@ class SparseArray(OpsMixin, PandasObject, ExtensionArray):
         return type(self)(op(self.to_dense()), dtype=dtype)
 
     def __pos__(self) -> SparseArray:
+        # [FUNCTION DOC]
+        # Unary plus via the shared unary helper; returns a sparse array.
         return self._unary_method(operator.pos)
 
     def __neg__(self) -> SparseArray:
+        # [FUNCTION DOC]
+        # Unary negation via the shared unary helper; returns a sparse array.
         return self._unary_method(operator.neg)
 
     def __invert__(self) -> SparseArray:
+        # [FUNCTION DOC]
+        # Unary inversion (bitwise/logical not) via the shared unary helper;
+        # returns a sparse array.
         return self._unary_method(operator.invert)
 
     def __abs__(self) -> SparseArray:
+        # [FUNCTION DOC]
+        # Absolute value via the shared unary helper; returns a sparse array.
         return self._unary_method(operator.abs)
 
     # ----------
     # Formatting
     # -----------
     def __repr__(self) -> str:
+        # [FUNCTION DOC]
+        # Text representation made of three parts on separate lines: the pretty
+        # printed values, the text "Fill: " with the pretty printed fill value, and
+        # the pretty printed sparse index description. Returns the combined string.
         pp_str = printing.pprint_thing(self)
         pp_fill = printing.pprint_thing(self.fill_value)
         pp_index = printing.pprint_thing(self.sp_index)
@@ -1882,6 +2408,10 @@ class SparseArray(OpsMixin, PandasObject, ExtensionArray):
     # error: Return type "None" of "_formatter" incompatible with return
     # type "Callable[[Any], str | None]" in supertype "ExtensionArray"
     def _formatter(self, boxed: bool = False) -> None:  # type: ignore[override]
+        # [FUNCTION DOC]
+        # HELPER: display hook. Always returns nothing, which tells the caller (the
+        # generic array formatter) to infer the element formatter from the dtype of
+        # the values itself. boxed is ignored.
         # Defer to the formatter from the GenericArrayFormatter calling us.
         # This will infer the correct formatter from the dtype of the values.
         return None
@@ -1893,6 +2423,23 @@ def _make_sparse(
     fill_value=None,
     dtype: np.dtype | None = None,
 ):
+    # [FUNCTION DOC]
+    # HELPER: sparsifies a dense numpy array for the constructor. arr must be a
+    # numpy array of at most one dimension (assertion error if not an array, type
+    # error if more dimensions); kind is "block" or "integer" for the index layout
+    # (the module default here is block, unlike the class constructor); fill_value
+    # (default none, the natural missing value of the array dtype) is the value
+    # that is not stored; dtype (default none) casts the stored values.
+    # Steps: the mask of positions to store is not-missing (for a missing fill
+    # value) or not-equal to the fill value (strings converted to object first;
+    # object arrays compared by type and value through a compiled helper). The
+    # stored positions become an index of the requested kind and the stored values
+    # are cut out (cast when a dtype is given). Returns a triple (stored values,
+    # sparse index, fill value).
+    # KNOWN ISSUE: the docstring lists a copy parameter that does not exist, and
+    # the branch handling a mask whose length differs from the array (the comment
+    # says the array is a sparse array) is unreachable because the array is
+    # asserted to be a numpy array; a source TODO also notes copy is not handled.
     """
     Convert ndarray to sparse format
 
@@ -1950,14 +2497,28 @@ def _make_sparse(
 
 
 @overload
-def make_sparse_index(length: int, indices, kind: Literal["block"]) -> BlockIndex: ...
+def make_sparse_index(length: int, indices, kind: Literal["block"]) -> BlockIndex:
+    # [FUNCTION DOC]
+    # Typing stub only: block kind gives a block index. See the implementation.
+    ...
 
 
 @overload
-def make_sparse_index(length: int, indices, kind: Literal["integer"]) -> IntIndex: ...
+def make_sparse_index(length: int, indices, kind: Literal["integer"]) -> IntIndex:
+    # [FUNCTION DOC]
+    # Typing stub only: integer kind gives an integer index. See the
+    # implementation.
+    ...
 
 
 def make_sparse_index(length: int, indices, kind: SparseIndexKind) -> SparseIndex:
+    # [FUNCTION DOC]
+    # Public factory for a sparse index. length is the total array length; indices
+    # is a sorted integer array of stored positions; kind is "block" or "integer".
+    # Block kind: contiguous runs of positions are converted to block starts and
+    # lengths by a compiled helper and a block index is built. Integer kind: an
+    # integer index is built directly. Any other kind raises a value error. Returns
+    # the index.
     index: SparseIndex
     if kind == "block":
         locs, lens = splib.get_blocks(indices)

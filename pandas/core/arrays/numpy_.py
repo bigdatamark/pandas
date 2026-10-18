@@ -1,3 +1,16 @@
+# [MODULE DOC]
+# Defines the extension array that wraps a plain numpy array, exposed publicly
+# as the numpy extension array in the public arrays namespace (the module name
+# is rewritten by the module-setting decorator). It is mostly an internal
+# compatibility layer: it lets numpy-backed data participate wherever an
+# extension array is required (for example as the base of the string array
+# classes, which reuse its ufunc, reduction and ops machinery).
+# Relationships: builds on the ndarray-backed extension array mixin, the
+# operator mixin and the object-string method mixin; delegates reductions to
+# the nan-aware reduction module, filling to the missing-data module, and
+# comparison/arithmetic to the ops module. Timedelta results are re-boxed as
+# timedelta arrays.
+# No import-time side effects besides applying the module-setting decorator.
 from __future__ import annotations
 
 from typing import (
@@ -63,6 +76,23 @@ class NumpyExtensionArray(
     NDArrayBackedExtensionArray,
     ObjectStringArrayMixin,
 ):
+    # [CLASS DOC]
+    # Thin extension array around a one-dimensional numpy array. State: the
+    # wrapped array (kept in the backing-array attribute) and the dtype, a
+    # numpy-extension dtype built from the array dtype. Inherits storage,
+    # indexing, take/copy/etc. from the ndarray-backed mixin, operator dunder
+    # plumbing from the ops mixin, and string accessor support from the
+    # object-string mixin. Key methods: constructors, the numpy array and ufunc
+    # protocols, cast/NA handling, fill and interpolate, take, reductions
+    # (all delegated to the nan-aware reductions), to_numpy, unary operators and
+    # the shared comparison/arithmetic method. Invariant: the backing array is
+    # not zero-dimensional. The class marker type is distinct so the series
+    # constructors do not place this array in an extension block. Missing value
+    # is NaN by default for the internal fill value.
+    # If you're wondering why pd.Series(cls) doesn't put the array in an
+    # ExtensionBlock, search for `ABCNumpyExtensionArray`. We check for
+    # that _typ to ensure that users don't unnecessarily use EAs inside
+    # pandas internals, which turns off things like block consolidation.
     """
     A pandas ExtensionArray for NumPy data.
 
@@ -97,10 +127,6 @@ class NumpyExtensionArray(
     Length: 4, dtype: int64
     """
 
-    # If you're wondering why pd.Series(cls) doesn't put the array in an
-    # ExtensionBlock, search for `ABCNumpyExtensionArray`. We check for
-    # that _typ to ensure that users don't unnecessarily use EAs inside
-    # pandas internals, which turns off things like block consolidation.
     _typ = "npy_extension"
     __array_priority__ = 1000
     _ndarray: np.ndarray
@@ -113,6 +139,16 @@ class NumpyExtensionArray(
     def __init__(
         self, values: np.ndarray | NumpyExtensionArray, copy: bool = False
     ) -> None:
+        # [FUNCTION DOC]
+        # Wraps a numpy array. values is a numpy array or another instance of
+        # this class (its backing array is unwrapped); copy (default false)
+        # copies the array first. Raises a value error when values is not a
+        # numpy array, and when it is zero-dimensional.
+        # KNOWN ISSUE: the class docstring and the error message say values
+        # must be one-dimensional, but only zero-dimensional input is rejected;
+        # arrays with two or more dimensions are accepted.
+        # Sets the dtype from the array dtype and calls the
+        # parent constructor.
         if isinstance(values, type(self)):
             values = values._ndarray
         if not isinstance(values, np.ndarray):
@@ -134,6 +170,17 @@ class NumpyExtensionArray(
     def _from_sequence(
         cls, scalars, *, dtype: Dtype | None = None, copy: bool = False
     ) -> NumpyExtensionArray:
+        # [FUNCTION DOC]
+        # HELPER: class-method constructor used by the generic array factory.
+        # scalars is any sequence; dtype (keyword-only, default none) may be a
+        # numpy-extension dtype (unwrapped to its numpy dtype) or anything the
+        # numpy array constructor accepts; copy (keyword-only, default false)
+        # copies only if the conversion returned the very same object.
+        # Behavior: converts to a numpy array; if the result has more than one
+        # dimension, the input has no dtype attribute and the requested dtype
+        # is none or object (for example a list of tuples), a one-dimensional
+        # object array holding each element is built instead.
+        # Returns a new instance of the class.
         if isinstance(dtype, NumpyEADtype):
             dtype = dtype._dtype
 
@@ -156,6 +203,15 @@ class NumpyExtensionArray(
         return cls(result)
 
     def _cast_pointwise_result(self, values) -> ArrayLike:
+        # [FUNCTION DOC]
+        # HELPER: post-processes the output of an element-wise mapping
+        # operation. Takes the sequence of results and first applies the parent
+        # conversion. If both result and own kinds are integer-like, both
+        # float, or both complex, the result is downcast to this array's numpy
+        # dtype when that is lossless. If the result holds datetimes, it is
+        # converted to a proper datetime extension array so later conversion
+        # to object keeps timestamps. Otherwise returned as is. Returns the
+        # array-like result.
         result = super()._cast_pointwise_result(values)
         lkind = self.dtype.kind
         rkind = result.dtype.kind
@@ -178,6 +234,8 @@ class NumpyExtensionArray(
 
     @property
     def dtype(self) -> NumpyEADtype:
+        # [FUNCTION DOC]
+        # Property returning the stored numpy-extension dtype wrapper.
         return self._dtype
 
     # ------------------------------------------------------------------------
@@ -186,6 +244,13 @@ class NumpyExtensionArray(
     def __array__(
         self, dtype: np.dtype | None = None, copy: bool | None = None
     ) -> np.ndarray:
+        # [FUNCTION DOC]
+        # Numpy array protocol. dtype is an optional target numpy dtype;
+        # copy is none (copy only if needed), true (always copy) or false.
+        # Returns the backing array converted to the dtype. If the array is
+        # read-only and no copy was requested and the conversion is a view, the
+        # returned object is a view flagged non-writeable so the protection
+        # carries over.
         if copy is not None:
             # Note: branch avoids `copy=None` for NumPy 1.x support
             result = np.array(self._ndarray, dtype=dtype, copy=copy)
@@ -203,6 +268,22 @@ class NumpyExtensionArray(
         return result
 
     def __array_ufunc__(self, ufunc: np.ufunc, method: str, *inputs, **kwargs):
+        # [FUNCTION DOC]
+        # Numpy universal-function protocol. ufunc is the function object,
+        # method the call style name (call, reduce, at, and so on), inputs the
+        # operands and kwargs the options (possibly including output arrays).
+        # Order of handling: first try dispatching to the equivalent operator
+        # dunder method; then a call with output arguments is dispatched
+        # through the helper for outputs; a reduce call is tried through the
+        # reduction dispatcher. If none applies, wrapped inputs and outputs are
+        # unwrapped to plain arrays and the numpy function is invoked.
+        # Result boxing: multiple outputs are each re-boxed in a tuple; the at
+        # method returns nothing; reduce returns the raw scalar, or a boxed
+        # array if the reduction produced an array; otherwise a single array
+        # result is re-boxed (for string dtype arrays, boxed with the same
+        # string dtype, and if that validation raises a value error the raw
+        # numpy result is returned instead).
+        # Scalars are never boxed because extension arrays are one-dimensional.
         # Lightly modified version of
         # https://numpy.org/doc/stable/reference/generated/numpy.lib.mixins.NDArrayOperatorsMixin.html
         # The primary modification is not boxing scalar return values
@@ -270,6 +351,13 @@ class NumpyExtensionArray(
     # Pandas ExtensionArray Interface
 
     def astype(self, dtype, copy: bool = True):
+        # [FUNCTION DOC]
+        # Casts to the given dtype (anything the dtype resolver accepts);
+        # copy (default true) controls copying. If the resolved dtype equals
+        # the current one, returns a copy or the same object depending on
+        # copy; otherwise delegates to the generic array cast on the backing
+        # array and returns its result (which may be a numpy array or an
+        # extension array, not necessarily this class).
         dtype = pandas_dtype(dtype)
 
         if dtype == self.dtype:
@@ -281,15 +369,28 @@ class NumpyExtensionArray(
         return result
 
     def isna(self) -> np.ndarray:
+        # [FUNCTION DOC]
+        # Returns a boolean numpy array, true where the backing element is
+        # missing according to the generic missing-value check (NaN, none,
+        # NaT and so on).
         return isna(self._ndarray)
 
     def _validate_scalar(self, fill_value):
+        # [FUNCTION DOC]
+        # HELPER: validation hook for fill values (used by take and fill
+        # operations). A none fill value is replaced with the dtype's NA
+        # value (mostly for subclasses); anything else is returned unchanged,
+        # no actual validation is performed.
         if fill_value is None:
             # Primarily for subclasses
             fill_value = self.dtype.na_value
         return fill_value
 
     def _values_for_factorize(self) -> tuple[np.ndarray, float | None]:
+        # [FUNCTION DOC]
+        # HELPER: hook used by factorize. Returns a pair of the backing array
+        # and the value to treat as missing: none for integer, unsigned and
+        # boolean kinds (no missing possible), otherwise NaN.
         if self.dtype.kind in "iub":
             fv = None
         else:
@@ -307,6 +408,15 @@ class NumpyExtensionArray(
         limit_area: Literal["inside", "outside"] | None = None,
         copy: bool = True,
     ) -> Self:
+        # [FUNCTION DOC]
+        # HELPER: forward/backward fill hook. Keyword-only: method is the fill
+        # direction name; limit (default none) caps consecutive fills;
+        # limit_area (default none) restricts to inside or outside the valid
+        # range; copy (default true) fills a copy instead of in place.
+        # Operates on the transpose of the backing array along axis zero via
+        # the missing-data module in place. Returns a new array of the same
+        # class when copy is true, otherwise returns self (mutated).
+        # Side effect: when copy is false the backing array is modified.
         """
         ffill or bfill along axis=0.
         """
@@ -340,6 +450,19 @@ class NumpyExtensionArray(
         copy: bool,
         **kwargs,
     ) -> Self:
+        # [FUNCTION DOC]
+        # Fills missing values by interpolation. Keyword-only inputs: method
+        # (interpolation algorithm name), axis, index (the index labels used by
+        # index-based methods), limit, limit_direction, limit_area (fill
+        # restrictions), copy (work on a copy, else in place), and extra
+        # keyword arguments forwarded to the algorithm.
+        # Raises a type error for non-numeric dtypes. The work is done in place
+        # by the missing-data module on either a copy or the backing array.
+        # Returns a new array of this class if copy is true, otherwise self
+        # (mutated).
+        # KNOWN ISSUE: a source comment notes there is no assertion that the
+        # dtype is floating, so integer data would be interpolated in place
+        # without a check.
         """
         See NDFrame.interpolate.__doc__.
         """
@@ -375,6 +498,15 @@ class NumpyExtensionArray(
         fill_value: Any = None,
         axis: AxisInt = 0,
     ) -> Self:
+        # [FUNCTION DOC]
+        # Takes entries by position. indices is an integer sequence;
+        # keyword-only allow_fill (default false) treats negative indices as
+        # missing markers, fill_value (default none) is used for those, and
+        # axis (default zero). Delegates to the parent implementation, then,
+        # for integer, unsigned or boolean kinds, re-wraps the result array
+        # without copying (works around a known issue with the result type).
+        # Returns the new array. Errors for out-of-bounds indices come from
+        # the parent.
         """
         Take entries from this array at each index in a list of indices,
         producing an array containing only those entries.
@@ -399,6 +531,13 @@ class NumpyExtensionArray(
         keepdims: bool = False,
         skipna: bool = True,
     ):
+        # [FUNCTION DOC]
+        # Reduction: true if any element is truthy. Keyword-only: axis
+        # (default none, reduce everything), out and keepdims (accepted only
+        # for numpy compatibility; validated and must be defaults), skipna
+        # (default true, ignore missing). Raises a value error through the
+        # compatibility validator for non-default out or keepdims. Returns the
+        # reduction result, wrapped via the parent helper for the axis.
         nv.validate_any((), {"out": out, "keepdims": keepdims})
         result = nanops.nanany(self._ndarray, axis=axis, skipna=skipna)
         return self._wrap_reduction_result(axis, result)
@@ -411,6 +550,10 @@ class NumpyExtensionArray(
         keepdims: bool = False,
         skipna: bool = True,
     ):
+        # [FUNCTION DOC]
+        # Reduction: true if all elements are truthy. Same parameters and
+        # behavior as the any reduction (out and keepdims only validated,
+        # skipna default true, axis default none), using the nan-aware all.
         nv.validate_all((), {"out": out, "keepdims": keepdims})
         result = nanops.nanall(self._ndarray, axis=axis, skipna=skipna)
         return self._wrap_reduction_result(axis, result)
@@ -418,6 +561,10 @@ class NumpyExtensionArray(
     def min(
         self, *, axis: AxisInt | None = None, skipna: bool = True, **kwargs
     ) -> Scalar:
+        # [FUNCTION DOC]
+        # Reduction: minimum. Keyword-only axis (default none) and skipna
+        # (default true); extra keyword arguments are only validated for numpy
+        # compatibility. Uses the own missing mask. Returns the wrapped result.
         nv.validate_min((), kwargs)
         result = nanops.nanmin(
             values=self._ndarray, axis=axis, mask=self.isna(), skipna=skipna
@@ -427,6 +574,9 @@ class NumpyExtensionArray(
     def max(
         self, *, axis: AxisInt | None = None, skipna: bool = True, **kwargs
     ) -> Scalar:
+        # [FUNCTION DOC]
+        # Reduction: maximum. Same parameters and behavior as the minimum
+        # reduction.
         nv.validate_max((), kwargs)
         result = nanops.nanmax(
             values=self._ndarray, axis=axis, mask=self.isna(), skipna=skipna
@@ -441,6 +591,11 @@ class NumpyExtensionArray(
         min_count: int = 0,
         **kwargs,
     ) -> Scalar:
+        # [FUNCTION DOC]
+        # Reduction: sum. Keyword-only axis (default none), skipna (default
+        # true), min_count (default zero; minimum number of valid values
+        # needed, otherwise the result is missing); extra keywords only
+        # validated. Returns the wrapped result.
         nv.validate_sum((), kwargs)
         result = nanops.nansum(
             self._ndarray, axis=axis, skipna=skipna, min_count=min_count
@@ -455,6 +610,9 @@ class NumpyExtensionArray(
         min_count: int = 0,
         **kwargs,
     ) -> Scalar:
+        # [FUNCTION DOC]
+        # Reduction: product. Same parameters and behavior as the sum
+        # reduction (axis, skipna, min_count).
         nv.validate_prod((), kwargs)
         result = nanops.nanprod(
             self._ndarray, axis=axis, skipna=skipna, min_count=min_count
@@ -470,6 +628,11 @@ class NumpyExtensionArray(
         keepdims: bool = False,
         skipna: bool = True,
     ):
+        # [FUNCTION DOC]
+        # Reduction: arithmetic mean. Keyword-only axis (default none), skipna
+        # (default true); dtype, out and keepdims exist only for numpy
+        # compatibility and are validated (non-default values rejected), not
+        # used. Returns the wrapped result.
         nv.validate_mean((), {"dtype": dtype, "out": out, "keepdims": keepdims})
         result = nanops.nanmean(self._ndarray, axis=axis, skipna=skipna)
         return self._wrap_reduction_result(axis, result)
@@ -483,6 +646,10 @@ class NumpyExtensionArray(
         keepdims: bool = False,
         skipna: bool = True,
     ):
+        # [FUNCTION DOC]
+        # Reduction: median. Keyword-only axis (default none), skipna (default
+        # true); out, overwrite_input and keepdims are only validated for
+        # numpy compatibility. Returns the wrapped result.
         nv.validate_median(
             (), {"out": out, "overwrite_input": overwrite_input, "keepdims": keepdims}
         )
@@ -499,6 +666,11 @@ class NumpyExtensionArray(
         keepdims: bool = False,
         skipna: bool = True,
     ):
+        # [FUNCTION DOC]
+        # Reduction: standard deviation. Keyword-only axis (default none),
+        # ddof (delta degrees of freedom, default one), skipna (default true);
+        # dtype, out and keepdims are validated only. Returns the wrapped
+        # result.
         nv.validate_stat_ddof_func(
             (), {"dtype": dtype, "out": out, "keepdims": keepdims}, fname="std"
         )
@@ -515,6 +687,9 @@ class NumpyExtensionArray(
         keepdims: bool = False,
         skipna: bool = True,
     ):
+        # [FUNCTION DOC]
+        # Reduction: variance. Same parameters and behavior as the standard
+        # deviation reduction (ddof default one).
         nv.validate_stat_ddof_func(
             (), {"dtype": dtype, "out": out, "keepdims": keepdims}, fname="var"
         )
@@ -531,6 +706,9 @@ class NumpyExtensionArray(
         keepdims: bool = False,
         skipna: bool = True,
     ):
+        # [FUNCTION DOC]
+        # Reduction: standard error of the mean. Same parameters and behavior
+        # as the standard deviation reduction (ddof default one).
         nv.validate_stat_ddof_func(
             (), {"dtype": dtype, "out": out, "keepdims": keepdims}, fname="sem"
         )
@@ -546,6 +724,10 @@ class NumpyExtensionArray(
         keepdims: bool = False,
         skipna: bool = True,
     ):
+        # [FUNCTION DOC]
+        # Reduction: excess kurtosis. Keyword-only axis (default none) and
+        # skipna (default true); dtype, out and keepdims are validated only.
+        # Returns the wrapped result.
         nv.validate_stat_ddof_func(
             (), {"dtype": dtype, "out": out, "keepdims": keepdims}, fname="kurt"
         )
@@ -561,6 +743,9 @@ class NumpyExtensionArray(
         keepdims: bool = False,
         skipna: bool = True,
     ):
+        # [FUNCTION DOC]
+        # Reduction: skewness. Same parameters and behavior as the kurtosis
+        # reduction.
         nv.validate_stat_ddof_func(
             (), {"dtype": dtype, "out": out, "keepdims": keepdims}, fname="skew"
         )
@@ -576,6 +761,16 @@ class NumpyExtensionArray(
         copy: bool = False,
         na_value: object = lib.no_default,
     ) -> np.ndarray:
+        # [FUNCTION DOC]
+        # Converts to a numpy array. dtype is the optional target dtype; copy
+        # (default false) forces a copy; na_value (default: not specified)
+        # replaces missing entries.
+        # Behavior: if na_value is given and there are missing entries, a copy
+        # of the data with those entries replaced is made. Otherwise the
+        # backing array is used, and for read-only arrays without copy a
+        # non-writeable view is returned. The result is converted to dtype; if
+        # copy was requested and the result is still the backing array, it is
+        # copied. Returns the numpy array.
         mask = self.isna()
         if na_value is not lib.no_default and mask.any():
             result = self._ndarray.copy()
@@ -597,18 +792,42 @@ class NumpyExtensionArray(
     # Ops
 
     def __invert__(self) -> NumpyExtensionArray:
+        # [FUNCTION DOC]
+        # Unary bitwise/logical inversion; returns a new array of this class
+        # holding the element-wise inversion of the backing array.
         return type(self)(~self._ndarray)
 
     def __neg__(self) -> NumpyExtensionArray:
+        # [FUNCTION DOC]
+        # Unary negation; returns a new array of this class with every element
+        # negated.
         return type(self)(-self._ndarray)
 
     def __pos__(self) -> NumpyExtensionArray:
+        # [FUNCTION DOC]
+        # Unary plus; returns a new array of this class with the unary plus
+        # applied to the backing array.
         return type(self)(+self._ndarray)
 
     def __abs__(self) -> NumpyExtensionArray:
+        # [FUNCTION DOC]
+        # Absolute value; returns a new array of this class with every element
+        # replaced by its absolute value.
         return type(self)(abs(self._ndarray))
 
     def _cmp_method(self, other, op):
+        # [FUNCTION DOC]
+        # HELPER: shared implementation behind comparison and arithmetic
+        # operators (also bound as the arithmetic method, so both operator
+        # families use identical logic). other is a scalar, array-like or
+        # another instance (unwrapped); op is the operator function.
+        # The operand is prepared for the operation, datetime-like operands are
+        # wrapped, and the array-op for the operator is applied to the backing
+        # array and operand. For the paired quotient-and-remainder operators
+        # (normal and reflected) the two results are each wrapped. A numpy
+        # result is wrapped via the wrapping helper (which makes timedelta
+        # arrays where appropriate); results that already are extension
+        # arrays are returned as is. Returns the wrapped result or tuple.
         if isinstance(other, NumpyExtensionArray):
             other = other._ndarray
 
@@ -634,6 +853,11 @@ class NumpyExtensionArray(
     _arith_method = _cmp_method
 
     def _wrap_ndarray_result(self, result: np.ndarray):
+        # [FUNCTION DOC]
+        # HELPER: boxes the numpy result of an operator. If the result has a
+        # timedelta kind with a supported resolution, returns a timedelta array
+        # (built without validation, imported lazily); otherwise a new array
+        # of this class.
         # If we have timedelta64[ns] result, return a TimedeltaArray instead
         #  of a NumpyExtensionArray
         if result.dtype.kind == "m" and is_supported_dtype(result.dtype):
@@ -643,6 +867,12 @@ class NumpyExtensionArray(
         return type(self)(result)
 
     def _formatter(self, boxed: bool = False) -> Callable[[Any], str | None]:
+        # [FUNCTION DOC]
+        # HELPER: returns the per-element formatting function used when
+        # printing. boxed (default false) is accepted but not used. For
+        # bytes/unicode string kinds, returns a function that wraps the value in
+        # single quotes (to follow the numpy repr change); for object dtype the
+        # repr function; otherwise the plain string conversion.
         # NEP 51: https://github.com/numpy/numpy/pull/22449
         if self.dtype.kind in "SU":
             return "'{}'".format

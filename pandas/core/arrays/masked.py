@@ -1,3 +1,20 @@
+# [MODULE DOC]
+# Base class for nullable ("masked") extension arrays: arrays that store the
+# values in one numpy array and the missingness in a parallel boolean numpy
+# array (true means missing). The concrete types (nullable integer, floating
+# and boolean arrays, defined in sibling modules, and the numeric base in the
+# numeric module) subclass the single class defined here, which implements the
+# generic behavior: construction, indexing and assignment, null handling
+# (fill, pad/backfill), conversion to numpy and to other dtypes, unary and
+# binary operators with missing-value propagation (logical, arithmetic and
+# comparison), reductions, accumulations, sorting helpers, unique/factorize,
+# value counts, quantiles, mode, hashing, take, copying, concatenation and
+# equality. Subclasses supply the dtype, the coercion of inputs to
+# (data, mask) pairs, and the result-masking rules for operations.
+# Relationships: relies on the operator mixin, the extension array base, the
+# masked reduction/accumulation helper modules, the nan-aware reduction module
+# and the general ops machinery; arrow-backed arrays and other masked arrays
+# are handled for interoperability. No import-time side effects.
 from __future__ import annotations
 
 from typing import (
@@ -120,18 +137,34 @@ from pandas.compat.numpy import function as nv
 
 
 class BaseMaskedArray(OpsMixin, ExtensionArray):
+    # [CLASS DOC]
+    # Abstract base for numpy-backed nullable arrays. Inherits the operator
+    # mixin (binary operator dunder plumbing) and the extension array base.
+    # State: the data array and the mask array, both numpy arrays of equal shape
+    # (the mask has boolean dtype and is true where the value is missing; data
+    # values at masked positions are arbitrary placeholders and must not be
+    # relied upon). Subclasses must provide the dtype property, the coercion
+    # classmethod turning input into (data, mask), and operator result wrapping.
+    # Invariant: data and mask shapes are identical. The class mostly works on
+    # one dimension but supports reshaping/transposing for internal use.
+    # Missing value representation comes from the dtype (the NA singleton,
+    # or NaN for float types when configured so).
+    # our underlying data and mask are each ndarrays
     """
     Base class for masked arrays (which use _data and _mask to store the data).
 
     numpy based
     """
 
-    # our underlying data and mask are each ndarrays
     _data: np.ndarray
     _mask: npt.NDArray[np.bool_]
 
     @classmethod
     def _simple_new(cls, values: np.ndarray, mask: npt.NDArray[np.bool_]) -> Self:
+        # [FUNCTION DOC]
+        # HELPER: fast internal constructor that stores the given data and mask
+        # arrays directly with no validation or copying. Returns the new
+        # instance of the class.
         result = BaseMaskedArray.__new__(cls)
         result._data = values
         result._mask = mask
@@ -140,6 +173,12 @@ class BaseMaskedArray(OpsMixin, ExtensionArray):
     def __init__(
         self, values: np.ndarray, mask: npt.NDArray[np.bool_], copy: bool = False
     ) -> None:
+        # [FUNCTION DOC]
+        # Constructor. values is the data numpy array (assumed already validated
+        # by the subclass constructor); mask is a boolean numpy array of the same
+        # shape (true means missing); copy (default false) copies both.
+        # Raises a type error if mask is not a boolean numpy array, and a value
+        # error if the shapes differ. Stores data and mask.
         # values is supposed to already be validated in the subclass
         if not (isinstance(mask, np.ndarray) and mask.dtype == np.bool_):
             raise TypeError(
@@ -158,10 +197,23 @@ class BaseMaskedArray(OpsMixin, ExtensionArray):
 
     @classmethod
     def _from_sequence(cls, scalars, *, dtype=None, copy: bool = False) -> Self:
+        # [FUNCTION DOC]
+        # HELPER: class-method constructor used by the generic array factory.
+        # scalars is any sequence; keyword-only dtype (default none) and copy
+        # (default false) go to the subclass coercion routine, which returns the
+        # (data, mask) pair used to build the new array. Errors from coercion
+        # propagate.
         values, mask = cls._coerce_to_array(scalars, dtype=dtype, copy=copy)
         return cls(values, mask)
 
     def _cast_pointwise_result(self, values) -> ArrayLike:
+        # [FUNCTION DOC]
+        # HELPER: post-processes the sequence of results of an element-wise
+        # mapping. If all results are missing, builds an array of this dtype.
+        # Otherwise infers a nullable type from the object values; when both the
+        # original and the inferred kinds are integer-like, or both float, the
+        # data is losslessly downcast to this array's numpy dtype and re-wrapped
+        # with the inferred mask. Returns the resulting array.
         if isna(values).all():
             return type(self)._from_sequence(values, dtype=self.dtype)
         values = np.asarray(values, dtype=object)
@@ -178,6 +230,12 @@ class BaseMaskedArray(OpsMixin, ExtensionArray):
 
     @classmethod
     def _empty(cls, shape: Shape, dtype: ExtensionDtype) -> Self:
+        # [FUNCTION DOC]
+        # HELPER: class-method creating an all-missing array. shape is the
+        # desired shape; dtype is the masked dtype. The data is filled with the
+        # dtype's internal fill value and the mask is all true. Raises a
+        # not-implemented error if the constructed array's dtype does not equal
+        # the requested one. Returns the array.
         """
         Create an ExtensionArray with the given shape and dtype.
 
@@ -198,20 +256,40 @@ class BaseMaskedArray(OpsMixin, ExtensionArray):
         return result
 
     def _formatter(self, boxed: bool = False) -> Callable[[Any], str | None]:
+        # [FUNCTION DOC]
+        # HELPER: returns the per-element display function: the plain text
+        # conversion (to avoid the new numpy scalar repr). boxed is ignored.
         # NEP 51: https://github.com/numpy/numpy/pull/22449
         return str
 
     @property
     def dtype(self) -> BaseMaskedDtype:
+        # [FUNCTION DOC]
+        # Abstract property; subclasses return their masked dtype. The base
+        # implementation always raises an abstract-method error.
         raise AbstractMethodError(self)
 
     @overload
-    def __getitem__(self, item: ScalarIndexer) -> Any: ...
+    def __getitem__(self, item: ScalarIndexer) -> Any:
+        # [FUNCTION DOC]
+        # Typing stub only: scalar position gives a scalar. See implementation.
+        ...
 
     @overload
-    def __getitem__(self, item: SequenceIndexer) -> Self: ...
+    def __getitem__(self, item: SequenceIndexer) -> Self:
+        # [FUNCTION DOC]
+        # Typing stub only: sequence/slice/mask key gives an array. See
+        # implementation.
+        ...
 
     def __getitem__(self, item: PositionalIndexer) -> Self | Any:
+        # [FUNCTION DOC]
+        # Positional indexing. item is an integer, slice, boolean mask or integer
+        # array (validated). The mask is indexed first: if the result is a scalar
+        # boolean, the dtype's missing value is returned for a missing entry,
+        # otherwise the data element. For array results, a new array of the
+        # indexed data and mask is returned and, if the indexing returned views,
+        # the read-only flag is inherited.
         item = check_array_indexer(self, item)
 
         newmask = self._mask[item]
@@ -234,6 +312,18 @@ class BaseMaskedArray(OpsMixin, ExtensionArray):
         limit_area: Literal["inside", "outside"] | None = None,
         copy: bool = True,
     ) -> Self:
+        # [FUNCTION DOC]
+        # HELPER: forward/backward fill hook. Keyword-only: method (fill
+        # direction name), limit (default none), limit_area (inside, outside or
+        # none; restricts which runs of missing values may be filled), copy
+        # (default true).
+        # If nothing is missing returns a copy or self. Otherwise a fill routine
+        # for the method operates on the transposed data and mask (on copies when
+        # copy is true, in place otherwise), propagating values and updating the
+        # mask. When limit_area is given and not everything is missing, the
+        # leading and trailing missing runs (inside) or the interior missing runs
+        # (outside) are restored as missing. Returns a new array if copy is true
+        # else self (mutated).
         mask = self._mask
 
         if mask.any():
@@ -270,6 +360,15 @@ class BaseMaskedArray(OpsMixin, ExtensionArray):
         return new_values
 
     def fillna(self, value, limit: int | None = None, copy: bool = True) -> Self:
+        # [FUNCTION DOC]
+        # Fills missing entries. value is a scalar or an array-like of the same
+        # length as the array (size-validated); limit (default none) caps the
+        # number of entries filled (counting from the start); copy (default true)
+        # selects a copy versus a view that is modified in place.
+        # Only the first limit missing positions are filled. Assignment uses the
+        # array's own element assignment with the mask, so value type errors from
+        # there apply. Returns the filled array (a copy, or a full-slice view of
+        # this array when copy is false and something was filled).
         """
         Fill NA/NaN values using the specified method.
 
@@ -334,9 +433,23 @@ class BaseMaskedArray(OpsMixin, ExtensionArray):
     def _coerce_to_array(
         cls, values, *, dtype: DtypeObj, copy: bool = False
     ) -> tuple[np.ndarray, np.ndarray]:
+        # [FUNCTION DOC]
+        # HELPER: abstract class method. Subclasses convert values (any input)
+        # with a keyword-only dtype and copy flag (default false) to a (data,
+        # mask) pair of numpy arrays. The base implementation raises an
+        # abstract-method error.
         raise AbstractMethodError(cls)
 
     def _validate_setitem_value(self, value):
+        # [FUNCTION DOC]
+        # HELPER: checks that a non-missing scalar can be stored losslessly.
+        # Boolean arrays accept boolean values; float arrays accept integers and
+        # floats; other (integer) arrays accept integers and integral floats.
+        # Anything else raises a type error naming the value and dtype. Returns
+        # the value unchanged.
+        # KNOWN ISSUE: a source comment notes that range checks for unsigned
+        # integer types are missing, so values out of range for the concrete
+        # integer width are only rejected by the later numpy assignment.
         """
         Check if we have a scalar that we can cast losslessly.
 
@@ -363,6 +476,15 @@ class BaseMaskedArray(OpsMixin, ExtensionArray):
         raise TypeError(f"Invalid value '{value!s}' for dtype '{self.dtype}'")
 
     def __setitem__(self, key, value) -> None:
+        # [FUNCTION DOC]
+        # In-place assignment. key is an integer, slice, boolean mask or
+        # position array; value is a scalar or array-like.
+        # Raises a value error if read-only; type errors from scalar validation.
+        # A scalar that is a valid missing marker for the dtype marks the mask
+        # true (a float NaN is only treated as missing when the NaN-is-NA option
+        # is on); other scalars are validated, written to the data and the mask
+        # cleared. Non-scalars are coerced to (data, mask) with this dtype and
+        # both are written. Mutates this array.
         if self._readonly:
             raise ValueError("Cannot modify read-only array")
 
@@ -385,6 +507,13 @@ class BaseMaskedArray(OpsMixin, ExtensionArray):
         self._mask[key] = mask
 
     def __contains__(self, key) -> bool:
+        # [FUNCTION DOC]
+        # Membership test for a single key. A missing-like key that is not the
+        # dtype's missing object is normalized: a float NaN becomes the dtype
+        # missing value when NaN-is-NA is on, and for float data without that
+        # option a float NaN key is found iff the data holds a genuine (unmasked)
+        # NaN. Everything else uses the parent membership logic (iteration with
+        # equality). Returns a boolean.
         if isna(key) and key is not self.dtype.na_value:
             # GH#52840
             if lib.is_float(key) and is_nan_na():
@@ -395,6 +524,11 @@ class BaseMaskedArray(OpsMixin, ExtensionArray):
         return bool(super().__contains__(key))
 
     def __iter__(self) -> Iterator:
+        # [FUNCTION DOC]
+        # Generator over elements. One-dimensional: yields each data element, with
+        # the dtype's missing value in place of masked entries (a fast path
+        # yields data directly if nothing is missing). Higher dimensions: yields
+        # the sub-array at each leading position.
         if self.ndim == 1:
             if not self._hasna:
                 for val in self._data:
@@ -411,38 +545,64 @@ class BaseMaskedArray(OpsMixin, ExtensionArray):
                 yield self[i]
 
     def __len__(self) -> int:
+        # [FUNCTION DOC]
+        # Length of the first axis of the data array.
         return len(self._data)
 
     @property
     def shape(self) -> Shape:
+        # [FUNCTION DOC]
+        # Property: the shape of the data array (shared with the mask).
         return self._data.shape
 
     @property
     def ndim(self) -> int:
+        # [FUNCTION DOC]
+        # Property: the number of dimensions of the data array.
         return self._data.ndim
 
     def swapaxes(self, axis1, axis2) -> Self:
+        # [FUNCTION DOC]
+        # Returns a new array with the two given axes interchanged in both data
+        # and mask (views, no copy).
         data = self._data.swapaxes(axis1, axis2)
         mask = self._mask.swapaxes(axis1, axis2)
         return self._simple_new(data, mask)
 
     def delete(self, loc, axis: AxisInt = 0) -> Self:
+        # [FUNCTION DOC]
+        # Returns a new array with the entries at loc (integer, sequence of
+        # integers or slice) removed along axis (default zero) from both data and
+        # mask. This array is unchanged.
         data = np.delete(self._data, loc, axis=axis)
         mask = np.delete(self._mask, loc, axis=axis)
         return self._simple_new(data, mask)
 
     def reshape(self, *args, **kwargs) -> Self:
+        # [FUNCTION DOC]
+        # Returns a new array whose data and mask are reshaped with the given
+        # numpy reshape arguments (views when possible).
         data = self._data.reshape(*args, **kwargs)
         mask = self._mask.reshape(*args, **kwargs)
         return self._simple_new(data, mask)
 
     def ravel(self, *args, **kwargs) -> Self:
+        # [FUNCTION DOC]
+        # Returns a flattened array of the same class; data and mask are
+        # flattened with the same numpy arguments (e.g. memory order). The source
+        # notes the order of data and mask should be verified to agree.
         # TODO: need to make sure we have the same order for data/mask
         data = self._data.ravel(*args, **kwargs)
         mask = self._mask.ravel(*args, **kwargs)
         return type(self)(data, mask)
 
     def shift(self, periods: int = 1, fill_value=None) -> Self:
+        # [FUNCTION DOC]
+        # Shifts entries along the first axis by periods (default one; positive
+        # moves toward the end). fill_value (default none) fills vacated slots; a
+        # none fill value fills with missing entries (data zero, mask true), any
+        # other value is written to data with mask false. The fill value is not
+        # type-validated here. Returns a new array of the same class.
         # NB: shift is always along axis=0
         axis = 0
         if fill_value is None:
@@ -455,9 +615,19 @@ class BaseMaskedArray(OpsMixin, ExtensionArray):
 
     @property
     def T(self) -> Self:
+        # [FUNCTION DOC]
+        # Property: transposed view of data and mask as a new array.
         return self._simple_new(self._data.T, self._mask.T)
 
     def round(self, decimals: int = 0, *args, **kwargs):
+        # [FUNCTION DOC]
+        # Rounds values. decimals (default zero) may be negative; extra
+        # positional and keyword arguments are validated for numpy compatibility
+        # (invalid ones raise) and extra keywords are forwarded to numpy rounding.
+        # Boolean arrays are returned unchanged (self). Otherwise the data is
+        # rounded and wrapped with a copy of the mask using the subclass hook,
+        # which may change the array type (e.g. integer to integer or boolean to
+        # float). Returns the new array.
         """
         Round each value in the array a to the given number of decimals.
 
@@ -493,20 +663,32 @@ class BaseMaskedArray(OpsMixin, ExtensionArray):
     # Unary Methods
 
     def __invert__(self) -> Self:
+        # [FUNCTION DOC]
+        # Unary inversion: bitwise/logical not of the data with a copy of the
+        # mask (missing stays missing). Returns a new array.
         return self._simple_new(~self._data, self._mask.copy())
 
     def __neg__(self) -> Self:
+        # [FUNCTION DOC]
+        # Unary negation of the data with a copy of the mask. Returns a new array.
         return self._simple_new(-self._data, self._mask.copy())
 
     def __pos__(self) -> Self:
+        # [FUNCTION DOC]
+        # Unary plus: returns a copy of the array.
         return self.copy()
 
     def __abs__(self) -> Self:
+        # [FUNCTION DOC]
+        # Absolute value of the data with a copy of the mask. Returns a new array.
         return self._simple_new(abs(self._data), self._mask.copy())
 
     # ------------------------------------------------------------------
 
     def _values_for_json(self) -> np.ndarray:
+        # [FUNCTION DOC]
+        # HELPER: values handed to the JSON writer. Returns an object ndarray of
+        # the elements with missing entries as the dtype's missing value.
         return np.asarray(self, dtype=object)
 
     def to_numpy(
@@ -515,6 +697,18 @@ class BaseMaskedArray(OpsMixin, ExtensionArray):
         copy: bool = False,
         na_value: object = lib.no_default,
     ) -> np.ndarray:
+        # [FUNCTION DOC]
+        # Converts to a numpy array. dtype (default none: inferred; object when
+        # not inferable) is the target numpy dtype; copy (default false) forces a
+        # copy when no missing values are present; na_value (default: not
+        # specified) is the value that replaces missing entries.
+        # The dtype and fill value are decided by the shared inference helper. If
+        # there are missing entries, the data is cast to a new array and the
+        # missing positions are set to the fill value; a non-object, non-string
+        # target with the NA singleton as fill raises a value error. Otherwise
+        # the data is cast (copying if requested); a read-only array without copy
+        # whose cast is a view is returned as a non-writeable view. Runtime
+        # warnings from the cast are silenced. Returns the numpy array.
         """
         Convert to a NumPy Array.
 
@@ -606,6 +800,12 @@ class BaseMaskedArray(OpsMixin, ExtensionArray):
         return data
 
     def tolist(self) -> list:
+        # [FUNCTION DOC]
+        # Returns a plain list of Python scalars (nested for more than one
+        # dimension). Missing entries appear as the NA singleton: when any
+        # missing entries exist the array is converted to object first, otherwise
+        # to its own numpy dtype, then each element is converted to a Python
+        # scalar.
         """
         Return a list of the values.
 
@@ -635,15 +835,43 @@ class BaseMaskedArray(OpsMixin, ExtensionArray):
         return self.to_numpy(dtype=dtype, na_value=libmissing.NA).tolist()
 
     @overload
-    def astype(self, dtype: npt.DTypeLike, copy: bool = ...) -> np.ndarray: ...
+    def astype(self, dtype: npt.DTypeLike, copy: bool = ...) -> np.ndarray:
+        # [FUNCTION DOC]
+        # Typing stub only: numpy dtype target gives an ndarray. See
+        # implementation.
+        ...
 
     @overload
-    def astype(self, dtype: ExtensionDtype, copy: bool = ...) -> ExtensionArray: ...
+    def astype(self, dtype: ExtensionDtype, copy: bool = ...) -> ExtensionArray:
+        # [FUNCTION DOC]
+        # Typing stub only: extension dtype target gives an extension array. See
+        # implementation.
+        ...
 
     @overload
-    def astype(self, dtype: AstypeArg, copy: bool = ...) -> ArrayLike: ...
+    def astype(self, dtype: AstypeArg, copy: bool = ...) -> ArrayLike:
+        # [FUNCTION DOC]
+        # Typing stub only: generic dtype argument gives an array-like. See
+        # implementation.
+        ...
 
     def astype(self, dtype: AstypeArg, copy: bool = True) -> ArrayLike:
+        # [FUNCTION DOC]
+        # Casts to another dtype. dtype is anything resolvable to a dtype; copy
+        # (default true) forces copying even when not required.
+        # Same dtype: returns a copy or self. Another masked dtype: the data is
+        # cast to the target numpy dtype (rounding or truncating as numpy does;
+        # runtime warnings silenced) and wrapped with the mask, which is copied
+        # only if the data was copied. Another extension dtype: delegated to its
+        # sequence constructor with this array as input. Otherwise the target is
+        # a numpy dtype: float targets use NaN as the fill value, datetime
+        # targets use not-a-time, and other targets use no explicit fill value.
+        # Integer or boolean targets with any missing entries raise a value error
+        # (cannot convert NA to integer / NaN to bool). The conversion itself is
+        # done by the numpy conversion method with that fill value and the copy
+        # flag; the result is a numpy array.
+        # KNOWN ISSUE: a source TODO notes NaN handling for floating targets is
+        # not dealt with in the masked-to-masked fast path.
         dtype = pandas_dtype(dtype)
 
         if dtype == self.dtype:
@@ -695,6 +923,18 @@ class BaseMaskedArray(OpsMixin, ExtensionArray):
     def __array__(
         self, dtype: NpDtype | None = None, copy: bool | None = None
     ) -> np.ndarray:
+        # [FUNCTION DOC]
+        # Numpy array protocol. dtype is the requested dtype (none lets the
+        # numpy-conversion method infer it); copy is none, true or false.
+        # With copy false: if no entries are missing returns the data array
+        # directly (as a non-writeable view for read-only arrays), otherwise
+        # raises a value error since a copy is unavoidable. Otherwise (copy true
+        # or none, none being treated as false) converts through the numpy
+        # conversion method, so missing entries force an object array unless
+        # the dtype inference says otherwise.
+        # KNOWN ISSUE: the docstring says an object array is always returned to
+        # preserve scalars, but the dtype is inferred and can be a numeric dtype
+        # when there are no missing values.
         """
         the array interface, return my values
         We return an object array here to preserve our scalar values
@@ -719,6 +959,21 @@ class BaseMaskedArray(OpsMixin, ExtensionArray):
     _HANDLED_TYPES: tuple[type, ...]
 
     def __array_ufunc__(self, ufunc: np.ufunc, method: str, *inputs, **kwargs):
+        # [FUNCTION DOC]
+        # Numpy universal-function protocol. ufunc is the function, method the
+        # call style (call, reduce, at, ...), inputs the operands, kwargs the
+        # options (possibly output arrays).
+        # Returns the not-implemented marker if any operand (or output) is not a
+        # masked array nor one of the subclass's handled scalar/array types.
+        # Binary operators are first dispatched to the equivalent dunder methods;
+        # calls with outputs and reductions have dedicated dispatchers. Otherwise
+        # the union of the operands' masks is built, the ufunc runs on the raw
+        # data, and results are rebuilt: multiple outputs give a tuple; a reduce
+        # returns the missing value if any element is missing, else the plain
+        # result; other results are re-wrapped by dtype kind (boolean, integer,
+        # float arrays; any other kind is returned as numpy with masked slots set
+        # to NaN). Float results that are 16-bit are widened to 32-bit, and NaN
+        # results are added to the mask when NaN counts as NA.
         # For MaskedArray inputs, we apply the ufunc to ._data
         # and mask the result.
 
@@ -758,6 +1013,13 @@ class BaseMaskedArray(OpsMixin, ExtensionArray):
                 inputs2.append(x)
 
         def reconstruct(x: np.ndarray):
+            # [FUNCTION DOC]
+            # HELPER: nested function in the ufunc protocol. x is a raw numpy
+            # result of the ufunc. Wraps it by dtype kind into a boolean, integer
+            # or float masked array using a copy of the combined mask (for floats
+            # widening 16-bit data and masking NaN when NaN counts as NA); for
+            # other kinds, sets masked slots to NaN in place and returns the plain
+            # numpy array.
             # we don't worry about scalar `x` here, since we
             # raise for reduce up above.
             from pandas.core.arrays import (
@@ -798,6 +1060,10 @@ class BaseMaskedArray(OpsMixin, ExtensionArray):
             return reconstruct(result)
 
     def __arrow_array__(self, type=None):
+        # [FUNCTION DOC]
+        # Arrow export protocol (pyarrow imported lazily). type (default none)
+        # is the requested arrow type. Builds an arrow array from the data with
+        # the mask marking nulls and returns it.
         """
         Convert myself into a pyarrow Array.
         """
@@ -807,6 +1073,9 @@ class BaseMaskedArray(OpsMixin, ExtensionArray):
 
     @property
     def _hasna(self) -> bool:
+        # [FUNCTION DOC]
+        # HELPER: property telling whether any entry is missing. Scans the whole
+        # mask each time (not cached), so it is linear in the length.
         # Note: this is expensive right now! The hope is that we can
         # make this faster by having an optional mask, but not have to change
         # source code using it..
@@ -816,6 +1085,14 @@ class BaseMaskedArray(OpsMixin, ExtensionArray):
     def _propagate_mask(
         self, mask: npt.NDArray[np.bool_] | None, other
     ) -> npt.NDArray[np.bool_]:
+        # [FUNCTION DOC]
+        # HELPER: computes the result mask of a binary operation. mask is the
+        # other operand's mask or none; other is the other operand itself. If mask
+        # is given, returns the element-wise union with this array's mask. If none,
+        # starts from a copy of this mask; when other is the NA singleton, every
+        # position becomes masked (a new array, not in place); when other is a
+        # list-like of equal length, positions where other is missing are added.
+        # Returns a new boolean array.
         if mask is None:
             mask = self._mask.copy()  # TODO: need test for BooleanArray needing a copy
             if other is libmissing.NA:
@@ -828,6 +1105,26 @@ class BaseMaskedArray(OpsMixin, ExtensionArray):
         return mask
 
     def _arith_method(self, other, op):
+        # [FUNCTION DOC]
+        # HELPER: implementation of arithmetic operators, also bound as the logical
+        # operator implementation. other is a scalar, array-like or array (masked
+        # arrays donate their own mask; one-dimensional list-likes of equal
+        # length are first converted with array inference); op is the operator
+        # function.
+        # Raises a not-implemented error for multi-dimensional list-likes, and for
+        # certain operators (floor division, power, true division) with boolean
+        # data and the NA singleton. Returns the not-implemented marker when
+        # other is an arrow-backed array. Details: the computation reuses the
+        # non-masked array-op machinery (with errors suppressed); integer floor
+        # division and modulo use the raw operator to keep historical behavior;
+        # NA as other gives an all-masked result of a suitable dtype (float for
+        # true division on non-float data, integer 8-bit for boolean modulo, and a
+        # pair for divmod). For power, positions where the base is one or the
+        # exponent is zero are unmasked since the result is defined (one) even
+        # for missing partners. The result is wrapped with the result-masking
+        # hook, which chooses the array class from the result dtype.
+        # KNOWN ISSUE: a source TODO notes integer floor-division by zero does not
+        # match the non-masked behavior.
         op_name = op.__name__
         omask = None
 
@@ -931,6 +1228,18 @@ class BaseMaskedArray(OpsMixin, ExtensionArray):
     _logical_method = _arith_method
 
     def _cmp_method(self, other, op) -> BooleanArray:
+        # [FUNCTION DOC]
+        # HELPER: implementation of the six comparison operators. other is a
+        # scalar, array-like or masked array (donating its mask); op is the
+        # operator function. Returns the not-implemented marker for arrow-backed
+        # arrays; raises a not-implemented error for multi-dimensional list-likes
+        # and a value error for length mismatch. The NA singleton gives an
+        # all-false data with an all-true mask. Otherwise the comparison runs on
+        # the raw data using the data array's own method (numpy warnings about
+        # elementwise comparison are ignored), falling back to the generic
+        # invalid-comparison handler if the method returns the not-implemented
+        # marker. The result mask is the union of the masks. Returns a nullable
+        # boolean array (no copy of the result).
         from pandas.core.arrays import BooleanArray
 
         mask = None
@@ -977,6 +1286,17 @@ class BaseMaskedArray(OpsMixin, ExtensionArray):
     def _maybe_mask_result(
         self, result: np.ndarray | tuple[np.ndarray, np.ndarray], mask: np.ndarray
     ):
+        # [FUNCTION DOC]
+        # HELPER: wraps a raw operation result with a mask into the right array
+        # type. result is a numpy array or a pair of arrays (divmod, wrapped
+        # individually); mask is the boolean missing mask.
+        # By result dtype kind: float gives a floating masked array (and when NaN
+        # counts as NA, NaN positions are set in the passed mask in place, a side
+        # effect on the argument); boolean gives a boolean masked array; supported
+        # timedelta gives a timedelta array with masked slots set to not-a-time
+        # (mutating result); integer gives an integer masked array; object arrays
+        # get the dtype's missing value at masked slots; anything else gets NaN at
+        # masked slots. The last two return plain numpy arrays.
         """
         Parameters
         ----------
@@ -1029,14 +1349,20 @@ class BaseMaskedArray(OpsMixin, ExtensionArray):
             return result
 
     def isna(self) -> np.ndarray:
+        # [FUNCTION DOC]
+        # Returns a copy of the mask as a boolean array (true where missing).
         return self._mask.copy()
 
     @property
     def _na_value(self):
+        # [FUNCTION DOC]
+        # HELPER: property returning the dtype's missing value.
         return self.dtype.na_value
 
     @property
     def nbytes(self) -> int:
+        # [FUNCTION DOC]
+        # Property: total memory in bytes, data plus mask.
         return self._data.nbytes + self._mask.nbytes
 
     @classmethod
@@ -1045,6 +1371,11 @@ class BaseMaskedArray(OpsMixin, ExtensionArray):
         to_concat: Sequence[Self],
         axis: AxisInt = 0,
     ) -> Self:
+        # [FUNCTION DOC]
+        # HELPER: class-method used by concatenation. to_concat is a sequence of
+        # arrays of the same class; axis (default zero). Data arrays and mask
+        # arrays are concatenated separately along the axis. Returns the new array
+        # (via the regular constructor, so shape checks apply).
         data = np.concatenate([x._data for x in to_concat], axis=axis)
         mask = np.concatenate([x._mask for x in to_concat], axis=axis)
         return cls(data, mask)
@@ -1052,6 +1383,12 @@ class BaseMaskedArray(OpsMixin, ExtensionArray):
     def _hash_pandas_object(
         self, *, encoding: str, hash_key: str, categorize: bool
     ) -> npt.NDArray[np.uint64]:
+        # [FUNCTION DOC]
+        # HELPER: per-element 64-bit hashes used for hashing of rows/objects.
+        # Keyword-only: encoding (text encoding for strings), hash_key (the key
+        # for the keyed hash), categorize (whether to factorize before hashing).
+        # Hashes the data array and overwrites the hashes at masked positions with
+        # the hash of the dtype's missing value. Returns an unsigned 64-bit array.
         hashed_array = hash_array(
             self._data, encoding=encoding, hash_key=hash_key, categorize=categorize
         )
@@ -1066,6 +1403,19 @@ class BaseMaskedArray(OpsMixin, ExtensionArray):
         fill_value: Scalar | None = None,
         axis: AxisInt = 0,
     ) -> Self:
+        # [FUNCTION DOC]
+        # Positional take. indexer is an integer sequence; keyword-only
+        # allow_fill (default false: negatives count from the end; true: minus one
+        # marks positions to fill), fill_value (default none meaning missing) and
+        # axis (default zero).
+        # Data is taken with an internal placeholder fill (to avoid upcasting) and
+        # the mask is taken with true as fill. If filling with a non-missing
+        # value, the filled positions get that value and are unmasked (their mask
+        # is toggled relative to the taken mask). Errors for out-of-bounds or
+        # invalid negative positions come from the generic take. Returns a new
+        # array.
+        # KNOWN ISSUE: the in-code comment says the fill is always the integer
+        # one, but the placeholder is the dtype's internal fill value.
         # we always fill with 1 internally
         # to avoid upcasting
         data_fill_value = (
@@ -1097,6 +1447,12 @@ class BaseMaskedArray(OpsMixin, ExtensionArray):
     # error: Return type "BooleanArray" of "isin" incompatible with return type
     # "ndarray" in supertype "ExtensionArray"
     def isin(self, values: ArrayLike) -> BooleanArray:  # type: ignore[override]
+        # [FUNCTION DOC]
+        # Membership test. values is an array-like of candidates. Returns a
+        # nullable boolean array of this array's shape with no missing entries:
+        # non-missing elements are checked against the candidates; missing
+        # elements are true exactly when the candidates contain the dtype's
+        # missing object (missing does not propagate).
         from pandas.core.arrays import BooleanArray
 
         # algorithms.isin will eventually convert values to an ndarray, so no extra
@@ -1117,6 +1473,8 @@ class BaseMaskedArray(OpsMixin, ExtensionArray):
         return BooleanArray(result, mask, copy=False)
 
     def copy(self) -> Self:
+        # [FUNCTION DOC]
+        # Returns a new array with copies of both the data and the mask.
         data = self._data.copy()
         mask = self._mask.copy()
         return self._simple_new(data, mask)
@@ -1130,6 +1488,17 @@ class BaseMaskedArray(OpsMixin, ExtensionArray):
         ascending: bool = True,
         pct: bool = False,
     ):
+        # [FUNCTION DOC]
+        # HELPER: ranking hook. Keyword-only: axis (default zero), method (tie
+        # handling, default average), na_option (default keep; or top/bottom),
+        # ascending (default true), pct (default false; return percentile ranks).
+        # Raises a not-implemented error unless axis is zero and the array is one-
+        # dimensional. Boolean data is viewed as small integers. The compiled
+        # ranking routine is run with the missing mask. The result mask is the
+        # original mask when missing values are kept, otherwise all false. Returns
+        # a nullable unsigned 64-bit integer array when the method is not average
+        # and pct is false (masked slots zeroed first), otherwise a nullable
+        # floating array.
         # GH#62043 Avoid going through copy-making ensure_data in algorithms.rank
         if axis != 0 or self.ndim != 1:
             raise NotImplementedError
@@ -1167,6 +1536,11 @@ class BaseMaskedArray(OpsMixin, ExtensionArray):
     def duplicated(
         self, keep: Literal["first", "last", False] = "first"
     ) -> npt.NDArray[np.bool_]:
+        # [FUNCTION DOC]
+        # Marks repeated values. keep (default first) says which occurrence is
+        # not marked: first, last, or false meaning all repeats are marked.
+        # Missing values are treated as equal to each other. Returns a boolean
+        # numpy array computed by the generic duplicated routine on data and mask.
         """
         Return boolean ndarray denoting duplicate values.
 
@@ -1200,6 +1574,10 @@ class BaseMaskedArray(OpsMixin, ExtensionArray):
         return algos.duplicated(values, keep=keep, mask=mask)
 
     def unique(self) -> Self:
+        # [FUNCTION DOC]
+        # Returns a new array of the distinct values in order of first appearance,
+        # with at most one missing entry (the generic unique-with-mask routine
+        # returns both the values and the mask).
         """
         Compute the BaseMaskedArray of unique values.
 
@@ -1216,6 +1594,13 @@ class BaseMaskedArray(OpsMixin, ExtensionArray):
         side: Literal["left", "right"] = "left",
         sorter: NumpySorter | None = None,
     ) -> npt.NDArray[np.intp] | np.intp:
+        # [FUNCTION DOC]
+        # Binary search for insertion points. value is a scalar or array-like (an
+        # extension array is converted to object first); side is left or right
+        # (default left); sorter (default none) is an integer array that sorts
+        # the data. Raises a value error if this array has any missing entries.
+        # The search is done directly on the data array (avoiding object
+        # conversion). Returns an integer array, or a single integer for a scalar.
         """
         Find indices where elements should be inserted to maintain order.
 
@@ -1274,6 +1659,18 @@ class BaseMaskedArray(OpsMixin, ExtensionArray):
         self,
         use_na_sentinel: bool = True,
     ) -> tuple[np.ndarray, ExtensionArray]:
+        # [FUNCTION DOC]
+        # Encodes the values as integer codes plus the array of distinct values.
+        # use_na_sentinel (default true): missing values get code minus one and are
+        # not in the uniques; when false, missing values are given their own code
+        # (placed in order of first appearance among the codes, shifting later
+        # codes up) and the uniques gain a masked entry at that code.
+        # The generic array factorizer runs on data and mask (always with the
+        # sentinel); an assertion checks the uniques dtype equals this dtype's
+        # numpy dtype. Returns a pair (integer code array, masked array of
+        # uniques).
+        # KNOWN ISSUE: the docstring example factorizes a period index, not a
+        # masked array.
         """
         Encode the extension array as an enumerated type.
 
@@ -1351,6 +1748,10 @@ class BaseMaskedArray(OpsMixin, ExtensionArray):
         return codes, uniques_ea
 
     def _values_for_argsort(self) -> np.ndarray:
+        # [FUNCTION DOC]
+        # HELPER: returns the raw data array (a view, not a copy) as the sort keys;
+        # missing slots hold arbitrary placeholders that callers must ignore using
+        # the missing mask.
         """
         Return values for sorting.
 
@@ -1385,6 +1786,13 @@ class BaseMaskedArray(OpsMixin, ExtensionArray):
         return self._data
 
     def value_counts(self, dropna: bool = True) -> Series:
+        # [FUNCTION DOC]
+        # Counts occurrences of each distinct value. dropna (default true) leaves
+        # out missing values. The generic routine returns keys, counts and the
+        # number of missing entries; when missing entries are counted they are the
+        # last key (masked in the index). Returns a series named "count" holding
+        # nullable 64-bit integer counts, indexed by an index of this array type
+        # built from the keys and mask.
         """
         Returns a Series containing counts of each unique value.
 
@@ -1427,11 +1835,22 @@ class BaseMaskedArray(OpsMixin, ExtensionArray):
         return Series(arr, index=index, name="count", copy=False)
 
     def _mode(self, dropna: bool = True) -> Self:
+        # [FUNCTION DOC]
+        # HELPER: most-frequent-values hook. dropna (default true) ignores missing
+        # entries when counting (otherwise missing can be a mode). The generic
+        # mode routine returns the modal values and mask; they are wrapped in a
+        # new array of this class and returned sorted ascending (via the argsort
+        # positions).
         result, res_mask = mode(self._data, dropna=dropna, mask=self._mask)
         result = type(self)(result, res_mask)
         return result[result.argsort()]
 
     def equals(self, other) -> bool:
+        # [FUNCTION DOC]
+        # Whether other is an equivalent array. Returns false unless other has the
+        # same class and dtype and an identical mask (so a missing value of one
+        # kind never equals a differently-represented one), then compares the
+        # non-missing data with NaN-aware equality. Returns a boolean.
         """
         Return if another array is equivalent to this array.
 
@@ -1484,6 +1903,16 @@ class BaseMaskedArray(OpsMixin, ExtensionArray):
     def _quantile(
         self, qs: npt.NDArray[np.float64], interpolation: str
     ) -> BaseMaskedArray:
+        # [FUNCTION DOC]
+        # HELPER: quantile hook. qs is a float array of quantile positions in the
+        # unit interval; interpolation names the interpolation method. The
+        # masked-quantile routine computes values with NaN as fill. If the array
+        # has missing entries: two-dimensional input raises a not-implemented
+        # error; an all-missing array yields an all-masked result (integer dtypes
+        # keep an integer zero placeholder); otherwise no result is masked. Without
+        # missing entries nothing is masked. The result is wrapped using the
+        # result-masking hook (so a floating array for float output). Returns the
+        # wrapped quantiles.
         """
         Dispatch to quantile_with_mask, needed because we do not have
         _from_factorized.
@@ -1528,6 +1957,19 @@ class BaseMaskedArray(OpsMixin, ExtensionArray):
     def _reduce(
         self, name: str, *, skipna: bool = True, keepdims: bool = False, **kwargs
     ):
+        # [FUNCTION DOC]
+        # Generic reduction entry point. name is the reduction name; skipna
+        # (keyword-only, default true); keepdims (default false) returns a
+        # one-element array; extra keywords (such as axis or ddof) go to the
+        # method.
+        # For the common reductions (any, all, min, max, sum, prod, mean, var, std)
+        # the same-named method is called. For the others (median, skew, kurt,
+        # sem and similar) the nan-aware reduction of that name runs on the data
+        # with the mask (axis popped from the keywords, default none); an unknown
+        # name fails with an attribute error. With keepdims, a missing result
+        # gives a one-element all-masked array of a suitable dtype and a valid
+        # result is reshaped to one element and wrapped. Without keepdims, a
+        # missing result is returned as the NA singleton, else the plain result.
         if name in {"any", "all", "min", "max", "sum", "prod", "mean", "var", "std"}:
             result = getattr(self, name)(skipna=skipna, **kwargs)
         else:
@@ -1555,6 +1997,13 @@ class BaseMaskedArray(OpsMixin, ExtensionArray):
             return result
 
     def _wrap_reduction_result(self, name: str, result, *, skipna, axis):
+        # [FUNCTION DOC]
+        # HELPER: finalizes a reduction result. name is the reduction name
+        # (unused here); result is a scalar or numpy array; skipna and axis are
+        # keyword-only. Scalars are returned unchanged. Array results (reductions
+        # along an axis) are wrapped with a mask: with skipna, only rows or columns
+        # that are entirely missing are masked; otherwise any missing entry masks
+        # its row or column.
         if isinstance(result, np.ndarray):
             if skipna:
                 # we only retain mask for all-NA rows/columns
@@ -1566,6 +2015,16 @@ class BaseMaskedArray(OpsMixin, ExtensionArray):
         return result
 
     def _wrap_na_result(self, *, name, axis, mask_size):
+        # [FUNCTION DOC]
+        # HELPER: builds an all-missing result array for a reduction. Keyword-only:
+        # name (reduction name), axis (unused), mask_size (shape of the result).
+        # The result dtype is chosen to match what a real reduction would produce:
+        # float (32-bit for the 32-bit floating dtype, else 64-bit) for mean-like
+        # reductions; the array's own numpy dtype for min and max or for 8-byte
+        # types; otherwise the platform-width signed integer for boolean and
+        # signed kinds, unsigned for unsigned, and float for float kinds (32-bit
+        # integers on Windows or 32-bit platforms). Returns a masked array with
+        # all entries missing.
         mask = np.ones(mask_size, dtype=bool)
 
         float_dtyp = "float32" if self.dtype == "Float32" else "float64"
@@ -1587,6 +2046,12 @@ class BaseMaskedArray(OpsMixin, ExtensionArray):
     def _wrap_min_count_reduction_result(
         self, name: str, result, *, skipna, min_count, axis
     ):
+        # [FUNCTION DOC]
+        # HELPER: finalizes sum/prod style results. name is the reduction name;
+        # result the raw result; skipna, min_count and axis are keyword-only. With
+        # no minimum count and an array result, nothing is masked (the identity
+        # value is valid for empty groups). Otherwise defers to the general
+        # reduction-result wrapper.
         if min_count == 0 and isinstance(result, np.ndarray):
             return self._maybe_mask_result(result, np.zeros(result.shape, dtype=bool))
         return self._wrap_reduction_result(name, result, skipna=skipna, axis=axis)
@@ -1599,6 +2064,13 @@ class BaseMaskedArray(OpsMixin, ExtensionArray):
         axis: AxisInt | None = 0,
         **kwargs,
     ):
+        # [FUNCTION DOC]
+        # Sum of the values. Keyword-only: skipna (default true), min_count
+        # (default zero; minimum number of valid values needed, else the result is
+        # missing), axis (default zero); extra keywords only validated for numpy
+        # compatibility. Uses the masked sum routine, then the min-count result
+        # wrapper. Returns a scalar (possibly the NA singleton) or, for axis
+        # reductions of higher-dimensional data, an array.
         nv.validate_sum((), kwargs)
 
         result = masked_reductions.sum(
@@ -1620,6 +2092,10 @@ class BaseMaskedArray(OpsMixin, ExtensionArray):
         axis: AxisInt | None = 0,
         **kwargs,
     ):
+        # [FUNCTION DOC]
+        # Product of the values; same parameters and behavior as the sum (skipna,
+        # min_count, axis, validated extra keywords) using the masked product
+        # routine.
         nv.validate_prod((), kwargs)
 
         result = masked_reductions.prod(
@@ -1634,6 +2110,11 @@ class BaseMaskedArray(OpsMixin, ExtensionArray):
         )
 
     def mean(self, *, skipna: bool = True, axis: AxisInt | None = 0, **kwargs):
+        # [FUNCTION DOC]
+        # Arithmetic mean. Keyword-only skipna (default true) and axis (default
+        # zero); extra keywords only validated. Uses the masked mean routine and
+        # the reduction result wrapper (missing result for empty or all-missing
+        # input).
         nv.validate_mean((), kwargs)
         result = masked_reductions.mean(
             self._data,
@@ -1646,6 +2127,10 @@ class BaseMaskedArray(OpsMixin, ExtensionArray):
     def var(
         self, *, skipna: bool = True, axis: AxisInt | None = 0, ddof: int = 1, **kwargs
     ):
+        # [FUNCTION DOC]
+        # Variance. Keyword-only skipna (default true), axis (default zero), ddof
+        # (delta degrees of freedom, default one); extra keywords only validated.
+        # Uses the masked variance routine and the reduction result wrapper.
         nv.validate_stat_ddof_func((), kwargs, fname="var")
         result = masked_reductions.var(
             self._data,
@@ -1659,6 +2144,9 @@ class BaseMaskedArray(OpsMixin, ExtensionArray):
     def std(
         self, *, skipna: bool = True, axis: AxisInt | None = 0, ddof: int = 1, **kwargs
     ):
+        # [FUNCTION DOC]
+        # Standard deviation; same parameters and behavior as the variance
+        # (skipna, axis, ddof default one).
         nv.validate_stat_ddof_func((), kwargs, fname="std")
         result = masked_reductions.std(
             self._data,
@@ -1670,6 +2158,10 @@ class BaseMaskedArray(OpsMixin, ExtensionArray):
         return self._wrap_reduction_result("std", result, skipna=skipna, axis=axis)
 
     def min(self, *, skipna: bool = True, axis: AxisInt | None = 0, **kwargs):
+        # [FUNCTION DOC]
+        # Minimum. Keyword-only skipna (default true) and axis (default zero);
+        # extra keywords only validated. Uses the masked minimum routine and the
+        # reduction result wrapper.
         nv.validate_min((), kwargs)
         result = masked_reductions.min(
             self._data,
@@ -1680,6 +2172,8 @@ class BaseMaskedArray(OpsMixin, ExtensionArray):
         return self._wrap_reduction_result("min", result, skipna=skipna, axis=axis)
 
     def max(self, *, skipna: bool = True, axis: AxisInt | None = 0, **kwargs):
+        # [FUNCTION DOC]
+        # Maximum; same parameters and behavior as the minimum.
         nv.validate_max((), kwargs)
         result = masked_reductions.max(
             self._data,
@@ -1690,21 +2184,46 @@ class BaseMaskedArray(OpsMixin, ExtensionArray):
         return self._wrap_reduction_result("max", result, skipna=skipna, axis=axis)
 
     def map(self, mapper, na_action: Literal["ignore"] | None = None):
+        # [FUNCTION DOC]
+        # Applies a mapping to every element. mapper is a function or mapping
+        # (dict-like); na_action (default none) may be "ignore" to leave missing
+        # entries unmapped. The array is converted to a numpy array first (object
+        # with missing values) and the generic mapping routine returns its result
+        # (a numpy or extension array).
         return map_array(self.to_numpy(), mapper, na_action=na_action)
 
     @overload
     def any(
         self, *, skipna: Literal[True] = ..., axis: AxisInt | None = ..., **kwargs
-    ) -> np.bool_: ...
+    ) -> np.bool_:
+        # [FUNCTION DOC]
+        # Typing stub only: with skipna true the result is a plain boolean. See
+        # implementation.
+        ...
 
     @overload
     def any(
         self, *, skipna: bool, axis: AxisInt | None = ..., **kwargs
-    ) -> np.bool_ | NAType: ...
+    ) -> np.bool_ | NAType:
+        # [FUNCTION DOC]
+        # Typing stub only: with an arbitrary skipna the result may be the NA
+        # singleton. See implementation.
+        ...
 
     def any(
         self, *, skipna: bool = True, axis: AxisInt | None = 0, **kwargs
     ) -> np.bool_ | NAType:
+        # [FUNCTION DOC]
+        # True if any element is truthy. Keyword-only skipna (default true) and
+        # axis (default zero); extra keywords only validated.
+        # Missing entries are replaced by the dtype's falsey value in a copy and
+        # the data reduced. With skipna, that result is returned. Without skipna,
+        # if the result is true, or the array is empty or has no missing entries,
+        # the result is returned; otherwise the answer is unknown and the NA
+        # singleton is returned (three-valued logic).
+        # KNOWN ISSUE: the axis argument is accepted but not used in the
+        # reduction (the data is reduced over all elements), unlike the all
+        # reduction which passes it on.
         """
         Return whether any element is truthy.
 
@@ -1780,16 +2299,31 @@ class BaseMaskedArray(OpsMixin, ExtensionArray):
     @overload
     def all(
         self, *, skipna: Literal[True] = ..., axis: AxisInt | None = ..., **kwargs
-    ) -> np.bool_: ...
+    ) -> np.bool_:
+        # [FUNCTION DOC]
+        # Typing stub only: with skipna true the result is a plain boolean. See
+        # implementation.
+        ...
 
     @overload
     def all(
         self, *, skipna: bool, axis: AxisInt | None = ..., **kwargs
-    ) -> np.bool_ | NAType: ...
+    ) -> np.bool_ | NAType:
+        # [FUNCTION DOC]
+        # Typing stub only: with an arbitrary skipna the result may be the NA
+        # singleton. See implementation.
+        ...
 
     def all(
         self, *, skipna: bool = True, axis: AxisInt | None = 0, **kwargs
     ) -> np.bool_ | NAType:
+        # [FUNCTION DOC]
+        # True if all elements are truthy. Keyword-only skipna (default true) and
+        # axis (default zero, passed to the reduction); extra keywords only
+        # validated. Missing entries are replaced by the dtype's truthy value in a
+        # copy and the data reduced. With skipna the result is returned. Without
+        # skipna, a false result, an empty array, or no missing entries return the
+        # result; otherwise the NA singleton (three-valued logic).
         """
         Return whether all elements are truthy.
 
@@ -1875,6 +2409,20 @@ class BaseMaskedArray(OpsMixin, ExtensionArray):
         copy: bool,
         **kwargs,
     ) -> FloatingArray:
+        # [FUNCTION DOC]
+        # Fills missing values by interpolation. Keyword-only: method (algorithm
+        # name), axis (accepted but zero is always used for the work), index (index
+        # labels for index-based methods), limit, limit_direction, limit_area
+        # (fill restrictions), copy (work on copies else in place), plus extra
+        # keywords forwarded to the algorithm.
+        # Float arrays work on copies of data and mask (or in place when copy is
+        # false). Integer arrays always work on a float copy of the data (copy
+        # forced true) and the result is a floating array. Other kinds (boolean)
+        # raise a not-implemented error. The interpolation updates data and mask in
+        # place. Returns self if not copying, a same-class array for floats, or a
+        # floating array otherwise.
+        # KNOWN ISSUE: the axis parameter is ignored; the in-place interpolation
+        # is always called with axis zero.
         """
         See NDFrame.interpolate.__doc__.
         """
@@ -1918,6 +2466,13 @@ class BaseMaskedArray(OpsMixin, ExtensionArray):
     def _accumulate(
         self, name: str, *, skipna: bool = True, **kwargs
     ) -> BaseMaskedArray:
+        # [FUNCTION DOC]
+        # Cumulative operation hook. name is the accumulation name (cumsum, cumprod,
+        # cummin or cummax); skipna (keyword-only, default true); extra keywords
+        # are forwarded. Calls the same-named routine in the masked-accumulation
+        # module with data, mask and skipna, which returns new data and mask arrays.
+        # Returns a new array of the same class. An unknown name fails with an
+        # attribute error.
         data = self._data
         mask = self._mask
 
@@ -1939,6 +2494,20 @@ class BaseMaskedArray(OpsMixin, ExtensionArray):
         ids: npt.NDArray[np.intp],
         **kwargs,
     ):
+        # [FUNCTION DOC]
+        # HELPER: group-by hook. Keyword-only: how (operation name such as sum,
+        # mean, rank, ohlc, idxmin), has_dropped_na (whether rows with missing
+        # keys were dropped), min_count (minimum valid values per group), ngroups
+        # (number of groups), ids (integer array mapping each row to its group
+        # number), plus extra keywords for the operation (e.g. rank options).
+        # The operation kind (aggregate versus transform) is derived from how and
+        # the compiled grouped routine is run on the data with the mask. The
+        # compiled code must not change the input mask. Result mask: for transforms
+        # a copy of the input mask; for aggregations all false of length ngroups;
+        # for rank with top or bottom placement, all false. For the open-high-low-
+        # close operation the mask is tiled across its multiple output columns.
+        # Index-returning operations (idxmin, idxmax) return the plain integer
+        # array; everything else is wrapped with the result-masking hook.
         from pandas.core.groupby.ops import WrappedCythonOp
 
         kind = WrappedCythonOp.get_kind_from_how(how)
@@ -1980,6 +2549,15 @@ class BaseMaskedArray(OpsMixin, ExtensionArray):
 def transpose_homogeneous_masked_arrays(
     masked_arrays: Sequence[BaseMaskedArray],
 ) -> list[BaseMaskedArray]:
+    # [FUNCTION DOC]
+    # Transposes a collection of masked arrays viewed as the columns of a matrix.
+    # masked_arrays is a sequence of equal-length one-dimensional masked arrays
+    # sharing one dtype (not validated; an empty sequence fails with an index
+    # error). All data are stacked into one column-major matrix and all masks
+    # into one boolean matrix of the same layout; then each matrix column
+    # (originally a row across the inputs) becomes a new masked array of the
+    # same class. Returns the list of new arrays, one per original position; they
+    # are views of the shared matrices.
     """Transpose masked arrays in a list, but faster.
 
     Input should be a list of 1-dim masked arrays of equal length and all have the

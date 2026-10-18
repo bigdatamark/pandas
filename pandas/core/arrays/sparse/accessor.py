@@ -1,5 +1,20 @@
 """Sparse accessor"""
 
+# [MODULE DOC]
+# Implements the "sparse" accessor namespaces attached to series and frames.
+# Public contents: the series-level accessor class (properties delegated to the
+# sparse array: stored-point count, density, fill value, stored values; plus
+# coordinate-matrix import/export and densification) and the frame-level
+# accessor class (build a frame from a scipy matrix, densify, export to a
+# coordinate matrix, overall density). A shared private-ish base class stores
+# the parent object and triggers validation.
+# Relationships: uses the sparse array class and sparse dtype, the scipy
+# conversion helpers in the sibling module (imported lazily), the generic
+# accessor delegation utilities and common-type resolution. The accessors are
+# registered on the series and frame classes elsewhere (in the frame/series
+# modules), not in this file. scipy is only imported inside methods.
+# No import-time side effects other than the delegation decorator adding
+# properties to the series accessor class.
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
@@ -30,13 +45,26 @@ if TYPE_CHECKING:
 
 
 class BaseAccessor:
+    # [CLASS DOC]
+    # HELPER: common base of the two sparse accessors. State: the parent series
+    # or frame (stored in the parent attribute) and a class-level error message
+    # used when the parent is not sparse. Subclasses implement the validation
+    # step; construction stores the parent and then validates it.
     _validation_msg = "Can only use the '.sparse' accessor with Sparse data."
 
     def __init__(self, data=None) -> None:
+        # [FUNCTION DOC]
+        # Stores the given series or frame as the parent, then runs the
+        # subclass validation. Raises whatever the validation raises (an
+        # attribute error for non-sparse data, so that attribute access on the
+        # accessor property fails cleanly).
         self._parent = data
         self._validate(data)
 
     def _validate(self, data) -> None:
+        # [FUNCTION DOC]
+        # HELPER: abstract validation hook. Always raises a not-implemented
+        # error in the base class; subclasses check that the data is sparse.
         raise NotImplementedError
 
 
@@ -44,6 +72,19 @@ class BaseAccessor:
     SparseArray, ["npoints", "density", "fill_value", "sp_values"], typ="property"
 )
 class SparseAccessor(BaseAccessor, PandasDelegate):
+    # [CLASS DOC]
+    # Series-level sparse accessor (the sparse namespace on a series).
+    # Inherits the parent storage/validation protocol from the base accessor and
+    # the delegation protocol from the pandas delegate class. The class
+    # decorator creates read-only properties for stored-point count, density,
+    # fill value and stored values, which read the same-named attributes from
+    # the series' sparse array through the property delegate hook. Other
+    # methods: import from a coordinate matrix (class method), export to a
+    # coordinate matrix, and conversion to a dense series. Invariant: the
+    # parent series has a sparse dtype (checked at construction).
+    # KNOWN ISSUE: the docstring summary line reads "Accessor for SparseSparse
+    # from other sparse matrix data types", which is garbled; it is a
+    # series-level accessor for sparse-dtype data.
     """
     Accessor for SparseSparse from other sparse matrix data types.
 
@@ -69,13 +110,29 @@ class SparseAccessor(BaseAccessor, PandasDelegate):
     """
 
     def _validate(self, data) -> None:
+        # [FUNCTION DOC]
+        # HELPER: construction check. Raises an attribute error with the
+        # shared message when the series dtype is not a sparse dtype; returns
+        # nothing otherwise.
         if not isinstance(data.dtype, SparseDtype):
             raise AttributeError(self._validation_msg)
 
     def _delegate_property_get(self, name: str, *args, **kwargs):
+        # [FUNCTION DOC]
+        # HELPER: property delegation hook used by the delegating decorator.
+        # name is the property name; extra positional/keyword arguments are
+        # ignored. Returns the same-named attribute of the sparse array held
+        # by the parent series.
         return getattr(self._parent.array, name)
 
     def _delegate_method(self, name: str, *args, **kwargs):
+        # [FUNCTION DOC]
+        # HELPER: method delegation hook. For the names of the matrix import
+        # and export methods it forwards the arguments to those methods and
+        # returns their result; any other name raises a bare value error.
+        # KNOWN ISSUE: the class only delegates properties through the
+        # decorator, so this hook appears to be unused in practice, and the
+        # raised error carries no message.
         if name == "from_coo":
             return self.from_coo(*args, **kwargs)
         elif name == "to_coo":
@@ -85,6 +142,14 @@ class SparseAccessor(BaseAccessor, PandasDelegate):
 
     @classmethod
     def from_coo(cls, A, dense_index: bool = False) -> Series:
+        # [FUNCTION DOC]
+        # Class method. Builds a sparse-valued series from a scipy coordinate
+        # matrix A; dense_index (default false) chooses between an index of only
+        # stored coordinates and an index with the full sorted set of
+        # coordinates. Delegates to the conversion helper in the scipy module
+        # (which raises a type error if A is not a coordinate matrix), then
+        # re-wraps the resulting array and index in a fresh series without
+        # copying. Returns a series with a two-level index.
         """
         Create a Series with sparse values from a scipy.sparse.coo_matrix.
 
@@ -150,6 +215,15 @@ class SparseAccessor(BaseAccessor, PandasDelegate):
     def to_coo(
         self, row_levels=(0,), column_levels=(1,), sort_labels: bool = False
     ) -> tuple[coo_matrix, list, list]:
+        # [FUNCTION DOC]
+        # Exports the parent series (which must have a multi-index with at
+        # least two levels and a unique index) to a scipy coordinate matrix.
+        # row_levels and column_levels (defaults: first level for rows, second
+        # for columns) are sequences of level names or numbers that together
+        # partition all levels; sort_labels (default false) sorts the labels.
+        # Returns a triple of the matrix, the list of row labels and the list of
+        # column labels. Errors (value errors for bad index/levels) come from
+        # the scipy helper module.
         """
         Create a scipy.sparse.coo_matrix from a Series with MultiIndex.
 
@@ -242,6 +316,10 @@ class SparseAccessor(BaseAccessor, PandasDelegate):
         return A, rows, columns
 
     def to_dense(self) -> Series:
+        # [FUNCTION DOC]
+        # Returns a new series with the same index and name whose values are
+        # the dense (numpy) version of the sparse array, built without copying
+        # the densified data again. The parent is not modified.
         """
         Convert a Series from sparse values to dense.
 
@@ -276,6 +354,16 @@ class SparseAccessor(BaseAccessor, PandasDelegate):
 
 
 class SparseFrameAccessor(BaseAccessor, PandasDelegate):
+    # [CLASS DOC]
+    # Frame-level sparse accessor (the sparse namespace on a frame). Inherits
+    # the parent/validation protocol from the base accessor and the delegate
+    # class. The parent is a frame in which every column has a sparse dtype
+    # (checked at construction). Methods: build a frame from a scipy matrix
+    # (class method), convert to a dense frame, convert to a coordinate matrix,
+    # the overall density property, and a private index-preparation helper.
+    # KNOWN ISSUE: the docstring parameter section says the data is a scipy
+    # matrix, but the constructor takes the data frame to which the accessor
+    # is attached.
     """
     DataFrame accessor for sparse data.
 
@@ -301,12 +389,29 @@ class SparseFrameAccessor(BaseAccessor, PandasDelegate):
     """
 
     def _validate(self, data) -> None:
+        # [FUNCTION DOC]
+        # HELPER: construction check. Raises an attribute error with the shared
+        # message unless every column dtype of the frame is a sparse dtype.
         dtypes = data.dtypes
         if not all(isinstance(t, SparseDtype) for t in dtypes):
             raise AttributeError(self._validation_msg)
 
     @classmethod
     def from_spmatrix(cls, data, index=None, columns=None) -> DataFrame:
+        # [FUNCTION DOC]
+        # Class method. Builds a frame of sparse columns from a scipy sparse
+        # matrix. data is any scipy sparse matrix (converted to compressed
+        # column format); index and columns (default none) are optional labels
+        # for rows and columns, defaulting to a default integer range index.
+        # Raises a value error if the label lengths do not match the matrix
+        # shape (via the index preparation helper).
+        # Behavior: the stored indices are sorted first (mutating the converted
+        # matrix, which for a matrix already in that format is the caller's
+        # object) because the integer sparse index is built without integrity
+        # validation. Each column becomes a sparse array whose stored values
+        # and positions are the column's slice of the compressed storage, with
+        # a sparse dtype taken from the data dtype. Returns the frame, created
+        # without integrity verification.
         """
         Create a new DataFrame from a scipy sparse matrix.
 
@@ -366,6 +471,10 @@ class SparseFrameAccessor(BaseAccessor, PandasDelegate):
         )
 
     def to_dense(self) -> DataFrame:
+        # [FUNCTION DOC]
+        # Returns a new frame (same constructor type as the parent, same index
+        # and columns) in which every sparse column is replaced by its dense
+        # array. The parent is not modified.
         """
         Convert a DataFrame with sparse values to dense.
 
@@ -394,6 +503,18 @@ class SparseFrameAccessor(BaseAccessor, PandasDelegate):
         )
 
     def to_coo(self) -> spmatrix:
+        # [FUNCTION DOC]
+        # Exports the frame to a scipy coordinate matrix with the frame's shape.
+        # Requires scipy (an import error is raised when missing, through the
+        # optional dependency helper). The matrix dtype is the common type of
+        # all column dtypes (the subtype if the common type is itself sparse).
+        # For each column the stored positions become row coordinates, the
+        # column number the column coordinate, and the stored values are cast
+        # to the common type; all pieces are concatenated. Fill values are not
+        # stored, so the matrix only holds the stored entries.
+        # KNOWN ISSUE: a frame with no columns makes the concatenation of an
+        # empty list fail with a value error instead of returning an empty
+        # matrix.
         """
         Return the contents of the frame as a sparse SciPy COO matrix.
 
@@ -447,6 +568,11 @@ class SparseFrameAccessor(BaseAccessor, PandasDelegate):
 
     @property
     def density(self) -> float:
+        # [FUNCTION DOC]
+        # Property. Returns the mean of the per-column densities (ratio of
+        # stored points to length) as a floating scalar; since all columns have
+        # equal length this equals the overall ratio of stored points to total
+        # cells. An empty frame yields NaN.
         """
         Ratio of non-sparse points to total (dense) data points.
 
@@ -466,6 +592,13 @@ class SparseFrameAccessor(BaseAccessor, PandasDelegate):
 
     @staticmethod
     def _prep_index(data, index, columns):
+        # [FUNCTION DOC]
+        # HELPER: static helper for the matrix import method. data is the
+        # matrix (its shape gives the row and column counts); index and
+        # columns are optional label collections. Missing labels become default
+        # integer range indexes; supplied ones are converted to index objects.
+        # Raises a value error if the number of column labels or row labels does
+        # not match the matrix shape. Returns the pair (index, columns).
         from pandas.core.indexes.api import (
             default_index,
             ensure_index,
