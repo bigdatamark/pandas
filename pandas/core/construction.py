@@ -5,6 +5,20 @@ and Index.__new__.
 These should not depend on core.internals.
 """
 
+# [MODULE DOC]
+# Constructor helpers shared by the public array factory, the Series
+# initialiser and the Index constructor; they must not depend on the internals
+# (block manager) package. Public contents: array (the public factory choosing
+# an extension array type), extract_array (unbox Series/Index),
+# ensure_wrapped_if_datetimelike
+# (wrap datetime-like numpy arrays in array classes), sanitize_masked_array,
+# sanitize_array (turn arbitrary input into a one-dimensional numpy or
+# extension array) and range_to_ndarray. Private helpers handle dimension
+# checking, string-dtype normalisation, broadcasting of length-one data and
+# casting.
+# Imports the array classes lazily inside functions to avoid import cycles. No
+# import-time side effects beyond imports.
+
 from __future__ import annotations
 
 from typing import (
@@ -79,6 +93,27 @@ def array(
     dtype: Dtype | None = None,
     copy: bool = True,
 ) -> ExtensionArray:
+    # [FUNCTION DOC]
+    # Public factory (published in the top-level namespace) building an
+    # extension array. Inputs: data, a one-dimensional sequence, array, Series
+    # or Index; dtype, optional dtype specification; copy (default true).
+    # Raises a value error for scalar data, a type error for a data frame.
+    # With no dtype given, a Series, Index or extension array supplies its own
+    # dtype. The data is unboxed (Series/Index to array, wrapped-numpy to numpy).
+    # A given dtype is resolved. An extension array that needs no conversion is
+    # returned (copied if copy). An extension dtype builds its array type from
+    # the sequence. With no dtype: non-ndarray or object-dtype input is run
+    # through object inference (including nullable types and datetimelike,
+    # all-NaT defaulting to second resolution); inference landing on a numpy
+    # array gives a wrapped-numpy array, except empty non-ndarray input which
+    # becomes an empty nullable float array. Datetime-like ndarrays become
+    # datetime or timedelta arrays; fixed-width string arrays use the default
+    # string dtype's array; integer, float (except half precision, which
+    # stays wrapped numpy), and boolean ndarrays become nullable arrays; others
+    # (for example complex) stay wrapped numpy. With a numpy datetime or
+    # timedelta dtype of supported resolution, returns a datetime or timedelta
+    # array; unsupported resolutions raise a value error. Any other numpy dtype
+    # gives a wrapped-numpy array.
     """
     Create an array.
 
@@ -418,18 +453,33 @@ _typs = frozenset(
 @overload
 def extract_array(
     obj: Series | Index, extract_numpy: bool = ..., extract_range: bool = ...
-) -> ArrayLike: ...
+) -> ArrayLike:
+    # [FUNCTION DOC]
+    # Typing overload stub (Series or Index input gives an array); see the
+    # implementation below.
+    ...
 
 
 @overload
 def extract_array(
     obj: T, extract_numpy: bool = ..., extract_range: bool = ...
-) -> T | ArrayLike: ...
+) -> T | ArrayLike:
+    # [FUNCTION DOC]
+    # Typing overload stub (any other input); see the implementation below.
+    ...
 
 
 def extract_array(
     obj: T, extract_numpy: bool = False, extract_range: bool = False
 ) -> T | ArrayLike:
+    # [FUNCTION DOC]
+    # Unboxes containers. Inputs: obj, any object; extract_numpy (default
+    # false), also unwrap wrapped-numpy arrays to plain numpy arrays;
+    # extract_range (default false), also materialise range indexes. Dispatches
+    # on the private type tag of obj: Series and indexes yield their underlying
+    # array (a range index is returned unchanged unless extract_range is set);
+    # a wrapped-numpy array yields its numpy array only when extract_numpy is
+    # set. Everything else is returned unchanged.
     """
     Extract the ndarray or ExtensionArray from a Series or Index.
 
@@ -493,6 +543,11 @@ def extract_array(
 
 
 def ensure_wrapped_if_datetimelike(arr):
+    # [FUNCTION DOC]
+    # Wraps datetime or timedelta numpy arrays. Input arr: any object. A numpy
+    # array of datetime64 or timedelta64 dtype is converted to a datetime or
+    # timedelta array using the nearest supported resolution of its dtype;
+    # everything else is returned unchanged.
     """
     Wrap datetime64 and timedelta64 ndarrays in DatetimeArray/TimedeltaArray.
     """
@@ -513,6 +568,13 @@ def ensure_wrapped_if_datetimelike(arr):
 
 
 def sanitize_masked_array(data: ma.MaskedArray) -> np.ndarray:
+    # [FUNCTION DOC]
+    # Converts a masked array to a plain-semantics array. Input data: numpy
+    # masked array. If any element is masked, the dtype is promoted so that NaN
+    # (or the promoted missing marker) is representable, the data is cast to a
+    # copy with that dtype, a hard mask is softened, and masked positions are
+    # set to the promoted fill value. Otherwise returns a copy of data. Returns a
+    # (still masked-array-typed) result.
     """
     Convert numpy MaskedArray to ensure mask is softened.
     """
@@ -536,6 +598,32 @@ def sanitize_array(
     *,
     allow_2d: bool = False,
 ) -> ArrayLike:
+    # [FUNCTION DOC]
+    # Turns arbitrary input into a numpy or extension array. Inputs: data, any
+    # object; index, optional index used to broadcast scalars and length-one
+    # data (required, as a positional argument, even when none); dtype,
+    # optional target dtype (a wrapped-numpy dtype is unwrapped); copy
+    # (default false); allow_2d (keyword-only, default false) permitting
+    # two-dimensional arrays.
+    # Steps: masked arrays are softened; Series/Index/arrays are unboxed (range
+    # indexes materialised); a zero-dimensional array becomes its scalar (its
+    # dtype used if none given); ranges become integer arrays without copying.
+    # Scalars require an index (value error otherwise) and are broadcast to its
+    # length, with text scalars using the nan-based string dtype when the string
+    # option is on and no dtype was requested. Extension arrays are cast or
+    # copied as requested. An extension dtype builds its array from the data
+    # (unordered sets raise a type error). Numpy arrays are used as-is (object
+    # arrays optionally inferred, unicode arrays converted to the string dtype
+    # when that option is on) or cast to the dtype. Other array-likes are
+    # converted to numpy and sanitised recursively. Any other iterable is
+    # materialised as a list (unordered sets raise a type error); empty with no
+    # dtype becomes an empty float array, a dtype triggers a cast, otherwise the
+    # platform conversion plus object inference is used. Finally the result is
+    # forced to one dimension (or allowed to be two-dimensional), length-one
+    # results are repeated to the index length, and numpy string dtypes are
+    # replaced by object arrays.
+    # KNOWN ISSUE: the docstring says index defaults to none, but the parameter
+    # has no default.
     """
     Sanitize input data to an ndarray or ExtensionArray, copy if specified,
     coerce to the dtype if specified.
@@ -689,6 +777,12 @@ def sanitize_array(
 
 
 def range_to_ndarray(rng: range) -> np.ndarray:
+    # [FUNCTION DOC]
+    # Converts a range to a numpy array without building a list. Input rng: a
+    # range. Tries a signed 64-bit integer array; if the values overflow, tries
+    # an unsigned 64-bit array when the range is non-negative and ascending (or
+    # descending with a non-negative stop); if that also overflows, or the range
+    # is otherwise not representable, builds an object array of Python integers.
     """
     Cast a range object to ndarray.
     """
@@ -708,6 +802,10 @@ def range_to_ndarray(rng: range) -> np.ndarray:
 
 
 def _sanitize_non_ordered(data) -> None:
+    # [FUNCTION DOC]
+    # HELPER: guard in the array sanitiser. Raises a type error naming the type
+    # when data is a set or frozen set (no defined order); returns nothing
+    # otherwise (including for dictionary key views).
     """
     Raise only for unordered sets, e.g., not for dict_keys
     """
@@ -723,6 +821,16 @@ def _sanitize_ndim(
     *,
     allow_2d: bool = False,
 ) -> ArrayLike:
+    # [FUNCTION DOC]
+    # HELPER: dimension check for the array sanitiser. Inputs: result, the array
+    # built so far; data, the original input; dtype, requested dtype or none;
+    # index, optional index; allow_2d (keyword-only, default false). Raises a
+    # value error if result has no dimensions. A one-dimensional result is
+    # repeated to the index length if it has length one. For higher dimensions:
+    # numpy input is returned as-is when allow_2d, else a value error stating the
+    # shape is raised; non-numpy input is rebuilt as a one-dimensional object
+    # array of its rows (tuples), converted by the extension array class when the
+    # dtype is a wrapped-object extension dtype. Returns the result.
     """
     Ensure we have a 1-dimensional result array.
     """
@@ -757,6 +865,13 @@ def _sanitize_ndim(
 def _sanitize_str_dtypes(
     result: np.ndarray, data, dtype: np.dtype | None, copy: bool
 ) -> np.ndarray:
+    # [FUNCTION DOC]
+    # HELPER: replaces numpy string dtypes by object arrays. Inputs: result,
+    # numpy array; data, the original input; dtype, requested dtype or none;
+    # copy. If result has a string dtype and data is not a scalar, then (unless
+    # all of data is missing) data is first converted with the given dtype, and
+    # an object array is built from it (a copy when copy is true, otherwise a
+    # no-copy conversion). Otherwise returns result unchanged.
     """
     Ensure we have a dtype that is supported by pandas.
     """
@@ -778,6 +893,10 @@ def _sanitize_str_dtypes(
 
 
 def _maybe_repeat(arr: ArrayLike, index: Index | None) -> ArrayLike:
+    # [FUNCTION DOC]
+    # HELPER: broadcasts length-one arrays. If index is given and arr has length
+    # one while the index has another length, returns arr repeated to the index
+    # length; otherwise returns arr unchanged.
     """
     If we have a length-1 array and an index describing how long we expect
     the result to be, repeat the array.
@@ -793,6 +912,16 @@ def _try_cast(
     dtype: np.dtype,
     copy: bool,
 ) -> ArrayLike:
+    # [FUNCTION DOC]
+    # HELPER: casts a list or ndarray to a numpy dtype for the array sanitiser.
+    # Inputs: arr; dtype; copy. Object target: a list becomes an object array,
+    # an ndarray is cast (after wrapping datetime-like arrays). Unicode target:
+    # elements converted to strings keeping missing values, preserving shape.
+    # Datetime or timedelta target: delegated to the datetime casting helper (a
+    # single-column two-dimensional array is processed as one-dimensional then
+    # reshaped). Integer targets: checked cast that raises for lossy input such
+    # as floats. Everything else: plain numpy conversion, copying when copy is
+    # true.
     """
     Convert input to numpy ndarray and optionally cast to a given dtype.
 

@@ -10,6 +10,38 @@ module is imported, register them here rather than in the module.
 
 """
 
+# [MODULE DOC]
+# Registers the library's core configuration options with the configuration
+# machinery. It defines no public API: its effect is entirely import-time
+# registration, and the package initialiser imports it so the options exist as
+# soon as the package loads.
+# Option groups (each registered inside a prefix context): "compute"
+# (bottleneck, numexpr and numba toggles, each with a callback that
+# propagates the change to the relevant module), "display" (precision, row and
+# column limits, representation style, formatting, unicode width, HTML
+# settings), "mode" (simulated interactive flag, copy-on-write, chained
+# assignment and performance warning behaviour, default string storage),
+# "io.excel.*" (reader and writer engine choices per file extension),
+# "io.parquet" and "io.sql" (engine choice), "plotting" (backend, with
+# validation by loading the backend, and matplotlib converter registration),
+# "styler" (rendering defaults) and "future" (opt-in flags for upcoming
+# behaviour, several read from environment variables at import time).
+# Each option has a default, a documentation string (module-level text
+# constants), usually a validator, and optionally a callback run when the
+# value changes. At the end, two options are marked deprecated with the
+# next-major-version warning class.
+# KNOWN ISSUE: a source comment on the copy-on-write option says the default is
+# false when the environment variable is unset, but the code yields true in that
+# case (and the warn string only when the variable equals warn).
+# KNOWN ISSUE: the Excel writer options use the string type as their validator,
+# which accepts any value, unlike the reader options that restrict to the
+# listed engines.
+# Import-time side effects: reads environment variables (copy-on-write,
+# future infer-string, distinguish NaN and NA, Python scalars), may detect
+# whether it runs in a terminal or notebook kernel to choose the default
+# maximum column count, registers all options in global state, and deprecates
+# two options.
+
 from __future__ import annotations
 
 from collections.abc import Callable
@@ -41,6 +73,11 @@ use_bottleneck_doc = """
 
 
 def use_bottleneck_cb(key: str) -> None:
+    # [FUNCTION DOC]
+    # HELPER: change callback for the bottleneck option. Input key: full option
+    # name. Reads the option's new value and passes it to the nan-aware
+    # operations module's setter (imported lazily). Side effect: updates that
+    # module's global flag.
     from pandas.core import nanops
 
     nanops.set_use_bottleneck(cf.get_option(key))
@@ -55,6 +92,10 @@ use_numexpr_doc = """
 
 
 def use_numexpr_cb(key: str) -> None:
+    # [FUNCTION DOC]
+    # HELPER: change callback for the numexpr option. Reads the option's new
+    # value and passes it to the expressions module's enable routine (imported
+    # lazily), which updates that module's global flag and function slots.
     from pandas.core.computation import expressions
 
     expressions.set_use_numexpr(cf.get_option(key))
@@ -69,6 +110,9 @@ use_numba_doc = """
 
 
 def use_numba_cb(key: str) -> None:
+    # [FUNCTION DOC]
+    # HELPER: change callback for the numba option. Reads the option's new value
+    # and passes it to the numba utility module's setter (imported lazily).
     from pandas.core.util import numba_
 
     numba_.set_use_numba(cf.get_option(key))
@@ -288,12 +332,23 @@ pc_memory_usage_doc = """
 
 
 def table_schema_cb(key: str) -> None:
+    # [FUNCTION DOC]
+    # HELPER: change callback for the display.html.table_schema option. Reads the
+    # option's new value and enables or disables the notebook table-schema
+    # display formatter accordingly (imported lazily). Side effect: registers or
+    # unregisters an interactive-display formatter.
     from pandas.io.formats.printing import enable_data_resource_formatter
 
     enable_data_resource_formatter(cf.get_option(key))
 
 
 def is_terminal() -> bool:
+    # [FUNCTION DOC]
+    # HELPER: used to choose the default maximum column count. Returns True when
+    # not running under IPython (plain interpreter) or when IPython runs in a
+    # terminal; returns False when the IPython instance has a kernel attribute
+    # (a notebook or other kernel front end). Relies on the IPython-injected
+    # global accessor, caught as a name error when absent.
     """
     Detect if Python is running in a terminal.
 
@@ -465,6 +520,12 @@ string_storage_doc = """
 
 
 def is_valid_string_storage(value: Any) -> None:
+    # [FUNCTION DOC]
+    # HELPER: validator for the mode.string_storage option. Input value: the
+    # proposed setting. Returns nothing if it is one of auto, python or pyarrow;
+    # otherwise raises a value error.
+    # KNOWN ISSUE: the error message lists only python and pyarrow, although auto
+    # is also accepted.
     legal_values = ["auto", "python", "pyarrow"]
     if value not in legal_values:
         msg = "Value must be one of python|pyarrow"
@@ -620,6 +681,12 @@ plotting_backend_doc = """
 
 
 def register_plotting_backend_cb(key: str | None) -> None:
+    # [FUNCTION DOC]
+    # HELPER: validator for the plotting.backend option. Input key: the proposed
+    # backend name (the value itself, despite the parameter name). The default
+    # "matplotlib" is accepted without loading it (validation deferred);
+    # any other name is loaded through the plotting backend loader, which raises
+    # an error if the backend cannot be imported or lacks the required interface.
     if key == "matplotlib":
         # We defer matplotlib validation, since it's the default
         return
@@ -646,6 +713,12 @@ register_converter_doc = """
 
 
 def register_converter_cb(key: str) -> None:
+    # [FUNCTION DOC]
+    # HELPER: change callback for plotting.matplotlib.register_converters. Input
+    # key: full option name. If the option value is truthy (including the string
+    # "auto"), registers the matplotlib unit converters; if false, removes them,
+    # restoring any converters that were overwritten. Side effect: modifies the
+    # matplotlib units registry.
     from pandas.plotting import (
         deregister_matplotlib_converters,
         register_matplotlib_converters,

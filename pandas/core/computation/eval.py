@@ -2,6 +2,15 @@
 Top level ``eval`` module.
 """
 
+# [MODULE DOC]
+# Defines the public expression evaluation function (published in the pandas
+# namespace) together with private validation helpers for its engine, parser,
+# resolvers and expression arguments. The function builds a scope, parses the
+# expression text with the expr module, runs the chosen engine from the
+# engines module and optionally assigns results to a target object.
+# Relies on the scope, expr, engines and parsing modules. No import-time side
+# effects beyond imports.
+
 from __future__ import annotations
 
 import tokenize
@@ -36,6 +45,12 @@ if TYPE_CHECKING:
 
 
 def _check_engine(engine: str | None) -> str:
+    # [FUNCTION DOC]
+    # HELPER: validates and resolves the engine name for the evaluator.
+    # Input engine: engine name or none. None selects numexpr when numexpr use
+    # is currently enabled, else python. Returns the engine name. Raises a key
+    # error if the name is not a registered engine, and an import error if the
+    # numexpr engine is requested but numexpr is not installed or unsupported.
     """
     Make sure a valid engine is passed.
 
@@ -81,6 +96,9 @@ def _check_engine(engine: str | None) -> str:
 
 
 def _check_parser(parser: str) -> None:
+    # [FUNCTION DOC]
+    # HELPER: validates the parser name. Raises a key error naming the valid
+    # parsers when parser is not a registered parser; returns nothing.
     """
     Make sure a valid parser is passed.
 
@@ -100,6 +118,10 @@ def _check_parser(parser: str) -> None:
 
 
 def _check_resolvers(resolvers) -> None:
+    # [FUNCTION DOC]
+    # HELPER: validates the resolvers argument. None is accepted; otherwise
+    # every element must support item lookup, else a type error naming the
+    # offending element type is raised. Returns nothing.
     if resolvers is not None:
         for resolver in resolvers:
             if not hasattr(resolver, "__getitem__"):
@@ -111,6 +133,9 @@ def _check_resolvers(resolvers) -> None:
 
 
 def _check_expression(expr) -> None:
+    # [FUNCTION DOC]
+    # HELPER: raises a value error when expr is falsy (an empty string, or any
+    # empty or false-like object); returns nothing otherwise.
     """
     Make sure an expression is not an empty string
 
@@ -129,6 +154,10 @@ def _check_expression(expr) -> None:
 
 
 def _convert_expression(expr) -> str:
+    # [FUNCTION DOC]
+    # HELPER: converts an expression object to its text form with the pretty
+    # printer, validates it is non-empty (raising a value error otherwise) and
+    # returns the text. Used so operator objects can be re-evaluated.
     """
     Convert an object to an expression.
 
@@ -158,6 +187,14 @@ def _convert_expression(expr) -> str:
 
 
 def _check_for_locals(expr: str, stack_level: int, parser: str) -> None:
+    # [FUNCTION DOC]
+    # HELPER: rejects the at-sign local-variable prefix where unsupported.
+    # Inputs: expr, expression text; stack_level, the evaluation level (zero
+    # means a top-level call); parser, parser name. The prefix is disallowed
+    # for any parser other than the pandas one, and for top-level calls with the
+    # pandas parser. When disallowed, tokenizes the text (backtick-aware) and
+    # raises a syntax error with an explanatory message on finding an at-sign
+    # operator token. Otherwise does nothing.
     at_top_of_stack = stack_level == 0
     not_pandas_parser = parser != "pandas"
 
@@ -187,6 +224,30 @@ def eval(
     target=None,
     inplace: bool = False,
 ) -> Any:
+    # [FUNCTION DOC]
+    # Public entry point for expression evaluation (see the docstring for
+    # user-facing semantics; this block adds implementation details).
+    # Inputs: expr, text or an internal operator object; parser, engine,
+    # local_dict, global_dict, resolvers, level and target as documented;
+    # inplace, a boolean validated for type.
+    # Flow: split text into non-blank stripped lines (an empty string raises a
+    # value error); several lines without a target raise a value error; engine,
+    # parser and resolvers are validated. For each line: convert to text,
+    # check for the local prefix, build a scope one level deeper, parse into an
+    # expression, and switch the engine permanently to python with a runtime
+    # warning if numexpr was selected but the result or operand types include
+    # a non-string extension dtype. Then build the engine, evaluate, and require
+    # an assignment when there are several lines or inplace is requested
+    # (value error otherwise). If the scope has a target and the line assigns,
+    # the target is replaced by a shallow copy on the first assignment unless
+    # inplace (value error if it cannot copy), the value is stored under the
+    # assigned name (via label-based column setting for inplace frames), with
+    # type or index errors converted to a value error, the value is made
+    # visible to later lines through the resolvers, and the line's result is
+    # cleared. Returns the modified target if any assignment happened, else the
+    # last result; returns none when inplace is true (and implicitly nothing
+    # else).
+    # Side effects: may mutate the target, may emit a runtime warning.
     """
     Evaluate a Python expression as a string using various backends.
 

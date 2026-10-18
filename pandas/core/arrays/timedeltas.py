@@ -1,3 +1,17 @@
+# [MODULE DOC]
+# Extension array for timedelta data. Public contents: TimedeltaArray
+# (published in the arrays namespace), a datetime-like array backed by a numpy
+# timedelta64 array with a unit of seconds, milliseconds, microseconds or
+# nanoseconds and an optional fixed frequency; and the constructor helper
+# sequence_to_td64ns, which converts many input kinds (strings, objects,
+# integers, floats, timedelta64 arrays) to a timedelta64 numpy array and
+# infers a frequency when the input already carries one. Private helpers
+# convert integers and objects and validate dtypes, and a factory builds
+# read-only component properties (days, seconds, microseconds, nanoseconds).
+# Relationships: subclasses the datetime-like timelike-ops base in the
+# datetimelike module; used by the TimedeltaIndex, the Series dt accessor and
+# conversion functions. No import-time side effects beyond imports and
+# property creation on the class.
 from __future__ import annotations
 
 from datetime import timedelta
@@ -87,7 +101,19 @@ import textwrap
 
 
 def _field_accessor(name: str, alias: str, docstring: str):
+    # [FUNCTION DOC]
+    # HELPER: factory for the read-only component properties of the timedelta
+    # array. Inputs: name, the property name; alias, the field to extract
+    # ("days" uses the dedicated day extraction, others the generic field
+    # extraction); docstring, the documentation text. Returns a property whose
+    # getter computes the field from the integer representation at the array's
+    # resolution; if the array has missing values, they are masked and the result
+    # is float with NaN there. The getter's name and documentation are set from
+    # name and docstring.
     def f(self) -> np.ndarray:
+        # [FUNCTION DOC]
+        # HELPER: the generated getter; returns the component values (integer
+        # array, or float array when missing values are present).
         values = self.asi8
         if alias == "days":
             result = get_timedelta_days(values, reso=self._creso)
@@ -110,6 +136,22 @@ def _field_accessor(name: str, alias: str, docstring: str):
 
 @set_module("pandas.arrays")
 class TimedeltaArray(dtl.TimelikeOps):
+    # [CLASS DOC]
+    # Extension array for timedeltas (subclass of the datetime-like
+    # timelike-operations base). State: the backing numpy timedelta64 array (unit
+    # s, ms, us or ns), and _freq, an optional fixed frequency (tick or day
+    # offset) that is kept valid across operations that preserve regular spacing.
+    # Class attributes: the type tag "timedeltaarray", recognised scalar types
+    # (standard timedelta, numpy timedelta64, tick offsets), a predicate for
+    # recognised dtypes (a function defined by assignment: true for numpy
+    # timedelta dtypes), inference tags, a high array priority, and lists of
+    # delegated field names and methods. The days, seconds, microseconds and
+    # nanoseconds properties are generated at class creation by the field
+    # factory. Key behaviour: construction helpers, unit conversion, scalar and
+    # vector arithmetic (multiplication, true and floor division, modulo,
+    # divmod, negation, absolute value) with frequency tracking, sum and
+    # standard deviation reductions, cumulative sum, conversion to total seconds,
+    # Python timedeltas and component tables.
     """
     Pandas ExtensionArray for timedelta data.
 
@@ -160,10 +202,15 @@ class TimedeltaArray(dtl.TimelikeOps):
 
     @property
     def _internal_fill_value(self) -> np.timedelta64:
+        # [FUNCTION DOC]
+        # Property: the missing-value marker (not-a-time) as a numpy timedelta
+        # scalar in this array's unit.
         return np.timedelta64("NaT", self.unit)
 
     @property
     def _scalar_type(self) -> type[Timedelta]:
+        # [FUNCTION DOC]
+        # Property: the scalar class of the elements, Timedelta.
         return Timedelta
 
     __array_priority__ = 1000
@@ -185,6 +232,10 @@ class TimedeltaArray(dtl.TimelikeOps):
     #  operates pointwise.
 
     def _box_func(self, x: np.timedelta64) -> Timedelta | NaTType:
+        # [FUNCTION DOC]
+        # HELPER: boxes a numpy timedelta scalar. Reinterprets x as an integer;
+        # the missing-value integer gives the not-a-time singleton, otherwise a
+        # Timedelta with the same integer value at this array's resolution.
         y = x.view("i8")
         if y == NaT._value:
             return NaT
@@ -194,6 +245,8 @@ class TimedeltaArray(dtl.TimelikeOps):
     # error: Return type "dtype" of "dtype" incompatible with return type
     # "ExtensionDtype" in supertype "ExtensionArray"
     def dtype(self) -> np.dtype[np.timedelta64]:  # type: ignore[override]
+        # [FUNCTION DOC]
+        # Property: the numpy timedelta64 dtype (with unit) of the backing array.
         """
         The dtype for the TimedeltaArray.
 
@@ -216,6 +269,11 @@ class TimedeltaArray(dtl.TimelikeOps):
 
     @classmethod
     def _validate_dtype(cls, values, dtype):
+        # [FUNCTION DOC]
+        # HELPER (class method) called by the base initialiser. Inputs: values,
+        # the backing array; dtype, requested dtype. Validates the requested dtype
+        # (supported timedelta resolution with a unit) and the values' dtype, and
+        # raises a value error if the two differ. Returns the validated dtype.
         # used in TimeLikeOps.__init__
         dtype = _validate_td64_dtype(dtype)
         _validate_td64_dtype(values.dtype)
@@ -231,6 +289,14 @@ class TimedeltaArray(dtl.TimelikeOps):
         freq: Tick | Day | None = None,
         dtype: np.dtype[np.timedelta64] = TD64NS_DTYPE,
     ) -> Self:
+        # [FUNCTION DOC]
+        # HELPER (class method): low-level constructor that skips validation of
+        # conversions. Inputs: values, a numpy timedelta64 array; freq (default
+        # none), a tick or day offset; dtype (default nanosecond timedelta64) which
+        # must equal the values' dtype. Asserts (assertion error) that the dtype is a
+        # timedelta dtype with a unit equal to the values' dtype, that values is a
+        # numpy array and that freq is none or a tick/day offset. Returns a new
+        # array wrapping values with the given freq.
         # Require td64 dtype, not unit-less, matching values.dtype
         assert lib.is_np_dtype(dtype, "m")
         assert not tslibs.is_unitless(dtype)
@@ -244,6 +310,14 @@ class TimedeltaArray(dtl.TimelikeOps):
 
     @classmethod
     def _from_sequence(cls, data, *, dtype=None, copy: bool = False) -> Self:
+        # [FUNCTION DOC]
+        # Class method building an array from a sequence. Inputs: data, any
+        # array-like; dtype (keyword-only, default none), a supported timedelta
+        # dtype (validated; integer-valued data are then interpreted in that
+        # dtype's unit); copy (keyword-only, default false). Converts with the
+        # sequence helper, then casts to dtype safely against overflow if given.
+        # The frequency inferred from the input (if it was already an array with
+        # a frequency) is kept. Returns the new array.
         unit = None
         if dtype:
             dtype = _validate_td64_dtype(dtype)
@@ -267,6 +341,16 @@ class TimedeltaArray(dtl.TimelikeOps):
         freq=lib.no_default,
         unit=None,
     ) -> Self:
+        # [FUNCTION DOC]
+        # Class method: like the strict sequence constructor but additionally
+        # accepts freq and a unit for integer data, and leaves frequency discovery
+        # to the caller. Inputs: data; dtype (validated; supplies the unit for
+        # integer data when unit is none); copy; freq (default: not specified),
+        # frequency to pin to the result; unit (default none), the unit integers
+        # are multiples of. Asserts that unit is not a year or month unit (caller's
+        # responsibility). Converts, optionally casts to dtype, builds the array
+        # with the inferred frequency and then pins/validates the requested freq.
+        # Returns the array.
         """
         _from_sequence_not_strict but without responsibility for finding the
         result's `freq`.
@@ -292,6 +376,16 @@ class TimedeltaArray(dtl.TimelikeOps):
     def _generate_range(
         cls, start, end, periods, freq, closed=None, *, unit: TimeUnit
     ) -> Self:
+        # [FUNCTION DOC]
+        # Class method generating a regular range of timedeltas. Inputs: start,
+        # end, periods, freq (any three of the four must be given, else a value
+        # error); closed (default none: both ends included, or left/right);
+        # unit (keyword-only), one of s, ms, us, ns (value error otherwise).
+        # Start and end are converted to Timedelta and to the unit without
+        # rounding (an error if rounding would be needed). With freq, the regular
+        # range generator produces the values; without freq, values are evenly
+        # spaced between start and end (linear spacing, integer truncated). Open
+        # ends drop the first/last value. Returns an array with the freq.
         periods = dtl.validate_periods(periods)
         if freq is None and any(x is None for x in [periods, start, end]):
             raise ValueError("Must provide freq argument if no data is supplied")
@@ -335,6 +429,12 @@ class TimedeltaArray(dtl.TimelikeOps):
     # DatetimeLike Interface
 
     def _unbox_scalar(self, value) -> np.timedelta64:
+        # [FUNCTION DOC]
+        # HELPER: converts a scalar to this array's numpy representation. Input
+        # value: a Timedelta or the not-a-time marker; anything else raises a value
+        # error. The not-a-time marker becomes a numpy missing timedelta in this
+        # unit; a Timedelta is converted exactly to this unit (an error if it would
+        # lose precision) and returned as a numpy scalar.
         if not isinstance(value, self._scalar_type) and value is not NaT:
             raise ValueError("'value' should be a Timedelta.")
         self._check_compatible_with(value)
@@ -344,9 +444,14 @@ class TimedeltaArray(dtl.TimelikeOps):
             return value.as_unit(self.unit, round_ok=False).asm8
 
     def _scalar_from_string(self, value) -> Timedelta | NaTType:
+        # [FUNCTION DOC]
+        # HELPER: parses a string into a Timedelta (or the not-a-time marker).
         return Timedelta(value)
 
     def _check_compatible_with(self, other) -> None:
+        # [FUNCTION DOC]
+        # HELPER: compatibility hook required by the base class; nothing to check
+        # for timedeltas, so it does nothing.
         # we don't have anything to validate.
         pass
 
@@ -354,6 +459,12 @@ class TimedeltaArray(dtl.TimelikeOps):
     # Array-Like / EA-Interface Methods
 
     def astype(self, dtype, copy: bool = True):
+        # [FUNCTION DOC]
+        # Converts to another dtype. Inputs: dtype, anything convertible; copy
+        # (default true). A timedelta dtype equal to the current one returns a copy
+        # (or self). A different supported timedelta unit converts the values with
+        # overflow checking, preserving the frequency. An unsupported timedelta
+        # unit raises a value error. Everything else goes to the base class.
         # We handle
         #   --> timedelta64[ns]
         #   --> timedelta64
@@ -381,6 +492,11 @@ class TimedeltaArray(dtl.TimelikeOps):
         return dtl.DatetimeLikeArrayMixin.astype(self, dtype, copy=copy)
 
     def __iter__(self) -> Iterator:
+        # [FUNCTION DOC]
+        # Generator over elements. For multi-dimensional arrays yields the rows by
+        # position. For one dimension, converts the integers to boxed Timedelta
+        # objects in chunks of ten thousand and yields them one at a time (the
+        # chunk count has one extra, possibly empty, chunk).
         if self.ndim > 1:
             for i in range(len(self)):
                 yield self[i]
@@ -410,6 +526,13 @@ class TimedeltaArray(dtl.TimelikeOps):
         skipna: bool = True,
         min_count: int = 0,
     ):
+        # [FUNCTION DOC]
+        # Sum reduction. Inputs (all keyword-only): axis (default none: all);
+        # dtype, out, keepdims, initial (numpy-compatibility arguments, validated
+        # to be defaults); skipna (default true); min_count (default 0), minimum
+        # number of non-missing values needed for a non-missing result. Computes
+        # with the nan-aware sum on the integer values and boxes the outcome as a
+        # Timedelta (axis none) or an array of timedeltas.
         nv.validate_sum(
             (), {"dtype": dtype, "out": out, "keepdims": keepdims, "initial": initial}
         )
@@ -429,6 +552,12 @@ class TimedeltaArray(dtl.TimelikeOps):
         keepdims: bool = False,
         skipna: bool = True,
     ):
+        # [FUNCTION DOC]
+        # Standard deviation reduction. Inputs (keyword-only): axis (default none),
+        # dtype/out/keepdims (compatibility arguments, validated), ddof (default
+        # 1), skipna (default true). Computes on the integer values; returns a
+        # Timedelta for a full or one-dimensional reduction, otherwise a timedelta
+        # array built from the result.
         nv.validate_stat_ddof_func(
             (), {"dtype": dtype, "out": out, "keepdims": keepdims}, fname="std"
         )
@@ -442,6 +571,11 @@ class TimedeltaArray(dtl.TimelikeOps):
     # Accumulations
 
     def _accumulate(self, name: str, *, skipna: bool = True, **kwargs):
+        # [FUNCTION DOC]
+        # Cumulative operations. Inputs: name; skipna (keyword-only, default true);
+        # extra keywords for the underlying routine. Cumulative sum runs on a copy
+        # of the data and returns a new array without a frequency. Cumulative
+        # product raises a type error. Other names go to the base class.
         if name == "cumsum":
             op = getattr(datetimelike_accumulations, name)
             result = op(self._ndarray.copy(), skipna=skipna, **kwargs)
@@ -457,6 +591,11 @@ class TimedeltaArray(dtl.TimelikeOps):
     # Rendering Methods
 
     def _formatter(self, boxed: bool = False):
+        # [FUNCTION DOC]
+        # Returns the element formatter used for display, delegating to the
+        # timedelta formatting factory.
+        # KNOWN ISSUE: the boxed argument is ignored; the factory is always called
+        # with boxing enabled.
         from pandas.io.formats.format import get_format_timedelta64
 
         return get_format_timedelta64(self, box=True)
@@ -464,6 +603,11 @@ class TimedeltaArray(dtl.TimelikeOps):
     def _format_native_types(
         self, *, na_rep: str | float = "NaT", date_format=None, **kwargs
     ) -> npt.NDArray[np.object_]:
+        # [FUNCTION DOC]
+        # Converts elements to text for output. Inputs (keyword-only): na_rep
+        # (default "NaT"), text for missing values; date_format (unused); extra
+        # keywords ignored. Applies the timedelta formatter element-wise over the
+        # backing array (any dimensionality) and returns an object array of strings.
         from pandas.io.formats.format import get_format_timedelta64
 
         # Relies on TimeDelta._repr_base
@@ -476,6 +620,10 @@ class TimedeltaArray(dtl.TimelikeOps):
     # Arithmetic Methods
 
     def _add_offset(self, other):
+        # [FUNCTION DOC]
+        # HELPER: addition of a non-fixed (calendar) offset is unsupported. Asserts
+        # that other is not a tick or day offset, then always raises a type error
+        # naming both types.
         assert not isinstance(other, (Tick, Day))
         raise TypeError(
             f"cannot add the type {type(other).__name__} to a {type(self).__name__}"
@@ -483,6 +631,19 @@ class TimedeltaArray(dtl.TimelikeOps):
 
     @unpack_zerodim_and_defer("__mul__")
     def __mul__(self, other) -> Self:
+        # [FUNCTION DOC]
+        # Multiplication by a number (also used as the reflected form). Input
+        # other: scalar, list, array or extension array. Boolean operands raise a
+        # type error (explicit cast required). A numeric scalar scales the values;
+        # if numpy does not return a timedelta result a type error is raised; the
+        # frequency is scaled too, unless the scalar is missing or the new
+        # frequency would be zero. Sequences are converted to arrays; arrow or
+        # masked-dtype arrays defer by returning the not-implemented marker; a
+        # length mismatch (except for timedelta operands, which fail with a type
+        # error) raises a value error; object arrays are multiplied element-wise;
+        # other arrays use numpy and must yield a timedelta result (else type
+        # error). Array results carry no frequency. Wrapped to defer on unsupported
+        # operand types and unpack zero-dimensional arrays.
         if is_scalar(other):
             if lib.is_bool(other):
                 raise TypeError(
@@ -542,6 +703,17 @@ class TimedeltaArray(dtl.TimelikeOps):
     __rmul__ = __mul__
 
     def _scalar_divlike_op(self, other, op):
+        # [FUNCTION DOC]
+        # HELPER: shared scalar division logic. Inputs: other, a scalar; op, one of
+        # the division operator functions (true or floor, normal or reflected).
+        # Timedelta-like scalars are converted to Timedelta: a missing one gives a
+        # float array of NaN; otherwise numpy applies op to the values and the
+        # scalar. Numeric scalars: reflected operations raise a type error; others
+        # apply op to the values and the frequency is divided (true division even
+        # for floor division; day frequencies stay exact when divisible, otherwise
+        # converted to a finer offset); a frequency that collapses to zero is
+        # dropped. Returns an array (timedelta for numeric divisors, numeric for
+        # timedelta divisors).
         """
         Shared logic for __truediv__, __rtruediv__, __floordiv__, __rfloordiv__
         with scalar 'other'.
@@ -589,6 +761,10 @@ class TimedeltaArray(dtl.TimelikeOps):
             return type(self)._simple_new(result, dtype=result.dtype, freq=freq)
 
     def _cast_divlike_op(self, other):
+        # [FUNCTION DOC]
+        # HELPER: prepares a non-scalar divisor/dividend. Converts lists and
+        # tuples to arrays and raises a value error if its length differs from this
+        # array's. Returns the array-like.
         if not hasattr(other, "dtype"):
             # e.g. list, tuple
             other = np.array(other)
@@ -598,6 +774,13 @@ class TimedeltaArray(dtl.TimelikeOps):
         return other
 
     def _vector_divlike_op(self, other, op) -> np.ndarray | Self:
+        # [FUNCTION DOC]
+        # HELPER: shared array division logic. Inputs: other, an array with
+        # timedelta, integer or float dtype; op, a division operator function.
+        # Numpy applies op. Division of timedeltas by integers or floats (true or
+        # floor, non-reflected) gives a timedelta array without a frequency. For
+        # floor division (normal or reflected), positions that are missing in either
+        # operand become NaN in a float result. Otherwise returns the numpy result.
         """
         Shared logic for __truediv__, __floordiv__, and their reversed versions
         with timedelta64-dtype ndarray other.
@@ -621,6 +804,14 @@ class TimedeltaArray(dtl.TimelikeOps):
 
     @unpack_zerodim_and_defer("__truediv__")
     def __truediv__(self, other):
+        # [FUNCTION DOC]
+        # True division by a scalar or array. Scalars use the scalar helper. Arrays
+        # of timedelta, integer or float dtype use the vector helper (floats and
+        # integers yield timedeltas, timedeltas yield floats). Object arrays divide
+        # element-wise (row by row for multi-dimensional arrays, otherwise via a
+        # specialised routine). Anything else returns the not-implemented marker.
+        # Length mismatches raise a value error. Wrapped to unpack zero-dimensional
+        # arrays and defer to unsupported types.
         # timedelta / X is well-defined for timedelta-like or numeric X
         op = operator.truediv
         if is_scalar(other):
@@ -652,6 +843,12 @@ class TimedeltaArray(dtl.TimelikeOps):
 
     @unpack_zerodim_and_defer("__rtruediv__")
     def __rtruediv__(self, other):
+        # [FUNCTION DOC]
+        # Reflected true division (other divided by this array); defined only for
+        # timedelta-like numerators. Scalars use the scalar helper (numeric
+        # scalars raise a type error); timedelta arrays use the vector helper;
+        # object arrays divide element-wise into a numeric array; anything else
+        # returns the not-implemented marker. Length mismatches raise a value error.
         # X / timedelta is defined only for timedelta-like X
         op = roperator.rtruediv
         if is_scalar(other):
@@ -673,6 +870,12 @@ class TimedeltaArray(dtl.TimelikeOps):
 
     @unpack_zerodim_and_defer("__floordiv__")
     def __floordiv__(self, other):
+        # [FUNCTION DOC]
+        # Floor division by a scalar or array; same dispatch as true division, but
+        # object arrays use the specialised floor-division routine (or row-wise
+        # division) and must yield an object array (asserted). Timedelta divisors
+        # produce integers (or floats with NaN where either side is missing);
+        # integer or float divisors produce timedeltas.
         op = operator.floordiv
         if is_scalar(other):
             return self._scalar_divlike_op(other, op)
@@ -704,6 +907,11 @@ class TimedeltaArray(dtl.TimelikeOps):
 
     @unpack_zerodim_and_defer("__rfloordiv__")
     def __rfloordiv__(self, other):
+        # [FUNCTION DOC]
+        # Reflected floor division (other floor-divided by this array); defined
+        # only for timedelta-like numerators: scalars via the scalar helper, timedelta
+        # arrays via the vector helper, object arrays element-wise into a numpy
+        # array; anything else returns the not-implemented marker.
         op = roperator.rfloordiv
         if is_scalar(other):
             return self._scalar_divlike_op(other, op)
@@ -722,6 +930,10 @@ class TimedeltaArray(dtl.TimelikeOps):
 
     @unpack_zerodim_and_defer("__mod__")
     def __mod__(self, other):
+        # [FUNCTION DOC]
+        # Remainder of this array divided by other: recognised scalars are first
+        # converted to Timedelta, then the result is this array minus the floor
+        # quotient times other (naive implementation). Returns a timedelta array.
         # Note: This is a naive implementation, can likely be optimized
         if isinstance(other, self._recognized_scalars):
             other = Timedelta(other)
@@ -729,6 +941,10 @@ class TimedeltaArray(dtl.TimelikeOps):
 
     @unpack_zerodim_and_defer("__rmod__")
     def __rmod__(self, other):
+        # [FUNCTION DOC]
+        # Reflected remainder (other modulo this array): recognised scalars are
+        # converted to Timedelta, then computed as other minus the floor quotient
+        # times this array (naive implementation).
         # Note: This is a naive implementation, can likely be optimized
         if isinstance(other, self._recognized_scalars):
             other = Timedelta(other)
@@ -736,6 +952,10 @@ class TimedeltaArray(dtl.TimelikeOps):
 
     @unpack_zerodim_and_defer("__divmod__")
     def __divmod__(self, other):
+        # [FUNCTION DOC]
+        # Quotient and remainder of this array by other (recognised scalars
+        # converted to Timedelta). Returns the pair (floor quotient, remainder),
+        # computed naively from floor division and multiplication.
         # Note: This is a naive implementation, can likely be optimized
         if isinstance(other, self._recognized_scalars):
             other = Timedelta(other)
@@ -746,6 +966,10 @@ class TimedeltaArray(dtl.TimelikeOps):
 
     @unpack_zerodim_and_defer("__rdivmod__")
     def __rdivmod__(self, other):
+        # [FUNCTION DOC]
+        # Reflected divmod: quotient and remainder of other by this array
+        # (recognised scalars converted to Timedelta). Returns the pair (floor
+        # quotient, remainder).
         # Note: This is a naive implementation, can likely be optimized
         if isinstance(other, self._recognized_scalars):
             other = Timedelta(other)
@@ -755,17 +979,26 @@ class TimedeltaArray(dtl.TimelikeOps):
         return res1, res2
 
     def __neg__(self) -> TimedeltaArray:
+        # [FUNCTION DOC]
+        # Element-wise negation; returns a new array whose frequency (if any) is
+        # negated.
         freq = None
         if self.freq is not None:
             freq = -self.freq
         return type(self)._simple_new(-self._ndarray, dtype=self.dtype, freq=freq)
 
     def __pos__(self) -> TimedeltaArray:
+        # [FUNCTION DOC]
+        # Unary plus; returns a new array with a copy of the data and the same
+        # frequency.
         return type(self)._simple_new(
             self._ndarray.copy(), dtype=self.dtype, freq=self.freq
         )
 
     def __abs__(self) -> TimedeltaArray:
+        # [FUNCTION DOC]
+        # Element-wise absolute value; returns a new array. The frequency is not
+        # preserved.
         # Note: freq is not preserved
         return type(self)._simple_new(np.abs(self._ndarray), dtype=self.dtype)
 
@@ -773,6 +1006,10 @@ class TimedeltaArray(dtl.TimelikeOps):
     # Conversion Methods - Vectorized analogues of Timedelta methods
 
     def total_seconds(self) -> npt.NDArray[np.float64]:
+        # [FUNCTION DOC]
+        # Returns each duration in seconds as floating-point numbers, computed from
+        # the integer values and the number of periods per second at this unit;
+        # missing elements become NaN. The result is a numpy array for this class.
         """
         Return total duration of each element expressed in seconds.
 
@@ -830,6 +1067,14 @@ class TimedeltaArray(dtl.TimelikeOps):
         return self._maybe_mask_results(self.asi8 / pps, fill_value=None)
 
     def to_pytimedelta(self) -> npt.NDArray[np.object_]:
+        # [FUNCTION DOC]
+        # Returns an object array of standard-library timedelta objects, one per
+        # element, converted from the integer values (missing values become the
+        # not-a-time marker).
+        # KNOWN ISSUE: the docstring's Returns section describes a numpy
+        # timedelta64 value with nanosecond precision, but the method returns an
+        # object-dtype array of standard timedelta objects at their native
+        # (microsecond-limited) precision.
         """
         Return an ndarray of datetime.timedelta objects.
 
@@ -1028,6 +1273,12 @@ class TimedeltaArray(dtl.TimelikeOps):
 
     @property
     def components(self) -> DataFrame:
+        # [FUNCTION DOC]
+        # Property: a data frame with one row per element and columns days, hours,
+        # minutes, seconds, milliseconds, microseconds, nanoseconds. Each element's
+        # components are taken from its Timedelta; missing elements give NaN in all
+        # columns and the frame is floating-point; with no missing values the
+        # columns are cast to 64-bit integers.
         """
         Return a DataFrame of the individual resolution components of the Timedeltas.
 
@@ -1069,6 +1320,9 @@ class TimedeltaArray(dtl.TimelikeOps):
         if hasnans:
 
             def f(x):
+                # [FUNCTION DOC]
+                # HELPER: component list of one element, or all-NaN for a missing
+                # element (used when the array has missing values).
                 if isna(x):
                     return [np.nan] * len(columns)
                 return x.components
@@ -1076,6 +1330,9 @@ class TimedeltaArray(dtl.TimelikeOps):
         else:
 
             def f(x):
+                # [FUNCTION DOC]
+                # HELPER: component list of one element (used when the array has
+                # no missing values).
                 return x.components
 
         result = DataFrame([f(x) for x in self], columns=columns)
@@ -1094,6 +1351,27 @@ def sequence_to_td64ns(
     unit=None,
     errors: DateTimeErrorChoices = "raise",
 ) -> tuple[np.ndarray, Tick | Day | None]:
+    # [FUNCTION DOC]
+    # Converts many input kinds to a timedelta64 numpy array. Inputs: data,
+    # list-like; copy (default false); unit (default none), the unit numeric data
+    # are multiples of (disallowed with string data when errors are raised;
+    # year and month units fail an assertion); errors, "raise" (default), "coerce"
+    # or "ignore" (passed to the object parser; the caller may ignore errors).
+    # Returns (array, inferred frequency): the frequency is taken from the input
+    # if it was already a timedelta array.
+    # Behaviour by input dtype: object or string data are parsed; integers are
+    # scaled by the unit; floats are converted with separate whole/fractional
+    # handling to limit precision loss (if a non-nanosecond unit is requested and
+    # all non-missing floats are whole numbers they are treated as integers and
+    # missing values are set to the missing marker); timedelta arrays in an
+    # unsupported unit are converted to the closest supported unit; any other
+    # dtype (such as datetimes) raises a type error. The result always has a
+    # supported timedelta unit and a copy is made only if requested and not
+    # already made.
+    # KNOWN ISSUE: the docstring says the result has nanosecond resolution, but
+    # integer data with a coarser unit and timedelta input keep (or convert to) a
+    # coarser supported unit such as seconds, so the dtype is not always
+    # nanosecond.
     """
     Parameters
     ----------
@@ -1198,6 +1476,15 @@ def sequence_to_td64ns(
 
 
 def _ints_to_td64ns(data, unit: str = "ns") -> tuple[np.ndarray, bool]:
+    # [FUNCTION DOC]
+    # HELPER: integer conversion for the sequence helper. Inputs: data, integer
+    # array; unit (default "ns"; none is treated as nanoseconds). Casts to 64-bit
+    # integers if needed (a copy), reinterprets as timedelta64 in the unit, and if
+    # that unit is unsupported converts it to the closest supported one (another
+    # copy). Returns (timedelta array, whether a copy was made).
+    # KNOWN ISSUE: the docstring and return description say the result is
+    # nanosecond resolution, but non-nanosecond units are kept (or converted only
+    # to the nearest supported unit).
     """
     Convert an ndarray with integer-dtype to timedelta64[ns] dtype, treating
     the integers as multiples of the given timedelta unit.
@@ -1242,6 +1529,12 @@ def _ints_to_td64ns(data, unit: str = "ns") -> tuple[np.ndarray, bool]:
 def _objects_to_td64ns(
     data, unit=None, errors: DateTimeErrorChoices = "raise"
 ) -> np.ndarray:
+    # [FUNCTION DOC]
+    # HELPER: parses object-dtype or string-dtype data. Inputs: data, array or
+    # index; unit (default none), the unit for numeric items (must not be given if
+    # strings are present); errors, "raise", "coerce" or "ignore" forwarded to the
+    # parser. Converts data to an object array and parses it into a timedelta64
+    # array. Parsing failures raise a value error (when errors are raised).
     """
     Convert an object-dtyped or string-dtyped array into a
     timedelta64[ns]-dtyped array.
@@ -1278,6 +1571,12 @@ def _objects_to_td64ns(
 
 
 def _validate_td64_dtype(dtype) -> DtypeObj:
+    # [FUNCTION DOC]
+    # HELPER: validates a requested timedelta dtype. Input dtype: anything
+    # convertible to a dtype. Raises a value error for a unit-less timedelta
+    # dtype, for non-timedelta dtypes, and for timedelta units other than
+    # seconds, milliseconds, microseconds and nanoseconds. Returns the resolved
+    # dtype.
     dtype = pandas_dtype(dtype)
     if dtype == np.dtype("m8"):
         # no precision disallowed GH#24806

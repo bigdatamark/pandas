@@ -2,6 +2,18 @@
 Base and utility classes for pandas objects.
 """
 
+# [MODULE DOC]
+# Base classes shared by the main containers. Public contents (all internal,
+# not part of the user API): PandasObject (root class with cache handling and
+# memory-size reporting), NoNewAttributesMixin (freezes an object against new
+# attributes, used by accessors), SelectionMixin (column selection and
+# aggregation interface for group-like objects such as groupby, rolling and
+# resample), and IndexOpsMixin (the common interface of Series and Index:
+# shape-related properties, conversion, unique/duplicate handling, value counts,
+# factorization, searching, arithmetic dispatch, and abstract hooks).
+# Depends on algorithms, nanops, ops, accessor and arraylike mixins and on the
+# array classes. No import-time side effects beyond imports.
+
 from __future__ import annotations
 
 from typing import (
@@ -82,6 +94,11 @@ if TYPE_CHECKING:
 
 
 class PandasObject(DirNamesMixin):
+    # [CLASS DOC]
+    # Root base class of pandas containers (subclass of the directory-listing
+    # mixin). Declares a per-instance cache dict, filled by methods decorated as
+    # cached read-only properties, and provides cache clearing, a default
+    # representation, and a memory-size report.
     """
     Base class for various pandas objects.
     """
@@ -91,12 +108,18 @@ class PandasObject(DirNamesMixin):
 
     @property
     def _constructor(self) -> type[Self]:
+        # [FUNCTION DOC]
+        # Property: the class used to build new instances of the same kind; here
+        # simply the object's own class (subclasses override).
         """
         Class constructor (for this class it's just `__class__`).
         """
         return type(self)
 
     def __repr__(self) -> str:
+        # [FUNCTION DOC]
+        # Default representation: the plain object representation (class and
+        # address). Subclasses are expected to override.
         """
         Return a string representation for a particular object.
         """
@@ -104,6 +127,10 @@ class PandasObject(DirNamesMixin):
         return object.__repr__(self)
 
     def _reset_cache(self, key: str | None = None) -> None:
+        # [FUNCTION DOC]
+        # HELPER: invalidates cached property values. Input key (default none):
+        # a single cache entry name to drop (missing names are ignored); none
+        # clears the whole cache. Does nothing if the object has no cache dict.
         """
         Reset cached properties. If ``key`` is passed, only clears that key.
         """
@@ -115,6 +142,11 @@ class PandasObject(DirNamesMixin):
             self._cache.pop(key, None)
 
     def __sizeof__(self) -> int:
+        # [FUNCTION DOC]
+        # Reports the object's size in bytes. If the object has a memory-usage
+        # method, calls it with deep inspection and returns the integer total (a
+        # scalar result is used directly, a per-column result is summed);
+        # otherwise falls back to the default object size.
         """
         Generates the total memory usage for an object that returns
         either a value or Series of values
@@ -129,6 +161,13 @@ class PandasObject(DirNamesMixin):
 
 
 class NoNewAttributesMixin:
+    # [CLASS DOC]
+    # Mixin that can lock an object against gaining new attributes (used by
+    # accessors). State: a hidden frozen marker set by the freeze method.
+    # While frozen, assignment is allowed only for the cache attribute, names
+    # defined on the class itself, or names that already resolve to a non-none
+    # value on the instance; anything else raises an attribute error. The lock
+    # can be bypassed by calling the base-object setter directly.
     """
     Mixin which prevents adding new attributes.
 
@@ -141,6 +180,9 @@ class NoNewAttributesMixin:
     """
 
     def _freeze(self) -> None:
+        # [FUNCTION DOC]
+        # Marks the instance as frozen (sets the hidden marker, bypassing the
+        # restricted setter). Irreversible through normal assignment.
         """
         Prevents setting additional attributes.
         """
@@ -148,6 +190,12 @@ class NoNewAttributesMixin:
 
     # prevent adding any attribute via s.xxx.new_attribute = ...
     def __setattr__(self, key: str, value) -> None:
+        # [FUNCTION DOC]
+        # Attribute assignment with the frozen check. Inputs: key, value. If the
+        # instance is frozen and the key is not the cache attribute, not in the
+        # class's own namespace, and does not already resolve to a non-none value
+        # on the instance, raises an attribute error saying new attributes cannot
+        # be added. Otherwise stores the value normally.
         # _cache is used by a decorator
         # We need to check both 1.) cls.__dict__ and 2.) getattr(self, key)
         # because
@@ -163,6 +211,15 @@ class NoNewAttributesMixin:
 
 
 class SelectionMixin(Generic[NDFrameT]):
+    # [CLASS DOC]
+    # Mixin giving group-like objects (grouping, rolling, resampling) column
+    # selection and an aggregation interface. Generic in the frame type.
+    # Subclasses must provide obj (the wrapped Series or DataFrame) and
+    # exclusions (set of labels to leave out); this class tracks the optional
+    # current selection. Class attributes: the selection (default none) and
+    # internal attribute names (the cache and unpickling hook) hidden from
+    # directory listings. Subclasses must implement the sub-selection hook and
+    # aggregate (both abstract here).
     """
     mixin implementing the selection & aggregation interface on a group-like
     object sub-classes need to define: obj, exclusions
@@ -177,6 +234,10 @@ class SelectionMixin(Generic[NDFrameT]):
     @final
     @property
     def _selection_list(self):
+        # [FUNCTION DOC]
+        # Property: the current selection as a list-like. A scalar selection (or
+        # none) is wrapped in a one-element list; list, tuple, Series, Index and
+        # array selections are returned unchanged.
         if not isinstance(
             self._selection, (list, tuple, ABCSeries, ABCIndex, np.ndarray)
         ):
@@ -185,6 +246,10 @@ class SelectionMixin(Generic[NDFrameT]):
 
     @cache_readonly
     def _selected_obj(self):
+        # [FUNCTION DOC]
+        # Cached property: the object restricted to the selection. Returns the
+        # wrapped object itself when there is no selection or it is a Series;
+        # otherwise the wrapped frame indexed by the selection.
         if self._selection is None or isinstance(self.obj, ABCSeries):
             return self.obj
         else:
@@ -193,11 +258,18 @@ class SelectionMixin(Generic[NDFrameT]):
     @final
     @cache_readonly
     def ndim(self) -> int:
+        # [FUNCTION DOC]
+        # Cached property: number of dimensions of the selected object.
         return self._selected_obj.ndim
 
     @final
     @cache_readonly
     def _obj_with_exclusions(self):
+        # [FUNCTION DOC]
+        # Cached property: the wrapped object without excluded columns. A Series
+        # is returned as-is. With a selection, the frame indexed by the selection
+        # list. Otherwise, if there are exclusions, a column-sliced view dropping
+        # them (avoiding consolidation and copying); else the wrapped frame.
         if isinstance(self.obj, ABCSeries):
             return self.obj
 
@@ -214,6 +286,14 @@ class SelectionMixin(Generic[NDFrameT]):
             return self.obj
 
     def __getitem__(self, key):
+        # [FUNCTION DOC]
+        # Selects column(s). Input key: a label, or a list, tuple, Series, Index
+        # or array of labels. Raises an index error if a selection was already
+        # made. For several labels: raises a key error listing missing columns,
+        # otherwise returns the sub-selection hook's result with the labels as a
+        # list and two dimensions. For a single label: raises a key error if
+        # absent; otherwise returns the hook's result with that label and the
+        # dimensionality of the corresponding column.
         if self._selection is not None:
             raise IndexError(f"Column(s) {self._selection} already selected")
 
@@ -230,6 +310,11 @@ class SelectionMixin(Generic[NDFrameT]):
             return self._gotitem(key, ndim=ndim)
 
     def _gotitem(self, key, ndim: int, subset=None):
+        # [FUNCTION DOC]
+        # HELPER: abstract hook that subclasses implement to return a sliced
+        # object. Inputs: key, label or list of labels; ndim, requested
+        # dimensionality (1 or 2); subset, optional object to act on. This base
+        # version always raises the abstract-method error.
         """
         sub-classes to define
         return a sliced object
@@ -246,6 +331,13 @@ class SelectionMixin(Generic[NDFrameT]):
 
     @final
     def _infer_selection(self, key, subset: Series | DataFrame):
+        # [FUNCTION DOC]
+        # HELPER: computes the selection to pass to a subclass constructor from
+        # the sub-selection hook (shared by rolling and resampling). Inputs: key;
+        # subset, the object being sliced. For two-dimensional subsets, the key
+        # is the selection if it is a scalar present in the subset or any
+        # list-like. For one-dimensional subsets, the key is the selection if it
+        # is a scalar equal to the subset's name. Otherwise none.
         """
         Infer the `selection` to pass to our constructor in _gotitem.
         """
@@ -260,12 +352,25 @@ class SelectionMixin(Generic[NDFrameT]):
         return selection
 
     def aggregate(self, func, *args, **kwargs):
+        # [FUNCTION DOC]
+        # Abstract aggregation entry point (alias: agg); always raises the
+        # abstract-method error. Subclasses implement it.
         raise AbstractMethodError(self)
 
     agg = aggregate
 
 
 class IndexOpsMixin(OpsMixin):
+    # [CLASS DOC]
+    # Common interface of one-dimensional labelled containers (Series and Index);
+    # extends the operator mixin. Subclasses supply the dtype, the underlying
+    # values (numpy or extension array), the length and the result constructor;
+    # this mixin builds on those for shape properties, conversion to numpy and
+    # lists, iteration, position of extremes, uniqueness and monotonicity,
+    # counting, factorizing, searching, duplicate dropping and arithmetic
+    # dispatch. Class attributes: a high array priority so numpy defers to it
+    # in mixed operations, and the set of hidden attributes (the list-conversion
+    # method is suppressed from directory listings).
     """
     Common ops mixin to support a unified interface / docs for Series / Index
     """
@@ -278,16 +383,26 @@ class IndexOpsMixin(OpsMixin):
 
     @property
     def dtype(self) -> DtypeObj:
+        # [FUNCTION DOC]
+        # Abstract property declared for type checkers; raises the
+        # abstract-method error. Subclasses return their dtype.
         # must be defined here as a property for mypy
         raise AbstractMethodError(self)
 
     @property
     def _values(self) -> ExtensionArray | np.ndarray:
+        # [FUNCTION DOC]
+        # Abstract property declared for type checkers; raises the
+        # abstract-method error. Subclasses return the underlying array.
         # must be defined here as a property for mypy
         raise AbstractMethodError(self)
 
     @final
     def transpose(self, *args, **kwargs) -> Self:
+        # [FUNCTION DOC]
+        # Transpose, which is the object itself for one dimension. Extra
+        # arguments are only validated (numpy compatibility: anything other than
+        # default values raises). Also exposed as the T property. Returns self.
         """
         Return the transpose, which is by definition self.
 
@@ -333,6 +448,8 @@ class IndexOpsMixin(OpsMixin):
 
     @property
     def shape(self) -> Shape:
+        # [FUNCTION DOC]
+        # Property: the shape tuple of the underlying values array.
         """
         Return a tuple of the shape of the underlying data.
 
@@ -351,6 +468,9 @@ class IndexOpsMixin(OpsMixin):
         return self._values.shape
 
     def __len__(self) -> int:
+        # [FUNCTION DOC]
+        # Abstract length declared for type checkers; raises the abstract-method
+        # error. Subclasses return the number of elements.
         # We need this defined here for mypy
         raise AbstractMethodError(self)
 
@@ -359,6 +479,8 @@ class IndexOpsMixin(OpsMixin):
     # https://github.com/davidhalter/jedi/issues/1990
     @property
     def ndim(self) -> int:
+        # [FUNCTION DOC]
+        # Property: always 1.
         """
         Number of dimensions of the underlying data, by definition 1.
 
@@ -392,6 +514,9 @@ class IndexOpsMixin(OpsMixin):
 
     @final
     def item(self):
+        # [FUNCTION DOC]
+        # Returns the sole element as a Python or pandas scalar (the first item of
+        # the iterator). Raises a value error if the length is not exactly one.
         """
         Return the first element of the underlying data as a Python scalar.
 
@@ -428,6 +553,8 @@ class IndexOpsMixin(OpsMixin):
 
     @property
     def nbytes(self) -> int:
+        # [FUNCTION DOC]
+        # Property: byte size of the underlying values array.
         """
         Return the number of bytes in the underlying data.
 
@@ -461,6 +588,8 @@ class IndexOpsMixin(OpsMixin):
 
     @property
     def size(self) -> int:
+        # [FUNCTION DOC]
+        # Property: number of elements, taken as the length of the values array.
         """
         Return the number of elements in the underlying data.
 
@@ -496,6 +625,10 @@ class IndexOpsMixin(OpsMixin):
 
     @property
     def array(self) -> ExtensionArray:
+        # [FUNCTION DOC]
+        # Abstract property: the extension array backing the object (numpy data
+        # wrapped without copying). This base version raises the abstract-method
+        # error; subclasses implement it.
         """
         The ExtensionArray of the data backing this Series or Index.
 
@@ -571,6 +704,24 @@ class IndexOpsMixin(OpsMixin):
         na_value: object = lib.no_default,
         **kwargs,
     ) -> np.ndarray:
+        # [FUNCTION DOC]
+        # Converts the values to a numpy array. Inputs: dtype (default none), the
+        # target dtype; copy (default false); na_value (default: not given), the
+        # replacement for missing values; kwargs, extra options accepted only for
+        # extension dtypes.
+        # Extension dtypes delegate to the backing array's conversion with all
+        # arguments. For numpy dtypes, extra keyword arguments raise a type error
+        # naming the first one. If na_value is given (except NaN on a float dtype)
+        # and there are missing values, they are replaced in a copy (a copy is
+        # avoided when the array cannot hold the value because the dtype
+        # conversion already copies). The values are converted with the requested
+        # dtype. Finally, when the result shares memory with the object's data:
+        # with copy false it is returned as a read-only view; with copy true and no
+        # replacement made it is copied. Returns the array.
+        # KNOWN ISSUE: the docstring's notes say that for numpy dtypes the result
+        # is a reference to the data that can be modified in place, but with the
+        # default of no copy the code returns a read-only view, so in-place writes
+        # raise an error.
         """
         A NumPy ndarray representing the values in this Series or Index.
 
@@ -702,6 +853,8 @@ class IndexOpsMixin(OpsMixin):
     @final
     @property
     def empty(self) -> bool:
+        # [FUNCTION DOC]
+        # Property: True when the object has no elements (size is zero).
         """
         Indicator whether Index is empty.
 
@@ -746,6 +899,15 @@ class IndexOpsMixin(OpsMixin):
     def argmax(
         self, axis: AxisInt | None = None, skipna: bool = True, *args, **kwargs
     ) -> int:
+        # [FUNCTION DOC]
+        # Position of the first maximum. Inputs: axis (ignored; validated to be
+        # none or a valid axis for compatibility); skipna (default true);
+        # args/kwargs, numpy compatibility arguments that are validated (and may
+        # carry a skipna override check). Extension-array values delegate to the
+        # array's own method; numpy values use the nan-aware routine. Per the
+        # documentation, a ValueError arises when all values are missing or
+        # skipna is false with a missing value present. Returns the integer
+        # position (numpy integer for numpy data).
         """
         Return int position of the largest value in the Series.
 
@@ -819,6 +981,9 @@ class IndexOpsMixin(OpsMixin):
     def argmin(
         self, axis: AxisInt | None = None, skipna: bool = True, *args, **kwargs
     ) -> int:
+        # [FUNCTION DOC]
+        # Position of the first minimum; mirrors the maximum-position method in
+        # inputs, delegation and error behaviour, using the minimum variants.
         """
         Return int position of the smallest value in the Series.
 
@@ -890,6 +1055,10 @@ class IndexOpsMixin(OpsMixin):
             return result  # type: ignore[return-value]
 
     def tolist(self) -> list:
+        # [FUNCTION DOC]
+        # Returns the values as a Python list of scalars (Python scalars for
+        # basic types, pandas scalars for datetime-like and interval/period
+        # types) via the values array's own list conversion. Alias: to_list.
         """
         Return a list of the values.
 
@@ -929,6 +1098,11 @@ class IndexOpsMixin(OpsMixin):
     to_list = tolist
 
     def __iter__(self) -> Iterator:
+        # [FUNCTION DOC]
+        # Returns an iterator over scalar elements. For non-numpy values (extension
+        # and datetime-like arrays) iterates the array directly; for numpy arrays
+        # lazily maps the array's scalar extraction over positions so elements are
+        # Python scalars.
         """
         Return an iterator of the values.
 
@@ -963,6 +1137,9 @@ class IndexOpsMixin(OpsMixin):
 
     @cache_readonly
     def hasnans(self) -> bool:
+        # [FUNCTION DOC]
+        # Cached property: True if any element is missing (using the library's
+        # missing-value test). Cached, so only valid while the data is unchanged.
         """
         Return True if there are any NaNs.
 
@@ -995,6 +1172,14 @@ class IndexOpsMixin(OpsMixin):
 
     @final
     def _map_values(self, mapper, na_action=None):
+        # [FUNCTION DOC]
+        # HELPER: maps the values through a mapping. Inputs: mapper, a function,
+        # dict or Series; na_action (default none), "ignore" to leave missing
+        # values out of the mapping. Extension arrays use their own map method;
+        # numpy arrays use the generic map routine. Returns the mapped array.
+        # KNOWN ISSUE: the docstring says the result is an Index or MultiIndex,
+        # but the method returns the mapped array (numpy or extension) and leaves
+        # any wrapping to callers.
         """
         An internal function that maps values using the input
         correspondence (which can be a dict, Series, or function).
@@ -1029,6 +1214,13 @@ class IndexOpsMixin(OpsMixin):
         bins=None,
         dropna: bool = True,
     ) -> Series:
+        # [FUNCTION DOC]
+        # Counts occurrences of unique values and returns them as a Series.
+        # Inputs: normalize (default false), return fractions; sort (default
+        # true), order by count (stable) else keep order of appearance; ascending
+        # (default false); bins (default none), count numeric values in this many
+        # half-open bins; dropna (default true), exclude missing values. The
+        # work is delegated to the shared algorithms routine with these options.
         """
         Return a Series containing counts of unique values.
 
@@ -1151,6 +1343,10 @@ class IndexOpsMixin(OpsMixin):
         )
 
     def unique(self):
+        # [FUNCTION DOC]
+        # Returns the unique values in order of first appearance. Extension arrays
+        # use their own method (returning an extension array); numpy arrays use the
+        # generic one-dimensional routine (returning a numpy array).
         values = self._values
         if not isinstance(values, np.ndarray):
             # i.e. ExtensionArray
@@ -1161,6 +1357,10 @@ class IndexOpsMixin(OpsMixin):
 
     @final
     def nunique(self, dropna: bool = True) -> int:
+        # [FUNCTION DOC]
+        # Number of distinct values. Input dropna (default true): exclude missing
+        # values from the count. Computed as the length of the unique values after
+        # optionally removing missing entries.
         """
         Return number of unique elements in the object.
 
@@ -1202,6 +1402,9 @@ class IndexOpsMixin(OpsMixin):
 
     @property
     def is_unique(self) -> bool:
+        # [FUNCTION DOC]
+        # Property: True when no value repeats (missing values count as a value):
+        # the distinct count including missing equals the length.
         """
         Return True if values in the object are unique.
 
@@ -1229,6 +1432,9 @@ class IndexOpsMixin(OpsMixin):
 
     @property
     def is_monotonic_increasing(self) -> bool:
+        # [FUNCTION DOC]
+        # Property: True if values are non-decreasing; computed by building an
+        # Index from the object and asking it (imported lazily).
         """
         Return True if values in the object are monotonically increasing.
 
@@ -1257,6 +1463,9 @@ class IndexOpsMixin(OpsMixin):
 
     @property
     def is_monotonic_decreasing(self) -> bool:
+        # [FUNCTION DOC]
+        # Property: True if values are non-increasing; computed through an Index
+        # built from the object.
         """
         Return True if values in the object are monotonically decreasing.
 
@@ -1285,6 +1494,12 @@ class IndexOpsMixin(OpsMixin):
 
     @final
     def _memory_usage(self, deep: bool = False) -> int:
+        # [FUNCTION DOC]
+        # HELPER: memory use of the values in bytes. Input deep (default false):
+        # also measure the Python objects referenced by object-dtype data (skipped
+        # on PyPy). If the backing array provides its own memory-usage method it is
+        # used; otherwise the array's byte size plus, for deep object data, the
+        # objects' sizes. Returns an integer.
         """
         Memory usage of the values.
 
@@ -1331,6 +1546,17 @@ class IndexOpsMixin(OpsMixin):
         sort: bool = False,
         use_na_sentinel: bool = True,
     ) -> tuple[npt.NDArray[np.intp], Index]:
+        # [FUNCTION DOC]
+        # Encodes values as integer codes plus the array of unique values. Inputs:
+        # sort (default false): sort the uniques and remap codes; use_na_sentinel
+        # (default true): code missing values as -1 and omit them from the uniques
+        # rather than giving them their own code. Uses the shared factorization
+        # routine on the underlying values; half-precision float uniques are
+        # widened to single precision. The uniques are returned as a multi-level
+        # index for multi-level indexes (empty slice for an empty one, else rebuilt
+        # with the same class) and as an Index with the original dtype otherwise
+        # (falling back to an inferred dtype if the dtype is unsupported by
+        # Index). Returns (codes, uniques).
         """
         Encode the object as an enumerated type or categorical variable.
 
@@ -1486,7 +1712,11 @@ class IndexOpsMixin(OpsMixin):
         value: ScalarLike_co,
         side: Literal["left", "right"] = ...,
         sorter: NumpySorter = ...,
-    ) -> np.intp: ...
+    ) -> np.intp:
+        # [FUNCTION DOC]
+        # Typing overload stub (scalar value gives one position); see the
+        # implementation below.
+        ...
 
     @overload
     def searchsorted(
@@ -1494,7 +1724,11 @@ class IndexOpsMixin(OpsMixin):
         value: npt.ArrayLike | ExtensionArray,
         side: Literal["left", "right"] = ...,
         sorter: NumpySorter = ...,
-    ) -> npt.NDArray[np.intp]: ...
+    ) -> npt.NDArray[np.intp]:
+        # [FUNCTION DOC]
+        # Typing overload stub (array value gives an array of positions); see the
+        # implementation below.
+        ...
 
     def searchsorted(
         self,
@@ -1502,6 +1736,14 @@ class IndexOpsMixin(OpsMixin):
         side: Literal["left", "right"] = "left",
         sorter: NumpySorter | None = None,
     ) -> npt.NDArray[np.intp] | np.intp:
+        # [FUNCTION DOC]
+        # Binary search for insertion positions in a sorted object. Inputs: value,
+        # a scalar or array-like; side, "left" (default) for the first suitable
+        # position or "right" for the last; sorter (default none), integer indices
+        # that sort the object. A data frame value raises a value error. Extension
+        # arrays use their own method directly; numpy values use the generic
+        # routine. The sortedness of the object is not checked. Returns a single
+        # position for scalar input or an array of positions.
         """
         Find indices where elements should be inserted to maintain order.
 
@@ -1619,18 +1861,36 @@ class IndexOpsMixin(OpsMixin):
         )
 
     def drop_duplicates(self, *, keep: DropKeep = "first") -> Self:
+        # [FUNCTION DOC]
+        # Returns the object without duplicate values. Input keep (keyword-only,
+        # default "first"): which duplicate to retain (first, last, or none of
+        # them). Builds the duplicate mask and returns the object indexed by its
+        # negation.
         duplicated = self._duplicated(keep=keep)
         # error: Value of type "IndexOpsMixin" is not indexable
         return self[~duplicated]  # type: ignore[index]
 
     @final
     def _duplicated(self, keep: DropKeep = "first") -> npt.NDArray[np.bool_]:
+        # [FUNCTION DOC]
+        # HELPER: boolean mask marking duplicate values. Input keep (default
+        # "first"): which occurrence is not marked (first, last, or none kept so
+        # all duplicates are marked). Extension arrays use their own method, numpy
+        # arrays the generic routine.
         arr = self._values
         if isinstance(arr, ExtensionArray):
             return arr.duplicated(keep=keep)
         return algorithms.duplicated(arr, keep=keep)
 
     def _arith_method(self, other, op):
+        # [FUNCTION DOC]
+        # HELPER: implements a binary arithmetic operator. Inputs: other, the other
+        # operand; op, the operator function. The result name is derived from the
+        # two operands' names. The other operand is unboxed to a raw array (ranges
+        # become integer arrays, scalars are prepared for the operation, and
+        # datetime-like numpy arrays are wrapped). The operation runs with numpy
+        # floating-point warnings suppressed, then the subclass's result builder
+        # wraps the output with the chosen name.
         res_name = ops.get_op_result_name(self, other)
 
         lvalues = self._values
@@ -1646,6 +1906,10 @@ class IndexOpsMixin(OpsMixin):
         return self._construct_result(result, name=res_name, other=other)
 
     def _construct_result(self, result, name, other):
+        # [FUNCTION DOC]
+        # HELPER: abstract hook that wraps a raw array result of an arithmetic
+        # operation into the proper container. Inputs: result, name, other (the
+        # other operand). Always raises the abstract-method error here.
         """
         Construct an appropriately-wrapped result from the ArrayLike result
         of an arithmetic-like operation.

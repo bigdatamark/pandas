@@ -4,6 +4,21 @@ Misc tools for implementing data structures
 Note: pandas.core.common is *not* part of the public API.
 """
 
+# [MODULE DOC]
+# Miscellaneous internal utilities shared across the core package: nested
+# sequence flattening, None-counting helpers, boolean-indexer and slice
+# predicates, array and label conversion helpers (asarray_tuplesafe,
+# index_labels_to_array, convert_to_list_like), callable helpers (naming,
+# conditional application, pipe, rename-function building), a random-state
+# normaliser, a temporary attribute-setting context manager, a mapping
+# standardiser used by the dictionary export methods, a table mapping numpy and
+# builtin reduction functions to internal method names, and a stack-frame
+# helper for chained-assignment detection.
+# Depends on the dtypes package, the compiled lib module and the column
+# expression class (imported at import time from the col module, which means
+# the col module must not import this one at module level). No other
+# import-time side effects.
+
 from __future__ import annotations
 
 import builtins
@@ -66,6 +81,11 @@ if TYPE_CHECKING:
 
 
 def flatten(line):
+    # [FUNCTION DOC]
+    # Generator that lazily flattens an arbitrarily nested sequence. Input
+    # line: an iterable. Yields each leaf element in order; an element that is
+    # iterable but not a string is recursed into, strings (and non-iterables)
+    # are yielded as-is.
     """
     Flatten an arbitrarily nested sequence.
 
@@ -90,6 +110,12 @@ def flatten(line):
 
 
 def consensus_name_attr(objs):
+    # [FUNCTION DOC]
+    # Finds a shared name among objects. Input objs: non-empty indexable
+    # sequence of objects with a name attribute. Returns the first object's name
+    # if every other object's name compares equal to it; returns none as soon as
+    # one differs or the comparison itself raises a value error (for example a
+    # name that is an array). An empty input raises an index error.
     name = objs[0].name
     for obj in objs[1:]:
         try:
@@ -103,6 +129,14 @@ def consensus_name_attr(objs):
 
 
 def is_bool_indexer(key: Any) -> bool:
+    # [FUNCTION DOC]
+    # Decides whether key is a boolean mask. Input key: any object. Series,
+    # arrays, indexes (except multi-level indexes) and extension arrays count if
+    # their dtype is boolean; an object-dtype one counts only if all entries are
+    # booleans, and if it has missing values mixed with booleans a value error
+    # is raised (other object contents just return False). Plain lists count
+    # when non-empty and entirely booleans (subclasses are copied to a plain list
+    # first). Anything else returns False.
     """
     Check whether `key` is a valid boolean indexer.
 
@@ -159,6 +193,11 @@ def is_bool_indexer(key: Any) -> bool:
 
 
 def cast_scalar_indexer(val):
+    # [FUNCTION DOC]
+    # Rejects whole-number float scalars used as positional keys. Input val: a
+    # scalar (caller guarantees). Raises an index error if val is a float with an
+    # integral value; otherwise returns val unchanged (non-integral floats and
+    # other scalars pass through).
     """
     Disallow indexing with a float key, even if that key is a round number.
 
@@ -181,6 +220,8 @@ def cast_scalar_indexer(val):
 
 
 def not_none(*args):
+    # [FUNCTION DOC]
+    # Returns a lazy generator over the arguments that are not none, in order.
     """
     Returns a generator consisting of the arguments that are not None.
     """
@@ -188,6 +229,8 @@ def not_none(*args):
 
 
 def any_none(*args) -> bool:
+    # [FUNCTION DOC]
+    # Returns True if at least one argument is none.
     """
     Returns a boolean indicating if any argument is None.
     """
@@ -195,6 +238,8 @@ def any_none(*args) -> bool:
 
 
 def all_none(*args) -> bool:
+    # [FUNCTION DOC]
+    # Returns True if every argument is none (also true for no arguments).
     """
     Returns a boolean indicating if all arguments are None.
     """
@@ -202,6 +247,8 @@ def all_none(*args) -> bool:
 
 
 def any_not_none(*args) -> bool:
+    # [FUNCTION DOC]
+    # Returns True if at least one argument is not none.
     """
     Returns a boolean indicating if any argument is not None.
     """
@@ -209,6 +256,8 @@ def any_not_none(*args) -> bool:
 
 
 def all_not_none(*args) -> bool:
+    # [FUNCTION DOC]
+    # Returns True if no argument is none (also true for no arguments).
     """
     Returns a boolean indicating if all arguments are not None.
     """
@@ -216,6 +265,8 @@ def all_not_none(*args) -> bool:
 
 
 def count_not_none(*args) -> int:
+    # [FUNCTION DOC]
+    # Returns how many arguments are not none.
     """
     Returns the count of arguments that are not None.
     """
@@ -226,6 +277,9 @@ def count_not_none(*args) -> int:
 def asarray_tuplesafe(
     values: ArrayLike | list | tuple | zip, dtype: NpDtype | None = ...
 ) -> np.ndarray:
+    # [FUNCTION DOC]
+    # Typing overload stub (array return for common input types); see the
+    # implementation below.
     # ExtensionArray can only be returned when values is an Index, all other iterables
     # will return np.ndarray. Unfortunately "all other" cannot be encoded in a type
     # signature, so instead we special-case some common types.
@@ -233,10 +287,24 @@ def asarray_tuplesafe(
 
 
 @overload
-def asarray_tuplesafe(values: Iterable, dtype: NpDtype | None = ...) -> ArrayLike: ...
+def asarray_tuplesafe(values: Iterable, dtype: NpDtype | None = ...) -> ArrayLike:
+    # [FUNCTION DOC]
+    # Typing overload stub (general iterables); see the implementation below.
+    ...
 
 
 def asarray_tuplesafe(values: Iterable, dtype: NpDtype | None = None) -> ArrayLike:
+    # [FUNCTION DOC]
+    # Converts an iterable to a one-dimensional array without turning tuples
+    # into extra dimensions. Inputs: values, any iterable; dtype, optional numpy
+    # dtype (default none: infer). Iterables that are not lists, tuples or
+    # array-convertible are first materialised as a list. Index and Series inputs
+    # return their underlying values directly (possibly an extension array,
+    # ignoring dtype). A list with an object dtype request builds an object
+    # array directly. Otherwise numpy conversion is tried; a value error (ragged
+    # input) falls back to an object array built from the list. Fixed-width
+    # string results are redone as object arrays. A two-dimensional result is
+    # replaced by an object array of tuples, one per row. Returns the array.
     if not (isinstance(values, (list, tuple)) or hasattr(values, "__array__")):
         values = list(values)
     elif isinstance(values, ABCIndex):
@@ -270,6 +338,13 @@ def asarray_tuplesafe(values: Iterable, dtype: NpDtype | None = None) -> ArrayLi
 def index_labels_to_array(
     labels: np.ndarray | Iterable, dtype: NpDtype | None = None
 ) -> np.ndarray:
+    # [FUNCTION DOC]
+    # Converts a label or labels into an array for index construction. Inputs:
+    # labels, a single label, tuple, string, array or iterable; dtype, optional
+    # dtype (default infer). Strings and tuples are treated as a single label
+    # (wrapped in a list); non-list, non-array iterables are listed; a
+    # non-iterable is wrapped as one label. Delegates to the tuple-safe array
+    # converter. Returns the array.
     """
     Transform label or iterable of labels to array, for use in Index.
 
@@ -297,12 +372,19 @@ def index_labels_to_array(
 
 
 def maybe_make_list(obj):
+    # [FUNCTION DOC]
+    # Wraps obj in a one-element list unless it is none, a tuple or a list, in
+    # which case it is returned unchanged.
     if obj is not None and not isinstance(obj, (tuple, list)):
         return [obj]
     return obj
 
 
 def maybe_iterable_to_list(obj: Iterable[T] | T) -> Collection[T] | T:
+    # [FUNCTION DOC]
+    # Materialises one-shot iterables. If obj is iterable but has no length
+    # (for example a generator), returns a new list of its items (consuming it);
+    # anything else is returned unchanged.
     """
     If obj is Iterable but not list-like, consume into list.
     """
@@ -313,6 +395,8 @@ def maybe_iterable_to_list(obj: Iterable[T] | T) -> Collection[T] | T:
 
 
 def is_null_slice(obj) -> bool:
+    # [FUNCTION DOC]
+    # True when obj is a slice with no start, stop or step (selects everything).
     """
     We have a null slice.
     """
@@ -325,6 +409,9 @@ def is_null_slice(obj) -> bool:
 
 
 def is_empty_slice(obj) -> bool:
+    # [FUNCTION DOC]
+    # True when obj is a slice whose start and stop are both given and equal
+    # (selects nothing); the step is ignored.
     """
     We have an empty slice, e.g. no values are selected.
     """
@@ -337,6 +424,9 @@ def is_empty_slice(obj) -> bool:
 
 
 def is_true_slices(line: abc.Iterable) -> abc.Generator[bool, None, None]:
+    # [FUNCTION DOC]
+    # Generator over line yielding, per element, True if it is a slice that is
+    # not a null slice, else False.
     """
     Find non-trivial slices in "line": yields a bool.
     """
@@ -346,6 +436,9 @@ def is_true_slices(line: abc.Iterable) -> abc.Generator[bool, None, None]:
 
 # TODO: used only once in indexing; belongs elsewhere?
 def is_full_slice(obj, line: int) -> bool:
+    # [FUNCTION DOC]
+    # True when obj is a slice starting at zero, stopping exactly at line (the
+    # length) with no step. A null slice does not count.
     """
     We have a full length slice.
     """
@@ -358,6 +451,10 @@ def is_full_slice(obj, line: int) -> bool:
 
 
 def get_callable_name(obj):
+    # [FUNCTION DOC]
+    # Best-effort display name for a callable. Returns its own name attribute if
+    # present; for a partial application, the name of the wrapped function;
+    # for other callables, the class name; returns none if obj is not callable.
     # typical case has name
     if hasattr(obj, "__name__"):
         return obj.__name__
@@ -375,6 +472,11 @@ def get_callable_name(obj):
 
 
 def apply_if_callable(maybe_callable, obj, **kwargs):
+    # [FUNCTION DOC]
+    # Evaluates a possibly callable argument against obj. A column expression
+    # object is evaluated via its private evaluation method with obj and the
+    # keyword arguments; any other callable is called with obj and the keyword
+    # arguments; non-callables are returned unchanged.
     """
     Evaluate possibly callable input using obj and kwargs if it is callable,
     otherwise return as it is.
@@ -394,6 +496,13 @@ def apply_if_callable(maybe_callable, obj, **kwargs):
 
 
 def standardize_mapping(into):
+    # [FUNCTION DOC]
+    # Normalises a mapping specification into a constructor. Input into: a
+    # mapping class, a mapping instance, or an initialised default-dict. An
+    # initialised default-dict yields a partial constructor preserving its
+    # default factory. Other instances are replaced by their class. Raises a
+    # type error if the class is not a mapping subclass, or if it is the bare
+    # default-dict class (uninitialised). Returns the class or partial.
     """
     Helper function to standardize a supplied mapping.
 
@@ -426,16 +535,32 @@ def standardize_mapping(into):
 
 
 @overload
-def random_state(state: np.random.Generator) -> np.random.Generator: ...
+def random_state(state: np.random.Generator) -> np.random.Generator:
+    # [FUNCTION DOC]
+    # Typing overload stub (generator in, same generator out); see the
+    # implementation below.
+    ...
 
 
 @overload
 def random_state(
     state: int | np.ndarray | np.random.BitGenerator | np.random.RandomState | None,
-) -> np.random.RandomState: ...
+) -> np.random.RandomState:
+    # [FUNCTION DOC]
+    # Typing overload stub for non-generator inputs; see the implementation
+    # below.
+    # KNOWN ISSUE: the declared return type is a seeded state object, but for a
+    # none input the implementation returns the global random module instead.
+    ...
 
 
 def random_state(state: RandomState | None = None):
+    # [FUNCTION DOC]
+    # Normalises a random-state argument. Input state (default none): an
+    # integer, array or bit generator creates a new legacy random state seeded
+    # with it; an existing legacy state or new-style generator is returned
+    # unchanged; none returns numpy's global random module (shared state). Any
+    # other type raises a value error.
     """
     Helper function for processing random_state arguments.
 
@@ -479,7 +604,11 @@ def pipe(
     func: Callable[Concatenate[_T, P], T],
     *args: P.args,
     **kwargs: P.kwargs,
-) -> T: ...
+) -> T:
+    # [FUNCTION DOC]
+    # Typing overload stub (callable applied with the object first); see the
+    # implementation below.
+    ...
 
 
 @overload
@@ -488,7 +617,11 @@ def pipe(
     func: tuple[Callable[..., T], str],
     *args: Any,
     **kwargs: Any,
-) -> T: ...
+) -> T:
+    # [FUNCTION DOC]
+    # Typing overload stub (pair of callable and keyword name); see the
+    # implementation below.
+    ...
 
 
 def pipe(
@@ -497,6 +630,14 @@ def pipe(
     *args: Any,
     **kwargs: Any,
 ) -> T:
+    # [FUNCTION DOC]
+    # Applies func to obj. If func is a pair (callable, keyword name), calls the
+    # callable with the extra positional arguments and the keyword arguments plus
+    # obj passed under the given keyword name; raises a value error if that
+    # keyword is already in the keyword arguments. Otherwise calls func with obj
+    # first followed by the extra arguments. Returns the call's result. Note the
+    # keyword argument dict is mutated locally by the pair form (no effect on the
+    # caller).
     """
     Apply a function ``func`` to object ``obj`` either by passing obj as the
     first argument to the function or, in the case that the func is a tuple,
@@ -533,12 +674,20 @@ def pipe(
 
 
 def get_rename_function(mapper):
+    # [FUNCTION DOC]
+    # Builds a label-mapping function. Input mapper: a mapping, a Series, or a
+    # callable. For a mapping or Series, returns a function giving the mapped
+    # value for labels present and the label itself otherwise; any other mapper
+    # is returned as-is (assumed callable).
     """
     Returns a function that will map names/labels, dependent if mapper
     is a dict, Series or just a function.
     """
 
     def f(x):
+        # [FUNCTION DOC]
+        # HELPER: the generated lookup function: returns mapper's value for x when
+        # x is a key, else x unchanged.
         if x in mapper:
             return mapper[x]
         else:
@@ -550,6 +699,11 @@ def get_rename_function(mapper):
 def convert_to_list_like(
     values: Hashable | Iterable | AnyArrayLike,
 ) -> list | AnyArrayLike:
+    # [FUNCTION DOC]
+    # Ensures list-like output. Lists, numpy arrays, indexes, Series and
+    # extension arrays are returned unchanged; other non-string iterables are
+    # consumed into a new list; anything else (scalars, strings) is wrapped in a
+    # one-element list.
     """
     Convert list-like or scalar input to list-like. List, numpy and pandas array-like
     inputs are returned unmodified whereas others are converted to list.
@@ -564,6 +718,14 @@ def convert_to_list_like(
 
 @contextlib.contextmanager
 def temp_setattr(obj, attr: str, value, condition: bool = True) -> Generator[None]:
+    # [FUNCTION DOC]
+    # Context manager that temporarily replaces an attribute. Inputs: obj, the
+    # target; attr, attribute name; value, temporary value; condition (default
+    # true): when false, nothing is changed. When active, remembers the old value
+    # (the attribute must exist, else an attribute error), sets the new one,
+    # yields obj, and restores the old value on exit even if the body raises.
+    # KNOWN ISSUE: the generator is annotated to yield nothing, but it actually
+    # yields the target object.
     """
     Temporarily set attribute on an object.
 
@@ -594,6 +756,9 @@ def temp_setattr(obj, attr: str, value, condition: bool = True) -> Generator[Non
 
 
 def require_length_match(data, index: Index) -> None:
+    # [FUNCTION DOC]
+    # Raises a value error stating both lengths if data and index differ in
+    # length; returns nothing otherwise.
     """
     Check the length of data matches the length of the index.
     """
@@ -636,6 +801,10 @@ _cython_table = {
 
 
 def get_cython_func(arg: Callable) -> str | None:
+    # [FUNCTION DOC]
+    # Looks up a numpy or builtin reduction function in the table of known
+    # functions and returns the matching internal method name (for example the
+    # name for sum), or none when the function is not in the table.
     """
     if we define an internal function for this argument, return it
     """
@@ -643,6 +812,9 @@ def get_cython_func(arg: Callable) -> str | None:
 
 
 def fill_missing_names(names: Sequence[Hashable | None]) -> list[Hashable]:
+    # [FUNCTION DOC]
+    # Returns a new list in which each none entry is replaced by the text
+    # "level_" followed by its position; other entries are kept as-is.
     """
     If a name is missing then replace it by level_n, where n is the count
 
@@ -660,6 +832,11 @@ def fill_missing_names(names: Sequence[Hashable | None]) -> list[Hashable]:
 
 
 def is_local_in_caller_frame(obj):
+    # [FUNCTION DOC]
+    # HELPER: for chained-assignment detection. Looks at the frame two levels up
+    # the call stack (the caller of the function that called this helper) and
+    # returns True if any of its local variables is the very same object as obj
+    # (identity test), else False. Relies on the fixed call depth.
     """
     Helper function used in detecting chained assignment.
 

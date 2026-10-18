@@ -1,3 +1,10 @@
+# [MODULE DOC]
+# Public re-export module for dtype inspection helpers. It imports a fixed
+# set of type-checking predicates (is_* functions) plus the dtype coercion
+# function from the common dtypes module and republishes exactly those names
+# through __all__, which lists them in the same order as the import.
+# It defines no functions or classes of its own. Import-time side effect:
+# loads the common dtypes module.
 from pandas.core.dtypes.common import (
     is_any_real_numeric_dtype,
     is_array_like,

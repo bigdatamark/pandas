@@ -2,6 +2,16 @@
 Module for scope operations
 """
 
+# [MODULE DOC]
+# Variable-scope handling for expression evaluation. Public contents: the
+# DeepChainMap mapping class, the Scope class (the lookup environment for an
+# expression: captured caller globals and locals, extra resolvers such as
+# frame columns, and temporaries), the ensure_scope factory, and the
+# DEFAULT_GLOBALS table of names always visible (timestamp and datetime
+# types, boolean literals, list and tuple constructors, and infinity values).
+# Used by the expr, eval and engines modules. Captures Python stack frames
+# of the caller at construction time; no import-time side effects.
+
 from __future__ import annotations
 
 from collections import ChainMap
@@ -25,6 +35,11 @@ _VT = TypeVar("_VT")
 
 # https://docs.python.org/3/library/collections.html#chainmap-examples-and-recipes
 class DeepChainMap(ChainMap[_KT, _VT]):
+    # [CLASS DOC]
+    # Subclass of the standard chained mapping whose item assignment and
+    # deletion act on whichever underlying mapping already holds the key,
+    # instead of only the first mapping. Lookup behaviour is inherited.
+    # Invariant: all underlying mappings must be mutable.
     """
     Variant of ChainMap that allows direct updates to inner scopes.
 
@@ -32,6 +47,10 @@ class DeepChainMap(ChainMap[_KT, _VT]):
     """
 
     def __setitem__(self, key: _KT, value: _VT) -> None:
+        # [FUNCTION DOC]
+        # Assigns value to key in the first underlying mapping (searching in
+        # order) that already contains key; if none does, stores it in the
+        # first mapping. Mutates an underlying mapping.
         for mapping in self.maps:
             if key in mapping:
                 mapping[key] = value
@@ -39,6 +58,9 @@ class DeepChainMap(ChainMap[_KT, _VT]):
         self.maps[0][key] = value
 
     def __delitem__(self, key: _KT) -> None:
+        # [FUNCTION DOC]
+        # Deletes key from the first underlying mapping that contains it.
+        # Raises a key error when no mapping contains key.
         """
         Raises
         ------
@@ -55,6 +77,13 @@ class DeepChainMap(ChainMap[_KT, _VT]):
 def ensure_scope(
     level: int, global_dict=None, local_dict=None, resolvers=(), target=None
 ) -> Scope:
+    # [FUNCTION DOC]
+    # Factory for a lookup scope. Inputs: level, the number of stack frames
+    # above the caller whose variables to treat as the local frame; global_dict
+    # and local_dict, optional explicit namespaces (a Scope is allowed for
+    # local_dict); resolvers, a sequence of extra mappings; target, the object
+    # for assignments. Returns a new Scope built with the level incremented by
+    # one to account for this factory's own frame.
     """Ensure that we are grabbing the correct scope."""
     return Scope(
         level + 1,
@@ -66,6 +95,13 @@ def ensure_scope(
 
 
 def _replacer(x) -> str:
+    # [FUNCTION DOC]
+    # HELPER: for building temporary-variable names. Input x: a single
+    # character or an integer byte value. Returns the hexadecimal text of its
+    # ordinal (a character is converted via its ordinal; integers are used
+    # directly), including the leading hex marker.
+    # KNOWN ISSUE: the inline comment mentions removing the hex marker and
+    # padding, but the code does neither.
     """
     Replace a number with its hexadecimal representation. Used to tag
     temporary variables with their calling scope's id.
@@ -82,6 +118,13 @@ def _replacer(x) -> str:
 
 
 def _raw_hex_id(obj) -> str:
+    # [FUNCTION DOC]
+    # HELPER: builds a text tag identifying obj, used to make temporary names
+    # unique per scope. Packs the object's identity as a native pointer, and
+    # concatenates the hexadecimal text of each packed byte.
+    # KNOWN ISSUE: the docstring promises a padded id, but no padding is
+    # applied and every byte keeps its hex marker, so the tag has variable
+    # length.
     """Return the padded hexadecimal id of ``obj``."""
     # interpret as a pointer since that's what really what id returns
     packed = struct.pack("@P", id(obj))
@@ -101,6 +144,9 @@ DEFAULT_GLOBALS = {
 
 
 def _get_pretty_string(obj) -> str:
+    # [FUNCTION DOC]
+    # HELPER: for the scope representation. Returns the pretty-printed text of
+    # obj (as produced by the standard pretty printer, ending with a newline).
     """
     Return a prettier version of obj.
 
@@ -120,6 +166,18 @@ def _get_pretty_string(obj) -> str:
 
 
 class Scope:
+    # [CLASS DOC]
+    # Lookup environment for one expression evaluation. Fixed slots:
+    # level (stack depth used to find the caller frame), scope (chained mapping
+    # of default globals, then caller globals, then caller locals, outermost
+    # first), resolvers (chained mapping of extra namespaces, such as frame
+    # columns, consulted for non-local names), target (the object assigned to
+    # by assignment expressions) and temps (dict of temporary variables created
+    # during parsing). Key methods: resolve (name lookup), swapkey (rename an
+    # entry), add_tmp (register a temporary), full_scope (merged mapping for
+    # engines).
+    # KNOWN ISSUE: the class docstring attribute list omits the resolvers
+    # slot.
     """
     Object to hold scope, with a few bells to deal with some custom syntax
     and contexts added by pandas.
@@ -149,6 +207,19 @@ class Scope:
     def __init__(
         self, level: int, global_dict=None, local_dict=None, resolvers=(), target=None
     ) -> None:
+        # [FUNCTION DOC]
+        # Builds the scope. Inputs: level, frames to go up (stored plus one);
+        # global_dict, optional dict of globals, defaulting to the globals of
+        # the frame at the stored level; local_dict, optional dict, or another
+        # Scope whose variables, target (if set) and resolvers are inherited,
+        # defaulting to that frame's locals; resolvers, tuple of mappings
+        # (outermost first); target, assignment target, overridden by an
+        # inherited non-empty target.
+        # Starts from a copy of the default globals, layers shallow copies of
+        # globals and locals on top (copies so that later alignment does not
+        # rewrite caller variables), and starts with no temporaries.
+        # Captures a stack frame via the interpreter; the frame reference is
+        # released before returning.
         self.level = level + 1
 
         # shallow copy because we don't want to keep filling this up with what
@@ -187,12 +258,17 @@ class Scope:
         self.temps = {}
 
     def __repr__(self) -> str:
+        # [FUNCTION DOC]
+        # Returns text showing the class name and the pretty-printed key lists
+        # of the scope and the resolvers (keys only, not values).
         scope_keys = _get_pretty_string(list(self.scope.keys()))
         res_keys = _get_pretty_string(list(self.resolvers.keys()))
         return f"{type(self).__name__}(scope={scope_keys}, resolvers={res_keys})"
 
     @property
     def has_resolvers(self) -> bool:
+        # [FUNCTION DOC]
+        # Property: True when the resolvers mapping holds at least one entry.
         """
         Return whether we have any extra scope.
 
@@ -206,6 +282,16 @@ class Scope:
         return bool(len(self.resolvers))
 
     def resolve(self, key: str, is_local: bool):
+        # [FUNCTION DOC]
+        # Looks up the value of a variable. Inputs: key, the name; is_local,
+        # whether the name was marked as a local (at-sign prefixed) variable.
+        # Local names are looked up only in the captured scope. Other names are
+        # looked up in the resolvers when any exist, otherwise in the scope.
+        # If the primary lookup fails, the temporaries are tried. Raises the
+        # undefined-variable error (carrying the name and local flag) when
+        # nothing is found. Returns the value.
+        # Note: with resolvers present, a non-local name is not searched in
+        # the captured scope, only in resolvers and temporaries.
         """
         Resolve a variable name in a possibly local context.
 
@@ -245,6 +331,15 @@ class Scope:
                 raise UndefinedVariableError(key, is_local) from err
 
     def swapkey(self, old_key: str, new_key: str, new_value=None) -> None:
+        # [FUNCTION DOC]
+        # Registers new_key (with new_value, default none) in the first mapping
+        # that contains old_key; searches resolvers then scope maps (or just
+        # scope maps without resolvers), then the temporaries. Does nothing if
+        # old_key is not found.
+        # KNOWN ISSUE: the old key is not removed, despite the "replace" wording.
+        # KNOWN ISSUE: when no resolvers exist the code appends the temporaries
+        # dict directly to the scope's own list of maps (no copy is made), so
+        # each call permanently adds the temporaries mapping to the scope chain.
         """
         Replace a variable name, with a potentially new value.
 
@@ -270,6 +365,13 @@ class Scope:
                 return
 
     def _get_vars(self, stack, scopes: list[str]) -> None:
+        # [FUNCTION DOC]
+        # HELPER: for the update routine. Inputs: stack, list of frame records
+        # (frame object first); scopes, names of frame attributes (without the
+        # prefix) giving dicts, e.g. locals. For every scope name and frame, in
+        # that product order, pushes the frame's dict as a new innermost child
+        # mapping of the current scope. Mutates the scope; releases each frame
+        # reference.
         """
         Get specifically scoped variables from a list of stack frames.
 
@@ -293,6 +395,11 @@ class Scope:
                 del frame
 
     def _update(self, level: int) -> None:
+        # [FUNCTION DOC]
+        # HELPER: used when inheriting from another scope. Input level: depth.
+        # Inspects the call stack and merges the locals of the innermost
+        # level-plus-one frames into the scope. Clears its stack reference
+        # afterwards.
         """
         Update the current scope by going back `level` levels.
 
@@ -313,6 +420,11 @@ class Scope:
             del stack[:], stack
 
     def add_tmp(self, value) -> str:
+        # [FUNCTION DOC]
+        # Stores value as a temporary variable and returns its generated name,
+        # built from the value's type name, the current temporary count and
+        # a tag derived from the scope's identity. Asserts the name is unused.
+        # Side effect: adds to the temporaries dict.
         """
         Add a temporary variable to the scope.
 
@@ -338,11 +450,17 @@ class Scope:
 
     @property
     def ntemps(self) -> int:
+        # [FUNCTION DOC]
+        # Property: number of temporaries currently stored.
         """The number of temporary variables in this scope"""
         return len(self.temps)
 
     @property
     def full_scope(self) -> DeepChainMap:
+        # [FUNCTION DOC]
+        # Property: returns a new chained mapping combining, in lookup priority
+        # order, the temporaries, the resolvers' maps and the scope's maps; used
+        # as the variable dictionary for engines.
         """
         Return the full scope for use with passing to engines transparently
         as a mapping.

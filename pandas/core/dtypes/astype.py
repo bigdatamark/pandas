@@ -3,6 +3,18 @@ Functions for implementing 'astype' methods according to pandas conventions,
 particularly ones that differ from numpy.
 """
 
+# [MODULE DOC]
+# Array type-conversion routines behind the astype methods of the data
+# structures. Public contents: astype_array (convert an array to a dtype),
+# astype_array_safe (validated entry point with error-handling mode) and
+# astype_is_view (predict whether a conversion can avoid copying). Private
+# helpers handle numpy conversion with missing-value safety. Differences from
+# plain numpy: non-finite floats cannot become integers, fixed-width string
+# results are stored as object arrays, datetime-like dtypes need units, and
+# extension dtypes dispatch to their own array construction.
+# Used by the array, block and generic container modules. No import-time side
+# effects beyond imports.
+
 from __future__ import annotations
 
 import inspect
@@ -45,18 +57,45 @@ if TYPE_CHECKING:
 @overload
 def _astype_nansafe(
     arr: np.ndarray, dtype: np.dtype, copy: bool = ..., skipna: bool = ...
-) -> np.ndarray: ...
+) -> np.ndarray:
+    # [FUNCTION DOC]
+    # Typing overload stub (numpy dtype target gives an ndarray); see the
+    # implementation below.
+    ...
 
 
 @overload
 def _astype_nansafe(
     arr: np.ndarray, dtype: ExtensionDtype, copy: bool = ..., skipna: bool = ...
-) -> ExtensionArray: ...
+) -> ExtensionArray:
+    # [FUNCTION DOC]
+    # Typing overload stub (extension dtype target gives an extension array); see
+    # the implementation below.
+    ...
 
 
 def _astype_nansafe(
     arr: np.ndarray, dtype: DtypeObj, copy: bool = True, skipna: bool = False
 ) -> ArrayLike:
+    # [FUNCTION DOC]
+    # HELPER: numpy-array conversion used by the public conversion routine.
+    # Inputs: arr, a numpy array; dtype, numpy or extension dtype target; copy
+    # (default true), whether to force a copy; skipna (default false), whether
+    # missing values are skipped when converting to a string type.
+    # Behaviour in order: an extension dtype builds its array type from the
+    # sequence (honouring copy). A target that is neither dtype kind raises a
+    # value error. Datetime-like sources are wrapped in their array type, cast
+    # there, and returned as a plain numpy array. String targets flatten
+    # multi-dimensional input, convert elements to strings (keeping missing
+    # values unconverted) and restore the shape. Floating sources with integer
+    # targets go through the missing-value-safe float-to-integer routine. Object
+    # sources with a datetime target are parsed by the datetime array type;
+    # with a timedelta target are parsed to nanosecond timedeltas then cast.
+    # Unit-less datetime or timedelta targets raise a value error telling the
+    # user to add a unit. Finally the array is cast with numpy, always copying
+    # when copy is true or when either side is object (numpy cannot view
+    # to/from object).
+    # Returns the converted array.
     """
     Cast the elements of an array to a given dtype a nan-safe manner.
 
@@ -139,6 +178,15 @@ def _astype_nansafe(
 def _astype_float_to_int_nansafe(
     values: np.ndarray, dtype: np.dtype, copy: bool
 ) -> np.ndarray:
+    # [FUNCTION DOC]
+    # HELPER: float-to-integer conversion guard. Inputs: values, float array;
+    # dtype, integer numpy dtype; copy, whether to copy. Raises the integer
+    # casting error for NaN or infinite values. For unsigned targets raises a
+    # value error if any value is negative. Then casts with numpy, suppressing
+    # numpy runtime warnings. Returns the integer array.
+    # KNOWN ISSUE: the first error message is built from string pieces that lack
+    # separating spaces ("integer." runs into "Replace", and "type" runs into
+    # "that").
     """
     astype with a check preventing converting NaN to a meaningless integer value.
     """
@@ -158,6 +206,14 @@ def _astype_float_to_int_nansafe(
 
 
 def astype_array(values: ArrayLike, dtype: DtypeObj, copy: bool = False) -> ArrayLike:
+    # [FUNCTION DOC]
+    # Converts an array to a dtype. Inputs: values, numpy or extension array;
+    # dtype, an already-resolved dtype object; copy (default false). If the
+    # dtype already matches, returns the input itself or a copy. Extension-array
+    # inputs use their own conversion method (honouring copy); numpy inputs go
+    # through the missing-value-safe helper. If the target is a numpy dtype and
+    # the result has a fixed-width string dtype, it is converted to an object
+    # array (pandas does not store numpy string dtypes). Returns the result.
     """
     Cast array (ndarray or ExtensionArray) to the new dtype.
 
@@ -194,6 +250,19 @@ def astype_array(values: ArrayLike, dtype: DtypeObj, copy: bool = False) -> Arra
 def astype_array_safe(
     values: ArrayLike, dtype, copy: bool = False, errors: IgnoreRaise = "raise"
 ) -> ArrayLike:
+    # [FUNCTION DOC]
+    # Validated conversion used by the astype methods of Series and DataFrame.
+    # Inputs: values, numpy or extension array; dtype, anything convertible to a
+    # dtype (a string, type or dtype object); copy (default false); errors,
+    # "raise" (default) or "ignore". Raises a value error for any other errors
+    # setting, and a type error if dtype is an extension dtype class rather than
+    # an instance. Resolves dtype (a wrapped-numpy extension dtype is unwrapped
+    # to the numpy dtype), then converts. With errors set to ignore, value or
+    # type errors during conversion are swallowed and the original values are
+    # returned; otherwise they propagate. Returns the converted (or original)
+    # array.
+    # KNOWN ISSUE: the docstring's description sentence is truncated ("not
+    # allowing )").
     """
     Cast array (ndarray or ExtensionArray) to the new dtype.
 
@@ -250,6 +319,19 @@ def astype_array_safe(
 
 
 def astype_is_view(dtype: DtypeObj, new_dtype: DtypeObj) -> bool:
+    # [FUNCTION DOC]
+    # Predicts whether converting from dtype to new_dtype can return a view of
+    # the original data (True) or must be a copy (False). True also means
+    # "not guaranteed to be a copy".
+    # Rules in order: same-kind numeric or boolean numpy-like dtypes are a view
+    # when item sizes match. (If one dtype is numpy and the other extension, the
+    # two are swapped so the extension one is examined first.) Equal dtypes: view.
+    # Two numpy dtypes that are unequal: copy. Two string dtypes: copy only for
+    # arrow-backed string to object, else treated as a possible view. Two object
+    # dtypes: view. Two datetime/timedelta dtypes: view when units match.
+    # Timezone, period or interval dtype to object: copy. Categorical to a
+    # non-categorical dtype: copy. Otherwise, if both have an underlying numpy
+    # dtype, view only when those are equal. In all remaining cases returns True.
     """Checks if astype avoided copying the data.
 
     Parameters

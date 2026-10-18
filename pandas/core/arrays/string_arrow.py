@@ -1,3 +1,17 @@
+# [MODULE DOC]
+# Arrow-backed string extension array. Public contents: ArrowStringArray
+# (published in the arrays namespace), which stores string data in a pyarrow
+# large-string array (possibly chunked) and implements the string-method
+# interface, comparison, reductions and conversions on top of the generic
+# Arrow extension array, the Arrow string-method mixin, the object-based string
+# fallback mixin and the base string array. Private helpers check that pyarrow
+# is installed and detect string-view types.
+# Two missing-value semantics are supported, selected by the dtype's NA value:
+# the NA scalar (nullable results of boolean/integer extension types) or NaN
+# (plain numpy results, False/NaN propagation).
+# pyarrow is optional: this module imports it only when available, and the
+# array constructor raises an import error when it is missing. No other
+# import-time side effects.
 from __future__ import annotations
 
 import operator
@@ -65,6 +79,10 @@ if TYPE_CHECKING:
 
 
 def _check_pyarrow_available() -> None:
+    # [FUNCTION DOC]
+    # HELPER: guard for operations that need pyarrow. Raises an import error
+    # stating the minimum required pyarrow version when pyarrow is not
+    # installed; returns nothing otherwise.
     if not HAS_PYARROW:
         msg = (
             f"pyarrow>={PYARROW_MIN_VERSION} is required for PyArrow "
@@ -74,6 +92,9 @@ def _check_pyarrow_available() -> None:
 
 
 def _is_string_view(typ):
+    # [FUNCTION DOC]
+    # HELPER: True when typ is pyarrow's string-view type; always False when the
+    # installed pyarrow is older than version 16, which lacks that type.
     return not pa_version_under16p0 and pa.types.is_string_view(typ)
 
 
@@ -84,6 +105,16 @@ def _is_string_view(typ):
 
 @set_module("pandas.arrays")
 class ArrowStringArray(ObjectStringArrayMixin, ArrowExtensionArray, BaseStringArray):
+    # [CLASS DOC]
+    # Extension array for string data held in a pyarrow large-string array
+    # (subclass of the object-based string method mixin, the Arrow extension
+    # array and the base string array; the object-based mixin is a fallback for
+    # methods pyarrow does not support). State: the pyarrow data (inherited) and
+    # _dtype, the string dtype instance, whose NA value (NA scalar or NaN)
+    # drives result types. Invariant: the stored pyarrow type is always large
+    # string. Methods wrap the Arrow-mixin implementations for most string
+    # operations and fall back to the object implementation for flags,
+    # compiled-pattern flags, callables and unsupported regex features.
     """
     Extension array for string data in a ``pyarrow.ChunkedArray``.
 
@@ -132,6 +163,13 @@ class ArrowStringArray(ObjectStringArrayMixin, ArrowExtensionArray, BaseStringAr
     _dtype: StringDtype  # type: ignore[assignment]
 
     def __init__(self, values, *, dtype: StringDtype | None = None) -> None:
+        # [FUNCTION DOC]
+        # Inputs: values, a pyarrow array or chunked array; dtype (keyword-only,
+        # default none), a string dtype instance, defaulting to the pyarrow-storage
+        # dtype with the NA scalar as missing value. Raises an import error if
+        # pyarrow is missing. String, string-view and dictionary-of-string pyarrow
+        # data are first cast to large string. After the parent initialiser runs,
+        # a value error is raised unless the stored type is large string.
         _check_pyarrow_available()
         if isinstance(values, (pa.Array, pa.ChunkedArray)) and (
             pa.types.is_string(values.type)
@@ -160,6 +198,9 @@ class ArrowStringArray(ObjectStringArrayMixin, ArrowExtensionArray, BaseStringAr
             )
 
     def _from_pyarrow_array(self, pa_array):
+        # [FUNCTION DOC]
+        # HELPER: wraps an operation's pyarrow result in a new array of the same
+        # class, keeping this array's dtype (and so its missing-value semantics).
         """
         Construct from the pyarrow array result of an operation, retaining
         self.dtype.na_value.
@@ -168,6 +209,10 @@ class ArrowStringArray(ObjectStringArrayMixin, ArrowExtensionArray, BaseStringAr
 
     @classmethod
     def _box_pa_scalar(cls, value, pa_type: pa.DataType | None = None) -> pa.Scalar:
+        # [FUNCTION DOC]
+        # HELPER (class method): boxes a Python value as a pyarrow scalar using the
+        # parent logic, then, when no explicit pyarrow type was requested and the
+        # result is a regular string, casts it to large string. Returns the scalar.
         pa_scalar = super()._box_pa_scalar(value, pa_type)
         if pa.types.is_string(pa_scalar.type) and pa_type is None:
             pa_scalar = pc.cast(pa_scalar, pa.large_string())
@@ -177,12 +222,20 @@ class ArrowStringArray(ObjectStringArrayMixin, ArrowExtensionArray, BaseStringAr
     def _box_pa_array(
         cls, value, pa_type: pa.DataType | None = None, copy: bool = False
     ) -> pa.Array | pa.ChunkedArray:
+        # [FUNCTION DOC]
+        # HELPER (class method): boxes values as a pyarrow array using the parent
+        # logic, then, when no explicit pyarrow type was requested and the result is
+        # a regular string, casts it to large string. Returns the array.
+        # KNOWN ISSUE: the copy argument is accepted but never forwarded to the
+        # parent method, so it has no effect.
         pa_array = super()._box_pa_array(value, pa_type)
         if pa.types.is_string(pa_array.type) and pa_type is None:
             pa_array = pc.cast(pa_array, pa.large_string())
         return pa_array
 
     def __len__(self) -> int:
+        # [FUNCTION DOC]
+        # Returns the number of elements: the length of the pyarrow data.
         """
         Length of this array.
 
@@ -196,6 +249,22 @@ class ArrowStringArray(ObjectStringArrayMixin, ArrowExtensionArray, BaseStringAr
     def _from_sequence(
         cls, scalars, *, dtype: Dtype | None = None, copy: bool = False
     ) -> Self:
+        # [FUNCTION DOC]
+        # Class method building an array from a sequence. Inputs: scalars,
+        # anything array-like; dtype (keyword-only, default none), a string dtype,
+        # or the alias "string" or none; copy (keyword-only, default false).
+        # Raises an import error without pyarrow. A given dtype other than the
+        # plain alias is resolved and asserted to be a pyarrow-storage string dtype.
+        # Conversion by input kind: masked arrays use their data and mask directly
+        # (strings made without converting missing values); Arrow extension arrays
+        # use pyarrow's cast for integer, string and boolean types (booleans
+        # capitalised to match Python's text), and the generic string conversion for
+        # other types such as floats because their text differs; raw pyarrow arrays
+        # are cast to large string; everything else is converted to strings with
+        # missing values preserved. Builds the array with the dtype given.
+        # KNOWN ISSUE: when dtype is the alias string "string" it is not resolved to
+        # a dtype object and is passed on as-is to the constructor, which then
+        # stores the raw string as the dtype instead of a dtype instance.
         from pandas.core.arrays.masked import BaseMaskedArray
 
         _check_pyarrow_available()
@@ -246,16 +315,27 @@ class ArrowStringArray(ObjectStringArrayMixin, ArrowExtensionArray, BaseStringAr
     def _from_sequence_of_strings(
         cls, strings, *, dtype: ExtensionDtype, copy: bool = False
     ) -> Self:
+        # [FUNCTION DOC]
+        # Class method: builds an array from a sequence of strings by simply
+        # delegating to the general sequence constructor with the same dtype and
+        # copy setting.
         return cls._from_sequence(strings, dtype=dtype, copy=copy)
 
     @property
     def dtype(self) -> StringDtype:  # type: ignore[override]
+        # [FUNCTION DOC]
+        # Property: the string dtype instance stored on the array.
         """
         An instance of 'string[pyarrow]'.
         """
         return self._dtype
 
     def insert(self, loc: int, item) -> ArrowStringArray:
+        # [FUNCTION DOC]
+        # Inserts one item at position loc, returning a new array. Item must be a
+        # string or a missing value, else a type error naming the offending type is
+        # raised. For NaN-semantics dtypes a NaN item is first replaced by the NA
+        # scalar. Insertion itself is done by the parent method.
         if self.dtype.na_value is np.nan and item is np.nan:
             item = libmissing.NA
         if not isinstance(item, str) and item is not libmissing.NA:
@@ -266,6 +346,15 @@ class ArrowStringArray(ObjectStringArrayMixin, ArrowExtensionArray, BaseStringAr
         return super().insert(loc, item)
 
     def _convert_bool_result(self, values, na=lib.no_default, method_name=None):
+        # [FUNCTION DOC]
+        # HELPER: converts a pyarrow boolean result of a string method into the
+        # right output type. Inputs: values, pyarrow boolean data; na (default: not
+        # given), the value to use for missing results; method_name (unused). The
+        # na argument is validated. NaN-semantics dtypes: missing results become
+        # false (when na is not given or is itself missing) or na, and a numpy
+        # boolean array is returned. NA-semantics dtypes: missing results are
+        # replaced by na only if a non-missing na was given, and a nullable boolean
+        # array is returned.
         validate_na_arg(na, name="na")
         if self.dtype.na_value is np.nan:
             if na is lib.no_default or isna(na):
@@ -279,6 +368,13 @@ class ArrowStringArray(ObjectStringArrayMixin, ArrowExtensionArray, BaseStringAr
         return BooleanDtype().__from_arrow__(values)
 
     def _maybe_convert_setitem_value(self, value):
+        # [FUNCTION DOC]
+        # HELPER: validates and normalises a value being assigned. Scalars: missing
+        # values become none; non-strings raise a type error. Another array of this
+        # class passes through. Other inputs are converted to a numpy array (object
+        # dtype if not array-like) and must be one-dimensional and entirely strings
+        # or missing, else a type error is raised (empty input is accepted). The
+        # result is then given to the parent conversion, whose result is returned.
         """Maybe convert value to be pyarrow compatible."""
         if is_scalar(value):
             if isna(value):
@@ -305,6 +401,12 @@ class ArrowStringArray(ObjectStringArrayMixin, ArrowExtensionArray, BaseStringAr
         return super()._maybe_convert_setitem_value(value)
 
     def isin(self, values: ArrayLike) -> npt.NDArray[np.bool_]:
+        # [FUNCTION DOC]
+        # Membership test. Input values: array-like of candidates. Only candidates
+        # that convert to string, large string or null pyarrow scalars are kept
+        # (others cannot match). If none remain, returns an all-false numpy
+        # boolean array; otherwise tests membership in pyarrow and converts to a
+        # numpy boolean array, turning null results into false. Returns that array.
         value_set = [
             pa_scalar.as_py()
             for pa_scalar in [pa.scalar(value, from_pandas=True) for value in values]
@@ -323,6 +425,13 @@ class ArrowStringArray(ObjectStringArrayMixin, ArrowExtensionArray, BaseStringAr
         return np.array(result, dtype=np.bool_)
 
     def astype(self, dtype, copy: bool = True):
+        # [FUNCTION DOC]
+        # Converts to another dtype. Inputs: dtype, anything convertible to a
+        # dtype; copy (default true). The same dtype returns a copy (or self when
+        # copy is false). Numeric extension dtypes are produced by casting the
+        # pyarrow data to the matching pyarrow type and converting from it. Numpy
+        # floating dtypes use numpy conversion with NaN for missing values. All
+        # other dtypes go to the parent implementation.
         dtype = pandas_dtype(dtype)
 
         if dtype == self.dtype:
@@ -373,6 +482,9 @@ class ArrowStringArray(ObjectStringArrayMixin, ArrowExtensionArray, BaseStringAr
 
     @staticmethod
     def _is_re_pattern_with_flags(pat: str | re.Pattern) -> bool:
+        # [FUNCTION DOC]
+        # HELPER: True when pat is a compiled regular expression carrying flags
+        # other than ignore-case and unicode (the only ones pyarrow can honour).
         # check if `pat` is a compiled regex pattern with flags that are not
         # supported by pyarrow
         return (
@@ -384,6 +496,16 @@ class ArrowStringArray(ObjectStringArrayMixin, ArrowExtensionArray, BaseStringAr
     def _preprocess_re_pattern(
         pat: str | re.Pattern, case: bool, flags: int
     ) -> tuple[str, bool, int]:
+        # [FUNCTION DOC]
+        # HELPER (static): prepares a regular expression for pyarrow. Inputs: pat,
+        # a pattern string or compiled pattern; case, whether matching is case
+        # sensitive; flags, regex flag bits. For a compiled pattern its text is used,
+        # its flag bits replace the flags argument, ignore-case is turned into
+        # case=false, and the unicode flag is dropped (pyarrow assumes unicode). A
+        # pattern ending in an unescaped end-of-string anchor in Python's spelling
+        # is rewritten to pyarrow's spelling. Returns (pattern text, case, flags).
+        # KNOWN ISSUE: for compiled patterns, flags passed separately by the caller
+        # are discarded (a source comment marks this as a to-do).
         if isinstance(pat, re.Pattern):
             pattern = pat.pattern
             # TODO flags passed separately by user are ignored
@@ -416,6 +538,14 @@ class ArrowStringArray(ObjectStringArrayMixin, ArrowExtensionArray, BaseStringAr
         na=lib.no_default,
         regex: bool = True,
     ):
+        # [FUNCTION DOC]
+        # Substring/regex containment test. Inputs: pat, pattern; case (default
+        # true); flags (default 0); na (default: not given), result for missing
+        # values; regex (default true). Falls back to the object-based
+        # implementation when flags are given, the pattern is a compiled pattern
+        # with unsupported flags, or (in regex mode) the pattern uses features
+        # pyarrow lacks. Otherwise preprocesses the pattern and uses the Arrow
+        # implementation.
         if (
             flags
             or self._is_re_pattern_with_flags(pat)
@@ -433,6 +563,12 @@ class ArrowStringArray(ObjectStringArrayMixin, ArrowExtensionArray, BaseStringAr
         flags: int = 0,
         na: Scalar | lib.NoDefault = lib.no_default,
     ):
+        # [FUNCTION DOC]
+        # Match from the start of each string. Inputs: pat (string or compiled
+        # pattern), case (default true), flags (default 0), na (default: not
+        # given). Uses the object-based fallback when flags exist, the compiled
+        # pattern has unsupported flags or the regex is unsupported by pyarrow;
+        # otherwise the Arrow implementation after pattern preprocessing.
         if (
             flags
             or self._is_re_pattern_with_flags(pat)
@@ -450,6 +586,9 @@ class ArrowStringArray(ObjectStringArrayMixin, ArrowExtensionArray, BaseStringAr
         flags: int = 0,
         na: Scalar | lib.NoDefault = lib.no_default,
     ):
+        # [FUNCTION DOC]
+        # Match the whole string. Same inputs and fallback rules as the start-match
+        # method, but uses the Arrow whole-string match after preprocessing.
         if (
             flags
             or self._is_re_pattern_with_flags(pat)
@@ -469,6 +608,14 @@ class ArrowStringArray(ObjectStringArrayMixin, ArrowExtensionArray, BaseStringAr
         flags: int = 0,
         regex: bool = True,
     ):
+        # [FUNCTION DOC]
+        # Replace occurrences of a pattern. Inputs: pat, repl (text or callable), n
+        # (maximum replacements, -1 for all), case, flags, regex. Falls back to the
+        # object-based implementation for compiled patterns, callable replacements,
+        # case-insensitive matching, flags, replacement text with a named-group
+        # reference, or unsupported regex features in regex mode. Otherwise the
+        # pattern is preprocessed (regex mode only) and the Arrow implementation is
+        # used.
         if (
             isinstance(pat, re.Pattern)
             or callable(repl)
@@ -490,12 +637,21 @@ class ArrowStringArray(ObjectStringArrayMixin, ArrowExtensionArray, BaseStringAr
         )
 
     def _str_repeat(self, repeats: int | Sequence[int]):
+        # [FUNCTION DOC]
+        # Repeats each string. Input repeats: one integer, or a sequence of
+        # per-element counts. Sequences use the object-based fallback; a single
+        # integer uses the Arrow extension array's implementation.
         if not isinstance(repeats, int):
             return super()._str_repeat(repeats)
         else:
             return ArrowExtensionArray._str_repeat(self, repeats=repeats)
 
     def _str_count(self, pat: str, flags: int = 0):
+        # [FUNCTION DOC]
+        # Counts pattern matches per element. Inputs: pat, regular expression text;
+        # flags (default 0). With flags or an unsupported regex, uses the
+        # object-based fallback. Otherwise counts with pyarrow and converts the
+        # count array to the dtype-appropriate integer result.
         if flags or self._has_unsupported_regex(pat):
             return super()._str_count(pat, flags)
 
@@ -504,6 +660,13 @@ class ArrowStringArray(ObjectStringArrayMixin, ArrowExtensionArray, BaseStringAr
         return self._convert_int_result(result)
 
     def _str_get_dummies(self, sep: str = "|", dtype: NpDtype | None = None):
+        # [FUNCTION DOC]
+        # Builds indicator columns from delimited strings. Inputs: sep (default
+        # pipe), dtype (default 64-bit integer). Delegates to the plain Arrow
+        # extension array version, stacks the per-row indicator arrays into a
+        # two-dimensional numpy array, and casts it to the requested numpy dtype
+        # (boolean if the dtype is not a numpy dtype). Returns (indicator matrix,
+        # labels); with no labels returns an empty zero-by-zero matrix.
         if dtype is None:
             dtype = np.int64
         dummies_pa, labels = ArrowExtensionArray(self._pa_array)._str_get_dummies(
@@ -521,6 +684,11 @@ class ArrowStringArray(ObjectStringArrayMixin, ArrowExtensionArray, BaseStringAr
         return dummies.astype(dummies_dtype, copy=False), labels
 
     def _convert_int_result(self, result):
+        # [FUNCTION DOC]
+        # HELPER: converts a pyarrow integer result to the output type. For
+        # NaN-semantics dtypes: casts to 64-bit integers and returns a numpy
+        # array (via the appropriate pyarrow conversion for arrays versus chunked
+        # arrays). For NA-semantics dtypes: returns a nullable 64-bit integer array.
         if self.dtype.na_value is np.nan:
             result = result.cast(pa.int64())
             if isinstance(result, pa.Array):
@@ -532,6 +700,10 @@ class ArrowStringArray(ObjectStringArrayMixin, ArrowExtensionArray, BaseStringAr
         return Int64Dtype().__from_arrow__(result)
 
     def _convert_rank_result(self, result):
+        # [FUNCTION DOC]
+        # HELPER: converts a pyarrow rank result. NaN-semantics dtypes: returns a
+        # numpy array cast to 64-bit floats. NA-semantics dtypes: returns a nullable
+        # 64-bit float array.
         if self.dtype.na_value is np.nan:
             if isinstance(result, pa.Array):
                 result = result.to_numpy(zero_copy_only=False)
@@ -544,6 +716,16 @@ class ArrowStringArray(ObjectStringArrayMixin, ArrowExtensionArray, BaseStringAr
     def _reduce(
         self, name: str, *, skipna: bool = True, keepdims: bool = False, **kwargs
     ):
+        # [FUNCTION DOC]
+        # Reduction. Inputs: name, reduction name; skipna (keyword-only, default
+        # true); keepdims (default false); kwargs passed through. For NaN-semantics
+        # dtypes, any and all treat a string as true when non-empty (missing values
+        # count as true when not skipping missing) and run on a derived boolean
+        # array; with keepdims the result is converted to numpy boolean. Supported
+        # for all dtypes: minimum, maximum, sum, argmin, argmax, computed by the
+        # parent calculation; other names raise a type error. Position results
+        # become dtype-appropriate integer arrays; array results are rewrapped in
+        # this class; scalars are returned unchanged.
         if self.dtype.na_value is np.nan and name in ["any", "all"]:
             if not skipna:
                 nas = pc.is_null(self._pa_array)
@@ -571,6 +753,10 @@ class ArrowStringArray(ObjectStringArrayMixin, ArrowExtensionArray, BaseStringAr
             return result
 
     def value_counts(self, dropna: bool = True) -> Series:
+        # [FUNCTION DOC]
+        # Counts unique values. Input dropna (default true). Uses the parent method;
+        # for NaN-semantics dtypes, rebuilds the result Series with plain numpy
+        # counts (same index and name, no copy). Returns a Series.
         result = super().value_counts(dropna=dropna)
         if self.dtype.na_value is np.nan:
             res_values = result._values.to_numpy()
@@ -580,6 +766,14 @@ class ArrowStringArray(ObjectStringArrayMixin, ArrowExtensionArray, BaseStringAr
         return result
 
     def _cmp_method(self, other, op):
+        # [FUNCTION DOC]
+        # Element-wise comparison. Inputs: other, comparand; op, the comparison
+        # operator function. If this array uses NaN semantics and other is a string
+        # or Arrow array using NA semantics, returns the not-implemented marker so
+        # that the NA-semantics side handles it (NA has priority). Otherwise uses
+        # the parent comparison; for NaN-semantics dtypes the result is converted
+        # to a numpy boolean array with missing positions being true for
+        # inequality and false for every other operator.
         if (
             isinstance(other, (BaseStringArray, ArrowExtensionArray))
             and self.dtype.na_value is not libmissing.NA
@@ -597,4 +791,6 @@ class ArrowStringArray(ObjectStringArrayMixin, ArrowExtensionArray, BaseStringAr
         return result
 
     def __pos__(self) -> Self:
+        # [FUNCTION DOC]
+        # Unary plus is unsupported: always raises a type error naming the dtype.
         raise TypeError(f"bad operand type for unary +: '{self.dtype}'")

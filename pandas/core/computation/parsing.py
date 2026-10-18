@@ -2,6 +2,15 @@
 :func:`~pandas.eval` source string parsing functions
 """
 
+# [MODULE DOC]
+# Tokenizing support for expression strings that contain backtick-quoted
+# column names (names that are not valid identifiers). Public contents:
+# create_valid_python_identifier, clean_backtick_quoted_toks, clean_column_name,
+# tokenize_string, the parse-state enumeration and the private splitter. Also
+# defines the token number constant reserved for backtick-quoted strings.
+# Used by the expr module and by code that looks up columns referred to via
+# backticks. No import-time side effects.
+
 from __future__ import annotations
 
 from enum import Enum
@@ -22,6 +31,17 @@ BACKTICK_QUOTED_STRING = 100
 
 
 def create_valid_python_identifier(name: str) -> str:
+    # [FUNCTION DOC]
+    # Converts an arbitrary string into a valid Python identifier.
+    # Input name: any string. If it is already a non-keyword identifier it is
+    # returned unchanged. Otherwise non-ASCII characters are first replaced by
+    # backslash-escape sequences (backslashes then become either a unicode
+    # marker or a backslash marker), then each operator or punctuation
+    # character is replaced by an underscore-wrapped token name (using the
+    # tokenizer's exact-token table plus extras for space, question mark,
+    # exclamation mark, dollar, euro, degree, quotes, hash and backtick), and a
+    # fixed prefix is added. Raises a syntax error if the result is still not a
+    # valid identifier.
     """
     Create valid Python identifiers from any string.
 
@@ -80,6 +100,15 @@ def create_valid_python_identifier(name: str) -> str:
 
 
 def clean_backtick_quoted_toks(tok: tuple[int, str]) -> tuple[int, str]:
+    # [FUNCTION DOC]
+    # Maps a (token number, token text) pair: if the number is the reserved
+    # backtick-quoted number, returns the name token type with the text
+    # converted to a valid identifier; otherwise returns the pair unchanged.
+    # KNOWN ISSUE: the docstring refers to a function named with a leading
+    # underscore, but the actual function has no underscore. Also, the
+    # tokenizer in this module already replaces backtick-quoted text by
+    # identifiers before tokenizing, so the reserved number is never produced
+    # here and this mapping is effectively a pass-through.
     """
     Clean up a column name if surrounded by backticks.
 
@@ -106,6 +135,13 @@ def clean_backtick_quoted_toks(tok: tuple[int, str]) -> tuple[int, str]:
 
 
 def clean_column_name(name: Hashable) -> Hashable:
+    # [FUNCTION DOC]
+    # Predicts the identifier a column label would receive when referenced via
+    # backticks in an expression. Input name: any hashable label. String labels
+    # have backticks doubled, then the label is wrapped in backticks,
+    # tokenized, and the first token's text is converted to a valid identifier.
+    # If a syntax error occurs, returns name (the original, or the
+    # backtick-doubled form for strings) unchanged.
     """
     Function to emulate the cleaning of a backtick quoted name.
 
@@ -136,6 +172,10 @@ def clean_column_name(name: Hashable) -> Hashable:
 
 
 class ParseState(Enum):
+    # [CLASS DOC]
+    # HELPER: enumeration of lexical states used by the backtick splitter:
+    # default (outside any quote), inside backticks, inside single quotes and
+    # inside double quotes.
     DEFAULT = 0
     IN_BACKTICK = 1
     IN_SINGLE_QUOTE = 2
@@ -143,6 +183,14 @@ class ParseState(Enum):
 
 
 def _split_by_backtick(s: str) -> list[tuple[bool, str]]:
+    # [FUNCTION DOC]
+    # HELPER: splits source text into backtick-quoted and plain segments for
+    # the tokenizer. Input s: source string. Returns a list of pairs (is
+    # backtick-quoted, text); quoted segments include their surrounding
+    # backticks and a doubled backtick inside is treated as an escaped
+    # backtick. Backticks inside single or double quoted strings are ignored
+    # (a quote preceded by a backslash does not close the string). An
+    # unterminated backtick segment is emitted as plain text at the end.
     """
     Splits a str into substrings along backtick characters (`).
 
@@ -221,6 +269,12 @@ def _split_by_backtick(s: str) -> list[tuple[bool, str]]:
 
 
 def tokenize_string(source: str) -> Iterator[tuple[int, str]]:
+    # [FUNCTION DOC]
+    # Generator that tokenizes expression source. Input source: string that
+    # may contain backtick-quoted names. Each quoted segment is first replaced
+    # by the valid identifier for its inner text (may raise a syntax error),
+    # then the standard Python tokenizer is run over the result. Yields
+    # (token number, token text) pairs, dropping position information.
     """
     Tokenize a Python source code string.
 
