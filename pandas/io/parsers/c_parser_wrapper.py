@@ -1,3 +1,12 @@
+# [MODULE DOC]
+# Adapter that lets the delimited-text reader use the compiled C tokenizer
+# (the text reader in the compiled parsers module) as an engine. Public
+# content: the CParserWrapper class (a parser base subclass created by the
+# readers module for the C engine) plus helpers to filter column selections,
+# concatenate low-memory chunks (warning on mixed types) and normalize dtype
+# arguments to dtype objects. Also re-exports names imported from the base
+# parser module for use by other modules and tests. No import-time side
+# effects beyond imports.
 from __future__ import annotations
 
 from collections import defaultdict
@@ -59,10 +68,48 @@ if TYPE_CHECKING:
 
 
 class CParserWrapper(ParserBase):
+    # [CLASS DOC]
+    # Parsing engine wrapping the compiled C text reader. Extends the shared
+    # parser base. State: low_memory (read in chunks and concatenate), the
+    # underlying reader object, unnamed_cols (placeholder names found in the
+    # header), names/original names/index names resolved from the header and
+    # options, and the implicit-index flag (true when the data has more fields
+    # than the header, so leading columns form the index). Key methods: close,
+    # read (returns index, column labels and column data for up to a number of
+    # rows; repeated calls stream chunks, raising end-of-iteration when
+    # exhausted) and helpers to mark date columns as unconverted.
     low_memory: bool
     _reader: parsers.TextReader
 
     def __init__(self, src: ReadCsvBuffer[str], **kwds) -> None:
+        # [FUNCTION DOC]
+        # Builds the C reader and resolves column names from the header.
+        # Inputs: src a text buffer; kwds the option mapping (stored; a copy
+        # is used for the reader). The copy gets: low-memory removed and
+        # stored (default false); a leading-columns allowance unless the index
+        # option is exactly false; the validated column selection; the bad-lines
+        # policy as its integer value; storage, encoding, memory-map and
+        # compression keys dropped (handled earlier); the dtype argument
+        # normalized to dtype objects; and the dtype backend set to numpy when
+        # absent or unset (the pyarrow backend requires pyarrow, checked
+        # eagerly so failure happens before reading).
+        # After constructing the reader: records its unnamed-column set; sets
+        # names to none if the reader found no header, else derives names, index
+        # names, column-level names and a passed-names flag from the header rows
+        # (multi-row headers become tuples); if still no names, uses numeric
+        # positions up to the table width. Saves a copy of the names as original
+        # names, then, when a column selection exists, resolves callables to
+        # positions, validates string selections against the names (value error
+        # for missing columns) and filters names down to the selected ones,
+        # validating again if fewer names than selections remain. Validates
+        # date columns exist, marks date columns as exempt from conversion in the
+        # reader, then sets original names to the filtered names (no copy).
+        # If the reader reports no leading columns and an index option is set,
+        # cleans index names/positions from the names. With no header and no
+        # user-passed names, index names are reset to none placeholders. Sets
+        # the implicit-index flag when the reader reports leading columns.
+        # Raises: value errors from validation; import error for the missing
+        # pyarrow dependency.
         super().__init__(kwds)
         self.kwds = kwds
         kwds = kwds.copy()
@@ -174,6 +221,9 @@ class CParserWrapper(ParserBase):
         self._implicit_index = self._reader.leading_cols > 0
 
     def close(self) -> None:
+        # [FUNCTION DOC]
+        # Closes the underlying reader and any handles it opened. A value error
+        # raised by the reader (already closed) is swallowed. Returns nothing.
         # close handles opened by C parser
         try:
             self._reader.close()
@@ -181,6 +231,12 @@ class CParserWrapper(ParserBase):
             pass
 
     def _set_noconvert_columns(self) -> None:
+        # [FUNCTION DOC]
+        # HELPER: tells the C reader which columns must not be dtype-converted
+        # (date columns). Maps current names to their positions in the original
+        # names, asks the base class helper for the exempt positions, and
+        # marks each in the reader (side effect on the reader). Requires
+        # original names to be set. Returns nothing.
         """
         Set the columns that should not undergo dtype conversions.
 
@@ -203,6 +259,15 @@ class CParserWrapper(ParserBase):
     def _low_memory_column_labels(
         self, chunks: list[dict[int, ArrayLike]]
     ) -> dict[int, Hashable]:
+        # [FUNCTION DOC]
+        # HELPER: for the low-memory read path, builds a mapping from the
+        # integer field positions that key the chunk dictionaries to column
+        # labels, used for the mixed-type warning. Takes the list of chunks and
+        # uses the sorted positions of the first chunk; positions after any
+        # leading implicit index columns are paired with original names in order
+        # (pairing stops at the shorter side, non-strict); positions without a
+        # name (including leading index columns) map to none. Returns a new
+        # dictionary covering all positions.
         """
         Map the field positions ``read_low_memory`` keys its chunks by to labels.
 
@@ -231,6 +296,30 @@ class CParserWrapper(ParserBase):
         Sequence[Hashable] | MultiIndex,
         Mapping[Hashable, AnyArrayLike],
     ]:
+        # [FUNCTION DOC]
+        # Reads up to nrows rows (all remaining when none) and returns
+        # (index or none, column labels, mapping of label to column array).
+        # Reading: in low-memory mode reads chunks and concatenates them per
+        # column (destroying the chunks; may warn about mixed types);
+        # otherwise a single read. If the reader signals exhaustion: on the
+        # first read, returns an empty result built from the header names (with
+        # deduplicated names, empty index and series with the dtype option,
+        # column labels turned into a multi-level index if needed and
+        # restricted to the column selection); on later reads closes the reader
+        # and re-raises the end-of-iteration signal. Marks the first chunk done.
+        # With leading implicit-index columns: raises a parser error if the
+        # index option's length differs from their count; pops those columns
+        # from the data, date-converts them where requested, and builds the
+        # index from them; then filters and deduplicates names, relabels the
+        # remaining columns by sorted position, applies date conversions and
+        # builds column labels (possibly multi-level). Otherwise: relabels
+        # columns by sorted position using deduplicated, filtered original
+        # names, checks data length against names when no column selection
+        # exists (may warn), applies date conversions and builds index and
+        # labels from the index option.
+        # KNOWN ISSUE: in the implicit-index branch the relabeling pairs names
+        # with data strictly, raising a value error on count mismatch, while the
+        # other branch pairs non-strictly and silently truncates.
         index: Index | MultiIndex | None
         column_names: Sequence[Hashable] | MultiIndex
         try:
@@ -351,6 +440,11 @@ class CParserWrapper(ParserBase):
 
 
 def _filter_usecols(usecols, names: SequenceT) -> SequenceT | list[Hashable]:
+    # [FUNCTION DOC]
+    # HELPER: restricts column labels to the selected columns. Resolves a
+    # callable selection to positions first. If a selection exists and its size
+    # differs from the label count, returns a new list of labels whose position
+    # or value is in the selection; otherwise returns the labels unchanged.
     # hackish
     usecols = evaluate_callable_usecols(usecols, names)
     if usecols is not None and len(names) != len(usecols):
@@ -362,6 +456,19 @@ def _concatenate_chunks(
     chunks: list[dict[int, ArrayLike]],
     column_names: Sequence[Hashable] | Mapping[int, Hashable],
 ) -> dict:
+    # [FUNCTION DOC]
+    # HELPER: merges the per-chunk column dictionaries from a low-memory read.
+    # Inputs: chunks list of mappings from column key to array (consumed:
+    # entries are popped out); column_names indexable by those keys, used for
+    # the warning text. For each key of the first chunk, collects its arrays;
+    # categorical columns are merged with a categorical union without sorting
+    # categories; others are concatenated. If more than one non-categorical
+    # dtype appeared and the result is object dtype, the column is recorded and
+    # one dtype warning is emitted at the end listing position and label (label
+    # omitted when none) and advising to set dtype or disable low-memory mode.
+    # Returns a dictionary of key to merged array.
+    # KNOWN ISSUE: the warning text is assembled by joining a one-element list,
+    # which is redundant but harmless.
     """
     Concatenate chunks of data read with low_memory=True.
 
@@ -411,6 +518,13 @@ def _concatenate_chunks(
 def ensure_dtype_objs(
     dtype: DtypeArg | dict[Hashable, DtypeArg] | None,
 ) -> DtypeObj | dict[Hashable, DtypeObj] | None:
+    # [FUNCTION DOC]
+    # Normalizes a dtype argument to dtype objects. None stays None; a
+    # default-valued mapping becomes a new default-valued mapping whose default
+    # and entries are converted (the default factory's result is converted
+    # once); a plain mapping becomes a new mapping with converted values; any
+    # other value is converted to a single dtype object. Raises whatever dtype
+    # conversion raises for invalid dtypes.
     """
     Ensure we have either None, a dtype object, or a dictionary mapping to
     dtype objects.

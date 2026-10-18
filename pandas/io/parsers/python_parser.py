@@ -1,3 +1,15 @@
+# [MODULE DOC]
+# Pure-Python parsing engine for delimited and fixed-width text. Public
+# content: PythonParser (the delimited engine, a parser base subclass used by
+# the readers module for the python engine and by the Excel reader for nested
+# lists), FixedWidthReader (an iterator that slices lines into fields by
+# column ranges, optionally inferring the ranges from sample lines) and
+# FixedWidthFieldParser (a parser specialization using that reader). A private
+# validator checks the skipfooter argument and a module constant holds the
+# byte-order-mark character that is stripped from the start of the data.
+# Relationships: builds on the shared parser base for index, date, type
+# inference and name handling; uses the standard csv module for tokenizing.
+# No import-time side effects beyond imports.
 from __future__ import annotations
 
 from collections import (
@@ -94,12 +106,42 @@ _BOM = "\ufeff"
 
 
 class PythonParser(ParserBase):
+    # [CLASS DOC]
+    # Delimited-text parsing engine written in Python. Extends the shared
+    # parser base. State: data (an iterator of string rows or a nested list for
+    # Excel input), buf (lines read ahead and pushed back), pos (rows consumed
+    # including skipped ones), line_pos (rows consumed that were not skipped),
+    # dialect-related settings (delimiter, quote and escape characters, quoting,
+    # doublequote, initial-space skipping, line terminator, blank-line
+    # skipping, comment character, thousands and decimal markers), skip
+    # settings (a skip-rows spec and a predicate derived from it, skip-footer
+    # count), column bookkeeping (columns, original names, original column
+    # count, selected column positions, columns excluded from thousands
+    # handling) and an Excel-only flag for index-name rows. Main methods: read
+    # (return a chunk), the line fetching/cleaning helpers, and the header and
+    # index inference helpers. Subclassed for fixed-width input.
     _no_thousands_columns: set[int]
 
     def __init__(self, f: ReadCsvBuffer[str] | list, **kwds) -> None:
-        """
-        Workhorse function for processing nested list into DataFrame
-        """
+        # [FUNCTION DOC]
+        # Sets up the parser, reads the header and infers columns and index.
+        # Inputs: f a text stream with a line-reading method, or a nested list
+        # of rows (Excel); kwds the option mapping, which must contain skiprows,
+        # skipfooter, delimiter, quotechar, escapechar, doublequote,
+        # skipinitialspace, lineterminator, quoting, skip_blank_lines,
+        # thousands, decimal and comment (plus the base class keys); the Excel
+        # flag has_index_names is optional (default false).
+        # Behavior: runs base initialization; builds the skip predicate (a
+        # callable skiprows is used directly, otherwise membership in the
+        # collection); validates skipfooter (value error if not a non-negative
+        # integer); creates the row source (a list is used as is, anything else
+        # must have a line-reading method and is wrapped by the reader factory);
+        # infers raw columns from the header, resolves multi-row header columns,
+        # derives original names, index names and cleans them; selects default
+        # column positions when none were chosen; computes columns exempt from
+        # thousands handling. Raises a value error unless the decimal marker has
+        # length one. May consume lines from the stream (header, and one or two
+        # lookahead lines buffered for later).
         super().__init__(kwds)
 
         self.data: Iterator[list[str]] | list[list[Scalar]] = []
@@ -112,6 +154,8 @@ class PythonParser(ParserBase):
         if callable(self.skiprows):
             self.skipfunc = self.skiprows
         else:
+            # (lambda: membership test of a row number in the skip-rows
+            # collection; returns a boolean)
             self.skipfunc = lambda x: x in self.skiprows
 
         self.skipfooter = _validate_skipfooter_arg(kwds["skipfooter"])
@@ -185,6 +229,13 @@ class PythonParser(ParserBase):
 
     @cache_readonly
     def num(self) -> re.Pattern:
+        # [FUNCTION DOC]
+        # Cached read-only property. Returns a compiled pattern matching strings
+        # that look like numbers: optional sign, digits (with the thousands
+        # marker allowed between digit groups when one is configured), an
+        # optional decimal part using the configured decimal marker, and an
+        # optional exponent. Used to decide whether a text cell is numeric
+        # before removing thousands separators or replacing the decimal marker.
         decimal = re.escape(self.decimal)
         if self.thousands is None:
             regex = rf"^[\-\+]?[0-9]*({decimal}[0-9]*)?([0-9]?(E|e)\-?[0-9]+)?$"
@@ -197,6 +248,24 @@ class PythonParser(ParserBase):
         return re.compile(regex)
 
     def _make_reader(self, f: IO[str] | ReadCsvBuffer[str]) -> Iterator[list[str]]:
+        # [FUNCTION DOC]
+        # HELPER: wraps the text stream into an iterator of field lists.
+        # Input f is the stream. Three modes by delimiter: (a) a single-character
+        # delimiter uses the standard csv reader in strict mode with a dialect
+        # built from the parser settings (a custom line terminator raises a
+        # value error); rows to skip are first discarded from the stream so the
+        # csv reader never sees them; (b) no delimiter: reads lines until one
+        # that is neither skipped nor a comment, lets the csv sniffer detect the
+        # delimiter from it, pushes that parsed line into the buffer and
+        # advances the position counters; (c) a longer delimiter is treated as a
+        # regular expression, and each stripped line is split with it (the
+        # first line is read separately, which makes the file-iteration
+        # continue after it). Returns the iterator. May raise csv errors from
+        # sniffing (e.g. when no delimiter can be determined).
+        # KNOWN ISSUE: in the sniffing mode the loop reading the first
+        # valid line never checks for end of input, so an empty or
+        # all-skipped file ends with a sniffer error rather than an
+        # empty-data error.
         sep = self.delimiter
 
         if sep is None or len(sep) == 1:
@@ -206,6 +275,12 @@ class PythonParser(ParserBase):
                 )
 
             class MyDialect(csv.Dialect):
+                # [CLASS DOC]
+                # HELPER: local csv dialect built from the enclosing parser's
+                # settings (delimiter, quote and escape characters, doublequote,
+                # initial-space skipping, quoting mode) with a newline line
+                # terminator. The delimiter may be overridden after creation
+                # (sniffed or explicit).
                 delimiter = self.delimiter
                 quotechar = self.quotechar
                 escapechar = self.escapechar
@@ -256,6 +331,12 @@ class PythonParser(ParserBase):
         else:
 
             def _read():
+                # [FUNCTION DOC]
+                # HELPER: generator for the regular-expression delimiter mode.
+                # Compiles the delimiter once, yields the field list of the
+                # first line (read explicitly) and then of every remaining line
+                # of the stream, each stripped of surrounding whitespace before
+                # splitting.
                 line = f.readline()
                 pat = re.compile(sep)
 
@@ -275,6 +356,19 @@ class PythonParser(ParserBase):
         Sequence[Hashable] | MultiIndex,
         Mapping[Hashable, ArrayLike | Series],
     ]:
+        # [FUNCTION DOC]
+        # Reads up to rows data rows (all remaining when none) and returns
+        # (index or none, column labels, mapping of label to converted column).
+        # Fetches cleaned rows; if the source is exhausted, the first call
+        # proceeds with no content (to yield an empty result with the right
+        # metadata) while later calls close the parser and re-raise the
+        # end-of-iteration signal. With no content, builds the empty result from
+        # deduplicated original names. Otherwise: if the Excel index-names flag
+        # is set and the first row consists solely of empty entries matching the
+        # column count, that row is treated as the index name row and removed;
+        # transposes rows into columns, splits off the implicit-index columns,
+        # converts types per column, applies date conversions and builds the
+        # index and final column labels.
         try:
             content = self._get_lines(rows)
         except StopIteration:
@@ -328,6 +422,14 @@ class PythonParser(ParserBase):
         self,
         alldata: list[np.ndarray],
     ) -> tuple[Mapping[Hashable, np.ndarray], Sequence[Hashable]]:
+        # [FUNCTION DOC]
+        # HELPER: separates data columns from implicit index columns.
+        # Input alldata is the list of all column arrays. Computes deduplicated
+        # original names, offsets by the number of index columns when an
+        # implicit index is in use, checks the data length against the names
+        # (possibly warning), and returns (mapping of name to array for each name
+        # that has data, the deduplicated names). Names beyond the available
+        # data are omitted from the mapping.
         # error: Cannot determine type of 'index_col'
         names = dedup_names(
             self.orig_names,
@@ -356,6 +458,12 @@ class PythonParser(ParserBase):
         Sequence[Hashable] | MultiIndex,
         Mapping[Hashable, ArrayLike | Series],
     ]:
+        # [FUNCTION DOC]
+        # Legacy convenience wrapper around read. Reads size rows; when size is
+        # none, uses the chunk size attribute. Returns what read returns.
+        # KNOWN ISSUE: the chunk size attribute is not defined in this class
+        # (a type-checker suppression hides this), so calling with no size fails
+        # with an attribute error unless something else sets it.
         if size is None:
             # error: "PythonParser" has no attribute "chunksize"
             size = self.chunksize  # type: ignore[attr-defined]
@@ -365,6 +473,14 @@ class PythonParser(ParserBase):
         self,
         data: Mapping[Hashable, np.ndarray],
     ) -> Mapping[Hashable, ArrayLike]:
+        # [FUNCTION DOC]
+        # HELPER: prepares per-column options and converts the raw columns.
+        # Input data maps column name to raw object array. Resolves converters
+        # and dtypes so that integer keys become names. Resolves missing-value
+        # markers: when they are a mapping, integer keys are turned into names
+        # (entries with a none key are dropped) for both string and float marker
+        # mappings; otherwise they are used as is. Delegates to the conversion
+        # routine and returns its mapping of name to converted array.
         # apply converters
         clean_conv = self._clean_mapping(self.converters)
         clean_dtypes = self._clean_mapping(self.dtype)
@@ -405,6 +521,28 @@ class PythonParser(ParserBase):
         converters=None,
         dtypes=None,
     ) -> dict[Any, np.ndarray]:
+        # [FUNCTION DOC]
+        # HELPER: converts each raw column according to converters, dtype,
+        # missing-value markers and the date list. Inputs: dct name to raw
+        # array; na_values and na_fvalues string and float missing markers
+        # (global or per-column); converters per-column functions (optional);
+        # dtypes a mapping or a single dtype (optional). Returns a new dict of
+        # name to converted array.
+        # Per column: the missing set is empty unless missing-value filtering is
+        # on. Date columns are left unconverted except that missing markers are
+        # replaced with NaN in place so date parsing works. With a converter:
+        # warns that the dtype is ignored if both given; applies the converter
+        # to every value (on a value error, retries skipping entries matching
+        # missing markers), then infers types without numeric/boolean
+        # attempts. Without one: skips numeric/boolean attempts when the target
+        # is a string or extension dtype; infers types; if a dtype is given and
+        # differs from the inferred one (or is an extension type), raises a
+        # value error when casting a column with missing values to boolean (for
+        # non-extension types), else casts through the cast helper. Raises a
+        # value error if date columns are not all present.
+        # KNOWN ISSUE: in the converter retry path, the missing mask is built
+        # from the global missing marker collection even when it is a
+        # mapping, ignoring the per-column markers.
         result = {}
         parse_date_cols = validate_parse_dates_presence(self.parse_dates, self.columns)
         for c, values in dct.items():
@@ -483,6 +621,24 @@ class PythonParser(ParserBase):
 
     @final
     def _cast_types(self, values: ArrayLike, cast_type: DtypeObj, column) -> ArrayLike:
+        # [FUNCTION DOC]
+        # HELPER: casts an inferred column to an explicit target dtype.
+        # Inputs: values the array; cast_type the target dtype object; column
+        # the label, used only in error text. Returns the cast array.
+        # Categorical targets: non-object input without known categories is first
+        # stringified (matching the C engine); categories are the unique
+        # non-missing values and codes are looked up, honoring configured true
+        # values. Other extension targets: built from string sequences by the
+        # array type (boolean targets additionally receive true, false and
+        # missing markers, with values stringified first); a missing
+        # implementation raises a not-implemented error naming the array type.
+        # Extension-array input with a numpy target: element-wise cast without
+        # copying. String targets: converted to string objects keeping missing
+        # as is. Anything else: a copying array cast, with a value error naming
+        # the column and dtype on failure.
+        # KNOWN ISSUE: a source comment notes the string conversion skips
+        # missing values here while the categorical path does not; the
+        # difference is untested.
         """
         Cast values to specified type
 
@@ -557,6 +713,10 @@ class PythonParser(ParserBase):
 
     @cache_readonly
     def _have_mi_columns(self) -> bool:
+        # [FUNCTION DOC]
+        # HELPER: cached read-only property; true when the header option is a
+        # list, tuple or array with more than one entry (multi-row header),
+        # false otherwise (including no header).
         if self.header is None:
             return False
 
@@ -569,6 +729,39 @@ class PythonParser(ParserBase):
     def _infer_columns(
         self,
     ) -> tuple[list[list[Scalar | None]], int, set[Scalar | None]]:
+        # [FUNCTION DOC]
+        # HELPER: reads the header line(s) and determines the raw columns.
+        # Returns (list of column-label lists, one per header row; original
+        # column count from the first header row; set of placeholder names given
+        # to blank header cells). Consumes lines from the source; pushed-back
+        # lookahead stays in the buffer (cleared unless a multi-row header ended
+        # with a non-header extra line).
+        # With a header: for each header row index, advances to that line. If the
+        # file ends early: raises a value error stating the header spec and the
+        # actual number of lines when some lines existed (excluding the
+        # multi-row case's extra line); for a multi-row header with a later row
+        # missing, appends a row of none labels and returns early; if no lines
+        # at all, uses the user names or raises an empty-data error when there
+        # are none. Blank cells become placeholder names that include the
+        # position (and header level for multi-row headers). For single-row
+        # headers, duplicates are renamed by appending a counter, handling
+        # named columns before placeholders; if a dtype mapping covers the
+        # original name it is copied to the renamed one (mutating the dtype
+        # option). For multi-row headers the extra last row is probed to see
+        # whether it holds index names; if not in that format it is replaced by
+        # none labels and kept in the buffer.
+        # After the header: with user names, reads the first data row to check
+        # length, raises a value error if more names than both header fields and
+        # first data row width, raises a type error if names are combined with a
+        # multi-row header, applies column selection and uses the user names
+        # (restricted to selected positions when the counts differ); without
+        # user names applies column selection to the header columns.
+        # Without a header: uses the first data line width as the column count;
+        # user names or numeric positions become the columns, with checks that a
+        # non-callable column selection length matches the names length (value
+        # error otherwise).
+        # KNOWN ISSUE: a source comment notes the duplicate-name logic should be
+        # replaced by the shared deduplication helper.
         names = self.names
         num_original_columns = 0
         clear_buffer = True
@@ -751,6 +944,12 @@ class PythonParser(ParserBase):
 
     @cache_readonly
     def _header_line(self):
+        # [FUNCTION DOC]
+        # HELPER: cached read-only property giving the first data line when the
+        # header option is none (so that the width and index inference can reuse
+        # it); returns none when a header exists. Takes the buffered line, or,
+        # if the source is empty, a copy of the user names, and raises an
+        # empty-data error when there are neither.
         # Store line for reuse in _get_index_name
         if self.header is not None:
             return None
@@ -770,8 +969,21 @@ class PythonParser(ParserBase):
         usecols_key: list[Scalar | None],
         num_original_columns: int,
     ) -> list[list[Scalar | None]]:
+        # [FUNCTION DOC]
+        # HELPER: applies the column selection to the header columns and records
+        # the selected positions.
+        # Inputs: columns list of label lists (one per header row); usecols_key
+        # the labels used to look up string selections; num_original_columns the
+        # field count for bounds checks. Without a selection returns the columns
+        # unchanged. A callable selection yields positions from the key labels;
+        # a selection containing strings requires a single header row (value
+        # error otherwise) and maps names to positions, failing validation with
+        # a value error for missing names, while integers in the mixed list are
+        # used as positions; an all-integer selection raises a parser error if
+        # any index is at or beyond the field count. Returns new label lists
+        # containing only the selected positions, and stores the sorted
+        # positions (side effect).
         """
-        Sets self._col_indices
 
         usecols_key is used if there are string usecols.
         """
@@ -813,6 +1025,10 @@ class PythonParser(ParserBase):
         return columns
 
     def _buffered_line(self) -> list[Scalar]:
+        # [FUNCTION DOC]
+        # HELPER: returns the first buffered line without consuming it, reading
+        # a new line (which also appends it to the buffer) when the buffer is
+        # empty. May propagate end-of-iteration from the line reader.
         """
         Return a line from buffer, filling buffer if required.
         """
@@ -822,6 +1038,16 @@ class PythonParser(ParserBase):
             return self._next_line()
 
     def _check_for_bom(self, first_row: list[Scalar]) -> list[Scalar]:
+        # [FUNCTION DOC]
+        # HELPER: removes a leading byte-order mark from the first row.
+        # Returns the row unchanged when it is empty, its first element is not a
+        # non-empty string, or that string does not start with the mark.
+        # Otherwise returns a new row whose first element has the mark removed;
+        # if the mark is immediately followed by the quote character, the
+        # quoted content between the quotes (plus anything after the closing
+        # quote) replaces the element.
+        # KNOWN ISSUE: if a quote follows the mark but no closing quote exists in
+        # the element, the search for the closing quote raises a value error.
         """
         Checks whether the file begins with the BOM character.
         If it does, remove it. In addition, if there is quoting
@@ -875,6 +1101,9 @@ class PythonParser(ParserBase):
         return new_row_list + first_row[1:]
 
     def _is_line_empty(self, line: Sequence[Scalar]) -> bool:
+        # [FUNCTION DOC]
+        # HELPER: returns true if the row has no fields or every field is falsy
+        # (empty string, none, zero).
         """
         Check if a line is empty or not.
 
@@ -890,6 +1119,18 @@ class PythonParser(ParserBase):
         return not line or all(not x for x in line)
 
     def _next_line(self) -> list[Scalar]:
+        # [FUNCTION DOC]
+        # HELPER: fetches the next logical row, appends it to the lookahead
+        # buffer and returns it.
+        # Skips rows selected by the skip predicate (advancing the position),
+        # then reads rows, removes comment text, and drops blank rows when blank
+        # skipping is on (otherwise keeps rows that were blank to begin with or
+        # still have content after comment removal). For a nested-list source
+        # exhaustion is signaled as end-of-iteration; for stream sources the
+        # underlying iteration's own end-of-iteration is propagated, and rows
+        # that fail to tokenize (reported or ignored per bad-line policy) are
+        # skipped. When the row is the first of the file, a byte-order mark is
+        # stripped. Increments the line counter.
         if isinstance(self.data, list):
             while self.skipfunc(self.pos):
                 if self.pos >= len(self.data):
@@ -944,6 +1185,14 @@ class PythonParser(ParserBase):
         return line
 
     def _alert_malformed(self, msg: str, row_num: int) -> None:
+        # [FUNCTION DOC]
+        # HELPER: reports a malformed row according to the bad-line policy.
+        # Inputs: msg the message; row_num the one-based row number for display.
+        # Error policy: raises a parser error with the message. Warn policy or a
+        # callable policy: emits a parser warning saying the line is skipped,
+        # with the message. Skip policy: does nothing.
+        # KNOWN ISSUE: the docstring mentions only the error and warn cases; a
+        # callable policy also produces the warning.
         """
         Alert a user about a malformed row, depending on value of
         `self.on_bad_lines` enum.
@@ -972,6 +1221,16 @@ class PythonParser(ParserBase):
             )
 
     def _next_iter_line(self, row_num: int) -> list[Scalar] | None:
+        # [FUNCTION DOC]
+        # HELPER: takes the next row from the stream source.
+        # Input row_num is the one-based number of the row, for messages.
+        # Returns the row, or none if the tokenizer failed on it and the policy
+        # allows continuing. A csv tokenization error under the error or warn
+        # policy is reported via the malformed-row alert (which raises for
+        # error), with a clearer message for null bytes and an extra hint when a
+        # footer is being skipped; under skip or callable policies the row is
+        # silently dropped. End-of-iteration propagates. Requires a stream
+        # source (asserts it is not a list).
         """
         Wrapper around iterating through `self.data` (CSV source).
 
@@ -1018,6 +1277,13 @@ class PythonParser(ParserBase):
             return None
 
     def _check_comments(self, lines: list[list[Scalar]]) -> list[list[Scalar]]:
+        # [FUNCTION DOC]
+        # HELPER: strips comment text from rows. Without a comment character
+        # returns the input unchanged. Otherwise returns new rows: each field is
+        # kept whole if it is not a string, lacks the comment character, or is
+        # one of the missing-value markers; the first field containing the
+        # comment character is truncated at it (kept only if non-empty) and the
+        # rest of the row is dropped.
         if self.comment is None:
             return lines
         ret = []
@@ -1039,6 +1305,11 @@ class PythonParser(ParserBase):
         return ret
 
     def _remove_empty_lines(self, lines: list[list[T]]) -> list[list[T]]:
+        # [FUNCTION DOC]
+        # HELPER: returns a new list of rows without blank rows, where blank
+        # means no fields, or a single field that is a string consisting only of
+        # whitespace. Rows with several fields, or a single non-string field,
+        # are kept. Overridden for fixed-width input.
         """
         Iterate through the lines and remove any that are
         either empty or contain only one whitespace value
@@ -1067,6 +1338,11 @@ class PythonParser(ParserBase):
         return ret
 
     def _check_thousands(self, lines: list[list[Scalar]]) -> list[list[Scalar]]:
+        # [FUNCTION DOC]
+        # HELPER: removes the thousands separator from numeric-looking text
+        # cells. Returns the rows unchanged when no separator is configured,
+        # otherwise the result of the shared replacement routine with the
+        # separator replaced by nothing.
         if self.thousands is None:
             return lines
 
@@ -1077,6 +1353,13 @@ class PythonParser(ParserBase):
     def _search_replace_num_columns(
         self, lines: list[list[Scalar]], search: str, replace: str
     ) -> list[list[Scalar]]:
+        # [FUNCTION DOC]
+        # HELPER: shared routine for thousands and decimal handling. Inputs:
+        # lines rows of fields; search the marker to replace; replace its
+        # replacement. Returns new rows in which a field is rewritten (all
+        # occurrences of the marker replaced) only if it is a string containing
+        # the marker, its column is not excluded from this treatment, and its
+        # stripped text matches the numeric pattern; other fields are kept.
         ret = []
         for line in lines:
             rl = []
@@ -1094,6 +1377,11 @@ class PythonParser(ParserBase):
         return ret
 
     def _check_decimal(self, lines: list[list[Scalar]]) -> list[list[Scalar]]:
+        # [FUNCTION DOC]
+        # HELPER: normalizes a custom decimal marker to a period in
+        # numeric-looking text cells. Returns the rows unchanged when the marker
+        # already is the default period; otherwise the result of the shared
+        # replacement routine.
         if self.decimal == parser_defaults["decimal"]:
             return lines
 
@@ -1104,6 +1392,23 @@ class PythonParser(ParserBase):
     def _get_index_name(
         self,
     ) -> tuple[Sequence[Hashable] | None, list[Hashable], list[Hashable]]:
+        # [FUNCTION DOC]
+        # HELPER: determines index names and finalizes original names/columns.
+        # Returns (index names or none, original names, columns). Reads the
+        # first data line (the stored header line or a freshly read one) and
+        # one more lookahead line. Case 1 (implicit index): more fields in the
+        # first data line than original columns (unless the index option is
+        # false) means leading columns form the index; sets the implicit flag,
+        # defaults the index columns to the leading positions and returns no
+        # names. Case 0 (names on separate rows): with a header, the index not
+        # false, and the next line's width equal to the first line's width plus
+        # the original column count, the first line holds index names: sets the
+        # index columns to those positions, drops one buffered line, prepends
+        # the index names to the columns and original names, updates the
+        # original column count, and returns early with that line as the index
+        # names. Case 2: otherwise cleans index names from the columns per the
+        # index option (updating it). Side effects on buffer, flags and index
+        # option as described.
         """
         Try several cases to get lines:
 
@@ -1179,6 +1484,26 @@ class PythonParser(ParserBase):
         return index_name, orig_names, columns
 
     def _rows_to_cols(self, content: list[list[Scalar]]) -> list[np.ndarray]:
+        # [FUNCTION DOC]
+        # HELPER: transposes row lists into column arrays, enforcing width.
+        # Input content is a non-empty list of rows (an empty list fails when
+        # taking the maximum width). Expected width is the original column count
+        # plus the index columns when an implicit index is used. If some row is
+        # wider than expected, and the index option is not false and no column
+        # selection is set, each wide row is handled per bad-line policy: with
+        # a callable, the callable receives the row and may return a replacement
+        # (truncated if still too wide, recorded as a callable-source problem)
+        # or none to drop it; with error or warn policies the row is recorded
+        # (the error policy stops at the first) and dropped; narrow rows are kept.
+        # Then each recorded problem is reported via the malformed-row alert with
+        # a message giving the expected width, row number and actual width, plus
+        # a hint about quoting for multi-character delimiters. The rows are
+        # converted to an object matrix padded to the expected width and
+        # transposed to a list of column arrays; with a column selection, only
+        # the index columns (if implicit) and selected positions are kept.
+        # Under the skip policy wide rows are dropped silently. Row number
+        # accounting subtracts the pending rows and footer length from the
+        # current position.
         col_len = self.num_original_columns
 
         if self._implicit_index:
@@ -1264,6 +1589,21 @@ class PythonParser(ParserBase):
         return zipped_content
 
     def _get_lines(self, rows: int | None = None) -> list[list[Scalar]]:
+        # [FUNCTION DOC]
+        # HELPER: gathers up to rows data rows (all when none), cleaned.
+        # Takes rows from the lookahead buffer first, then from the source (list
+        # slice for nested lists; stream iteration otherwise, counting only
+        # non-skipped rows toward the requested number), applies row skipping,
+        # advances the position counter, and clears the buffer when source rows
+        # were read. Raises end-of-iteration when the source is exhausted and
+        # nothing was gathered. Then drops footer rows, strips comments, drops
+        # blank rows if configured, removes thousands separators and normalizes
+        # the decimal marker. Returns the resulting rows.
+        # KNOWN ISSUE: the footer rows are cut from every chunk returned, not
+        # only the last one, so chunked reading with a footer count drops that
+        # many rows from each chunk.
+        # KNOWN ISSUE: the offset computation checks the position against none
+        # although the position is always an integer (dead branch).
         lines = self.buf
         new_rows = None
 
@@ -1342,6 +1682,11 @@ class PythonParser(ParserBase):
         return self._check_decimal(lines)
 
     def _remove_skipped_rows(self, new_rows: list[list[Scalar]]) -> list[list[Scalar]]:
+        # [FUNCTION DOC]
+        # HELPER: when a skip-rows option is set (truthy), returns the rows whose
+        # absolute position (index within the batch plus the current position)
+        # does not satisfy the skip predicate; otherwise returns the rows
+        # unchanged.
         if self.skiprows:
             return [
                 row for i, row in enumerate(new_rows) if not self.skipfunc(i + self.pos)
@@ -1349,6 +1694,13 @@ class PythonParser(ParserBase):
         return new_rows
 
     def _set_no_thousand_columns(self) -> set[int]:
+        # [FUNCTION DOC]
+        # HELPER: computes positions of columns where thousands/decimal rewriting
+        # must not be applied. Includes date-parsed columns (when columns exist
+        # and date parsing is on, via the base-class helper) and, when a dtype
+        # option exists, columns whose target dtype is not numeric (or is
+        # boolean): for a single dtype all columns if it is non-numeric, for a
+        # mapping the listed columns that qualify. Returns the set of positions.
         no_thousands_columns: set[int] = set()
         if self.columns and self.parse_dates:
             assert self._col_indices is not None
@@ -1375,6 +1727,14 @@ class PythonParser(ParserBase):
 
 
 class FixedWidthReader(abc.Iterator):
+    # [CLASS DOC]
+    # Iterator over a fixed-width text stream that yields, for each line, the
+    # list of stripped field strings cut out by column ranges. State: f the
+    # stream, buffer an optional iterator of lines consumed while inferring
+    # column ranges (replayed before continuing the stream), delimiter the set
+    # of characters stripped from field edges (whitespace by default, or line
+    # breaks plus the user delimiter), comment, colspecs the list of half-open
+    # (start, end) ranges. Implements the standard iterator protocol.
     """
     A reader of fixed-width lines.
     """
@@ -1388,6 +1748,16 @@ class FixedWidthReader(abc.Iterator):
         skiprows: set[int] | None = None,
         infer_nrows: int = 100,
     ) -> None:
+        # [FUNCTION DOC]
+        # Inputs: f the stream; colspecs a list of (start, end) pairs or the
+        # word infer; delimiter an extra character set to strip (none means strip
+        # whitespace-like characters); comment the comment marker or none;
+        # skiprows a set of row numbers to ignore while inferring (optional);
+        # infer_nrows the number of sample rows for inference (default 100).
+        # Builds the strip set, infers the ranges when requested (consuming and
+        # buffering sample lines), and validates the ranges: raises a type error
+        # if they are not a list or tuple, or if any entry is not a two-element
+        # list or tuple whose items are integers or none.
         self.f = f
         self.buffer: Iterator | None = None
         self.delimiter = "\r\n" + delimiter if delimiter else "\n\r\t "
@@ -1418,6 +1788,13 @@ class FixedWidthReader(abc.Iterator):
                 )
 
     def get_rows(self, infer_nrows: int, skiprows: set[int] | None = None) -> list[str]:
+        # [FUNCTION DOC]
+        # Reads lines from the stream for column inference. Reads until
+        # infer_nrows lines that are not in the skip set have been collected (or
+        # the stream ends). Every line read, skipped or not, is also stored so
+        # the main iteration can replay it (the buffer attribute is set,
+        # consuming the stream by side effect). Returns only the non-skipped
+        # lines.
         """
         Read rows from self.f, skipping as specified.
 
@@ -1458,6 +1835,14 @@ class FixedWidthReader(abc.Iterator):
     def detect_colspecs(
         self, infer_nrows: int = 100, skiprows: set[int] | None = None
     ) -> list[tuple[int, int]]:
+        # [FUNCTION DOC]
+        # Infers field ranges from sample lines. Inputs: infer_nrows number of
+        # lines to sample (default 100); skiprows lines to ignore. Reads the
+        # sample (raising an empty-data error if there are no lines), strips
+        # comments from each sample line if a comment marker is set, marks every
+        # character position covered by a run of non-delimiter characters in
+        # any sample line, and returns the start/end pairs of the marked runs
+        # (half-open). Positions with no content in any sample separate fields.
         # Regex escape the delimiters
         delimiters = "".join([rf"\{x}" for x in self.delimiter])
         pattern = re.compile(f"([^{delimiters}]+)")
@@ -1478,6 +1863,11 @@ class FixedWidthReader(abc.Iterator):
         return edge_pairs
 
     def __next__(self) -> list[str]:
+        # [FUNCTION DOC]
+        # Returns the next line cut into fields: takes lines from the replay
+        # buffer first (discarding it when exhausted), then from the stream;
+        # end-of-iteration propagates. Each field is the slice over its
+        # half-open range, with the strip set removed from both ends.
         if self.buffer is not None:
             try:
                 line = next(self.buffer)
@@ -1491,18 +1881,32 @@ class FixedWidthReader(abc.Iterator):
 
 
 class FixedWidthFieldParser(PythonParser):
+    # [CLASS DOC]
+    # Fixed-width variant of the Python parsing engine. Extends PythonParser by
+    # swapping the row source for a fixed-width reader and by redefining blank
+    # row detection. Extra state: colspecs (column ranges or the word infer) and
+    # infer_nrows (sample size for inference).
     """
     Specialization that Converts fixed-width fields into DataFrames.
     See PythonParser for details.
     """
 
     def __init__(self, f: ReadCsvBuffer[str], **kwds) -> None:
+        # [FUNCTION DOC]
+        # Removes the column-range and sample-size options from the option
+        # mapping (mutating it; both keys are required), stores them, then runs
+        # the parent initialization, which calls back into the reader factory
+        # below.
         # Support iterators, convert to a list.
         self.colspecs = kwds.pop("colspecs")
         self.infer_nrows = kwds.pop("infer_nrows")
         PythonParser.__init__(self, f, **kwds)
 
     def _make_reader(self, f: IO[str] | ReadCsvBuffer[str]) -> FixedWidthReader:
+        # [FUNCTION DOC]
+        # HELPER: override of the reader factory; builds a fixed-width reader on
+        # the stream using the stored column ranges, delimiter, comment,
+        # skip-rows spec and sample size.
         return FixedWidthReader(
             f,
             self.colspecs,
@@ -1513,6 +1917,11 @@ class FixedWidthFieldParser(PythonParser):
         )
 
     def _remove_empty_lines(self, lines: list[list[T]]) -> list[list[T]]:
+        # [FUNCTION DOC]
+        # HELPER: override of blank row removal for fixed-width rows. Returns the
+        # rows that have at least one field that is either not a string or a
+        # string with non-whitespace content (blank rows are lists of empty
+        # strings, so a length test would not work).
         """
         Returns the list of lines without the empty ones. With fixed-width
         fields, empty lines become arrays of empty strings.
@@ -1527,6 +1936,10 @@ class FixedWidthFieldParser(PythonParser):
 
 
 def _validate_skipfooter_arg(skipfooter: int) -> int:
+    # [FUNCTION DOC]
+    # HELPER: validates the footer-row count for the parser constructor.
+    # Raises a value error if it is not an integer, or if it is negative;
+    # otherwise returns it unchanged.
     """
     Validate the 'skipfooter' parameter.
 

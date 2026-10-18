@@ -1,5 +1,13 @@
 """pickle compat"""
 
+# [MODULE DOC]
+# Pickle (de)serialization of arbitrary objects, with pandas-aware handling of
+# compression, URLs and storage options. Public contents: to_pickle and
+# read_pickle, both exported as top-level pandas functions (and used by the
+# DataFrame/Series pickle methods). Relationships: uses the shared io common
+# handle opener for compression and remote paths, and falls back to the
+# pandas compat unpickler for objects written by older pandas versions.
+# No import-time side effects beyond imports.
 from __future__ import annotations
 
 import pickle
@@ -37,6 +45,17 @@ def to_pickle(
     protocol: int = pickle.HIGHEST_PROTOCOL,
     storage_options: StorageOptions | None = None,
 ) -> None:
+    # [FUNCTION DOC]
+    # Serializes obj with the standard pickle module to a path, URL or binary
+    # writable buffer.
+    # Inputs: obj is any picklable object; filepath_or_buffer is the target;
+    # compression is infer (default, guessed from the file extension), none,
+    # a method name, or a mapping with a method key plus options for the
+    # compressor; protocol is the pickle protocol (default highest; any
+    # negative value is replaced by the highest); storage_options are passed to
+    # the remote filesystem layer.
+    # Returns nothing. Side effect: writes to the target through a handle that
+    # is closed on exit. Pickling errors propagate.
     """
     Pickle (serialize) object to file.
 
@@ -133,6 +152,19 @@ def read_pickle(
     compression: CompressionOptions = "infer",
     storage_options: StorageOptions | None = None,
 ) -> DataFrame | Series:
+    # [FUNCTION DOC]
+    # Loads and returns a pickled object from a path, URL or binary buffer.
+    # Inputs: filepath_or_buffer is the source; compression is infer (default),
+    # none, a method name or a mapping with a method key plus options;
+    # storage_options are passed to the remote filesystem layer.
+    # Behavior: first tries the standard unpickler with all warnings silenced
+    # (e.g. about moved modules). If that raises an attribute, import,
+    # module-not-found or type error (typical for objects written by older
+    # pandas versions), rewinds the stream and retries with the pandas compat
+    # unpickler. Errors from the second attempt propagate.
+    # KNOWN ISSUE: the return annotation says a frame or series, but any
+    # unpickled object is returned.
+    # Security: unpickling untrusted data can execute arbitrary code.
     """
     Load pickled pandas object (or any object) from file and return unpickled object.
 

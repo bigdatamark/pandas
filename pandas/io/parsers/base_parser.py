@@ -1,3 +1,19 @@
+# [MODULE DOC]
+# Shared machinery for the text parsing engines. Public-ish contents: the
+# ParserBase class (state and helpers common to the C, Python and pyarrow
+# engine wrappers), a module-level defaults mapping of parser options (used by
+# the readers module to detect non-default arguments and to fill in defaults),
+# and free functions: date_converter (string column to datetimes),
+# get_na_values (per-column missing-value sets), is_index_col (is an index
+# column specification really set), validate_parse_dates_presence (check date
+# columns exist) and evaluate_callable_usecols (resolve a callable column
+# selector). The private function validating the column-selection argument is
+# used by the base class constructor.
+# Relationships: imported by the three engine wrapper modules and by the
+# readers module; depends on the compiled parser module for missing-value
+# constants and sanitizing helpers, on datetime tools, and on the arrow
+# extension array for the pyarrow dtype backend.
+# Import-time side effects: builds the defaults mapping only.
 from __future__ import annotations
 
 from collections import defaultdict
@@ -84,7 +100,24 @@ if TYPE_CHECKING:
 
 
 class ParserBase:
+    # [CLASS DOC]
+    # Base class for all parsing engine wrappers. Holds the parsed option state
+    # shared by engines: column names (names, original names, column and index
+    # names), index column spec, date parsing options (parse flag/list, date
+    # parser, date format, day-first, cache flag), missing-value options,
+    # dtype, converters, dtype backend, true/false values, header, validated
+    # column selection and its inferred kind, bad-line policy, an implicit
+    # index flag and a first-chunk flag used to special-case empty input.
+    # Subclasses must supply their own reading logic; this class provides
+    # index construction, type inference, date conversion and name cleaning
+    # helpers, most marked final. Invariants: the usecols attribute is either a
+    # set, a callable or None; header list-likes imply integer-only index
+    # columns and no usecols/names.
     class BadLineHandleMethod(Enum):
+        # [CLASS DOC]
+        # Enumeration of policies for rows with too many fields: ERROR (0)
+        # raise, WARN (1) warn and skip, SKIP (2) silently skip. The numeric
+        # value is what the compiled C reader receives.
         ERROR = 0
         WARN = 1
         SKIP = 2
@@ -97,6 +130,22 @@ class ParserBase:
     usecols_dtype: str | None
 
     def __init__(self, kwds) -> None:
+        # [FUNCTION DOC]
+        # Initializes shared parser state from the options mapping kwds.
+        # Reads (without removing) names, index_col, na_values, na_fvalues,
+        # na_filter (default false when absent), keep_default_na (default
+        # true), dtype (shallow-copied), converters, dtype_backend, true_values,
+        # false_values, header, usecols (required key), and on_bad_lines
+        # (defaults to the error policy). Removes from the mapping (mutating
+        # it) parse_dates, date_parser, date_format, dayfirst and cache_dates,
+        # with defaults false, no-default sentinel, none, false and true.
+        # Raises a type error if parse_dates is neither boolean/None nor a list
+        # (None is coerced to false). When header is list-like (multi-row
+        # header): raises a value error if usecols or names are given, and
+        # normalizes index_col to a list of integers, raising a value error if
+        # it contains non-integers. Sets all derived attributes (usecols and its
+        # inferred kind via the private validator), the first-chunk flag to
+        # true and the implicit-index flag to false.
         self._implicit_index = False
 
         self.names = kwds.get("names")
@@ -169,10 +218,21 @@ class ParserBase:
         self.on_bad_lines = kwds.get("on_bad_lines", self.BadLineHandleMethod.ERROR)
 
     def close(self) -> None:
+        # [FUNCTION DOC]
+        # Releases resources held by the parser. The base implementation does
+        # nothing; engine wrappers override it.
         pass
 
     @final
     def _should_parse_dates(self, i: int) -> bool:
+        # [FUNCTION DOC]
+        # HELPER: decides whether the index column at position i should be
+        # converted to dates. If the parse-dates option is a plain boolean,
+        # returns it. Otherwise (a list), looks up the index name at position i
+        # (if index names are known) and the original column position (the
+        # position itself, or the index column entry at that position when an
+        # index column spec exists) and returns true if either the position or
+        # the name appears in the list.
         if isinstance(self.parse_dates, bool):
             return self.parse_dates
         else:
@@ -195,6 +255,24 @@ class ParserBase:
     ) -> tuple[
         Sequence[Hashable], Sequence[Hashable] | None, Sequence[Hashable] | None, bool
     ]:
+        # [FUNCTION DOC]
+        # HELPER: derives column labels when the header spans several rows.
+        # Inputs: header is the list of header rows (each a list of labels);
+        # index_names the caller's index names; passed_names whether the user
+        # supplied names. Returns a four-tuple: names, index names, column-level
+        # names and a passed-names flag.
+        # With a single header row, returns that row, the unchanged index names,
+        # no column-level names and the unchanged flag. Otherwise: removes the
+        # last header row (mutating the header) and uses it, cleaned of
+        # placeholder names, as the index names (the index_names argument is
+        # thus ignored in this case); requires all remaining rows to have equal
+        # length (raises a parser error otherwise); builds one tuple per
+        # non-index column by zipping the rows, then reinserts the index
+        # column positions as placeholders at their numeric positions; builds
+        # column-level names from each row's entry at the first index column
+        # (none if absent or an unnamed placeholder, or all none when there is
+        # no index column). The returned flag is always true for multi-row
+        # headers.
         """
         Extract and return the names, index_names, col_names if the column
         names are a MultiIndex.
@@ -263,6 +341,10 @@ class ParserBase:
         columns: SequenceT,
         col_names: Sequence[Hashable] | None = None,
     ) -> SequenceT | MultiIndex:
+        # [FUNCTION DOC]
+        # HELPER: if the column labels are a non-empty sequence of tuples,
+        # returns a multi-level index built from them, using col_names as level
+        # names; otherwise returns the columns unchanged.
         # possibly create a column mi here
         if is_potential_multi_index(columns):
             columns_mi = cast("Sequence[tuple[Hashable, ...]]", columns)
@@ -273,6 +355,19 @@ class ParserBase:
     def _make_index(
         self, alldata, columns, indexnamerow: list[Scalar] | None = None
     ) -> tuple[Index | None, Sequence[Hashable] | MultiIndex]:
+        # [FUNCTION DOC]
+        # HELPER: splits index columns out of parsed column data.
+        # Inputs: alldata the list of column arrays (mutated: index columns are
+        # removed); columns the column labels (mutated: index labels removed
+        # unless an implicit index is in use); indexnamerow optional list of
+        # index names read from a separate row.
+        # Returns (index or None, columns possibly turned into a multi-level
+        # index). When the index column option is a non-empty list, picks those
+        # positions out of the data (string entries raise a value error as
+        # invalid), removes them from the largest position down, aggregates
+        # them into an index via the aggregation helper and, if an index name
+        # row is given, names the index with the leading entries of it (as many
+        # as the surplus over the column count). Otherwise no index is built.
         index: Index | None
         if isinstance(self.index_col, list) and len(self.index_col):
             to_remove = []
@@ -304,6 +399,13 @@ class ParserBase:
 
     @final
     def _clean_mapping(self, mapping):
+        # [FUNCTION DOC]
+        # HELPER: converts integer keys of a per-column mapping (converters or
+        # dtypes) to column names using the original names. Non-mapping input is
+        # returned as is. Integer keys that are already names are kept. For a
+        # default-valued mapping, the remaining original columns are given the
+        # mapping's default via lookup so the result is explicit. Returns a new
+        # plain dict. Requires original names to be set.
         """converts col numbers to names"""
         if not isinstance(mapping, dict):
             return mapping
@@ -322,6 +424,20 @@ class ParserBase:
 
     @final
     def _agg_index(self, index) -> Index:
+        # [FUNCTION DOC]
+        # HELPER: builds the final index from raw index column arrays.
+        # Input is a sequence of arrays, one per index level. For each level:
+        # optionally converts to dates when date parsing applies; picks the
+        # missing-value set (empty when missing-value filtering is off; the
+        # per-column sets when the missing-value option is a mapping and the
+        # level has a name, else empty); looks up a per-level target dtype and
+        # whether a converter exists (by index name); skips numeric/boolean
+        # inference when the target is a string dtype or a converter exists;
+        # infers types; and creates an index, with the cast dtype if given
+        # (avoiding range-index inference) or via the generic sequence
+        # constructor. Returns the single index or a multi-level index when
+        # there are several levels. Raises a value error if index names and
+        # arrays differ in count (strict pairing) when names are known.
         arrays = []
         converters = self._clean_mapping(self.converters)
         clean_dtypes = self._clean_mapping(self.dtype)
@@ -391,6 +507,19 @@ class ParserBase:
     def _set_noconvert_dtype_columns(
         self, col_indices: list[int], names: Sequence[Hashable]
     ) -> set[int]:
+        # [FUNCTION DOC]
+        # HELPER: computes positions of columns exempt from dtype conversion
+        # (those used for date parsing). Does not itself mark anything; returns
+        # a set of integer positions.
+        # Inputs: col_indices positions corresponding to names; names column
+        # labels. Builds a position lookup: for integer-valued usecols, the
+        # sorted selected positions; for callable or string usecols, the given
+        # col_indices; otherwise none. Each date-spec entry (when parse-dates
+        # is a list, first validated for presence, raising a value error for
+        # missing names) is mapped to a position: integers are translated via
+        # the lookup when present, names are translated via their index in names
+        # then col_indices. If parse-dates is a true flag instead, the index
+        # column(s) are exempted.
         """
         Set the columns that should not undergo dtype conversions.
 
@@ -423,6 +552,13 @@ class ParserBase:
             usecols = None
 
         def _set(x) -> int:
+            # [FUNCTION DOC]
+            # HELPER: nested function converting a date specification entry (an
+            # integer position relative to the selected columns, or a name) into
+            # an absolute column position, using the enclosing lookup lists.
+            # Integers are looked up in the selected-position list when one
+            # exists; a non-integer result is treated as a name and translated
+            # via its index in names.
             if usecols is not None and is_integer(x):
                 x = usecols[x]
 
@@ -449,6 +585,29 @@ class ParserBase:
     def _infer_types(
         self, values, na_values, no_dtype_specified, try_num_bool: bool = True
     ) -> tuple[ArrayLike, int]:
+        # [FUNCTION DOC]
+        # HELPER: infers and converts the type of one parsed column.
+        # Inputs: values an array of raw values; na_values the set of strings
+        # and floats considered missing; no_dtype_specified true when the user
+        # gave no explicit dtype for this column (enables nullable/arrow
+        # outputs for non-default dtype backends); try_num_bool whether to try
+        # numeric then boolean conversion (default true). Returns (converted
+        # array, count of missing values found).
+        # Numeric or boolean input: marks entries matching the non-string
+        # missing values as NaN in place (integers are first promoted to float)
+        # and returns. Object input with conversion enabled: tries numeric
+        # conversion; on a value or type error falls back to sanitizing object
+        # values (turning missing strings to NaN) and keeping them. With a
+        # nullable backend, results become masked integer, boolean or float
+        # arrays (an all-missing column becomes an integer array). If the
+        # result is still object (and not leading with an integer), tries
+        # boolean conversion using true/false values; nullable backends turn
+        # booleans into a masked boolean array and remaining non-datetime
+        # objects into a string-dtype array. Finally, for the pyarrow backend,
+        # wraps results into an arrow extension array (an all-missing masked
+        # result becomes an arrow null array). Requires pyarrow in that case.
+        # KNOWN ISSUE: the docstring says try_num_bool defaults to try; the
+        # default is the boolean true.
         """
         Infer types of values, possibly casting
 
@@ -567,14 +726,20 @@ class ParserBase:
         self,
         names: Index,
         data: DataFrame,
-    ) -> DataFrame: ...
+    ) -> DataFrame:
+        # [FUNCTION DOC]
+        # Overload stub: frame input yields a frame. See the implementation.
+        ...
 
     @overload
     def _do_date_conversions(
         self,
         names: Sequence[Hashable],
         data: Mapping[Hashable, ArrayLike],
-    ) -> Mapping[Hashable, ArrayLike]: ...
+    ) -> Mapping[Hashable, ArrayLike]:
+        # [FUNCTION DOC]
+        # Overload stub: mapping input yields a mapping. See the implementation.
+        ...
 
     @final
     def _do_date_conversions(
@@ -582,6 +747,16 @@ class ParserBase:
         names: Sequence[Hashable] | Index,
         data: Mapping[Hashable, ArrayLike] | DataFrame,
     ) -> Mapping[Hashable, ArrayLike] | DataFrame:
+        # [FUNCTION DOC]
+        # HELPER: applies date conversion to the columns named in the
+        # parse-dates option. Inputs: names column labels (used to resolve
+        # integer specs that are not themselves keys of the data); data a
+        # mapping of arrays or a frame, MUTATED in place (converted columns are
+        # replaced). If parse-dates is not a list, returns data untouched. For
+        # each entry, skips columns that are index columns or index names
+        # (those are converted when the index is built); otherwise converts via
+        # the module date converter with the parser's day-first, cache and
+        # format options. Returns the same data object.
         if not isinstance(self.parse_dates, list):
             return data
         for colspec in self.parse_dates:
@@ -610,6 +785,16 @@ class ParserBase:
         columns: Sequence[Hashable],
         data: Sequence[ArrayLike],
     ) -> None:
+        # [FUNCTION DOC]
+        # HELPER: warns when the number of data columns differs from the number
+        # of column labels. Does nothing when an index column is set (truthy),
+        # when lengths agree, or when there are no labels. Allows exactly one
+        # extra trailing data column if it consists only of empty strings or
+        # missing values (trailing delimiters). Otherwise emits a parser warning
+        # about possible data loss. Returns nothing.
+        # KNOWN ISSUE: the docstring claims a parser error is raised for an
+        # index column that is not false; the code only warns (and skips the
+        # check for any truthy index column).
         """Checks if length of data is equal to length of column names.
 
         One set of trailing commas is allowed. self.index_col not False
@@ -636,6 +821,10 @@ class ParserBase:
 
     @final
     def _validate_usecols_names(self, usecols: SequenceT, names: Sequence) -> SequenceT:
+        # [FUNCTION DOC]
+        # HELPER: verifies every selected column exists among names. Raises a
+        # value error listing the missing ones; otherwise returns usecols
+        # unchanged.
         """
         Validates that all usecols are present in a given
         list of names. If not, raise a ValueError that
@@ -668,6 +857,20 @@ class ParserBase:
 
     @final
     def _clean_index_names(self, columns, index_col) -> tuple[list | None, list, list]:
+        # [FUNCTION DOC]
+        # HELPER: resolves index column specs into names and positions.
+        # Inputs: columns the column labels; index_col the index spec. Returns
+        # (index names, remaining column labels, index positions). If no index
+        # is requested (none or false) returns no names and inputs unchanged.
+        # Otherwise copies the inputs (no mutation of arguments): with empty
+        # columns returns a list of none names per index column; for each spec,
+        # a string is matched to the first equal label (its position replaces
+        # the spec; if no label matches, the spec stays a string), an integer
+        # is used as a position into the labels; the chosen labels are removed
+        # from the returned columns. Names that are placeholder unnamed-column
+        # markers are replaced by none.
+        # KNOWN ISSUE: removal uses value equality, so duplicate labels may
+        # remove an earlier occurrence than the indexed one.
         if not is_index_col(index_col):
             return None, columns, index_col
 
@@ -708,6 +911,20 @@ class ParserBase:
     def _get_empty_meta(
         self, columns: Sequence[HashableT], dtype: DtypeArg | None = None
     ) -> tuple[Index, list[HashableT], dict[HashableT, Series]]:
+        # [FUNCTION DOC]
+        # HELPER: builds the empty result structure when the input had no data
+        # rows. Inputs: columns labels; dtype a single dtype, a mapping from
+        # label or integer position to dtype, or none. Returns (empty index,
+        # list of remaining column labels, mapping of label to an empty series
+        # of the column's dtype).
+        # Dtypes: a non-mapping dtype applies to all columns (none meaning
+        # object); a mapping is keyed by label (integer keys translated via
+        # positions) with unmapped columns getting none. Index: when index
+        # column and index names are both set, creates an empty index (or
+        # multi-level index) with those names and dtypes, then removes the index
+        # columns from the labels. Otherwise a default empty index.
+        # Side effect: sorts the stored index column list in place (mutating
+        # parser state) before removing columns.
         columns = list(columns)
 
         index_col = self.index_col
@@ -767,6 +984,18 @@ def date_converter(
     cache_dates: bool = True,
     date_format: dict[Hashable, str] | str | None = None,
 ):
+    # [FUNCTION DOC]
+    # Converts one column of values to datetimes.
+    # Inputs: date_col an array; col the column label (used to pick a format
+    # when date_format is a mapping); dayfirst whether ambiguous dates are
+    # day-first; cache_dates whether to use the conversion cache; date_format a
+    # single format string, a per-column mapping, or none (infer).
+    # Returns the input unchanged if it is already datetime or timedelta
+    # typed. Otherwise converts to strings and parses (timezone-naive
+    # handling, no forced UTC); on a value or type error returns the string
+    # array instead of raising. A parsed datetime index is returned as a
+    # writable object/datetime array; other results return their underlying
+    # values.
     if date_col.dtype.kind in "Mm":
         return date_col
 
@@ -793,6 +1022,10 @@ def date_converter(
     return result._values
 
 
+# Module-level mapping of default values for parser options (names as accepted
+# by the readers). Used by the readers module to fill in defaults and detect
+# options explicitly set by the caller. Includes the bad-line policy default of
+# error and the unset dtype-backend sentinel.
 parser_defaults = {
     "delimiter": None,
     "escapechar": None,
@@ -834,6 +1067,13 @@ parser_defaults = {
 
 
 def get_na_values(col, na_values, na_fvalues, keep_default_na: bool):
+    # [FUNCTION DOC]
+    # Resolves the missing-value sets for one column. If na_values is a
+    # mapping: returns the string and float sets stored for the column when it
+    # is a key (the float mapping must also contain the key); else the default
+    # string set and an empty set when keep_default_na is true, or two empty
+    # sets otherwise. If na_values is not a mapping, returns both inputs
+    # unchanged. Returns a pair (string-valued set, float-valued set).
     """
     Get the NaN values for a given column.
 
@@ -869,12 +1109,27 @@ def get_na_values(col, na_values, na_fvalues, keep_default_na: bool):
 
 
 def is_index_col(col) -> bool:
+    # [FUNCTION DOC]
+    # Returns true when the index column option designates real columns, that
+    # is, it is neither none nor the boolean false (zero and empty lists count
+    # as set).
     return col is not None and col is not False
 
 
 def validate_parse_dates_presence(
     parse_dates: bool | list, columns: Sequence[Hashable]
 ) -> set:
+    # [FUNCTION DOC]
+    # Checks that the columns requested for date parsing exist. Inputs:
+    # parse_dates the option (only a list is examined; anything else returns an
+    # empty set); columns the available labels. Names that are strings must be
+    # present; non-string entries that are labels are accepted as is; other
+    # entries are treated as positions and resolved to labels by indexing.
+    # Raises a value error listing the sorted missing string names. Returns the
+    # set of resolved labels (excluding missing ones).
+    # KNOWN ISSUE: the docstring omits the parse_dates parameter and describes
+    # return as names to be parsed; an out-of-range position raises an index
+    # error rather than a value error.
     """
     Check if parse_dates are in columns.
 
@@ -919,6 +1174,13 @@ def validate_parse_dates_presence(
 
 
 def _validate_usecols_arg(usecols):
+    # [FUNCTION DOC]
+    # HELPER: validates the column selection option used by the base
+    # constructor. None passes through as (none, none); a callable passes
+    # through as (callable, none). Non-list-like values (including strings)
+    # and list-likes whose inferred kind is not empty, integer or string raise
+    # a value error. Valid list-likes are converted to a set and returned with
+    # the inferred kind (empty, integer or string).
     """
     Validate the 'usecols' parameter.
 
@@ -972,19 +1234,31 @@ def _validate_usecols_arg(usecols):
 def evaluate_callable_usecols(
     usecols: Callable[[Hashable], object],
     names: Iterable[Hashable],
-) -> set[int]: ...
+) -> set[int]:
+    # [FUNCTION DOC]
+    # Overload stub: a callable selector yields a set of positions. See the
+    # implementation.
+    ...
 
 
 @overload
 def evaluate_callable_usecols(
     usecols: SequenceT, names: Iterable[Hashable]
-) -> SequenceT: ...
+) -> SequenceT:
+    # [FUNCTION DOC]
+    # Overload stub: a non-callable selector is returned unchanged. See the
+    # implementation.
+    ...
 
 
 def evaluate_callable_usecols(
     usecols: Callable[[Hashable], object] | SequenceT,
     names: Iterable[Hashable],
 ) -> SequenceT | set[int]:
+    # [FUNCTION DOC]
+    # Resolves a column selector against column labels. If usecols is callable,
+    # evaluates it on each label and returns the set of positions for which it
+    # is truthy; otherwise returns usecols unchanged (including none).
     """
     Check whether or not the 'usecols' parameter
     is a callable.  If so, enumerates the 'names'

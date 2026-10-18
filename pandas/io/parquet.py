@@ -1,5 +1,16 @@
 """parquet compat"""
 
+# [MODULE DOC]
+# Parquet reading and writing with two interchangeable engines (pyarrow and
+# fastparquet), both optional dependencies imported lazily.
+# Public contents: to_parquet (used by the DataFrame writer method) and
+# read_parquet (exported as a top-level pandas function). Internal: an engine
+# selector, a path/handle preparation helper, an abstract base implementation
+# class, and the pyarrow and fastparquet implementation classes.
+# Relationships: engine "auto" consults the io.parquet.engine option and tries
+# pyarrow then fastparquet; file opening goes through the shared io common
+# helpers; arrow results are converted to frames via the shared arrow helper.
+# No import-time side effects beyond imports.
 from __future__ import annotations
 
 import io
@@ -50,6 +61,15 @@ if TYPE_CHECKING:
 
 
 def get_engine(engine: str) -> BaseImpl:
+    # [FUNCTION DOC]
+    # Selects and instantiates a parquet engine implementation.
+    # Input engine is auto, pyarrow or fastparquet. For auto, the io.parquet.engine
+    # option is read first; if that is still auto, tries the pyarrow
+    # implementation then the fastparquet one and returns the first whose
+    # dependency imports, otherwise raises an import error that lists each
+    # failure message. Explicit names build that implementation directly (an
+    # import error propagates if its dependency is missing). Any other value
+    # raises a value error. Returns the new implementation instance.
     """return our implementation"""
     if engine == "auto":
         engine = get_option("io.parquet.engine")
@@ -92,6 +112,29 @@ def _get_path_or_handle(
 ) -> tuple[
     FilePath | ReadBuffer[bytes] | WriteBuffer[bytes], IOHandles[bytes] | None, Any
 ]:
+    # [FUNCTION DOC]
+    # HELPER: normalizes a path/buffer and filesystem for the pyarrow engine.
+    # Inputs: path is a path, URL or binary buffer; fs is an optional pyarrow
+    # or fsspec filesystem; storage_options are remote connection options; mode
+    # is the open mode (read-binary default); is_dir says the target is known to
+    # be a directory (e.g. partitioned writes).
+    # Returns a triple: the path or handle to hand to pyarrow, an I/O handles
+    # object that the caller must close (or None), and the filesystem to use (or
+    # None).
+    # Behavior: converts path-like to string. A given filesystem must be a
+    # pyarrow or fsspec one (else value error); a pyarrow filesystem combined
+    # with storage options is a not-implemented error. For fsspec-style URLs
+    # without a filesystem: if no storage options, tries a pyarrow filesystem
+    # from the URI (type/arrow-invalid errors ignored); if still none, resolves
+    # an fsspec filesystem and stripped path using the storage options.
+    # Otherwise, storage options with a non-URL or non-read use raise a value
+    # error. Finally, when there is no filesystem, the target is not known to be
+    # a directory, and it is a string that is not an existing directory, it is
+    # opened through the shared handle opener (binary) so compression/URL
+    # handling applies, and the opened stream replaces the path.
+    # KNOWN ISSUE: the URI-resolution step passes the original path argument
+    # rather than the stringified path, so path-like inputs reaching that
+    # step are not stringified there.
     """File handling for PyArrow."""
     path_or_handle = stringify_path(path)
     if fs is not None:
@@ -147,20 +190,45 @@ def _get_path_or_handle(
 
 
 class BaseImpl:
+    # [CLASS DOC]
+    # Abstract base for parquet engine implementations. Holds no state. Provides
+    # a shared dataframe validator and abstract write and read methods that
+    # subclasses (the pyarrow and fastparquet engines) must override.
     @staticmethod
     def validate_dataframe(df: DataFrame) -> None:
+        # [FUNCTION DOC]
+        # Static check that the argument is a frame; raises a value error
+        # otherwise. Returns nothing.
         if not isinstance(df, DataFrame):
             raise ValueError("to_parquet only supports IO with DataFrames")
 
     def write(self, df: DataFrame, path, compression, **kwargs) -> None:
+        # [FUNCTION DOC]
+        # Abstract write; always raises the abstract-method error. Subclasses
+        # accept the frame, destination, compression and engine options.
         raise AbstractMethodError(self)
 
     def read(self, path, columns=None, **kwargs) -> DataFrame:
+        # [FUNCTION DOC]
+        # Abstract read; always raises the abstract-method error. Subclasses
+        # return a frame from the source, optionally limited to columns.
         raise AbstractMethodError(self)
 
 
 class PyArrowImpl(BaseImpl):
+    # [CLASS DOC]
+    # Parquet engine backed by pyarrow. Subclass of the abstract base.
+    # State: api, the imported pyarrow package (with its parquet submodule
+    # loaded). Construction requires pyarrow and registers pandas' arrow
+    # extension types as an import side effect. Methods: write (frame to
+    # file/dataset, preserving frame attributes in schema metadata) and read
+    # (file/dataset to frame, restoring attributes).
     def __init__(self) -> None:
+        # [FUNCTION DOC]
+        # Imports pyarrow (raising an import error with a hint if missing),
+        # imports its parquet module, imports the pandas arrow extension type
+        # module purely for its registration side effect, and stores the pyarrow
+        # package as the api attribute.
         import_optional_dependency(
             "pyarrow", extra="pyarrow is required for parquet support."
         )
@@ -182,6 +250,25 @@ class PyArrowImpl(BaseImpl):
         filesystem=None,
         **kwargs,
     ) -> None:
+        # [FUNCTION DOC]
+        # Writes a frame with pyarrow.
+        # Inputs: df the frame (validated); path destination path/buffer;
+        # compression codec (default snappy, or none); index whether to store
+        # the index (None lets pyarrow decide, storing a range index as
+        # metadata); storage_options remote options; partition_cols column names
+        # for a partitioned dataset write (None for a single file); filesystem
+        # optional filesystem; extra keyword arguments go to the pyarrow
+        # writer, except a schema entry which is removed and used for the arrow
+        # table conversion.
+        # Behavior: converts to an arrow table; if the frame has attributes,
+        # serializes them as JSON into the table schema metadata (merged with
+        # existing metadata). Prepares the path/handle via the helper; a
+        # buffered file writer with a string or bytes name is replaced by that
+        # name decoded to text. Writes a dataset when partition columns are
+        # given, otherwise a single table. Any handle opened by the helper is
+        # closed afterwards even on error. Returns nothing.
+        # Errors: value error for non-frame input or bad filesystem or storage
+        # options; others propagate.
         self.validate_dataframe(df)
 
         from_pandas_kwargs: dict[str, Any] = {"schema": kwargs.pop("schema", None)}
@@ -248,6 +335,20 @@ class PyArrowImpl(BaseImpl):
         to_pandas_kwargs: dict[str, Any] | None = None,
         **kwargs,
     ) -> DataFrame:
+        # [FUNCTION DOC]
+        # Reads a parquet file or dataset into a frame with pyarrow.
+        # Inputs: path source; columns optional column subset; filters optional
+        # row filters in pyarrow format; dtype_backend unset, nullable numpy or
+        # pyarrow; storage_options remote options; filesystem optional
+        # filesystem; to_pandas_kwargs extra options for the arrow-to-pandas
+        # conversion; extra keyword arguments are passed to the arrow reader
+        # (the use-pandas-metadata flag is always forced on, overriding any
+        # caller value, which mutates the local keyword mapping).
+        # Behavior: prepares path/handle, reads the arrow table, converts it
+        # while suppressing a block-construction deprecation warning, then, if
+        # the schema metadata has a pandas attributes entry, decodes it from
+        # JSON and assigns it to the frame attributes. Closes any opened handle
+        # in all cases. Returns the frame.
         kwargs["use_pandas_metadata"] = True
 
         path_or_handle, handles, filesystem = _get_path_or_handle(
@@ -287,7 +388,17 @@ class PyArrowImpl(BaseImpl):
 
 
 class FastParquetImpl(BaseImpl):
+    # [CLASS DOC]
+    # Parquet engine backed by fastparquet. Subclass of the abstract base.
+    # State: api, the imported fastparquet module. Supports fewer features than
+    # the pyarrow engine: no filesystem argument, no dtype backend, no
+    # to_pandas options, and no file-like destinations for writing. Methods:
+    # write and read.
     def __init__(self) -> None:
+        # [FUNCTION DOC]
+        # Imports fastparquet lazily (raising an import error with a hint if
+        # missing; lazy because fastparquet itself depends on pandas) and stores
+        # it as the api attribute.
         # since pandas is a dependency of fastparquet
         # we need to import on first use
         fastparquet = import_optional_dependency(
@@ -306,6 +417,22 @@ class FastParquetImpl(BaseImpl):
         filesystem=None,
         **kwargs,
     ) -> None:
+        # [FUNCTION DOC]
+        # Writes a frame with fastparquet.
+        # Inputs: df frame (validated); path destination (converted to string);
+        # compression snappy (default), gzip, brotli or none; index whether to
+        # write the index (passed as the engine's write-index option);
+        # partition_cols partition columns; storage_options remote options;
+        # filesystem must be None; extra keyword arguments go to the engine.
+        # Behavior: a partition_on keyword together with partition_cols is a
+        # value error; a lone partition_on keyword is moved into the partition
+        # columns. With partition columns the hive file scheme is requested.
+        # A filesystem raises a not-implemented error. For fsspec URLs, an
+        # opener callable (a lambda ignoring its second argument) is supplied
+        # that opens the path for binary writing with the storage options;
+        # storage options with any other path raise a value error. The engine
+        # write runs with warnings recorded (so they are swallowed). Returns
+        # nothing.
         self.validate_dataframe(df)
 
         if "partition_on" in kwargs and partition_cols is not None:
@@ -358,6 +485,20 @@ class FastParquetImpl(BaseImpl):
         to_pandas_kwargs: dict | None = None,
         **kwargs,
     ) -> DataFrame:
+        # [FUNCTION DOC]
+        # Reads a parquet file with fastparquet.
+        # Inputs: path source; columns optional subset; filters optional
+        # partition/row-group filters; storage_options remote options;
+        # filesystem and to_pandas_kwargs must be None (not-implemented error
+        # otherwise); extra keyword arguments pass to the engine's conversion,
+        # except dtype_backend which is removed and must be unset (value error
+        # otherwise). Nullable dtype use in the engine is always disabled.
+        # Behavior: for fsspec URLs, passes the filesystem from an opened
+        # fsspec file; for other string paths that are not directories, opens
+        # through the shared handle opener and reads from the stream. Reads the
+        # file, converts to pandas while suppressing a block-construction
+        # deprecation warning, and always closes any opened handle. Returns the
+        # frame.
         parquet_kwargs: dict[str, Any] = {}
         dtype_backend = kwargs.pop("dtype_backend", lib.no_default)
         # We are disabling nullable dtypes for fastparquet pending discussion
@@ -417,6 +558,18 @@ def to_parquet(
     filesystem: Any = None,
     **kwargs,
 ) -> bytes | None:
+    # [FUNCTION DOC]
+    # Writes a frame to parquet through the chosen engine.
+    # Inputs: df frame; path destination or None to return bytes; engine auto,
+    # pyarrow or fastparquet; compression codec (default snappy); index whether
+    # to store the index; storage_options remote options; partition_cols a
+    # column name or list (a single string is wrapped into a list); filesystem
+    # optional filesystem; extra keyword arguments go to the engine.
+    # Behavior: selects the engine, writes into an in-memory buffer when path is
+    # None, and returns its bytes; otherwise returns None. Errors from engine
+    # selection or writing propagate.
+    # KNOWN ISSUE: the docstring says the partition columns must be None if the
+    # path is not a string, but this is not validated here.
     """
     Write a DataFrame to the parquet format.
 
@@ -517,6 +670,17 @@ def read_parquet(
     to_pandas_kwargs: dict | None = None,
     **kwargs,
 ) -> DataFrame:
+    # [FUNCTION DOC]
+    # Public reader (exported as a top-level pandas function) that loads a
+    # parquet file or dataset into a frame.
+    # Inputs: path source; engine auto, pyarrow or fastparquet; columns optional
+    # subset; storage_options remote options; dtype_backend unset, nullable
+    # numpy or pyarrow (validated; the fastparquet engine rejects it);
+    # filesystem optional filesystem (pyarrow only); filters optional row/
+    # partition filters; to_pandas_kwargs options for the arrow-to-pandas step
+    # (pyarrow only); extra keyword arguments go to the engine.
+    # Behavior: selects the engine, validates the backend, and delegates to the
+    # engine reader, returning its frame.
     """
     Load a parquet object from the file path, returning a DataFrame.
 

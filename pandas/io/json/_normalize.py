@@ -1,5 +1,16 @@
 # ---------------------------------------------------------------------
 # JSON normalization routines
+# [MODULE DOC]
+# Flattening of nested, JSON-like data (dicts, lists of dicts, Series of dicts)
+# into tabular form. Public content: the json_normalize function (exported as a
+# top-level pandas function), the nested_to_record helper that flattens dicts
+# with a configurable depth limit, and convert_to_line_delimits which turns a
+# JSON list string into line-delimited JSON. Private helpers implement a fast
+# path for the plain "no options" case and validation of the meta argument.
+# Relationships: used by the JSON reader/writer in the sibling json package and
+# by DataFrame construction; depends on a Cython writer routine for line
+# conversion and imports the top-level pandas package for null checks.
+# No import-time side effects beyond the imports.
 from __future__ import annotations
 
 from collections import (
@@ -37,6 +48,17 @@ if TYPE_CHECKING:
 
 
 def convert_to_line_delimits(s: str) -> str:
+    # [FUNCTION DOC]
+    # HELPER: used by the JSON writer to emit line-delimited output.
+    # Takes a JSON string s. If the string looks like a JSON list, strips the
+    # outer brackets and delegates to the compiled line converter, returning
+    # the line-delimited string. Otherwise returns the input unchanged.
+    # KNOWN ISSUE: the guard is written as "not first-char-is-open-bracket and
+    # last-char-is-close-bracket" due to operator precedence, so it only
+    # returns early for strings that do not start with an opening bracket but
+    # do end with a closing one; the intended check (list must start AND end
+    # with brackets) is not what is evaluated. Empty strings raise an index
+    # error.
     """
     Helper function that converts JSON lists to line delimited JSON.
     """
@@ -56,7 +78,11 @@ def nested_to_record(
     sep: str = ...,
     level: int = ...,
     max_level: int | None = ...,
-) -> dict[str, Any]: ...
+) -> dict[str, Any]:
+    # [FUNCTION DOC]
+    # Overload stub: a single dict input yields a single flat dict. See the
+    # implementation below.
+    ...
 
 
 @overload
@@ -66,7 +92,11 @@ def nested_to_record(
     sep: str = ...,
     level: int = ...,
     max_level: int | None = ...,
-) -> list[dict[str, Any]]: ...
+) -> list[dict[str, Any]]:
+    # [FUNCTION DOC]
+    # Overload stub: a list of dicts yields a list of flat dicts. See the
+    # implementation below.
+    ...
 
 
 def nested_to_record(
@@ -76,6 +106,21 @@ def nested_to_record(
     level: int = 0,
     max_level: int | None = None,
 ) -> dict[str, Any] | list[dict[str, Any]]:
+    # [FUNCTION DOC]
+    # Flattens nested dicts into flat dicts whose keys are the path of nested
+    # keys joined by the separator. Does not extract sub-records.
+    # Inputs: ds is a dict or a list of dicts; prefix is the key path built so
+    # far (used by recursion; ignored at level zero); sep is the joiner for key
+    # parts; level is the current depth (recursion bookkeeping, callers leave
+    # it at zero); max_level is the maximum depth to flatten, or None for
+    # unlimited. Non-string keys are converted to strings.
+    # Returns a dict if a dict was given, otherwise a list of new dicts. Input
+    # is deep-copied, so the argument is not mutated. Only dict values are
+    # recursed into; values at or beyond max_level are left as-is (but renamed
+    # with the prefix when below the top level). Dict values are removed and
+    # replaced by their flattened entries.
+    # KNOWN ISSUE: the docstring describes the level parameter as the number of
+    # levels in the json string, but it is only the current recursion depth.
     """
     A simplified json_normalize
 
@@ -156,6 +201,15 @@ def _normalize_json(
     normalized_dict: dict[str, Any],
     separator: str,
 ) -> dict[str, Any]:
+    # [FUNCTION DOC]
+    # HELPER: recursive worker for the fast path of the simple JSON normalizer.
+    # Inputs: data is the current value (a dict is recursed into, anything else
+    # is a leaf); key_string is the joined key path so far (empty at the top);
+    # normalized_dict is the accumulator that is mutated in place; separator
+    # joins key parts. For dict input, each child key is appended to the path
+    # (a leading separator is stripped when the path was empty). Leaves are
+    # stored in the accumulator under the full path. Returns the accumulator.
+    # Keys are formatted via string interpolation, so non-string keys work.
     """
     Main recursive function
     Designed for the most basic use case of pd.json_normalize(data)
@@ -192,6 +246,15 @@ def _normalize_json(
 
 
 def _normalize_json_ordered(data: dict[str, Any], separator: str) -> dict[str, Any]:
+    # [FUNCTION DOC]
+    # HELPER: flattens one record for the simple fast path.
+    # Takes a dict and a separator. Returns a new dict in which all
+    # non-dict top-level entries come first (original order), followed by the
+    # fully flattened entries from dict-valued keys. This ordering matches the
+    # column order of the general algorithm. Input is not mutated.
+    # KNOWN ISSUE: the docstring says the input may be a list of dicts and that
+    # the return matches a name that does not exist as a parameter; the code
+    # only accepts a single dict.
     """
     Order the top level keys and then recursively go to depth
 
@@ -220,6 +283,15 @@ def _simple_json_normalize(
     ds: dict | list[dict],
     sep: str = ".",
 ) -> dict | list[dict] | Any:
+    # [FUNCTION DOC]
+    # HELPER: optimized implementation of normalization when no record path,
+    # meta, prefixes or max level are requested.
+    # Inputs: ds is a dict or list of dicts; sep is the key joiner. A dict is
+    # flattened via the ordered helper; a list is processed element-wise
+    # (recursively) and a list of flat dicts is returned; any other type yields
+    # an empty dict. The caller wraps the result in a DataFrame.
+    # KNOWN ISSUE: the docstring lists a frame return that does not exist; the
+    # function returns dicts or lists of dicts.
     """
     An optimized basic json_normalize
 
@@ -270,6 +342,12 @@ def _simple_json_normalize(
 
 
 def _validate_meta(meta: str | list[str | list[str]] | None) -> None:
+    # [FUNCTION DOC]
+    # HELPER: argument validation for the public normalizer.
+    # Accepts nothing, a single string, or a list whose items are strings or
+    # lists of strings. Returns nothing. Raises a type error naming the
+    # offending element when a nested path contains a non-string, or when a
+    # top-level item is neither a string nor a list. No mutation.
     """
     Validate that meta parameter contains only strings or lists of strings.
     Parameters
@@ -311,6 +389,39 @@ def json_normalize(
     sep: str = ".",
     max_level: int | None = None,
 ) -> DataFrame:
+    # [FUNCTION DOC]
+    # Public entry point (exported as a top-level pandas function) that turns
+    # JSON-like data into a flat DataFrame.
+    # Inputs: data is a dict, an iterable of dicts (generators are consumed),
+    # or a Series of dicts (its index is preserved); record_path is a key or
+    # list of keys leading to the list of records to expand (default none: the
+    # data are the records); meta is a key or list of keys/key-paths to carry
+    # onto every record row; meta_prefix and record_prefix are optional strings
+    # prepended to meta column names and record column names; errors is raise
+    # or ignore, controlling whether missing meta keys raise a key error or
+    # become missing values; sep joins nested key names; max_level limits the
+    # flattening depth (None means all levels).
+    # Behavior: validates meta first. An empty list gives an empty frame. A
+    # single dict is wrapped in a list. Other iterables are materialized and
+    # each item must be a dict or a scalar missing value (which becomes an empty
+    # dict). With no options at all, the fast simple path is used. Without a
+    # record path, records are flattened with the nested-record helper (when
+    # any dict value is present) and optionally have columns prefixed. With a
+    # record path, the path is walked recursively, record dicts are flattened,
+    # meta values are collected per parent and repeated for each of its
+    # records, and the result index is repeated per record when the input was a
+    # Series.
+    # Raises: a type error for invalid meta, for non-dict non-missing items, or
+    # when a record path target is neither a list nor null; a key error for
+    # missing record path keys (always) or missing meta keys (unless errors is
+    # ignore); a value error when a meta column name collides with a record
+    # column; a not-implemented error when data is not a dict or non-string
+    # iterable.
+    # KNOWN ISSUE: the any-dict check in the no-record-path branch builds a
+    # generator of lists for each record, and a non-empty list is truthy
+    # regardless of its contents, so flattening is applied whenever any record
+    # has at least one entry, even if no dict values exist (harmless but the
+    # test is ineffective).
     """
     Normalize semi-structured JSON data into a flat table.
 
@@ -475,6 +586,15 @@ def json_normalize(
     def _pull_field(
         js: dict[str, Any], spec: list | str, extract_record: bool = False
     ) -> Scalar | Iterable:
+        # [FUNCTION DOC]
+        # HELPER: nested function of the public normalizer that looks up a
+        # value in one record.
+        # js is the record; spec is a single key or a list of keys describing a
+        # path; extract_record marks lookups of the record path itself. A
+        # missing key (or a None encountered midway) raises a key error with an
+        # explanatory message when extract_record is set; otherwise, if errors
+        # is ignore in the enclosing scope, returns a missing value, else raises
+        # a key error suggesting that option. Returns the value found.
         """Internal function to pull field"""
         result = js
         try:
@@ -502,6 +622,11 @@ def json_normalize(
         return result
 
     def _pull_records(js: dict[str, Any], spec: list | str) -> list:
+        # [FUNCTION DOC]
+        # HELPER: nested function of the public normalizer that fetches the
+        # list of records at a path. Uses the field puller in record mode.
+        # Returns the list found; a null value gives an empty list; any other
+        # non-list value raises a type error stating the type and path.
         """
         Internal function to pull field for records, and similar to
         _pull_field, but require to return list. And will raise error
@@ -593,6 +718,19 @@ def json_normalize(
     meta_keys = [sep.join(val) for val in _meta]
 
     def _recursive_extract(data, path, seen_meta, level: int = 0) -> None:
+        # [FUNCTION DOC]
+        # HELPER: nested function of the public normalizer that walks the record
+        # path, mutating the enclosing lists and mappings (records, lengths,
+        # meta values).
+        # data is a dict or list of dicts at the current depth; path is the
+        # remaining record path; seen_meta stores meta values captured on the
+        # way down, keyed by joined meta name; level is the depth. While more
+        # than one path element remains, captures meta values whose path ends at
+        # this depth and recurses into the next path element of each object. At
+        # the last element, pulls the records, flattens dict records, appends
+        # the record count to the lengths list, collects meta values for each
+        # meta key (from seen_meta if defined at a shallower depth, else pulled
+        # from the object), and extends the records list. Returns nothing.
         if isinstance(data, dict):
             data = [data]
         if len(path) > 1:

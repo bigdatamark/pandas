@@ -4,6 +4,18 @@ Table Schema builders
 https://specs.frictionlessdata.io/table-schema/
 """
 
+# [MODULE DOC]
+# Conversion between pandas objects and the Frictionless Table Schema
+# description used by the JSON reader/writer in the table orientation.
+# Public contents: the schema version constant; as_json_table_type (dtype to
+# schema type name); set_default_names (give unnamed index levels default
+# names); convert_pandas_type_to_json_field and
+# convert_json_field_to_pandas_type (the two directions of per-column field
+# conversion); build_table_schema (schema dictionary for a frame or series);
+# parse_table_schema (rebuild a frame from a JSON string holding a schema and
+# data). Relationships: used by the sibling JSON reader and writer modules;
+# depends on the dtype registry, the JSON decoder and offset parsing.
+# No import-time side effects beyond the imports.
 from __future__ import annotations
 
 from typing import (
@@ -53,6 +65,16 @@ TABLE_SCHEMA_VERSION = "1.4.0"
 
 
 def as_json_table_type(x: DtypeObj) -> str:
+    # [FUNCTION DOC]
+    # Maps a NumPy or extension dtype to a Table Schema type name.
+    # Input x is a dtype object. Returns one of: integer (integer dtypes),
+    # boolean, number (other numeric dtypes), datetime (datetime64, timezone
+    # aware datetimes and periods), duration (timedelta64), string (string
+    # dtypes, including object dtype) or any (everything else, e.g.
+    # categoricals). Checks run in that order, so integers and booleans are
+    # detected before generic numerics. No side effects.
+    # KNOWN ISSUE: the docstring table says object maps to str, but the code
+    # returns the name string for string-like dtypes (object included).
     """
     Convert a NumPy / pandas type to its corresponding json_table.
 
@@ -99,6 +121,18 @@ def as_json_table_type(x: DtypeObj) -> str:
 
 
 def set_default_names(data):
+    # [FUNCTION DOC]
+    # Ensures the index of a frame or series has names suitable for a schema.
+    # If every index level already has a name, returns the input unchanged but
+    # emits a warning (attributed to the caller) when the single level is named
+    # index, or when a multi-level index has any name beginning with the
+    # level prefix, because those names are not round-trippable. Otherwise
+    # makes a shallow copy and names the single level index (when its name is
+    # empty) or fills missing names of a multi-level index with level-number
+    # based names. Returns the (possibly copied) object; the input is never
+    # modified.
+    # KNOWN ISSUE: the multi-level warning check calls a string method on every
+    # level name, so a non-string (e.g. integer) name raises an attribute error.
     """Sets index names to 'index' for regular, or 'level_x' for Multi"""
     if com.all_not_none(*data.index.names):
         nms = data.index.names
@@ -123,6 +157,16 @@ def set_default_names(data):
 
 
 def convert_pandas_type_to_json_field(arr) -> dict[str, JSONSerializable]:
+    # [FUNCTION DOC]
+    # Builds the Table Schema field descriptor for one Series or Index.
+    # Input arr is any object with a dtype and a name. Returns a dictionary
+    # with the name (the object's name, or the word values when unnamed) and
+    # the schema type from the dtype mapper, plus extras by dtype: categorical
+    # adds an enum constraint listing the categories and an ordered flag; period
+    # adds the frequency string; timezone-aware datetime adds the zone (UTC, or
+    # the zone name when it is a string; omitted when the zone has no string
+    # name); any other extension dtype adds its registered name. No side
+    # effects.
     dtype = arr.dtype
     name: JSONSerializable
     if arr.name is None:
@@ -155,6 +199,20 @@ def convert_pandas_type_to_json_field(arr) -> dict[str, JSONSerializable]:
 
 
 def convert_json_field_to_pandas_type(field) -> str | CategoricalDtype:
+    # [FUNCTION DOC]
+    # Maps a field descriptor (mapping with a type key and optional extra keys)
+    # to a dtype specification usable for casting.
+    # string: the extension dtype name if present, else none; integer, number,
+    # boolean: the extension dtype name if present else int64, float64 or bool;
+    # duration: the generic timedelta name; datetime: a timezone-aware
+    # nanosecond string if a zone is given, a period spec using the normalized
+    # frequency if a frequency is given, else plain nanosecond datetime; any:
+    # a categorical dtype when both constraints and ordered keys exist, a
+    # registry lookup when an extension dtype name exists, else object.
+    # Raises a value error for unknown types.
+    # KNOWN ISSUE: for the string type with no extension dtype name the
+    # function returns None rather than a string, contradicting the return
+    # annotation.
     """
     Converts a JSON field descriptor into its corresponding NumPy / pandas type
 
@@ -236,6 +294,28 @@ def build_table_schema(
     primary_key: bool | None = None,
     version: bool = True,
 ) -> dict[str, JSONSerializable]:
+    # [FUNCTION DOC]
+    # Builds a Table Schema dictionary for a frame or series.
+    # Inputs: data is the object; index says whether index levels are included
+    # as fields (default true); primary_key is None (default; use the index
+    # level names when the index is unique), or an explicit value stored as the
+    # primary key; version says whether to add the schema version entry
+    # (default true).
+    # Behavior: when index is exactly true, index names are defaulted first
+    # (possibly copying and warning). Fields list index levels first (for a
+    # multi-level index, per-level descriptors renamed to the level names; the
+    # level values, not the full index, are examined), then columns (or the
+    # series itself). Primary key is set to the single index name (as a list)
+    # or the list-like of level names when the index is included, unique and
+    # primary_key is None; otherwise to the provided value if not None.
+    # Returns the dictionary with keys fields, optional primary key, optional
+    # version.
+    # KNOWN ISSUE: the docstring says primary_key defaults to True and is a
+    # bool describing column names, but the signature default is None and the
+    # value is stored verbatim.
+    # KNOWN ISSUE: for a multi-level index the data index is reassigned through
+    # a cast; when index is true but not the boolean true (e.g. truthy value) no
+    # default names are applied.
     """
     Create a Table schema from ``data``.
 
@@ -336,6 +416,21 @@ def build_table_schema(
 
 
 def parse_table_schema(json, precise_float: bool) -> DataFrame:
+    # [FUNCTION DOC]
+    # Rebuilds a frame from a JSON string holding a schema section and a data
+    # section.
+    # Inputs: json is the JSON text; precise_float selects the slower, more
+    # precise float decoding. Decodes the text, creates a frame with columns in
+    # schema field order, converts each column to the dtype implied by its
+    # field (inside a temporary option context that does not distinguish NaN
+    # from NA), then applies the primary key as the index if present, undoing
+    # the default naming: a lone index named index becomes unnamed and
+    # multi-level names starting with the level prefix become unnamed.
+    # Raises a not-implemented error if any field is a duration. Returns the
+    # frame.
+    # KNOWN ISSUE: the docstring says timezone data also raises
+    # NotImplementedError, but only duration fields do; time zones are
+    # supported.
     """
     Builds a DataFrame from a given schema
 

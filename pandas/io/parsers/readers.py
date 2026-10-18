@@ -4,6 +4,23 @@ Module contains tools for processing files into DataFrames or other objects
 GH#48849 provides a convenient way of deprecating keyword arguments
 """
 
+# [MODULE DOC]
+# Public entry points and orchestration for reading delimited and fixed-width
+# text into frames. Public contents: read_csv, read_table and read_fwf (all
+# exported as top-level pandas functions), the TextFileReader class (an
+# iterator/context manager that owns the chosen parsing engine and the opened
+# file handles) and the TextParser factory (parse nested lists with the Python
+# engine, used by the Excel reader). Internal: shared option-default tables
+# for the C engine, fixed-width reader and per-engine unsupported-option sets;
+# input validators; the common read driver; missing-value marker builders;
+# dialect extraction/merging; and the default refinement used by the readers.
+# Relationships: selects among the C, Python, fixed-width Python and pyarrow
+# engine wrappers (each a subclass of the shared parser base) after validating
+# options and possibly falling back from the C or pyarrow engines to the
+# Python engine with a warning; file opening goes through the shared io common
+# helpers. Under type checking only, a shared keyword-argument typed mapping
+# describes the keyword arguments common to the three readers.
+# Import-time side effects: builds module-level constant tables only.
 from __future__ import annotations
 
 from collections import (
@@ -94,6 +111,12 @@ if TYPE_CHECKING:
     )
 
     class _read_shared(TypedDict, Generic[HashableT], total=False):
+        # [CLASS DOC]
+        # HELPER: typing-only (defined only under static type checking; at
+        # runtime the name is bound to the plain dictionary type) typed mapping
+        # that lists the optional keyword arguments shared by the three readers'
+        # overloads, so a keyword splat can be type-checked. All keys are
+        # optional. Must be kept in sync with the real function signature.
         # annotations shared between read_csv/fwf/table's overloads
         # NOTE: Keep in sync with the annotations of the implementation
         sep: str | None | lib.NoDefault
@@ -145,6 +168,10 @@ else:
 
 
 class _C_Parser_Defaults(TypedDict):
+    # [CLASS DOC]
+    # HELPER: typed mapping describing the shape of the table of C-engine-only
+    # option defaults: missing-value filtering on, low-memory chunked reading
+    # on, memory mapping off, float precision unset.
     na_filter: Literal[True]
     low_memory: Literal[True]
     memory_map: Literal[False]
@@ -160,6 +187,9 @@ _c_parser_defaults: _C_Parser_Defaults = {
 
 
 class _Fwf_Defaults(TypedDict):
+    # [CLASS DOC]
+    # HELPER: typed mapping describing the shape of the fixed-width defaults
+    # table: column ranges inferred, 100 sample rows for inference, no widths.
     colspecs: Literal["infer"]
     infer_nrows: Literal[100]
     widths: None
@@ -188,20 +218,39 @@ _pyarrow_unsupported = {
 
 
 @overload
-def validate_integer(name: str, val: None, min_val: int = ...) -> None: ...
+def validate_integer(name: str, val: None, min_val: int = ...) -> None:
+    # [FUNCTION DOC]
+    # Overload stub: a none value yields none. See the implementation.
+    ...
 
 
 @overload
-def validate_integer(name: str, val: float, min_val: int = ...) -> int: ...
+def validate_integer(name: str, val: float, min_val: int = ...) -> int:
+    # [FUNCTION DOC]
+    # Overload stub: a numeric value yields an integer. See the implementation.
+    ...
 
 
 @overload
-def validate_integer(name: str, val: int | None, min_val: int = ...) -> int | None: ...
+def validate_integer(name: str, val: int | None, min_val: int = ...) -> int | None:
+    # [FUNCTION DOC]
+    # Overload stub: an integer or none yields an integer or none. See the
+    # implementation.
+    ...
 
 
 def validate_integer(
     name: str, val: int | float | None, min_val: int = 0
 ) -> int | None:
+    # [FUNCTION DOC]
+    # Validates an integer-like option. Inputs: name the option name (for the
+    # message); val the value; min_val the smallest allowed value (default 0).
+    # None passes through. A float is accepted only if it has an integral value
+    # (then converted to an integer) and its lower bound is NOT enforced; any
+    # other value must be an integer at or above the minimum. Raises a value
+    # error naming the option and the minimum otherwise. Returns the integer.
+    # KNOWN ISSUE: the minimum is only enforced for integer inputs; an
+    # integral float below the minimum (e.g. a negative float) is accepted.
     """
     Checks whether the 'name' parameter for parsing is either
     an integer OR float that can SAFELY be cast to an integer
@@ -232,6 +281,13 @@ def validate_integer(
 
 
 def _validate_names(names: Sequence[Hashable] | None) -> None:
+    # [FUNCTION DOC]
+    # HELPER: validates the user-supplied column names. None is accepted.
+    # Otherwise raises a value error if the names contain duplicates, or if the
+    # collection is not an ordered list-like (sets are rejected; dictionary key
+    # views are accepted). Returns nothing.
+    # The duplicate check runs first by building a set, so an unhashable name
+    # raises a type error before the ordering check.
     """
     Raise ValueError if the `names` parameter contains duplicates or has an
     invalid data type.
@@ -258,6 +314,19 @@ def _validate_names(names: Sequence[Hashable] | None) -> None:
 def _read(
     filepath_or_buffer: FilePath | ReadCsvBuffer[bytes] | ReadCsvBuffer[str], kwds
 ) -> DataFrame | TextFileReader:
+    # [FUNCTION DOC]
+    # HELPER: common driver behind the public readers.
+    # Inputs: filepath_or_buffer path or buffer; kwds the complete option
+    # mapping (MUTATED: the date-parsing option is defaulted).
+    # Behavior: if date parsing is unset, sets it to false when no date format
+    # is given and true when one is. Reads the iterator and chunk-size options.
+    # Raises a value error if the encoding-errors option is not a string. For
+    # the pyarrow engine, raises a value error if iteration or chunking was
+    # requested; for other engines validates the chunk size as an integer of at
+    # least one. Validates names for duplicates, builds the text file reader,
+    # and returns it directly when iterating or chunking; otherwise reads all
+    # rows (or the requested row limit) inside a managed block that closes
+    # the reader, and returns the resulting frame.
     """Generic reader of line files."""
     # if we pass a date_format and parse_dates=False, we should not parse the
     # dates GH#44366
@@ -313,7 +382,11 @@ def read_csv(
     iterator: Literal[True],
     chunksize: int | None = ...,
     **kwds: Unpack[_read_shared[HashableT]],
-) -> TextFileReader: ...
+) -> TextFileReader:
+    # [FUNCTION DOC]
+    # Overload stub: iterator true yields a reader object. See the
+    # implementation.
+    ...
 
 
 @overload
@@ -323,7 +396,11 @@ def read_csv(
     iterator: bool = ...,
     chunksize: int,
     **kwds: Unpack[_read_shared[HashableT]],
-) -> TextFileReader: ...
+) -> TextFileReader:
+    # [FUNCTION DOC]
+    # Overload stub: a chunk size yields a reader object. See the
+    # implementation.
+    ...
 
 
 @overload
@@ -333,7 +410,11 @@ def read_csv(
     iterator: Literal[False] = ...,
     chunksize: None = ...,
     **kwds: Unpack[_read_shared[HashableT]],
-) -> DataFrame: ...
+) -> DataFrame:
+    # [FUNCTION DOC]
+    # Overload stub: no iteration and no chunking yields a frame. See the
+    # implementation.
+    ...
 
 
 @overload
@@ -343,7 +424,11 @@ def read_csv(
     iterator: bool = ...,
     chunksize: int | None = ...,
     **kwds: Unpack[_read_shared[HashableT]],
-) -> DataFrame | TextFileReader: ...
+) -> DataFrame | TextFileReader:
+    # [FUNCTION DOC]
+    # Overload stub: general case yields a frame or a reader. See the
+    # implementation.
+    ...
 
 
 @set_module("pandas")
@@ -404,6 +489,26 @@ def read_csv(
     storage_options: StorageOptions | None = None,
     dtype_backend: DtypeBackend | lib.NoDefault = lib.no_default,
 ) -> DataFrame | TextFileReader:
+    # [FUNCTION DOC]
+    # Public reader (exported as a top-level pandas function) for
+    # comma-delimited text. All parameters are keyword-only except the source.
+    # Parameters mirror the shared reader options: column and header selection
+    # (header, names, index column, column subset), general parsing (dtype,
+    # engine, converters, true/false markers, skipping of initial space, rows
+    # and footers, row limit), missing-value handling, date handling, iteration
+    # (iterator, chunk size), quoting/compression/format (compression,
+    # thousands, decimal, line terminator, quote and escape characters, quoting
+    # mode, doublequote, comment character, encoding and its error mode,
+    # dialect), bad-line policy (error, warn, skip, or a callable), low-memory
+    # mode, memory mapping, float precision, storage options and dtype backend.
+    # Behavior: snapshots its own arguments (excluding the source and the
+    # separator), computes refined delimiter/engine/bad-line/dtype-backend
+    # settings with the shared refinement helper using a comma as the default
+    # delimiter, merges them over the snapshot, and delegates to the common
+    # driver. Returns a frame, or a reader object if iteration or a chunk size
+    # was requested. Errors: value errors from conflicting separator and
+    # delimiter, invalid bad-line settings, etc., plus whatever the driver and
+    # engines raise.
     """
     Read a comma-separated values (csv) file into DataFrame.
 
@@ -879,7 +984,11 @@ def read_table(
     iterator: Literal[True],
     chunksize: int | None = ...,
     **kwds: Unpack[_read_shared[HashableT]],
-) -> TextFileReader: ...
+) -> TextFileReader:
+    # [FUNCTION DOC]
+    # Overload stub: iterator true yields a reader object. See the
+    # implementation.
+    ...
 
 
 @overload
@@ -889,7 +998,11 @@ def read_table(
     iterator: bool = ...,
     chunksize: int,
     **kwds: Unpack[_read_shared[HashableT]],
-) -> TextFileReader: ...
+) -> TextFileReader:
+    # [FUNCTION DOC]
+    # Overload stub: a chunk size yields a reader object. See the
+    # implementation.
+    ...
 
 
 @overload
@@ -899,7 +1012,11 @@ def read_table(
     iterator: Literal[False] = ...,
     chunksize: None = ...,
     **kwds: Unpack[_read_shared[HashableT]],
-) -> DataFrame: ...
+) -> DataFrame:
+    # [FUNCTION DOC]
+    # Overload stub: no iteration and no chunking yields a frame. See the
+    # implementation.
+    ...
 
 
 @overload
@@ -909,7 +1026,11 @@ def read_table(
     iterator: bool = ...,
     chunksize: int | None = ...,
     **kwds: Unpack[_read_shared[HashableT]],
-) -> DataFrame | TextFileReader: ...
+) -> DataFrame | TextFileReader:
+    # [FUNCTION DOC]
+    # Overload stub: general case yields a frame or a reader. See the
+    # implementation.
+    ...
 
 
 @set_module("pandas")
@@ -970,6 +1091,13 @@ def read_table(
     storage_options: StorageOptions | None = None,
     dtype_backend: DtypeBackend | lib.NoDefault = lib.no_default,
 ) -> DataFrame | TextFileReader:
+    # [FUNCTION DOC]
+    # Public reader (exported as a top-level pandas function) for general
+    # delimited text. Identical in parameters and behavior to the comma
+    # reader except that the default delimiter is a tab character: snapshots its
+    # arguments, merges refined settings (default delimiter tab), and
+    # delegates to the common driver. Returns a frame, or a reader object when
+    # iterating or chunking.
     """
     Read general delimited file into DataFrame.
 
@@ -1444,7 +1572,11 @@ def read_fwf(
     iterator: Literal[True],
     chunksize: int | None = ...,
     **kwds: Unpack[_read_shared[HashableT]],
-) -> TextFileReader: ...
+) -> TextFileReader:
+    # [FUNCTION DOC]
+    # Overload stub: iterator true yields a reader object. See the
+    # implementation.
+    ...
 
 
 @overload
@@ -1457,7 +1589,11 @@ def read_fwf(
     iterator: bool = ...,
     chunksize: int,
     **kwds: Unpack[_read_shared[HashableT]],
-) -> TextFileReader: ...
+) -> TextFileReader:
+    # [FUNCTION DOC]
+    # Overload stub: a chunk size yields a reader object. See the
+    # implementation.
+    ...
 
 
 @overload
@@ -1470,7 +1606,11 @@ def read_fwf(
     iterator: Literal[False] = ...,
     chunksize: None = ...,
     **kwds: Unpack[_read_shared[HashableT]],
-) -> DataFrame: ...
+) -> DataFrame:
+    # [FUNCTION DOC]
+    # Overload stub: no iteration and no chunking yields a frame. See the
+    # implementation.
+    ...
 
 
 @set_module("pandas")
@@ -1484,6 +1624,29 @@ def read_fwf(
     chunksize: int | None = None,
     **kwds: Unpack[_read_shared[HashableT]],
 ) -> DataFrame | TextFileReader:
+    # [FUNCTION DOC]
+    # Public reader (exported as a top-level pandas function) for fixed-width
+    # formatted text.
+    # Inputs: filepath_or_buffer the source; colspecs a list of half-open
+    # (start, end) character ranges per field, or the word infer (default),
+    # or none (then widths is required); widths contiguous field widths used
+    # instead of ranges; infer_nrows sample size for inference (default 100);
+    # iterator and chunksize as in the other readers; remaining keyword
+    # arguments are passed through to the reader (names, index column, dtype,
+    # etc.).
+    # Validation: raises a value error if both colspecs and widths are absent,
+    # or if both are specified (ranges other than none/infer together with
+    # widths). When widths are given, builds contiguous ranges from them
+    # (overriding any inferred setting). If names are given (not the unset
+    # sentinel) and ranges are explicit: raises a value error unless the
+    # number of names, plus the number of index columns (one for a single
+    # label, the sequence length for several, zero for false or none), equals
+    # the number of ranges; this check is skipped when a column subset is
+    # given. Validates the dtype backend (defaulting it when absent).
+    # Delegates to the common driver with the fixed-width Python engine forced,
+    # returning a frame or a reader.
+    # KNOWN ISSUE: the Returns section of the docstring describes a
+    # comma-separated file, which is boilerplate copied from the CSV reader.
     r"""
     Read a table of fixed-width formatted lines into DataFrame.
 
@@ -1589,6 +1752,19 @@ def read_fwf(
 
 
 class TextFileReader(abc.Iterator):
+    # [CLASS DOC]
+    # Iterator and context manager that owns a parsing engine and the opened
+    # file handles, producing frames chunk by chunk or all at once. State:
+    # engine (the chosen engine name, possibly changed by fallback),
+    # _engine_specified (whether the user chose the engine explicitly, which
+    # turns fallbacks into errors), orig_options (the user option mapping after
+    # dialect merging and header defaulting), options (cleaned options passed to
+    # the engine), chunksize and nrows (removed from the options), _currow
+    # (rows produced so far, used to number the index), handles (opened file
+    # handles or none), and _engine (the engine wrapper instance). Key
+    # methods: read, get_chunk, close, the iteration and context-manager
+    # protocols, plus option-cleaning helpers. Invariant: the file is closed
+    # when iteration is exhausted or an engine error occurs.
     """
 
     Passed dialect overrides any of the related parser options
@@ -1601,6 +1777,21 @@ class TextFileReader(abc.Iterator):
         engine: CSVEngine | None = None,
         **kwds,
     ) -> None:
+        # [FUNCTION DOC]
+        # Builds the reader and its engine. Inputs: f a path, buffer or (for the
+        # Python engine) a nested list; engine the engine name or none
+        # (meaning the Python engine, not explicitly specified); kwds the option
+        # mapping (the optional engine-specified key overrides whether the
+        # engine counts as user-chosen).
+        # Behavior: validates footer-skipping compatibility; extracts a dialect
+        # and, if present, raises a value error for the pyarrow engine and
+        # otherwise merges its settings over the options (with conflict
+        # warnings); replaces an inferred header with row zero when no names
+        # were given, else with none; stores the options; fills defaults per
+        # engine (validating unsupported options); takes out chunk size and row
+        # limit; validates the source against the engine; cleans options
+        # (possibly falling back to the Python engine); keeps the index-name
+        # flag if provided (Excel); opens the file and builds the engine.
         if engine is not None:
             engine_specified = True
         else:
@@ -1643,11 +1834,29 @@ class TextFileReader(abc.Iterator):
         self._engine = self._make_engine(f, self.engine)
 
     def close(self) -> None:
+        # [FUNCTION DOC]
+        # Closes the opened file handles (if any) and then the engine. Returns
+        # nothing.
         if self.handles is not None:
             self.handles.close()
         self._engine.close()
 
     def _get_options_with_defaults(self, engine: CSVEngine) -> dict[str, Any]:
+        # [FUNCTION DOC]
+        # HELPER: builds the full option mapping for an engine from the user
+        # options and the defaults tables. Input engine the engine name.
+        # Returns a new dict with every generic option (user value or default);
+        # for the pyarrow engine raises a value error naming any unsupported
+        # option whose value differs from its default (enumeration members are
+        # compared by their underlying value). Then adds the C-specific options
+        # (user value if given, else default); for non-C engines a non-default
+        # value raises a value error unless the option is supported by that
+        # engine family. For the fixed-width engine adds the colspec, sample
+        # size and widths options (user value or default).
+        # Note: the unsupported-option test for pyarrow also compares against
+        # an attribute named value of the value itself, which only matters for
+        # enumeration members such as the bad-line policy. A source comment
+        # calls the C-option branch logic convoluted.
         kwds = self.orig_options
 
         options = {}
@@ -1694,6 +1903,13 @@ class TextFileReader(abc.Iterator):
         return options
 
     def _check_file_or_buffer(self, f, engine: CSVEngine) -> None:
+        # [FUNCTION DOC]
+        # HELPER: validates the source against the engine. Raises a value error
+        # if a file-like object lacks an iteration method and the engine is not
+        # C (message names the python engine). Raises a value error if the
+        # source declares an encoding that differs from the reader's requested
+        # encoding (when both are set), naming the file if known. Returns
+        # nothing.
         # see gh-16530
         if is_file_like(f) and engine != "c" and not hasattr(f, "__iter__"):
             # The C engine doesn't need the file-like to have the "__iter__"
@@ -1717,6 +1933,36 @@ class TextFileReader(abc.Iterator):
     def _clean_options(
         self, options: dict[str, Any], engine: CSVEngine
     ) -> tuple[dict[str, Any], CSVEngine]:
+        # [FUNCTION DOC]
+        # HELPER: normalizes the option mapping and decides the final engine.
+        # Inputs: options the full option mapping; engine the requested engine.
+        # Returns (new options dict, final engine name); the input is not
+        # mutated.
+        # Engine fallback to the Python engine (with a reason) when: the C
+        # engine is asked to skip footers; the separator is none (sniffing)
+        # under the C or pyarrow engines; the separator is longer than one
+        # character and the engine does not support regular expressions (the C
+        # engine treats the whitespace pattern as a special flag instead of
+        # falling back, replacing the delimiter option with a whitespace flag);
+        # a single-character separator encodes to more than one byte in the file
+        # system encoding; or the quote character is a non-ASCII character. If
+        # the user explicitly chose the engine, a fallback reason raises a value
+        # error instead. For the C engine, removes the unsupported option keys;
+        # for Python engines, removes the options they do not support, raising a
+        # value error if a fallback happened while such an option has a
+        # non-default value. A fallback otherwise emits a parser warning.
+        # Normalization: validates the header option; raises a value error if the
+        # index column is true; wraps a scalar index column in a list; copies
+        # names into a list; requires converters to be a dict (type error
+        # otherwise; none becomes an empty dict); builds the string and float
+        # missing-value markers (float conversion skipped for pyarrow); for
+        # pyarrow requires skiprows to be an integer or none (value error
+        # otherwise), for other engines converts an integer to a range and none
+        # to an empty set and any non-callable to a set. Stores names,
+        # converters, markers and skiprows back into the result.
+        # KNOWN ISSUE: the separator-encoding probe catches decode errors, but
+        # encoding a string can only raise encode errors, so an unencodable
+        # separator would raise instead of falling back.
         result = options.copy()
 
         fallback_reason = None
@@ -1865,6 +2111,10 @@ class TextFileReader(abc.Iterator):
         return result, engine
 
     def __next__(self) -> DataFrame:
+        # [FUNCTION DOC]
+        # Iterator protocol: returns the next chunk as a frame (default chunk
+        # size). When the data is exhausted, closes the reader and re-raises the
+        # end-of-iteration signal.
         try:
             return self.get_chunk()
         except StopIteration:
@@ -1876,6 +2126,18 @@ class TextFileReader(abc.Iterator):
         f: FilePath | ReadCsvBuffer[bytes] | ReadCsvBuffer[str] | list | IO,
         engine: CSVEngine = "c",
     ) -> ParserBase:
+        # [FUNCTION DOC]
+        # HELPER: opens the source and instantiates the engine wrapper.
+        # Inputs: f the source; engine the engine name (default C). Raises a
+        # value error for an unknown engine name, or for a list source with a
+        # non-Python engine. For non-list sources, opens a handle: text mode for
+        # most engines; binary for pyarrow, and for the C engine when the
+        # encoding is UTF-8 (the default) and the source is a path string (it
+        # decodes bytes itself, avoiding a slower text wrapper). Compression,
+        # memory mapping, encoding errors and storage options come from the
+        # stored options; the handle is saved so it can be closed later. Builds
+        # the engine with the stored options; on any exception closes the handle
+        # and re-raises. Returns the engine instance.
         mapping: dict[str, type[ParserBase]] = {
             "c": CParserWrapper,
             "python": PythonParser,
@@ -1929,9 +2191,28 @@ class TextFileReader(abc.Iterator):
             raise
 
     def _failover_to_python(self) -> None:
+        # [FUNCTION DOC]
+        # HELPER: placeholder hook that always raises the abstract-method error.
+        # KNOWN ISSUE: nothing in this module calls this method; it appears to be
+        # dead code left from an earlier fallback design.
         raise AbstractMethodError(self)
 
     def read(self, nrows: int | None = None) -> DataFrame:
+        # [FUNCTION DOC]
+        # Reads up to nrows rows (all remaining when none) and returns a frame.
+        # The pyarrow engine reads everything at once through its own read
+        # method (nrows ignored). Other engines: validates nrows as a
+        # non-negative integer, asks the engine for (index, columns, column
+        # data), and on any engine exception closes the reader and re-raises.
+        # If the engine gave no index, builds a range index continuing from the
+        # rows already produced (empty data gives zero new rows). If the user
+        # dtype is a mapping, or a single string/object dtype, builds per-column
+        # series with that string/object dtype applied (other column dtypes
+        # were handled by the engine); then builds the frame from columns and
+        # index without copying, and advances the row counter by the number of
+        # new rows. Returns the frame.
+        # KNOWN ISSUE: the check for the options attribute is always true since
+        # it is set in the constructor.
         if self.engine == "pyarrow":
             try:
                 # error: "ParserBase" has no attribute "read"
@@ -2003,6 +2284,12 @@ class TextFileReader(abc.Iterator):
         return df
 
     def get_chunk(self, size: int | None = None) -> DataFrame:
+        # [FUNCTION DOC]
+        # Reads the next chunk. Input size the number of rows, defaulting to the
+        # configured chunk size. If a total row limit is set: raises
+        # end-of-iteration once that many rows were produced, and caps the
+        # requested size at the remaining rows (using the remaining rows when no
+        # size is set). Returns the frame from read.
         if size is None:
             size = self.chunksize
         if self.nrows is not None:
@@ -2015,6 +2302,8 @@ class TextFileReader(abc.Iterator):
         return self.read(nrows=size)
 
     def __enter__(self) -> Self:
+        # [FUNCTION DOC]
+        # Context-manager entry: returns the reader itself.
         return self
 
     def __exit__(
@@ -2023,10 +2312,18 @@ class TextFileReader(abc.Iterator):
         exc_value: BaseException | None,
         traceback: TracebackType | None,
     ) -> None:
+        # [FUNCTION DOC]
+        # Context-manager exit: closes the reader; exception details are ignored
+        # and exceptions are not suppressed.
         self.close()
 
 
 def TextParser(*args, **kwds) -> TextFileReader:
+    # [FUNCTION DOC]
+    # Factory used to parse nested lists (and file-like objects) with the
+    # Python engine. Forces the engine option to the Python engine (mutating
+    # the keyword mapping, overriding any caller value) and passes all
+    # positional and keyword arguments to the reader class. Returns the reader.
     """
     Converts lists of lists/tuples into DataFrames with proper type inference
     and optional (e.g. string to datetime) conversion. Also enables iterating
@@ -2080,6 +2377,17 @@ def TextParser(*args, **kwds) -> TextFileReader:
 
 
 def _clean_na_values(na_values, keep_default_na: bool = True, floatify: bool = True):
+    # [FUNCTION DOC]
+    # HELPER: builds the missing-value marker collections.
+    # Inputs: na_values none, a scalar, a list-like, or a mapping from column to
+    # such values; keep_default_na whether to include the built-in marker set;
+    # floatify whether to also add numeric forms (false for pyarrow).
+    # Returns (markers, float markers). None: the built-in set (or empty set when
+    # defaults are disabled) and an empty float set. Mapping: a new mapping where
+    # each column's values are listified, united with the built-ins when
+    # enabled, and expanded to string/numeric forms, plus a mapping of
+    # per-column float sets. Otherwise: scalars are wrapped, values expanded,
+    # united with the built-ins when enabled, and the float set derived.
     na_fvalues: set | dict
     if na_values is None:
         if keep_default_na:
@@ -2117,6 +2425,9 @@ def _clean_na_values(na_values, keep_default_na: bool = True, floatify: bool = T
 
 
 def _floatify_na_values(na_values) -> set[float]:
+    # [FUNCTION DOC]
+    # HELPER: returns the set of float versions of the markers, skipping
+    # values that cannot be converted and values that convert to not-a-number.
     # create float versions of the na_values
     result = set()
     for v in na_values:
@@ -2130,6 +2441,14 @@ def _floatify_na_values(na_values) -> set[float]:
 
 
 def _stringify_na_values(na_values, floatify: bool) -> set[str | float]:
+    # [FUNCTION DOC]
+    # HELPER: expands markers into every text and numeric form that should
+    # match. For each value x: adds its string form and itself; if it converts
+    # to a float with integral value, adds the forms with and without a
+    # trailing zero fraction (e.g. 999 and 999.0 as text); when floatify is true
+    # also adds the float and (if convertible) the integer form. Unconvertible
+    # values are silently kept only in their string and original forms. Returns
+    # the resulting set.
     """return a stringified and numeric for these values"""
     result: list[str | float] = []
     for x in na_values:
@@ -2166,6 +2485,25 @@ def _refine_defaults_read(
     defaults: dict[str, Any],
     dtype_backend: DtypeBackend | lib.NoDefault,
 ):
+    # [FUNCTION DOC]
+    # HELPER: validates and normalizes arguments common to the CSV and table
+    # readers and returns a dict of overrides to merge into the options.
+    # Inputs: dialect, delimiter, engine, sep, on_bad_lines, names (the
+    # no-default sentinel is allowed), the defaults mapping (must contain the
+    # default delimiter) and dtype_backend.
+    # Output keys: delimiter (the user delimiter, else the separator, else the
+    # default); names (none when unset); engine-specified flag, and, when no
+    # engine was given, the engine set to C; the bad-line policy converted to
+    # its enumeration member (callable allowed only for Python or pyarrow); the
+    # dtype backend; and, when a dialect is given, a flag saying the delimiter
+    # came from defaults only (so no conflict warning is needed).
+    # Raises a value error when both a separator and a delimiter are given, when
+    # the delimiter is a newline, or when the bad-line policy is invalid (a
+    # string other than error/warn/skip, a non-callable, or a callable with an
+    # unsupported engine); validates the dtype backend.
+    # KNOWN ISSUE: the docstring lists only C and Python engines and describes a
+    # none sentinel for the bad-line policy, but pyarrow is also accepted and
+    # none is rejected as invalid.
     """Validate/refine default values of input parameters of read_csv, read_table.
 
     Parameters
@@ -2270,6 +2608,11 @@ def _refine_defaults_read(
 
 
 def _extract_dialect(kwds: dict[str, str | csv.Dialect]) -> csv.Dialect | None:
+    # [FUNCTION DOC]
+    # HELPER: resolves the dialect option. Returns none when absent. A string
+    # naming a registered dialect is looked up; any other value is used as is.
+    # The result is validated to have all mandatory attributes (value error
+    # otherwise). Returns the dialect object.
     """
     Extract concrete csv dialect instance.
 
@@ -2293,6 +2636,9 @@ def _extract_dialect(kwds: dict[str, str | csv.Dialect]) -> csv.Dialect | None:
     return tdialect
 
 
+# Module constant: the attribute names every dialect must provide and that are
+# merged over the reader options (delimiter, doublequote, escapechar,
+# skipinitialspace, quotechar, quoting).
 MANDATORY_DIALECT_ATTRS = (
     "delimiter",
     "doublequote",
@@ -2304,6 +2650,9 @@ MANDATORY_DIALECT_ATTRS = (
 
 
 def _validate_dialect(dialect: csv.Dialect | str) -> None:
+    # [FUNCTION DOC]
+    # HELPER: raises a value error if the dialect object lacks any attribute in
+    # the mandatory list; returns nothing otherwise.
     """
     Validate csv dialect instance.
 
@@ -2321,6 +2670,19 @@ def _merge_with_dialect_properties(
     dialect: csv.Dialect,
     defaults: dict[str, Any],
 ) -> dict[str, Any]:
+    # [FUNCTION DOC]
+    # HELPER: overlays dialect settings on the reader options. Inputs: dialect
+    # the concrete dialect; defaults the option mapping (copied, not mutated).
+    # For each mandatory attribute, the dialect value always wins and is
+    # stored in the result. A parser warning listing the conflict is emitted
+    # when the provided value is neither the parser default nor the dialect
+    # value (so passing a default explicitly never warns); for the delimiter,
+    # the warning is also suppressed when the override flag set by the
+    # refinement helper is present (that flag is removed from the copy only in
+    # that situation). Returns the merged copy.
+    # KNOWN ISSUE: the override flag is removed from the result only when a
+    # delimiter conflict is evaluated, so it may remain in the returned mapping
+    # otherwise (harmless since only known option names are read later).
     """
     Merge default kwargs in TextFileReader with dialect parameters.
 
@@ -2372,6 +2734,10 @@ def _merge_with_dialect_properties(
 
 
 def _validate_skipfooter(kwds: dict[str, Any]) -> None:
+    # [FUNCTION DOC]
+    # HELPER: if a footer-skipping count is set (truthy), raises a value error
+    # when iteration or a chunk size is also requested, or when a row limit is
+    # also requested. Returns nothing.
     """
     Check whether skipfooter is compatible with other kwargs in TextFileReader.
 

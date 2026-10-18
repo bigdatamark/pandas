@@ -1,5 +1,13 @@
 """orc compat"""
 
+# [MODULE DOC]
+# ORC file reading and writing built on the optional pyarrow dependency.
+# Public contents: read_orc (exported as a top-level pandas function) and
+# to_orc (used by the DataFrame ORC writer method). Relationships: uses the
+# shared io handle opener and URL checks, the arrow-to-pandas conversion
+# helper for dtype backends, and the default index builder for validating
+# frames. pyarrow modules are imported lazily inside the functions, so there
+# are no import-time side effects.
 from __future__ import annotations
 
 import io
@@ -44,6 +52,21 @@ def read_orc(
     filesystem: pyarrow.fs.FileSystem | fsspec.spec.AbstractFileSystem | None = None,
     **kwargs: Any,
 ) -> DataFrame:
+    # [FUNCTION DOC]
+    # Reads an ORC file into a frame via the pyarrow ORC reader.
+    # Inputs: path is a path, URL or binary readable buffer; columns optionally
+    # restricts the columns read (output follows file order); dtype_backend is
+    # unset (classic numpy dtypes), the nullable numpy backend or the pyarrow
+    # backend, and is validated; filesystem optionally gives a pyarrow or
+    # fsspec filesystem; extra keyword arguments are forwarded to the pyarrow
+    # table reader.
+    # Behavior: requires pyarrow (raises an import error otherwise). Opens the
+    # path in binary mode through the shared handle opener. If the path is a
+    # URL handled by fsspec and no filesystem is given, tries to resolve a
+    # pyarrow filesystem and relative source from the URI; type or arrow
+    # invalid-argument errors in that attempt are ignored and the opened handle
+    # is used instead. Converts the arrow table to a frame with the requested
+    # backend and returns it.
     """
     Load an ORC object from the file path, returning a DataFrame.
 
@@ -144,6 +167,26 @@ def to_orc(
     index: bool | None = None,
     engine_kwargs: dict[str, Any] | None = None,
 ) -> bytes | None:
+    # [FUNCTION DOC]
+    # Writes a frame to ORC with pyarrow.
+    # Inputs: df is the frame; path is a destination path/buffer, or None to
+    # return the bytes; engine must be pyarrow (keyword-only); index says
+    # whether to write the index (None: write it when the first index level
+    # has a name); engine_kwargs are extra keyword arguments for the pyarrow
+    # table writer (None means none).
+    # Validation: the frame index must equal a default range index and have no
+    # name, otherwise a value error asks the user to reset the index; a value
+    # error is also raised for any engine other than pyarrow. Checks happen
+    # before the dependency import.
+    # Writing: converts to an arrow table (preserving the index per the index
+    # flag) and writes through a binary handle. Type errors or arrow
+    # not-implemented errors are re-raised as a not-implemented error about
+    # unsupported column dtypes. Returns the written bytes when no path was
+    # given (an in-memory buffer is used), else None.
+    # KNOWN ISSUE: the validation requires a default unnamed index, so the
+    # index flag can only usefully write a default range index; the docstring
+    # suggests other indexes can be written as columns, which is rejected by
+    # the earlier validation.
     """
     Write a DataFrame to the ORC format.
 
