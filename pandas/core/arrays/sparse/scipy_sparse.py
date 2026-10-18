@@ -3,6 +3,14 @@ Interaction with scipy.sparse matrices.
 
 Currently only includes to_coo helpers.
 """
+# [MODULE DOC]
+# Conversion helpers between a sparse-dtype series with a multi-level index and
+# a scipy coordinate-format sparse matrix. The public entry points are
+# sparse_series_to_coo (series to matrix plus the row and column label lists)
+# and coo_to_sparse_series (matrix back to a sparse series with a two-level
+# index). The remaining functions are private helpers that validate the level
+# partition and compute integer row, column and value arrays. scipy is only
+# touched through the matrix object passed in or returned, never imported here.
 
 from __future__ import annotations
 
