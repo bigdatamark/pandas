@@ -1,3 +1,11 @@
+# [MODULE DOC]
+# Excel writer engine for OpenDocument spreadsheets (ods) using the optional odfpy
+#   library.
+# Public contents: ODSWriter, a subclass of the ExcelWriter base class from the base
+#   module. It is looked up by engine name odf through the util registry. odfpy is
+#   imported lazily inside methods.
+# Import-time side effects: none.
+
 from __future__ import annotations
 
 from collections import defaultdict
@@ -31,6 +39,12 @@ if TYPE_CHECKING:
 
 
 class ODSWriter(ExcelWriter):
+    # [CLASS DOC]
+    # Concrete writer for ods files. Class attributes: the engine name is odf and the
+    #   only supported extension is ods. State: _book (the odfpy spreadsheet document),
+    #   _style_dict (maps a serialized style description to the generated style name so
+    #   each distinct style is created once), plus everything the base class keeps.
+    #   Append mode is not supported.
     _engine = "odf"
     _supported_extensions = (".ods",)
 
@@ -46,6 +60,13 @@ class ODSWriter(ExcelWriter):
         engine_kwargs: dict[str, Any] | None = None,
         **kwargs: Any,
     ) -> None:
+        # [FUNCTION DOC]
+        # Create the writer. Inputs are the same as for the base class plus extra
+        #   keyword arguments that are merged into engine_kwargs. Raises a value error
+        #   when mode is append. Merges engine_kwargs and the extra keyword arguments
+        #   with the util helper, creates the spreadsheet document using them, then runs
+        #   the base constructor (which validates the path extension and opens the
+        #   output) and initializes an empty style registry.
         from odf.opendocument import OpenDocumentSpreadsheet
 
         if mode == "a":
@@ -66,6 +87,9 @@ class ODSWriter(ExcelWriter):
 
     @property
     def book(self) -> OpenDocumentSpreadsheet:
+        # [FUNCTION DOC]
+        # Read only property: the underlying odfpy spreadsheet document, for access to
+        #   engine specific features.
         """
         Book instance of class odf.opendocument.OpenDocumentSpreadsheet.
 
@@ -75,6 +99,9 @@ class ODSWriter(ExcelWriter):
 
     @property
     def sheets(self) -> dict[str, Any]:
+        # [FUNCTION DOC]
+        # Read only property: builds and returns a new mapping from sheet name to table
+        #   element for all tables currently in the document.
         """Mapping of sheet names to sheet objects."""
         from odf.table import Table
 
@@ -85,6 +112,10 @@ class ODSWriter(ExcelWriter):
         return result
 
     def _save(self) -> None:
+        # [FUNCTION DOC]
+        # HELPER: implements the save hook of the base class. Adds every sheet element
+        #   to the spreadsheet body and then writes the document to the output handle.
+        #   Returns nothing.
         """
         Save workbook to disk.
         """
@@ -101,6 +132,20 @@ class ODSWriter(ExcelWriter):
         freeze_panes: tuple[int, int] | None = None,
         autofilter_range: str | None = None,
     ) -> None:
+        # [FUNCTION DOC]
+        # HELPER: implements the cell writing hook of the base class. Inputs: cells
+        #   (list of cell objects with row, column, value, style and merge information),
+        #   sheet_name (default none means current sheet), startrow and startcol (zero
+        #   based offsets), freeze_panes (optional pair) and autofilter_range.
+        # Behavior: raises a value error if an autofilter range is requested, since odf
+        #   does not support it. Resolves the sheet name; reuses the existing table of
+        #   that name or creates and appends a new one. Creates freeze pane settings if
+        #   the freeze pane pair is valid. Adds startrow empty rows at the top. Then
+        #   processes cells sorted by row and column: for the first cell of a row adds
+        #   startcol empty cells, pads with empty cells up to the cell's column,
+        #   converts the cell, appends it with its display paragraph. Finally appends
+        #   all row elements in order up to the largest row index that was used. Returns
+        #   nothing.
         """
         Write the frame cells using odf
         """
@@ -157,6 +202,12 @@ class ODSWriter(ExcelWriter):
                 wks.addElement(rows[row_nr])
 
     def _make_table_cell_attributes(self, cell: ExcelCell) -> dict[str, int | str]:
+        # [FUNCTION DOC]
+        # HELPER: converts a cell object into the attribute mapping for an odf table
+        #   cell. Includes the style name (from the style processing helper) when the
+        #   cell has a style, and, when both merge fields are set, the number of rows
+        #   spanned (at least one, taken from the merge start field) and the number of
+        #   columns spanned (taken from the merge end field). Returns the mapping.
         """Convert cell attributes to OpenDocument attributes
 
         Parameters
@@ -179,6 +230,15 @@ class ODSWriter(ExcelWriter):
         return attributes
 
     def _make_table_cell(self, cell: ExcelCell) -> tuple[object, Any]:
+        # [FUNCTION DOC]
+        # HELPER: converts a cell object into an odf table cell. Returns a pair of the
+        #   display text value and the cell element. The value is first normalized by
+        #   the base class value helper. Booleans produce a boolean cell with lower case
+        #   value and upper case display text; datetimes produce a date cell with an ISO
+        #   text value and locale dependent display text; plain dates produce a date
+        #   cell with a year-month-day value and locale dependent display text; strings
+        #   produce a string cell; everything else (numbers, including missing values)
+        #   produces a float cell.
         """Convert cell data to an OpenDocument spreadsheet cell
 
         Parameters
@@ -246,11 +306,26 @@ class ODSWriter(ExcelWriter):
 
     @overload
     def _process_style(self, style: dict[str, Any]) -> str: ...
+        # [FUNCTION DOC]
+        # Typing overload only: a style dictionary gives a style name. See the
+        #   implementation below.
 
     @overload
     def _process_style(self, style: None) -> None: ...
+        # [FUNCTION DOC]
+        # Typing overload only: no style gives no result. See the implementation below.
 
     def _process_style(self, style: dict[str, Any] | None) -> str | None:
+        # [FUNCTION DOC]
+        # HELPER: converts a style dictionary into a registered odf cell style and
+        #   returns its name, or returns none when the style is none. The dictionary is
+        #   serialized to text to use as a cache key; a known key returns the stored
+        #   name. Otherwise a new name is generated from the count of known styles, the
+        #   style is added to the document's styles with a text bold property if the
+        #   font entry is bold, one cell border property per border side (only the thin
+        #   thickness is translatable; any other thickness raises a key error), a
+        #   horizontal paragraph alignment and a vertical cell alignment when present.
+        #   Side effects: mutates the style registry and the document styles.
         """Convert a style dictionary to an OpenDocument style sheet
 
         Parameters
@@ -305,6 +380,15 @@ class ODSWriter(ExcelWriter):
     def _create_freeze_panes(
         self, sheet_name: str, freeze_panes: tuple[int, int]
     ) -> None:
+        # [FUNCTION DOC]
+        # HELPER: writes view settings into the document so that the given sheet shows
+        #   frozen panes. Inputs: sheet_name and a pair of integers (first entry used
+        #   for the horizontal split position and the position right, second entry for
+        #   the vertical split position and position bottom). Builds the nested
+        #   configuration item structure under the view settings set (views, tables,
+        #   then an entry named after the sheet) with split mode flags fixed and the
+        #   four position items. Side effects: appends a new configuration item set to
+        #   the document settings each time it is called.
         """
         Create freeze panes in the sheet.
 

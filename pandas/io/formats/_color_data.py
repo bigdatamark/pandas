@@ -3,6 +3,16 @@
 # This data has been copied here, instead of being imported from matplotlib,
 # not to have ``to_excel`` methods require matplotlib.
 # source: matplotlib._color_data (3.3.3)
+
+# [MODULE DOC]
+# HELPER: internal data module for Excel export of CSS named colors.
+# Contains a single constant mapping lower case CSS color names (the standard CSS level
+#   4 named colors, copied from matplotlib 3.3.3 so that Excel export does not need
+#   matplotlib) to six digit hexadecimal red-green-blue strings in upper case without a
+#   leading hash sign. Consumed by the Excel formatter when converting CSS color names
+#   to Excel color values. No functions or classes; no import time side effects beyond
+#   creating the dictionary.
+
 from __future__ import annotations
 
 CSS4_COLORS = {

@@ -1,3 +1,21 @@
+# [MODULE DOC]
+# Core of pandas Excel I/O: the public reader function, the reader base class, the
+#   writer base class and the file wrapper class.
+# Public contents: read_excel (function), ExcelFile (workbook wrapper that owns an
+#   engine specific reader), ExcelWriter (abstract writer; instantiating it selects a
+#   concrete engine subclass), and inspect_excel_format (sniffs a file format). Also
+#   exported for internal use: BaseExcelReader (generic base class for the engine
+#   readers in the sibling engine modules) and the signature constants used for
+#   sniffing.
+# Relationships: engine readers (calamine, odf, openpyxl, pyxlsb, xlrd) subclass
+#   BaseExcelReader and are registered in the ExcelFile engine table; engine writers
+#   subclass ExcelWriter and are looked up through the helper functions in the sibling
+#   util module; parsing of the raw cell grid is delegated to the shared text parser
+#   used by the CSV readers.
+# Import-time side effects: none beyond importing the engine reader modules lazily
+#   inside the ExcelFile class body, which happens when this module is imported (those
+#   modules import their third party libraries only lazily).
+
 from __future__ import annotations
 
 from collections.abc import (
@@ -120,6 +138,12 @@ def read_excel(
     storage_options: StorageOptions = ...,
     dtype_backend: DtypeBackend | lib.NoDefault = ...,
 ) -> DataFrame: ...
+    # [FUNCTION DOC]
+    # Typing overload only (no runtime behavior). Selected when the sheet selector is a
+    #   single name or position; the static return type is a single table. See the
+    #   implementation below.
+    # KNOWN ISSUE: this overload (and the next) omits the engine_kwargs keyword that the
+    #   implementation accepts, so type checkers reject calls passing it.
 
 
 @overload
@@ -157,6 +181,12 @@ def read_excel(
     storage_options: StorageOptions = ...,
     dtype_backend: DtypeBackend | lib.NoDefault = ...,
 ) -> dict[IntStrT, DataFrame]: ...
+    # [FUNCTION DOC]
+    # Typing overload only (no runtime behavior). Selected when the sheet selector is a
+    #   list or None; the static return type is a mapping from sheet selector to table.
+    #   See the implementation below.
+    # KNOWN ISSUE: like the first overload, it omits the engine_kwargs keyword that the
+    #   implementation accepts.
 
 
 @set_module("pandas")
@@ -194,6 +224,26 @@ def read_excel(
     dtype_backend: DtypeBackend | lib.NoDefault = lib.no_default,
     engine_kwargs: dict | None = None,
 ) -> DataFrame | dict[IntStrT, DataFrame]:
+    # [FUNCTION DOC]
+    # Public entry point that reads one or more worksheets of an Excel or OpenDocument
+    #   workbook into tables. Parameters mirror the CSV reader where applicable: io is a
+    #   path, URL, file like object, ExcelFile or engine workbook; sheet_name selects
+    #   sheets (name, zero based position, list of those, or None for all sheets;
+    #   default first sheet); header, names, index_col, usecols, dtype, converters,
+    #   true_values, false_values, skiprows, nrows, na_values, keep_default_na,
+    #   na_filter, verbose, parse_dates, date_format, thousands, decimal, comment,
+    #   skipfooter and dtype_backend are forwarded to the sheet parser; engine picks the
+    #   reader (None means auto detect); storage_options is used when opening remote or
+    #   special paths; engine_kwargs is passed to the engine when it loads the workbook
+    #   (default none, treated as empty).
+    # Returns a single table when sheet_name is a scalar, otherwise a mapping from each
+    #   requested sheet selector to its table.
+    # Behavior: first validates the dtype backend argument. If io is not already an
+    #   ExcelFile, builds one (and remembers that it must close it afterwards); if it is
+    #   an ExcelFile and an engine is given that differs from the file's engine, raises
+    #   a value error because the engine is already fixed. Then delegates to the
+    #   ExcelFile parse method and always closes the file in a finally step if this
+    #   function opened it.
     """
     Read an Excel file into a ``DataFrame``.
 
@@ -526,6 +576,17 @@ _WorkbookT = TypeVar("_WorkbookT")
 
 
 class BaseExcelReader(Generic[_WorkbookT]):
+    # [CLASS DOC]
+    # Generic (over the engine workbook type) abstract base class for engine specific
+    #   Excel readers. Subclasses must supply the workbook class, a method that loads a
+    #   workbook from a binary handle, the list of sheet names, per sheet lookup by name
+    #   and by position, and a method that materializes a sheet into a list of rows.
+    # State: book is the loaded engine workbook object; handles is the IOHandles object
+    #   wrapping the opened file (or the already open object) and is closed by the close
+    #   method.
+    # Key methods: the constructor (opens/loads), close, parse (public, multi sheet
+    #   driver), and the private helpers that translate skiprows/nrows into a row count
+    #   to read and that turn the raw cell grid into a table.
     book: _WorkbookT
 
     def __init__(
@@ -534,6 +595,20 @@ class BaseExcelReader(Generic[_WorkbookT]):
         storage_options: StorageOptions | None = None,
         engine_kwargs: dict | None = None,
     ) -> None:
+        # [FUNCTION DOC]
+        # Open the workbook. Parameters: filepath_or_buffer is a path, URL, binary
+        #   buffer, ExcelFile, or an engine workbook object; storage_options is
+        #   forwarded to the file opener; engine_kwargs (default none, treated as empty)
+        #   is forwarded to the workbook loader.
+        # Behavior: wraps the input in a handles object with no compression. Unless the
+        #   input is an ExcelFile or already an instance of the engine workbook class,
+        #   opens it in binary mode through the common file handle opener. If the
+        #   resulting handle is itself an engine workbook it is used directly as the
+        #   book; otherwise if it has a read method the stream is rewound and the book
+        #   is loaded through the load_workbook hook (on any failure the reader is
+        #   closed and the exception re raised). Anything else raises a value error
+        #   saying the engine must be set explicitly when not passing a buffer or path.
+        # Side effects: may open a file handle that remains open until close is called.
         if engine_kwargs is None:
             engine_kwargs = {}
 
@@ -562,12 +637,25 @@ class BaseExcelReader(Generic[_WorkbookT]):
 
     @property
     def _workbook_class(self) -> type[_WorkbookT]:
+        # [FUNCTION DOC]
+        # Abstract property: returns the engine's workbook class, used to recognize pre-
+        #   loaded workbook objects. Raises not implemented error in the base class.
         raise NotImplementedError
 
     def load_workbook(self, filepath_or_buffer, engine_kwargs) -> _WorkbookT:
+        # [FUNCTION DOC]
+        # Abstract hook: load and return an engine workbook from a binary file like
+        #   object, given the engine_kwargs mapping. Raises not implemented error in the
+        #   base class.
         raise NotImplementedError
 
     def close(self) -> None:
+        # [FUNCTION DOC]
+        # Release resources. If a book was loaded, closes it when it has a close method
+        #   (needed by the pyxlsb and openpyxl engines which hold temporary files or
+        #   file handles), otherwise calls the release resources method that the xlrd
+        #   workbook offers. Then closes the underlying handles. Safe to call when
+        #   construction failed before the book was assigned. Returns nothing.
         if hasattr(self, "book"):
             if hasattr(self.book, "close"):
                 # pyxlsb: opens a TemporaryFile
@@ -582,18 +670,36 @@ class BaseExcelReader(Generic[_WorkbookT]):
 
     @property
     def sheet_names(self) -> list[str]:
+        # [FUNCTION DOC]
+        # Abstract property: returns the list of sheet names of the workbook. Raises not
+        #   implemented error in the base class.
         raise NotImplementedError
 
     def get_sheet_by_name(self, name: str):
+        # [FUNCTION DOC]
+        # Abstract hook: returns the engine sheet object with the given name. Raises not
+        #   implemented error in the base class.
         raise NotImplementedError
 
     def get_sheet_by_index(self, index: int):
+        # [FUNCTION DOC]
+        # Abstract hook: returns the engine sheet object at the given zero based
+        #   position. Raises not implemented error in the base class.
         raise NotImplementedError
 
     def get_sheet_data(self, sheet, rows: int | None = None):
+        # [FUNCTION DOC]
+        # Abstract hook: converts a sheet into a list of rows (each a list of Python
+        #   cell values). The optional rows argument (default none) limits how many rows
+        #   are read; none reads all. Raises not implemented error in the base class.
         raise NotImplementedError
 
     def raise_if_bad_sheet_by_index(self, index: int) -> None:
+        # [FUNCTION DOC]
+        # Validation helper for subclasses. Input: a zero based sheet position. Raises a
+        #   value error naming the position and the number of worksheets found when the
+        #   position is not smaller than the number of sheets. Negative positions are
+        #   not rejected here. Returns nothing.
         n_sheets = len(self.sheet_names)
         if index >= n_sheets:
             raise ValueError(
@@ -601,6 +707,10 @@ class BaseExcelReader(Generic[_WorkbookT]):
             )
 
     def raise_if_bad_sheet_by_name(self, name: str) -> None:
+        # [FUNCTION DOC]
+        # Validation helper for subclasses. Input: a sheet name. Raises a value error
+        #   saying the worksheet was not found when the name is not in the list of sheet
+        #   names. Returns nothing.
         if name not in self.sheet_names:
             raise ValueError(f"Worksheet named '{name}' not found")
 
@@ -609,6 +719,14 @@ class BaseExcelReader(Generic[_WorkbookT]):
         skiprows: Callable,
         rows_to_use: int,
     ) -> int:
+        # [FUNCTION DOC]
+        # HELPER: used by the row count calculation when skiprows is callable.
+        # Determines how many file rows must be read so that the requested number of
+        #   rows (header plus data, given by rows_to_use) remain after rows for which
+        #   the callable returns true are dropped. Walks row indices from zero, counting
+        #   rows the callable does not skip, and returns the row index count reached
+        #   when enough rows were counted. Does not terminate if the callable skips
+        #   every row indefinitely.
         """
         Determine how many file rows are required to obtain `nrows` data
         rows when `skiprows` is a function.
@@ -640,6 +758,18 @@ class BaseExcelReader(Generic[_WorkbookT]):
         skiprows: Sequence[int] | int | Callable[[int], object] | None,
         nrows: int | None,
     ) -> int | None:
+        # [FUNCTION DOC]
+        # HELPER: used by the parse method to avoid reading more of the sheet than
+        #   needed.
+        # Inputs: header (row position, list of positions, or none), index_col, skiprows
+        #   (none, count, list of positions or callable) and nrows. Returns none when
+        #   nrows is none (read everything). Otherwise computes the number of header
+        #   rows (one if no header, otherwise one plus the last header position), adds
+        #   one more when a multi row header is combined with an index column (the row
+        #   holding index names), then: with no skiprows returns header rows plus nrows;
+        #   with an integer skiprows adds that count; with a list or callable delegates
+        #   to the callable skip counter so skipped rows are not counted; for any other
+        #   skiprows type returns none so no optimization is applied.
         """
         If nrows specified, find the number of rows needed from the
         file, otherwise return None.
@@ -684,6 +814,10 @@ class BaseExcelReader(Generic[_WorkbookT]):
         if is_list_like(skiprows):
 
             def f(skiprows: Sequence, x: int) -> bool:
+                # [FUNCTION DOC]
+                # HELPER: nested predicate used with a partial application to turn a
+                #   list of skipped positions into a callable. Returns true if the row
+                #   index x is contained in the sequence skiprows.
                 return x in skiprows
 
             skiprows = cast(Sequence, skiprows)
@@ -720,6 +854,25 @@ class BaseExcelReader(Generic[_WorkbookT]):
         dtype_backend: DtypeBackend | lib.NoDefault = lib.no_default,
         **kwds,
     ):
+        # [FUNCTION DOC]
+        # Public driver that reads one or several sheets and returns tables. Parameters
+        #   follow read_excel: sheet_name (name, position, list, or none for all sheets;
+        #   default first sheet), header, names, index_col, usecols, dtype, true_values,
+        #   false_values, skiprows, nrows, na_values, verbose (print a line per sheet),
+        #   parse_dates, date_format, thousands, decimal, comment, skipfooter,
+        #   dtype_backend, and extra keyword arguments passed through to the text
+        #   parser.
+        # Returns a mapping of sheet selector to table when sheet_name is a list or
+        #   none, otherwise the single table for the last (only) selected sheet.
+        # Behavior: validates the header argument and that nrows is a valid integer;
+        #   builds the list of selected sheets (none means all sheet names; duplicates
+        #   of the same value are removed while keeping order); for each sheet looks it
+        #   up by name or by position, computes how many rows are needed, reads the
+        #   sheet data, closes the sheet if it supports closing, normalizes usecols once
+        #   through the util helper, stores an empty table if the sheet has no data, and
+        #   otherwise delegates to the private sheet parser. Raises a value error if the
+        #   list of sheets is empty.
+        # Side effects: prints a progress line per sheet when verbose is true.
         validate_header_arg(header)
         validate_integer("nrows", nrows)
 
@@ -821,6 +974,24 @@ class BaseExcelReader(Generic[_WorkbookT]):
         dtype_backend: DtypeBackend | lib.NoDefault = lib.no_default,
         **kwds,
     ):
+        # [FUNCTION DOC]
+        # HELPER: turns one sheet's raw rows into a table and stores it in the shared
+        #   output mapping (under key asheetname), returning that mapping.
+        # Inputs: data is the list of rows (mutated in place for header and index
+        #   forward filling); output is the accumulating mapping; asheetname is the
+        #   sheet key; remaining arguments are the read options forwarded to the shared
+        #   text parser, plus extra keyword arguments.
+        # Behavior: normalizes a length one list header to a scalar; for a multi row
+        #   header forward fills merged header cells row by row (raising a value error
+        #   when a header position, after adding an integer skiprows offset, is beyond
+        #   the data) and, when an index column is set, pops the header name for the
+        #   index; detects whether a row of index names follows a multi level header
+        #   (all non-index, non-filled cells empty); forward fills blanks in the index
+        #   columns of a multi index; then builds a text parser with blank line skipping
+        #   off and reads nrows rows. If header names were collected, they are set as
+        #   the column level names. An empty data error produces an empty table; any
+        #   other exception has the sheet name appended to its first argument and is re
+        #   raised.
         is_list_header = False
         is_len_one_list_header = False
         if is_list_like(header):
@@ -954,6 +1125,18 @@ class BaseExcelReader(Generic[_WorkbookT]):
 
 @set_module("pandas")
 class ExcelWriter(Generic[_WorkbookT]):
+    # [CLASS DOC]
+    # Abstract base class and factory for writing tables to Excel sheets. Calling the
+    #   class directly (not a subclass) picks a concrete engine subclass from the file
+    #   extension and the engine configuration options (or the explicit engine argument)
+    #   and returns an instance of that subclass. Concrete engine subclasses must define
+    #   the engine name, the supported extensions, the cells writing method, the save
+    #   method, and expose the workbook and sheets.
+    # State: _handles (IOHandles for the output), _cur_sheet, _date_format and
+    #   _datetime_format (format strings, defaults for dates and datetimes), _mode
+    #   (binary file mode used to open the output, with append mapped to read/update)
+    #   and _if_sheet_exists (policy applied when a sheet exists in append mode).
+    # Usable as a context manager; leaving the block saves and closes the output.
     """
     Class for writing DataFrame objects into excel sheets.
 
@@ -1159,6 +1342,16 @@ class ExcelWriter(Generic[_WorkbookT]):
         if_sheet_exists: ExcelWriterIfSheetExists | None = None,
         engine_kwargs: dict | None = None,
     ) -> Self:
+        # [FUNCTION DOC]
+        # Factory hook that chooses the concrete class. Inputs mirror the constructor.
+        #   When called on the base class itself: if engine is none or the string auto,
+        #   derives the extension from a string path (otherwise assumes xlsx), looks up
+        #   the configured writer engine for that extension and, if that is auto,
+        #   resolves a default engine; an unknown extension (no such configuration
+        #   option) raises a value error saying there is no engine for the file type.
+        #   Then resolves the class through the util registry lookup. When called on a
+        #   subclass the class is used unchanged. Returns a new uninitialized instance
+        #   of the resulting class (the constructor then runs).
         # only switch class if generic(ExcelWriter)
         if cls is ExcelWriter:
             if engine is None or (isinstance(engine, str) and engine == "auto"):
@@ -1184,21 +1377,31 @@ class ExcelWriter(Generic[_WorkbookT]):
 
     @property
     def supported_extensions(self) -> tuple[str, ...]:
+        # [FUNCTION DOC]
+        # Read only property: the tuple of file extensions the writer engine supports.
         """Extensions that writer engine supports."""
         return self._supported_extensions
 
     @property
     def engine(self) -> str:
+        # [FUNCTION DOC]
+        # Read only property: the engine name string of this writer.
         """Name of engine."""
         return self._engine
 
     @property
     def sheets(self) -> dict[str, Any]:
+        # [FUNCTION DOC]
+        # Abstract property: mapping from sheet names to engine sheet objects. Raises
+        #   not implemented error in the base class.
         """Mapping of sheet names to sheet objects."""
         raise NotImplementedError
 
     @property
     def book(self) -> _WorkbookT:
+        # [FUNCTION DOC]
+        # Abstract property: the engine workbook object, allowing access to engine
+        #   specific features. Raises not implemented error in the base class.
         """
         Book instance. Class type will depend on the engine used.
 
@@ -1215,6 +1418,17 @@ class ExcelWriter(Generic[_WorkbookT]):
         freeze_panes: tuple[int, int] | None = None,
         autofilter_range: str | None = None,
     ) -> None:
+        # [FUNCTION DOC]
+        # HELPER: engine hook called by the frame to Excel formatter to write cells.
+        # Abstract: subclasses write the formatted cells (an iterable of cell objects)
+        #   into the sheet named sheet_name (default none means the current sheet), with
+        #   the upper left corner at startrow and startcol (zero based, default zero),
+        #   optionally freezing panes (pair of row and column counts) and applying an
+        #   automatic filter over a cell range string. Raises not implemented error in
+        #   the base class.
+        # KNOWN ISSUE: the docstring describes freeze_panes as the bottom most row and
+        #   right most column to freeze; engines treat it as the number of rows and
+        #   columns to freeze from the top left.
         """
         Write given formatted cells into Excel an excel sheet
 
@@ -1234,6 +1448,9 @@ class ExcelWriter(Generic[_WorkbookT]):
         raise NotImplementedError
 
     def _save(self) -> None:
+        # [FUNCTION DOC]
+        # HELPER: engine hook that writes the workbook to the output handle. Abstract;
+        #   raises not implemented error in the base class. Called by close.
         """
         Save workbook to disk.
         """
@@ -1250,6 +1467,25 @@ class ExcelWriter(Generic[_WorkbookT]):
         if_sheet_exists: ExcelWriterIfSheetExists | None = None,
         engine_kwargs: dict[str, Any] | None = None,
     ) -> None:
+        # [FUNCTION DOC]
+        # Initialize the writer. Inputs: path (string path, binary buffer, or another
+        #   ExcelWriter), engine (unused here, consumed by the factory), date_format and
+        #   datetime_format (format strings; defaults year-month-day and year-month-day
+        #   hour:minute:second), mode (write or append, default write), storage_options,
+        #   if_sheet_exists (one of error, new, replace, overlay or none; none becomes
+        #   error), engine_kwargs (unused here, consumed by subclasses).
+        # Behavior: for a string path checks that the extension is supported, raising a
+        #   value error otherwise. Forces a binary mode and maps append to read plus
+        #   update so the engine can first read the existing file. Raises a value error
+        #   if if_sheet_exists is not one of the valid values, or if it is given while
+        #   the mode is not append. Wraps the path in a handles object, and unless the
+        #   input is an ExcelWriter opens the file through the common opener in binary
+        #   mode.
+        # Side effects: opens a file handle that is released by close.
+        # KNOWN ISSUE: the placeholder IOHandles built for a non-file input is given a
+        #   compression dict keyed by the word compression, while the reader class uses
+        #   a key named method; the two spellings are inconsistent and only the latter
+        #   matches the compression options structure.
         # validate that this engine can handle the extension
         if isinstance(path, str):
             ext = os.path.splitext(path)[-1]
@@ -1296,6 +1532,8 @@ class ExcelWriter(Generic[_WorkbookT]):
 
     @property
     def date_format(self) -> str:
+        # [FUNCTION DOC]
+        # Read only property: the format string used for date values.
         """
         Format string for dates written into Excel files (e.g. 'YYYY-MM-DD').
         """
@@ -1303,6 +1541,11 @@ class ExcelWriter(Generic[_WorkbookT]):
 
     @property
     def datetime_format(self) -> str:
+        # [FUNCTION DOC]
+        # Read only property: the format string used for datetime values.
+        # KNOWN ISSUE: the docstring is copied from the date format property and still
+        #   describes dates with a date-only example, although this returns the datetime
+        #   format.
         """
         Format string for dates written into Excel files (e.g. 'YYYY-MM-DD').
         """
@@ -1310,15 +1553,24 @@ class ExcelWriter(Generic[_WorkbookT]):
 
     @property
     def if_sheet_exists(self) -> str:
+        # [FUNCTION DOC]
+        # Read only property: the policy (error, new, replace, overlay) applied when
+        #   writing to an existing sheet in append mode.
         """
         How to behave when writing to a sheet that already exists in append mode.
         """
         return self._if_sheet_exists
 
     def __fspath__(self) -> str:
+        # [FUNCTION DOC]
+        # Path protocol support: returns the name attribute of the underlying handle, or
+        #   an empty string if the handle has none.
         return getattr(self._handles.handle, "name", "")
 
     def _get_sheet_name(self, sheet_name: str | None) -> str:
+        # [FUNCTION DOC]
+        # HELPER: resolves an optional sheet name. Returns the given name, or the
+        #   current sheet if none was given. Raises a value error if both are none.
         if sheet_name is None:
             sheet_name = self._cur_sheet
         if sheet_name is None:  # pragma: no cover
@@ -1330,6 +1582,17 @@ class ExcelWriter(Generic[_WorkbookT]):
     ) -> tuple[
         int | float | bool | str | datetime.datetime | datetime.date, str | None
     ]:
+        # [FUNCTION DOC]
+        # HELPER: converts a cell value to a type the engines can write and an optional
+        #   number format. Input: any value. Returns a pair of the converted value and a
+        #   format string or none. Integers, floats, booleans and decimals are converted
+        #   to the plain Python type (no format). Datetime values get the datetime
+        #   format and dates get the date format (datetime is checked first because it
+        #   is a subclass of date). Time deltas become a fractional number of days with
+        #   the general number format. Anything else is converted to text; if that text
+        #   exceeds 32767 characters (the Excel cell limit) a user warning is emitted
+        #   that the contents were truncated, though the returned text itself is not
+        #   shortened here.
         """
         Convert numpy types to Python types for the Excel writers.
 
@@ -1376,6 +1639,16 @@ class ExcelWriter(Generic[_WorkbookT]):
 
     @classmethod
     def check_extension(cls, ext: str) -> Literal[True]:
+        # [FUNCTION DOC]
+        # Class method that validates a file extension against the engine's supported
+        #   extensions. Input: extension string, with or without a leading dot. Returns
+        #   true if supported; otherwise raises a value error naming the engine and the
+        #   extension.
+        # KNOWN ISSUE: the docstring says an unsupported file type error is raised, but
+        #   a value error is raised. The membership test is a substring check against
+        #   each supported extension rather than an exact match, and the message reads
+        #   the engine attribute from the class, which is a property object when
+        #   accessed on the class rather than a string.
         """
         checks that path's extension against the Writer's supported
         extensions.  If it isn't supported, raises UnsupportedFiletypeError.
@@ -1388,6 +1661,8 @@ class ExcelWriter(Generic[_WorkbookT]):
 
     # Allow use as a contextmanager
     def __enter__(self) -> Self:
+        # [FUNCTION DOC]
+        # Context manager entry: returns the writer itself.
         return self
 
     def __exit__(
@@ -1396,9 +1671,15 @@ class ExcelWriter(Generic[_WorkbookT]):
         exc_value: BaseException | None,
         traceback: TracebackType | None,
     ) -> None:
+        # [FUNCTION DOC]
+        # Context manager exit: closes the writer (saving the workbook). Exception
+        #   arguments are ignored and exceptions propagate.
         self.close()
 
     def close(self) -> None:
+        # [FUNCTION DOC]
+        # Save the workbook through the engine save hook and then close the underlying
+        #   handles. Returns nothing. Acts as a file like close.
         """synonym for save, to make it more file-like"""
         self._save()
         self._handles.close()
@@ -1418,6 +1699,19 @@ def inspect_excel_format(
     content_or_path: FilePath | ReadBuffer[bytes],
     storage_options: StorageOptions | None = None,
 ) -> str | None:
+    # [FUNCTION DOC]
+    # Determine the format of an Excel file from its leading bytes and, if zipped, its
+    #   member names. Inputs: content_or_path (path, URL or binary file like object) and
+    #   storage_options for opening. Returns xls when the first bytes match one of the
+    #   old binary signatures; none when the content is neither such a signature nor a
+    #   zip signature; for zip archives inspects the lower cased member names
+    #   (backslashes normalized to slashes) and returns xlsx if the workbook xml part
+    #   exists, xlsb if the workbook binary part exists, ods if the content xml part
+    #   exists, and otherwise zip. Raises a value error if reading yields nothing; the
+    #   zip library raises its bad zip file error for a zip signature with invalid
+    #   content.
+    # Side effects: opens the input, rewinds the stream to the start before returning
+    #   (and before inspecting the archive), and closes only handles it opened.
     """
     Inspect the path or content of an excel file and get its format.
 
@@ -1484,6 +1778,15 @@ def inspect_excel_format(
 
 @set_module("pandas")
 class ExcelFile:
+    # [CLASS DOC]
+    # Public wrapper around an Excel workbook that lets several sheets be parsed from
+    #   one opened file. Not a subclass of any reader; it composes one engine reader.
+    # State: engine (name string of the chosen engine), storage_options, _io (string
+    #   form of the input), _reader (instance of the engine reader class created from
+    #   the engine table), and the class level mapping of engine names to reader
+    #   classes.
+    # Supports use as a context manager. Key methods: parse, the book and sheet_names
+    #   properties, close.
     """
     Class for parsing tabular Excel sheets into DataFrame objects.
 
@@ -1573,6 +1876,20 @@ class ExcelFile:
         storage_options: StorageOptions | None = None,
         engine_kwargs: dict | None = None,
     ) -> None:
+        # [FUNCTION DOC]
+        # Create the file wrapper. Inputs: path_or_buffer (path, URL, buffer, engine
+        #   workbook), engine (name or none for auto detection), storage_options,
+        #   engine_kwargs (default none, treated as empty).
+        # Behavior: raises a value error for an engine name that is not in the engine
+        #   table. Stores the path as a string via the path conversion helper. When the
+        #   engine is none: if the input is an xlrd workbook object (checked only when
+        #   xlrd is installed, to avoid importing it needlessly) the format is xls;
+        #   otherwise the format is sniffed from the content and a value error is raised
+        #   when it cannot be determined. The engine is then taken from the reader
+        #   configuration option for that format, and auto is resolved by the default
+        #   engine helper. Finally constructs the engine reader with the string input,
+        #   storage options and engine kwargs.
+        # Side effects: opens the file through the reader.
         if engine_kwargs is None:
             engine_kwargs = {}
 
@@ -1625,6 +1942,8 @@ class ExcelFile:
         )
 
     def __fspath__(self):
+        # [FUNCTION DOC]
+        # Path protocol support: returns the stored string form of the input.
         return self._io
 
     def parse(
@@ -1648,6 +1967,19 @@ class ExcelFile:
         dtype_backend: DtypeBackend | lib.NoDefault = lib.no_default,
         **kwds,
     ) -> DataFrame | dict[str, DataFrame] | dict[int, DataFrame]:
+        # [FUNCTION DOC]
+        # Parse the selected sheet or sheets into tables. Same parameters as the reader
+        #   function (sheet_name, header, names, index_col, usecols, converters,
+        #   true_values, false_values, skiprows, nrows, na_values, parse_dates,
+        #   date_format, thousands, comment, skipfooter, dtype_backend) plus extra
+        #   keyword arguments such as dtype, decimal and verbose which are forwarded
+        #   unchanged to the reader's parse method. Returns a single table for scalar
+        #   sheet selection or a mapping of selector to table for a list or none
+        #   selector.
+        # KNOWN ISSUE: the signature does not list dtype, decimal or verbose and the
+        #   docstring does not mention them, but the module level reader function passes
+        #   them here and they only work because they travel through the extra keyword
+        #   arguments.
         """
         Parse specified sheet(s) into a DataFrame.
 
@@ -1800,6 +2132,9 @@ class ExcelFile:
 
     @property
     def book(self):
+        # [FUNCTION DOC]
+        # Read only property: the underlying engine workbook object, taken from the
+        #   reader.
         """
         Gets the Excel workbook.
 
@@ -1830,6 +2165,9 @@ class ExcelFile:
 
     @property
     def sheet_names(self):
+        # [FUNCTION DOC]
+        # Read only property: the list of sheet names of the workbook, taken from the
+        #   reader.
         """
         Names of the sheets in the document.
 
@@ -1856,10 +2194,14 @@ class ExcelFile:
         return self._reader.sheet_names
 
     def close(self) -> None:
+        # [FUNCTION DOC]
+        # Close the reader and release the underlying file resources. Returns nothing.
         """close io if necessary"""
         self._reader.close()
 
     def __enter__(self) -> Self:
+        # [FUNCTION DOC]
+        # Context manager entry: returns the file wrapper itself.
         return self
 
     def __exit__(
@@ -1868,4 +2210,7 @@ class ExcelFile:
         exc_value: BaseException | None,
         traceback: TracebackType | None,
     ) -> None:
+        # [FUNCTION DOC]
+        # Context manager exit: closes the wrapper; exception arguments are ignored and
+        #   exceptions propagate.
         self.close()

@@ -2,6 +2,24 @@
 Printing tools.
 """
 
+# [MODULE DOC]
+# Pretty printing tools used across pandas for converting objects to text and for
+#   joining and justifying columns of text.
+# Public contents: adjoin (glue lists of strings side by side), pprint_thing and
+#   pprint_thing_encoded (convert any object, including nested sequences and mappings,
+#   to text or bytes honoring display options), default_pprint, format_object_summary
+#   (bracketed, truncated, line wrapped summary of a sequence as used in index and array
+#   reprs), enable_data_resource_formatter (toggle the notebook table schema display),
+#   PrettyDict (dictionary with abbreviated representation), the text adjustment classes
+#   (plain and East Asian width aware) with their factory get_adjustment, and the type
+#   alias for escape character specifications. The private helpers justify table cells
+#   and print sequences and mappings.
+# Relationships: reads display options from the global options; the console module
+#   supplies the console width; the frame formatters in the sibling format module and
+#   the string, html and info renderers use the adjustment objects and pprint_thing.
+# Import-time side effects: defines two type variables and the escape characters type
+#   alias.
+
 from __future__ import annotations
 
 from collections.abc import (
@@ -33,6 +51,23 @@ _VT = TypeVar("_VT")
 
 
 def adjoin(space: int, *lists: list[str], **kwargs: Any) -> str:
+    # [FUNCTION DOC]
+    # Glue several columns of text together side by side, separated by a number of
+    #   spaces, producing a multi line string. Inputs: space (padding between columns),
+    #   lists (one list of strings per column) and optional keyword arguments strlen
+    #   (function measuring text width, default the built in length; needed for wide
+    #   characters) and justfunc (function that justifies a list of strings to a width
+    #   with a mode argument, default the plain left justify helper); the two are
+    #   removed from the keyword arguments before use. Returns the lines joined by
+    #   newlines.
+    # Behavior: computes each column width as its widest cell plus the spacing, except
+    #   the last column which gets only its widest cell (measured by plain length);
+    #   shorter columns are padded at the top with blank cells so that all have the same
+    #   number of rows; every column is left justified to its width; rows are
+    #   concatenated and joined.
+    # KNOWN ISSUE: the docstring lacks a Parameters heading (only an underline is
+    #   present) and describes lists as a list of strings; the last column's width uses
+    #   plain length rather than the supplied measuring function.
     """
     Glues together two sets of strings using the amount of space requested.
     The idea is to prettify.
@@ -65,6 +100,11 @@ def adjoin(space: int, *lists: list[str], **kwargs: Any) -> str:
 
 
 def _adj_justify(texts: Iterable[str], max_len: int, mode: str = "right") -> list[str]:
+    # [FUNCTION DOC]
+    # HELPER: default justification function for the column joiner. Inputs: texts
+    #   (iterable of strings), max_len (target width) and mode (left, center, or
+    #   anything else meaning right; default right). Returns a new list of strings
+    #   padded to the width in that mode.
     """
     Perform ljust, center, rjust against string or list-like
     """
@@ -103,6 +143,15 @@ def _adj_justify(texts: Iterable[str], max_len: int, mode: str = "right") -> lis
 def _pprint_seq(
     seq: ListLike, _nest_lvl: int = 0, max_seq_items: int | None = None, **kwds: Any
 ) -> str:
+    # [FUNCTION DOC]
+    # HELPER: pretty printer for sequences, used by the main printer. Inputs: seq (list
+    #   like), _nest_lvl (current nesting depth, internal), max_seq_items (limit of
+    #   printed items; none uses the display option, then the full length; the value
+    #   false means unlimited) and extra keyword arguments passed to the recursive
+    #   printer for each element. Returns the text: sets use braces, frozen sets use the
+    #   frozen set wrapper with braces, mutable sequences use square brackets and
+    #   everything else round brackets. Items beyond the limit are replaced by a
+    #   trailing ellipsis; a one element tuple gets a trailing comma.
     """
     internal. pprinter for iterables. you should probably use pprint_thing()
     rather than calling this directly.
@@ -143,6 +192,12 @@ def _pprint_seq(
 def _pprint_dict(
     seq: Mapping, _nest_lvl: int = 0, max_seq_items: int | None = None, **kwds: Any
 ) -> str:
+    # [FUNCTION DOC]
+    # HELPER: pretty printer for mappings, used by the main printer. Inputs: seq
+    #   (mapping), _nest_lvl, max_seq_items (limit of printed pairs; none uses the
+    #   display option, then the full length; false means unlimited) and extra keyword
+    #   arguments passed to the printer for keys and values. Returns braces around comma
+    #   separated key colon value pairs, followed by an ellipsis when truncated.
     """
     internal. pprinter for iterables. you should probably use pprint_thing()
     rather than calling this directly.
@@ -179,6 +234,27 @@ def pprint_thing(
     quote_strings: bool = False,
     max_seq_items: int | None = None,
 ) -> str:
+    # [FUNCTION DOC]
+    # Convert any object to text. This is the sanctioned way of stringifying objects in
+    #   pandas; it handles nested sequences and mappings. Inputs: thing (the object),
+    #   _nest_lvl (internal recursion depth), escape_chars (characters to escape: a
+    #   mapping from character to replacement, or an iterable of characters),
+    #   default_escapes (for a mapping, whether it adds to or replaces the default
+    #   escapes of tab, newline, carriage return and single quote; default false),
+    #   quote_strings (wrap plain strings in single quotes; default false) and
+    #   max_seq_items (limit for printed items; default none uses the display option).
+    #   Returns the text.
+    # Behavior: iterators (objects with a next method) are converted with plain string
+    #   conversion; mappings and sequences (while the nesting depth is below the nest
+    #   depth display option) are printed by the dedicated printers; a string with
+    #   quoting enabled gets escaped and quoted; everything else is converted to text
+    #   and has the escapes applied.
+    # KNOWN ISSUE: the docstring says the default escapes flag controls whether the
+    #   characters replace or add to the defaults, but it only has an effect when
+    #   escape_chars is a mapping; for an iterable of characters each character must be
+    #   one of the four default escape characters or a key error is raised. The mapping
+    #   printer is called without the escape characters, so they are not applied inside
+    #   mappings, and strings in mappings are always quoted.
     """
     This function is the sanctioned way of converting objects
     to a string representation and properly handles nested sequences.
@@ -205,6 +281,14 @@ def pprint_thing(
     def as_escaped_string(
         thing: Any, escape_chars: EscapeChars | None = escape_chars
     ) -> str:
+        # [FUNCTION DOC]
+        # HELPER: nested function that converts an object to text and applies character
+        #   escapes. Input: thing and escape_chars (defaults to the enclosing call's
+        #   value). Builds a translation table from the default escapes; for a mapping,
+        #   either merges it into the defaults or replaces them, and uses its keys as
+        #   the characters to escape; otherwise uses the given iterable (or nothing).
+        #   Returns the converted text with each escape character replaced by its
+        #   translation.
         translate = {"\t": r"\t", "\n": r"\n", "\r": r"\r", "'": r"\'"}
         if isinstance(escape_chars, Mapping):
             if default_escapes:
@@ -250,11 +334,24 @@ def pprint_thing(
 def pprint_thing_encoded(
     object: object, encoding: str = "utf-8", errors: str = "replace"
 ) -> bytes:
+    # [FUNCTION DOC]
+    # Convert an object to text with the main printer and encode it to bytes. Inputs:
+    #   object, encoding (default utf-8) and errors (error handling for encoding;
+    #   default replace). Returns the bytes.
     value = pprint_thing(object)  # get unicode representation of object
     return value.encode(encoding, errors)
 
 
 def enable_data_resource_formatter(enable: bool) -> None:
+    # [FUNCTION DOC]
+    # Turn the notebook table schema display format on or off. Input: enable (true to
+    #   register and enable the data resource formatter, false to disable it). Does
+    #   nothing when IPython has not been imported or there is no active shell. When
+    #   enabling and the formatter for the data resource media type is not yet
+    #   registered, defines and registers a formatter class that uses the table schema
+    #   representation method of objects; then enables it. When disabling, disables the
+    #   formatter if it is registered. Side effects: modifies the active IPython display
+    #   formatters.
     if "IPython" not in sys.modules:
         # definitely not in IPython
         return
@@ -276,6 +373,12 @@ def enable_data_resource_formatter(enable: bool) -> None:
             from traitlets import ObjectName
 
             class TableSchemaFormatter(BaseFormatter):
+                # [CLASS DOC]
+                # HELPER: formatter class defined on demand inside the enable function
+                #   and registered with IPython for the data resource media type. It
+                #   subclasses the IPython base formatter, uses the table schema
+                #   representation method of objects as its print method and accepts
+                #   only dictionaries as results.
                 print_method = ObjectName("_repr_data_resource_")
                 _return_type = (dict,)
 
@@ -289,6 +392,10 @@ def enable_data_resource_formatter(enable: bool) -> None:
 
 
 def default_pprint(thing: Any, max_seq_items: int | None = None) -> str:
+    # [FUNCTION DOC]
+    # Print an object using the main printer with tabs, carriage returns and newlines
+    #   escaped and strings quoted. Inputs: thing and max_seq_items (default none).
+    #   Returns the text.
     return pprint_thing(
         thing,
         escape_chars=("\t", "\r", "\n"),
@@ -305,6 +412,27 @@ def format_object_summary(
     indent_for_name: bool = True,
     line_break_each_value: bool = False,
 ) -> str:
+    # [FUNCTION DOC]
+    # Build the bracketed summary text of a sequence, as used by index and array
+    #   representations. Inputs: obj (sized, indexable sequence), formatter (function
+    #   formatting one element to text), is_justify (right justify values to a common
+    #   width when needed; default true), name (label whose length determines the
+    #   continuation indent; default the class name of obj), indent_for_name (indent
+    #   continuation lines to line up with the name; default true) and
+    #   line_break_each_value (put every value, each itself a sequence, on its own line;
+    #   default false). Returns the summary text.
+    # Behavior: gets the display width from the console size, falling back to the width
+    #   option or 80. Reads the maximum items option; truncation applies when the length
+    #   exceeds it. Empty, one element and two element inputs (when not breaking per
+    #   value) are printed inline. Otherwise shows leading and trailing elements (at
+    #   most ten each side, half the limit each; a limit of one shows only the last
+    #   element), formats them, optionally justifies them (to a common width when
+    #   truncated or too wide for a line; per position when breaking each value), packs
+    #   the values into lines no wider than the display width using separators, inserts
+    #   an ellipsis line when truncated, closes the bracket and adds a trailing
+    #   separator or line break depending on whether it fits on one row. In per value
+    #   mode each value is shortened to the number of items that fits the available
+    #   width.
     """
     Return the formatted obj as a unicode string
 
@@ -362,6 +490,13 @@ def format_object_summary(
     def _extend_line(
         s: str, line: str, value: str, display_width: int, next_line_prefix: str
     ) -> tuple[str, str]:
+        # [FUNCTION DOC]
+        # HELPER: nested function that appends a value to the current line. Inputs: s
+        #   (text accumulated so far), line (current line), value (text to append),
+        #   display_width and next_line_prefix. If the current line plus the value would
+        #   reach the display width, the current line (right stripped) is flushed to s
+        #   and a new line starting with the prefix is begun. Returns the pair of
+        #   updated accumulated text and current line.
         if adj.len(line.rstrip()) + adj.len(value.rstrip()) >= display_width:
             s += line.rstrip()
             line = next_line_prefix
@@ -369,6 +504,9 @@ def format_object_summary(
         return s, line
 
     def best_len(values: list[str]) -> int:
+        # [FUNCTION DOC]
+        # HELPER: nested function returning the largest display width among the given
+        #   strings, or zero for an empty list.
         if values:
             return max(adj.len(x) for x in values)
         else:
@@ -471,6 +609,12 @@ def format_object_summary(
 def _justify(
     head: list[Sequence[str]], tail: list[Sequence[str]]
 ) -> tuple[list[tuple[str, ...]], list[tuple[str, ...]]]:
+    # [FUNCTION DOC]
+    # HELPER: right justifies items so that they line up when the head and tail lists
+    #   are stacked vertically. Inputs: head and tail, lists of sequences of strings.
+    #   For each position within the inner sequences finds the widest string across both
+    #   lists and right justifies to it. Returns the pair of head and tail as lists of
+    #   tuples of strings.
     """
     Justify items in head and tail, so they are right-aligned when stacked.
 
@@ -512,20 +656,41 @@ def _justify(
 
 
 class PrettyDict(dict[_KT, _VT]):
+    # [CLASS DOC]
+    # Dictionary subclass whose representation is produced by the main printer, so it is
+    #   abbreviated according to the display options. Generic over key and value types;
+    #   no extra state.
     """Dict extension to support abbreviated __repr__"""
 
     def __repr__(self) -> str:
+        # [FUNCTION DOC]
+        # Returns the text produced by the main printer for this dictionary (limited
+        #   number of items, nested printing).
         return pprint_thing(self)
 
 
 class _TextAdjustment:
+    # [CLASS DOC]
+    # Default text measurement and justification object used by the frame formatters.
+    #   State: encoding (the display encoding option). Methods: len (character count),
+    #   justify (pad strings to a width in a mode) and adjoin (the module level column
+    #   joiner configured with this object's measuring and justify methods). Subclassed
+    #   to account for East Asian wide characters.
     def __init__(self) -> None:
+        # [FUNCTION DOC]
+        # Store the display encoding option.
         self.encoding = get_option("display.encoding")
 
     def len(self, text: str) -> int:
+        # [FUNCTION DOC]
+        # Returns the number of characters in the text.
         return len(text)
 
     def justify(self, texts: Any, max_len: int, mode: str = "right") -> list[str]:
+        # [FUNCTION DOC]
+        # Pad each string of an iterable to a width. Inputs: texts, max_len and mode
+        #   (left, center, otherwise right; default right). Returns a new list of padded
+        #   strings.
         """
         Perform ljust, center, rjust against string or list-like
         """
@@ -537,11 +702,24 @@ class _TextAdjustment:
             return [x.rjust(max_len) for x in texts]
 
     def adjoin(self, space: int, *lists: Any, **kwargs: Any) -> str:
+        # [FUNCTION DOC]
+        # Join columns side by side using the module level joiner with this object's
+        #   length and justify methods. Inputs: space, the lists of strings and extra
+        #   keyword arguments. Returns the joined multi line text.
         return adjoin(space, *lists, strlen=self.len, justfunc=self.justify, **kwargs)
 
 
 class _EastAsianTextAdjustment(_TextAdjustment):
+    # [CLASS DOC]
+    # Text adjustment that measures width in terminal cells, counting East Asian wide
+    #   and fullwidth characters as two. State: ambiguous_width (two if the ambiguous
+    #   characters as wide option is set, else one) and the table mapping East Asian
+    #   width classes (narrow, neutral, wide, fullwidth, halfwidth) to cell counts.
     def __init__(self) -> None:
+        # [FUNCTION DOC]
+        # Initialize the base class, set the ambiguous width from the display option and
+        #   define the table mapping the Unicode East Asian width class to a number of
+        #   terminal cells.
         super().__init__()
         if get_option("display.unicode.ambiguous_as_wide"):
             self.ambiguous_width = 2
@@ -554,6 +732,10 @@ class _EastAsianTextAdjustment(_TextAdjustment):
         self._EAW_MAP = {"Na": 1, "N": 1, "W": 2, "F": 2, "H": 1}
 
     def len(self, text: str) -> int:
+        # [FUNCTION DOC]
+        # Returns the display width of the text: the sum of per character widths based
+        #   on the Unicode East Asian width class (ambiguous characters use the
+        #   configured width). Non string input is measured with the plain length.
         """
         Calculate display width considering unicode East Asian Width
         """
@@ -567,8 +749,18 @@ class _EastAsianTextAdjustment(_TextAdjustment):
     def justify(
         self, texts: Iterable[str], max_len: int, mode: str = "right"
     ) -> list[str]:
+        # [FUNCTION DOC]
+        # Pad each string to a display width. Inputs: texts, max_len and mode (left,
+        #   center, otherwise right; default right). Because widths differ from
+        #   character counts, the padding for each string is its target width minus its
+        #   display width plus its character count. Returns a new list of padded
+        #   strings.
         # re-calculate padding space per str considering East Asian Width
         def _get_pad(t: str) -> int:
+            # [FUNCTION DOC]
+            # HELPER: nested function computing the pad width for one text so that the
+            #   padded text reaches the target display width: the target minus the
+            #   display width plus the character count.
             return max_len - self.len(t) + len(t)
 
         if mode == "left":
@@ -580,6 +772,10 @@ class _EastAsianTextAdjustment(_TextAdjustment):
 
 
 def get_adjustment() -> _TextAdjustment:
+    # [FUNCTION DOC]
+    # Factory returning the text adjustment object chosen by the East Asian width
+    #   display option: the width aware one when the option is set, otherwise the plain
+    #   one.
     use_east_asian_width = get_option("display.unicode.east_asian_width")
     if use_east_asian_width:
         return _EastAsianTextAdjustment()

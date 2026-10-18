@@ -1,5 +1,15 @@
 """feather-format compat"""
 
+# [MODULE DOC]
+# Feather file format support for pandas I/O, built on the optional pyarrow library.
+# Public contents: read_feather (public, exported at the top level of pandas) and
+#   to_feather (used by the frame's to_feather method). Both open the file through the
+#   common handle opener in binary mode so paths, URLs, buffers and storage options work
+#   uniformly.
+# Import-time side effects: none; pyarrow is imported lazily inside the functions. Both
+#   functions suppress known deprecation warnings raised by newer pyarrow versions for
+#   the legacy feather entry points.
+
 from __future__ import annotations
 
 from typing import (
@@ -45,6 +55,17 @@ def to_feather(
     storage_options: StorageOptions | None = None,
     **kwargs: Any,
 ) -> None:
+    # [FUNCTION DOC]
+    # Write a table to a Feather file. Inputs: df (must be a DataFrame), path (path, URL
+    #   or writable binary buffer), storage_options (default none, for remote paths),
+    #   and extra keyword arguments passed through to the pyarrow feather writer.
+    #   Returns nothing.
+    # Behavior: verifies pyarrow is installed (import error otherwise); raises a value
+    #   error if df is not a DataFrame (note this check happens after the dependency
+    #   check); opens the target in binary write mode and calls the pyarrow writer
+    #   inside a warning filter that silences the pyarrow deprecation warning for the
+    #   feather writer.
+    # Side effects: creates or overwrites the target; closes the handle on exit.
     """
     Write a DataFrame to the binary Feather format.
 
@@ -93,6 +114,22 @@ def read_feather(
     storage_options: StorageOptions | None = None,
     dtype_backend: DtypeBackend | lib.NoDefault = lib.no_default,
 ) -> DataFrame:
+    # [FUNCTION DOC]
+    # Read a Feather file into a DataFrame. Inputs: path (path, URL or readable binary
+    #   buffer), columns (optional sequence of column labels to read; default none reads
+    #   all), use_threads (default true; coerced to a plain boolean), storage_options
+    #   (default none) and dtype_backend (default means not specified; validated by the
+    #   shared check which raises for invalid values). Returns a DataFrame.
+    # Behavior: verifies pyarrow is installed and imports the module that registers
+    #   pyarrow extension types as a side effect. Opens the file in binary read mode.
+    #   When no dtype backend is requested and the string dtype option is not enabled,
+    #   reads with the pyarrow frame reader while silencing a deprecated block
+    #   construction warning and the pyarrow feather deprecation warning, then converts
+    #   every column that came back as the string extension dtype with a not-a-number
+    #   missing marker to plain object dtype (because pyarrow always produces string
+    #   dtype even when string inference is off), and returns that frame. Otherwise
+    #   reads an Arrow table (silencing the pyarrow deprecation warning) and converts it
+    #   with the shared Arrow table to pandas helper, honoring the dtype backend.
     """
     Load a feather-format object from the file path.
 

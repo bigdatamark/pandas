@@ -1,3 +1,13 @@
+# [MODULE DOC]
+# Excel writer engine for xlsx files using the optional xlsxwriter library (the default
+#   xlsx writer when the library is installed).
+# Public contents: XlsxWriter (subclass of the ExcelWriter base class; engine name
+#   xlsxwriter; write only, no append) and the private style translator _XlsxStyler that
+#   converts the openpyxl oriented style dictionaries produced by the Excel formatter
+#   into the flat property dictionaries xlsxwriter expects.
+# Import-time side effects: none; xlsxwriter is imported lazily inside the writer
+#   constructor.
+
 from __future__ import annotations
 
 import json
@@ -22,6 +32,13 @@ if TYPE_CHECKING:
 
 
 class _XlsxStyler:
+    # [CLASS DOC]
+    # HELPER: private style translator used only by XlsxWriter. Holds a class level
+    #   ordered mapping from each style group (font, number format, protection,
+    #   alignment, fill, border) to a list of pairs of a key path into the nested
+    #   openpyxl style dictionary and the flat xlsxwriter property name. Order matters
+    #   for determinism and because more specific paths (for example color with rgb)
+    #   must come before their prefixes. Offers one class method, convert.
     # Map from openpyxl-oriented styles to flatter xlsxwriter representation
     # Ordering necessary for both determinism and because some are keyed by
     # prefixes of others.
@@ -94,6 +111,23 @@ class _XlsxStyler:
 
     @classmethod
     def convert(cls, style_dict, num_format_str=None) -> dict[str, Any]:
+        # [FUNCTION DOC]
+        # HELPER: converts a style dictionary and an optional number format string into
+        #   a flat dictionary of xlsxwriter format properties. Inputs: style_dict
+        #   (nested dictionary or none) and num_format_str (default none).
+        # Behavior: starts with the number format property if a number format string is
+        #   given. If the style is none returns that. A borders key is renamed to border
+        #   (on a copy). For every group in the style, each mapped key path is tried in
+        #   order; the first path that resolves (a missing key or non-mapping value
+        #   aborts that path) sets the destination property, and a destination that is
+        #   already set is never overwritten. Then string values are translated to
+        #   numbers: the fill pattern becomes zero for none and one otherwise (other
+        #   patterns are not supported); border style names become the index in the
+        #   fixed list of xlsxwriter styles with unknown names mapped to medium; font
+        #   script names become indices in baseline, superscript, subscript (an unknown
+        #   name raises a value error); underline names become numeric codes (an unknown
+        #   name raises a key error). Finally a vertical alignment of center is renamed
+        #   to vcenter. Returns the properties dictionary.
         """
         converts a style_dict to an xlsxwriter format dict
 
@@ -193,6 +227,14 @@ class XlsxWriter(ExcelWriter):
         engine_kwargs: dict[str, Any] | None = None,
         **kwargs,
     ) -> None:
+        # [FUNCTION DOC]
+        # Create the writer. Inputs: same as the base class plus extra keyword arguments
+        #   merged into engine_kwargs. Imports xlsxwriter (an import error if absent),
+        #   merges the option sources with the util helper, raises a value error when
+        #   mode is append (not supported), runs the base constructor and creates the
+        #   xlsxwriter workbook on the output handle with engine_kwargs. If the library
+        #   rejects the keywords with a type error, the handle is closed and the error
+        #   re raised.
         # Use the xlsxwriter module as the Excel writer.
         from xlsxwriter import Workbook
 
@@ -220,6 +262,9 @@ class XlsxWriter(ExcelWriter):
 
     @property
     def book(self):
+        # [FUNCTION DOC]
+        # Read only property: the underlying xlsxwriter workbook for engine specific
+        #   access.
         """
         Book instance of class xlsxwriter.Workbook.
 
@@ -229,10 +274,16 @@ class XlsxWriter(ExcelWriter):
 
     @property
     def sheets(self) -> dict[str, Any]:
+        # [FUNCTION DOC]
+        # Read only property: the workbook's mapping from sheet name to worksheet
+        #   object, as maintained by the library.
         result = self.book.sheetnames
         return result
 
     def _save(self) -> None:
+        # [FUNCTION DOC]
+        # HELPER: implements the save hook. Closes the xlsxwriter workbook, which writes
+        #   the file to the handle. Returns nothing.
         """
         Save workbook to disk.
         """
@@ -247,6 +298,21 @@ class XlsxWriter(ExcelWriter):
         freeze_panes: tuple[int, int] | None = None,
         autofilter_range: str | None = None,
     ) -> None:
+        # [FUNCTION DOC]
+        # HELPER: implements the cell writing hook. Inputs: cells (iterable of cell
+        #   objects with row, column, value, style and merge fields), sheet_name
+        #   (default none means current sheet), startrow and startcol (zero based
+        #   offsets), freeze_panes (optional pair) and autofilter_range (optional range
+        #   string).
+        # Behavior: resolves the sheet name and gets the existing worksheet of that name
+        #   or adds a new one. Applies freeze panes when the pair is valid. For each
+        #   cell, converts the value and optional number format with the base class
+        #   helper, builds a cache key from the serialized style plus the number format,
+        #   and creates the xlsxwriter format once per key through the style translator.
+        #   A cell with merge information is written as a merged range from its position
+        #   to its merge end row and column (offsets applied); otherwise it is written
+        #   as a single cell. Finally sets the autofilter on the given range if any.
+        #   Returns nothing.
         # Write the frame cells using xlsxwriter.
         sheet_name = self._get_sheet_name(sheet_name)
 

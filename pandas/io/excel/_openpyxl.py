@@ -1,3 +1,15 @@
+# [MODULE DOC]
+# Excel engine for xlsx and xlsm workbooks built on the optional openpyxl library,
+#   providing both a writer and a reader.
+# Public contents: OpenpyxlWriter (subclass of the ExcelWriter base class; engine name
+#   openpyxl; supports append mode) and OpenpyxlReader (subclass of the generic reader
+#   base class; registered in the ExcelFile engine table under the name openpyxl). The
+#   writer also holds class methods that translate pandas style dictionaries (as
+#   produced by the Excel formatter) into native openpyxl style objects. openpyxl is
+#   imported lazily inside methods.
+# Import-time side effects: none (imports the shared docstring templates used by the doc
+#   decorator).
+
 from __future__ import annotations
 
 import mmap
@@ -39,6 +51,13 @@ if TYPE_CHECKING:
 
 
 class OpenpyxlWriter(ExcelWriter):
+    # [CLASS DOC]
+    # Writer for xlsx and xlsm files using openpyxl. Class attributes: engine name
+    #   openpyxl, supported extensions xlsx and xlsm. State: _book (the openpyxl
+    #   workbook; either newly created or loaded from the existing file in append mode).
+    #   Supports append mode, with the existing content handled according to the sheet
+    #   exists policy. Style translation is done by a family of class methods named
+    #   after the style group they convert.
     _engine = "openpyxl"
     _supported_extensions = (".xlsx", ".xlsm")
 
@@ -54,6 +73,17 @@ class OpenpyxlWriter(ExcelWriter):
         engine_kwargs: dict[str, Any] | None = None,
         **kwargs,
     ) -> None:
+        # [FUNCTION DOC]
+        # Create the writer. Inputs: same as the base class plus extra keyword arguments
+        #   merged into engine_kwargs. Merges the two keyword sources with the util
+        #   helper, runs the base constructor (which validates the path extension, maps
+        #   append to read/update mode and opens the output), then creates the workbook.
+        #   In read/update mode loads the existing workbook from the open handle with
+        #   engine_kwargs, closing the handle and re raising if the library rejects the
+        #   keywords with a type error, and rewinds the handle. Otherwise creates a new
+        #   workbook with engine_kwargs (closing the handle and re raising on a type
+        #   error) and removes the default first worksheet if any exist.
+        # Side effects: holds an open file handle until close.
         # Use the openpyxl module as the Excel writer.
         from openpyxl.workbook import Workbook
 
@@ -91,6 +121,9 @@ class OpenpyxlWriter(ExcelWriter):
 
     @property
     def book(self) -> Workbook:
+        # [FUNCTION DOC]
+        # Read only property: the underlying openpyxl workbook, for engine specific
+        #   access.
         """
         Book instance of class openpyxl.workbook.Workbook.
 
@@ -100,11 +133,19 @@ class OpenpyxlWriter(ExcelWriter):
 
     @property
     def sheets(self) -> dict[str, Any]:
+        # [FUNCTION DOC]
+        # Read only property: builds and returns a new mapping from sheet name to
+        #   worksheet object for all sheets in the workbook.
         """Mapping of sheet names to sheet objects."""
         result = {name: self.book[name] for name in self.book.sheetnames}
         return result
 
     def _save(self) -> None:
+        # [FUNCTION DOC]
+        # HELPER: implements the save hook. Saves the workbook to the output handle; in
+        #   append (read/update) mode, unless the handle is a memory map, truncates the
+        #   file at the current position so that leftover bytes of a longer previous
+        #   file are removed. Returns nothing.
         """
         Save workbook to disk.
         """
@@ -117,6 +158,14 @@ class OpenpyxlWriter(ExcelWriter):
     def _convert_to_style_kwargs(
         cls, style_dict: dict[str, Serialisable]
     ) -> dict[str, Serialisable]:
+        # [FUNCTION DOC]
+        # HELPER: converts a style dictionary into keyword arguments for openpyxl cell
+        #   style attributes. Input: dictionary whose keys are style groups (font, fill,
+        #   border or its synonym borders, alignment, number_format, protection) and
+        #   whose values are nested descriptions. Returns a new dictionary with
+        #   normalized keys and native openpyxl style objects as values. For each group
+        #   looks up the matching class method for that group; groups without a
+        #   converter, or whose converted value is empty or false, are dropped.
         """
         Convert a style_dict to a set of kwargs suitable for initializing
         or updating-on-copy an openpyxl v2 style object.
@@ -153,6 +202,11 @@ class OpenpyxlWriter(ExcelWriter):
 
     @classmethod
     def _convert_to_color(cls, color_spec):
+        # [FUNCTION DOC]
+        # HELPER: converts a color specification to an openpyxl color object. Input:
+        #   either a string (an aarrggbb hex value) or a dictionary of color attributes
+        #   (rgb, indexed, auto, theme, tint, index, type) passed as keyword arguments.
+        #   Returns the color object.
         """
         Convert ``color_spec`` to an openpyxl v2 Color object.
 
@@ -182,6 +236,12 @@ class OpenpyxlWriter(ExcelWriter):
 
     @classmethod
     def _convert_to_font(cls, font_dict):
+        # [FUNCTION DOC]
+        # HELPER: converts a font description dictionary to an openpyxl font object.
+        #   Short key synonyms (sz, b, i, u, strike, vertalign) are renamed to the full
+        #   names; the color entry is converted by the color helper; all other keys are
+        #   passed through unchanged. Returns the font object. The library raises a type
+        #   error for unknown keys.
         """
         Convert ``font_dict`` to an openpyxl v2 Font object.
 
@@ -230,6 +290,11 @@ class OpenpyxlWriter(ExcelWriter):
 
     @classmethod
     def _convert_to_stop(cls, stop_seq):
+        # [FUNCTION DOC]
+        # HELPER: converts an iterable of color specifications into the stop colors for
+        #   a gradient fill by applying the color helper to each item.
+        # KNOWN ISSUE: the docstring says a list is returned, but the function returns a
+        #   lazy mapping iterator that can be consumed only once.
         """
         Convert ``stop_seq`` to a list of openpyxl v2 Color objects,
         suitable for initializing the ``GradientFill`` ``stop`` parameter.
@@ -248,6 +313,15 @@ class OpenpyxlWriter(ExcelWriter):
 
     @classmethod
     def _convert_to_fill(cls, fill_dict: dict[str, Any]) -> Fill:
+        # [FUNCTION DOC]
+        # HELPER: converts a fill description dictionary to an openpyxl fill object.
+        #   Keys are split into pattern fill keywords (with synonyms such as pattern
+        #   type, foreground color and background color renamed to fill type, start
+        #   color and end color, and colors converted) and gradient fill keywords (fill
+        #   type renamed to type, stop converted to colors); keys that are neither are
+        #   given to both. First tries to build a pattern fill; if the library rejects
+        #   the keywords with a type error, builds a gradient fill from the gradient
+        #   keywords instead. Returns the fill object.
         """
         Convert ``fill_dict`` to an openpyxl v2 Fill object.
 
@@ -311,6 +385,11 @@ class OpenpyxlWriter(ExcelWriter):
 
     @classmethod
     def _convert_to_side(cls, side_spec):
+        # [FUNCTION DOC]
+        # HELPER: converts a border side specification to an openpyxl side object. A
+        #   string is taken as the border style. A dictionary has the key border_style
+        #   renamed to style and the color entry converted; the rest are passed through.
+        #   Returns the side object.
         """
         Convert ``side_spec`` to an openpyxl v2 Side object.
 
@@ -344,6 +423,12 @@ class OpenpyxlWriter(ExcelWriter):
 
     @classmethod
     def _convert_to_border(cls, border_dict):
+        # [FUNCTION DOC]
+        # HELPER: converts a border description dictionary to an openpyxl border object.
+        #   Synonym keys for diagonal up and diagonal down are renamed; the left, right,
+        #   top, bottom and diagonal entries are converted with the side helper; a color
+        #   entry, if present, is converted with the color helper; other keys pass
+        #   through. Returns the border object.
         """
         Convert ``border_dict`` to an openpyxl v2 Border object.
 
@@ -384,6 +469,10 @@ class OpenpyxlWriter(ExcelWriter):
 
     @classmethod
     def _convert_to_alignment(cls, alignment_dict):
+        # [FUNCTION DOC]
+        # HELPER: converts an alignment dictionary (horizontal, vertical, text rotation,
+        #   wrap text, shrink to fit, indent) to an openpyxl alignment object by passing
+        #   all entries as keyword arguments. Returns the alignment object.
         """
         Convert ``alignment_dict`` to an openpyxl v2 Alignment object.
 
@@ -407,6 +496,12 @@ class OpenpyxlWriter(ExcelWriter):
 
     @classmethod
     def _convert_to_number_format(cls, number_format_dict):
+        # [FUNCTION DOC]
+        # HELPER: extracts the number format code string from the number format
+        #   dictionary and returns it.
+        # KNOWN ISSUE: the docstring says the dictionary may have zero or more keys, but
+        #   the format code entry is required; a dictionary without it raises a key
+        #   error.
         """
         Convert ``number_format_dict`` to an openpyxl v2.1.0 number format
         initializer.
@@ -425,6 +520,11 @@ class OpenpyxlWriter(ExcelWriter):
 
     @classmethod
     def _convert_to_protection(cls, protection_dict):
+        # [FUNCTION DOC]
+        # HELPER: converts a protection dictionary (locked, hidden) to an openpyxl
+        #   protection object by passing entries as keyword arguments. Returns the
+        #   protection object.
+        # KNOWN ISSUE: the Returns section of the docstring is empty.
         """
         Convert ``protection_dict`` to an openpyxl v2 Protection object.
 
@@ -451,6 +551,29 @@ class OpenpyxlWriter(ExcelWriter):
         freeze_panes: tuple[int, int] | None = None,
         autofilter_range: str | None = None,
     ) -> None:
+        # [FUNCTION DOC]
+        # HELPER: implements the cell writing hook. Inputs: cells (iterable of cell
+        #   objects with row, column, value, style and merge fields), sheet_name
+        #   (default none means current sheet), startrow and startcol (zero based
+        #   offsets), freeze_panes (optional pair of row and column counts) and
+        #   autofilter_range (optional range string).
+        # Behavior: resolves the target sheet. If the sheet already exists and the
+        #   policy is not new: in append mode, replace deletes the old sheet and creates
+        #   a fresh one at the same position, error raises a value error saying the
+        #   sheet exists, overlay reuses the existing sheet; in write mode reuses the
+        #   sheet. Otherwise creates a new sheet with the given title (openpyxl makes
+        #   titles unique, which is how new works). If the freeze pane pair is valid,
+        #   freezes at the cell one row and one column past the given counts. Then
+        #   writes each cell at its offset position (one based): converted value from
+        #   the base class helper, number format if any, and style attributes (converted
+        #   once per distinct style and cached by the style's text form). Merged cells
+        #   are merged over the stated range and, because only the top left cell is
+        #   preserved, the style is applied to every other cell in the merged range.
+        #   Finally sets the autofilter range if given.
+        # KNOWN ISSUE: the final branch that raises a value error for an invalid policy
+        #   inside the append mode handling cannot be reached, because the base class
+        #   constructor already rejects invalid policies and the new policy is excluded
+        #   by the enclosing condition.
         # Write the frame cells using openpyxl.
         sheet_name = self._get_sheet_name(sheet_name)
 
@@ -538,6 +661,12 @@ class OpenpyxlWriter(ExcelWriter):
 
 
 class OpenpyxlReader(BaseExcelReader["Workbook"]):
+    # [CLASS DOC]
+    # Reader for xlsx and xlsm workbooks using openpyxl. Loads workbooks in read only
+    #   mode with cached formula values (formula results rather than formulas) and
+    #   without external links, unless overridden by engine_kwargs. Overrides
+    #   construction, workbook class, loader, sheet listing, lookups and the sheet to
+    #   rows hook.
     @doc(storage_options=_shared_docs["storage_options"])
     def __init__(
         self,
@@ -545,6 +674,11 @@ class OpenpyxlReader(BaseExcelReader["Workbook"]):
         storage_options: StorageOptions | None = None,
         engine_kwargs: dict | None = None,
     ) -> None:
+        # [FUNCTION DOC]
+        # Create the reader. Inputs: filepath_or_buffer, storage_options, engine_kwargs.
+        #   Verifies that openpyxl is installed (the helper raises an import error
+        #   otherwise) and runs the base constructor. The docstring is completed with
+        #   the shared storage options text by the doc decorator.
         """
         Reader using openpyxl engine.
 
@@ -565,6 +699,9 @@ class OpenpyxlReader(BaseExcelReader["Workbook"]):
 
     @property
     def _workbook_class(self) -> type[Workbook]:
+        # [FUNCTION DOC]
+        # Returns the openpyxl workbook class (imported lazily); used by the base class
+        #   to recognize already loaded workbooks.
         from openpyxl import Workbook
 
         return Workbook
@@ -572,6 +709,10 @@ class OpenpyxlReader(BaseExcelReader["Workbook"]):
     def load_workbook(
         self, filepath_or_buffer: FilePath | ReadBuffer[bytes], engine_kwargs
     ) -> Workbook:
+        # [FUNCTION DOC]
+        # Loads a workbook with openpyxl. Default options are read only true, data only
+        #   true (cached values rather than formulas) and keep links false;
+        #   engine_kwargs override these defaults by key. Returns the workbook.
         from openpyxl import load_workbook
 
         default_kwargs = {"read_only": True, "data_only": True, "keep_links": False}
@@ -583,17 +724,31 @@ class OpenpyxlReader(BaseExcelReader["Workbook"]):
 
     @property
     def sheet_names(self) -> list[str]:
+        # [FUNCTION DOC]
+        # Read only property: the titles of all worksheets (chart sheets are not
+        #   included, so positions count only worksheets).
         return [sheet.title for sheet in self.book.worksheets]
 
     def get_sheet_by_name(self, name: str):
+        # [FUNCTION DOC]
+        # Returns the sheet with the given name after the base class name check (raising
+        #   a value error for unknown names).
         self.raise_if_bad_sheet_by_name(name)
         return self.book[name]
 
     def get_sheet_by_index(self, index: int):
+        # [FUNCTION DOC]
+        # Returns the worksheet at the given zero based position after the base class
+        #   position check (raising a value error when out of range).
         self.raise_if_bad_sheet_by_index(index)
         return self.book.worksheets[index]
 
     def _convert_cell(self, cell) -> Scalar:
+        # [FUNCTION DOC]
+        # HELPER: converts an openpyxl cell to a Python value. A cell without a value
+        #   becomes the empty string (for compatibility with xlrd). Error cells become
+        #   not a number. Numeric cells that are whole become integers, other numbers
+        #   become floats. Everything else is returned as is.
         from openpyxl.cell.cell import (
             TYPE_ERROR,
             TYPE_NUMERIC,
@@ -614,6 +769,15 @@ class OpenpyxlReader(BaseExcelReader["Workbook"]):
     def get_sheet_data(
         self, sheet, file_rows_needed: int | None = None
     ) -> list[list[Scalar]]:
+        # [FUNCTION DOC]
+        # Converts a worksheet to a list of equal length rows. Input: sheet and
+        #   file_rows_needed (default none; reading stops once at least that many rows,
+        #   including empty rows, have been collected). Returns the list of rows.
+        # Behavior: in read only mode first resets the sheet's stored dimensions (the
+        #   stored dimensions can be wrong, which would truncate the rows). Each row is
+        #   converted cell by cell with trailing empty strings trimmed; all rows are
+        #   collected but trailing completely empty rows are dropped; remaining rows are
+        #   padded with empty strings to the widest row.
         if self.book.read_only:
             sheet.reset_dimensions()
 

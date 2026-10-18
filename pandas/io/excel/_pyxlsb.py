@@ -1,4 +1,13 @@
 # pyright: reportMissingImports=false
+
+# [MODULE DOC]
+# Excel reader engine for binary Excel workbooks (xlsb) built on the optional pyxlsb
+#   library.
+# Public contents: PyxlsbReader, a subclass of the generic reader base class from the
+#   base module, registered in the ExcelFile engine table under the name pyxlsb. Library
+#   imports happen lazily inside methods.
+# Import-time side effects: none.
+
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
@@ -19,12 +28,22 @@ if TYPE_CHECKING:
 
 
 class PyxlsbReader(BaseExcelReader["Workbook"]):
+    # [CLASS DOC]
+    # Concrete reader for xlsb files. The workbook type is the library's workbook
+    #   object. Overrides construction, workbook class, loader, sheet names, sheet
+    #   lookups and the sheet-to-rows hook. Limitation: the library cannot tell floats
+    #   from datetimes, so date cells come back as plain numbers.
     def __init__(
         self,
         filepath_or_buffer: FilePath | ReadBuffer[bytes],
         storage_options: StorageOptions | None = None,
         engine_kwargs: dict | None = None,
     ) -> None:
+        # [FUNCTION DOC]
+        # Create the reader. Inputs: filepath_or_buffer, storage_options, engine_kwargs
+        #   (passed to the library's open function). Verifies the pyxlsb dependency is
+        #   installed (the helper raises an import error otherwise) and then runs the
+        #   base constructor, which loads the workbook through the loader hook.
         """
         Reader using pyxlsb engine.
 
@@ -55,6 +74,9 @@ class PyxlsbReader(BaseExcelReader["Workbook"]):
 
     @property
     def _workbook_class(self) -> type[Workbook]:
+        # [FUNCTION DOC]
+        # Returns the library's workbook class (imported lazily); used by the base class
+        #   to recognize already loaded workbooks.
         from pyxlsb import Workbook
 
         return Workbook
@@ -62,6 +84,9 @@ class PyxlsbReader(BaseExcelReader["Workbook"]):
     def load_workbook(
         self, filepath_or_buffer: FilePath | ReadBuffer[bytes], engine_kwargs
     ) -> Workbook:
+        # [FUNCTION DOC]
+        # Opens a workbook from the given path or stream with the library's open
+        #   function, passing engine_kwargs as keyword arguments. Returns the workbook.
         from pyxlsb import open_workbook
 
         # TODO: hack in buffer capability
@@ -72,19 +97,36 @@ class PyxlsbReader(BaseExcelReader["Workbook"]):
 
     @property
     def sheet_names(self) -> list[str]:
+        # [FUNCTION DOC]
+        # Read only property: the list of sheet names, taken directly from the workbook.
         return self.book.sheets
 
     def get_sheet_by_name(self, name: str):
+        # [FUNCTION DOC]
+        # Returns the sheet with the given name after the base class name check (which
+        #   raises a value error for unknown names).
         self.raise_if_bad_sheet_by_name(name)
         return self.book.get_sheet(name)
 
     def get_sheet_by_index(self, index: int):
+        # [FUNCTION DOC]
+        # Returns the sheet at the given zero based position after the base class
+        #   position check (which raises a value error for out of range positions). The
+        #   library numbers sheets from one, so one is added to the position.
         self.raise_if_bad_sheet_by_index(index)
         # pyxlsb sheets are indexed from 1 onwards
         # There's a fix for this in the source, but the pypi package doesn't have it
         return self.book.get_sheet(index + 1)
 
     def _convert_cell(self, cell) -> Scalar:
+        # [FUNCTION DOC]
+        # HELPER: converts a library cell into a Python value. A missing value becomes
+        #   the empty string so unnamed header cells still appear as columns. Floats
+        #   that are whole numbers become integers, other floats stay floats. Anything
+        #   else is returned unchanged.
+        # KNOWN ISSUE: the in-code comment states that datetimes cannot be read from
+        #   xlsb files because the library does not distinguish them from floats; dates
+        #   therefore surface as numeric serial values.
         # TODO: there is no way to distinguish between floats and datetimes in pyxlsb
         # This means that there is no way to read datetime types from an xlsb file yet
         if cell.v is None:
@@ -103,6 +145,16 @@ class PyxlsbReader(BaseExcelReader["Workbook"]):
         sheet,
         file_rows_needed: int | None = None,
     ) -> list[list[Scalar]]:
+        # [FUNCTION DOC]
+        # Converts a sheet to a list of equal length rows. Input: sheet (library sheet
+        #   object) and file_rows_needed (default none; stop once at least that many
+        #   rows were collected). Returns the list of rows.
+        # Behavior: iterates rows in sparse mode (rows may have different lengths and
+        #   fully empty rows are not produced). Each row is converted cell by cell and
+        #   trailing empty strings are trimmed. Non-empty rows are appended after
+        #   inserting empty rows for any gap in row numbers since the previous kept row.
+        #   When rows exist, all rows shorter than the widest are padded with empty
+        #   strings.
         data: list[list[Scalar]] = []
         previous_row_number = -1
         # When sparse=True the rows can have different lengths and empty rows are

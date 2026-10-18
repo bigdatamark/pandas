@@ -2,6 +2,17 @@
 Utilities for interpreting CSS from Stylers for formatting non-HTML outputs.
 """
 
+# [MODULE DOC]
+# Utilities for interpreting CSS declarations from Styler objects so that non-HTML
+#   output (notably Excel and LaTeX conversion) can use atomic CSS 2.2 properties.
+# Public contents: CSSResolver (callable class that parses a declaration string or
+#   pairs, expands shorthand properties, resolves inheritance and converts sizes to
+#   points), plus two private factory functions that build the shorthand expansion
+#   callbacks stored in the resolver's expansion table. Problems are reported via the
+#   CSS warning category from the errors module.
+# Import-time side effects: none (the class body builds lookup tables when the module is
+#   imported).
+
 from __future__ import annotations
 
 import re
@@ -21,6 +32,15 @@ if TYPE_CHECKING:
 
 
 def _side_expander(prop_fmt: str) -> Callable:
+    # [FUNCTION DOC]
+    # HELPER: factory for CSSResolver shorthand expansion callbacks (used to fill the
+    #   expansion table). Input: prop_fmt, a format string with one placeholder for the
+    #   side name (for example for margin or per-side border attributes). Returns a
+    #   function taking the resolver instance, the property name and the value string,
+    #   which is a generator of (property, value) pairs.
+    # KNOWN ISSUE: the docstring documents a parameter called side, but the actual
+    #   parameter is the format string prop_fmt; the Returns description is also loosely
+    #   formatted.
     """
     Wrapper to expand shorthand property into top, right, bottom, left properties
 
@@ -35,6 +55,16 @@ def _side_expander(prop_fmt: str) -> Callable:
     """
 
     def expand(self: CSSResolver, prop: str, value: str) -> Generator[tuple[str, str]]:
+        # [FUNCTION DOC]
+        # HELPER: nested generator returned by the side expander factory. Inputs: self
+        #   (the resolver, used for the side shorthand table and the side names), prop
+        #   (the property name, used only in the warning text) and value (the value
+        #   string). Splits the value on whitespace; the number of tokens (one to four)
+        #   selects, through the shorthand table, which token applies to the sides in
+        #   the order top, right, bottom, left, following CSS semantics. Yields one pair
+        #   per side with the side name inserted into the format string. If the token
+        #   count is not one to four, emits a CSS warning that the property could not be
+        #   expanded and yields nothing.
         """
         Expand shorthand property into side-specific property (top, right, bottom, left)
 
@@ -64,6 +94,10 @@ def _side_expander(prop_fmt: str) -> Callable:
 
 
 def _border_expander(side: str = "") -> Callable:
+    # [FUNCTION DOC]
+    # HELPER: factory for border shorthand expanders. Input: side, one of the empty
+    #   string (all sides) or a side name; when not empty it is prefixed with a dash.
+    #   Returns a generator function for border or per-side border declarations.
     """
     Wrapper to expand 'border' property into border color, style, and width properties
 
@@ -80,6 +114,20 @@ def _border_expander(side: str = "") -> Callable:
         side = f"-{side}"
 
     def expand(self: CSSResolver, prop: str, value: str) -> Generator[tuple[str, str]]:
+        # [FUNCTION DOC]
+        # HELPER: nested generator returned by the border expander factory. Inputs: self
+        #   (the resolver), prop (property name for the warning text) and value (the
+        #   declaration value). Splits into tokens and warns with the CSS warning when
+        #   there are zero or more than three tokens. Starts from defaults (color black,
+        #   style none, width medium), then classifies each token: a known border style
+        #   name sets the style; a token whose lower cased form contains any key of the
+        #   border width table sets the width; anything else sets the color. Yields the
+        #   atomized pairs of the resulting declarations, so a border shorthand resets
+        #   earlier longhand declarations.
+        # KNOWN ISSUE: the warning text says too many tokens even when there are no
+        #   tokens at all. The width test is a substring test against all unit and
+        #   keyword names, so color names containing a unit abbreviation (for example
+        #   pink contains the abbreviation for inches) are misclassified as widths.
         """
         Expand border into color, style, and width tuples
 
@@ -124,6 +172,17 @@ def _border_expander(side: str = "") -> Callable:
 
 
 class CSSResolver:
+    # [CLASS DOC]
+    # Callable that resolves CSS declarations to a dictionary of atomic CSS 2.2
+    #   properties. Has no instance state; all behavior is driven by class level tables:
+    #   unit ratios and the derived tables for font size, margins and border widths
+    #   (each mapping a unit to the unit it converts into and a multiplier), the list of
+    #   border styles, the shorthand token to side mapping, the side names (top, right,
+    #   bottom, left) and the expansion table that maps shorthand properties (border and
+    #   its per side and per attribute forms, margin and padding) to expander callbacks.
+    #   Key methods: the call operator (entry point), parse (declaration string to
+    #   pairs), atomize (expansion), size_to_pt (unit conversion) and the private
+    #   resolution steps.
     """
     A callable for parsing and resolving CSS to atomic properties.
     """
@@ -221,6 +280,20 @@ class CSSResolver:
         declarations: str | Iterable[tuple[str, str]],
         inherited: dict[str, str] | None = None,
     ) -> dict[str, str]:
+        # [FUNCTION DOC]
+        # Resolve declarations into atomic properties. Inputs: declarations (a CSS
+        #   string such as semicolon separated name colon value pairs, or an iterable of
+        #   property and value pairs) and inherited (optional dictionary of already
+        #   resolved properties from the parent context; default none means empty).
+        #   Returns a dictionary of atomic properties.
+        # Behavior: parses a string into pairs; expands shorthand properties through the
+        #   atomize method (later duplicate properties override earlier ones); then
+        #   applies, in order, inheritance and initial value resolution, relative font
+        #   size resolution against the inherited font size, and conversion of border
+        #   widths, margins and paddings to points.
+        # KNOWN ISSUE: the docstring names the first parameter declarations_str and its
+        #   summary sentence is incomplete, but the actual parameter name is
+        #   declarations.
         """
         The given declarations to atomic properties.
 
@@ -278,6 +351,12 @@ class CSSResolver:
         props: dict[str, str],
         inherited: dict[str, str],
     ) -> dict[str, str]:
+        # [FUNCTION DOC]
+        # HELPER: step one of resolution. Copies any inherited property that is not
+        #   already set into props (mutating it), then builds a new dictionary in which
+        #   the value inherit is replaced by the inherited value (or initial when none),
+        #   and properties whose value is initial or none are removed since no complete
+        #   initial stylesheet exists. Returns the new dictionary.
         # 1. resolve inherited, initial
         for prop, val in inherited.items():
             if prop not in props:
@@ -300,6 +379,11 @@ class CSSResolver:
         props: dict[str, str],
         inherited: dict[str, str],
     ) -> dict[str, str]:
+        # [FUNCTION DOC]
+        # HELPER: step two of resolution. If props has a non empty font size, replaces
+        #   it (in place) by its size in points, using the inherited font size as the
+        #   base for relative units and the font size conversion table. Returns the same
+        #   dictionary.
         # 2. resolve relative font size
         if props.get("font-size"):
             props["font-size"] = self.size_to_pt(
@@ -310,16 +394,29 @@ class CSSResolver:
         return props
 
     def _get_font_size(self, props: dict[str, str]) -> float | None:
+        # [FUNCTION DOC]
+        # HELPER: returns the font size in points as a float from a resolved property
+        #   dictionary, or none when it has no non empty font size entry.
         if props.get("font-size"):
             font_size_string = props["font-size"]
             return self._get_float_font_size_from_pt(font_size_string)
         return None
 
     def _get_float_font_size_from_pt(self, font_size_string: str) -> float:
+        # [FUNCTION DOC]
+        # HELPER: converts a font size string that must end in the points unit into a
+        #   float. Fails an assertion if the string does not end in the unit. Returns
+        #   the number.
         assert font_size_string.endswith("pt")
         return float(font_size_string.rstrip("pt"))
 
     def _update_other_units(self, props: dict[str, str]) -> dict[str, str]:
+        # [FUNCTION DOC]
+        # HELPER: step three of resolution. Using the font size of props as the base for
+        #   relative units, converts border widths, margins and paddings of each of the
+        #   four sides to points, using the border width table for borders and the
+        #   margin table for margins and paddings, in place. Returns the same
+        #   dictionary.
         font_size = self._get_font_size(props)
         # 3. TODO: resolve other font-relative units
         for side in self.SIDES:
@@ -344,7 +441,24 @@ class CSSResolver:
     def size_to_pt(
         self, in_val: str, em_pt: float | None = None, conversions: dict = UNIT_RATIOS
     ) -> str:
+        # [FUNCTION DOC]
+        # Convert a CSS size string to points. Inputs: in_val (a string such as a number
+        #   with a unit or a keyword such as large), em_pt (the size in points of one
+        #   em; default none) and conversions (table mapping unit to the next unit and
+        #   multiplier; default the general unit table). Returns a string made of the
+        #   rounded (five decimals) number and the points unit, with no decimal part
+        #   when whole.
+        # Behavior: splits the value into a numeric prefix and a unit suffix (a keyword
+        #   has an empty prefix, treated as one); then repeatedly converts the unit
+        #   through the table until points is reached. An em unit multiplies by em_pt,
+        #   or, when em_pt is unknown, switches to the root em unit. An unparsable value
+        #   or an unknown unit emits a CSS warning about an unhandled size and returns
+        #   the conversion of the default entry of the table.
         def _error() -> str:
+            # [FUNCTION DOC]
+            # HELPER: nested error handler of the size conversion. Emits a CSS warning
+            #   that the size could not be handled and returns the result of converting
+            #   the placeholder default size using the same conversion table.
             warnings.warn(
                 f"Unhandled size: {in_val!r}",
                 CSSWarning,
@@ -389,6 +503,11 @@ class CSSResolver:
         return size_fmt
 
     def atomize(self, declarations: Iterable) -> Generator[tuple[str, str]]:
+        # [FUNCTION DOC]
+        # Generator that expands shorthand declarations. Input: iterable of (property,
+        #   value) pairs. Lower cases both elements; a property that is in the expansion
+        #   table is expanded by its callback, which yields several atomic pairs; any
+        #   other pair is yielded unchanged.
         for prop, value in declarations:
             prop = prop.lower()
             value = value.lower()
@@ -399,6 +518,15 @@ class CSSResolver:
                 yield prop, value
 
     def parse(self, declarations_str: str) -> Iterator[tuple[str, str]]:
+        # [FUNCTION DOC]
+        # Generator that parses a declaration string. Input: declarations_str, semicolon
+        #   separated declarations. Skips blank declarations; splits each at the first
+        #   colon; yields (property, value) pairs with surrounding whitespace removed
+        #   and lower cased. A declaration without a colon emits a CSS warning about an
+        #   ill-formatted attribute and is skipped.
+        # KNOWN ISSUE: values are lower cased unconditionally, so case sensitive parts
+        #   of values (such as quoted strings) are altered; the code carries a note
+        #   about this.
         """
         Generates (prop, value) pairs from declarations.
 

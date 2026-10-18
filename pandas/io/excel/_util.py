@@ -1,3 +1,17 @@
+# [MODULE DOC]
+# Shared helpers for the Excel reader and writer machinery.
+# Public contents: the writer registry and its functions register_writer, get_writer and
+#   get_default_engine (default engine per file extension for reading or writing);
+#   column specification helpers maybe_convert_usecols (with typing overloads) and the
+#   private column name converters; validate_freeze_panes; the multi level header
+#   helpers fill_mi_header and pop_header_name; and combine_kwargs which merges the two
+#   sources of engine options.
+# Relationships: used by the base module (reader and writer base classes) and by each
+#   engine module; the typing-only imports of the writer base class avoid a circular
+#   import.
+# Import-time side effects: creates the module level empty registry mapping engine names
+#   to writer classes, which engine modules populate through the register function.
+
 from __future__ import annotations
 
 from collections.abc import (
@@ -32,6 +46,12 @@ _writers: MutableMapping[str, ExcelWriter_t] = {}
 
 
 def register_writer(klass: ExcelWriter_t) -> None:
+    # [FUNCTION DOC]
+    # Adds a writer class to the registry. Input: klass, a callable (normally an
+    #   ExcelWriter subclass) that has an engine name attribute. Raises a value error if
+    #   klass is not callable. Stores it in the module registry under its engine name,
+    #   replacing any earlier entry for the same name. Returns nothing. Needed so that
+    #   the base ExcelWriter class can find the engine.
     """
     Add engine to the excel writer registry.io.excel.
 
@@ -48,6 +68,15 @@ def register_writer(klass: ExcelWriter_t) -> None:
 
 
 def get_default_engine(ext: str, mode: Literal["reader", "writer"] = "reader") -> str:
+    # [FUNCTION DOC]
+    # Returns the default engine name for a file extension without dot. Input: ext and
+    #   mode (reader or writer, default reader; any other mode fails an assertion).
+    #   Reader defaults: xlsx and xlsm map to openpyxl, xlsb to pyxlsb, xls to xlrd, ods
+    #   to odf. Writer defaults: xlsx and xlsm to openpyxl, xlsb to pyxlsb, ods to odf;
+    #   but for xlsx the writer default becomes xlsxwriter whenever that library is
+    #   installed (the optional import helper is asked to warn rather than fail if it is
+    #   missing or too old). An unknown extension raises a key error. Side effects: may
+    #   emit a warning about an unusable optional dependency.
     """
     Return the default reader/writer for the given extension.
 
@@ -89,6 +118,10 @@ def get_default_engine(ext: str, mode: Literal["reader", "writer"] = "reader") -
 
 
 def get_writer(engine_name: str) -> ExcelWriter_t:
+    # [FUNCTION DOC]
+    # Looks up a writer class in the registry by engine name. Raises a value error
+    #   saying there is no such Excel writer when the name is unknown. Returns the
+    #   class.
     try:
         return _writers[engine_name]
     except KeyError as err:
@@ -96,6 +129,12 @@ def get_writer(engine_name: str) -> ExcelWriter_t:
 
 
 def _excel2num(x: str) -> int:
+    # [FUNCTION DOC]
+    # HELPER: converts an Excel column name to a zero based column index. Input: a
+    #   string of letters (case insensitive, surrounding whitespace removed) read as a
+    #   base 26 number where A is one. Raises a value error naming the input if a
+    #   character is not a letter. An empty string yields minus one. Returns the
+    #   integer.
     """
     Convert Excel column name like 'AB' to 0-based column index.
 
@@ -128,6 +167,12 @@ def _excel2num(x: str) -> int:
 
 
 def _range2cols(areas: str) -> list[int]:
+    # [FUNCTION DOC]
+    # HELPER: expands a comma separated column specification into a list of zero based
+    #   column indices. Each comma separated part is either a single column name or two
+    #   names separated by a colon, which denotes an inclusive range. Invalid names
+    #   raise a value error through the name converter. Extra colon separated parts
+    #   beyond the second are ignored. Returns the list in the order given.
     """
     Convert comma separated list of column names and ranges to indices.
 
@@ -162,23 +207,40 @@ def _range2cols(areas: str) -> list[int]:
 
 @overload
 def maybe_convert_usecols(usecols: str | list[int]) -> list[int]: ...
+    # [FUNCTION DOC]
+    # Typing overload only: a string or list of integers gives a list of integers. See
+    #   the implementation below.
 
 
 @overload
 def maybe_convert_usecols(usecols: list[str]) -> list[str]: ...
+    # [FUNCTION DOC]
+    # Typing overload only: a list of strings gives a list of strings. See the
+    #   implementation below.
 
 
 @overload
 def maybe_convert_usecols(usecols: usecols_func) -> usecols_func: ...
+    # [FUNCTION DOC]
+    # Typing overload only: a callable gives the same callable. See the implementation
+    #   below.
 
 
 @overload
 def maybe_convert_usecols(usecols: None) -> None: ...
+    # [FUNCTION DOC]
+    # Typing overload only: none gives none. See the implementation below.
 
 
 def maybe_convert_usecols(
     usecols: str | list[int] | list[str] | usecols_func | None,
 ) -> None | list[int] | list[str] | usecols_func:
+    # [FUNCTION DOC]
+    # Normalizes the usecols argument for the text parser. Input: none, a string, a list
+    #   or a callable. None is returned unchanged; an integer raises a value error
+    #   saying integers are no longer supported and a list of ints should be passed; a
+    #   string is expanded to a list of column indices with the range helper; anything
+    #   else (lists, callables) is returned unchanged.
     """
     Convert `usecols` into a compatible format for parsing in `parsers.py`.
 
@@ -209,13 +271,22 @@ def maybe_convert_usecols(
 
 @overload
 def validate_freeze_panes(freeze_panes: tuple[int, int]) -> Literal[True]: ...
+    # [FUNCTION DOC]
+    # Typing overload only: a pair of integers gives true. See the implementation below.
 
 
 @overload
 def validate_freeze_panes(freeze_panes: None) -> Literal[False]: ...
+    # [FUNCTION DOC]
+    # Typing overload only: none gives false. See the implementation below.
 
 
 def validate_freeze_panes(freeze_panes: tuple[int, int] | None) -> bool:
+    # [FUNCTION DOC]
+    # Validates the freeze panes argument. Returns true when it is a sequence of exactly
+    #   two integer items (booleans count as integers). Raises a value error saying it
+    #   must be a row and column pair of integers when it is given but invalid. Returns
+    #   false when it is none, meaning that no freeze panes should be applied.
     if freeze_panes is not None:
         if len(freeze_panes) == 2 and all(
             isinstance(item, int) for item in freeze_panes
@@ -235,6 +306,15 @@ def validate_freeze_panes(freeze_panes: tuple[int, int] | None) -> bool:
 def fill_mi_header(
     row: list[Hashable], control_row: list[bool]
 ) -> tuple[list[Hashable], list[bool]]:
+    # [FUNCTION DOC]
+    # Forward fills blank cells in a header row for building multi level column headers,
+    #   without crossing parent boundaries. Inputs: row (list of cell values, modified
+    #   in place) and control_row (list of booleans, modified in place, one per column;
+    #   false marks columns where a new parent value has been seen). Walks columns from
+    #   the second one; when a column's control flag is not set, the carried value
+    #   restarts from that column's value; a blank (empty string or none) cell takes the
+    #   carried value, while a non blank cell clears the flag and becomes the carried
+    #   value. Returns the pair of the same row and control_row lists.
     """
     Forward fill blank entries in row but only inside the same parent index.
 
@@ -270,6 +350,13 @@ def fill_mi_header(
 def pop_header_name(
     row: list[Hashable], index_col: int | Sequence[int]
 ) -> tuple[Hashable | None, list[Hashable]]:
+    # [FUNCTION DOC]
+    # Extracts the header name for the index columns from a header row. Inputs: row
+    #   (list of cell values) and index_col (an integer or sequence of integers, assumed
+    #   not null). The position used is the integer itself or the largest of the
+    #   sequence. Returns a pair: the value at that position (none if it is the empty
+    #   string) and a new row with that position replaced by the empty string. The input
+    #   row is not modified.
     """
     Pop the header name for MultiIndex parsing.
 
@@ -302,6 +389,14 @@ def pop_header_name(
 
 
 def combine_kwargs(engine_kwargs: dict[str, Any] | None, kwargs: dict) -> dict:
+    # [FUNCTION DOC]
+    # Merges two dictionaries of engine options. Inputs: engine_kwargs (dictionary or
+    #   none) and kwargs (dictionary). Returns a new dictionary: a copy of engine_kwargs
+    #   (empty if none) updated with kwargs, so kwargs win on conflicts. Does not modify
+    #   the inputs.
+    # KNOWN ISSUE: the docstring says the base writer constructor ensures that only one
+    #   of the two sources is used, but no such check exists in the base class factory
+    #   method; both sources are merged without validation.
     """
     Used to combine two sources of kwargs for the backend engine.
 
