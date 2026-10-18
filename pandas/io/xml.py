@@ -1,6 +1,20 @@
 """
 :mod:``pandas.io.xml`` is a module for reading XML.
 """
+# [MODULE DOC]
+# Reader for XML documents into frames (backing the public XML reading function).
+# Public contents: the XML reading function. Private contents: an abstract base
+# parser class with two concrete parsers (one using the standard library element
+# tree module, one using the optional lxml package, which also supports full XPath
+# and XSLT stylesheets), file-loading and preprocessing helpers, a converter from
+# parsed row dictionaries to a frame via the text parser, and an internal
+# dispatching parse function.
+# Relationships: file handling comes from the shared IO common module; type
+# inference and conversion are delegated to the text parser of the parsers
+# module. Parsing rules: each selected XPath node becomes a row; attributes,
+# child element text and the node's own text become columns (depending on the
+# elements-only and attributes-only flags); namespaces are stripped from names.
+# Import-time side effects: none; optional dependencies are imported lazily.
 
 from __future__ import annotations
 
@@ -56,6 +70,16 @@ if TYPE_CHECKING:
 
 
 class _XMLFrameParser:
+    # [CLASS DOC]
+    # HELPER: abstract base for the internal XML-to-rows parsers.
+    # State (all set from constructor arguments, no validation there): path_or_buffer,
+    # xpath, namespaces, elems_only, attrs_only, names, dtype, converters,
+    # parse_dates, encoding, stylesheet, iterparse, compression, storage_options.
+    # Subclasses (element-tree and lxml) must override parse_data, the path and name
+    # validation methods and the document parsing method; the base versions of
+    # those raise the abstract-method error. The base class implements the shared
+    # row building: the node parser and the incremental parser.
+    # KNOWN ISSUE: the class docstring describes path_or_buffer as a valid JSON string (copy-paste error); it is an XML source, and its notes name the node parsing methods as required overrides although the base implements them.
     """
     Internal subclass to parse XML into DataFrames.
 
@@ -169,6 +193,13 @@ class _XMLFrameParser:
         compression: CompressionOptions,
         storage_options: StorageOptions,
     ) -> None:
+        # [FUNCTION DOC]
+        # Constructor: stores each argument on the instance under the same name
+        # (types: path or buffer; xpath string; namespace prefix mapping or none;
+        # booleans for elements-only and attributes-only; optional column names;
+        # dtype, converters, parse-date settings; encoding; stylesheet source or none;
+        # iterparse mapping from row tag to list of tags or attributes, or none;
+        # compression options; storage options). No validation or I/O.
         self.path_or_buffer = path_or_buffer
         self.xpath = xpath
         self.namespaces = namespaces
@@ -185,6 +216,9 @@ class _XMLFrameParser:
         self.storage_options = storage_options
 
     def parse_data(self) -> list[dict[str, str | None]]:
+        # [FUNCTION DOC]
+        # Abstract: subclasses return a list of row dictionaries (column name to text
+        # or none). Always raises the abstract-method error in the base class.
         """
         Parse xml data.
 
@@ -195,6 +229,19 @@ class _XMLFrameParser:
         raise AbstractMethodError(self)
 
     def _parse_nodes(self, elems: list[Any]) -> list[dict[str, str | None]]:
+        # [FUNCTION DOC]
+        # Builds row dictionaries from selected element nodes. Input: elems, the list
+        # of nodes matched by the path. Raises a value error if both elements-only and
+        # attributes-only are set. Elements-only: columns come from child elements
+        # (text or none for empty); with names, children are paired with the names
+        # strictly (length mismatch raises a value error) and the node's own text is
+        # included when it is non-blank. Attributes-only: attributes with empty values
+        # become none. Otherwise attributes, the node's own non-blank text (under the
+        # node's tag) and child elements are combined, with names applied non-strictly
+        # to children. Namespace prefixes (everything up to a closing brace) are
+        # removed from keys. Then all rows are aligned to the union of keys in first
+        # seen order, filling gaps with none; finally, if names were given, keys are
+        # replaced positionally by names (strict length match). Returns the list.
         """
         Parse xml nodes.
 
@@ -281,6 +328,22 @@ class _XMLFrameParser:
         return dicts
 
     def _iterparse_nodes(self, iterparse: Callable) -> list[dict[str, str | None]]:
+        # [FUNCTION DOC]
+        # Incrementally parses a file with an event-based parser, without holding the
+        # whole tree in memory. Input: iterparse, the parsing callable (from the
+        # standard library or lxml). Uses the instance iterparse mapping: its first key
+        # is the row tag and its value lists tags/attributes to collect. Raises a type
+        # error if the mapping is not a dict or its value is not list-like; raises a
+        # parser error if the source is not a plain local uncompressed file or file-like
+        # (URLs, fsspec URLs, XML text and compressed paths are refused) and when no
+        # rows were found. A row starts at a start event of the row tag and ends at its
+        # end event; matching tag text or attribute values are stored per row (empty text
+        # becomes none). If names are given and the list of tags has repeats, values are
+        # mapped to names positionally and duplicate values are skipped. After each end
+        # event the element is cleared and (for lxml) earlier siblings are deleted to
+        # free memory; the parser is closed at the end. Rows are aligned to the union of
+        # keys, filled with none, and renamed to names if provided (strict length).
+        # Returns the row dictionaries.
         """
         Iterparse xml nodes.
 
@@ -397,6 +460,10 @@ class _XMLFrameParser:
         return dicts
 
     def _validate_path(self) -> list[Any]:
+        # [FUNCTION DOC]
+        # Abstract: subclasses validate the path expression and return the matched
+        # nodes. Always raises the abstract-method error in the base.
+        # KNOWN ISSUE: the docstring typos the word XPath as xpah; documented raises are syntax error for unsupported expression and value error for no nodes.
         """
         Validate ``xpath``.
 
@@ -414,6 +481,9 @@ class _XMLFrameParser:
         raise AbstractMethodError(self)
 
     def _validate_names(self) -> None:
+        # [FUNCTION DOC]
+        # Abstract: subclasses check that names is list-like and not shorter than the
+        # child elements. Always raises the abstract-method error in the base.
         """
         Validate names.
 
@@ -430,6 +500,9 @@ class _XMLFrameParser:
     def _parse_doc(
         self, raw_doc: FilePath | ReadBuffer[bytes] | ReadBuffer[str]
     ) -> Element | etree._Element:
+        # [FUNCTION DOC]
+        # Abstract: subclasses parse the source (string, bytes, path, buffer) into a
+        # document tree. Always raises the abstract-method error in the base.
         """
         Build tree from path_or_buffer.
 
@@ -440,12 +513,22 @@ class _XMLFrameParser:
 
 
 class _EtreeFrameParser(_XMLFrameParser):
+    # [CLASS DOC]
+    # HELPER: concrete parser using the standard library element tree
+    # (subclass of the abstract base). Supports limited XPath, no stylesheets.
+    # Holds the parsed document in an attribute set during parsing.
     """
     Internal class to parse XML into DataFrames with the Python
     standard library XML module: `xml.etree.ElementTree`.
     """
 
     def parse_data(self) -> list[dict[str, str | None]]:
+        # [FUNCTION DOC]
+        # Parses the source to row dictionaries. Raises a value error if a stylesheet
+        # was supplied (needs lxml). Without incremental mode: parses the document,
+        # validates the path and gets the nodes. Always validates names. Returns rows
+        # from the node parser, or from the incremental parser using the standard
+        # library parsing callable when the iterparse mapping is set.
         from xml.etree.ElementTree import iterparse
 
         if self.stylesheet is not None:
@@ -468,6 +551,14 @@ class _EtreeFrameParser(_XMLFrameParser):
         return xml_dicts
 
     def _validate_path(self) -> list[Any]:
+        # [FUNCTION DOC]
+        # Finds nodes matching the path in the document (with the namespaces).
+        # Raises a value error with a hint about the path and namespaces when no node
+        # yields children or attributes as required by the elements-only,
+        # attributes-only or default modes. Converts key and syntax errors from the
+        # element tree into a syntax error saying the expression is unsupported or the
+        # prefix undeclared. Returns the node list.
+        # KNOWN ISSUE: the check for a missing node list (none) can never be true since the search returns a list, so an empty match is caught only by the later child and attribute checks.
         """
         Notes
         -----
@@ -509,6 +600,11 @@ class _EtreeFrameParser(_XMLFrameParser):
         return elems
 
     def _validate_names(self) -> None:
+        # [FUNCTION DOC]
+        # Validates names when given. The reference children are the tags listed in the
+        # iterparse mapping, or the child elements of the first node matching the path
+        # (empty if none matches). Raises a type error when names is not list-like and
+        # a value error when names is shorter than the children.
         children: list[Any]
 
         if self.names:
@@ -531,6 +627,10 @@ class _EtreeFrameParser(_XMLFrameParser):
     def _parse_doc(
         self, raw_doc: FilePath | ReadBuffer[bytes] | ReadBuffer[str]
     ) -> Element:
+        # [FUNCTION DOC]
+        # Parses a source into a root element. Loads the data through the file helper
+        # (with encoding, compression, storage options), parses it with an element tree
+        # parser configured with the encoding, and returns the root element.
         from xml.etree.ElementTree import (
             XMLParser,
             parse,
@@ -551,6 +651,11 @@ class _EtreeFrameParser(_XMLFrameParser):
 
 
 class _LxmlFrameParser(_XMLFrameParser):
+    # [CLASS DOC]
+    # HELPER: concrete parser using the third-party lxml package (subclass of the
+    # abstract base); supports full XPath 1.0 and XSLT 1.0 stylesheets. State: the
+    # parsed document, and the stylesheet document and transformed document when a
+    # stylesheet is used.
     """
     Internal class to parse XML into :class:`~pandas.DataFrame` with third-party
     full-featured XML library, ``lxml``, that supports
@@ -558,6 +663,12 @@ class _LxmlFrameParser(_XMLFrameParser):
     """
 
     def parse_data(self) -> list[dict[str, str | None]]:
+        # [FUNCTION DOC]
+        # Parses the source to row dictionaries. Without incremental mode: parses the
+        # document; if a stylesheet is given, parses it and replaces the document with
+        # the transformed result; validates the path and collects the nodes. Always
+        # validates names. Returns rows from the node parser, or from the incremental
+        # parser using the lxml parsing callable when the iterparse mapping is set.
         """
         Parse xml data.
 
@@ -587,6 +698,11 @@ class _LxmlFrameParser(_XMLFrameParser):
         return xml_dicts
 
     def _validate_path(self) -> list[Any]:
+        # [FUNCTION DOC]
+        # Evaluates the path in the document. Raises a value error with a hint about
+        # path and namespaces if nothing matches, or if no children or attributes
+        # exist as required by the mode. Returns the matched nodes.
+        # KNOWN ISSUE: the second conditional block repeats the negation of the earlier empty check, which is always true at that point; the structure is redundant, not wrong.
         msg = (
             "xpath does not return any nodes or attributes. "
             "Be sure to specify in `xpath` the parent nodes of "
@@ -614,6 +730,11 @@ class _LxmlFrameParser(_XMLFrameParser):
         return elems
 
     def _validate_names(self) -> None:
+        # [FUNCTION DOC]
+        # Validates names when given, with the reference children being the tags in the
+        # iterparse mapping or the child elements of the first node matched by the
+        # path. Raises a type error if names is not list-like and a value error if
+        # names is shorter than the children.
         children: list[Any]
 
         if self.names:
@@ -637,6 +758,11 @@ class _LxmlFrameParser(_XMLFrameParser):
     def _parse_doc(
         self, raw_doc: FilePath | ReadBuffer[bytes] | ReadBuffer[str]
     ) -> etree._Element:
+        # [FUNCTION DOC]
+        # Parses a source into a document. Loads data via the file helper. With a text
+        # buffer, raises a type error when encoding is none (text must be encoded
+        # again), then parses the encoded text. Otherwise parses the buffer directly.
+        # Returns the lxml element (root of the document).
         from lxml.etree import (
             XMLParser,
             fromstring,
@@ -668,6 +794,10 @@ class _LxmlFrameParser(_XMLFrameParser):
         return document
 
     def _transform_doc(self) -> etree._XSLTResultTree:
+        # [FUNCTION DOC]
+        # Applies the stylesheet document to the main document using an XSLT transformer
+        # and returns the transformed result tree. Requires both document attributes to
+        # have been set earlier.
         """
         Transform original tree using stylesheet.
 
@@ -689,6 +819,12 @@ def get_data_from_filepath(
     compression: CompressionOptions,
     storage_options: StorageOptions,
 ):
+    # [FUNCTION DOC]
+    # Loads raw XML into a buffer. Inputs: the path or buffer (converted from
+    # path-like to string), encoding, compression, storage options. Opens it through
+    # the shared handle opener in read mode; if the handle is readable returns its
+    # content preprocessed into an in-memory text or byte buffer, otherwise returns
+    # the handle itself. Returns before the handle context closes.
     """
     Extract raw XML data.
 
@@ -714,6 +850,9 @@ def get_data_from_filepath(
 def preprocess_data(
     data: str | bytes | io.StringIO | io.BytesIO,
 ) -> io.StringIO | io.BytesIO:
+    # [FUNCTION DOC]
+    # Normalizes data to a buffer: a string becomes an in-memory text buffer and
+    # bytes an in-memory byte buffer; buffers pass through unchanged. Returns it.
     """
     Convert extracted raw data.
 
@@ -732,6 +871,14 @@ def preprocess_data(
 
 
 def _data_to_frame(data: list[dict[str, str | None]], **kwargs) -> DataFrame:
+    # [FUNCTION DOC]
+    # HELPER: turns the row dictionaries into a frame. Inputs: data (non-empty
+    # list of row dictionaries with the same keys), extra keywords for the text
+    # parser (dtype, converters, parse_dates, dtype backend). Column names are the
+    # keys of the first row; rows are the value lists. Returns the frame from the
+    # text parser. Raises a parser error with advice to flatten the document when
+    # the text parser fails with a parser error. Raises a stop-iteration error for
+    # empty data.
     """
     Convert parsed data to Data Frame.
 
@@ -773,6 +920,14 @@ def _parse(
     dtype_backend: DtypeBackend | lib.NoDefault = lib.no_default,
     **kwargs,
 ) -> DataFrame:
+    # [FUNCTION DOC]
+    # HELPER: dispatches to the selected parser. Inputs mirror the public reader
+    # (source, xpath, namespaces, flags, names, dtype, converters, parse_dates,
+    # encoding, parser name, stylesheet, iterparse, compression, storage options,
+    # dtype backend) plus extra keywords for the text parser. For lxml: raises an
+    # import error when lxml is not installed; for etree builds that parser; any
+    # other parser name raises a value error. Runs the parser's data method and
+    # returns the frame from the conversion helper.
     """
     Call internal parsers.
 
@@ -866,6 +1021,14 @@ def read_xml(
     storage_options: StorageOptions | None = None,
     dtype_backend: DtypeBackend | lib.NoDefault = lib.no_default,
 ) -> DataFrame:
+    # [FUNCTION DOC]
+    # Public XML reader. All arguments after the source are keyword-only: xpath
+    # (default selects all children of the root), namespaces, elements-only and
+    # attributes-only flags (default false), names, dtype, converters, parse_dates,
+    # encoding (default utf-8), parser (lxml by default, or etree), stylesheet,
+    # iterparse, compression (default infer), storage options, dtype backend.
+    # Validates the dtype backend, then forwards everything to the internal parse
+    # function and returns a frame. Errors come from the helpers described there.
     r"""
     Read XML document into a :class:`~pandas.DataFrame` object.
 

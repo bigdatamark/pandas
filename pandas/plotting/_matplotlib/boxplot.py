@@ -1,3 +1,15 @@
+# [MODULE DOC]
+# Matplotlib implementation of box plots for the pandas plotting backend.
+# Public contents: the box plot class (a line-plot subclass used for the plot
+# accessor box kind), the stand-alone box plot function for frames and series,
+# the method-style frame function, the grouped-frame function, and a color
+# helper that paints the artists of a drawn box plot.
+# Relationships: builds on the line plot and base plot classes of the core
+# module, uses subplot-creation utilities from the tools module, color
+# selection from the style module, and grouped-data helpers from the groupby
+# module. The generic front end in the plotting core module dispatches here.
+# Import-time side effects: imports matplotlib and pandas at load time; none
+# other.
 from __future__ import annotations
 
 from typing import (
@@ -47,6 +59,15 @@ if TYPE_CHECKING:
 
 
 def _set_ticklabels(ax: Axes, labels: list[str], is_vertical: bool, **kwargs) -> None:
+    # [FUNCTION DOC]
+    # HELPER: sets tick labels on the value-axis-orthogonal axis of a box plot.
+    # Inputs: ax is the target axes; labels is the list of label strings;
+    # is_vertical selects the horizontal axis when true, else the vertical one;
+    # extra keywords (such as rotation) go to the matplotlib label setter.
+    # Works around a matplotlib issue with repeated fixed ticks: when the number of
+    # current ticks differs from the labels count, the label list is repeated by the
+    # integer ratio (older matplotlib versions assert the ratio is exact; newer
+    # ones skip that check). Mutates the axes; returns nothing.
     """Set the tick labels of a given axis.
 
     Due to https://github.com/matplotlib/matplotlib/pull/17266, we need to handle the
@@ -66,8 +87,18 @@ def _set_ticklabels(ax: Axes, labels: list[str], is_vertical: bool, **kwargs) ->
 
 
 class BoxPlot(LinePlot):
+    # [CLASS DOC]
+    # Box plot implementation (subclass of the line plot class). Kind is box;
+    # subplot layout is horizontal. State: the validated return type (none, axes,
+    # dict or both) plus the usual plot state. A nested named-tuple class pairs an
+    # axes with the dict of drawn line artists for the both return type. Key
+    # behavior: draws with matplotlib's box plot per column (or per by-group
+    # subplot), recolors artists, sets tick labels from column names, and returns an
+    # object chosen by the return type.
     @property
     def _kind(self) -> Literal["box"]:
+        # [FUNCTION DOC]
+        # Property returning the constant kind name box.
         return "box"
 
     _layout_type = "horizontal"
@@ -75,11 +106,23 @@ class BoxPlot(LinePlot):
     _valid_return_types = (None, "axes", "dict", "both")
 
     class BP(NamedTuple):
+        # [CLASS DOC]
+        # Named tuple used as the result type when the return type is both: field ax
+        # holds the axes and field lines holds the dictionary of line artists lists
+        # (boxes, whiskers, medians, caps, fliers) returned by matplotlib.
         # namedtuple to hold results
         ax: Axes
         lines: dict[str, list[Line2D]]
 
     def __init__(self, data, return_type: str = "axes", **kwargs) -> None:
+        # [FUNCTION DOC]
+        # Constructor. Inputs: data to plot; return_type (default axes; allowed none,
+        # axes, dict, both); extra keywords for the base plot class. Raises a value
+        # error for any other return type. Deliberately calls the base plot class
+        # initializer directly instead of the line plot one, to avoid its missing-value
+        # filling. When subplots are requested, disables sharing along the axis that
+        # carries the labels (x for vertical boxes, y for horizontal) so each subplot
+        # keeps its own labels.
         if return_type not in self._valid_return_types:
             raise ValueError("return_type must be {None, 'axes', 'dict', 'both'}")
 
@@ -100,6 +143,16 @@ class BoxPlot(LinePlot):
     def _plot(  # type: ignore[override]
         cls, ax: Axes, y: np.ndarray, column_num=None, return_type: str = "axes", **kwds
     ):
+        # [FUNCTION DOC]
+        # Class-level drawing step for one axes (signature intentionally differs from
+        # the base class). Inputs: ax, y (a one- or two-dimensional array of values),
+        # column_num (unused), return_type (default axes), and keywords for matplotlib's
+        # box plot. For two-dimensional input each column is stripped of missing values,
+        # and empty columns are replaced by a single missing value because matplotlib
+        # fails on empty arrays; one-dimensional input just drops missing values.
+        # Draws and returns a pair: first the object to hand back to the user (the line
+        # dictionary for dict, the named tuple for both, otherwise the axes), second the
+        # raw dictionary of artists.
         ys: np.ndarray | list[np.ndarray]
         if y.ndim == 2:
             ys = [remove_na_arraylike(v) for v in y]
@@ -119,6 +172,12 @@ class BoxPlot(LinePlot):
             return ax, bp
 
     def _validate_color_args(self, color, colormap):
+        # [FUNCTION DOC]
+        # HELPER: validates the color argument for this plot kind (overrides the base
+        # class). Returns none when the argument is the unset sentinel. Otherwise emits
+        # a user warning if a colormap was also given (the color is used). When color is
+        # a dictionary, raises a value error for any key outside boxes, whiskers,
+        # medians, caps. Returns the color unchanged.
         if color is lib.no_default:
             return None
 
@@ -140,6 +199,10 @@ class BoxPlot(LinePlot):
 
     @cache_readonly
     def _color_attrs(self):
+        # [FUNCTION DOC]
+        # HELPER: cached property computing three default colors from the standard color
+        # selection (honoring the colormap): index 0 for box, whisker and cap, index 2
+        # for the median. Flier colors are controlled by the symbol keyword instead.
         # get standard colors for default
         # use 2 colors by default, for box/whisker and median
         # flier colors isn't needed here
@@ -148,18 +211,26 @@ class BoxPlot(LinePlot):
 
     @cache_readonly
     def _boxes_c(self):
+        # [FUNCTION DOC]
+        # HELPER: cached default color of the boxes (first default color).
         return self._color_attrs[0]
 
     @cache_readonly
     def _whiskers_c(self):
+        # [FUNCTION DOC]
+        # HELPER: cached default color of the whiskers (first default color).
         return self._color_attrs[0]
 
     @cache_readonly
     def _medians_c(self):
+        # [FUNCTION DOC]
+        # HELPER: cached default color of the medians (third default color).
         return self._color_attrs[2]
 
     @cache_readonly
     def _caps_c(self):
+        # [FUNCTION DOC]
+        # HELPER: cached default color of the caps (first default color).
         return self._color_attrs[0]
 
     def _get_colors(
@@ -170,9 +241,21 @@ class BoxPlot(LinePlot):
         | Collection[MatplotlibColor]
         | None = "color",
     ) -> None:
+        # [FUNCTION DOC]
+        # HELPER: intentionally empty override of the base class color generation, so
+        # that no per-series color list is computed for box plots (colors are applied
+        # after drawing). Parameters are ignored; returns nothing.
         pass
 
     def maybe_color_bp(self, bp) -> None:
+        # [FUNCTION DOC]
+        # Recolors the artists of a drawn box plot dictionary. If the plot color is a
+        # dictionary, each of boxes, whiskers, medians, caps takes the user value or
+        # falls back to the cached default; otherwise a single user color (anything
+        # accepted by matplotlib) is used for all four, or the defaults when it is
+        # unset. Then calls the module-level coloring function with the colors and the
+        # plot keywords (so explicitly given property dictionaries win). Mutates
+        # artists; returns nothing.
         if isinstance(self.color, dict):
             boxes = self.color.get("boxes", self._boxes_c)
             whiskers = self.color.get("whiskers", self._whiskers_c)
@@ -190,6 +273,19 @@ class BoxPlot(LinePlot):
         maybe_color_bp(bp, color_tup=color_tup, **self.kwds)
 
     def _make_plot(self, fig: Figure) -> None:
+        # [FUNCTION DOC]
+        # Draws the box plot(s) on the figure (called by the base class generation).
+        # With subplots: when a by-grouping was requested, the data is rebuilt into
+        # per-group form; each iterated item gets its own axes, a copy of the keywords,
+        # and is drawn with the drawing step and recolored. For by-grouping the values
+        # are transposed, the subplot title is the group label and tick labels are the
+        # grouped values from the first level of the column index; otherwise the tick
+        # label is the column name. The returned objects are collected into an object
+        # series indexed by label and stored as the return object. Without subplots:
+        # all columns are drawn on the first axes as a transposed value array, the
+        # return object is the draw result, and tick labels are the column names (or
+        # positional numbers when the index is not used). Tick labels are set via the
+        # module helper.
         if self.subplots:
             obj_axes = []
             obj_labels = []
@@ -248,9 +344,15 @@ class BoxPlot(LinePlot):
             )
 
     def _make_legend(self) -> None:
+        # [FUNCTION DOC]
+        # Intentionally does nothing: box plots have no legend.
         pass
 
     def _post_plot_logic(self, ax: Axes, data) -> None:
+        # [FUNCTION DOC]
+        # Post-drawing hook: sets the x and y axis labels (printed form) when the plot
+        # has them, since box plots would otherwise ignore them. The data argument is
+        # unused.
         # GH 45465: make sure that the boxplot doesn't ignore xlabel/ylabel
         if self.xlabel:
             ax.set_xlabel(pprint_thing(self.xlabel))
@@ -259,6 +361,9 @@ class BoxPlot(LinePlot):
 
     @property
     def orientation(self) -> Literal["horizontal", "vertical"]:
+        # [FUNCTION DOC]
+        # Property: returns vertical unless the keyword vert is given and false, in which
+        # case horizontal.
         if self.kwds.get("vert", True):
             return "vertical"
         else:
@@ -266,6 +371,9 @@ class BoxPlot(LinePlot):
 
     @property
     def result(self):
+        # [FUNCTION DOC]
+        # Property: the plot result. When the return type is none it defers to the base
+        # class result (axes); otherwise returns the stored return object.
         if self.return_type is None:
             return super().result
         else:
@@ -273,6 +381,13 @@ class BoxPlot(LinePlot):
 
 
 def maybe_color_bp(bp, color_tup, **kwds) -> None:
+    # [FUNCTION DOC]
+    # Recolors a drawn box plot dictionary. Inputs: bp is the dictionary of artists
+    # (boxes, whiskers, medians, caps); color_tup is a four-item sequence of colors in
+    # that order; extra keywords are the user's matplotlib properties. For each of
+    # the four artist groups, sets color (with full opacity) only when the user did
+    # not supply the corresponding property dictionary keyword (box, whisker,
+    # median, cap properties). Mutates artists; returns nothing.
     # GH#30346, when users specifying those arguments explicitly, our defaults
     # for these four kwargs should be overridden; if not, use Pandas settings
     if not kwds.get("boxprops"):
@@ -298,6 +413,21 @@ def _grouped_plot_by_column(
     return_type=None,
     **kwargs,
 ):
+    # [FUNCTION DOC]
+    # HELPER: draws one box plot per selected column, grouped by key columns, each in
+    # its own subplot. Inputs: plotf is the per-axes drawing callable taking keys,
+    # values and axes; data is the frame; columns (default none, meaning all numeric
+    # columns except the grouping ones); by is the grouping spec;
+    # KNOWN ISSUE: numeric_only (default true) is accepted but never used in the body.
+    # grid (default false) toggles axes grid; figsize; ax; layout;
+    # return_type; extra keywords (sharex and sharey default true, xlabel, ylabel
+    # popped; the rest passed on). Groups the data (not dropping unobserved
+    # categories), creates the subplots grid, puts the by label on the category
+    # axis when the user did not give one (x for vertical boxes else y), draws each
+    # column and titles each axes with the column. Builds a series of drawing
+    # results indexed by column; when return_type is none the axes array is
+    # returned instead. Sets the figure super title naming the grouping and adjusts
+    # the figure margins. Returns the series or axes array.
     grouped = data.groupby(by, observed=False)
     if columns is None:
         if not isinstance(by, (list, tuple)):
@@ -356,6 +486,21 @@ def boxplot(
     return_type=None,
     **kwds,
 ):
+    # [FUNCTION DOC]
+    # Backend box plot function behind the frame and series box plot front ends.
+    # Inputs: data (frame or series; a series is converted to a one-column frame),
+    # column (label or list or none), by (grouping or none), ax, fontsize (tick
+    # label size), rot (label rotation, default 0), grid (default true), figsize,
+    # layout, return_type (none, axes, dict, both), extra keywords for matplotlib.
+    # KNOWN ISSUE: the invalid return type message below lists only axes, dict and both although none is also accepted.
+    # Raises a value error for an invalid return type, for a layout given
+    # without by, and when there are no numeric columns.
+    # With by: delegates to the grouped helper and returns its result (series of
+    # results, or axes array when return_type is none). Without by: return type
+    # defaults to axes, draws on the given axes or the current one (with figsize
+    # applied through a temporary rc context), uses numeric columns (restricted to
+    # the requested ones), draws all in one axes and applies the grid. Returns the
+    # object chosen by return_type.
     import matplotlib.pyplot as plt
 
     # validate return_type:
@@ -367,6 +512,13 @@ def boxplot(
         column = "x"
 
     def _get_colors():
+        # [FUNCTION DOC]
+        # HELPER: builds the four-color array (boxes, whiskers, medians, caps) for the
+        # enclosing box plot function. Defaults come from the standard colors with
+        # caps black. Pops the color keyword from the enclosing keywords; a dict-like
+        # value replaces entries by the keys boxes, whiskers, medians, caps (value error
+        # for any other key); any other truthy value fills all four entries. Returns the
+        # array.
         #  num_colors=3 is required as method maybe_color_bp takes the colors
         #  in positions 0 and 2.
         #  if colors not provided, use same defaults as DataFrame.plot.box
@@ -396,6 +548,14 @@ def boxplot(
         return result
 
     def plot_group(keys, values, ax: Axes, **kwds):
+        # [FUNCTION DOC]
+        # HELPER: draws one set of boxes on one axes for the enclosing function.
+        # Inputs: keys (labels), values (arrays per label), ax, extra keywords. Pops
+        # xlabel and ylabel and applies them if set. Drops missing values from each
+        # array, draws with matplotlib, applies the enclosing font size to ticks if
+        # set, sets tick labels from the printed keys with the enclosing rotation, and
+        # recolors the artists using the enclosing colors. Returns the artist dictionary
+        # for dict, the named tuple for both, otherwise the axes.
         # GH 45465: xlabel/ylabel need to be popped out before plotting happens
         xlabel, ylabel = kwds.pop("xlabel", None), kwds.pop("ylabel", None)
         if xlabel:
@@ -487,6 +647,11 @@ def boxplot_frame(
     return_type=None,
     **kwds,
 ):
+    # [FUNCTION DOC]
+    # Backend frame box plot method. Takes the same inputs as the box plot function
+    # (column, by, ax, fontsize, rot, grid, figsize, layout, return_type and extra
+    # keywords) with self as the frame; calls it, then asks pyplot to redraw if
+    # interactive, and returns its result.
     import matplotlib.pyplot as plt
 
     ax = boxplot(
@@ -520,6 +685,15 @@ def boxplot_frame_groupby(
     sharey: bool = True,
     **kwds,
 ):
+    # [FUNCTION DOC]
+    # Backend grouped box plot. Inputs: grouped (grouped frame object), subplots
+    # (default true), column, fontsize, rot, grid, ax, figsize, layout, sharex
+    # (default false), sharey (default true), extra keywords. With subplots true:
+    # one subplot per group, each drawn by the group's own box plot method with the
+    # group key as title; returns a series of results indexed by key and adjusts the
+    # figure margins. Otherwise concatenates all groups side by side with keys as an
+    # outer column level, converts the column selection to pairs of group key and
+    # column (when given) and draws one box plot; returns that result.
     if subplots is True:
         naxes = len(grouped)
         fig, axes = create_subplots(

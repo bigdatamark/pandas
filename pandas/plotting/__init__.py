@@ -56,6 +56,21 @@ For the discussion about the API see
 https://github.com/pandas-dev/pandas/issues/26747.
 """
 
+# [PACKAGE DOC]
+# Public plotting package of pandas. It holds the plotting accessor, the
+# backend dispatch layer (private core module), the miscellaneous plotting
+# helpers (private misc module), and the private matplotlib backend
+# implementation subpackage.
+# Re-exports: the plot accessor class, the box plot and histogram entry points
+# (boxplot, boxplot_frame, boxplot_frame_groupby, hist_frame, hist_series),
+# the stand-alone plots (andrews_curves, autocorrelation_plot, bootstrap_plot,
+# lag_plot, parallel_coordinates, radviz, scatter_matrix, table), the global
+# plot parameter mapping, and the matplotlib converter registration functions
+# under the public names register_matplotlib_converters and
+# deregister_matplotlib_converters (aliases of the misc module's register and
+# deregister).
+# Import-time side effects: only the imports of the private submodules; no
+# matplotlib import is forced here.
 from pandas.plotting._core import (
     PlotAccessor,
     boxplot,

@@ -9,6 +9,24 @@ a once again improved version.
 You can find more information on http://presbrey.mit.edu/PyDTA and
 https://www.statsmodels.org/devel/
 """
+# [MODULE DOC]
+# Reading and writing of Stata binary data files (the dta format) to and from
+# frames. Original reader derived from the PyDTA project; extended by the
+# statsmodels project.
+# Public contents: the public read function, the reader class (iterable and a
+# context manager, supporting chunked reading), the missing-value class, the
+# writer classes (legacy format 114/115, XML-style formats 117/118/119, and a
+# UTF-8 variant), and value-label helper classes. Frame methods that write Stata
+# files delegate to the writers here.
+# Private contents: date conversion functions between Stata's internal formats
+# and datetimes, a dtype-coercion function, string-table (long string) writer,
+# byte-padding and type-mapping helpers, and module constants (epochs, message
+# templates, supported date formats, reader documentation fragments).
+# Relationships: file access via the shared IO common handle opener; categorical
+# and datetime support from the core pandas types; warning classes from the
+# errors module.
+# Import-time side effects: the missing-value class builds its lookup tables when
+# the class body runs; otherwise only constant definitions.
 
 from __future__ import annotations
 
@@ -159,6 +177,21 @@ unix_epoch: Final = datetime(1970, 1, 1)
 
 
 def _stata_elapsed_date_to_datetime_vec(dates: Series, fmt: str) -> Series:
+    # [FUNCTION DOC]
+    # HELPER: converts a series of Stata elapsed-date numbers into datetimes.
+    # Inputs: dates (series of numbers in Stata internal format, may hold NaN) and
+    # fmt (format string such as tc, td, tw, tm, tq, th, ty, with or without the
+    # leading percent sign). Behavior by format: tc is milliseconds since the Stata
+    # epoch (1960-01-01), td (also d) is days, tm months, tq quarters, th half-years,
+    # ty a year number; these return a datetime series (ms, day or second
+    # resolution) with the same index. For other formats the NaN positions are
+    # replaced by a placeholder and values cast to 64-bit integers. tC (leap-second
+    # adjusted) is not supported: warns and returns the numbers as an object series
+    # (NaT at bad positions). tw is converted by adding seven day multiples of the
+    # week-in-year remainder to the start of the year assuming fifty-two weeks per
+    # year. Any other format raises a value error. Missing positions are restored as
+    # NaT.
+    # KNOWN ISSUE: the prefix matching for the daily format accepts any format starting with the single letter d, and the fall-through branch for NaN handling mutates the input series values in place when it reaches the tC or tw branches.
     """
     Convert from SIF to datetime. https://www.stata.com/help.cgi?datetime
 
@@ -279,6 +312,17 @@ def _stata_elapsed_date_to_datetime_vec(dates: Series, fmt: str) -> Series:
 
 
 def _datetime_to_stata_elapsed_vec(dates: Series, fmt: str) -> Series:
+    # [FUNCTION DOC]
+    # HELPER: converts a series of datetimes to Stata elapsed numbers for a format.
+    # Inputs: dates (datetime64 or object datetimes, with null allowed) and fmt (tc,
+    # td, tw, tm, tq, th, ty, optionally percent-prefixed). Null positions are first
+    # replaced in the input by the Stata epoch (mutating the input values), then
+    # converted, and finally set to the Stata system missing value as 64-bit floats.
+    # Conversions: tc milliseconds since the epoch; td days; tw fifty-two times
+    # years since 1960 plus whole weeks into the year; tm months; tq quarters; th
+    # half-years; ty the year. tC is unsupported (warns and passes dates through).
+    # Raises a value error for an unknown format or for columns that are not
+    # datetimes. Returns a float64 series with the original index.
     """
     Convert from datetime to SIF. https://www.stata.com/help.cgi?datetime
 
@@ -298,6 +342,15 @@ def _datetime_to_stata_elapsed_vec(dates: Series, fmt: str) -> Series:
     def parse_dates_safe(
         dates: Series, delta: bool = False, year: bool = False, days: bool = False
     ) -> DataFrame:
+        # [FUNCTION DOC]
+        # HELPER: extracts the numeric pieces needed for Stata date conversion.
+        # Inputs: dates (series), and flags delta (milliseconds since the Stata epoch),
+        # year (year and month numbers), days (days since start of year). Returns a
+        # frame with the requested columns. For datetime64 data uses vectorized
+        # operations. For object-dtype datetimes emits a deprecation warning (writing
+        # object columns of datetimes is deprecated) and computes via per-element
+        # functions. Raises a value error when the column holds neither datetimes nor
+        # nulls.
         d = {}
         if lib.is_np_dtype(dates.dtype, "M"):
             if delta:
@@ -327,6 +380,9 @@ def _datetime_to_stata_elapsed_vec(dates: Series, fmt: str) -> Series:
                 delta = dates._values - stata_epoch
 
                 def f(x: timedelta) -> float:
+                    # [FUNCTION DOC]
+                    # HELPER: converts a timedelta to microseconds as a float, built from days,
+                    # seconds and microseconds parts (used for object-dtype datetime deltas).
                     return US_PER_DAY * x.days + 1_000_000 * x.seconds + x.microseconds
 
                 v = np.vectorize(f)
@@ -338,6 +394,9 @@ def _datetime_to_stata_elapsed_vec(dates: Series, fmt: str) -> Series:
             if days:
 
                 def g(x: datetime) -> int:
+                    # [FUNCTION DOC]
+                    # HELPER: returns the number of whole days between a datetime and January 1 of
+                    # its year.
                     return (x - datetime(x.year, 1, 1)).days
 
                 v = np.vectorize(g)
@@ -439,6 +498,23 @@ through the value_labels method of the reader.
 
 
 def _cast_to_stata_types(data: DataFrame) -> DataFrame:
+    # [FUNCTION DOC]
+    # HELPER: coerces frame columns to types that Stata can store; mutates the
+    # passed frame in place and returns it. For each column: nullable integer/boolean
+    # extension columns are filled with zero/false and cast to plain numpy types
+    # (missing positions later get the Stata missing sentinel for the dtype); other
+    # extension dtypes with a numpy type are cast to it; string extension dtypes
+    # become object with nulls as none. Then booleans become 8-bit integers;
+    # unsigned integers go to the same-sized signed type when values fit, else a
+    # larger type (64-bit unsigned goes to float); 8-bit values above 100 or below
+    # minus 127 widen to 16 bit, 16-bit values above 32740 or below minus 32767
+    # widen to 32 bit; 64-bit integers become 32-bit if within the Stata range, else
+    # float64 (warning of precision loss at 2 to the power 53). Float columns:
+    # raises a value error on infinities; float32 above the Stata maximum is widened
+    # to float64; float64 above the maximum raises a value error. After the loop
+    # emits a possible-precision-loss warning for the last recorded problem only.
+    # KNOWN ISSUE: the unsigned-64 precision warning is attached to the branch for the 32-bit unsigned row (its large type is 64-bit signed) so it is never triggered for real 64-bit unsigned data, and the message names unsigned 64 to float64.
+    # KNOWN ISSUE: the infinity error message concatenates two string pieces without a separating space ("infinity" immediately followed by "which").
     """
     Checks the dtypes of the columns of a pandas DataFrame for
     compatibility with the data types and ranges supported by Stata, and
@@ -567,6 +643,13 @@ def _cast_to_stata_types(data: DataFrame) -> DataFrame:
 
 
 class StataValueLabel:
+    # [CLASS DOC]
+    # Encodes the categories of a categorical series as a Stata value-label table.
+    # Inputs: catarray (categorical series) and encoding (latin-1 default, or utf-8;
+    # a value error otherwise). State: label name (the series name), encoding,
+    # enumerated (code, category) pairs, and after preparation the text list,
+    # count, text length, offsets and values arrays (32-bit) and total byte length.
+    # Key methods: preparation of encoded labels and generation of the binary table.
     """
     Parse a categorical column and prepare formatted output
 
@@ -581,6 +664,10 @@ class StataValueLabel:
     def __init__(
         self, catarray: Series, encoding: Literal["latin-1", "utf-8"] = "latin-1"
     ) -> None:
+        # [FUNCTION DOC]
+        # Constructor. Validates the encoding (value error if not latin-1 or utf-8),
+        # records label name, encoding and the enumeration of the categories, then
+        # prepares the encoded labels.
         if encoding not in ("latin-1", "utf-8"):
             raise ValueError("Only latin-1 and utf-8 are supported.")
         self.labname = catarray.name
@@ -591,6 +678,14 @@ class StataValueLabel:
         self._prepare_value_labels()
 
     def _prepare_value_labels(self) -> None:
+        # [FUNCTION DOC]
+        # HELPER: encodes the value labels. Resets counters and arrays; for each
+        # (code, category) pair converts non-string categories to text with a
+        # value-label-type-mismatch warning, encodes with the chosen encoding, records
+        # the running offset and text length (each label plus one terminator byte),
+        # the code and the bytes. Then stores offsets and codes as 32-bit arrays and the
+        # total table length as twelve bytes of header plus four per entry for offsets
+        # and for values plus the text length.
         """Encode value labels."""
 
         self.text_len = 0
@@ -629,6 +724,12 @@ class StataValueLabel:
         self.len = 4 + 4 + 4 * self.n + 4 * self.n + self.text_len
 
     def generate_value_label(self, byteorder: str) -> bytes:
+        # [FUNCTION DOC]
+        # Builds the binary value label record. Input: byteorder prefix for packing
+        # (for example little or big endian marker). Layout: total length (32-bit);
+        # label name truncated to 32 characters, encoded and padded to 33 bytes (129
+        # for utf-8); three padding bytes; entry count; text length; the offsets; the
+        # codes; then every label as null-terminated bytes. Returns the bytes.
         """
         Generate the binary representation of the value labels.
 
@@ -682,6 +783,11 @@ class StataValueLabel:
 
 
 class StataNonCatValueLabel(StataValueLabel):
+    # [CLASS DOC]
+    # Value-label encoder built from a plain mapping instead of a categorical series
+    # (subclass of the categorical one). Inputs: labname, value_labels (mapping of
+    # numeric value to label text) and encoding (latin-1 or utf-8). Labels are
+    # sorted by value. Reuses all preparation and generation behavior.
     """
     Prepare formatted version of value labels
 
@@ -701,6 +807,10 @@ class StataNonCatValueLabel(StataValueLabel):
         value_labels: dict[float, str],
         encoding: Literal["latin-1", "utf-8"] = "latin-1",
     ) -> None:
+        # [FUNCTION DOC]
+        # Constructor. Raises a value error for an unsupported encoding. Stores name and
+        # encoding, sorts the mapping items by value, and prepares the labels. Does not
+        # call the parent constructor.
         if encoding not in ("latin-1", "utf-8"):
             raise ValueError("Only latin-1 and utf-8 are supported.")
 
@@ -713,6 +823,13 @@ class StataNonCatValueLabel(StataValueLabel):
 
 
 class StataMissingValue:
+    # [CLASS DOC]
+    # Represents a Stata extended missing value (dot, dot-a through dot-z). Input:
+    # the numeric code (integer for byte, int, long types; float for single and
+    # double). Class-level tables built at class creation: a mapping from every
+    # possible missing numeric code (for 8, 16, 32-bit integers, and 32/64-bit floats)
+    # to its text, and a base-value table by type name. State: the code and its text.
+    # Comparison is by text and code only. Equality is defined without hashing support.
     """
     An observation's missing value.
 
@@ -787,6 +904,10 @@ class StataMissingValue:
     }
 
     def __init__(self, value: float) -> None:
+        # [FUNCTION DOC]
+        # Constructor. Input: value, the numeric code. Stores it, normalizes to an int
+        # for values below 2 to the power 31 and float otherwise, and looks up the text.
+        # Raises a key error if the value is not a known missing code.
         self._value = value
         # Conversion to int to avoid hash issues on 32 bit platforms #8968
         value = int(value) if value < 2147483648 else float(value)
@@ -794,6 +915,8 @@ class StataMissingValue:
 
     @property
     def string(self) -> str:
+        # [FUNCTION DOC]
+        # Property: the text form of the missing value (dot, dot-a, ..., dot-z).
         """
         The Stata representation of the missing value: '.', '.a'..'.z'
 
@@ -806,6 +929,8 @@ class StataMissingValue:
 
     @property
     def value(self) -> float:
+        # [FUNCTION DOC]
+        # Property: the numeric code supplied at construction.
         """
         The binary representation of the missing value.
 
@@ -817,12 +942,19 @@ class StataMissingValue:
         return self._value
 
     def __str__(self) -> str:
+        # [FUNCTION DOC]
+        # String conversion: returns the text form.
         return self.string
 
     def __repr__(self) -> str:
+        # [FUNCTION DOC]
+        # Representation: the class followed by the text form in parentheses.
         return f"{type(self)}({self})"
 
     def __eq__(self, other: object) -> bool:
+        # [FUNCTION DOC]
+        # Equality: true only when the other object is the same class with the same text
+        # and the same numeric code.
         return (
             isinstance(other, type(self))
             and self.string == other.string
@@ -831,6 +963,10 @@ class StataMissingValue:
 
     @classmethod
     def get_base_missing_value(cls, dtype: np.dtype) -> float:
+        # [FUNCTION DOC]
+        # Class method. Input: a numpy dtype. Returns the base missing code for 8, 16 or
+        # 32-bit integers, or 32 or 64-bit floats, from the base table. Raises a value
+        # error for other dtypes.
         if dtype.type is np.int8:
             value = cls.BASE_MISSING_VALUES["int8"]
         elif dtype.type is np.int16:
@@ -847,7 +983,19 @@ class StataMissingValue:
 
 
 class StataParser:
+    # [CLASS DOC]
+    # Base class holding Stata format constants for the reader and writer (no
+    # methods besides the constructor). The constructor builds instance attributes:
+    # a map from Stata type codes (1 to 244 fixed strings, 251 to 255 numeric) to numpy
+    # dtypes; the same for XML-style type codes; the type-code to struct-format
+    # tables; valid value ranges for new and old files; the map from old type codes
+    # to modern ones; generic missing values by type letter; a numpy type map; and the
+    # set of reserved words that cannot be variable names.
     def __init__(self) -> None:
+        # [FUNCTION DOC]
+        # Constructor without arguments. Populates the constant tables described in the
+        # class documentation (nothing is read or validated).
+        # KNOWN ISSUE: a comment in the code states that some valid ranges are technically wrong (more numbers could be represented than listed); the ranges follow the Stata manual's reserved missing-value region.
         # type          code.
         # --------------------
         # str1        1 = 0x01
@@ -1020,6 +1168,20 @@ class StataParser:
 
 @set_module("pandas.api.typing")
 class StataReader(StataParser, abc.Iterator):
+    # [CLASS DOC]
+    # Reader for Stata dta files (subclass of the parser constants class and an
+    # iterator; also usable as a context manager, which is the only supported way).
+    # Constructor options are stored as defaults that the read method can override
+    # per call: convert_dates, convert_categoricals, index_col, convert_missing,
+    # preserve_dtypes, columns, order_categoricals, chunksize, compression and
+    # storage options. State: file handle or buffer (opened lazily), parsed header
+    # data (format version, byte order, number of variables and observations, type,
+    # name, format, label lists, variable labels, data label, time stamp, seek
+    # positions for newer files, data location), the numpy record dtype, the count
+    # of lines already read, the value-label dictionary, the long-string table, and
+    # flags for iterator use and column selection.
+    # Supported formats: versions 102 to 119. Iterating (or the chunk method)
+    # returns frames of chunksize rows until the data is exhausted, then stops.
     __doc__ = _stata_reader_doc
 
     _path_or_buf: IO[bytes]  # Will be assigned by `_open_file`.
@@ -1038,6 +1200,15 @@ class StataReader(StataParser, abc.Iterator):
         compression: CompressionOptions = "infer",
         storage_options: StorageOptions | None = None,
     ) -> None:
+        # [FUNCTION DOC]
+        # Constructor. Parameters: path_or_buf (path or binary buffer); convert_dates
+        # (default true); convert_categoricals (default true); index_col (default none);
+        # convert_missing (default false); preserve_dtypes (default true); columns
+        # (default none); order_categoricals (default true); chunksize (default none,
+        # treated as one row per iteration step; must otherwise be a positive integer or a
+        # value error is raised); compression (default infer); storage_options.
+        # Initializes the parent constants, stores options, sets up empty state and
+        # records the machine byte order. Does not open the file.
         super().__init__()
 
         # Arguments to the reader (can be temporarily overridden in
@@ -1072,6 +1243,8 @@ class StataReader(StataParser, abc.Iterator):
         self._native_byteorder = _set_endianness(sys.byteorder)
 
     def _ensure_open(self) -> None:
+        # [FUNCTION DOC]
+        # Opens the file and reads the header if it has not been opened yet.
         """
         Ensure the file has been opened and its header data read.
         """
@@ -1079,6 +1252,11 @@ class StataReader(StataParser, abc.Iterator):
             self._open_file()
 
     def _open_file(self) -> None:
+        # [FUNCTION DOC]
+        # Opens the source in binary mode (warning with a resource warning if not used as
+        # a context manager). If the handle is seekable it is used directly; otherwise
+        # contents are copied into an in-memory buffer. Records the close callable, then
+        # reads the header and builds the record dtype.
         """
         Open the file (with compression options, etc.), and read header information.
         """
@@ -1110,6 +1288,8 @@ class StataReader(StataParser, abc.Iterator):
         self._setup_dtype()
 
     def __enter__(self) -> Self:
+        # [FUNCTION DOC]
+        # Context manager entry: marks the reader as entered and returns itself.
         """enter context manager"""
         self._entered = True
         return self
@@ -1120,10 +1300,16 @@ class StataReader(StataParser, abc.Iterator):
         exc_value: BaseException | None,
         traceback: TracebackType | None,
     ) -> None:
+        # [FUNCTION DOC]
+        # Context manager exit: closes the file if a close callable exists. Exception
+        # arguments are unused; exceptions are not suppressed.
         if self._close_file:
             self._close_file()
 
     def _set_encoding(self) -> None:
+        # [FUNCTION DOC]
+        # HELPER: sets the string encoding from the format version: latin-1 before
+        # version 118, utf-8 from 118 on.
         """
         Set string encoding which depends on file version
         """
@@ -1133,39 +1319,64 @@ class StataReader(StataParser, abc.Iterator):
             self._encoding = "utf-8"
 
     def _read_int8(self) -> int:
+        # [FUNCTION DOC]
+        # HELPER: reads one signed byte from the file and returns it as an integer.
         return struct.unpack("b", self._path_or_buf.read(1))[0]
 
     def _read_uint8(self) -> int:
+        # [FUNCTION DOC]
+        # HELPER: reads one unsigned byte and returns it as an integer.
         return struct.unpack("B", self._path_or_buf.read(1))[0]
 
     def _read_uint16(self) -> int:
+        # [FUNCTION DOC]
+        # HELPER: reads an unsigned 16-bit integer in the file byte order.
         return struct.unpack(f"{self._byteorder}H", self._path_or_buf.read(2))[0]
 
     def _read_uint32(self) -> int:
+        # [FUNCTION DOC]
+        # HELPER: reads an unsigned 32-bit integer in the file byte order.
         return struct.unpack(f"{self._byteorder}I", self._path_or_buf.read(4))[0]
 
     def _read_uint64(self) -> int:
+        # [FUNCTION DOC]
+        # HELPER: reads an unsigned 64-bit integer in the file byte order.
         return struct.unpack(f"{self._byteorder}Q", self._path_or_buf.read(8))[0]
 
     def _read_int16(self) -> int:
+        # [FUNCTION DOC]
+        # HELPER: reads a signed 16-bit integer in the file byte order.
         return struct.unpack(f"{self._byteorder}h", self._path_or_buf.read(2))[0]
 
     def _read_int32(self) -> int:
+        # [FUNCTION DOC]
+        # HELPER: reads a signed 32-bit integer in the file byte order.
         return struct.unpack(f"{self._byteorder}i", self._path_or_buf.read(4))[0]
 
     def _read_int64(self) -> int:
+        # [FUNCTION DOC]
+        # HELPER: reads a signed 64-bit integer in the file byte order.
         return struct.unpack(f"{self._byteorder}q", self._path_or_buf.read(8))[0]
 
     def _read_char8(self) -> bytes:
+        # [FUNCTION DOC]
+        # HELPER: reads a single raw byte and returns it as a length-one bytes value.
         return struct.unpack("c", self._path_or_buf.read(1))[0]
 
     def _read_int16_count(self, count: int) -> tuple[int, ...]:
+        # [FUNCTION DOC]
+        # HELPER: reads a given count of signed 16-bit integers in the file byte order
+        # and returns them as a tuple.
         return struct.unpack(
             f"{self._byteorder}{'h' * count}",
             self._path_or_buf.read(2 * count),
         )
 
     def _read_header(self) -> None:
+        # [FUNCTION DOC]
+        # HELPER: reads the first byte and dispatches: an opening angle bracket means an
+        # XML-style header (versions 117 to 119), anything else is the legacy binary
+        # header whose first byte is passed on.
         first_char = self._read_char8()
         if first_char == b"<":
             self._read_new_header()
@@ -1173,6 +1384,17 @@ class StataReader(StataParser, abc.Iterator):
             self._read_old_header(first_char)
 
     def _read_new_header(self) -> None:
+        # [FUNCTION DOC]
+        # HELPER: parses the tagged header of versions 117, 118 and 119. Skips the fixed
+        # tags, reads the version (value error for anything except 117 to 119, with a
+        # message listing supported versions), sets the encoding, byte order (big
+        # endian when the marker is the big-endian token), variable count (16-bit for
+        # 117 and 118, 32-bit for 119), observation count, data label and time stamp.
+        # Then reads the section offsets from the map (adjusting for tag lengths) to
+        # get seek positions for types, names, sort list, formats, value-label names,
+        # variable labels, data, long strings and value labels. Finally seeks to and
+        # reads the type lists, variable names, sort list, formats, label names and
+        # variable labels.
         # The first part of the header is common to 117 - 119.
         self._path_or_buf.read(27)  # stata_dta><header><release>
         self._format_version = int(self._path_or_buf.read(3))
@@ -1231,6 +1453,12 @@ class StataReader(StataParser, abc.Iterator):
     def _get_dtypes(
         self, seek_vartypes: int
     ) -> tuple[list[int | str], list[str | np.dtype]]:
+        # [FUNCTION DOC]
+        # HELPER: reads the variable type list for tagged formats from the given offset.
+        # For each variable reads a 16-bit code: codes up to 2045 are fixed-width strings
+        # (the code and its text are recorded); higher codes are mapped through the XML
+        # type tables. Raises a value error naming an unknown code. Returns two lists:
+        # type markers and dtypes.
         self._path_or_buf.seek(seek_vartypes)
         typlist = []
         dtyplist = []
@@ -1249,12 +1477,18 @@ class StataReader(StataParser, abc.Iterator):
         return typlist, dtyplist  # type: ignore[return-value]
 
     def _get_varlist(self) -> list[str]:
+        # [FUNCTION DOC]
+        # HELPER: reads variable names, each as a fixed field (33 bytes before version
+        # 118, 129 bytes after) decoded and cut at the first null. Returns the list.
         # 33 in order formats, 129 in formats 118 and 119
         b = 33 if self._format_version < 118 else 129
         return [self._decode(self._path_or_buf.read(b)) for _ in range(self._nvar)]
 
     # Returns the format list
     def _get_fmtlist(self) -> list[str]:
+        # [FUNCTION DOC]
+        # HELPER: reads the display format list; field width depends on version (57
+        # bytes for 118 and up, 49 for versions above 113, 12 for above 104, else 7).
         if self._format_version >= 118:
             b = 57
         elif self._format_version > 113:
@@ -1268,6 +1502,9 @@ class StataReader(StataParser, abc.Iterator):
 
     # Returns the label list
     def _get_lbllist(self) -> list[str]:
+        # [FUNCTION DOC]
+        # HELPER: reads the value-label-name list; field width 129 bytes for 118+, 33
+        # for versions above 108, else 9.
         if self._format_version >= 118:
             b = 129
         elif self._format_version > 108:
@@ -1277,6 +1514,9 @@ class StataReader(StataParser, abc.Iterator):
         return [self._decode(self._path_or_buf.read(b)) for _ in range(self._nvar)]
 
     def _get_variable_labels(self) -> list[str]:
+        # [FUNCTION DOC]
+        # HELPER: reads variable labels; field width 321 bytes for 118+, 81 for versions
+        # above 105, else 32. Returns the decoded list.
         if self._format_version >= 118:
             vlblist = [
                 self._decode(self._path_or_buf.read(321)) for _ in range(self._nvar)
@@ -1292,6 +1532,9 @@ class StataReader(StataParser, abc.Iterator):
         return vlblist
 
     def _get_nobs(self) -> int:
+        # [FUNCTION DOC]
+        # HELPER: reads the observation count: 64-bit for 118 and up, 32-bit for versions
+        # 103 and up, otherwise 16-bit.
         if self._format_version >= 118:
             return self._read_uint64()
         elif self._format_version >= 103:
@@ -1300,6 +1543,9 @@ class StataReader(StataParser, abc.Iterator):
             return self._read_uint16()
 
     def _get_data_label(self) -> str:
+        # [FUNCTION DOC]
+        # HELPER: reads the data label: length-prefixed (16-bit for 118+, one byte for
+        # 117), or a fixed field of 81 bytes (above 105) or 32 bytes (older).
         if self._format_version >= 118:
             strlen = self._read_uint16()
             return self._decode(self._path_or_buf.read(strlen))
@@ -1312,6 +1558,10 @@ class StataReader(StataParser, abc.Iterator):
             return self._decode(self._path_or_buf.read(32))
 
     def _get_time_stamp(self) -> str:
+        # [FUNCTION DOC]
+        # HELPER: reads the time stamp: length-prefixed for 117 and up (utf-8 for 118+),
+        # an 18-byte field for versions above 104. Raises a bare value error for older
+        # versions.
         if self._format_version >= 118:
             strlen = self._read_int8()
             return self._path_or_buf.read(strlen).decode("utf-8")
@@ -1324,6 +1574,11 @@ class StataReader(StataParser, abc.Iterator):
             raise ValueError
 
     def _get_seek_variable_labels(self) -> int:
+        # [FUNCTION DOC]
+        # HELPER: computes the seek position of the variable labels section. For 117
+        # (whose files do not follow the documented layout) it is derived from the value
+        # label names position plus 33 bytes per variable plus tag lengths; for 118 and up
+        # it is read from the map plus a tag length. Raises a bare value error otherwise.
         if self._format_version == 117:
             self._path_or_buf.read(8)  # <variable_labels>, throw away
             # Stata 117 data files do not follow the described format.  This is
@@ -1336,6 +1591,15 @@ class StataReader(StataParser, abc.Iterator):
             raise ValueError
 
     def _read_old_header(self, first_char: bytes) -> None:
+        # [FUNCTION DOC]
+        # HELPER: parses the legacy binary header (versions 102 to 115). Input: the first
+        # byte (the version). Raises a value error for unsupported versions. Sets the
+        # encoding, byte order, file type, variable and observation counts, data label,
+        # time stamp (105 and up), type list (old codes mapped to current ones for
+        # versions below 111), dtype list, names (33 or 9 bytes), sort list, formats,
+        # label names and variable labels, then skips expansion fields (105 and up) until
+        # a zero-type record, and records the data start position.
+        # KNOWN ISSUE: the two exception handlers around the lookup of type and dtype tables catch value errors, but those lookups raise index or key errors for unknown codes, so the friendly message is never produced.
         self._format_version = int(first_char[0])
         if self._format_version not in [
             102,
@@ -1427,6 +1691,11 @@ class StataReader(StataParser, abc.Iterator):
         self._data_location = self._path_or_buf.tell()
 
     def _setup_dtype(self) -> np.dtype:
+        # [FUNCTION DOC]
+        # Builds (once, cached) the numpy record dtype for the file. Numeric type letters
+        # map to little/big-endian numpy types per file byte order; string types become
+        # fixed-width byte strings of the given width. Fields are named by position.
+        # Returns the dtype.
         """Map between numpy and state dtypes"""
         if self._dtype is not None:
             return self._dtype
@@ -1443,6 +1712,10 @@ class StataReader(StataParser, abc.Iterator):
         return self._dtype
 
     def _decode(self, s: bytes) -> str:
+        # [FUNCTION DOC]
+        # HELPER: decodes a null-terminated byte field: cuts at the first null and
+        # decodes with the file encoding. On a decode failure warns (unicode warning)
+        # and falls back to latin-1.
         # have bytes not strings, so must decode
         s = s.partition(b"\0")[0]
         try:
@@ -1464,6 +1737,13 @@ the string values returned are correct."""
             return s.decode("latin-1")
 
     def _read_new_value_labels(self) -> None:
+        # [FUNCTION DOC]
+        # HELPER: reads value label tables for variable-length format (108 and later).
+        # Positions at the value label section (tagged formats) or just after the data.
+        # Per table: reads length, name (9, 33 or 129 bytes by version), padding, entry
+        # count and text length, offsets and codes; sorts by offset and decodes each
+        # label slice. Stores them in the value-label dictionary keyed by label name and
+        # code. Stops at the end tag (tagged formats) or when no more data remains.
         """Reads value labels with variable length strings (108 and later format)"""
         if self._format_version >= 117:
             self._path_or_buf.seek(self._seek_value_labels)
@@ -1511,6 +1791,10 @@ the string values returned are correct."""
                 self._path_or_buf.read(6)  # </lbl>
 
     def _read_old_value_labels(self) -> None:
+        # [FUNCTION DOC]
+        # HELPER: reads value label tables for the fixed-width format (105 and earlier).
+        # Positions after the data; each table has a 16-bit entry count, a 9-byte name,
+        # a padding byte, 16-bit codes and 8-byte labels. Stops at end of file.
         """Reads value labels with fixed-length strings (105 and earlier format)"""
         assert self._dtype is not None
         offset = self._nobs * self._dtype.itemsize
@@ -1536,6 +1820,9 @@ the string values returned are correct."""
                 )
 
     def _read_value_labels(self) -> None:
+        # [FUNCTION DOC]
+        # HELPER: ensures the file is open and reads value labels once (flag guards
+        # repeats), choosing the newer or older reader by version (108 threshold).
         self._ensure_open()
         if self._value_labels_read:
             # Don't read twice
@@ -1548,6 +1835,13 @@ the string values returned are correct."""
         self._value_labels_read = True
 
     def _read_strls(self) -> None:
+        # [FUNCTION DOC]
+        # HELPER: reads the long-string section (tagged formats). Seeks to the section
+        # and loops over GSO records until a record does not start with the marker.
+        # Keys are the variable/observation pair packed according to the version, held
+        # as strings; types 130 are decoded text (dropping the terminator), other
+        # types are stored as the string form of the raw bytes. Table starts with an
+        # entry for key zero mapping to empty text. Stores the table on the instance.
         self._path_or_buf.seek(self._seek_strls)
         # Wrap v_o in a string to allow uint64 values as keys on 32bit OS
         self.GSO = {"0": ""}
@@ -1578,10 +1872,17 @@ the string values returned are correct."""
             self.GSO[str(v_o)] = decoded_va
 
     def __next__(self) -> DataFrame:
+        # [FUNCTION DOC]
+        # Iterator step: marks iterator use and reads the next chunk (chunksize rows).
+        # Raises the stop-iteration signal when exhausted.
         self._using_iterator = True
         return self.read(nrows=self._chunksize)
 
     def get_chunk(self, size: int | None = None) -> DataFrame:
+        # [FUNCTION DOC]
+        # Reads a number of rows as a frame. Input: size (default none, which uses the
+        # chunk size configured on the reader).
+        # KNOWN ISSUE: the docstring says that none reads the whole file, but the code uses the reader's chunk size (one row when no chunk size was given).
         """
         Reads lines from Stata file and returns as dataframe
 
@@ -1609,6 +1910,22 @@ the string values returned are correct."""
         columns: Sequence[str] | None = None,
         order_categoricals: bool | None = None,
     ) -> DataFrame:
+        # [FUNCTION DOC]
+        # Reads observations into a frame. Inputs: nrows (default none, all remaining) and
+        # per-call overrides for convert_dates, convert_categoricals, index_col,
+        # convert_missing, preserve_dtypes, columns and order_categoricals (each none
+        # means use the constructor value). Behavior: ensures the file is open; for an
+        # empty file returns an empty typed frame; raises the stop-iteration signal when
+        # no rows remain (reading value labels first if categoricals are requested);
+        # reads the long-string table for tagged formats; reads nrows rows from the
+        # current position as a record array and advances the line counter; swaps bytes
+        # to native order if needed; builds a frame with variable names as columns and a
+        # continuing row number index (unless an index column is requested); applies
+        # column selection; decodes fixed strings; substitutes long strings; casts to the
+        # stored dtypes; converts missing values; converts date-format columns to
+        # datetimes; converts value-labelled columns to categoricals; when not
+        # preserving dtypes widens small ints to 64-bit and 16/32-bit floats to 64-bit;
+        # finally moves the requested column into the index. Returns the frame.
         """
         Reads observations from Stata file, converting them into a dataframe
 
@@ -1777,6 +2094,14 @@ the string values returned are correct."""
         return data
 
     def _do_convert_missing(self, data: DataFrame, convert_missing: bool) -> DataFrame:
+        # [FUNCTION DOC]
+        # HELPER: handles Stata missing values in numeric columns. Input: data frame
+        # and convert_missing flag. For each numeric column finds values outside the
+        # valid range (old ranges for versions up to 111; for 105 and older first remaps the
+        # old double missing code). If the flag is true, such columns become object
+        # columns where missing positions hold missing-value objects (the generic code
+        # for old versions, the specific code otherwise); if false, they are replaced
+        # with NaN in a float column. Returns the (modified) frame.
         # missing code for double was different in version 105 and prior
         old_missingdouble = float.fromhex("0x1.0p333")
 
@@ -1840,6 +2165,10 @@ the string values returned are correct."""
         return data
 
     def _insert_strls(self, data: DataFrame) -> DataFrame:
+        # [FUNCTION DOC]
+        # HELPER: replaces long-string reference codes with their text for each column
+        # of the long-string marker type, using the stored table. Returns the frame
+        # unchanged when no table exists.
         if not hasattr(self, "GSO") or len(self.GSO) == 0:
             return data
         for i, typ in enumerate(self._typlist):
@@ -1850,6 +2179,11 @@ the string values returned are correct."""
         return data
 
     def _do_select_columns(self, data: DataFrame, columns: Sequence[str]) -> DataFrame:
+        # [FUNCTION DOC]
+        # HELPER: restricts the frame to the requested columns, in the given order.
+        # On the first call validates the request (value error for duplicates or for
+        # names not in the file) and reorders the stored type, dtype, format and label
+        # lists to match, setting a flag so this happens once. Returns the subset frame.
         if not self._column_selector_set:
             column_set = set(columns)
             if len(column_set) != len(columns):
@@ -1888,6 +2222,16 @@ the string values returned are correct."""
         lbllist: Sequence[str],
         order_categoricals: bool,
     ) -> DataFrame:
+        # [FUNCTION DOC]
+        # HELPER: converts columns that have value labels to categorical columns.
+        # Inputs: the frame, the value-label dictionary, the per-column label name list,
+        # and whether categories are ordered. Returns the frame unchanged if there are
+        # no value labels. For each labelled column: when iterating and every value has
+        # a label, the full set of keys is used as the categories (so chunks agree);
+        # otherwise (warning with a categorical conversion warning when iterating) the
+        # categories come from the data. Categories are renamed to their label texts
+        # (unlabelled values keep their code). Raises a value error describing the
+        # repeated labels when label texts are not unique. Other columns pass through.
         """
         Converts categorical columns to Categorical type.
         """
@@ -1961,6 +2305,8 @@ The repeated labels are:
 
     @property
     def data_label(self) -> str:
+        # [FUNCTION DOC]
+        # Property: the data label of the file (opens the file if needed).
         """
         Return data label of Stata file.
 
@@ -1995,6 +2341,8 @@ The repeated labels are:
 
     @property
     def time_stamp(self) -> str:
+        # [FUNCTION DOC]
+        # Property: the time stamp string of the file (opens the file if needed).
         """
         Return time stamp of Stata file.
         """
@@ -2002,6 +2350,9 @@ The repeated labels are:
         return self._time_stamp
 
     def variable_labels(self) -> dict[str, str]:
+        # [FUNCTION DOC]
+        # Returns a dictionary from variable name to its label text (opens the file if
+        # needed; empty text for unlabelled variables).
         """
         Return a dict associating each variable name with corresponding label.
 
@@ -2043,6 +2394,11 @@ The repeated labels are:
         return dict(zip(self._varlist, self._variable_labels, strict=True))
 
     def value_labels(self) -> dict[str, dict[int, str]]:
+        # [FUNCTION DOC]
+        # Returns the nested dictionary of value labels: outer keys are value-label set
+        # names, inner mapping code to label text. Reads the value labels first if not
+        # yet read (the file is opened as needed).
+        # KNOWN ISSUE: the docstring says the outer keys are variable names, but the dictionary is keyed by the value label set name, which may differ from the variable name.
         """
         Return a nested dict associating each variable name to its value and label.
 
@@ -2102,6 +2458,14 @@ def read_stata(
     compression: CompressionOptions = "infer",
     storage_options: StorageOptions | None = None,
 ) -> DataFrame | StataReader:
+    # [FUNCTION DOC]
+    # Public reader for Stata files. All parameters after the path are keyword-only:
+    # convert_dates, convert_categoricals, index_col, convert_missing,
+    # preserve_dtypes, columns, order_categoricals, chunksize, iterator (default
+    # false), compression, storage_options (defaults as in the reader class).
+    # Builds a reader. If iterator is true or a truthy chunksize is given, returns the
+    # reader itself for the caller to iterate (and close); otherwise reads the whole
+    # file inside a context manager and returns a frame.
     """
     Read Stata file into DataFrame.
 
@@ -2237,6 +2601,10 @@ def read_stata(
 
 
 def _set_endianness(endianness: str) -> str:
+    # [FUNCTION DOC]
+    # HELPER: normalizes a byte order name. Accepts the less-than sign or little and
+    # the greater-than sign or big (case-insensitive) and returns the sign.
+    # Raises a value error otherwise.
     if endianness.lower() in ["<", "little"]:
         return "<"
     elif endianness.lower() in [">", "big"]:
@@ -2246,6 +2614,9 @@ def _set_endianness(endianness: str) -> str:
 
 
 def _pad_bytes(name: AnyStr, length: int) -> AnyStr:
+    # [FUNCTION DOC]
+    # HELPER: pads a string or bytes value with null characters up to the given
+    # length, preserving the type. Does not truncate longer inputs.
     """
     Take a char string and pads it with null bytes until it's length chars.
     """
@@ -2255,6 +2626,10 @@ def _pad_bytes(name: AnyStr, length: int) -> AnyStr:
 
 
 def _convert_datetime_to_stata_type(fmt: str) -> np.dtype:
+    # [FUNCTION DOC]
+    # HELPER: validates a date format name (tc, td, tw, tm, tq, th, ty, with or
+    # without a leading percent) and returns the float64 dtype used to store it.
+    # Raises a not-implemented error for any other format.
     """
     Convert from one of the stata date formats to a type in TYPE_MAP.
     """
@@ -2280,6 +2655,11 @@ def _convert_datetime_to_stata_type(fmt: str) -> np.dtype:
 
 
 def _maybe_convert_to_int_keys(convert_dates: dict, varlist: list[Hashable]) -> dict:
+    # [FUNCTION DOC]
+    # HELPER: normalizes the date-conversion mapping. Each format string gains a
+    # leading percent if missing (mutating the given mapping). Keys that are column
+    # names are replaced by column positions; other keys must be integers or a value
+    # error is raised. Returns a new mapping from position to format.
     new_dict = {}
     for key, value in convert_dates.items():
         if not value.startswith("%"):  # make sure proper fmts
@@ -2294,6 +2674,10 @@ def _maybe_convert_to_int_keys(convert_dates: dict, varlist: list[Hashable]) -> 
 
 
 def _dtype_to_stata_type(dtype: np.dtype, column: Series) -> int:
+    # [FUNCTION DOC]
+    # HELPER: maps a numpy dtype to the legacy (114/115) Stata type code. Strings
+    # (object) become their maximum length, at least one; float64 255, float32 254,
+    # int32 253, int16 252, int8 251. Raises a not-implemented error otherwise.
     """
     Convert dtype types to stata types. Returns the byte of the given ordinal.
     See TYPE_MAP and comments for an explanation. This is also explained in
@@ -2332,6 +2716,16 @@ def _dtype_to_stata_type(dtype: np.dtype, column: Series) -> int:
 def _dtype_to_default_stata_fmt(
     dtype: np.dtype, column: Series, dta_version: int = 114, force_strl: bool = False
 ) -> str:
+    # [FUNCTION DOC]
+    # HELPER: default Stata display format for a column. Inputs: dtype, the column,
+    # dta_version (default 114), force_strl (default false). For versions 117 and up
+    # a forced long string gives the nine-width string format. Object columns give a
+    # string format of width equal to the longest string (at least one); if longer than
+    # the version limit (244 older, 2045 newer) newer versions use the long-string
+    # format and older ones raise a value error. float64 gets a 10-wide general
+    # format, float32 9-wide, int32 12-wide, int8 and int16 8-wide. Raises a
+    # not-implemented error for other dtypes.
+    # KNOWN ISSUE: the docstring lists 64-bit integers and the long-string case as mapped types, but 64-bit integers are not handled here (they are downcast earlier) and would raise.
     """
     Map numpy dtype to stata's default format for this type. Not terribly
     important since users can change this in Stata. Semantics are
@@ -2375,6 +2769,17 @@ def _dtype_to_default_stata_fmt(
 
 
 class StataWriter(StataParser):
+    # [CLASS DOC]
+    # Writer for the legacy Stata dta format (version 114, Stata 10/11) (subclass of
+    # the parser constants class). Constructor takes a file name or binary buffer, the
+    # frame, date format mapping, index flag, byte order, time stamp, data label,
+    # variable labels, compression, storage options and (keyword-only) value labels
+    # for numeric columns. State: a prepared copy of the frame, number of
+    # observations and variables, variable names, type codes and display formats,
+    # value-label tables, per-column value-label flags, converted-name mapping, and
+    # (during writing) the opened handles. Class constants: maximum string width
+    # 244 and latin-1 encoding. Usage: construct (which prepares and validates the
+    # data) then call the write method. Extended by the 117 writer.
     """
     A class for writing Stata binary dta files
 
@@ -2488,6 +2893,14 @@ class StataWriter(StataParser):
         *,
         value_labels: dict[Hashable, dict[float, str]] | None = None,
     ) -> None:
+        # [FUNCTION DOC]
+        # Constructor. Stores options, prepares the data (copy, index, names, type
+        # coercion, NaN replacement, value labels, categoricals, dates, string
+        # encoding, formats and types), then stores storage options, byte order (default
+        # machine order; value error for an unknown name), and the file target; also
+        # sets a small map of numpy integer converters. Raises value errors,
+        # not-implemented errors or key errors from validation; emits warnings for
+        # renamed columns and precision loss.
         super().__init__()
         self.data = data
         self._convert_dates = {} if convert_dates is None else convert_dates
@@ -2512,12 +2925,16 @@ class StataWriter(StataParser):
         self.type_converters = {253: np.int32, 252: np.int16, 251: np.int8}
 
     def _write(self, to_write: str) -> None:
+        # [FUNCTION DOC]
+        # HELPER: encodes text with the writer encoding and writes it to the open handle.
         """
         Helper to call encode before writing to file for Python 3 compat.
         """
         self.handles.handle.write(to_write.encode(self._encoding))
 
     def _write_bytes(self, value: bytes) -> None:
+        # [FUNCTION DOC]
+        # HELPER: writes raw bytes to the open handle.
         """
         Helper to assert file is open before writing.
         """
@@ -2526,6 +2943,13 @@ class StataWriter(StataParser):
     def _prepare_non_cat_value_labels(
         self, data: DataFrame
     ) -> list[StataNonCatValueLabel]:
+        # [FUNCTION DOC]
+        # HELPER: builds value label tables for non-categorical columns from the user
+        # mapping. For each entry resolves the column (through the renamed-name map or the
+        # frame columns; key error if absent), requires a numeric column (value error
+        # otherwise), and creates a non-categorical value label object using the writer
+        # encoding. Returns the list (empty if no mapping was given).
+        # KNOWN ISSUE: the docstring ends mid-sentence ("Value labels" with no completion).
         """
         Check for value labels provided for non-categorical columns. Value
         labels
@@ -2557,6 +2981,14 @@ class StataWriter(StataParser):
         return non_cat_value_labels
 
     def _prepare_categoricals(self, data: DataFrame) -> DataFrame:
+        # [FUNCTION DOC]
+        # HELPER: converts categorical columns into integer code columns while recording
+        # their labels. Returns the frame unchanged when no column is categorical.
+        # Otherwise flags those columns as labelled, builds a value label table per
+        # categorical column, raises a value error when codes are 64-bit, copies the
+        # codes, widens the type if codes would collide with missing value ranges, and
+        # replaces the minus-one code with the base missing value of the type. Returns
+        # a new frame.
         """
         Check for categorical columns, retain categorical information for
         Stata file and convert categorical data to int
@@ -2599,6 +3031,9 @@ class StataWriter(StataParser):
         return DataFrame.from_dict(dict(data_formatted))
 
     def _replace_nans(self, data: DataFrame) -> DataFrame:
+        # [FUNCTION DOC]
+        # HELPER: replaces NaN in float32 and float64 columns with the generic Stata
+        # missing value of the matching type. Mutates and returns the frame.
         # return data
         """
         Checks floating point data columns for nans, and replaces these with
@@ -2616,9 +3051,15 @@ class StataWriter(StataParser):
         return data
 
     def _update_strl_names(self) -> None:
+        # [FUNCTION DOC]
+        # HELPER: hook for the long-string writer; does nothing in this class.
         """No-op, forward compatibility"""
 
     def _validate_variable_name(self, name: str) -> str:
+        # [FUNCTION DOC]
+        # HELPER: replaces each character not allowed in a Stata variable name
+        # (anything outside ASCII letters, digits and underscore) with an underscore.
+        # Input: name; returns the cleaned name. Overridden by the UTF-8 writer.
         """
         Validate variable names for Stata export.
 
@@ -2649,6 +3090,15 @@ class StataWriter(StataParser):
         return name
 
     def _check_column_names(self, data: DataFrame) -> DataFrame:
+        # [FUNCTION DOC]
+        # HELPER: makes column names valid Stata names. For each name: non-strings are
+        # converted to text, invalid characters replaced, reserved words and names
+        # starting with a digit get a leading underscore, names are cut to 32
+        # characters, and changed names that collide with existing ones get a numeric
+        # prefix. Assigns the new names to the frame, propagates renames to the date
+        # conversion mapping, emits an invalid-column-name warning listing the changes,
+        # records the rename map and calls the long-string name hook. Returns the frame.
+        # KNOWN ISSUE: when the date conversion mapping is not empty, a renamed column that is not itself in the mapping triggers a key error during the propagation step.
         """
         Checks column names to ensure that they are valid Stata column names.
         This includes checks for:
@@ -2722,6 +3172,9 @@ class StataWriter(StataParser):
         return data
 
     def _set_formats_and_types(self, dtypes: Series) -> None:
+        # [FUNCTION DOC]
+        # HELPER: computes display formats and type codes for all columns from a series
+        # of dtypes, storing them as attributes (format list and type list).
         self.fmtlist: list[str] = []
         self.typlist: list[int] = []
         for col, dtype in dtypes.items():
@@ -2729,6 +3182,14 @@ class StataWriter(StataParser):
             self.typlist.append(_dtype_to_stata_type(dtype, self.data[col]))
 
     def _prepare_pandas(self, data: DataFrame) -> None:
+        # [FUNCTION DOC]
+        # HELPER: prepares everything for writing. Copies the frame, optionally resets
+        # the index into columns, validates names, coerces types, replaces NaN, flags and
+        # builds value labels (user-provided for numeric columns, categorical-derived),
+        # stores the final frame, shape and variable names, marks datetime columns for
+        # the default clock format, normalizes the date mapping to positions and sets
+        # date column dtypes, encodes strings, sets formats and types, and writes
+        # explicit date formats into the format list.
         # NOTE: we might need a different API / class for pandas objects so
         # we can set different semantics - handle this with a PR to pandas.io
 
@@ -2795,6 +3256,11 @@ class StataWriter(StataParser):
                     self.fmtlist[key] = self._convert_dates[key]
 
     def _encode_strings(self) -> None:
+        # [FUNCTION DOC]
+        # HELPER: encodes string columns with the writer encoding, skipping columns
+        # selected for date conversion or long-string conversion. Raises a value error
+        # for object columns that are not all strings (or None) and not empty. Columns
+        # whose longest string exceeds the maximum width are left unencoded.
         """
         Encode strings in dta-specific encoding
 
@@ -2833,6 +3299,16 @@ supported types."""
                     self.data[col] = encoded
 
     def write_file(self) -> None:
+        # [FUNCTION DOC]
+        # Writes the whole file. Opens the target for binary writing with the
+        # compression options; when compression is active writes into an in-memory buffer
+        # first (needed for zip) and copies it at the end. Writes in order: header, map,
+        # variable types, names, sort list, formats, value label names, variable
+        # labels, expansion fields, characteristics, the data records, long strings,
+        # value labels, closing tag, map again, and finally the compression copy. On any
+        # exception closes the handle, deletes the output file if it is a path that
+        # exists (warning with a resource warning if deletion fails), and re-raises.
+        # Buffers passed by the caller are not closed.
         """
         Export DataFrame object to Stata dta format.
 
@@ -2926,6 +3402,9 @@ supported types."""
                 raise exc
 
     def _close(self) -> None:
+        # [FUNCTION DOC]
+        # HELPER: flushes the in-memory buffer to the real output when compression
+        # wrapped the handle; otherwise nothing. Does not close caller-provided buffers.
         """
         Close the file if it was created by the writer.
 
@@ -2939,22 +3418,35 @@ supported types."""
             self.handles.handle.write(bio.getvalue())
 
     def _write_map(self) -> None:
+        # [FUNCTION DOC]
+        # HELPER: placeholder for the tagged formats; does nothing here.
         """No-op, future compatibility"""
 
     def _write_file_close_tag(self) -> None:
+        # [FUNCTION DOC]
+        # HELPER: placeholder for the tagged formats; does nothing here.
         """No-op, future compatibility"""
 
     def _write_characteristics(self) -> None:
+        # [FUNCTION DOC]
+        # HELPER: placeholder for the tagged formats; does nothing here.
         """No-op, future compatibility"""
 
     def _write_strls(self) -> None:
+        # [FUNCTION DOC]
+        # HELPER: placeholder for the tagged formats (long strings); does nothing here.
         """No-op, future compatibility"""
 
     def _write_expansion_fields(self) -> None:
+        # [FUNCTION DOC]
+        # HELPER: writes the five zero bytes that end the expansion fields.
         """Write 5 zeros for expansion fields"""
         self._write(_pad_bytes("", 5))
 
     def _write_value_labels(self) -> None:
+        # [FUNCTION DOC]
+        # HELPER: writes each value label table in binary form using the writer byte
+        # order.
         for vl in self._value_labels:
             self._write_bytes(vl.generate_value_label(self._byteorder))
 
@@ -2963,6 +3455,13 @@ supported types."""
         data_label: str | None = None,
         time_stamp: datetime | None = None,
     ) -> None:
+        # [FUNCTION DOC]
+        # HELPER: writes the fixed header. Inputs: data_label (cut to 80 characters,
+        # blank if none) and time_stamp (default now; value error if not a datetime).
+        # Fields in order: version byte 114, byte order marker, file type, unused byte,
+        # variable count (2 bytes), observation count (4 bytes), data label (81 bytes,
+        # null terminated), time stamp as day, English month abbreviation (locale
+        # independent), year and time.
         byteorder = self._byteorder
         # ds_format - just use 114
         self._write_bytes(struct.pack("b", 114))
@@ -3014,10 +3513,15 @@ supported types."""
         self._write_bytes(self._null_terminate_bytes(ts))
 
     def _write_variable_types(self) -> None:
+        # [FUNCTION DOC]
+        # HELPER: writes one unsigned byte type code per variable.
         for typ in self.typlist:
             self._write_bytes(struct.pack("B", typ))
 
     def _write_varnames(self) -> None:
+        # [FUNCTION DOC]
+        # HELPER: writes variable names, each null terminated, cut to 32 characters and
+        # padded to 33 bytes.
         # varlist names are checked by _check_column_names
         # varlist, requires null terminated
         for name in self.varlist:
@@ -3026,16 +3530,23 @@ supported types."""
             self._write(name)
 
     def _write_sortlist(self) -> None:
+        # [FUNCTION DOC]
+        # HELPER: writes an empty (all zero) sort list of 2 bytes times (variables plus one).
         # srtlist, 2*(nvar+1), int array, encoded by byteorder
         srtlist = _pad_bytes("", 2 * (self.nvar + 1))
         self._write(srtlist)
 
     def _write_formats(self) -> None:
+        # [FUNCTION DOC]
+        # HELPER: writes the display formats, each padded to 49 bytes.
         # fmtlist, 49*nvar, char array
         for fmt in self.fmtlist:
             self._write(_pad_bytes(fmt, 49))
 
     def _write_value_label_names(self) -> None:
+        # [FUNCTION DOC]
+        # HELPER: writes the value label name for each variable (33 bytes): the variable
+        # name where the variable has value labels, otherwise blank.
         # lbllist, 33*nvar, char array
         for i in range(self.nvar):
             # Use variable name when categorical
@@ -3048,6 +3559,10 @@ supported types."""
                 self._write(_pad_bytes("", 33))
 
     def _write_variable_labels(self) -> None:
+        # [FUNCTION DOC]
+        # HELPER: writes variable labels, each padded to 81 bytes. Blank for unlabelled
+        # variables or when no labels are given. Raises a value error when a label has
+        # more than 80 characters or contains non-latin-1 characters.
         # Missing labels are 80 blank characters plus null termination
         blank = _pad_bytes("", 81)
 
@@ -3072,10 +3587,19 @@ supported types."""
                 self._write(blank)
 
     def _convert_strls(self, data: DataFrame) -> DataFrame:
+        # [FUNCTION DOC]
+        # HELPER: hook for converting columns to long strings; returns the frame
+        # unchanged in this class.
         """No-op, future compatibility"""
         return data
 
     def _prepare_data(self) -> np.rec.recarray:
+        # [FUNCTION DOC]
+        # HELPER: builds the record array to write. Converts date columns to Stata
+        # elapsed numbers, applies the long-string hook, then for string-typed columns
+        # replaces nulls by empty text, pads to the column width and casts to fixed-width
+        # bytes; other columns keep their dtype, adjusted to the target byte order if it is
+        # not the machine's. Returns the record array without the index.
         data = self.data
         typlist = self.typlist
         convert_dates = self._convert_dates
@@ -3109,18 +3633,30 @@ supported types."""
         return data.to_records(index=False, column_dtypes=dtypes)
 
     def _write_data(self, records: np.rec.recarray) -> None:
+        # [FUNCTION DOC]
+        # HELPER: writes the record array's raw bytes.
         self._write_bytes(records.tobytes())
 
     @staticmethod
     def _null_terminate_str(s: str) -> str:
+        # [FUNCTION DOC]
+        # HELPER: static; returns the text with a null character appended.
         s += "\x00"
         return s
 
     def _null_terminate_bytes(self, s: str) -> bytes:
+        # [FUNCTION DOC]
+        # HELPER: null terminates the text and encodes it with the writer encoding;
+        # returns bytes.
         return self._null_terminate_str(s).encode(self._encoding)
 
 
 def _dtype_to_stata_type_117(dtype: np.dtype, column: Series, force_strl: bool) -> int:
+    # [FUNCTION DOC]
+    # HELPER: maps a dtype to the tagged-format (117 and up) type code. A forced long
+    # string gives 32768. Object columns give the longest string length (at least
+    # one) up to 2045, else 32768. float64 65526, float32 65527, int32 65528, int16
+    # 65529, int8 65530. Raises a not-implemented error for other dtypes.
     """
     Converts dtype types to stata types. Returns the byte of the given ordinal.
     See TYPE_MAP and comments for an explanation. This is also explained in
@@ -3163,6 +3699,9 @@ def _dtype_to_stata_type_117(dtype: np.dtype, column: Series, force_strl: bool) 
 
 
 def _pad_bytes_new(name: str | bytes, length: int) -> bytes:
+    # [FUNCTION DOC]
+    # HELPER: converts text to utf-8 bytes if needed and pads with null bytes to the
+    # given length (no truncation).
     """
     Takes a bytes instance and pads it with null bytes until it's length chars.
     """
@@ -3172,6 +3711,13 @@ def _pad_bytes_new(name: str | bytes, length: int) -> bytes:
 
 
 class StataStrLWriter:
+    # [CLASS DOC]
+    # HELPER: builder of the long-string (strL) section for dta 117, 118 and 119.
+    # Inputs: the frame, the columns to convert, the version (default 117; value
+    # error otherwise) and byte order (default machine). State: the frame, columns,
+    # a lookup table from text to its (variable, observation) pair seeded with an
+    # empty-text entry, encoding (utf-8 for 118/119, latin-1 for 117), and the
+    # packing parameters for the pair key (differing per version and byte order).
     """
     Converter for Stata StrLs
 
@@ -3207,6 +3753,10 @@ class StataStrLWriter:
         version: int = 117,
         byteorder: str | None = None,
     ) -> None:
+        # [FUNCTION DOC]
+        # Constructor. Validates the version (value error unless 117, 118 or 119),
+        # stores the frame and columns, byte order and its native-ness, and chooses the
+        # encoding and the packing offset and struct types for the key by version.
         if version not in (117, 118, 119):
             raise ValueError("Only dta versions 117, 118 and 119 supported")
         self._dta_ver = version
@@ -3239,6 +3789,10 @@ class StataStrLWriter:
         self._gso_v_type = gso_v_type
 
     def _convert_key(self, key: tuple[int, int]) -> int:
+        # [FUNCTION DOC]
+        # HELPER: packs a (variable, observation) pair into one 64-bit integer. The
+        # pair is swapped for non-native byte order so that serialization yields the
+        # expected layout.
         v, o = key
         if self._native_byteorder:
             return v + self._o_offet * o
@@ -3247,6 +3801,11 @@ class StataStrLWriter:
             return o + self._o_offet * v
 
     def generate_table(self) -> tuple[dict[str, tuple[int, int]], DataFrame]:
+        # [FUNCTION DOC]
+        # Builds the lookup table. For each selected column and row, null values are
+        # treated as empty text, each distinct text gets a (column position plus one, row
+        # position plus one) pair, and the frame cell is replaced by the packed 64-bit
+        # key. Mutates the frame in place. Returns the table (text to pair) and the frame.
         """
         Generates the GSO lookup table for the DataFrame
 
@@ -3298,6 +3857,11 @@ class StataStrLWriter:
         return gso_table, gso_df
 
     def generate_blob(self, gso_table: dict[str, tuple[int, int]]) -> bytes:
+        # [FUNCTION DOC]
+        # Serializes the lookup table. Input: the table. For each text other than the
+        # empty entry writes a record: the marker GSO, the variable id, the observation id
+        # (sizes depend on the version), the type byte 130, the byte length plus one and
+        # the utf-8 bytes with a null terminator. Returns the bytes.
         """
         Generates the binary blob of GSOs that is written to the dta file.
 
@@ -3366,6 +3930,13 @@ class StataStrLWriter:
 
 
 class StataWriter117(StataWriter):
+    # [CLASS DOC]
+    # Writer for the tagged (XML-like) Stata 13 format (version 117) (subclass of
+    # the legacy writer). Adds the convert_strl option (columns forced to long
+    # strings; copied to a private list) and keeps a map of section offsets and the
+    # long-string blob. Class constants: maximum string width 2045 and the dta
+    # version number. Overrides every write step to wrap sections in tags and
+    # record offsets in a map, and supports long-string columns.
     """
     A class for writing Stata binary dta files in Stata 13 format (117)
 
@@ -3468,6 +4039,11 @@ class StataWriter117(StataWriter):
         *,
         value_labels: dict[Hashable, dict[float, str]] | None = None,
     ) -> None:
+        # [FUNCTION DOC]
+        # Constructor. Same arguments as the legacy writer plus convert_strl (columns to
+        # write as long strings, default none). Copies convert_strl to a private list
+        # before calling the parent constructor (so name changes can be propagated),
+        # then initializes the offset map and empty long-string blob.
         # Copy to new list since convert_strl might be modified later
         self._convert_strl: list[Hashable] = []
         if convert_strl is not None:
@@ -3491,12 +4067,17 @@ class StataWriter117(StataWriter):
 
     @staticmethod
     def _tag(val: str | bytes, tag: str) -> bytes:
+        # [FUNCTION DOC]
+        # HELPER: static; wraps a string or bytes value in opening and closing tags
+        # named by the tag. Returns bytes.
         """Surround val with <tag></tag>"""
         if isinstance(val, str):
             val = bytes(val, "utf-8")
         return bytes("<" + tag + ">", "utf-8") + val + bytes("</" + tag + ">", "utf-8")
 
     def _update_map(self, tag: str) -> None:
+        # [FUNCTION DOC]
+        # HELPER: records the current file position under the tag name in the offset map.
         """Update map location for tag with file position"""
         assert self.handles.handle is not None
         self._map[tag] = self.handles.handle.tell()
@@ -3506,6 +4087,12 @@ class StataWriter117(StataWriter):
         data_label: str | None = None,
         time_stamp: datetime | None = None,
     ) -> None:
+        # [FUNCTION DOC]
+        # HELPER: writes the tagged header: opening file tag, then a header section with
+        # release, byte order marker, variable count (16 bits, or 32 for 119),
+        # observation count (32 bits for 117, 64 for later), data label with a length
+        # prefix (cut to 80 characters), and a time stamp (value error if not a
+        # datetime; default now) prefixed with a length byte.
         """Write the file header"""
         byteorder = self._byteorder
         self._write_bytes(bytes("<stata_dta>", "utf-8"))
@@ -3560,6 +4147,11 @@ class StataWriter117(StataWriter):
         self._write_bytes(self._tag(bio.getvalue(), "header"))
 
     def _write_map(self) -> None:
+        # [FUNCTION DOC]
+        # HELPER: writes the section offset map. The first call creates the map with
+        # zero offsets and remembers its own position; the second call (after all
+        # sections) seeks back and overwrites it with the real offsets, as 64-bit
+        # integers in the file byte order.
         """
         Called twice during file write. The first populates the values in
         the map with 0s.  The second call writes the final map locations when
@@ -3590,6 +4182,9 @@ class StataWriter117(StataWriter):
         self._write_bytes(self._tag(bio.getvalue(), "map"))
 
     def _write_variable_types(self) -> None:
+        # [FUNCTION DOC]
+        # HELPER: records the offset and writes the variable type codes as tagged
+        # 16-bit values.
         self._update_map("variable_types")
         bio = BytesIO()
         for typ in self.typlist:
@@ -3597,6 +4192,9 @@ class StataWriter117(StataWriter):
         self._write_bytes(self._tag(bio.getvalue(), "variable_types"))
 
     def _write_varnames(self) -> None:
+        # [FUNCTION DOC]
+        # HELPER: records the offset and writes variable names, cut to 32 characters and
+        # padded to 33 bytes (117) or 129 bytes (118 and 119), tagged.
         self._update_map("varnames")
         bio = BytesIO()
         # 118 scales by 4 to accommodate utf-8 data worst case encoding
@@ -3608,11 +4206,17 @@ class StataWriter117(StataWriter):
         self._write_bytes(self._tag(bio.getvalue(), "varnames"))
 
     def _write_sortlist(self) -> None:
+        # [FUNCTION DOC]
+        # HELPER: records the offset and writes an empty sort list (zero bytes, 2 bytes
+        # per entry, 4 for version 119, times variables plus one), tagged.
         self._update_map("sortlist")
         sort_size = 2 if self._dta_version < 119 else 4
         self._write_bytes(self._tag(b"\x00" * sort_size * (self.nvar + 1), "sortlist"))
 
     def _write_formats(self) -> None:
+        # [FUNCTION DOC]
+        # HELPER: records the offset and writes display formats padded to 49 bytes (117)
+        # or 57 bytes (118 and 119), tagged.
         self._update_map("formats")
         bio = BytesIO()
         fmt_len = 49 if self._dta_version == 117 else 57
@@ -3621,6 +4225,9 @@ class StataWriter117(StataWriter):
         self._write_bytes(self._tag(bio.getvalue(), "formats"))
 
     def _write_value_label_names(self) -> None:
+        # [FUNCTION DOC]
+        # HELPER: records the offset and writes value label names (the variable name for
+        # labelled variables, else blank) padded to 33 or 129 bytes by version, tagged.
         self._update_map("value_label_names")
         bio = BytesIO()
         # 118 scales by 4 to accommodate utf-8 data worst case encoding
@@ -3636,6 +4243,10 @@ class StataWriter117(StataWriter):
         self._write_bytes(self._tag(bio.getvalue(), "value_label_names"))
 
     def _write_variable_labels(self) -> None:
+        # [FUNCTION DOC]
+        # HELPER: records the offset and writes variable labels padded to 81 bytes (117)
+        # or 321 bytes (118/119), tagged. Raises a value error when a label exceeds 80
+        # characters or cannot be encoded in the writer encoding.
         # Missing labels are 80 blank characters plus null termination
         self._update_map("variable_labels")
         bio = BytesIO()
@@ -3668,23 +4279,35 @@ class StataWriter117(StataWriter):
         self._write_bytes(self._tag(bio.getvalue(), "variable_labels"))
 
     def _write_characteristics(self) -> None:
+        # [FUNCTION DOC]
+        # HELPER: records the offset and writes an empty tagged characteristics section.
         self._update_map("characteristics")
         self._write_bytes(self._tag(b"", "characteristics"))
 
     def _write_data(self, records: np.rec.recarray) -> None:
+        # [FUNCTION DOC]
+        # HELPER: records the offset and writes the record array bytes between data tags.
         self._update_map("data")
         self._write_bytes(b"<data>")
         self._write_bytes(records.tobytes())
         self._write_bytes(b"</data>")
 
     def _write_strls(self) -> None:
+        # [FUNCTION DOC]
+        # HELPER: records the offset and writes the stored long-string blob in a tagged
+        # section.
         self._update_map("strls")
         self._write_bytes(self._tag(self._strl_blob, "strls"))
 
     def _write_expansion_fields(self) -> None:
+        # [FUNCTION DOC]
+        # HELPER: does nothing; expansion fields do not exist in versions 117 and later.
         """No-op in dta 117+"""
 
     def _write_value_labels(self) -> None:
+        # [FUNCTION DOC]
+        # HELPER: records the offset and writes all value label tables, each in its own
+        # tag, inside an outer tag.
         self._update_map("value_labels")
         bio = BytesIO()
         for vl in self._value_labels:
@@ -3694,11 +4317,17 @@ class StataWriter117(StataWriter):
         self._write_bytes(self._tag(bio.getvalue(), "value_labels"))
 
     def _write_file_close_tag(self) -> None:
+        # [FUNCTION DOC]
+        # HELPER: records the offset of the closing tag, writes the closing file tag and
+        # records the end-of-file offset.
         self._update_map("stata_data_close")
         self._write_bytes(bytes("</stata_dta>", "utf-8"))
         self._update_map("end-of-file")
 
     def _update_strl_names(self) -> None:
+        # [FUNCTION DOC]
+        # HELPER: after column names were possibly changed to be valid, updates the list
+        # of long-string columns to the new names.
         """
         Update column names for conversion to strl if they might have been
         changed to comply with Stata naming rules
@@ -3710,6 +4339,10 @@ class StataWriter117(StataWriter):
                 self._convert_strl[idx] = new
 
     def _convert_strls(self, data: DataFrame) -> DataFrame:
+        # [FUNCTION DOC]
+        # HELPER: turns long-string columns (type code for strL, or listed in the option)
+        # into packed keys via the long-string builder and stores the serialized blob.
+        # Returns the (possibly modified) frame.
         """
         Convert columns to StrLs if either very large or in the
         convert_strl variable
@@ -3730,6 +4363,9 @@ class StataWriter117(StataWriter):
         return data
 
     def _set_formats_and_types(self, dtypes: Series) -> None:
+        # [FUNCTION DOC]
+        # HELPER: computes display formats and type codes using the tagged-format type
+        # mapping, forcing a long string for columns listed in the option.
         self.typlist = []
         self.fmtlist = []
         for col, dtype in dtypes.items():
@@ -3747,6 +4383,12 @@ class StataWriter117(StataWriter):
 
 
 class StataWriterUTF8(StataWriter117):
+    # [CLASS DOC]
+    # Writer for the Unicode formats 118 (Stata 14/15) and 119 (Stata 15/16, more than
+    # 32,767 variables) (subclass of the 117 writer). Class constant: utf-8 encoding.
+    # An extra version argument selects 118 or 119, defaulting by variable count.
+    # Variable names may contain most Unicode characters.
+    # KNOWN ISSUE: the class docstring shows a literal unformatted placeholder for the compression options parameter (the same holds for the 117 writer docstring), so that parameter documentation is not rendered.
     """
     Stata binary dta file writing in Stata 15 (118) and 16 (119) formats
 
@@ -3860,6 +4502,13 @@ class StataWriterUTF8(StataWriter117):
         *,
         value_labels: dict[Hashable, dict[float, str]] | None = None,
     ) -> None:
+        # [FUNCTION DOC]
+        # Constructor. Same arguments as the 117 writer plus version (default none).
+        # Chooses 118 for up to 32767 columns, else 119. Raises a value error for any
+        # other version, or for 118 with more columns.
+        # KNOWN ISSUE: the error text for too many columns concatenates two string pieces without a space ("than" runs into "32,767").
+        # Calls the parent constructor, then sets the version attribute, which therefore
+        # is only applied after data preparation.
         if version is None:
             version = 118 if data.shape[1] <= 32767 else 119
         elif version not in (118, 119):
@@ -3888,6 +4537,11 @@ class StataWriterUTF8(StataWriter117):
         self._dta_version = version
 
     def _validate_variable_name(self, name: str) -> str:
+        # [FUNCTION DOC]
+        # HELPER: variable name cleaning for Unicode formats. Replaces ASCII characters
+        # other than letters, digits and underscore, characters in the range from code
+        # point 128 up to (excluding) 192, and the multiplication and division signs
+        # with underscores. Input: name; returns the cleaned name.
         """
         Validate variable names for Stata export.
 

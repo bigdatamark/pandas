@@ -1,3 +1,16 @@
+# [MODULE DOC]
+# Public front end of pandas plotting: backend-independent plotting entry points
+# and the plot accessor attached to series and frames.
+# Public contents: the histogram functions for series and frames, the box plot
+# functions (frame-level, method-style and grouped), the plot accessor class
+# (whose call and per-kind methods implement the plot method namespace), and
+# private helpers that load and cache the selected plotting backend.
+# Relationships: every function delegates to a backend module chosen by the
+# backend option or an explicit backend argument (default: the internal
+# matplotlib backend package); the accessor normalizes arguments before calling
+# the backend's generic plot function.
+# Import-time side effects: none beyond imports; a module-level dictionary
+# caches loaded backend modules by name (filled lazily at first plot).
 from __future__ import annotations
 
 import importlib
@@ -43,6 +56,10 @@ if TYPE_CHECKING:
 
 
 def holds_integer(column: Index) -> bool:
+    # [FUNCTION DOC]
+    # HELPER: used by the plot accessor call to decide whether column labels are
+    # integers. Takes an index and returns true when its dtype kind is signed or
+    # unsigned integer, false otherwise.
     return column.dtype.kind in "iu"
 
 
@@ -62,6 +79,14 @@ def hist_series(
     legend: bool = False,
     **kwargs,
 ):
+    # [FUNCTION DOC]
+    # Public histogram for a series (also the series hist method). Thin wrapper:
+    # resolves the backend (explicit backend argument, else the configured option)
+    # and forwards all arguments (by, ax, grid, label sizes and rotations, figsize,
+    # bins, legend and extra keywords) to the backend's series histogram function.
+    # Defaults: grid true, bins 10, legend false. Returns whatever the backend
+    # returns (for matplotlib, an axes or array of axes). Raises if the backend
+    # cannot be loaded.
     """
     Draw histogram of the input series using matplotlib.
 
@@ -165,6 +190,12 @@ def hist_frame(
     legend: bool = False,
     **kwargs,
 ):
+    # [FUNCTION DOC]
+    # Public histogram for a frame (also the frame hist method). Thin wrapper that
+    # resolves the backend and forwards column, by, grid, label sizes and rotations,
+    # ax, sharex and sharey (both false), figsize, layout, bins (10), legend (false)
+    # and extra keywords to the backend's frame histogram function. Returns the
+    # backend's result (for matplotlib, a two-dimensional array of axes).
     """
     Make a histogram of the DataFrame's columns.
 
@@ -289,6 +320,13 @@ def boxplot(
     return_type: str | None = None,
     **kwargs,
 ):
+    # [FUNCTION DOC]
+    # Public box plot of frame columns (the stand-alone function). Forwards data,
+    # column, by, ax, fontsize, rot (0), grid (true), figsize, layout and
+    # return_type plus extra keywords to the box plot function of the backend.
+    # KNOWN ISSUE: unlike the sibling histogram and frame box plot wrappers, this function has no backend argument and always uses the matplotlib backend regardless of the configured plotting backend option.
+    # Returns the backend result; its type depends on return_type (axes, series of
+    # axes per group, or array of axes when return_type is none).
     """
     Make a box plot from DataFrame columns.
 
@@ -478,6 +516,12 @@ def boxplot_frame(
     backend=None,
     **kwargs,
 ):
+    # [FUNCTION DOC]
+    # Frame box plot method (the frame boxplot method). Resolves the backend (backend
+    # argument or option) and forwards column, by, ax, fontsize, rot (0), grid
+    # (true), figsize, layout, return_type and extra keywords to the backend's frame
+    # box plot function. Returns what the backend returns (axes, series of axes, or
+    # array of axes depending on return_type and grouping).
     """
     Make a box plot from DataFrame columns.
 
@@ -681,6 +725,12 @@ def boxplot_frame_groupby(
     backend=None,
     **kwargs,
 ):
+    # [FUNCTION DOC]
+    # Grouped frame box plot (the groupby boxplot method). Resolves the backend and
+    # forwards the grouped object, subplots (true), column, fontsize, rot (0), grid
+    # (true), ax, figsize, layout, sharex (false), sharey (true) and extra keywords
+    # to the backend's grouped box plot function. Returns the backend result (a
+    # series of axes per group when drawing subplots, else a single axes).
     """
     Make box plots from DataFrameGroupBy data.
 
@@ -771,6 +821,16 @@ def boxplot_frame_groupby(
 
 @set_module("pandas.plotting")
 class PlotAccessor(PandasObject):
+    # [CLASS DOC]
+    # Accessor object exposed as the plot attribute of series and frames
+    # (subclass of the pandas base object class). State: a single private attribute
+    # holding the parent series or frame. Class attributes list the valid plot kinds:
+    # common kinds (line, bar, barh, box, hist, kde, area, pie, scatter, hexbin
+    # partitioned into common, series-only and frame-only groups) and one alias that
+    # maps density to kde. Key methods: calling the instance dispatches to the
+    # backend plot function after normalizing arguments; the per-kind methods (line,
+    # bar, barh, box, hist, kde and its alias density, area, pie, scatter, hexbin)
+    # are shortcuts that call the instance with a fixed kind.
     """
     Make plots of Series or DataFrame.
 
@@ -993,10 +1053,27 @@ class PlotAccessor(PandasObject):
     _all_kinds = _common_kinds + _series_kinds + _dataframe_kinds
 
     def __init__(self, data: Series | DataFrame) -> None:
+        # [FUNCTION DOC]
+        # Stores the parent series or frame on the instance. No validation here.
         self._parent = data
 
     @staticmethod
     def _get_call_args(backend_name: str, data: Series | DataFrame, args, kwargs):
+        # [FUNCTION DOC]
+        # HELPER: argument normalizer for the accessor call, keeping compatibility with
+        # the older series and frame plot method signatures.
+        # Inputs: backend_name is the module name of the active backend; data is the
+        # parent series or frame; args are positional arguments; kwargs the keywords.
+        # Behavior: picks a default-argument table by type (series table starts with
+        # kind; frame table starts with x, y, kind, then shared options such as axes,
+        # figsize, legend, scales, ticks, limits, colormap, error bars, secondary axis
+        # and labels). Raises a type error for any other data type. For a series,
+        # positional arguments are rejected with a type error whose message suggests
+        # the equivalent keyword form. For a frame, positional arguments are mapped onto
+        # the table names in order. When the backend is the internal matplotlib one, the
+        # table defaults are merged in (explicit values win); otherwise only the given
+        # values are kept. Pops x, y (default none) and kind (default line) from the
+        # keywords. Returns a tuple of x, y, kind and the remaining keyword dictionary.
         """
         This function makes calls to this accessor `__call__` method compatible
         with the previous `SeriesPlotMethods.__call__` and
@@ -1102,6 +1179,24 @@ class PlotAccessor(PandasObject):
         return x, y, kind, kwargs
 
     def __call__(self, *args, **kwargs):
+        # [FUNCTION DOC]
+        # Main plot entry for the accessor. Pops an optional backend keyword, loads the
+        # backend, normalizes arguments via the helper, and resolves kind aliases.
+        # For a non-matplotlib backend it immediately forwards x, y, kind and keywords
+        # to that backend's plot function. For matplotlib: raises a value error for an
+        # unknown kind; marks series data so the current axes are reused; raises a value
+        # error when a frame-only kind (scatter, hexbin) is used on a series, else
+        # plots directly. For the series-only kind (pie) on a frame: requires y unless
+        # subplots is true (value error otherwise), converts positional integer y to a
+        # column label when the columns are not integers, and plots that column as a
+        # shallow copy whose index is named after y. For other kinds on a frame:
+        # x (label or integer position) becomes the index (value error if x does not
+        # select a single column); y (label, list or integer positions) selects the
+        # columns; string or integer xerr/yerr values are replaced by the matching
+        # columns when found; a single selected column is renamed from the label
+        # keyword or y, while several columns are renamed from a list-like label which
+        # must match y in length (value error otherwise). Finally calls the backend
+        # generic plot with the prepared data, kind and keywords and returns its result.
         plot_backend = _get_plot_backend(kwargs.pop("backend", None))
 
         x, y, kind, kwargs = self._get_call_args(
@@ -1193,6 +1288,10 @@ class PlotAccessor(PandasObject):
         color: str | Sequence[str] | dict | None = None,
         **kwargs,
     ) -> PlotAccessor:
+        # [FUNCTION DOC]
+        # Line plot shortcut. Inputs: x and y column labels (default none), optional
+        # color (copied into the keywords when given) and extra keywords. Calls the
+        # accessor with kind line and returns its result (axes or array of axes).
         """
         Plot Series or DataFrame as lines.
 
@@ -1301,6 +1400,9 @@ class PlotAccessor(PandasObject):
         color: str | Sequence[str] | dict | None = None,
         **kwargs,
     ) -> PlotAccessor:
+        # [FUNCTION DOC]
+        # Vertical bar plot shortcut. Same inputs as the line shortcut (x, y, color,
+        # extra keywords); calls the accessor with kind bar and returns the result.
         """
         Vertical bar plot.
 
@@ -1438,6 +1540,9 @@ class PlotAccessor(PandasObject):
         color: str | Sequence[str] | dict | None = None,
         **kwargs,
     ) -> PlotAccessor:
+        # [FUNCTION DOC]
+        # Horizontal bar plot shortcut. Same inputs as the line shortcut (x, y, color,
+        # extra keywords); calls the accessor with kind barh and returns the result.
         """
         Make a horizontal bar plot.
 
@@ -1575,6 +1680,9 @@ class PlotAccessor(PandasObject):
         return self(kind="barh", x=x, y=y, **kwargs)
 
     def box(self, by: IndexLabel | None = None, **kwargs) -> PlotAccessor:
+        # [FUNCTION DOC]
+        # Box plot shortcut. Input: by (column label or list, default none) and extra
+        # keywords. Calls the accessor with kind box and the by value; returns result.
         r"""
         Make a box plot of the DataFrame columns.
 
@@ -1639,6 +1747,9 @@ class PlotAccessor(PandasObject):
     def hist(
         self, by: IndexLabel | None = None, bins: int = 10, **kwargs
     ) -> PlotAccessor:
+        # [FUNCTION DOC]
+        # Histogram shortcut. Inputs: by (default none), bins (default 10) and extra
+        # keywords. Calls the accessor with kind hist and returns the result.
         """
         Draw one histogram of the DataFrame's columns.
 
@@ -1700,6 +1811,11 @@ class PlotAccessor(PandasObject):
         weights: np.ndarray | None = None,
         **kwargs,
     ) -> PlotAccessor:
+        # [FUNCTION DOC]
+        # Kernel density estimate shortcut (also available under the alias density).
+        # Inputs: bw_method (rule name, scalar, callable or none), ind (evaluation
+        # points or a count, none for automatic), weights (optional array) and extra
+        # keywords. Calls the accessor with kind kde; returns the result.
         """
         Generate Kernel Density Estimate plot using Gaussian kernels.
 
@@ -1822,6 +1938,9 @@ class PlotAccessor(PandasObject):
         stacked: bool = True,
         **kwargs,
     ) -> PlotAccessor:
+        # [FUNCTION DOC]
+        # Area plot shortcut. Inputs: x and y labels (default none), stacked (default
+        # true) and extra keywords. Calls the accessor with kind area; returns result.
         """
         Draw a stacked area plot.
 
@@ -1901,6 +2020,11 @@ class PlotAccessor(PandasObject):
         return self(kind="area", x=x, y=y, stacked=stacked, **kwargs)
 
     def pie(self, y: IndexLabel | None = None, **kwargs) -> PlotAccessor:
+        # [FUNCTION DOC]
+        # Pie plot shortcut. Input: y (column label, required for frames unless
+        # subplots is requested) and extra keywords. When y is given it is stored in the
+        # keywords. Raises a value error for frame data when no y was given and subplots
+        # is not enabled. Calls the accessor with kind pie; returns the result.
         """
         Generate a pie plot.
 
@@ -1966,6 +2090,10 @@ class PlotAccessor(PandasObject):
         c: Hashable | Sequence[Hashable] | None = None,
         **kwargs,
     ) -> PlotAccessor:
+        # [FUNCTION DOC]
+        # Scatter plot shortcut (frames only). Inputs: required x and y labels, s
+        # (marker size, label or sequence), c (color, label or sequence) and extra
+        # keywords. Calls the accessor with kind scatter and returns the result.
         """
         Create a scatter plot with varying marker point size and color.
 
@@ -2062,6 +2190,12 @@ class PlotAccessor(PandasObject):
         gridsize: int | tuple[int, int] | None = None,
         **kwargs,
     ) -> PlotAccessor:
+        # [FUNCTION DOC]
+        # Hexagonal binning plot shortcut (frames only). Inputs: required x and y, C (a
+        # column of values to aggregate, default none), reduce_C_function (callable,
+        # default none; only forwarded if given), gridsize (int or pair, only forwarded
+        # if given) and extra keywords. Calls the accessor with kind hexbin; returns the
+        # result.
         """
         Generate a hexagonal binning plot.
 
@@ -2158,6 +2292,15 @@ _backends: dict[str, types.ModuleType] = {}
 
 
 def _load_backend(backend: str) -> types.ModuleType:
+    # [FUNCTION DOC]
+    # HELPER: imports a plotting backend module by name.
+    # Input: backend string. For the name matplotlib, imports the internal
+    # matplotlib backend package and raises an import error with a friendly message
+    # if matplotlib is missing. Otherwise searches the registered entry points in
+    # the pandas plotting backends group for a matching name and loads it; if none
+    # matches, tries importing the string as a module name (import failures are
+    # swallowed). A found module is accepted only if it has a plot attribute.
+    # Raises a value error when no usable backend is found. Returns the module.
     """
     Load a pandas plotting backend.
 
@@ -2225,6 +2368,12 @@ def _load_backend(backend: str) -> types.ModuleType:
 
 
 def _get_plot_backend(backend: str | None = None):
+    # [FUNCTION DOC]
+    # HELPER: returns the backend module for plotting, caching by name.
+    # Input: optional backend name; when missing or empty the plotting backend
+    # option is read. Looks the name up in the module-level cache; on a miss loads
+    # it via the loader helper and stores it (side effect on the cache). Returns the
+    # module; errors propagate from the loader.
     """
     Return the plotting backend to use (e.g. `pandas.plotting._matplotlib`).
 
