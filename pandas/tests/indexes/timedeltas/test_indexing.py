@@ -1,3 +1,6 @@
+# [MODULE DOC]
+# Tests for indexing the timedelta index: item and slice access (including name and frequency retention), label location with unit mismatches and missing values, indexer computation with fill methods and tolerance, conditional replacement, take, slice-bound casting with invalid strings, and membership. Organized into one class per operation family.
+
 from datetime import datetime
 import re
 
@@ -21,7 +24,11 @@ import pandas._testing as tm
 
 
 class TestGetItem:
+    # [CLASS DOC]
+    # Tests of element and slice access.
     def test_getitem_slice_keeps_name(self):
+        # [FUNCTION DOC]
+        # Slicing a named index built with a deprecated lowercase day unit keeps the name; the construction emits the Pandas 4 deprecation warning for the unit.
         # GH#4226, GH#59051
         msg = "'d' is deprecated and will be removed in a future version."
         with tm.assert_produces_warning(Pandas4Warning, match=msg):
@@ -29,6 +36,8 @@ class TestGetItem:
         assert tdi[1:].name == tdi.name
 
     def test_getitem(self):
+        # [FUNCTION DOC]
+        # On a daily range of 31 named elements: scalar access returns a timedelta; various slices (leading, stepped, negative-bounded stepped, reversed) give the expected ranges with the correct name and frequency (negative frequency for reversed).
         idx1 = timedelta_range("1 day", "31 day", freq="D", name="idx")
 
         for idx in [idx1]:
@@ -69,6 +78,8 @@ class TestGetItem:
         ],
     )
     def test_timestamp_invalid_key(self, key):
+        # [FUNCTION DOC]
+        # Parametrized over timestamp-like keys (timestamps, standard datetime, numpy datetime, datetime NaT). Looking up a non-timedelta key raises a key error containing the key's repr.
         # GH#20464
         tdi = timedelta_range(0, periods=10)
         with pytest.raises(KeyError, match=re.escape(repr(key))):
@@ -76,13 +87,19 @@ class TestGetItem:
 
 
 class TestGetLoc:
+    # [CLASS DOC]
+    # Tests of label location.
     def test_get_loc_key_unit_mismatch(self):
+        # [FUNCTION DOC]
+        # A timedelta key with millisecond unit is found in a nanosecond-unit index at its position.
         idx = to_timedelta(["0 days", "1 days", "2 days"])
         key = idx[1].as_unit("ms")
         loc = idx.get_loc(key)
         assert loc == 1
 
     def test_get_loc_key_unit_mismatch_not_castable(self):
+        # [FUNCTION DOC]
+        # In a second-unit index, a nanosecond-unit key that cannot be represented in seconds (one nanosecond more than zero) raises a key error showing the timedelta, and is not contained in the index.
         tdi = to_timedelta(["0 days", "1 days", "2 days"]).astype("m8[s]")
         assert tdi.dtype == "m8[s]"
         key = tdi[0].as_unit("ns") + Timedelta(1)
@@ -93,6 +110,8 @@ class TestGetLoc:
         assert key not in tdi
 
     def test_get_loc(self):
+        # [FUNCTION DOC]
+        # Location by numpy timedelta and by string both work.
         idx = to_timedelta(["0 days", "1 days", "2 days"])
 
         # GH 16909
@@ -102,6 +121,8 @@ class TestGetLoc:
         assert idx.get_loc("0 days") == 0
 
     def test_get_loc_nat(self):
+        # [FUNCTION DOC]
+        # Looking up NaT, None, float NaN and numpy NaN each return the position of the missing value.
         tidx = TimedeltaIndex(["1 days 01:00:00", "NaT", "2 days 01:00:00"])
 
         assert tidx.get_loc(NaT) == 1
@@ -111,7 +132,11 @@ class TestGetLoc:
 
 
 class TestGetIndexer:
+    # [CLASS DOC]
+    # Tests of indexer computation.
     def test_get_indexer(self):
+        # [FUNCTION DOC]
+        # Indexer of the index against itself is the positions; for a target of three timedeltas not in the index, forward fill gives minus one, zero, one; backward fill gives zero, one, two; nearest gives zero, one, one; nearest with a one-hour tolerance gives zero, minus one, one.
         idx = to_timedelta(["0 days", "1 days", "2 days"])
         tm.assert_numpy_array_equal(
             idx.get_indexer(idx), np.array([0, 1, 2], dtype=np.intp)
@@ -133,7 +158,11 @@ class TestGetIndexer:
 
 
 class TestWhere:
+    # [CLASS DOC]
+    # Tests of conditional replacement.
     def test_where_doesnt_retain_freq(self):
+        # [FUNCTION DOC]
+        # Replacing where the condition is false with values from the reversed index gives a result with no frequency, correct values and name.
         tdi = timedelta_range("1 day", periods=3, freq="D", name="idx")
         cond = [True, True, False]
         expected = TimedeltaIndex([tdi[0], tdi[1], tdi[0]], freq=None, name="idx")
@@ -142,6 +171,8 @@ class TestWhere:
         tm.assert_index_equal(result, expected)
 
     def test_where_invalid_dtypes(self, fixed_now_ts):
+        # [FUNCTION DOC]
+        # Uses a fixed current timestamp fixture. Replacing with incompatible other values (integer representation of NaT, timestamps, periods, a scalar timestamp) does not cast to timedelta; the result is an object index with the items as given and the name preserved.
         tdi = timedelta_range("1 day", periods=3, freq="D", name="idx")
 
         tail = tdi[2:].tolist()
@@ -169,6 +200,8 @@ class TestWhere:
         tm.assert_index_equal(result, expected)
 
     def test_where_mismatched_nat(self):
+        # [FUNCTION DOC]
+        # Replacing with a datetime NaT (numpy) gives an object index that contains that very object, not a timedelta NaT.
         tdi = timedelta_range("1 day", periods=3, freq="D", name="idx")
         cond = np.array([True, False, False])
 
@@ -180,7 +213,11 @@ class TestWhere:
 
 
 class TestTake:
+    # [CLASS DOC]
+    # Tests of take.
     def test_take(self):
+        # [FUNCTION DOC]
+        # Taking by positions: scalar results for single position; consecutive and evenly spaced positions keep or compute a frequency (including negative step); irregular positions or negative-index irregular positions give no frequency; name always preserved.
         # GH 10295
         idx1 = timedelta_range("1 day", "31 day", freq="D", name="idx")
 
@@ -217,6 +254,8 @@ class TestTake:
             assert result.freq is None
 
     def test_take_invalid_kwargs(self):
+        # [FUNCTION DOC]
+        # An unknown keyword raises a type error; the out and mode parameters raise value errors saying they are unsupported.
         idx = timedelta_range("1 day", "31 day", freq="D", name="idx")
         indices = [1, 6, 5, 9, 10, 13, 15, 3]
 
@@ -233,6 +272,8 @@ class TestTake:
             idx.take(indices, mode="clip")
 
     def test_take_equiv_getitem(self):
+        # [FUNCTION DOC]
+        # Taking positions two, four, ten from an hourly range equals fancy indexing with the same list: a timedelta index without frequency and with the name.
         tds = ["1day 02:00:00", "1 day 04:00:00", "1 day 10:00:00"]
         idx = timedelta_range(start="1D", end="2D", freq="h", name="idx")
         expected = TimedeltaIndex(tds, freq=None, name="idx")
@@ -247,6 +288,8 @@ class TestTake:
             assert taken.name == expected.name
 
     def test_take_fill_value(self):
+        # [FUNCTION DOC]
+        # Take with negative positions: wraps by default; with fill, minus one is NaT; with fill disabled it wraps; positions below minus one with fill raise a value error; an out-of-bounds position raises an index error.
         # GH 12631
         idx = TimedeltaIndex(["1 days", "2 days", "3 days"], name="xxx")
         result = idx.take(np.array([1, 0, -1]))
@@ -277,12 +320,18 @@ class TestTake:
 
 
 class TestMaybeCastSliceBound:
+    # [CLASS DOC]
+    # Tests of the private slice-bound casting using increasing, decreasing and unsorted indexes.
     @pytest.fixture(params=["increasing", "decreasing", None])
     def monotonic(self, request):
+        # [FUNCTION DOC]
+        # HELPER: parametrized fixture returning the ordering kind: increasing, decreasing or none (unsorted).
         return request.param
 
     @pytest.fixture
     def tdi(self, monotonic):
+        # [FUNCTION DOC]
+        # HELPER: fixture building a ten-day timedelta index; reversed for decreasing, randomly permuted (seeded) for none, in order for increasing.
         tdi = timedelta_range("1 Day", periods=10)
         if monotonic == "decreasing":
             tdi = tdi[::-1]
@@ -293,6 +342,8 @@ class TestMaybeCastSliceBound:
         return tdi
 
     def test_maybe_cast_slice_bound_invalid_str(self, tdi):
+        # [FUNCTION DOC]
+        # An unparseable string as slice bound raises a type error ("cannot do slice indexing on TimedeltaIndex with these indexers") from the private cast, the get-slice-bound method and slice-location method.
         # test the low-level _maybe_cast_slice_bound and that we get the
         #  expected exception+message all the way up the stack
         msg = (
@@ -309,6 +360,8 @@ class TestMaybeCastSliceBound:
     def test_slice_invalid_str_with_timedeltaindex(
         self, tdi, frame_or_series, indexer_sl
     ):
+        # [FUNCTION DOC]
+        # Uses frame_or_series and the indexer_sl fixtures (loc or plain getitem). Slicing a series or frame with an invalid string at start, stop, or after a valid start raises the same type error.
         obj = frame_or_series(range(10), index=tdi)
 
         msg = (
@@ -326,7 +379,11 @@ class TestMaybeCastSliceBound:
 
 
 class TestContains:
+    # [CLASS DOC]
+    # Tests of membership.
     def test_contains_nonunique(self):
+        # [FUNCTION DOC]
+        # For several non-unique timedelta indexes (integers or strings) the first element is contained.
         # GH#9512
         for vals in (
             [0, 1, 0],
@@ -339,6 +396,8 @@ class TestContains:
             assert idx[0] in idx
 
     def test_contains(self):
+        # [FUNCTION DOC]
+        # Under a deprecation warning for the lowercase day unit, a timedelta index with an hour added does not contain NaT-like values (NaT, None, NaN); an index of only NaT does contain them.
         # Checking for any NaT-like objects
         # GH#13603, GH#59051
         msg = "'d' is deprecated and will be removed in a future version."

@@ -1,5 +1,9 @@
 # Arithmetic tests for TimedeltaIndex are generally about the result's `freq` attribute.
 # Other cases can be shared in tests.arithmetic.test_timedelta64
+
+# [MODULE DOC]
+# Tests for arithmetic on the timedelta index that concern the resulting frequency attribute; other arithmetic cases are shared with the series arithmetic tests (referenced in the leading source comment).
+
 import numpy as np
 
 from pandas import (
@@ -11,7 +15,11 @@ import pandas._testing as tm
 
 
 class TestTimedeltaIndexArithmetic:
+    # [CLASS DOC]
+    # Test class for frequency behavior of arithmetic.
     def test_arithmetic_zero_freq(self):
+        # [FUNCTION DOC]
+        # For a nanosecond-frequency range: true division by two, floor division by two and multiplication by zero all give results without a frequency (not a zero-step frequency) and with the expected values (each of the first fifty values twice, or all zero).
         # GH#51575 don't get a .freq with freq.n = 0
         tdi = timedelta_range(0, periods=100, freq="ns")
         result = tdi / 2
@@ -30,6 +38,8 @@ class TestTimedeltaIndexArithmetic:
         tm.assert_index_equal(result3, expected3)
 
     def test_tdi_division(self, index_or_series):
+        # [FUNCTION DOC]
+        # Uses index_or_series. Dividing a container of 31 days (and 31 days 5 minutes 3 seconds, and a missing value) by a one-day or one-second timedelta gives the expected float values (NaN for missing) in the same container type.
         # doc example
 
         scalar = Timedelta(days=31)

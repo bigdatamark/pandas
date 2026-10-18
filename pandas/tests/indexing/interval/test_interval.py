@@ -1,3 +1,6 @@
+# [MODULE DOC]
+# Tests for indexing Series and DataFrame objects labelled by an interval index: getitem and loc with scalars, intervals, lists, slices (including large series that exceed an engine size cutoff), missing keys, NaN-valued intervals, setting with slices, and interval levels inside a multi-level index. Uses the indexer_sl fixture so each test runs with both label-based and plain getitem access where applicable.
+
 import numpy as np
 import pytest
 
@@ -14,11 +17,17 @@ import pandas._testing as tm
 
 
 class TestIntervalIndex:
+    # [CLASS DOC]
+    # Test class for interval-labelled indexing; provides a series fixture.
     @pytest.fixture
     def series_with_interval_index(self):
+        # [FUNCTION DOC]
+        # HELPER: fixture returning a series of the integers zero to four labelled by an interval index with breaks zero through five (right-closed intervals).
         return Series(np.arange(5), IntervalIndex.from_breaks(np.arange(6)))
 
     def test_getitem_with_scalar(self, series_with_interval_index, indexer_sl):
+        # [FUNCTION DOC]
+        # Uses the fixture and indexer_sl. Slicing by scalars (integer or float stop, start and stop, and for label-based access a start below the first interval) selects the first three rows; lists of scalars in the intervals one to three or four select the middle three rows; a boolean mask selects rows two to four.
         ser = series_with_interval_index.copy()
 
         expected = ser.iloc[:3]
@@ -38,6 +47,8 @@ class TestIntervalIndex:
 
     @pytest.mark.parametrize("direction", ["increasing", "decreasing"])
     def test_getitem_nonoverlapping_monotonic(self, direction, closed, indexer_sl):
+        # [FUNCTION DOC]
+        # Parametrized over increasing and decreasing orderings, with the closed fixture (which side(s) are closed) and indexer_sl. For each interval: lookup by the left endpoint works only when the left side is closed (else a key error); by the right endpoint only when the right side is closed; by the midpoint always works.
         tpls = [(0, 1), (2, 3), (4, 5)]
         if direction == "decreasing":
             tpls = tpls[::-1]
@@ -63,6 +74,8 @@ class TestIntervalIndex:
             assert indexer_sl(ser)[key] == expected
 
     def test_getitem_non_matching(self, series_with_interval_index, indexer_sl):
+        # [FUNCTION DOC]
+        # A list containing one value outside every interval raises a key error saying that value is not in the index (even if other values match).
         ser = series_with_interval_index.copy()
 
         # this is a departure from our current
@@ -74,6 +87,8 @@ class TestIntervalIndex:
             indexer_sl(ser)[[-1, 3]]
 
     def test_loc_getitem_large_series(self, monkeypatch):
+        # [FUNCTION DOC]
+        # Patches the module-level engine size cutoff down to 20 so the large-index path is taken. For a series of that length, label slices with stop 8, start 0 stop 8, and with step 1 give equal results.
         size_cutoff = 20
         with monkeypatch.context():
             monkeypatch.setattr(libindex, "_SIZE_CUTOFF", size_cutoff)
@@ -89,6 +104,8 @@ class TestIntervalIndex:
         tm.assert_series_equal(result1, result3)
 
     def test_loc_getitem_frame(self):
+        # [FUNCTION DOC]
+        # A frame indexed by the binned values of a column (categorical with interval categories): a scalar lookup returns the rows of the matching bin; a missing scalar raises key error; a one-element list works; a list of two scalars returns duplicated rows by position; an all-missing list raises a key error "None of [...] are in the [index]"; a partially missing list raises a key error naming the missing element.
         # CategoricalIndex with IntervalIndex categories
         df = DataFrame({"A": range(10)})
         ser = pd.cut(df.A, 5)
@@ -124,6 +141,8 @@ class TestIntervalIndex:
             df.loc[[10, 4]]
 
     def test_getitem_interval_with_nans(self, frame_or_series, indexer_sl):
+        # [FUNCTION DOC]
+        # Uses frame_or_series and indexer_sl. For an interval index of two missing entries, selecting with the first-entry sub-index as key returns the whole object (frames transposed for item-setting access).
         # GH#41831
 
         index = IntervalIndex([np.nan, np.nan])
@@ -139,6 +158,8 @@ class TestIntervalIndex:
         tm.assert_equal(result, expected)
 
     def test_setitem_interval_with_slice(self):
+        # [FUNCTION DOC]
+        # A label slice that does not overlap any interval is a no-op rather than an error; a slice matching intervals sets those positions; the same for a series on a stepped sub-index of the intervals. Tests both with the sets expected by position.
         # GH#54722
         ii = IntervalIndex.from_breaks(range(4, 15))
         ser = Series(range(10), index=ii)
@@ -167,7 +188,11 @@ class TestIntervalIndex:
 
 
 class TestIntervalIndexInsideMultiIndex:
+    # [CLASS DOC]
+    # Tests with an interval index as one level of a multi-level index.
     def test_mi_intervalindex_slicing_with_scalar(self):
+        # [FUNCTION DOC]
+        # Builds a frame with a three-level index (item, id, interval) and a query frame whose float values in the third level fall within the intervals. Selecting by the query's multi-level index returns the matching values with the interval level preserved as interval index (the matching intervals taken at expected positions).
         # GH#27456
         ii = IntervalIndex.from_arrays(
             [0, 1, 10, 11, 0, 1, 10, 11], [1, 2, 11, 12, 1, 2, 11, 12], name="MP"
@@ -213,6 +238,8 @@ class TestIntervalIndexInsideMultiIndex:
     @pytest.mark.xfail(WASM, reason="GH 23440")
     @pytest.mark.parametrize("base", [101, 1010])
     def test_reindex_behavior_with_interval_index(self, base):
+        # [FUNCTION DOC]
+        # Parametrized over base sizes 101 and 1010; expected to fail on WebAssembly. Reindexing a series with interval index to NaN and one gives NaN for NaN and the value for the interval containing one.
         # GH 51826
 
         ser = Series(
@@ -224,6 +251,8 @@ class TestIntervalIndexInsideMultiIndex:
         tm.assert_series_equal(result, expected_result)
 
     def test_multiindex_with_interval_index(self):
+        # [FUNCTION DOC]
+        # A frame with a string level and an interval level: selecting with a tuple of a string and a number inside an interval returns the row as a series named with the tuple using the matching interval.
         # for GH#25298
         intIndex = IntervalIndex.from_arrays([1, 5, 8, 13, 16], [4, 9, 12, 17, 20])
         multiIndex = pd.MultiIndex.from_arrays([["a", "a", "b", "b", "c"], intIndex])

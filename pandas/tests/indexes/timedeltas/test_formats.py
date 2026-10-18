@@ -1,3 +1,6 @@
+# [MODULE DOC]
+# Tests for the text representations of the timedelta index and of a series built from it: repr and str, summary, and day rounding for non-nanosecond units. The expected strings encode current default resolution (microsecond) for string-constructed indexes.
+
 import pytest
 
 import pandas as pd
@@ -8,7 +11,11 @@ from pandas import (
 
 
 class TestTimedeltaIndexRendering:
+    # [CLASS DOC]
+    # Test class for rendering.
     def test_repr_round_days_non_nano(self):
+        # [FUNCTION DOC]
+        # A second-resolution index holding one day prints as "1 days" (not with a zero time part) in the index repr and in the series repr.
         # GH#55405
         # we should get "1 days", not "1 days 00:00:00" with non-nano
         tdi = TimedeltaIndex(["1 days"], freq="D").as_unit("s")
@@ -22,6 +29,8 @@ class TestTimedeltaIndexRendering:
 
     @pytest.mark.parametrize("method", ["__repr__", "__str__"])
     def test_representation(self, method):
+        # [FUNCTION DOC]
+        # Parametrized over repr and str. With a wide display width, five indexes (empty with nanosecond dtype, one, two, three daily elements, and one with sub-day element and no frequency) render as the exact expected strings including dtype and frequency.
         idx1 = TimedeltaIndex([], freq="D", dtype="m8[ns]")
         idx2 = TimedeltaIndex(["1 days"], freq="D")
         idx3 = TimedeltaIndex(["1 days", "2 days"], freq="D")
@@ -53,6 +62,8 @@ class TestTimedeltaIndexRendering:
 
     # TODO: this is a Series.__repr__ test
     def test_representation_to_series(self):
+        # [FUNCTION DOC]
+        # This is really a test of series representation (a leftover from the source TODO). The same five indexes wrapped in a series render as the exact expected multi-line strings with the dtype line.
         idx1 = TimedeltaIndex([], freq="D", dtype="m8[ns]")
         idx2 = TimedeltaIndex(["1 days"], freq="D")
         idx3 = TimedeltaIndex(["1 days", "2 days"], freq="D")
@@ -82,6 +93,8 @@ class TestTimedeltaIndexRendering:
                 assert result == expected
 
     def test_summary(self):
+        # [FUNCTION DOC]
+        # The private summary string of the same five indexes: entry count, first and last values, and frequency line when a frequency exists (omitted for the one without).
         # GH#9116
         idx1 = TimedeltaIndex([], freq="D", dtype="m8[ns]")
         idx2 = TimedeltaIndex(["1 days"], freq="D")

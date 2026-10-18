@@ -1,3 +1,6 @@
+# [MODULE DOC]
+# Tests for the factorize method of the timedelta index, including frequency handling of the unique values.
+
 import numpy as np
 
 from pandas import (
@@ -9,7 +12,11 @@ import pandas._testing as tm
 
 
 class TestTimedeltaIndexFactorize:
+    # [CLASS DOC]
+    # Test class for factorizing timedelta indexes.
     def test_factorize(self):
+        # [FUNCTION DOC]
+        # Factorizing a six-element index of three repeated values gives codes zero, zero, one, one, two, two and a three-element unique index, with or without sorting, and the unique's frequency matches the expected (none).
         idx1 = TimedeltaIndex(["1 day", "1 day", "2 day", "2 day", "3 day", "3 day"])
 
         exp_arr = np.array([0, 0, 1, 1, 2, 2], dtype=np.intp)
@@ -26,6 +33,8 @@ class TestTimedeltaIndexFactorize:
         assert idx.freq == exp_idx.freq
 
     def test_factorize_preserves_freq(self):
+        # [FUNCTION DOC]
+        # Factorizing an already-unique second-frequency range gives sequential codes and a unique index equal to the original with the frequency preserved, whether called as a method or via the top-level function.
         # GH#38120 freq should be preserved
         idx3 = timedelta_range("1 day", periods=4, freq="s")
         exp_arr = np.array([0, 1, 2, 3], dtype=np.intp)

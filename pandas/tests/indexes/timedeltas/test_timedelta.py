@@ -1,3 +1,6 @@
+# [MODULE DOC]
+# Miscellaneous tests of the timedelta index: grouping, mapping and field accessors.
+
 import numpy as np
 import pytest
 
@@ -11,12 +14,18 @@ import pandas._testing as tm
 
 
 class TestTimedeltaIndex:
+    # [CLASS DOC]
+    # Test class for miscellaneous timedelta index behavior.
     def test_misc_coverage(self):
+        # [FUNCTION DOC]
+        # Grouping a five-element range by its day field returns a dictionary whose member indexes contain timedelta scalars.
         rng = timedelta_range("1 day", periods=5)
         result = rng.groupby(rng.days)
         assert isinstance(next(iter(result.values()))[0], Timedelta)
 
     def test_map(self):
+        # [FUNCTION DOC]
+        # Mapping a function extracting the day component over a range gives an int64 index of the day numbers. (The dictionary-like mapping tests are elsewhere.)
         # test_map_dictlike generally tests
 
         rng = timedelta_range("1 day", periods=10)
@@ -27,6 +36,8 @@ class TestTimedeltaIndex:
         tm.assert_index_equal(result, exp)
 
     def test_fields(self):
+        # [FUNCTION DOC]
+        # For a two-element second-frequency range: days, seconds, microseconds and nanoseconds components give the expected indexes (days int64; seconds, microseconds, nanoseconds int32); hours, minutes and milliseconds are not attributes and raise attribute errors. The series accessor handles a missing value (NaN) and the index field preserves the index name.
         rng = timedelta_range("1 days, 10:11:12.100123456", periods=2, freq="s")
         tm.assert_index_equal(rng.days, Index([1, 1], dtype=np.int64))
         tm.assert_index_equal(

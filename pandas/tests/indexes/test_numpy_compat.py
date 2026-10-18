@@ -1,3 +1,6 @@
+# [MODULE DOC]
+# Tests of interoperability of index objects with numpy universal functions: output-parameter support, element-wise math functions, floating-point predicate functions, binary reductions, and bitwise operations. All except the bitwise test use the shared index fixture so they exercise every index type; outcomes depend on dtype (numeric returns indexes, datetime-like raises).
+
 import numpy as np
 import pytest
 
@@ -19,6 +22,8 @@ from pandas.core.indexes.datetimelike import DatetimeIndexOpsMixin
 
 
 def test_numpy_ufuncs_out(index):
+    # [FUNCTION DOC]
+    # Comparing an index to itself with the numpy equality ufunc and an output array fills the array with the same boolean values as the element-wise equality operator; the same for the underlying extension array when the index is not multi-level.
     result = index == index
 
     out = np.empty(index.shape, dtype=bool)
@@ -61,6 +66,8 @@ def test_numpy_ufuncs_out(index):
     ids=lambda x: x.__name__,
 )
 def test_numpy_ufuncs_basic(index, func):
+    # [FUNCTION DOC]
+    # Parametrized over 22 numpy math ufuncs (exponentials, logarithms, roots, trigonometric, hyperbolic, angle conversions). Datetime-like indexes raise a type or attribute error from the external library; numeric indexes (except complex with angle conversions) return an index equal to applying the function to the values, keeping the name; the result dtype is checked per input dtype (complex preserved; small integer and bool give float16 or float32; 16-bit integer and float32 give float32; others float64), and extension-dtype numeric inputs return a plain Index. Empty non-numeric indexes pass; other non-numeric indexes raise type or attribute error.
     # test ufuncs of numpy, see:
     # https://numpy.org/doc/stable/reference/ufuncs.html
 
@@ -105,6 +112,8 @@ def test_numpy_ufuncs_basic(index, func):
     "func", [np.isfinite, np.isinf, np.isnan, np.signbit], ids=lambda x: x.__name__
 )
 def test_numpy_ufuncs_other(index, func):
+    # [FUNCTION DOC]
+    # Parametrized over isfinite, isinf, isnan, signbit. For datetime and timedelta indexes the first three return results (also fillable via an output array) while signbit raises a type error; for period indexes all raise a type error; numeric indexes (except complex with signbit) return a boolean index (nullable boolean for extension dtypes) equal to the output array version; empty others pass; remaining types raise a type error.
     # test ufuncs of numpy, see:
     # https://numpy.org/doc/stable/reference/ufuncs.html
     if isinstance(index, (DatetimeIndex, TimedeltaIndex)):
@@ -152,6 +161,8 @@ def test_numpy_ufuncs_other(index, func):
 
 @pytest.mark.parametrize("func", [np.maximum, np.minimum])
 def test_numpy_ufuncs_reductions(index, func):
+    # [FUNCTION DOC]
+    # Parametrized over maximum and minimum. Skips empty indexes. Reducing an unordered categorical index raises a type error saying it is not ordered. Otherwise the result has the same type as the index's own max or min (without skipping missing values) and either both are missing or equal.
     # TODO: overlap with tests.series.test_ufunc.test_reductions
     if len(index) == 0:
         pytest.skip("Test doesn't make sense for empty index.")
@@ -178,6 +189,8 @@ def test_numpy_ufuncs_reductions(index, func):
 
 @pytest.mark.parametrize("func", [np.bitwise_and, np.bitwise_or, np.bitwise_xor])
 def test_numpy_ufuncs_bitwise(func):
+    # [FUNCTION DOC]
+    # Parametrized over bitwise and, or, xor. Applied to two int64 indexes it emits no warnings and equals an index of the function applied to the underlying values.
     # https://github.com/pandas-dev/pandas/issues/46769
     idx1 = Index([1, 2, 3, 4], dtype="int64")
     idx2 = Index([3, 4, 5, 6], dtype="int64")

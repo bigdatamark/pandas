@@ -1,3 +1,6 @@
+# [MODULE DOC]
+# Tests for multi-level indexes with period or datetime elements: label lookup with a period level and datetime keys, and construction of an empty frame with datetime-valued column levels.
+
 from datetime import datetime
 
 import numpy as np
@@ -15,6 +18,8 @@ import pandas._testing as tm
 
 
 def test_multiindex_period_datetime():
+    # [FUNCTION DOC]
+    # A series on a two-level index (strings, monthly periods): selecting with a string and a period gives the first element; selecting with the string and a standard datetime for the same month gives the same element (no exception).
     # GH4861, using datetime in period of multiindex raises exception
 
     idx1 = Index(["a", "a", "a", "b", "b"])
@@ -32,6 +37,8 @@ def test_multiindex_period_datetime():
 
 
 def test_multiindex_datetime_columns():
+    # [FUNCTION DOC]
+    # An empty frame whose columns are a two-level index built from tuples of two datetimes equals one whose columns come from separate arrays of the same datetimes, with the same level names.
     # GH35015, using datetime as column indices raises exception
 
     mi = MultiIndex.from_tuples(

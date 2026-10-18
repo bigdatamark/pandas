@@ -1,3 +1,6 @@
+# [MODULE DOC]
+# Tests for loc-style indexing of Series labelled by an interval index under the current (new) semantics: exact interval matches, scalar containment, slices, overlap errors, non-unique intervals, error messages for missing keys, and a regression test for repeated intervals with infinities. Most tests take the indexer_sl fixture.
+
 import re
 
 import numpy as np
@@ -15,14 +18,20 @@ import pandas._testing as tm
 
 
 class TestIntervalIndex:
+    # [CLASS DOC]
+    # Test class for interval-labelled loc behavior; provides a series fixture.
     @pytest.fixture
     def series_with_interval_index(self):
+        # [FUNCTION DOC]
+        # HELPER: fixture returning a series of integers zero to four labelled by a right-closed interval index with breaks zero through five.
         """
         Fixture providing a Series with an IntervalIndex.
         """
         return Series(np.arange(5), IntervalIndex.from_breaks(np.arange(6)))
 
     def test_loc_with_interval(self, series_with_interval_index, indexer_sl):
+        # [FUNCTION DOC]
+        # Interval keys match only exactly: an existing interval returns its value; a list of intervals returns the matching rows; non-matching intervals (different closedness, partially covering, below range, beyond range) raise a key error naming the interval.
         # loc with single label / list of labels:
         #   - Intervals: only exact matches
         #   - scalars: those that contain it
@@ -53,6 +62,8 @@ class TestIntervalIndex:
             indexer_sl(ser)[Interval(5, 6)]
 
     def test_loc_with_scalar(self, series_with_interval_index, indexer_sl):
+        # [FUNCTION DOC]
+        # Scalar keys select the interval containing them (including a boundary belonging to the right-closed interval); lists of scalars give the corresponding rows (repeated keys give repeated rows); a boolean mask works.
         # loc with single label / list of labels:
         #   - Intervals: only exact matches
         #   - scalars: those that contain it
@@ -75,6 +86,8 @@ class TestIntervalIndex:
         tm.assert_series_equal(expected, indexer_sl(ser)[ser >= 2])
 
     def test_loc_with_slices(self, series_with_interval_index, indexer_sl):
+        # [FUNCTION DOC]
+        # Slices of interval objects select between the exactly matching endpoints; an open-ended slice from an interval works; start intervals not exactly matching (wrong bounds or closed side) raise a not-implemented error saying interval objects are not currently supported.
         # loc with slices:
         #   - Interval objects: only works with exact matches
         #   - scalars: only works for non-overlapping, monotonic intervals,
@@ -102,6 +115,8 @@ class TestIntervalIndex:
             indexer_sl(ser)[Interval(3, 4, closed="left") :]
 
     def test_slice_step_ne1(self, series_with_interval_index):
+        # [FUNCTION DOC]
+        # Integer slicing with a step other than one is positional and matches taking the slice then stepping.
         # GH#31658 slice of scalar with step != 1
         ser = series_with_interval_index.copy()
         expected = ser.iloc[0:4:2]
@@ -113,6 +128,8 @@ class TestIntervalIndex:
         tm.assert_series_equal(result2, expected)
 
     def test_slice_float_start_stop(self, series_with_interval_index):
+        # [FUNCTION DOC]
+        # Float slice bounds with a step of two raise a value error saying label-based slicing with step other than one is not supported for interval indexes.
         # GH#31658 slicing with integers is positional, with floats is not
         #  supported
         ser = series_with_interval_index.copy()
@@ -122,6 +139,8 @@ class TestIntervalIndex:
             ser[1.5:9.5:2]
 
     def test_slice_interval_step(self, series_with_interval_index):
+        # [FUNCTION DOC]
+        # An interval used as a slice step raises the same value error.
         # GH#31658 allows for integer step!=1, not Interval step
         ser = series_with_interval_index.copy()
         msg = "label-based slicing with step!=1 is not supported for IntervalIndex"
@@ -129,6 +148,8 @@ class TestIntervalIndex:
             ser[0 : 4 : Interval(0, 1)]
 
     def test_loc_with_overlap(self, indexer_sl):
+        # [FUNCTION DOC]
+        # For an index of overlapping intervals: a scalar in both intervals returns both rows; a list of that scalar likewise; exact interval keys return the single row (a list of both exact intervals returns all); a non-exact interval raises a key error naming it; a list of only non-exact raises key error "None of ... are in the [index]"; slicing between exact intervals works; slicing by non-matching intervals, and (for loc) by scalar bounds on overlapping intervals, raises a key error stating slices need non-overlapping monotonic bounds. (A source TODO questions whether key error is the right exception.)
         idx = IntervalIndex.from_tuples([(1, 5), (3, 7)])
         ser = Series(range(len(idx)), index=idx)
 
@@ -178,6 +199,8 @@ class TestIntervalIndex:
                 ser.loc[1:4]
 
     def test_non_unique(self, indexer_sl):
+        # [FUNCTION DOC]
+        # For adjacent intervals sharing an endpoint, an exact interval key returns the single scalar and a list key returns a one-row series.
         idx = IntervalIndex.from_tuples([(1, 3), (3, 7)])
         ser = Series(range(len(idx)), index=idx)
 
@@ -189,6 +212,8 @@ class TestIntervalIndex:
         tm.assert_series_equal(expected, result)
 
     def test_non_unique_moar(self, indexer_sl):
+        # [FUNCTION DOC]
+        # With a duplicated interval: an exact key returns both rows; an open-ended interval slice returns everything; a list key returns the two matching rows.
         idx = IntervalIndex.from_tuples([(1, 3), (1, 3), (3, 7)])
         ser = Series(range(len(idx)), index=idx)
 
@@ -207,6 +232,8 @@ class TestIntervalIndex:
     def test_loc_getitem_missing_key_error_message(
         self, frame_or_series, series_with_interval_index
     ):
+        # [FUNCTION DOC]
+        # Uses frame_or_series. Label-based selection with a list that includes a value outside every interval raises a key error mentioning that value.
         # GH#27365
         ser = series_with_interval_index.copy()
         obj = frame_or_series(ser)
@@ -225,6 +252,8 @@ class TestIntervalIndex:
     ],
 )
 def test_repeating_interval_index_with_infs(intervals):
+    # [FUNCTION DOC]
+    # Parametrized over four pairs of adjacent intervals with infinite ends; expected to fail on WebAssembly. An index made by repeating the pair 51 times, asked for the indexer of the second interval, returns the odd positions one to 101 (all 51 occurrences) as platform integers.
     # GH 46658
 
     interval_index = Index(intervals * 51)

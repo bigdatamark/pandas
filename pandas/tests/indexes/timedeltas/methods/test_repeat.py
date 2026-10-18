@@ -1,3 +1,6 @@
+# [MODULE DOC]
+# Tests for repeating elements of a timedelta index.
+
 import numpy as np
 
 from pandas import (
@@ -8,7 +11,11 @@ import pandas._testing as tm
 
 
 class TestRepeat:
+    # [CLASS DOC]
+    # Test class for repeat.
     def test_repeat(self):
+        # [FUNCTION DOC]
+        # Repeating each element (twice for a daily range, three times for an index with a missing value) via the method or the numpy function gives the expected index and clears the frequency.
         index = timedelta_range("1 days", periods=2, freq="D")
         exp = TimedeltaIndex(["1 days", "1 days", "2 days", "2 days"])
         for res in [index.repeat(2), np.repeat(index, 2)]:

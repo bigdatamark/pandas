@@ -2,6 +2,9 @@
 Tests for TimedeltaIndex methods behaving like their Timedelta counterparts
 """
 
+# [MODULE DOC]
+# Tests that timedelta index methods and fields behave like the corresponding scalar timedelta methods: total seconds, rounding (with invalid and non-fixed frequencies) and components, including the equivalent series accessor and missing-value handling.
+
 import numpy as np
 import pytest
 
@@ -19,7 +22,11 @@ import pandas._testing as tm
 
 
 class TestVectorizedTimedelta:
+    # [CLASS DOC]
+    # Test class for vectorized timedelta operations.
     def test_tdi_total_seconds(self):
+        # [FUNCTION DOC]
+        # The total seconds of a two-element second-frequency range equal the expected floats (including the nanosecond fraction); the series accessor gives the same, and with a missing element gives NaN there.
         # GH#10939
         # test index
         rng = timedelta_range("1 days, 10:11:12.100123456", periods=2, freq="s")
@@ -43,6 +50,8 @@ class TestVectorizedTimedelta:
         tm.assert_series_equal(ser.dt.total_seconds(), s_expt)
 
     def test_tdi_total_seconds_all_nat(self):
+        # [FUNCTION DOC]
+        # A nanosecond-timedelta series that is entirely missing returns a float series of NaN from the total seconds accessor.
         # with both nat
         ser = Series([np.nan, np.nan], dtype="timedelta64[ns]")
         result = ser.dt.total_seconds()
@@ -50,6 +59,8 @@ class TestVectorizedTimedelta:
         tm.assert_series_equal(result, expected)
 
     def test_tdi_round(self):
+        # [FUNCTION DOC]
+        # Rounding a half-hourly index to the hour gives the expected values (ties to even) and the scalar element rounds equally; an invalid frequency string raises a value error with the shared invalid-frequency message for both index and scalar; a month-end frequency raises a value error saying it is non-fixed.
         td = timedelta_range(start="16801 days", periods=5, freq="30Min")
         elt = td[1]
 
@@ -88,6 +99,8 @@ class TestVectorizedTimedelta:
         ],
     )
     def test_tdi_round_invalid(self, freq, msg):
+        # [FUNCTION DOC]
+        # Parametrized over (frequency, message) for year-end, month-end and an unknown string. Rounding the index or its underlying array raises a value error with that message.
         t1 = timedelta_range("1 days", periods=3, freq="1 min 2 s 3 us")
 
         with pytest.raises(ValueError, match=msg):
@@ -98,6 +111,9 @@ class TestVectorizedTimedelta:
 
     # TODO: de-duplicate with test_tdi_round
     def test_round(self):
+        # [FUNCTION DOC]
+        # The source marks it as a TODO to de-duplicate with the rounding test above. Builds a positive index, its negation and variants; emits a day-unit deprecation warning; loops over (frequency, expected positive result, expected negative result) triples (nanosecond, microsecond, millisecond, second, 12 minutes, hour, day), rounding both indexes.
+        # KNOWN ISSUE: the two equality assertions are placed after the loop rather than inside it, so only the final triple (day) is verified and the other frequencies' expectations are never checked.
         t1 = timedelta_range("1 days", periods=3, freq="1 min 2 s 3 us")
         t2 = -1 * t1
         t1a = timedelta_range("1 days", periods=3, freq="1 min 2 s")
@@ -135,6 +151,8 @@ class TestVectorizedTimedelta:
             tm.assert_index_equal(r2, s2)
 
     def test_components(self):
+        # [FUNCTION DOC]
+        # Accessing the components of a range works; for a series with a missing element, the components frame has a non-all-missing first row and an all-missing second row.
         rng = timedelta_range("1 days, 10:11:12", periods=2, freq="s")
         rng.components
 

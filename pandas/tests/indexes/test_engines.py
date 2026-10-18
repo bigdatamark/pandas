@@ -1,3 +1,6 @@
+# [MODULE DOC]
+# Tests of the low-level lookup engines (compiled index engine classes imported from the internal index module) that back index label lookup: datetime and timedelta engines must refuse non-matching scalar types, and numeric and object engines must correctly report monotonicity, uniqueness and location results. Defines a parametrized fixture over the numeric engine classes and their numpy dtypes.
+
 import re
 
 import numpy as np
@@ -24,10 +27,14 @@ import pandas as pd
     ids=lambda x: x[0].__name__,
 )
 def numeric_indexing_engine_type_and_dtype(request):
+    # [FUNCTION DOC]
+    # HELPER: parametrized fixture yielding pairs of a numeric engine class (signed and unsigned integers of 8 to 64 bits, 32 and 64 bit floats) and its matching numpy dtype; test ids come from the engine class name.
     return request.param
 
 
 class TestDatetimeEngine:
+    # [CLASS DOC]
+    # Tests for the datetime engine.
     @pytest.mark.parametrize(
         "scalar",
         [
@@ -38,6 +45,8 @@ class TestDatetimeEngine:
         ],
     )
     def test_not_contains_requires_timestamp(self, scalar):
+        # [FUNCTION DOC]
+        # Parametrized over scalars that are not timestamps (a timedelta, an integer, a standard-library datetime, a numpy datetime). For five datetime indexes (monotonic unique, non-monotonic, non-unique, a large monotonic one of two million, and a large non-unique one over the size threshold) membership in the engine raises a type error and location lookup raises a key error, both mentioning the scalar's text or repr.
         dti1 = pd.date_range("2016-01-01", periods=3)
         dti2 = dti1.insert(1, pd.NaT)  # non-monotonic
         dti3 = dti1.insert(3, dti1[0])  # non-unique
@@ -54,6 +63,8 @@ class TestDatetimeEngine:
 
 
 class TestTimedeltaEngine:
+    # [CLASS DOC]
+    # Tests for the timedelta engine.
     @pytest.mark.parametrize(
         "scalar",
         [
@@ -64,6 +75,8 @@ class TestTimedeltaEngine:
         ],
     )
     def test_not_contains_requires_timedelta(self, scalar):
+        # [FUNCTION DOC]
+        # Mirror of the datetime test with scalars that are not timedeltas (a timestamp, an integer, a standard-library timedelta, a numpy timedelta); same five index shapes; expects a type error on membership and key error on location.
         tdi1 = pd.timedelta_range("42 days", freq="9h", periods=1234)
         tdi2 = tdi1.insert(1, pd.NaT)  # non-monotonic
         tdi3 = tdi1.insert(3, tdi1[0])  # non-unique
@@ -80,7 +93,11 @@ class TestTimedeltaEngine:
 
 
 class TestNumericEngine:
+    # [CLASS DOC]
+    # Tests for the numeric engines, parametrized via the fixture over each engine class and dtype.
     def test_is_monotonic(self, numeric_indexing_engine_type_and_dtype):
+        # [FUNCTION DOC]
+        # With an array of 1000 each of ones, twos and threes: the engine reports increasing and not decreasing; for the reversed array the opposite; for an array with a repeat of the lowest value at the end (reversed) neither.
         engine_type, dtype = numeric_indexing_engine_type_and_dtype
         num = 1000
         arr = np.array([1] * num + [2] * num + [3] * num, dtype=dtype)
@@ -102,6 +119,8 @@ class TestNumericEngine:
         assert engine.is_monotonic_decreasing is False
 
     def test_is_unique(self, numeric_indexing_engine_type_and_dtype):
+        # [FUNCTION DOC]
+        # An array of distinct values is unique; an array with a repeated value is not.
         engine_type, dtype = numeric_indexing_engine_type_and_dtype
 
         # unique
@@ -115,6 +134,8 @@ class TestNumericEngine:
         assert engine.is_unique is False
 
     def test_get_loc(self, numeric_indexing_engine_type_and_dtype):
+        # [FUNCTION DOC]
+        # Location lookup returns an integer for a unique array; a slice (1000 to 2000) for a monotonic array with repeated runs; a boolean mask for a non-monotonic array with repeated values.
         engine_type, dtype = numeric_indexing_engine_type_and_dtype
 
         # unique
@@ -137,11 +158,15 @@ class TestNumericEngine:
 
 
 class TestObjectEngine:
+    # [CLASS DOC]
+    # Tests for the object engine. Class attributes define the engine class, object dtype and the values a, b, c.
     engine_type = libindex.ObjectEngine
     dtype = np.object_
     values = list("abc")
 
     def test_is_monotonic(self):
+        # [FUNCTION DOC]
+        # Same monotonic checks as for numeric engines but with strings.
         num = 1000
         arr = np.array(["a"] * num + ["a"] * num + ["c"] * num, dtype=self.dtype)
 
@@ -162,6 +187,8 @@ class TestObjectEngine:
         assert engine.is_monotonic_decreasing is False
 
     def test_is_unique(self):
+        # [FUNCTION DOC]
+        # Distinct strings are unique; a repeated string makes it non-unique.
         # unique
         arr = np.array(self.values, dtype=self.dtype)
         engine = self.engine_type(arr)
@@ -173,6 +200,8 @@ class TestObjectEngine:
         assert engine.is_unique is False
 
     def test_get_loc(self):
+        # [FUNCTION DOC]
+        # Same three location cases as numeric engines (integer, slice, boolean mask) with strings.
         # unique
         arr = np.array(self.values, dtype=self.dtype)
         engine = self.engine_type(arr)

@@ -1,3 +1,6 @@
+# [MODULE DOC]
+# Tests for set operations on the timedelta index: union (with the fast path, unsorted option, frequency inference and several historical bug regressions), intersection (name, frequency, copy and ordering behavior, non-monotonic inputs) and difference (frequency and ordering).
+
 import numpy as np
 import pytest
 
@@ -15,7 +18,11 @@ from pandas.tseries.offsets import Hour
 
 
 class TestTimedeltaIndex:
+    # [CLASS DOC]
+    # Test class for union and intersection.
     def test_union(self):
+        # [FUNCTION DOC]
+        # Union of two overlapping daily ranges equals one longer range; union of an integer index with a timedelta range works in both orders without error.
         i1 = timedelta_range("1day", periods=5)
         i2 = timedelta_range("3day", periods=5)
         result = i1.union(i2)
@@ -28,6 +35,8 @@ class TestTimedeltaIndex:
         i2.union(i1)  # Fails with "AttributeError: can't set attribute"
 
     def test_union_sort_false(self):
+        # [FUNCTION DOC]
+        # Takes two non-overlapping adjacent pieces of a range, with the later piece first. Checks the fast-union path is applicable; default union gives the sorted full range; with sort disabled the result keeps the order of the operands (later piece first).
         tdi = timedelta_range("1day", periods=5)
 
         left = tdi[3:]
@@ -44,6 +53,8 @@ class TestTimedeltaIndex:
         tm.assert_index_equal(result, expected)
 
     def test_union_coverage(self):
+        # [FUNCTION DOC]
+        # Index built from lowercase day-unit strings emits a Pandas 4 deprecation warning. Union of the sorted version (frequency inferred) with the unsorted original equals the sorted one; union of an empty slice with it keeps the frequency.
         # GH#59051
         msg = "'d' is deprecated and will be removed in a future version."
         with tm.assert_produces_warning(Pandas4Warning, match=msg):
@@ -57,6 +68,8 @@ class TestTimedeltaIndex:
         assert result.freq == ordered.freq
 
     def test_union_bug_1730(self):
+        # [FUNCTION DOC]
+        # Union of three-hourly and four-hourly ranges equals the sorted set union.
         rng_a = timedelta_range("1 day", periods=4, freq="3h")
         rng_b = timedelta_range("1 day", periods=4, freq="4h")
 
@@ -65,6 +78,8 @@ class TestTimedeltaIndex:
         tm.assert_index_equal(result, exp)
 
     def test_union_bug_1745(self):
+        # [FUNCTION DOC]
+        # Union of a single element and a three-element index of fractional-second times equals the sorted set union.
         left = TimedeltaIndex(["1 day 15:19:49.695000"])
         right = TimedeltaIndex(
             ["2 day 13:04:21.322000", "1 day 15:27:24.873000", "1 day 15:31:05.350000"]
@@ -75,6 +90,8 @@ class TestTimedeltaIndex:
         tm.assert_index_equal(result, exp)
 
     def test_union_bug_4564(self):
+        # [FUNCTION DOC]
+        # Union of a daily range and the same range offset by 15 minutes equals the sorted set union.
         left = timedelta_range("1 day", "30D")
         right = left + pd.offsets.Minute(15)
 
@@ -83,6 +100,8 @@ class TestTimedeltaIndex:
         tm.assert_index_equal(result, exp)
 
     def test_union_freq_infer(self):
+        # [FUNCTION DOC]
+        # Two indexes without frequency whose union covers a regular daily range give the full range with a daily frequency inferred.
         # When taking the union of two TimedeltaIndexes, we infer
         #  a freq even if the arguments don't have freq.  This matches
         #  DatetimeIndex behavior.
@@ -98,6 +117,8 @@ class TestTimedeltaIndex:
         assert result.freq == "D"
 
     def test_intersection_bug_1708(self):
+        # [FUNCTION DOC]
+        # Intersection of an hourly index with a copy shifted by five hours is empty; shifted by one hour it is the three overlapping elements with hourly frequency.
         index_1 = timedelta_range("1 day", periods=4, freq="h")
         index_2 = index_1 + pd.offsets.Hour(5)
 
@@ -113,6 +134,8 @@ class TestTimedeltaIndex:
         assert result.freq == expected.freq
 
     def test_intersection_equal(self, sort):
+        # [FUNCTION DOC]
+        # Uses the sort fixture. Intersection of two equal ranges equals the second (and its sorted version for sort none); intersecting an index with itself returns a different object that is equal (no shared mutable state).
         # GH 24471 Test intersection outcome given the sort keyword
         # GH#63169 intersection returns a copy to prevent shared mutable state
         first = timedelta_range("1 day", periods=4, freq="h")
@@ -129,6 +152,8 @@ class TestTimedeltaIndex:
 
     @pytest.mark.parametrize("period_1, period_2", [(0, 4), (4, 0)])
     def test_intersection_zero_length(self, period_1, period_2, sort):
+        # [FUNCTION DOC]
+        # Parametrized over (zero, four) periods in either order. The intersection of an empty and a non-empty hourly range is an empty hourly range.
         # GH 24471 test for non overlap the intersection should be zero length
         index_1 = timedelta_range("1 day", periods=period_1, freq="h")
         index_2 = timedelta_range("1 day", periods=period_2, freq="h")
@@ -137,6 +162,8 @@ class TestTimedeltaIndex:
         tm.assert_index_equal(result, expected)
 
     def test_zero_length_input_index(self, sort):
+        # [FUNCTION DOC]
+        # Intersecting an empty index with a non-empty one returns a new object (not either operand) that is a copy of the empty index.
         # GH 24966 test for 0-len intersections are copied
         index_1 = timedelta_range("1 day", periods=0, freq="h")
         index_2 = timedelta_range("1 day", periods=3, freq="h")
@@ -166,6 +193,8 @@ class TestTimedeltaIndex:
         ],
     )
     def test_intersection(self, rng, expected, sort):
+        # [FUNCTION DOC]
+        # Parametrized over other ranges and expected results: same name kept; different name resets to none; no overlap gives an empty hourly microsecond index. Result values, name and frequency are checked (sorted if sort is none).
         # GH 4690 (with tz)
         base = timedelta_range("1 day", periods=4, freq="h", name="idx")
         result = base.intersection(rng, sort=sort)
@@ -198,6 +227,8 @@ class TestTimedeltaIndex:
         ],
     )
     def test_intersection_non_monotonic(self, rng, expected, sort):
+        # [FUNCTION DOC]
+        # Parametrized over non-monotonic other indexes (partial, reordered with duplicate, and reversed). Result values and name match the expected; the frequency is a one-hour offset only when the other is the reverse of the base and sort is none, otherwise none.
         # 24471 non-monotonic
         base = TimedeltaIndex(["1 hour", "2 hour", "4 hour", "3 hour"], name="idx")
         result = base.intersection(rng, sort=sort)
@@ -214,7 +245,11 @@ class TestTimedeltaIndex:
 
 
 class TestTimedeltaIndexDifference:
+    # [CLASS DOC]
+    # Tests for difference.
     def test_difference_freq(self, sort):
+        # [FUNCTION DOC]
+        # Uses the sort fixture. Difference removing an interior block gives non-contiguous values without a frequency; removing a trailing block leaves a contiguous range and the daily frequency is preserved.
         # GH14323: Difference of TimedeltaIndex should not preserve frequency
 
         index = timedelta_range("0 days", "5 days", freq="D")
@@ -234,6 +269,8 @@ class TestTimedeltaIndexDifference:
         tm.assert_attr_equal("freq", idx_diff, expected)
 
     def test_difference_sort(self, sort):
+        # [FUNCTION DOC]
+        # Uses the sort fixture. Differences of an unsorted index with two ranges give the remaining elements (sorted when sort is none), never with a frequency.
         index = TimedeltaIndex(
             ["5 days", "3 days", "2 days", "4 days", "1 days", "0 days"]
         )

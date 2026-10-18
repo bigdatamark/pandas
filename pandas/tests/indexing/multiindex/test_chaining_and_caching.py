@@ -1,3 +1,6 @@
+# [MODULE DOC]
+# Tests for chained assignment detection and index-cache behavior when the object is labelled by a multi-level index: chained in-place fill, setting through a chained expression, caching of indexers when the index exceeds the engine size cutoff, and which cache entries survive renaming levels.
+
 import numpy as np
 
 from pandas._libs import index as libindex
@@ -12,6 +15,8 @@ import pandas._testing as tm
 
 
 def test_detect_chained_assignment():
+    # [FUNCTION DOC]
+    # Builds a frame with two-level columns (part, side) and one missing value. An in-place fill on a chained selection (select first-level then second-level then fill in place) raises the chained-assignment error rather than silently modifying a copy.
     # Inplace ops, originally from:
     # https://stackoverflow.com/questions/20508968/series-fillna-in-a-multiindex-dataframe-does-not-fill-is-this-a-bug
     a = [12, 23]
@@ -33,6 +38,9 @@ def test_detect_chained_assignment():
 
 
 def test_cache_updating():
+    # [FUNCTION DOC]
+    # Builds a random three-column frame with a two-level integer row index. Setting through a chained selection (row label then column then positional item) raises the chained-assignment error; afterwards the targeted cell still equals the value in an untouched copy of the original frame. Then a direct label-based assignment on the tuple key and column works, giving the new value.
+    # KNOWN ISSUE: the source comment above the chained assignment says it "actually works, since everything is a view", but the code asserts the chained-assignment error is raised and that the value is unchanged, so the comment is stale.
     # 5216
     # make sure that we don't try to set a dead cache
     a = np.random.default_rng(2).random((10, 3))
@@ -57,6 +65,8 @@ def test_cache_updating():
 
 
 def test_indexer_caching(monkeypatch):
+    # [FUNCTION DOC]
+    # Patches the engine size cutoff down to 20. A series of zeros on a two-level index of that length: setting values through a boolean condition on the series itself sets all to one; the result equals a series of ones with the same index. Checks nothing breaks with cached indexers on large multi-level indexes.
     # GH5727
     # make sure that indexers are in the _internal_names_set
     size_cutoff = 20
@@ -72,6 +82,8 @@ def test_indexer_caching(monkeypatch):
 
 
 def test_set_names_only_clears_level_cache():
+    # [FUNCTION DOC]
+    # After touching dtypes, monotonicity, engine and levels of a two-level index, the cache holds exactly those four keys. Renaming the levels removes only the levels entry (the others remain); fetching levels again gives range indexes carrying the new names.
     mi = MultiIndex.from_arrays([range(4), range(4)], names=["a", "b"])
     mi.dtypes
     mi.is_monotonic_increasing

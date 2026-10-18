@@ -1,3 +1,6 @@
+# [MODULE DOC]
+# Tests for the delete method of the timedelta index and its effect on the frequency attribute.
+
 from pandas import (
     TimedeltaIndex,
     timedelta_range,
@@ -6,7 +9,11 @@ import pandas._testing as tm
 
 
 class TestTimedeltaIndexDelete:
+    # [CLASS DOC]
+    # Test class for delete.
     def test_delete(self):
+        # [FUNCTION DOC]
+        # On a named daily range of five: deleting either end (by positive or negative position) preserves the frequency; deleting an interior element resets the frequency to none; the name is always preserved. Deleting a position past the end raises an index or value error depending on numpy version.
         idx = timedelta_range(start="1 Days", periods=5, freq="D", name="idx")
 
         # preserve freq
@@ -36,6 +43,8 @@ class TestTimedeltaIndexDelete:
             idx.delete(5)
 
     def test_delete_slice(self):
+        # [FUNCTION DOC]
+        # On a ten-element daily range: deleting a tuple of leading or trailing positions, or a slice of the same extent, preserves the frequency, and deleting interior positions resets it; name preserved in all cases.
         idx = timedelta_range(start="1 days", periods=10, freq="D", name="idx")
 
         # preserve freq
@@ -64,6 +73,8 @@ class TestTimedeltaIndexDelete:
             assert result.freq == expected.freq
 
     def test_delete_doesnt_infer_freq(self):
+        # [FUNCTION DOC]
+        # Deleting the missing element from an index with no frequency does not infer one: the result's frequency stays none.
         # GH#30655 behavior matches DatetimeIndex
 
         tdi = TimedeltaIndex(["1 Day", "2 Days", None, "3 Days", "4 Days"])

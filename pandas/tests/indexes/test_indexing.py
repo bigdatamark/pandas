@@ -15,6 +15,9 @@ The corresponding tests.indexes.[index_type].test_indexing files
 contain tests for the corresponding methods specific to those Index subclasses.
 """
 
+# [MODULE DOC]
+# Generic indexing tests for the base Index API: element selection by position (take), membership, label location, indexer computation with missing values and duplicates, slice conversion, mask-based replacement, and float-scalar getitem. Most tests use the shared index fixture so they run on every index type; subclass-specific indexing tests live in the per-type test packages. Grouped into one class per method family plus a few module-level tests.
+
 import numpy as np
 import pytest
 
@@ -40,7 +43,11 @@ import pandas._testing as tm
 
 
 class TestTake:
+    # [CLASS DOC]
+    # Tests for taking elements by position.
     def test_take_invalid_kwargs(self, index):
+        # [FUNCTION DOC]
+        # Taking with an unknown keyword raises a type error naming it; passing the numpy-style output or mode parameters raises a value error saying they are not supported.
         indices = [1, 2]
 
         msg = r"take\(\) got an unexpected keyword argument 'foo'"
@@ -56,6 +63,8 @@ class TestTake:
             index.take(indices, mode="clip")
 
     def test_take(self, index):
+        # [FUNCTION DOC]
+        # Skips indexes with fewer than five elements. Taking positions four, three, zero, two equals plain list indexing. For non-datetime-like indexes, reading a frequency attribute raises an attribute error.
         indexer = [4, 3, 0, 2]
         if len(index) < 5:
             pytest.skip("Test doesn't make sense since not enough elements")
@@ -71,6 +80,8 @@ class TestTake:
                 index.freq
 
     def test_take_indexer_type(self):
+        # [FUNCTION DOC]
+        # Taking with a scalar instead of an array-like raises a type error saying that indices are expected to be array-like.
         # GH#42875
         integer_index = Index([0, 1, 2, 3])
         scalar_index = 1
@@ -79,6 +90,8 @@ class TestTake:
             integer_index.take(scalar_index)
 
     def test_take_minus1_without_fill(self, index):
+        # [FUNCTION DOC]
+        # Skips empty indexes. Without enabling fill, a position of minus one means the last element.
         # -1 does not get treated as NA unless allow_fill=True is passed
         if len(index) == 0:
             # Test is not applicable
@@ -91,6 +104,8 @@ class TestTake:
 
 
 class TestContains:
+    # [CLASS DOC]
+    # Tests for membership testing.
     @pytest.mark.parametrize(
         "index,val",
         [
@@ -103,6 +118,8 @@ class TestContains:
         ],
     )
     def test_index_contains(self, index, val):
+        # [FUNCTION DOC]
+        # Parametrized over (values, value). The listed values (including infinity or NaN) are found in the index.
         index = Index(index)
         assert val in index
 
@@ -124,21 +141,30 @@ class TestContains:
         ],
     )
     def test_index_not_contains(self, index, val):
+        # [FUNCTION DOC]
+        # Parametrized over (index, value). Strings versus integers, absent numbers, infinity versus NaN, and infinity or NaN in integer-typed indexes (signed and unsigned) are not found and must not overflow.
         assert val not in index
 
     @pytest.mark.parametrize("val", [0, "2"])
     def test_mixed_index_contains(self, val):
+        # [FUNCTION DOC]
+        # Parametrized over zero and the string "2". Both are members of a mixed integer/string index.
         # GH#19860
         index = Index([0, 1, "2"])
         assert val in index
 
     @pytest.mark.parametrize("val", ["1", 2])
     def test_mixed_index_not_contains(self, index, val):
+        # [FUNCTION DOC]
+        # KNOWN ISSUE: requests the shared index fixture but immediately overwrites it with a local mixed index, so the test body is repeated needlessly for every index type.
+        # Parametrized over "1" and 2. Neither is a member of a mixed integer/string index.
         # GH#19860
         index = Index([0, 1, "2"])
         assert val not in index
 
     def test_contains_with_float_index(self, any_real_numpy_dtype):
+        # [FUNCTION DOC]
+        # Uses the real numpy dtype fixture. With float dtypes the index holds 0.1, 1.1, 2.2, 3.3 and contains 1.1 but not 1.0 or 1; for integer dtypes it holds 0 to 3 and contains 1.0 and 1 but not 1.1.
         # GH#22085
         dtype = any_real_numpy_dtype
         data = [0, 1, 2, 3] if not is_float_dtype(dtype) else [0.1, 1.1, 2.2, 3.3]
@@ -154,6 +180,8 @@ class TestContains:
             assert 1 not in index
 
     def test_contains_requires_hashable_raises(self, index):
+        # [FUNCTION DOC]
+        # Returns early for multi-level indexes. Testing membership of an unhashable list raises a type error ("unhashable type"). Testing an empty dictionary against the private engine raises a type error whose message varies by engine type (several accepted patterns, one depending on whether the Python version is at least 3.14).
         if isinstance(index, MultiIndex):
             return  # TODO: do we want this to raise?
 
@@ -181,15 +209,24 @@ class TestContains:
 
 
 class TestGetLoc:
+    # [CLASS DOC]
+    # Tests for single-label location.
     def test_get_loc_non_hashable(self, index):
+        # [FUNCTION DOC]
+        # KNOWN ISSUE: the expected message pattern is a regular-expression character class matching any single one of the characters zero, one, space or comma rather than the literal list text, so it is a very weak message check.
+        # Looking up a list raises the invalid-index error.
         with pytest.raises(InvalidIndexError, match="[0, 1]"):
             index.get_loc([0, 1])
 
     def test_get_loc_non_scalar_hashable(self, index):
+        # [FUNCTION DOC]
+        # Defines a local enumeration whose member is hashable but not a scalar. Looking it up raises a key error mentioning the member for most index types, but for datetime, timedelta, period and interval indexes raises the invalid-index error instead.
         # GH52877
         from enum import Enum
 
         class E(Enum):
+            # [CLASS DOC]
+            # HELPER: local enumeration with a single member, used as a hashable non-scalar key.
             X1 = "x1"
 
         assert not is_scalar(E.X1)
@@ -212,6 +249,8 @@ class TestGetLoc:
             index.get_loc(E.X1)
 
     def test_get_loc_generator(self, index):
+        # [FUNCTION DOC]
+        # Looking up a generator object raises a key error for most indexes, or the invalid-index error for datetime-like, interval and multi-level indexes; the message mentions a generator object.
         exc = KeyError
         if isinstance(
             index,
@@ -230,6 +269,8 @@ class TestGetLoc:
             index.get_loc(x for x in range(5))
 
     def test_get_loc_masked_duplicated_na(self):
+        # [FUNCTION DOC]
+        # In a nullable-integer index with two NA values, looking up NA returns a boolean mask marking both.
         # GH#48411
         idx = Index([1, 2, NA, NA], dtype="Int64")
         result = idx.get_loc(NA)
@@ -238,7 +279,11 @@ class TestGetLoc:
 
 
 class TestGetIndexer:
+    # [CLASS DOC]
+    # Tests for computing integer indexers.
     def test_get_indexer_base(self, index):
+        # [FUNCTION DOC]
+        # For unique indexes, the indexer of an index against itself is the range of positions as platform integers; for non-unique indexes it raises the invalid-index error stating that reindexing is only valid with uniquely valued indexes. An unknown fill method raises a value error.
         if index._index_as_unique:
             expected = np.arange(index.size, dtype=np.intp)
             actual = index.get_indexer(index)
@@ -252,6 +297,8 @@ class TestGetIndexer:
             index.get_indexer(index, method="invalid")
 
     def test_get_indexer_consistency(self, index):
+        # [FUNCTION DOC]
+        # The indexer for the first two elements is a platform-integer array when the index is unique and raises for non-unique indexes; the non-unique variant of the indexer method always returns a platform-integer array as its first result.
         # See GH#16819
 
         if index._index_as_unique:
@@ -268,6 +315,8 @@ class TestGetIndexer:
         assert indexer.dtype == np.intp
 
     def test_get_indexer_masked_duplicated_na(self):
+        # [FUNCTION DOC]
+        # In a nullable-integer index with duplicate NA values, the for-indexer method with targets one and NA returns positions zero, two, three.
         # GH#48411
         idx = Index([1, 2, NA, NA], dtype="Int64")
         result = idx.get_indexer_for(Index([1, NA], dtype="Int64"))
@@ -276,7 +325,11 @@ class TestGetIndexer:
 
 
 class TestConvertSliceIndexer:
+    # [CLASS DOC]
+    # Tests for the private slice converter.
     def test_convert_almost_null_slice(self, index):
+        # [FUNCTION DOC]
+        # With a slice that has no start or stop but a string step: for interval indexes raises a value error (label-based slicing with step other than one unsupported); for other indexes raises a type error about comparing string with integer.
         # slice with None at both ends, but not step
 
         key = slice(None, None, "foo")
@@ -292,7 +345,11 @@ class TestConvertSliceIndexer:
 
 
 class TestPutmask:
+    # [CLASS DOC]
+    # Tests for mask-based replacement.
     def test_putmask_with_wrong_mask(self, index):
+        # [FUNCTION DOC]
+        # Skips empty indexes. A boolean mask that is longer or shorter than the index, or a non-array mask, raises a value error saying mask and data must be the same size.
         # GH#18368
         if not len(index):
             pytest.skip("Test doesn't make sense for empty index")
@@ -312,6 +369,8 @@ class TestPutmask:
 
 @pytest.mark.parametrize("idx", [[1, 2, 3], [0.1, 0.2, 0.3], ["a", "b", "c"]])
 def test_getitem_deprecated_float(idx):
+    # [FUNCTION DOC]
+    # Parametrized over integer, float and string index contents. Indexing with a float scalar raises an index error saying that indexing with a float is no longer supported.
     # https://github.com/pandas-dev/pandas/issues/34191
     idx = Index(idx)
     msg = "Indexing with a float is no longer supported"
@@ -347,6 +406,8 @@ def test_getitem_deprecated_float(idx):
     ],
 )
 def test_get_indexer_non_unique_multiple_nans(idx, target, expected):
+    # [FUNCTION DOC]
+    # Parametrized over (index values, target, expected indexer). The for-indexer method matches all missing values (NaN or NaT) in the index to the target missing value, including combined with other labels.
     # GH 35392
     axis = Index(idx)
     actual = axis.get_indexer_for(target)
@@ -354,6 +415,8 @@ def test_get_indexer_non_unique_multiple_nans(idx, target, expected):
 
 
 def test_get_indexer_non_unique_nans_in_object_dtype_target(nulls_fixture):
+    # [FUNCTION DOC]
+    # Uses the nulls fixture. An object-dtype target holding one and a missing value against a float index of 1.0 and 2.0 yields indexer zero and minus one and a missing-positions array of one.
     idx = Index([1.0, 2.0])
     target = Index([1, nulls_fixture], dtype="object")
 

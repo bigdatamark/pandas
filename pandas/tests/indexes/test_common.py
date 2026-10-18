@@ -4,6 +4,9 @@ any index subclass except for MultiIndex. Makes use of the `index_flat`
 fixture defined in pandas/conftest.py.
 """
 
+# [MODULE DOC]
+# Tests of behavior common to every flat (non multi-level) Index subclass, mostly using the flat-index fixture from the top-level test configuration. Covers frame conversion, level dropping, name handling (hashability, setting, copying), copy and deepcopy, unique and duplicate handling, monotonic searchsorted, astype name preservation, missing-value flags, sorting with missing values and a natural-order sort key, array-compatibility properties, comparison of read-only data, and a deprecation warning for joining with a series. A single class holds the fixture-based tests; module-level tests follow.
+
 from copy import (
     copy,
     deepcopy,
@@ -32,8 +35,12 @@ import pandas._testing as tm
 
 
 class TestCommon:
+    # [CLASS DOC]
+    # Test class for behavior shared by all flat index types.
     @pytest.mark.parametrize("name", [None, "new_name"])
     def test_to_frame(self, name, index_flat):
+        # [FUNCTION DOC]
+        # Parametrized over the name (none or custom). Converting to a frame with one column: the frame's index is the same object as the index, there is exactly one column with the expected name (the index name or zero when unnamed); with index disabled the frame has a different index object.
         # see GH#15230, GH#22580
         idx = index_flat
 
@@ -52,6 +59,8 @@ class TestCommon:
         assert df.index is not idx
 
     def test_droplevel(self, index_flat):
+        # [FUNCTION DOC]
+        # Dropping an empty list of levels returns an equal index. Dropping the only level (by name or name in a list; tuple names skipped for the bare form) raises a value error that at least one level must remain. Using an unknown level label (string or list) raises a key error saying the requested level does not match the index name (none).
         # GH 21115
         # MultiIndex is tested separately in test_multi.py
         index = index_flat
@@ -77,6 +86,8 @@ class TestCommon:
                 index.droplevel(level)
 
     def test_constructor_non_hashable_name(self, index_flat):
+        # [FUNCTION DOC]
+        # Renaming or setting names with an unhashable value (nested list) raises a type error saying the name must be hashable.
         # GH 20527
         index = index_flat
 
@@ -92,6 +103,8 @@ class TestCommon:
             index.set_names(names=renamed)
 
     def test_constructor_unwraps_index(self, index_flat):
+        # [FUNCTION DOC]
+        # Constructing an index of the same class from an index with the same dtype gives an index with equal underlying data.
         a = index_flat
         # Passing dtype is necessary for Index([True, False], dtype=object)
         #  case.
@@ -99,6 +112,8 @@ class TestCommon:
         tm.assert_equal(a._data, b._data)
 
     def test_to_flat_index(self, index_flat):
+        # [FUNCTION DOC]
+        # The flat-index conversion of a flat index returns an equal index.
         # 22866
         index = index_flat
 
@@ -106,6 +121,8 @@ class TestCommon:
         tm.assert_index_equal(result, index)
 
     def test_set_name_methods(self, index_flat):
+        # [FUNCTION DOC]
+        # Setting names with a one-element list returns a new index with that name and leaves the original; in-place rename returns nothing and updates name and names; passing a level to set_names on a flat index raises a value error ("Level must be None"); tuple names are accepted as is.
         # MultiIndex tested separately
         index = index_flat
         new_name = "This is the new name for this index"
@@ -131,11 +148,15 @@ class TestCommon:
 
     @pytest.mark.xfail
     def test_set_names_single_label_no_level(self, index_flat):
+        # [FUNCTION DOC]
+        # Marked expected-to-fail. Intended behavior: setting names to a plain string (not list-like) with no level should raise a type error mentioning list-like even if the length would fit.
         with pytest.raises(TypeError, match="list-like"):
             # should still fail even if it would be the right length
             index_flat.set_names("a")
 
     def test_copy_and_deepcopy(self, index_flat):
+        # [FUNCTION DOC]
+        # Shallow and deep copies from the copy module are new objects equal to the original; copy with deep and a new name returns that name.
         index = index_flat
 
         for func in (copy, deepcopy):
@@ -147,6 +168,8 @@ class TestCommon:
         assert new_copy.name == "banana"
 
     def test_copy_name(self, index_flat):
+        # [FUNCTION DOC]
+        # Building an index of the same class with a name and copy, then again without copy, yields a new object with equal values and the name "mario"; the index equals the first (names differ); arithmetic of two series built on these indexes keeps the name.
         # GH#12309: Check that the "name" argument
         # passed at initialization is honored.
         index = index_flat
@@ -172,6 +195,8 @@ class TestCommon:
         assert s3.index.name == "mario"
 
     def test_copy_name2(self, index_flat):
+        # [FUNCTION DOC]
+        # Copying with a name sets it; a list of two names raises a value error (new names must have length one); an unhashable name raises a type error naming the class.
         # GH#35592
         index = index_flat
 
@@ -185,6 +210,8 @@ class TestCommon:
             index.copy(name=[["mario"]])
 
     def test_unique_level(self, index_flat):
+        # [FUNCTION DOC]
+        # unique with level zero, the index name, or none equals dropping duplicates. Level three raises an index error (too many levels). An unknown level label raises a key error about not matching the index name.
         # don't test a MultiIndex here (as its tested separated)
         index = index_flat
 
@@ -206,6 +233,8 @@ class TestCommon:
             index.unique(level="wrong")
 
     def test_unique(self, index_flat):
+        # [FUNCTION DOC]
+        # Skips empty indexes. An index made by repeating the first element five times has unique equal to a one-element index (exact type except for range indexes). If the index can hold missing values: replace the first element of the repeated values with NaN, build via the private shallow copy, and check the dtype is unchanged and unique yields the two-element NaN-then-value index for both the repeated and the already unique inputs.
         # MultiIndex tested separately
         index = index_flat
         if not len(index):
@@ -250,6 +279,8 @@ class TestCommon:
     @pytest.mark.filterwarnings("ignore:Period with BDay freq:FutureWarning")
     @pytest.mark.filterwarnings(r"ignore:PeriodDtype\[B\] is deprecated:FutureWarning")
     def test_searchsorted_monotonic(self, index_flat, request):
+        # [FUNCTION DOC]
+        # Ignores period business-day warnings. Interval indexes are expected to fail (searching with an interval is unsupported). Skips empty indexes. Computes expected left insertion position zero and expected right position as the first position not equal to the first value (the full length if all equal). For monotonic indexes both the private monotonic search and the public search must match the expected positions on both sides; for non-monotonic indexes the private method raises a value error that the index must be monotonic.
         # GH17271
         index = index_flat
         # not implemented for tuple searches in MultiIndex
@@ -292,6 +323,8 @@ class TestCommon:
 
     @pytest.mark.filterwarnings(r"ignore:PeriodDtype\[B\] is deprecated:FutureWarning")
     def test_drop_duplicates(self, index_flat, keep):
+        # [FUNCTION DOC]
+        # Uses the keep fixture (first, last, false). Skips range and empty indexes. Builds a unique index from the distinct values (with the index dtype for numeric ones), then a duplicated index by random sampling (seeded) of one and a half times its length. duplicated must match the series duplicated result and drop_duplicates must match the series drop_duplicates result. Ignores period warnings.
         # MultiIndex is tested separately
         index = index_flat
         if isinstance(index, RangeIndex):
@@ -328,6 +361,8 @@ class TestCommon:
 
     @pytest.mark.filterwarnings(r"ignore:PeriodDtype\[B\] is deprecated:FutureWarning")
     def test_drop_duplicates_no_duplicates(self, index_flat):
+        # [FUNCTION DOC]
+        # A unique index (a range index is used as is) has no duplicates and drop_duplicates returns an equal but distinct object.
         # MultiIndex is tested separately
         index = index_flat
 
@@ -350,12 +385,16 @@ class TestCommon:
         assert result_dropped is not unique_idx
 
     def test_drop_duplicates_inplace(self, index):
+        # [FUNCTION DOC]
+        # Uses the any index fixture. Passing an in-place argument to drop_duplicates raises a type error about an unexpected keyword argument.
         msg = r"drop_duplicates\(\) got an unexpected keyword argument"
         with pytest.raises(TypeError, match=msg):
             index.drop_duplicates(inplace=True)
 
     @pytest.mark.filterwarnings(r"ignore:PeriodDtype\[B\] is deprecated:FutureWarning")
     def test_has_duplicates(self, index_flat):
+        # [FUNCTION DOC]
+        # Skips empty and range indexes. An index made from five copies of the first element is not unique and reports duplicates.
         # MultiIndex tested separately in:
         #   tests/indexes/multi/test_unique_and_duplicates.
         index = index_flat
@@ -375,6 +414,8 @@ class TestCommon:
         ["int64", "uint64", "float64", "category", "datetime64[ns]", "timedelta64[ns]"],
     )
     def test_astype_preserves_name(self, index, dtype):
+        # [FUNCTION DOC]
+        # Parametrized over target dtypes (int64, uint64, float64, category, datetime64, timedelta64). Names the index (all levels for multi-level) then converts; conversions that cannot be performed (value, type, not-implemented or system errors) end the test silently. A complex-warning is expected when casting complex to numeric real dtypes; extra warnings are checked only for the pyarrow string to category case. On success the result keeps the name(s).
         # https://github.com/pandas-dev/pandas/issues/32013
         if isinstance(index, MultiIndex):
             index.names = ["idx" + str(i) for i in range(index.nlevels)]
@@ -405,6 +446,8 @@ class TestCommon:
             assert result.name == index.name
 
     def test_hasnans_isnans(self, index_flat):
+        # [FUNCTION DOC]
+        # For an index without missing values the NaN mask is all false and the NaN flag false. Then returns early for empty, integer-dtype and bool indexes; otherwise sets the second value to NaN in the values, rebuilds, and checks the mask marks only that position and the flag is true.
         # GH#11343, added tests for hasnans / isnans
         index = index_flat
 
@@ -438,6 +481,8 @@ class TestCommon:
 @pytest.mark.filterwarnings(r"ignore:PeriodDtype\[B\] is deprecated:FutureWarning")
 @pytest.mark.parametrize("na_position", [None, "middle"])
 def test_sort_values_invalid_na_position(index_with_missing, na_position):
+    # [FUNCTION DOC]
+    # Parametrized over invalid na_position values (none, "middle"). Sorting an index with missing values raises a value error saying the na_position is invalid.
     with pytest.raises(ValueError, match=f"invalid na_position: {na_position}"):
         index_with_missing.sort_values(na_position=na_position)
 
@@ -445,6 +490,8 @@ def test_sort_values_invalid_na_position(index_with_missing, na_position):
 @pytest.mark.filterwarnings(r"ignore:PeriodDtype\[B\] is deprecated:FutureWarning")
 @pytest.mark.parametrize("na_position", ["first", "last"])
 def test_sort_values_with_missing(index_with_missing, na_position, request):
+    # [FUNCTION DOC]
+    # Parametrized over na_position (first or last). Categorical is allowed to fail non-strictly. Computes the expected result by sorting the non-missing values and placing the missing count of missing markers at the chosen end, constructing it with the same class and dtype, and compares with the result of sort_values.
     # GH 35584. Test that sort_values works with missing values,
     # sort non-missing and place missing according to na_position
 
@@ -471,8 +518,12 @@ def test_sort_values_with_missing(index_with_missing, na_position, request):
 
 
 def test_sort_values_natsort_key():
+    # [FUNCTION DOC]
+    # Sorting an index of dotted version strings with a key function that converts each string to a tuple of integers yields natural numeric ordering (1.9, 1.10, 1.11, 2.0).
     # GH#56081
     def split_convert(s):
+        # [FUNCTION DOC]
+        # HELPER: converts a dotted version string to a tuple of integers for use by the sort key in the enclosing test.
         return tuple(int(x) for x in s.split("."))
 
     idx = pd.Index(["1.9", "2.0", "1.11", "1.10"])
@@ -482,6 +533,8 @@ def test_sort_values_natsort_key():
 
 
 def test_ndarray_compat_properties(index):
+    # [FUNCTION DOC]
+    # Skips period indexes on 32-bit platforms. Transposed index equals the original; shape, number of dimensions and size match the values array; the byte count matches the values array except for range and multi-level indexes (not array-backed). Accessing the byte counts must not raise.
     if isinstance(index, PeriodIndex) and not IS64:
         pytest.skip("Overflow")
     idx = index
@@ -504,6 +557,8 @@ def test_ndarray_compat_properties(index):
 
 
 def test_compare_read_only_array():
+    # [FUNCTION DOC]
+    # An index built from a read-only empty object array can be compared with a number and gives a boolean-dtype result (no write to the read-only buffer).
     # GH#57130
     arr = np.array([], dtype=object)
     arr.flags.writeable = False
@@ -513,6 +568,8 @@ def test_compare_read_only_array():
 
 
 def test_to_frame_column_rangeindex():
+    # [FUNCTION DOC]
+    # Converting a one-element integer index to a frame gives columns that are a range index (exact type).
     idx = pd.Index([1])
     result = idx.to_frame().columns
     expected = RangeIndex(1)
@@ -520,6 +577,8 @@ def test_to_frame_column_rangeindex():
 
 
 def test_to_frame_name_tuple_multiindex():
+    # [FUNCTION DOC]
+    # Converting with a tuple as name produces a frame whose columns are a two-level multi-level index built from the tuple parts.
     idx = pd.Index([1])
     result = idx.to_frame(name=(1, 2))
     expected = pd.DataFrame([1], columns=MultiIndex.from_arrays([[1], [2]]), index=idx)
@@ -527,6 +586,8 @@ def test_to_frame_name_tuple_multiindex():
 
 
 def test_join_series_deprecated():
+    # [FUNCTION DOC]
+    # Joining an index with a series (instead of an index) emits the Pandas 4 deprecation warning ("Passing ... to ... is deprecated").
     # GH#62897
     idx = pd.Index([1, 2])
     ser = pd.Series([1, 2, 2])

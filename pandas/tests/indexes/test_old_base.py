@@ -1,3 +1,6 @@
+# [MODULE DOC]
+# Legacy base tests for Index behavior that were historically shared by many index subclasses: construction errors, name inheritance, numeric operator rejection, logical reductions, representation, copy semantics, memory usage, argsort, repeat, where, insert, delete, equality, missing-value methods, joins, mapping, casting to categorical, uniqueness, caching behavior, groupby, append, and inversion. Two classes: one with a fixture spanning range, float, unsigned, signed integer, string, mixed, period, timedelta, datetime and interval indexes, and one restricted to numeric indexes. Also uses the shared index fixture for tests that should run on every index type.
+
 from __future__ import annotations
 
 from datetime import datetime
@@ -38,6 +41,8 @@ from pandas.core.arrays import BaseMaskedArray
 
 
 class TestBase:
+    # [CLASS DOC]
+    # General legacy tests for many index types; provides a parametrized fixture.
     @pytest.fixture(
         params=[
             RangeIndex(start=0, stop=20, step=2),
@@ -71,9 +76,13 @@ class TestBase:
         ]
     )
     def simple_index(self, request):
+        # [FUNCTION DOC]
+        # HELPER: fixture parametrized over a range index, float64/float32/uint64 and signed integer indexes (64 to 8 bit), a string index, a mixed integer/string index, a daily period range, a timedelta index and a datetime index (each with daily frequency), and an interval index with right-closed breaks from zero to ten.
         return request.param
 
     def test_pickle_compat_construction(self, simple_index):
+        # [FUNCTION DOC]
+        # Skips range indexes. Constructing the index class with no data argument raises a type error whose message is one of several variants (collection required, missing positional data argument, not iterable).
         # need an object to create with
         if isinstance(simple_index, RangeIndex):
             pytest.skip("RangeIndex() is a valid constructor")
@@ -94,6 +103,8 @@ class TestBase:
             type(simple_index)()
 
     def test_shift(self, simple_index):
+        # [FUNCTION DOC]
+        # Skips datetime, timedelta and period indexes. Shifting any other index (with one or two arguments) raises a not-implemented error saying the method is only implemented for datetime, period and timedelta indexes and naming the received type.
         # GH8083 test the base class for shift
         if isinstance(simple_index, (DatetimeIndex, TimedeltaIndex, PeriodIndex)):
             pytest.skip("Tested in test_ops/test_arithmetic")
@@ -108,6 +119,8 @@ class TestBase:
             idx.shift(1, 2)
 
     def test_constructor_name_unhashable(self, simple_index):
+        # [FUNCTION DOC]
+        # Constructing the same class from an index with an unhashable name (empty list) raises a type error saying the index name must be hashable.
         # GH#29069 check that name is hashable
         # See also same-named test in tests.series.test_constructors
         idx = simple_index
@@ -115,6 +128,8 @@ class TestBase:
             type(idx)(idx, name=[])
 
     def test_create_index_existing_name(self, simple_index):
+        # [FUNCTION DOC]
+        # An index built from another inherits its name; an explicit name overrides it. For multi-level indexes (names set to foo and bar), the result is checked against an index of tuples with those names, or with explicit new names.
         # GH11193, when an existing index is passed, and a new name is not
         # specified, the new index should inherit the previous object name
         expected = simple_index.copy()
@@ -167,6 +182,8 @@ class TestBase:
             )
 
     def test_numeric_compat(self, simple_index):
+        # [FUNCTION DOC]
+        # Asserts the index is not multi-level; skips the plain base class, numeric dtypes and timedelta indexes. For remaining types (period, datetime, interval, string-like), multiplication, true division and floor division by an integer, on either side, each raise a type error whose message names unsupported operand types or "cannot perform" the operation with this index type.
         idx = simple_index
         # Check that this doesn't cover MultiIndex case, if/when it does,
         #  we can remove multi.test_compat.test_numeric_compat
@@ -214,6 +231,8 @@ class TestBase:
             1 // idx
 
     def test_logical_compat(self, simple_index):
+        # [FUNCTION DOC]
+        # Skips object and string dtypes. For integer, unsigned, float, complex, bool and timedelta dtype kinds all and any equal the same reductions on the values and on the series. Other dtypes raise a type error saying the dtype does not support the operation.
         if simple_index.dtype in (object, "string"):
             pytest.skip("Tested elsewhere.")
         idx = simple_index
@@ -230,12 +249,16 @@ class TestBase:
                 idx.any()
 
     def test_repr_roundtrip(self, simple_index):
+        # [FUNCTION DOC]
+        # Skips interval indexes (no valid repr). Evaluating the text representation gives an equal index.
         if isinstance(simple_index, IntervalIndex):
             pytest.skip(f"Not a valid repr for {type(simple_index).__name__}")
         idx = simple_index
         tm.assert_index_equal(eval(repr(idx)), idx)
 
     def test_repr_max_seq_item_setting(self, simple_index):
+        # [FUNCTION DOC]
+        # Skips interval indexes. With the display option for maximum sequence items unset, the text of a fifty-fold repeated index contains no ellipsis.
         # GH10182
         if isinstance(simple_index, IntervalIndex):
             pytest.skip(f"Not a valid repr for {type(simple_index).__name__}")
@@ -247,6 +270,8 @@ class TestBase:
 
     @pytest.mark.filterwarnings(r"ignore:PeriodDtype\[B\] is deprecated:FutureWarning")
     def test_ensure_copied_data(self, index):
+        # [FUNCTION DOC]
+        # Uses the shared index fixture; ignores a period deprecation warning. Skips range, multi-level, categorical. Checks the copy argument of each constructor: building from the values with copy true equals the original (after adjusting timezone and removing frequency for datetime-like). Then: period indexes built from ordinals share memory with the original; interval indexes pass; extension-array-backed base indexes built without copy share memory (masked array data and mask, python-storage string ndarray, or Arrow-backed memory sharing) and raise not-implemented for other extension dtypes; everything else shares the values array when copy is false.
         # Check the "copy" argument of each Index.__new__ is honoured
         # GH12309
         init_kwargs = {}
@@ -309,6 +334,8 @@ class TestBase:
             tm.assert_numpy_array_equal(index.values, result.values, check_same="same")
 
     def test_memory_usage(self, index):
+        # [FUNCTION DOC]
+        # Uses the shared index fixture. After clearing the engine mapping, an empty index reports zero memory. Otherwise after a location lookup (which builds the engine) the memory use grows, except for range, interval and extension-array indexes which have no hash table. For object-inferred indexes the deep measurement exceeds the shallow one.
         index._engine.clear_mapping()
         result = index.memory_usage()
         if index.empty:
@@ -333,6 +360,8 @@ class TestBase:
             assert result3 > result2
 
     def test_memory_usage_doesnt_trigger_engine(self, index):
+        # [FUNCTION DOC]
+        # Clearing the cache and requesting memory usage must not create the engine; after explicitly creating the engine the reported usage is unchanged; usage is zero for empty indexes and positive otherwise.
         index._cache.clear()
         assert "_engine" not in index._cache
 
@@ -357,6 +386,8 @@ class TestBase:
             assert res_with_engine > 0
 
     def test_argsort(self, index):
+        # [FUNCTION DOC]
+        # Skips categorical indexes. The index sort order equals numpy's argsort of the array form (dtype of the result not compared).
         if isinstance(index, CategoricalIndex):
             pytest.skip(f"{type(self).__name__} separately tested")
 
@@ -365,6 +396,8 @@ class TestBase:
         tm.assert_numpy_array_equal(result, expected, check_dtype=False)
 
     def test_numpy_argsort(self, index):
+        # [FUNCTION DOC]
+        # The numpy function applied to an index equals the index method, including with the merge-sort kind. For categorical and range indexes only, the axis and order parameters raise value errors saying they are not supported.
         result = np.argsort(index)
         expected = index.argsort()
         tm.assert_numpy_array_equal(result, expected)
@@ -390,6 +423,8 @@ class TestBase:
                 np.argsort(index, order=("a", "b"))
 
     def test_repeat(self, simple_index):
+        # [FUNCTION DOC]
+        # Repeating each element twice gives an index built from repeating the values, with name preserved; repeating by an array of counts (zero up to length minus one) likewise.
         rep = 2
         idx = simple_index.copy()
         new_index_cls = idx._constructor
@@ -402,6 +437,8 @@ class TestBase:
         tm.assert_index_equal(idx.repeat(rep), expected)
 
     def test_numpy_repeat(self, simple_index):
+        # [FUNCTION DOC]
+        # The numpy repeat function equals the method; passing an axis raises a value error that the parameter is not supported.
         rep = 2
         idx = simple_index
         expected = idx.repeat(rep)
@@ -412,6 +449,8 @@ class TestBase:
             np.repeat(idx, rep, axis=0)
 
     def test_where(self, listlike_box, simple_index):
+        # [FUNCTION DOC]
+        # Uses the listlike_box fixture. Skips interval, period and numeric indexes. Datetime-like indexes first have the frequency cleared (where does not preserve it). A condition that is all true returns the same index; a condition with the first element false replaces it with the index's missing-value marker, keeping dtype.
         if isinstance(simple_index, (IntervalIndex, PeriodIndex)) or is_numeric_dtype(
             simple_index.dtype
         ):
@@ -434,6 +473,8 @@ class TestBase:
         tm.assert_index_equal(result, expected)
 
     def test_insert_base(self, index):
+        # [FUNCTION DOC]
+        # Skips empty indexes. Inserting the first element at the start of the slice between positions one and four gives the first four elements.
         # GH#51363
         trimmed = index[1:4]
 
@@ -444,6 +485,8 @@ class TestBase:
         assert index[0:4].equals(result)
 
     def test_insert_out_of_bounds(self, index, using_infer_string):
+        # [FUNCTION DOC]
+        # Uses the shared index fixture and infer-string flag. Inserting at a non-integer position (0.5) raises a type error for non-empty indexes (message about slice indices, differing by Python version and string inference) or an index error for empty ones (message about index out of bounds with size 0); with string inference some dtypes use the "loc must be an integer between" message. Inserting at positions one past the end or one before the beginning raises an index error.
         # TypeError/IndexError matches what np.insert raises in these cases
 
         if len(index) > 0:
@@ -481,6 +524,8 @@ class TestBase:
             index.insert(-len(index) - 1, 1)
 
     def test_delete_base(self, index):
+        # [FUNCTION DOC]
+        # Skips empty and range indexes. Deleting position zero and minus one gives the expected slices and preserves the name; deleting the position equal to the length raises an index error stating it is out of bounds.
         if not len(index):
             pytest.skip("Not applicable for empty index")
 
@@ -505,6 +550,8 @@ class TestBase:
 
     @pytest.mark.filterwarnings(r"ignore:PeriodDtype\[B\] is deprecated:FutureWarning")
     def test_equals(self, index):
+        # [FUNCTION DOC]
+        # Skips interval indexes. An index equals itself and a copy, and its object-cast version (not for extension-backed base indexes); does not equal a list, numpy array or series of the same values; the object-dtype version built from it equals it in both directions (except range and extension-backed).
         if isinstance(index, IntervalIndex):
             pytest.skip(f"{type(index).__name__} tested elsewhere")
 
@@ -530,6 +577,8 @@ class TestBase:
             assert not index.equals(Series(index))
 
     def test_equals_op(self, simple_index):
+        # [FUNCTION DOC]
+        # Compares an index with indexes, arrays and series of different lengths: length mismatch raises a value error ("Lengths must match" or broadcast failure), equal-length comparisons produce boolean arrays or series; length-one operands raise; series with differing labels raise "Can only compare identically-labeled Series objects"; and (excluding multi-level) comparison with a scalar (the second-to-last item, assumed unique) broadcasts.
         # GH9947, GH10637
         index_a = simple_index
 
@@ -592,6 +641,8 @@ class TestBase:
             tm.assert_series_equal(series_a == item, Series(expected3))
 
     def test_fillna(self, index):
+        # [FUNCTION DOC]
+        # Uses the shared index fixture. Skips empty, boolean and integer-dtype indexes. Multi-level indexes raise a not-implemented error. Others: filling with a scalar returns an equal but distinct index; a list-like value raises a type error ("value must be a scalar"); and after setting the second value to NaN in the values, rebuilding gives an index whose NaN mask marks only that position and reports NaNs present.
         # GH 11343
         if len(index) == 0:
             pytest.skip("Not relevant for empty index")
@@ -627,6 +678,8 @@ class TestBase:
             assert idx.hasnans is True
 
     def test_nulls(self, index):
+        # [FUNCTION DOC]
+        # Smoke test of missing-value methods on the shared index fixture. Empty index gives an empty boolean array; multi-level raises a not-implemented error; indexes without NaNs give all-false is-missing and all-true not-missing; others agree with the module-level missing-value function and its negation.
         # this is really a smoke test for the methods
         # as these are adequately tested for function elsewhere
         if len(index) == 0:
@@ -645,12 +698,16 @@ class TestBase:
             tm.assert_numpy_array_equal(index.notna(), ~result)
 
     def test_empty(self, simple_index):
+        # [FUNCTION DOC]
+        # The empty flag is false for the fixture and true for a zero-length slice.
         # GH 15270
         idx = simple_index
         assert not idx.empty
         assert idx[:0].empty
 
     def test_join_self_unique(self, join_type, simple_index):
+        # [FUNCTION DOC]
+        # For unique indexes, joining with itself under each join type (join_type fixture) returns the index (sorted with the safe sort helper for outer joins).
         idx = simple_index
         if idx.is_unique:
             joined = idx.join(idx, how=join_type)
@@ -660,6 +717,8 @@ class TestBase:
             tm.assert_index_equal(joined, expected)
 
     def test_map(self, simple_index):
+        # [FUNCTION DOC]
+        # Skips timedelta and period indexes. Mapping with the identity function returns an equivalent index (range indexes may be equivalent to int64).
         # callable
         if isinstance(simple_index, (TimedeltaIndex, PeriodIndex)):
             pytest.skip("Tested elsewhere.")
@@ -678,6 +737,8 @@ class TestBase:
     )
     @pytest.mark.filterwarnings(r"ignore:PeriodDtype\[B\] is deprecated:FutureWarning")
     def test_map_dictlike(self, mapper, simple_index, request):
+        # [FUNCTION DOC]
+        # Parametrized over dictionary and series mappers. Ignores a period deprecation warning. Skips datetime-like indexes. Mapping through an identity mapper returns an equivalent index; mapping through a mapper from an index-sized all-NaN expectation gives an all-NaN index (float dtype for float indexes).
         idx = simple_index
         if isinstance(idx, (DatetimeIndex, TimedeltaIndex, PeriodIndex)):
             pytest.skip("Tested elsewhere.")
@@ -698,6 +759,8 @@ class TestBase:
         tm.assert_index_equal(result, expected)
 
     def test_map_str(self, simple_index):
+        # [FUNCTION DOC]
+        # Skips categorical. Mapping with the string conversion function gives an index of the string forms.
         # GH 31202
         if isinstance(simple_index, CategoricalIndex):
             pytest.skip("See test_map.py")
@@ -710,6 +773,8 @@ class TestBase:
     @pytest.mark.parametrize("name", [None, "foo"])
     @pytest.mark.parametrize("ordered", [True, False])
     def test_astype_category(self, copy, name, ordered, simple_index):
+        # [FUNCTION DOC]
+        # Parametrized over copy, name (none or foo), ordered. Casting to a default categorical dtype equals a categorical index (exact). Casting to categories that omit the last unique value emits the Pandas 4 warning about constructing a categorical with a dtype and values containing other values, and equals the categorical index constructed the same way. For unordered only, casting to the string category also equals the default categorical index.
         # GH 18630
         idx = simple_index
         if name:
@@ -737,6 +802,8 @@ class TestBase:
             tm.assert_index_equal(result, expected, exact=True)
 
     def test_is_unique(self, simple_index):
+        # [FUNCTION DOC]
+        # Drops duplicates to get a unique index (unique); an empty slice is unique; inserting a duplicate of the first element makes it non-unique; inserting one NaN keeps it unique; inserting a second NaN makes it non-unique.
         # initialize a unique index
         index = simple_index.drop_duplicates()
         assert index.is_unique is True
@@ -759,6 +826,8 @@ class TestBase:
 
     @pytest.mark.arm_slow
     def test_engine_reference_cycle(self, simple_index):
+        # [FUNCTION DOC]
+        # Marked slow on ARM. Accessing the engine of a copied index and then deleting the index lets the index be garbage collected (the weak reference is cleared), proving there is no reference cycle through the engine.
         # GH27585
         index = simple_index.copy()
         ref = weakref.ref(index)
@@ -767,6 +836,8 @@ class TestBase:
         assert ref() is None
 
     def test_getitem_2d_deprecated(self, simple_index):
+        # [FUNCTION DOC]
+        # Skips interval indexes. Indexing with a slice and a new axis raises a value or index error about multi-dimensional indexing; indexing with a boolean scalar (true or false) raises the same, except for range indexes which raise an index error that only integers and slices are allowed.
         # GH#30588, GH#31479
         if isinstance(simple_index, IntervalIndex):
             pytest.skip("Tested elsewhere")
@@ -789,6 +860,8 @@ class TestBase:
                 idx[False]
 
     def test_copy_shares_cache(self, simple_index):
+        # [FUNCTION DOC]
+        # After a location lookup populates the cache, a copy has the very same cache dictionary object.
         # GH32898, GH36840
         idx = simple_index
         idx.get_loc(idx[0])  # populates the _cache.
@@ -797,6 +870,8 @@ class TestBase:
         assert copy._cache is idx._cache
 
     def test_shallow_copy_shares_cache(self, simple_index):
+        # [FUNCTION DOC]
+        # After populating the cache, the private view shares the cache dictionary; the private shallow copy built from the data gets a new empty cache.
         # GH32669, GH36840
         idx = simple_index
         idx.get_loc(idx[0])  # populates the _cache.
@@ -809,6 +884,8 @@ class TestBase:
         assert shallow_copy._cache == {}
 
     def test_index_groupby(self, simple_index):
+        # [FUNCTION DOC]
+        # Grouping the first five elements by a float array containing NaN gives a dictionary keyed by the float keys with member indexes (NaN group omitted); grouping by datetime64 values (with a missing value) gives timestamp keys.
         idx = simple_index[:5]
         to_groupby = np.array([1, 2, np.nan, 2, 1])
         tm.assert_dict_equal(
@@ -831,6 +908,8 @@ class TestBase:
         tm.assert_dict_equal(idx.groupby(to_groupby), expected)
 
     def test_append_preserves_dtype(self, simple_index):
+        # [FUNCTION DOC]
+        # Appending an index to itself keeps its dtype (including float32); both halves equal the original with exact value comparison, and the whole equals taking positions twice.
         # In particular Index with dtype float32
         index = simple_index
         N = len(index)
@@ -845,6 +924,8 @@ class TestBase:
         tm.assert_index_equal(result, alt, check_exact=True)
 
     def test_inv(self, simple_index, using_infer_string):
+        # [FUNCTION DOC]
+        # Uses the infer-string flag fixture (unused). For integer kinds bitwise inversion gives an index of inverted values (matches the series result); otherwise raises a type error (ufunc message for floats, "bad operand" or string-dtype message otherwise), also for series.
         idx = simple_index
 
         if idx.dtype.kind in ["i", "u"]:
@@ -869,6 +950,8 @@ class TestBase:
 
 
 class TestNumericBase:
+    # [CLASS DOC]
+    # Legacy tests for numeric indexes only; provides a fixture over the numeric subset (range, float64, float32, uint64, signed integers).
     @pytest.fixture(
         params=[
             RangeIndex(start=0, stop=20, step=2),
@@ -882,9 +965,13 @@ class TestNumericBase:
         ]
     )
     def simple_index(self, request):
+        # [FUNCTION DOC]
+        # HELPER: fixture parametrized over a range index, float64 and float32 indexes, a uint64 index and int64/32/16/8 indexes.
         return request.param
 
     def test_constructor_unwraps_index(self, simple_index):
+        # [FUNCTION DOC]
+        # Skips range indexes. Constructing the same class from an index of the same dtype gives an index whose internal array equals the values.
         if isinstance(simple_index, RangeIndex):
             pytest.skip("Tested elsewhere.")
         index_cls = type(simple_index)
@@ -896,11 +983,15 @@ class TestNumericBase:
         tm.assert_numpy_array_equal(result._data, expected)
 
     def test_can_hold_identifiers(self, simple_index):
+        # [FUNCTION DOC]
+        # The private identifier check is false for numeric indexes.
         idx = simple_index
         key = idx[0]
         assert idx._can_hold_identifiers_and_holds_name(key) is False
 
     def test_view(self, simple_index):
+        # [FUNCTION DOC]
+        # Skips range indexes. An empty named index: default view keeps name; view with its own dtype equals a reconstructed index (exact); viewing as the index class raises a type error about changing data type.
         if isinstance(simple_index, RangeIndex):
             pytest.skip("Tested elsewhere.")
         index_cls = type(simple_index)
@@ -922,6 +1013,8 @@ class TestNumericBase:
             idx.view(index_cls)
 
     def test_insert_non_na(self, simple_index):
+        # [FUNCTION DOC]
+        # Inserting an element the index can already hold keeps dtype and type (exact).
         # GH#43921 inserting an element that we know we can hold should
         #  not change dtype or type (except for RangeIndex)
         index = simple_index
@@ -932,6 +1025,8 @@ class TestNumericBase:
         tm.assert_index_equal(result, expected, exact=True)
 
     def test_insert_na(self, nulls_fixture, simple_index):
+        # [FUNCTION DOC]
+        # Uses the nulls fixture. Inserting a missing value at position one: NaT yields an object index; other nulls yield an index with NaN (float dtype preserved for float indexes). Exact comparison.
         # GH 18295 (test missing)
         index = simple_index
         na_val = nulls_fixture
@@ -948,6 +1043,8 @@ class TestNumericBase:
         tm.assert_index_equal(result, expected, exact=True)
 
     def test_arithmetic_explicit_conversions(self, simple_index):
+        # [FUNCTION DOC]
+        # Multiplying an integer index of five elements by a float scalar (either order) gives a float64 index; subtracting a float zero array from it and from a zero array gives the expected positive and negated float64 indexes.
         # GH 8608
         # add/sub are overridden explicitly for Float/Int Index
         index_cls = type(simple_index)
@@ -977,11 +1074,15 @@ class TestNumericBase:
 
     @pytest.mark.parametrize("complex_dtype", [np.complex64, np.complex128])
     def test_astype_to_complex(self, complex_dtype, simple_index):
+        # [FUNCTION DOC]
+        # Parametrized over complex64 and complex128. Casting returns a plain Index with that complex dtype.
         result = simple_index.astype(complex_dtype)
 
         assert type(result) is Index and result.dtype == complex_dtype
 
     def test_cast_string(self, simple_index):
+        # [FUNCTION DOC]
+        # Skips range indexes. Constructing from numeric strings with the index's dtype equals constructing from the numbers.
         if isinstance(simple_index, RangeIndex):
             pytest.skip("casting of strings not relevant for RangeIndex")
         result = type(simple_index)(["0", "1", "2"], dtype=simple_index.dtype)
