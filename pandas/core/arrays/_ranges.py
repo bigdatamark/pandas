@@ -3,6 +3,13 @@ Helper functions to generate range-like data for DatetimeArray
 (and possibly TimedeltaArray/PeriodArray)
 """
 
+# [MODULE DOC]
+# Internal module that builds regularly spaced integer ranges (in a given time
+# unit) for datetime-like arrays, with protection against integer overflow.
+# Public-ish content: one function generating the range. The other functions
+# are private overflow-safe endpoint calculators used by it.
+# Used by the datetime-like array range constructors. Relies on the construction
+# module to turn a range object into a numpy array. No import-time side effects.
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
@@ -35,6 +42,26 @@ def generate_regular_range(
     freq: BaseOffset,
     unit: TimeUnit = "ns",
 ) -> npt.NDArray[np.intp]:
+    # [FUNCTION DOC]
+    # Builds the integer values (in the requested unit) of a regular range.
+    # Parameters: start and end are optional timestamps or timedeltas giving
+    # the first and last points; periods is the optional number of points; freq
+    # is a fixed-frequency offset giving the spacing; unit is the resolution of
+    # the output integers, default nanoseconds.
+    # Returns an integer numpy array of the range values in the given unit.
+    # The step is a day-length timedelta for a Day offset, otherwise the offset
+    # converted to a timedelta (accessing its nanosecond size raises for
+    # non-fixed frequencies). The step is converted to the unit without allowing
+    # rounding.
+    # Cases: with start, end and no periods the range runs from start up to and
+    # including the last step not past end; with start and periods the end is
+    # computed with overflow checking; with end and periods the start is
+    # computed backwards with overflow checking; otherwise it raises.
+    # Raises a value error if the step cannot be represented exactly in the unit,
+    # or if neither start nor end is given together with periods. The overflow
+    # helpers may raise an out-of-bounds datetime error.
+    # KNOWN ISSUE: the docstring says freq is a Tick, but a Day offset is also
+    # handled explicitly and any fixed-frequency offset is accepted.
     """
     Generate a range of dates or timestamps with the spans between dates
     described by the given `freq` DateOffset.
@@ -99,6 +126,20 @@ def generate_regular_range(
 def _generate_range_overflow_safe(
     endpoint: int, periods: int, stride: int, side: str = "start"
 ) -> int:
+    # [FUNCTION DOC]
+    # HELPER: overflow-safe endpoint calculation for the range generator.
+    # Computes the endpoint that lies the given number of strides away from the
+    # known endpoint, going forward when side is start and backward when side is
+    # end. Parameters: endpoint, periods and stride are integers (stride in the
+    # range's unit); side must be start or end (asserted).
+    # Returns the other endpoint as an integer. Raises an out-of-bounds datetime
+    # error when the result cannot be represented in 64 bits.
+    # Strategy: if the product of periods and absolute stride fits in the
+    # unsigned 64-bit bound, delegate to the signed variant. If overflow is
+    # certain, raise. If the end endpoint only exceeded the bound because a
+    # stride was added by the caller, retry with one fewer period from the
+    # adjusted endpoint. Otherwise split the periods in half and recurse twice.
+    # GH#14187 raise instead of incorrectly wrapping around
     """
     Calculate the second endpoint for passing to np.arange, checking
     to avoid an integer overflow.  Catch OverflowError and re-raise
@@ -123,7 +164,6 @@ def _generate_range_overflow_safe(
     ------
     OutOfBoundsDatetime
     """
-    # GH#14187 raise instead of incorrectly wrapping around
     assert side in ["start", "end"]
 
     i64max = np.uint64(i8max)
@@ -166,6 +206,15 @@ def _generate_range_overflow_safe(
 def _generate_range_overflow_safe_signed(
     endpoint: int, periods: int, stride: int, side: str
 ) -> int:
+    # [FUNCTION DOC]
+    # HELPER: signed-arithmetic case of the overflow-safe endpoint calculation.
+    # Parameters: endpoint, periods, stride as integers; side is start or end
+    # (asserted); for end the stride is negated.
+    # Returns the endpoint moved by periods strides as a plain integer. If the
+    # plain sum overflows or equals the missing-timestamp sentinel, it falls
+    # back to unsigned arithmetic for the special case of a positive stride
+    # that exceeds the signed bound only slightly. Otherwise raises an
+    # out-of-bounds datetime error.
     """
     A special case for _generate_range_overflow_safe where `periods * stride`
     can be calculated without overflowing int64 bounds.

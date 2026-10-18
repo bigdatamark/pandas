@@ -7,6 +7,22 @@ An interface for extending pandas with custom arrays.
    without warning.
 """
 
+# [MODULE DOC]
+# Defines the public extension array interface that third parties subclass to add
+# custom array types, and the helper mixins used to implement operators.
+# Public contents: the abstract extension array base class (with default
+# implementations of most methods built on a few required ones), a subclass that
+# declares any/all support for typing, a mixin that attaches operator methods to a
+# class by name, and a public mixin that implements operators by applying them to
+# scalar elements. It also holds a module-level dictionary of shared docstring
+# templates (currently one entry, for repeat).
+# Relationships: concrete arrays elsewhere in the arrays package (masked, datetime-like,
+# categorical, arrow, string, etc.) inherit from the base class; the dtype counterpart
+# lives in the core dtypes package. The groupby hook imports the groupby and string
+# modules lazily to avoid import cycles.
+# Import-time side effects: none beyond creating the shared-docs dictionary and class
+# definitions (the public classes are re-labelled as belonging to the extensions
+# namespace).
 from __future__ import annotations
 
 import operator
@@ -113,6 +129,26 @@ _extension_array_shared_docs: dict[str, str] = {}
 
 @set_module("pandas.api.extensions")
 class ExtensionArray:
+    # [CLASS DOC]
+    # Abstract base class for custom one-dimensional array types that pandas treats as
+    # first-class arrays (public in the extensions API namespace). It deliberately does
+    # not use an abstract-base metaclass for speed; required members raise an abstract-
+    # method error instead, and there is no virtual-subclass registration. Class state:
+    # a type tag identifying extension arrays to the generic-type checks (must not be
+    # overridden), a priority value that orders it after index, series and dataframe in
+    # binary operations, and a read-only flag (default false) that mutating methods
+    # consult. Instances are unhashable by default. Required interface (subclass must
+    # implement): the sequence constructors, the factorized reconstruction hook, item
+    # access, length, equality, dtype, byte size, missing-value detection, take, copy
+    # and concatenation (the interpolate method raises not-implemented by default).
+    # Everything else has a generic default implementation, mostly built from the
+    # required methods by converting to object dtype (slow; subclasses are encouraged to
+    # override fill, pad, dropna, unique, factorize, argsort/argmin/argmax, searchsorted
+    # and map). Optional hooks: accumulate, reduce, string-sequence construction,
+    # hashing, formatting, explode and the groupby operation hook. Items are limited to
+    # one dimension, so shape, size, transpose and ravel are trivial. If the subclass
+    # implements the numpy ufunc hook it must return the not-implemented sentinel when
+    # any series is among the inputs and define a tuple of handled types.
     """
     Abstract base class for custom 1-D array types.
 
@@ -284,6 +320,12 @@ class ExtensionArray:
     def _from_sequence(
         cls, scalars, *, dtype: Dtype | None = None, copy: bool = False
     ) -> Self:
+        # [FUNCTION DOC]
+        # HELPER: abstract class-level constructor. Parameters: scalars is a sequence of
+        # scalars of the array's scalar type or convertible to it; dtype (keyword,
+        # default None) a compatible dtype; copy (keyword, default false) whether to
+        # copy data. Returns a new array. Subclasses must override; this raises an
+        # abstract-method error.
         """
         Construct a new ExtensionArray from a sequence of scalars.
 
@@ -322,6 +364,11 @@ class ExtensionArray:
     def _from_sequence_of_strings(
         cls, strings, *, dtype: ExtensionDtype, copy: bool = False
     ) -> Self:
+        # [FUNCTION DOC]
+        # HELPER: abstract class-level constructor from strings, used by text parsers.
+        # Parameters: strings is a sequence of strings; dtype (keyword, required) an
+        # extension dtype; copy (keyword, default false). Optional for subclasses; this
+        # default raises an abstract-method error.
         """
         Construct a new ExtensionArray from a sequence of strings.
 
@@ -360,6 +407,11 @@ class ExtensionArray:
 
     @classmethod
     def _from_factorized(cls, values, original):
+        # [FUNCTION DOC]
+        # HELPER: abstract class-level hook that rebuilds an array from factorization
+        # output. Parameters: values is the integer-keyed array of unique values
+        # returned by the values-for-factorize protocol; original is the array that was
+        # factorized. Subclasses must override; this raises an abstract-method error.
         """
         Reconstruct an ExtensionArray after factorization.
 
@@ -390,6 +442,14 @@ class ExtensionArray:
 
     @classmethod
     def _from_scalars(cls, scalars, *, dtype: DtypeObj) -> Self:
+        # [FUNCTION DOC]
+        # HELPER: class-level strict variant of the sequence constructor, used when
+        # casting the result of an element-wise operation. Parameters: scalars is a
+        # sequence of scalars; dtype (keyword) the target extension dtype. Calls the
+        # sequence constructor without copying. Value and type errors propagate
+        # unchanged; any other exception emits a warning (attributed to the caller's
+        # stack level) saying the method should only raise those two, and is then re-
+        # raised. Returns the new array.
         """
         Strict analogue to _from_sequence, allowing only sequences of scalars
         that should be specifically inferred to the given dtype.
@@ -421,6 +481,13 @@ class ExtensionArray:
             raise
 
     def _cast_pointwise_result(self, values) -> ArrayLike:
+        # [FUNCTION DOC]
+        # HELPER: converts the result sequence of an element-wise operation (such as a
+        # map) into an array. Parameter values is the sequence. First tries the strict
+        # class constructor using this array's own dtype; if that raises a value or type
+        # error it falls back to an object ndarray run through generic type inference,
+        # including non-numeric types. Returns an extension array or numpy array, not
+        # necessarily of the same type as this array.
         """
         Construct an ExtensionArray after a pointwise operation.
 
@@ -454,12 +521,27 @@ class ExtensionArray:
     # Must be a Sequence
     # ------------------------------------------------------------------------
     @overload
-    def __getitem__(self, item: ScalarIndexer) -> Any: ...
+    def __getitem__(self, item: ScalarIndexer) -> Any:
+        # [FUNCTION DOC]
+        # Typing-only overload stub: declares one accepted call signature for static
+        # type checking and has no behavior. See the implementation that follows the
+        # overloads for the real behavior.
+        ...
 
     @overload
-    def __getitem__(self, item: SequenceIndexer) -> Self: ...
+    def __getitem__(self, item: SequenceIndexer) -> Self:
+        # [FUNCTION DOC]
+        # Typing-only overload stub: declares one accepted call signature for static
+        # type checking and has no behavior. See the implementation that follows the
+        # overloads for the real behavior.
+        ...
 
     def __getitem__(self, item: PositionalIndexer) -> Self | Any:
+        # [FUNCTION DOC]
+        # Abstract item access. Parameter item is an integer, slice, boolean array or
+        # integer list/array. Subclasses must return a scalar for an integer and a new
+        # extension array (even for length zero or one) for all other indexers; this
+        # default raises an abstract-method error.
         """
         Select a subset of self.
 
@@ -493,6 +575,13 @@ class ExtensionArray:
         raise AbstractMethodError(self)
 
     def __setitem__(self, key, value) -> None:
+        # [FUNCTION DOC]
+        # Optional in-place assignment, not required by the interface. Parameters: key
+        # is an integer, integer array, boolean array or slice; value is a scalar or
+        # sequence to assign. Raises a value error if the array is read-only; otherwise
+        # the default raises a not-implemented error naming the type. The comments in
+        # the body are guidance for implementers (support multiple keys, broadcast
+        # scalars, coerce values like the constructor does).
         """
         Set one or more values inplace.
 
@@ -547,6 +636,9 @@ class ExtensionArray:
         raise NotImplementedError(f"{type(self)} does not implement __setitem__.")
 
     def __len__(self) -> int:
+        # [FUNCTION DOC]
+        # Abstract length. Subclasses must return the number of elements as an integer;
+        # this default raises an abstract-method error.
         """
         Length of this array
 
@@ -557,6 +649,10 @@ class ExtensionArray:
         raise AbstractMethodError(self)
 
     def __iter__(self) -> Iterator[Any]:
+        # [FUNCTION DOC]
+        # Generator over the elements. The default yields each item by repeated indexing
+        # from position zero to the length, which may be slower than necessary. Needed
+        # so that the array is recognized as list-like.
         """
         Iterate over elements of the array.
         """
@@ -567,6 +663,13 @@ class ExtensionArray:
             yield self[i]
 
     def __contains__(self, item: object) -> bool | np.bool_:
+        # [FUNCTION DOC]
+        # Membership test. Parameter item is any object. For a missing-value scalar it
+        # avoids the comparison (which would give missing): returns false if the dtype
+        # cannot hold missing values; otherwise true only if the item is the dtype's
+        # missing value or an instance of the dtype's scalar type and the array has any
+        # missing entries. For any other item it returns whether any element equals the
+        # item using element-wise comparison.
         """
         Return for `item in self`.
         """
@@ -587,6 +690,11 @@ class ExtensionArray:
 
     # error: Signature of "__eq__" incompatible with supertype "object"
     def __eq__(self, other: object) -> ArrayLike:  # type: ignore[override]
+        # [FUNCTION DOC]
+        # Abstract element-wise equality. Subclasses must return a boolean numpy array
+        # or boolean extension array, and should return the not-implemented sentinel
+        # when other is a series, index or dataframe. This default raises an abstract-
+        # method error.
         """
         Return for `self == other` (element-wise equality).
         """
@@ -600,6 +708,9 @@ class ExtensionArray:
 
     # error: Signature of "__ne__" incompatible with supertype "object"
     def __ne__(self, other: object) -> ArrayLike:  # type: ignore[override]
+        # [FUNCTION DOC]
+        # Element-wise inequality, defined as the logical negation of the equality
+        # result.
         """
         Return for `self != other` (element-wise in-equality).
         """
@@ -607,6 +718,14 @@ class ExtensionArray:
         return ~(self == other)  # type: ignore[operator]
 
     def item(self, index: int | None = None):
+        # [FUNCTION DOC]
+        # Return one element as a scalar. Parameter index is an optional integer
+        # position (default None). With no index the array must contain exactly one
+        # element, which is returned, otherwise a value error is raised. With an index,
+        # a non-integer raises a type error; otherwise the element at that position is
+        # returned (an out-of-bounds position raises the index error from item access).
+        # KNOWN ISSUE: the docstring does not document the type error raised for a non-
+        # integer index.
         """
         Return the array element at the specified position as a Python scalar.
 
@@ -662,6 +781,14 @@ class ExtensionArray:
         copy: bool = False,
         na_value: object = lib.no_default,
     ) -> np.ndarray:
+        # [FUNCTION DOC]
+        # Convert to a numpy array. Parameters: dtype (default None) target numpy dtype;
+        # copy (default false) forces an independent copy; na_value (default the library
+        # "no default" marker) a value to write into the positions that are missing.
+        # Builds the result with the generic array conversion; copies if copy is true or
+        # na_value is given; otherwise, if the array is read-only and converting to that
+        # dtype would be a view, returns a read-only view. If na_value was given,
+        # assigns it into the missing positions. Returns the numpy array.
         """
         Convert to a NumPy ndarray.
 
@@ -704,6 +831,9 @@ class ExtensionArray:
 
     @property
     def dtype(self) -> ExtensionDtype:
+        # [FUNCTION DOC]
+        # Abstract property: the extension dtype instance describing the array.
+        # Subclasses must override; this raises an abstract-method error.
         """
         An instance of ExtensionDtype.
 
@@ -724,6 +854,9 @@ class ExtensionArray:
 
     @property
     def shape(self) -> Shape:
+        # [FUNCTION DOC]
+        # Property: shape tuple of the array, here a one-element tuple holding the
+        # length.
         """
         Return a tuple of the array dimensions.
 
@@ -744,6 +877,8 @@ class ExtensionArray:
 
     @property
     def size(self) -> int:
+        # [FUNCTION DOC]
+        # Property: number of elements, computed as the product of the shape entries.
         """
         The number of elements in the array.
         """
@@ -753,6 +888,8 @@ class ExtensionArray:
 
     @property
     def ndim(self) -> int:
+        # [FUNCTION DOC]
+        # Property: number of dimensions; always one for the base class.
         """
         Extension Arrays are only allowed to be 1-dimensional.
 
@@ -771,6 +908,10 @@ class ExtensionArray:
 
     @property
     def nbytes(self) -> int:
+        # [FUNCTION DOC]
+        # Abstract property: bytes needed to store the data in memory (an approximate
+        # lower bound is acceptable if exact size is expensive). Subclasses must
+        # override; this raises an abstract-method error.
         """
         The number of bytes needed to store this object in memory.
 
@@ -793,15 +934,39 @@ class ExtensionArray:
     # ------------------------------------------------------------------------
 
     @overload
-    def astype(self, dtype: npt.DTypeLike, copy: bool = ...) -> np.ndarray: ...
+    def astype(self, dtype: npt.DTypeLike, copy: bool = ...) -> np.ndarray:
+        # [FUNCTION DOC]
+        # Typing-only overload stub: declares one accepted call signature for static
+        # type checking and has no behavior. See the implementation that follows the
+        # overloads for the real behavior.
+        ...
 
     @overload
-    def astype(self, dtype: ExtensionDtype, copy: bool = ...) -> ExtensionArray: ...
+    def astype(self, dtype: ExtensionDtype, copy: bool = ...) -> ExtensionArray:
+        # [FUNCTION DOC]
+        # Typing-only overload stub: declares one accepted call signature for static
+        # type checking and has no behavior. See the implementation that follows the
+        # overloads for the real behavior.
+        ...
 
     @overload
-    def astype(self, dtype: AstypeArg, copy: bool = ...) -> ArrayLike: ...
+    def astype(self, dtype: AstypeArg, copy: bool = ...) -> ArrayLike:
+        # [FUNCTION DOC]
+        # Typing-only overload stub: declares one accepted call signature for static
+        # type checking and has no behavior. See the implementation that follows the
+        # overloads for the real behavior.
+        ...
 
     def astype(self, dtype: AstypeArg, copy: bool = True) -> ArrayLike:
+        # [FUNCTION DOC]
+        # Cast to another dtype. Parameters: dtype is a dtype-like (normalized first);
+        # copy (default true) whether to always copy; when false a copy is made only if
+        # needed. If the dtype equals the current dtype, returns self or a copy
+        # according to copy. If the target is an extension dtype, builds an array of
+        # that dtype's array class from this array. For numpy datetime64 or timedelta64
+        # dtypes builds a datetime or timedelta array. Otherwise returns a numpy array
+        # of that dtype (using the non-copying conversion when copy is false). Returns
+        # an extension array or numpy array.
         """
         Cast to a NumPy array or ExtensionArray with 'dtype'.
 
@@ -883,6 +1048,11 @@ class ExtensionArray:
             return np.array(self, dtype=dtype, copy=copy)
 
     def isna(self) -> np.ndarray | ExtensionArraySupportsAnyAll:
+        # [FUNCTION DOC]
+        # Abstract missing-value detection. Subclasses must return a one-dimensional
+        # boolean numpy array (or, for expensive cases such as sparse arrays, a boolean
+        # extension array supporting any, all, reduce and accumulate) marking missing
+        # positions. This default raises an abstract-method error.
         """
         A 1-D array indicating if each value is missing.
 
@@ -918,6 +1088,9 @@ class ExtensionArray:
 
     @property
     def _hasna(self) -> bool:
+        # [FUNCTION DOC]
+        # HELPER: property that says whether any element is missing, computed from the
+        # missing mask. Subclasses may optimize it.
         # GH#22680
         """
         Equivalent to `self.isna().any()`.
@@ -927,6 +1100,11 @@ class ExtensionArray:
         return bool(self.isna().any())
 
     def _values_for_argsort(self) -> np.ndarray:
+        # [FUNCTION DOC]
+        # HELPER: returns the numpy array whose ordering is used for sorting, argmin and
+        # argmax. Default is a numpy array made from this array. Entries at missing
+        # positions need not sort correctly because callers handle the mask separately.
+        # Callers must not modify the result.
         """
         Return values for sorting.
 
@@ -969,6 +1147,13 @@ class ExtensionArray:
         na_position: str = "last",
         **kwargs,
     ) -> np.ndarray:
+        # [FUNCTION DOC]
+        # Indices that would sort the array. Keyword-only parameters: ascending (default
+        # true); kind (default quicksort) sort algorithm; na_position (first or last,
+        # default last) where missing values go; extra keyword arguments are validated
+        # against numpy's argsort signature (the ascending value is validated through
+        # that check). Sorts the values from the values-for-argsort hook with the shared
+        # sorting helper, using the missing mask. Returns an integer index array.
         """
         Return the indices that would sort this array.
 
@@ -1018,6 +1203,10 @@ class ExtensionArray:
         )
 
     def argmin(self, skipna: bool = True) -> int:
+        # [FUNCTION DOC]
+        # Position of the minimum (first occurrence on ties). Parameter skipna (default
+        # true, validated as boolean). Raises a value error if skipna is false and any
+        # value is missing. Uses the shared sorting helper on this array.
         """
         Return the index of minimum value.
 
@@ -1052,6 +1241,10 @@ class ExtensionArray:
         return nargminmax(self, "argmin")
 
     def argmax(self, skipna: bool = True) -> int:
+        # [FUNCTION DOC]
+        # Position of the maximum (first occurrence on ties). Parameter skipna (default
+        # true, validated as boolean). Raises a value error if skipna is false and any
+        # value is missing. Uses the shared sorting helper on this array.
         """
         Return the index of maximum value.
 
@@ -1097,6 +1290,13 @@ class ExtensionArray:
         copy: bool,
         **kwargs,
     ) -> Self:
+        # [FUNCTION DOC]
+        # Fill missing values by interpolation (optional; base class not supported). All
+        # parameters are keyword-only and are the same as for the series interpolate
+        # method: method, axis, index, limit, limit_direction, limit_area, copy, plus
+        # extra keywords for the interpolating function. Subclasses should return an
+        # array of their own type even when copy is false. This default always raises a
+        # not-implemented error naming the type.
         """
         Fill NaN values using an interpolation method.
 
@@ -1203,6 +1403,17 @@ class ExtensionArray:
         limit_area: Literal["inside", "outside"] | None = None,
         copy: bool = True,
     ) -> Self:
+        # [FUNCTION DOC]
+        # HELPER: forward or backward fill used by the series and dataframe fill
+        # methods. Keyword-only parameters: method (pad/ffill or backfill/bfill), limit
+        # (default None, the maximum consecutive fills), limit_area (inside, outside or
+        # None), copy (default true). If nothing is missing, returns self when copy is
+        # false else a copy. Otherwise the method name is normalized and the fill
+        # indexer is computed from the missing mask (restricted by limit_area when
+        # given); forward fill takes by that indexer with filling allowed, backward fill
+        # does the same on the reversed array and so also reverses the indexer. The base
+        # implementation ignores the copy keyword when values are missing and always
+        # returns a new array.
         """
         Pad or backfill values, used by Series/DataFrame ffill and bfill.
 
@@ -1287,6 +1498,15 @@ class ExtensionArray:
         limit: int | None = None,
         copy: bool = True,
     ) -> Self:
+        # [FUNCTION DOC]
+        # Fill missing values. Parameters: value is a scalar or an array-like of the
+        # same length; limit (default None) the maximum number of missing entries to
+        # fill, counted from the start; copy (default true). The mask is trimmed to the
+        # first limit missing entries when the limit is smaller than the length, and the
+        # value's size is checked against it. Then a copy (or a slice sharing data when
+        # copy is false) has the masked entries assigned the value (using item
+        # assignment, which the subclass must support). Returns the filled array of the
+        # same type.
         """
         Fill NA/NaN values using the specified method.
 
@@ -1356,6 +1576,9 @@ class ExtensionArray:
         return new_values
 
     def dropna(self) -> Self:
+        # [FUNCTION DOC]
+        # Return a new array without the missing entries, by indexing with the inverted
+        # missing mask.
         """
         Return ExtensionArray without NA values.
 
@@ -1385,6 +1608,10 @@ class ExtensionArray:
     def duplicated(
         self, keep: Literal["first", "last", False] = "first"
     ) -> npt.NDArray[np.bool_]:
+        # [FUNCTION DOC]
+        # Boolean numpy array marking duplicated values. Parameter keep: first (default,
+        # first occurrence not marked), last, or false (all duplicates marked). Uses the
+        # shared duplicated routine with the missing mask.
         """
         Return boolean ndarray denoting duplicate values.
 
@@ -1417,6 +1644,15 @@ class ExtensionArray:
         return duplicated(values=self, keep=keep, mask=mask)
 
     def shift(self, periods: int = 1, fill_value: object = None) -> ExtensionArray:
+        # [FUNCTION DOC]
+        # Shift values by a number of positions, filling vacated positions. Parameters:
+        # periods (default 1; negative shifts backward) and fill_value (default None,
+        # meaning the dtype's missing value; any missing value is replaced by it). An
+        # empty array or zero periods returns a copy. Otherwise builds a filler array of
+        # the fill value with length equal to the smaller of the shift size and array
+        # length, and concatenates filler and the retained slice in the right order.
+        # Assumes the dtype's missing value can be stored in the array. Returns an array
+        # of the same type.
         """
         Shift values by desired number.
 
@@ -1484,6 +1720,10 @@ class ExtensionArray:
         return self._concat_same_type([a, b])
 
     def unique(self) -> Self:
+        # [FUNCTION DOC]
+        # Unique values in order of appearance. Default implementation converts to
+        # object dtype, takes uniques with the generic routine and rebuilds an array of
+        # this dtype.
         """
         Compute the ExtensionArray of unique values.
 
@@ -1515,6 +1755,12 @@ class ExtensionArray:
         side: Literal["left", "right"] = "left",
         sorter: NumpySorter | None = None,
     ) -> npt.NDArray[np.intp] | np.intp:
+        # [FUNCTION DOC]
+        # Insertion positions that would keep the array sorted. Parameters: value
+        # (scalar, array-like or extension array); side (left, default, or right);
+        # sorter (optional integer index array that sorts the data). Default converts
+        # self (and an extension array value) to object dtype and uses the numpy search
+        # on that. Returns an integer position or array of positions.
         """
         Find indices where elements should be inserted to maintain order.
 
@@ -1570,6 +1816,12 @@ class ExtensionArray:
         return arr.searchsorted(value, side=side, sorter=sorter)
 
     def equals(self, other: object) -> bool:
+        # [FUNCTION DOC]
+        # Whether another object is an equivalent array. Returns false if the types
+        # differ, the dtypes differ or the lengths differ. Otherwise compares element-
+        # wise (missing results of a nullable comparison count as unequal), and
+        # considers positions where both arrays are missing equal; true only if every
+        # position is equal. Returns a bool.
         """
         Return if another array is equivalent to this array.
 
@@ -1622,6 +1874,11 @@ class ExtensionArray:
             return bool((equal_values | equal_na).all())
 
     def isin(self, values: ArrayLike) -> npt.NDArray[np.bool_]:
+        # [FUNCTION DOC]
+        # Membership test for each element. Parameter values is an array (numpy or
+        # extension) of values to look for. Default converts self to a numpy array and
+        # uses the generic membership routine, returning a boolean numpy array.
+        # Subclasses may return their own boolean array type.
         """
         Pointwise comparison for set containment in the given values.
 
@@ -1654,6 +1911,11 @@ class ExtensionArray:
         return isin(np.asarray(self), values)
 
     def _values_for_factorize(self) -> tuple[np.ndarray, Any]:
+        # [FUNCTION DOC]
+        # HELPER: returns a pair (values, na_value) for factorization and hashing. The
+        # values are this array cast to object dtype by default, and the missing marker
+        # is NaN by default. Entries equal to the marker are treated as missing and
+        # coded as the negative sentinel code.
         """
         Return an array and missing value suitable for factorization.
 
@@ -1690,6 +1952,14 @@ class ExtensionArray:
         self,
         use_na_sentinel: bool = True,
     ) -> tuple[np.ndarray, ExtensionArray]:
+        # [FUNCTION DOC]
+        # Encode the array as integer codes plus unique values. Parameter
+        # use_na_sentinel (default true): when true missing values get the code -1 and
+        # are excluded from the uniques; when false they get a regular non-negative code
+        # and appear in the uniques. Obtains values and the missing marker from the
+        # values-for-factorize hook, runs the generic array factorization, and rebuilds
+        # the uniques as an extension array through the factorized reconstruction hook.
+        # Returns a tuple of (integer codes numpy array, unique values array).
         """
         Encode the extension array as an enumerated type.
 
@@ -1794,6 +2064,12 @@ class ExtensionArray:
         """
 
     def repeat(self, repeats: int | Sequence[int], axis: AxisInt | None = None) -> Self:
+        # [FUNCTION DOC]
+        # Repeat each element consecutively. Parameters: repeats is a non-negative
+        # integer or sequence of integers (one per element); axis must be None and is
+        # only accepted for numpy compatibility (validated, so other values raise).
+        # Implemented by repeating positions and taking them. Returns a new array of the
+        # same type.
         """
         Repeat elements of an ExtensionArray.
 
@@ -1840,6 +2116,11 @@ class ExtensionArray:
         return self.take(ind)
 
     def value_counts(self, dropna: bool = True) -> Series:
+        # [FUNCTION DOC]
+        # Counts of unique values as a series. Parameter dropna (default true) excludes
+        # missing values. Converts to numpy without copying, counts without sorting
+        # using the generic routine, then casts the resulting index to this array's
+        # dtype. Returns a series indexed by the unique values.
         """
         Return a Series containing counts of unique values.
 
@@ -1889,6 +2170,15 @@ class ExtensionArray:
         allow_fill: bool = False,
         fill_value: Any = None,
     ) -> Self:
+        # [FUNCTION DOC]
+        # Abstract positional selection. Parameters: indices (sequence or one-
+        # dimensional integer array); allow_fill (keyword, default false): when false
+        # negative indices count from the end, when true -1 marks positions to fill and
+        # other negatives raise a value error; fill_value (keyword, default None meaning
+        # the dtype's missing value) is the user-facing scalar used for filled positions
+        # and must be translated to physical storage by the implementation. Out-of-
+        # bounds indices raise an index error. Returns a new array of the same type.
+        # Subclasses must override; this raises an abstract-method error.
         """
         Take elements from an array.
 
@@ -1980,6 +2270,9 @@ class ExtensionArray:
         raise AbstractMethodError(self)
 
     def copy(self) -> Self:
+        # [FUNCTION DOC]
+        # Abstract copy. Subclasses must return a new array of the same type whose
+        # changes do not affect the original; this raises an abstract-method error.
         """
         Return a copy of the array.
 
@@ -2010,12 +2303,27 @@ class ExtensionArray:
         raise AbstractMethodError(self)
 
     @overload
-    def view(self) -> Self: ...
+    def view(self) -> Self:
+        # [FUNCTION DOC]
+        # Typing-only overload stub: declares one accepted call signature for static
+        # type checking and has no behavior. See the implementation that follows the
+        # overloads for the real behavior.
+        ...
 
     @overload
-    def view(self, dtype: Dtype | None = ...) -> ArrayLike: ...
+    def view(self, dtype: Dtype | None = ...) -> ArrayLike:
+        # [FUNCTION DOC]
+        # Typing-only overload stub: declares one accepted call signature for static
+        # type checking and has no behavior. See the implementation that follows the
+        # overloads for the real behavior.
+        ...
 
     def view(self, dtype: Dtype | None = None) -> ArrayLike:
+        # [FUNCTION DOC]
+        # Return a view on the data. Parameter dtype (default None). Subclasses must
+        # return a new object (not self) referencing the same data. The base
+        # implementation supports only no dtype, returning a full slice of itself; any
+        # dtype raises a not-implemented error carrying the requested dtype.
         """
         Return a view on the array.
 
@@ -2062,6 +2370,12 @@ class ExtensionArray:
     # ------------------------------------------------------------------------
 
     def __repr__(self) -> str:
+        # [FUNCTION DOC]
+        # String representation. For arrays with more than one dimension delegates to
+        # the 2D representation. Otherwise formats the elements with the shared object-
+        # summary formatter (using this array's scalar formatter, trailing separators
+        # stripped), and returns a text with a first line holding the class name in
+        # angle brackets, the element summary, and a footer line with length and dtype.
         if self.ndim > 1:
             return self._repr_2d()
 
@@ -2078,12 +2392,19 @@ class ExtensionArray:
         return f"{class_name}{data}\n{footer}"
 
     def _get_repr_footer(self) -> str:
+        # [FUNCTION DOC]
+        # HELPER: footer line for the representation: shape and dtype for multi-
+        # dimensional arrays, length and dtype otherwise.
         # GH#24278
         if self.ndim > 1:
             return f"Shape: {self.shape}, dtype: {self.dtype}"
         return f"Length: {len(self)}, dtype: {self.dtype}"
 
     def _repr_2d(self) -> str:
+        # [FUNCTION DOC]
+        # HELPER: representation for arrays with more than one dimension. Formats each
+        # row with the shared summary formatter, joins the rows with commas and newlines
+        # inside square brackets under the class name line, and adds the footer line.
         from pandas.io.formats.printing import format_object_summary
 
         # the short repr has no trailing newline, while the truncated
@@ -2101,6 +2422,12 @@ class ExtensionArray:
         return f"{class_name}\n[\n{data}\n]\n{footer}"
 
     def _formatter(self, boxed: bool = False) -> Callable[[Any], str | None]:
+        # [FUNCTION DOC]
+        # Returns the function used to render individual scalars in the representation.
+        # Parameter boxed (default false) says whether the array is shown inside a
+        # series, dataframe or index. The default returns the built-in text conversion
+        # when boxed and the built-in representation conversion otherwise. Subclasses
+        # override to customize.
         """
         Formatting function for scalar values.
 
@@ -2154,6 +2481,10 @@ class ExtensionArray:
     # ------------------------------------------------------------------------
 
     def transpose(self, *axes: int) -> Self:
+        # [FUNCTION DOC]
+        # Transposed view. Because arrays are one-dimensional this is a no-op returning
+        # a full slice. The positional axes arguments are accepted for numpy
+        # compatibility and ignored.
         """
         Return a transposed view on this array.
 
@@ -2175,9 +2506,14 @@ class ExtensionArray:
 
     @property
     def T(self) -> Self:
+        # [FUNCTION DOC]
+        # Property: the transpose of the array (see the transpose method).
         return self.transpose()
 
     def ravel(self, order: Literal["C", "F", "A", "K"] | None = "C") -> Self:
+        # [FUNCTION DOC]
+        # Flattened view. Parameter order is accepted for numpy compatibility and
+        # ignored (default C). Because arrays are one-dimensional it returns self.
         """
         Return a flattened view on this array.
 
@@ -2210,6 +2546,11 @@ class ExtensionArray:
 
     @classmethod
     def _concat_same_type(cls, to_concat: Sequence[Self]) -> Self:
+        # [FUNCTION DOC]
+        # HELPER: abstract class-level concatenation. Parameter to_concat is a sequence
+        # of arrays of this class, all with the same dtype (guaranteed by callers). Must
+        # return a new array of the same dtype. Subclasses must override; this raises an
+        # abstract-method error.
         """
         Concatenate multiple array of this dtype.
 
@@ -2254,11 +2595,21 @@ class ExtensionArray:
     # of objects
     @cache_readonly
     def _can_hold_na(self) -> bool:
+        # [FUNCTION DOC]
+        # HELPER: cached property saying whether the array can hold missing values,
+        # taken from the dtype. When true, pandas internals use the dtype's missing
+        # value for operations such as take, reindex and shift and keep results as this
+        # array type.
         return self.dtype._can_hold_na
 
     def _accumulate(
         self, name: str, *, skipna: bool = True, **kwargs
     ) -> ExtensionArray:
+        # [FUNCTION DOC]
+        # HELPER: optional hook for cumulative operations. Parameters: name is one of
+        # the cumulative min, max, sum or product names; skipna (keyword, default true);
+        # extra keywords passed to the operation. The result dtype may differ. This
+        # default raises a not-implemented error naming the operation and dtype.
         """
         Return an ExtensionArray performing an accumulation operation.
 
@@ -2308,6 +2659,17 @@ class ExtensionArray:
     def _reduce(
         self, name: str, *, skipna: bool = True, keepdims: bool = False, **kwargs
     ):
+        # [FUNCTION DOC]
+        # HELPER: reduction dispatcher. Parameters: name is the reduction name (any,
+        # all, min, max, sum, mean, median, prod, std, var, sem, kurt, skew); skipna
+        # (keyword, default true); keepdims (keyword, default false); extra keywords
+        # passed to the method. Looks up a method of that name on the array and raises a
+        # type error if there is none. Calls it with skipna and the extra keywords. With
+        # keepdims, the min and max results are wrapped in a new array of this type and
+        # all other results in a one-element numpy array.
+        # KNOWN ISSUE: the docstring says that with keepdims the result is a numpy array
+        # with a single element, but for min and max the code returns an extension array
+        # of this type.
         """
         Return a scalar result of performing the reduction operation.
 
@@ -2391,6 +2753,10 @@ class ExtensionArray:
     #  these are not guaranteed to be stable across pandas versions.
 
     def _values_for_json(self) -> np.ndarray:
+        # [FUNCTION DOC]
+        # HELPER: values used when serializing to JSON. Default is a numpy array of the
+        # data. Subclasses with types that the JSON encoder cannot handle may return an
+        # array of strings.
         """
         Specify how to render our entries in to_json.
 
@@ -2406,6 +2772,12 @@ class ExtensionArray:
     def _hash_pandas_object(
         self, *, encoding: str, hash_key: str, categorize: bool
     ) -> npt.NDArray[np.uint64]:
+        # [FUNCTION DOC]
+        # HELPER: hook for hashing pandas objects. Keyword-only parameters: encoding
+        # (string encoding for text data), hash_key (string key for hashing), categorize
+        # (whether to categorize object arrays first for speed). The default hashes the
+        # values returned by the values-for-factorize hook with the generic array hasher
+        # (imported lazily). Returns an unsigned 64-bit integer array.
         """
         Hook for hash_pandas_object.
 
@@ -2447,6 +2819,12 @@ class ExtensionArray:
         )
 
     def _explode(self) -> tuple[Self, npt.NDArray[np.uint64]]:
+        # [FUNCTION DOC]
+        # HELPER: support for exploding list-like elements into rows. Default returns a
+        # copy of the array and an unsigned 64-bit array of ones with the array's length
+        # (meaning each element is unchanged). Subclasses with list-like elements
+        # override; the second return value gives the number of output rows each
+        # original element produced.
         """
         Transform each element of list-like to a row.
 
@@ -2483,6 +2861,10 @@ class ExtensionArray:
         return values, counts
 
     def tolist(self) -> list:
+        # [FUNCTION DOC]
+        # Return the values as a Python list. For multi-dimensional arrays, returns a
+        # nested list built from each row; otherwise a list built by iterating the
+        # array.
         """
         Return a list of the values.
 
@@ -2511,10 +2893,21 @@ class ExtensionArray:
         return list(self)
 
     def delete(self, loc: PositionalIndexer) -> Self:
+        # [FUNCTION DOC]
+        # Return a new array without the elements at the given position(s). Parameter
+        # loc is an integer, slice or sequence of integers. Computes the remaining
+        # positions with the numpy delete and takes them. Used by index deletion.
         indexer = np.delete(np.arange(len(self)), loc)
         return self.take(indexer)
 
     def insert(self, loc: int, item) -> Self:
+        # [FUNCTION DOC]
+        # Return a new array with an item inserted. Parameters: loc is the integer
+        # position (validated and normalized against the length); item is a scalar. The
+        # item is turned into a one-element array with the class constructor (which must
+        # raise for invalid items, normally a value or type error), then the head slice,
+        # the item and the tail slice are concatenated with the class concatenation.
+        # Result keeps type and dtype.
         """
         Insert an item at the given position.
 
@@ -2558,6 +2951,12 @@ class ExtensionArray:
         return type(self)._concat_same_type([self[:loc], item_arr, self[loc:]])
 
     def _putmask(self, mask: npt.NDArray[np.bool_], value) -> None:
+        # [FUNCTION DOC]
+        # HELPER: in-place analogue of the numpy masked assignment. Parameters: mask is
+        # a boolean array; value is a scalar or a list-like of the same length as the
+        # array (not repeated cyclically as numpy would). For list-likes only the
+        # entries at the mask positions are used. Assigns through item assignment.
+        # Returns nothing.
         """
         Analogue to np.putmask(self, mask, value)
 
@@ -2585,6 +2984,11 @@ class ExtensionArray:
         self[mask] = val
 
     def _where(self, mask: npt.NDArray[np.bool_], value) -> Self:
+        # [FUNCTION DOC]
+        # HELPER: analogue of the numpy conditional select. Parameters: mask is a
+        # boolean array (true keeps the current value); value is a scalar or list-like
+        # of the same length used where the mask is false. Works on a copy by assigning
+        # to the inverted mask positions. Returns an array of the same type.
         """
         Analogue to np.where(mask, self, value)
 
@@ -2616,6 +3020,13 @@ class ExtensionArray:
         ascending: bool = True,
         pct: bool = False,
     ):
+        # [FUNCTION DOC]
+        # HELPER: ranking support; behaves like the series rank method. Keyword-only
+        # parameters: axis (only zero supported, otherwise raises a not-implemented
+        # error); method (default average), na_option (default keep), ascending (default
+        # true) and pct (default false) as for the series method. Ranks the values-for-
+        # argsort data with the generic rank routine, passing the missing mask only if
+        # there are missing values. Returns the rank array.
         """
         See Series.rank.__doc__.
         """
@@ -2634,6 +3045,14 @@ class ExtensionArray:
 
     @classmethod
     def _empty(cls, shape: Shape, dtype: ExtensionDtype):
+        # [FUNCTION DOC]
+        # HELPER: class-level analogue of the numpy uninitialized-array constructor.
+        # Parameters: shape (tuple of ints) and dtype (extension dtype). Makes an empty
+        # array of the dtype and takes a broadcast array of -1 indices with filling
+        # allowed, so all entries are missing. Raises a not-implemented error if the
+        # result is not an instance of the class or has a different dtype than
+        # requested. Called by the dtype's public empty method, which is the official
+        # API; subclasses must still define this.
         """
         Create an ExtensionArray with the given shape and dtype.
 
@@ -2656,6 +3075,12 @@ class ExtensionArray:
         return result
 
     def _quantile(self, qs: npt.NDArray[np.float64], interpolation: str) -> Self:
+        # [FUNCTION DOC]
+        # HELPER: quantile computation. Parameters: qs (float array of quantiles) and
+        # interpolation (method name). Converts the data to numpy, passes the missing
+        # mask and NaN as the fill value to the masked quantile routine, and builds a
+        # new array of this type from the result using the class sequence constructor
+        # (without a dtype). Returns an array of the same type.
         """
         Compute the quantiles of self for each quantile in `qs`.
 
@@ -2676,6 +3101,11 @@ class ExtensionArray:
         return type(self)._from_sequence(res_values)
 
     def _mode(self, dropna: bool = True) -> Self:
+        # [FUNCTION DOC]
+        # HELPER: modes of the array. Parameter dropna (default true) excludes missing
+        # values from counting. Uses the generic mode routine and returns only the
+        # values part, always as an array (even if there is one mode), sorted when
+        # possible.
         """
         Returns the mode(s) of the ExtensionArray.
 
@@ -2697,6 +3127,14 @@ class ExtensionArray:
         return result  # type: ignore[return-value]
 
     def __array_ufunc__(self, ufunc: np.ufunc, method: str, *inputs, **kwargs):
+        # [FUNCTION DOC]
+        # Numpy ufunc protocol. Parameters: ufunc, the method name, and the inputs and
+        # keyword arguments. Returns the not-implemented sentinel if any input is a
+        # series, index or dataframe (so pandas unwraps them and retries). Otherwise
+        # tries, in order: mapping the ufunc to the corresponding dunder operator; the
+        # out-parameter dispatch if an output was supplied; for reduce, the reduction
+        # dispatch; and finally the default ufunc implementation, which applies the
+        # ufunc to numpy conversions of the inputs.
         if any(
             isinstance(other, (ABCSeries, ABCIndex, ABCDataFrame)) for other in inputs
         ):
@@ -2723,6 +3161,12 @@ class ExtensionArray:
         return arraylike.default_array_ufunc(self, ufunc, method, *inputs, **kwargs)
 
     def map(self, mapper, na_action: Literal["ignore"] | None = None):
+        # [FUNCTION DOC]
+        # Map values through a function, dict or series. Parameters: mapper; na_action
+        # (None, default, or ignore, which propagates missing values without calling the
+        # mapper; subclasses not supporting ignore should raise a not-implemented
+        # error). Delegates to the generic map routine. Returns a numpy array, index or
+        # extension array (a multi-index if the function returns multi-element tuples).
         """
         Map values using an input mapping or function.
 
@@ -2757,6 +3201,22 @@ class ExtensionArray:
         ids: npt.NDArray[np.intp],
         **kwargs,
     ) -> ArrayLike:
+        # [FUNCTION DOC]
+        # HELPER: experimental hook for group-wise reductions and transformations.
+        # Keyword-only parameters: how is the operation name; has_dropped_na says
+        # whether missing group keys were dropped; min_count is the minimum number of
+        # valid values; ngroups is the group count; ids is the integer group label of
+        # each element; extra keywords are operation specific (skipna, ddof, rank
+        # options). Only string dtypes are supported by the base class; any other dtype
+        # raises a not-implemented error. For strings, product, mean, median, cumulative
+        # sum and product, standard deviation, standard error, variance, skew and
+        # kurtosis raise a type error; other operations other than any and all are
+        # checked up front that a compiled implementation exists for object data. The
+        # data is converted to an object numpy array with NaN for missing. For sum the
+        # initial value is the empty string and, if skipna is requested with min_count
+        # zero, missing values are first filled with the empty string (a skipna keyword
+        # is required, asserted). The compiled group operation is then run. Rank results
+        # are returned as is; other results are rebuilt as an array of the string dtype.
         """
         Dispatch GroupBy reduction or transformation operation.
 
@@ -2851,26 +3311,65 @@ class ExtensionArray:
 
 
 class ExtensionArraySupportsAnyAll(ExtensionArray):
+    # [CLASS DOC]
+    # Typing-oriented subclass of the extension array base declaring that the array
+    # supports any and all reductions (used for extension arrays returned by the
+    # missing-value mask method). Both methods are abstract here and have overloads that
+    # type the return as plain bool when missing values are skipped and as bool-or-NA
+    # otherwise.
     @overload
-    def any(self, *, skipna: Literal[True] = ...) -> bool: ...
+    def any(self, *, skipna: Literal[True] = ...) -> bool:
+        # [FUNCTION DOC]
+        # Typing-only overload stub: declares one accepted call signature for static
+        # type checking and has no behavior. See the implementation that follows the
+        # overloads for the real behavior.
+        ...
 
     @overload
-    def any(self, *, skipna: bool) -> bool | NAType: ...
+    def any(self, *, skipna: bool) -> bool | NAType:
+        # [FUNCTION DOC]
+        # Typing-only overload stub: declares one accepted call signature for static
+        # type checking and has no behavior. See the implementation that follows the
+        # overloads for the real behavior.
+        ...
 
     def any(self, *, skipna: bool = True) -> bool | NAType:
+        # [FUNCTION DOC]
+        # Abstract any-reduction. Keyword parameter skipna (default true). Subclasses
+        # return whether any element is true. Raises an abstract-method error here.
         raise AbstractMethodError(self)
 
     @overload
-    def all(self, *, skipna: Literal[True] = ...) -> bool: ...
+    def all(self, *, skipna: Literal[True] = ...) -> bool:
+        # [FUNCTION DOC]
+        # Typing-only overload stub: declares one accepted call signature for static
+        # type checking and has no behavior. See the implementation that follows the
+        # overloads for the real behavior.
+        ...
 
     @overload
-    def all(self, *, skipna: bool) -> bool | NAType: ...
+    def all(self, *, skipna: bool) -> bool | NAType:
+        # [FUNCTION DOC]
+        # Typing-only overload stub: declares one accepted call signature for static
+        # type checking and has no behavior. See the implementation that follows the
+        # overloads for the real behavior.
+        ...
 
     def all(self, *, skipna: bool = True) -> bool | NAType:
+        # [FUNCTION DOC]
+        # Abstract all-reduction. Keyword parameter skipna (default true). Subclasses
+        # return whether all elements are true. Raises an abstract-method error here.
         raise AbstractMethodError(self)
 
 
 class ExtensionOpsMixin:
+    # [CLASS DOC]
+    # Base mixin that links operator implementations to their special-method names on a
+    # class. Subclasses supply factory methods that create the arithmetic, comparison
+    # and logical operator methods; the class methods here attach (by attribute
+    # assignment on the class) the generated methods for each operator and its reflected
+    # form. A class using it may want to set a numpy array priority so numpy defers to
+    # it.
     """
     A base class for linking the operators to their dunder names.
 
@@ -2883,10 +3382,18 @@ class ExtensionOpsMixin:
 
     @classmethod
     def _create_arithmetic_method(cls, op):
+        # [FUNCTION DOC]
+        # HELPER: abstract factory. Parameter op is an operator function. Subclasses
+        # return a method implementing it. Raises an abstract-method error here.
         raise AbstractMethodError(cls)
 
     @classmethod
     def _add_arithmetic_ops(cls) -> None:
+        # [FUNCTION DOC]
+        # HELPER: class-level installer. Takes no arguments, returns nothing. Sets on
+        # the class the add, subtract, multiply, power, modulo, floor-divide, true-
+        # divide and divmod special methods and their reflected counterparts, each
+        # created through the arithmetic factory. Mutates the class.
         setattr(cls, "__add__", cls._create_arithmetic_method(operator.add))
         setattr(cls, "__radd__", cls._create_arithmetic_method(roperator.radd))
         setattr(cls, "__sub__", cls._create_arithmetic_method(operator.sub))
@@ -2908,10 +3415,18 @@ class ExtensionOpsMixin:
 
     @classmethod
     def _create_comparison_method(cls, op):
+        # [FUNCTION DOC]
+        # HELPER: abstract factory. Parameter op is an operator function. Subclasses
+        # return a method implementing the comparison. Raises an abstract-method error
+        # here.
         raise AbstractMethodError(cls)
 
     @classmethod
     def _add_comparison_ops(cls) -> None:
+        # [FUNCTION DOC]
+        # HELPER: class-level installer. Sets the equal, not-equal, less, greater, less-
+        # equal and greater-equal special methods on the class, each created through the
+        # comparison factory. Mutates the class; returns nothing.
         setattr(cls, "__eq__", cls._create_comparison_method(operator.eq))
         setattr(cls, "__ne__", cls._create_comparison_method(operator.ne))
         setattr(cls, "__lt__", cls._create_comparison_method(operator.lt))
@@ -2921,10 +3436,18 @@ class ExtensionOpsMixin:
 
     @classmethod
     def _create_logical_method(cls, op):
+        # [FUNCTION DOC]
+        # HELPER: abstract factory. Parameter op is an operator function. Subclasses
+        # return a method implementing the logical operation. Raises an abstract-method
+        # error here.
         raise AbstractMethodError(cls)
 
     @classmethod
     def _add_logical_ops(cls) -> None:
+        # [FUNCTION DOC]
+        # HELPER: class-level installer. Sets the and, or, xor special methods and their
+        # reflected counterparts on the class, each created through the logical factory.
+        # Mutates the class; returns nothing.
         setattr(cls, "__and__", cls._create_logical_method(operator.and_))
         setattr(cls, "__rand__", cls._create_logical_method(roperator.rand_))
         setattr(cls, "__or__", cls._create_logical_method(operator.or_))
@@ -2935,6 +3458,13 @@ class ExtensionOpsMixin:
 
 @set_module("pandas.api.extensions")
 class ExtensionScalarOpsMixin(ExtensionOpsMixin):
+    # [CLASS DOC]
+    # Public mixin (extensions API namespace) that implements operators for an extension
+    # array by applying the operator to the underlying scalar elements one by one. It
+    # extends the operator-linking base mixin; arithmetic operators try to convert the
+    # result back to the array type, comparisons return plain boolean numpy arrays. A
+    # subclass of an extension array lists this mixin as an additional base and calls
+    # the installer class methods after the class definition.
     """
     A mixin for defining ops on an ExtensionArray.
 
@@ -2962,6 +3492,15 @@ class ExtensionScalarOpsMixin(ExtensionOpsMixin):
 
     @classmethod
     def _create_method(cls, op, coerce_to_dtype: bool = True, result_dtype=None):
+        # [FUNCTION DOC]
+        # HELPER: class-level factory that builds an operator method. Parameters: op is
+        # a binary operator function; coerce_to_dtype (default true) says whether to try
+        # to convert the result back to the array's type (falling back to numpy);
+        # result_dtype (default None) is the dtype used for the numpy result when not
+        # coercing. Returns a method, named after the operator via the name-setting
+        # helper, that takes the other operand and applies the operator element by
+        # element.
+        # KNOWN ISSUE: the docstring does not document the result_dtype parameter.
         """
         A class method that returns a method that will correspond to an
         operator for an ExtensionArray subclass, by dispatching to the
@@ -3001,7 +3540,20 @@ class ExtensionScalarOpsMixin(ExtensionOpsMixin):
         """
 
         def _binop(self, other):
+            # [FUNCTION DOC]
+            # HELPER: the generated operator method. Parameter other is the right
+            # operand. Returns the not-implemented sentinel for series, index and
+            # dataframe operands. Otherwise broadcasts a non-list-like scalar to the
+            # array length, applies the operator to the pairs of elements (strict
+            # pairing, so a length mismatch raises a value error; the operator's own
+            # type error propagates), and converts the list of results. For divmod and
+            # its reflected form, the paired results are split into two sequences and
+            # converted separately, returning a pair.
             def convert_values(param):
+                # [FUNCTION DOC]
+                # HELPER: nested function that returns the operand as is if it is an
+                # extension array or list-like, otherwise a list repeating the scalar
+                # once per element of the array.
                 if isinstance(param, ExtensionArray) or is_list_like(param):
                     ovalues = param
                 else:  # Assume its an object
@@ -3020,6 +3572,12 @@ class ExtensionScalarOpsMixin(ExtensionOpsMixin):
             res = [op(a, b) for (a, b) in zip(lvalues, rvalues, strict=True)]
 
             def _maybe_convert(arr):
+                # [FUNCTION DOC]
+                # HELPER: nested function converting a list of element results. When
+                # coercion is enabled, it casts through the pointwise-result hook and
+                # falls back to a numpy array if the result is not the same type as the
+                # array. When disabled, it makes a numpy array with the configured
+                # result dtype. Returns the converted array.
                 if coerce_to_dtype:
                     # https://github.com/pandas-dev/pandas/issues/22850
                     # We catch all regular exceptions here, and fall back
@@ -3043,8 +3601,15 @@ class ExtensionScalarOpsMixin(ExtensionOpsMixin):
 
     @classmethod
     def _create_arithmetic_method(cls, op):
+        # [FUNCTION DOC]
+        # HELPER: implements the arithmetic factory by creating a coercing operator
+        # method. Parameter op is the operator function.
         return cls._create_method(op)
 
     @classmethod
     def _create_comparison_method(cls, op):
+        # [FUNCTION DOC]
+        # HELPER: implements the comparison factory by creating a non-coercing operator
+        # method whose numpy result has boolean dtype. Parameter op is the operator
+        # function.
         return cls._create_method(op, coerce_to_dtype=False, result_dtype=bool)

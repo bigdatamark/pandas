@@ -1,3 +1,11 @@
+# [MODULE DOC]
+# Implementation of the nullable boolean extension type: the dtype class, the
+# array class and a coercion helper. Public contents: the boolean dtype (exposed
+# in the pandas namespace) and the boolean array (exposed in the arrays
+# namespace); the coercion function is used by other masked-array modules and
+# the array factory. Builds on the masked-array base module and on the Kleene
+# logic routines in the ops module. Import-time side effect: the dtype class is
+# registered in the extension dtype registry.
 from __future__ import annotations
 
 import numbers
@@ -42,6 +50,14 @@ if TYPE_CHECKING:
 @register_extension_dtype
 @set_module("pandas")
 class BooleanDtype(BaseMaskedDtype):
+    # [CLASS DOC]
+    # Extension dtype for nullable boolean data, registered under the name boolean and
+    # exposed publicly from the pandas namespace. Inherits the masked-dtype base class.
+    # Class state: the name, and the internal fill value false used to fill the data
+    # array under missing positions so that no upcasting occurs. Reports its scalar type
+    # as the numpy boolean scalar, kind code b, underlying numpy dtype bool, and is
+    # treated as both boolean and numeric. Its array type is the boolean array class.
+    # Can build arrays from arrow data.
     """
     Extension dtype for boolean data.
 
@@ -94,17 +110,27 @@ class BooleanDtype(BaseMaskedDtype):
     # error: Signature of "type" incompatible with supertype "BaseMaskedDtype"
     @property
     def type(self) -> type:  # type: ignore[override]
+        # [FUNCTION DOC]
+        # Property: the scalar type of elements, the numpy boolean scalar class. (A
+        # type-ignore is used because the signature differs from the base class.)
         return np.bool_
 
     @property
     def kind(self) -> str:
+        # [FUNCTION DOC]
+        # Property: the numpy kind character, always b for boolean.
         return "b"
 
     @property
     def numpy_dtype(self) -> np.dtype:
+        # [FUNCTION DOC]
+        # Property: the numpy dtype of the underlying data array, plain bool.
         return np.dtype("bool")
 
     def construct_array_type(self) -> type_t[BooleanArray]:
+        # [FUNCTION DOC]
+        # Returns the array class associated with this dtype: the boolean array class.
+        # Takes no arguments.
         """
         Return the array type associated with this dtype.
 
@@ -115,19 +141,36 @@ class BooleanDtype(BaseMaskedDtype):
         return BooleanArray
 
     def __repr__(self) -> str:
+        # [FUNCTION DOC]
+        # Returns the fixed string name of the dtype, without parentheses.
         return "BooleanDtype"
 
     @property
     def _is_boolean(self) -> bool:
+        # [FUNCTION DOC]
+        # HELPER: property used by the dtype-inspection utilities; always true.
         return True
 
     @property
     def _is_numeric(self) -> bool:
+        # [FUNCTION DOC]
+        # HELPER: property used by the dtype-inspection utilities; always true, so this
+        # dtype is treated as numeric.
         return True
 
     def __from_arrow__(
         self, array: pyarrow.Array | pyarrow.ChunkedArray
     ) -> BooleanArray:
+        # [FUNCTION DOC]
+        # Build a boolean array from a pyarrow array or chunked array (hook used by
+        # arrow conversion). Parameter array is the arrow data. Raises a type error when
+        # its type is neither boolean nor null. A null-typed input gives an all-missing
+        # array of the same length. Otherwise each chunk is converted separately: the
+        # data bits come from the data buffer and, when the chunk has nulls, the mask is
+        # the negation of the validity bits (no nulls gives an all-false mask), each
+        # chunk becoming a boolean array. The chunk arrays are concatenated; with no
+        # chunks an empty array is returned. Returns the boolean array. Imports pyarrow
+        # lazily.
         """
         Construct BooleanArray from pyarrow Array/ChunkedArray.
         """
@@ -178,6 +221,24 @@ class BooleanDtype(BaseMaskedDtype):
 def coerce_to_array(
     values, mask=None, copy: bool = False
 ) -> tuple[np.ndarray, np.ndarray]:
+    # [FUNCTION DOC]
+    # Coerce input values to a pair of numpy arrays: boolean data and boolean mask (true
+    # where missing). Parameters: values is a one-dimensional list-like (boolean array,
+    # numeric array, object array or sequence); mask is an optional boolean mask to
+    # combine with whatever missingness is found in values (default None); copy (default
+    # false) whether to copy inputs when they are already suitable. Returns a tuple of
+    # (data, mask). Cases: a boolean array input is reused (raising a value error if a
+    # mask is also given, since the mask comes from it; copied when requested). A numpy
+    # boolean array is used directly. A numeric numpy array has its missing entries
+    # masked and other entries converted to boolean, raising a type error if the
+    # conversion is lossy, i.e. values are not 0 or 1. Anything else is converted to an
+    # object array and its inferred type must be boolean, empty, or numeric with
+    # integer-like values (otherwise a type error is raised); missing entries are
+    # masked, the rest converted to boolean, and numeric values must be exactly 0 or 1
+    # (else a type error). The final mask: all false if there is none; the detected
+    # missingness if no mask was given; otherwise the given mask (converted to boolean
+    # array if needed) combined by logical or with the detected missingness. A value
+    # error is raised if the data and mask shapes differ.
     """
     Coerce the input values array to numpy arrays with a mask.
 
@@ -262,6 +323,15 @@ def coerce_to_array(
 
 @set_module("pandas.arrays")
 class BooleanArray(BaseMaskedArray):
+    # [CLASS DOC]
+    # Extension array of nullable boolean values, public as an array type in the arrays
+    # namespace. Inherits the masked-array base class, which stores the data (numpy
+    # boolean array) and mask (numpy boolean array, true meaning missing) as private
+    # attributes. The dtype is always the boolean dtype. Logical operators follow Kleene
+    # three-valued logic. Class constants: accepted string spellings of true and false
+    # for string parsing, and the tuple of scalar types handled directly in arithmetic
+    # dispatch. Cumulative min and max are done natively; other accumulations go through
+    # integer arrays.
     """
     Array of boolean (True/False) data with missing values.
 
@@ -325,6 +395,11 @@ class BooleanArray(BaseMaskedArray):
 
     @classmethod
     def _simple_new(cls, values: np.ndarray, mask: npt.NDArray[np.bool_]) -> Self:
+        # [FUNCTION DOC]
+        # HELPER: class-level fast constructor used internally. Parameters: values
+        # (numpy array) and mask (boolean numpy array), not validated here. Calls the
+        # parent constructor and then sets the dtype attribute to the boolean dtype.
+        # Returns the new array.
         result = super()._simple_new(values, mask)
         result._dtype = BooleanDtype()
         return result
@@ -332,6 +407,12 @@ class BooleanArray(BaseMaskedArray):
     def __init__(
         self, values: np.ndarray, mask: np.ndarray, copy: bool = False
     ) -> None:
+        # [FUNCTION DOC]
+        # Constructor. Parameters: values is a one-dimensional numpy array of bool
+        # dtype; mask is a boolean numpy array of the same shape marking missing values;
+        # copy (default false) whether to copy both. Raises a type error, suggesting the
+        # array factory function, if values is not a numpy boolean array. Sets the dtype
+        # and delegates validation of the mask and storage to the parent constructor.
         if not (isinstance(values, np.ndarray) and values.dtype == np.bool_):
             raise TypeError(
                 "values should be boolean numpy array. Use "
@@ -342,6 +423,8 @@ class BooleanArray(BaseMaskedArray):
 
     @property
     def dtype(self) -> BooleanDtype:
+        # [FUNCTION DOC]
+        # Property: the boolean dtype instance of this array.
         return self._dtype
 
     @classmethod
@@ -355,6 +438,14 @@ class BooleanArray(BaseMaskedArray):
         false_values: list[str] | None = None,
         none_values: list[str] | None = None,
     ) -> BooleanArray:
+        # [FUNCTION DOC]
+        # HELPER: class-level parser used by file readers. Parameters: strings is a list
+        # of strings (missing values allowed); dtype is the target dtype (keyword,
+        # required); copy (default false); true_values, false_values and none_values are
+        # optional extra strings to treat as true, false and missing (added to the
+        # built-in spellings for true and false; none values default to empty). Raises a
+        # value error (from the nested mapper) for a non-missing string not in any of
+        # the sets. Returns a boolean array built from the mapped values.
         true_values_union = cls._TRUE_VALUES.union(true_values or [])
         false_values_union = cls._FALSE_VALUES.union(false_values or [])
 
@@ -362,6 +453,11 @@ class BooleanArray(BaseMaskedArray):
             none_values = []
 
         def map_string(s) -> bool | None:
+            # [FUNCTION DOC]
+            # HELPER: nested mapper from one string to true, false or None. Returns true
+            # if the string is in the true set, false if in the false set, None if in
+            # the none set, otherwise raises a value error saying the string cannot be
+            # cast to bool.
             if s in true_values_union:
                 return True
             elif s in false_values_union:
@@ -382,11 +478,27 @@ class BooleanArray(BaseMaskedArray):
     def _coerce_to_array(
         cls, value, *, dtype: DtypeObj, copy: bool = False
     ) -> tuple[np.ndarray, np.ndarray]:
+        # [FUNCTION DOC]
+        # HELPER: class-level hook converting arbitrary input to data and mask arrays.
+        # Parameters: value is the input; dtype (keyword) must be falsy or equal to the
+        # boolean dtype name (asserted); copy (default false). Returns the pair from the
+        # module's coerce function.
         if dtype:
             assert dtype == "boolean"
         return coerce_to_array(value, copy=copy)
 
     def _logical_method(self, other, op):
+        # [FUNCTION DOC]
+        # HELPER: implements the logical operators with Kleene logic. Parameters: other
+        # is a scalar (boolean, missing marker, numpy boolean), a boolean array or a
+        # one-dimensional list-like; op is an operator function whose name must be one
+        # of or, and, xor or their reflected forms (asserted). List-likes are converted
+        # to boolean data and mask; arrays with more than one dimension give the not-
+        # implemented sentinel. Raises a type error if a scalar is neither missing nor
+        # boolean, and a value error if the lengths differ. Returns a new array of the
+        # result computed by the Kleene or, and, or xor routine with data and masks of
+        # both operands (so a missing operand does not propagate when the other operand
+        # determines the answer).
         assert op.__name__ in {"or_", "ror_", "and_", "rand_", "xor", "rxor"}
         other_is_scalar = lib.is_scalar(other)
         mask = None
@@ -424,6 +536,13 @@ class BooleanArray(BaseMaskedArray):
     def _accumulate(
         self, name: str, *, skipna: bool = True, **kwargs
     ) -> BaseMaskedArray:
+        # [FUNCTION DOC]
+        # HELPER: cumulative operations. Parameters: name is the operation name; skipna
+        # (keyword, default true); extra keyword arguments passed through. For
+        # cumulative minimum and maximum the masked accumulation routine runs on data
+        # and mask and a new boolean array is returned. For other operations the data is
+        # converted to an integer array with the same mask and the integer array's
+        # accumulate is used, returning its result type.
         data = self._data
         mask = self._mask
         if name in ("cummin", "cummax"):

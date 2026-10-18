@@ -1,5 +1,12 @@
 """Accessors for arrow-backed data."""
 
+# [MODULE DOC]
+# Defines the series accessors for arrow-backed list and struct data: an abstract
+# validating base class and the list and struct accessor classes. They are
+# registered on series as the list and struct accessors elsewhere in the library
+# (and re-exported from the arrow package). Pyarrow and the arrow dtype are
+# imported only when pyarrow is installed; without it, constructing an accessor
+# raises an attribute error. No other import-time side effects.
 from __future__ import annotations
 
 from abc import (
@@ -31,17 +38,39 @@ if TYPE_CHECKING:
 
 
 class ArrowAccessor(metaclass=ABCMeta):
+    # [CLASS DOC]
+    # Abstract base class for the series accessors that expose pyarrow-specific
+    # operations (list and struct). Uses an abstract-base metaclass. State: the wrapped
+    # series and a message template used for validation errors. Construction validates
+    # immediately: subclasses must supply the template and decide which pyarrow types
+    # are acceptable. Provides a property exposing the underlying pyarrow chunked array
+    # of the series.
     @abstractmethod
     def __init__(self, data, validation_msg: str) -> None:
+        # [FUNCTION DOC]
+        # Abstract constructor (subclasses must override and call it). Parameters: data
+        # is the series to wrap; validation_msg is a message template with a placeholder
+        # named dtype, used when validation fails. Stores both and validates the data,
+        # which may raise an attribute error.
         self._data = data
         self._validation_msg = validation_msg
         self._validate(data)
 
     @abstractmethod
     def _is_valid_pyarrow_dtype(self, pyarrow_dtype) -> bool:
+        # [FUNCTION DOC]
+        # HELPER: abstract predicate implemented by subclasses. Takes a pyarrow data
+        # type and returns true if the accessor supports it. The base body does nothing.
         pass
 
     def _validate(self, data) -> None:
+        # [FUNCTION DOC]
+        # HELPER: checks that the series has an arrow-backed dtype with a supported
+        # pyarrow type. Parameter data is the series. Raises an attribute error (rather
+        # than a type or value error, so that introspection tools treat the accessor as
+        # absent) with the formatted message template when pyarrow is not installed, the
+        # dtype is not an arrow dtype, or the subclass predicate rejects the pyarrow
+        # type.
         dtype = data.dtype
         if not HAS_PYARROW or not isinstance(dtype, ArrowDtype):
             # Raise AttributeError so that inspect can handle non-struct Series.
@@ -53,10 +82,18 @@ class ArrowAccessor(metaclass=ABCMeta):
 
     @property
     def _pa_array(self):
+        # [FUNCTION DOC]
+        # HELPER: property returning the pyarrow chunked array stored in the wrapped
+        # series' backing array.
         return self._data.array._pa_array
 
 
 class ListAccessor(ArrowAccessor):
+    # [CLASS DOC]
+    # Accessor for series holding pyarrow list data (list, fixed-size list and large
+    # list types), exposed as the list accessor on series. Inherits the validating base
+    # class. Methods: length of each list, element or slice extraction by subscripting,
+    # and flattening. Iteration is deliberately disabled.
     """
     Accessor object for list data properties of the Series values.
 
@@ -67,6 +104,11 @@ class ListAccessor(ArrowAccessor):
     """
 
     def __init__(self, data=None) -> None:
+        # [FUNCTION DOC]
+        # Constructor. Parameter data is the series to wrap (default None, which will
+        # fail validation). Validates that the series has a pyarrow list-like dtype;
+        # raises an attribute error with a message mentioning the list accessor
+        # otherwise.
         super().__init__(
             data,
             validation_msg="Can only use the '.list' accessor with "
@@ -74,6 +116,9 @@ class ListAccessor(ArrowAccessor):
         )
 
     def _is_valid_pyarrow_dtype(self, pyarrow_dtype) -> bool:
+        # [FUNCTION DOC]
+        # HELPER: returns true when the pyarrow type is a list, fixed-size list or large
+        # list type.
         return (
             pa.types.is_list(pyarrow_dtype)
             or pa.types.is_fixed_size_list(pyarrow_dtype)
@@ -81,6 +126,10 @@ class ListAccessor(ArrowAccessor):
         )
 
     def len(self) -> Series:
+        # [FUNCTION DOC]
+        # Length of each list in the series. Returns a series (same index and name) with
+        # an arrow-backed integer dtype, whose values are the list lengths from the
+        # pyarrow length kernel; missing lists stay missing.
         """
         Return the length of each list in the Series.
 
@@ -121,6 +170,17 @@ class ListAccessor(ArrowAccessor):
         )
 
     def __getitem__(self, key: int | slice) -> Series:
+        # [FUNCTION DOC]
+        # Extract an element or slice from every list. Parameter key is an integer or a
+        # slice. An integer selects that element from each list using the pyarrow
+        # element kernel and returns a series with the element's arrow dtype. A slice
+        # selects a sub-list from each list (start defaults to 0 and step to 1) and
+        # returns a series with the sliced list's arrow dtype. Result keeps the index
+        # and name. Raises a value error naming the type when key is neither.
+        # KNOWN ISSUE: negative integer keys and negative slice bounds or steps are not
+        # handled specially (the author's TODOs note the pyarrow limitation), so they
+        # are passed straight to the kernel; in particular a missing start with a
+        # negative step still starts at zero instead of the last element.
         """
         Index or slice lists in the Series.
 
@@ -189,9 +249,17 @@ class ListAccessor(ArrowAccessor):
             raise ValueError(f"key must be an int or slice, got {type(key).__name__}")
 
     def __iter__(self) -> Iterator:
+        # [FUNCTION DOC]
+        # Disables iteration. Always raises a type error saying the accessor object is
+        # not iterable.
         raise TypeError(f"'{type(self).__name__}' object is not iterable")
 
     def flatten(self) -> Series:
+        # [FUNCTION DOC]
+        # Flatten all lists into a single series. Computes each list's length and the
+        # concatenated elements; the index is the original index repeated by each list's
+        # length (missing lists count as length zero). Returns a series with the element
+        # arrow dtype and the original name.
         """
         Flatten list values.
 
@@ -235,6 +303,11 @@ class ListAccessor(ArrowAccessor):
 
 
 class StructAccessor(ArrowAccessor):
+    # [CLASS DOC]
+    # Accessor for series holding pyarrow struct data, exposed as the struct accessor on
+    # series. Inherits the validating base class. Provides the dtypes of the child
+    # fields, extraction of a single (possibly nested) field as a series, and expansion
+    # of all fields into a dataframe.
     """
     Accessor object for structured data properties of the Series values.
 
@@ -245,6 +318,10 @@ class StructAccessor(ArrowAccessor):
     """
 
     def __init__(self, data=None) -> None:
+        # [FUNCTION DOC]
+        # Constructor. Parameter data is the series to wrap (default None, which will
+        # fail validation). Validates that the series has a pyarrow struct dtype; raises
+        # an attribute error with a message mentioning the struct accessor otherwise.
         super().__init__(
             data,
             validation_msg=(
@@ -254,10 +331,15 @@ class StructAccessor(ArrowAccessor):
         )
 
     def _is_valid_pyarrow_dtype(self, pyarrow_dtype) -> bool:
+        # [FUNCTION DOC]
+        # HELPER: returns true when the pyarrow type is a struct type.
         return pa.types.is_struct(pyarrow_dtype)
 
     @property
     def dtypes(self) -> Series:
+        # [FUNCTION DOC]
+        # Property: the dtype of each child field. Returns a series of arrow dtypes
+        # indexed by the field names, in field order.
         """
         Return the dtype object of each child field of the struct.
 
@@ -308,6 +390,16 @@ class StructAccessor(ArrowAccessor):
         | str
         | int,
     ) -> Series:
+        # [FUNCTION DOC]
+        # Extract a child field as a series. Parameter name_or_index is a field name
+        # (string or bytes), a field position (integer), a pyarrow compute expression,
+        # or a list of names and positions describing a path into nested structs.
+        # Returns a series with the field's arrow dtype and the original index. The
+        # series name is the field name for names and positions (the name of the last
+        # field for a path) and the string form of an expression. The name is determined
+        # first by a nested helper; the data is extracted with the pyarrow struct-field
+        # kernel using the original argument. Raises a value error (from the helper) for
+        # unsupported argument types; invalid fields raise errors from pyarrow.
         """
         Extract a child field of a struct as a Series.
 
@@ -422,6 +514,16 @@ class StructAccessor(ArrowAccessor):
             | int,
             data: pa.ChunkedArray,
         ):
+            # [FUNCTION DOC]
+            # HELPER: nested function that determines the result series name for the
+            # field selection. Parameters: level_name_or_index is the selector
+            # (position, name, bytes, expression or list) and data is the pyarrow
+            # chunked array of structs at that level. A position yields the name of the
+            # field at that position; a string or bytes yields itself; an expression
+            # yields its string form; a list is walked level by level (recursively
+            # resolving each element against the current struct type and descending into
+            # that field), and the name of the final field is returned. Anything else
+            # raises a value error listing the accepted types.
             if isinstance(level_name_or_index, int):
                 name = data.type.field(level_name_or_index).name
             elif isinstance(level_name_or_index, (str, bytes)):
@@ -461,6 +563,10 @@ class StructAccessor(ArrowAccessor):
         )
 
     def explode(self) -> DataFrame:
+        # [FUNCTION DOC]
+        # Expand all child fields into columns. Returns a dataframe made by extracting
+        # each field by position and concatenating them side by side; the column names
+        # come from the field names.
         """
         Extract all child fields of a struct as a DataFrame.
 

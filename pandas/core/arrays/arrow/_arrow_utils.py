@@ -1,3 +1,8 @@
+# [MODULE DOC]
+# Internal helper module holding one function that converts a primitive pyarrow
+# array into a numpy data array plus validity mask by reading the raw buffers.
+# Used by the masked-array construction from arrow data. Imports pyarrow at
+# import time, so it requires pyarrow to be installed. No other side effects.
 from __future__ import annotations
 
 import numpy as np
@@ -7,6 +12,18 @@ import pyarrow
 def pyarrow_array_to_numpy_and_mask(
     arr, dtype: np.dtype
 ) -> tuple[np.ndarray, np.ndarray]:
+    # [FUNCTION DOC]
+    # HELPER: zero-copy-style conversion of arrow data for masked arrays.
+    # Parameters: arr is a primitive pyarrow array (boolean arrays are not
+    # supported because their data buffer is bit-packed); dtype is the numpy
+    # dtype used to interpret the data buffer (coerced to a numpy dtype).
+    # Returns a pair (data, mask): data is a numpy array over the arrow data
+    # buffer sliced by the array offset and length, and mask is a boolean array
+    # where true means valid (not missing). For a null-typed array the data is
+    # uninitialized and the mask is all false. When there is no validity buffer
+    # the mask is all true. The validity bitmap is expanded through a pyarrow
+    # boolean array using the array's offset.
+    # The data array may share memory with the arrow buffer (no copy is made).
     """
     Convert a primitive pyarrow.Array to a numpy array and boolean mask based
     on the buffers of the Array.
