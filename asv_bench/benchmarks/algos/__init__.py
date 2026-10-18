@@ -10,3 +10,9 @@ In many cases these algorithms are reachable in multiple ways:
 In most cases we profile the Series variant directly, trusting the performance
 of the others to be highly correlated.
 """
+
+# [PACKAGE DOC]
+# Subpackage of the benchmark suite holding benchmarks for individual algorithm
+# functions that live in the core algorithms module of the library. Currently its
+# only submodule is isin, which measures membership testing. The package re-exports
+# nothing and has no import-time side effects.
