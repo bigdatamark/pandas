@@ -1,3 +1,16 @@
+# [MODULE DOC]
+# Consumer side of the dataframe interchange protocol: converts any object that
+# implements the protocol (or the Arrow stream capsule interface) into a pandas
+# frame.
+# Public content: the public conversion function (published under the public
+# interchange API namespace). Everything else is internal: per-chunk
+# conversion, per-kind column converters (primitive, categorical, string,
+# datetime), a datetime format-string parser, a buffer-to-numpy-array
+# reader and a null-setting function with typing overloads. Module constant:
+# a mapping from protocol dtype kind to a mapping from bit width to numpy type
+# (ints and unsigned 8 to 64 bits, floats 32 and 64, bool for widths 1 and 8).
+# Depends on the protocol, utils modules and optionally pyarrow. No import-time
+# side effects.
 from __future__ import annotations
 
 import ctypes
@@ -40,6 +53,20 @@ _NP_DTYPES: dict[DtypeKind, dict[int, Any]] = {
 
 @set_module("pandas.api.interchange")
 def from_dataframe(df, allow_copy: bool = True) -> pd.DataFrame:
+# [FUNCTION DOC]
+# Public entry point: build a pandas frame from any interchange-capable object.
+# Parameters: df (any object); allow_copy (default true) states whether memory
+# copies are allowed (false requests zero-copy).
+# Behavior: a pandas frame is returned unchanged. If the object exposes the
+# Arrow stream capsule method, pyarrow (minimum version 14) is imported; if
+# that import fails a user warning is emitted and processing falls through to
+# the protocol path; otherwise the object is converted via a pyarrow table to
+# pandas, with zero-copy-only mode when copies are disallowed, and an Arrow
+# invalid-data error is re-raised as a runtime error. If the object has no
+# protocol export method a value error is raised. Otherwise a deprecation
+# warning (pandas 4 warning class) pointing to alternatives is emitted at the
+# caller's stack level, the object's export method is called with the copy flag
+# and the result is converted by the private function.
     """
     Build a ``pd.DataFrame`` from any DataFrame supporting the interchange protocol.
 
@@ -137,6 +164,15 @@ def from_dataframe(df, allow_copy: bool = True) -> pd.DataFrame:
 
 
 def _from_dataframe(df: DataFrameXchg, allow_copy: bool = True) -> pd.DataFrame:
+# [FUNCTION DOC]
+# HELPER: converts a protocol frame object to a pandas frame (used by the public
+# entry point). Parameters: df (protocol frame); allow_copy (default true).
+# Converts every chunk of the frame separately through the chunk converter. If
+# copying is disallowed and there is more than one chunk, raises a runtime error
+# (joining needs a copy). With no chunks, converts the frame itself; with one
+# chunk uses it; with several concatenates them along rows with a fresh index
+# and no copy. Finally, if the metadata has an entry for the pandas index, it
+# is assigned as the result's index. Returns the frame.
     """
     Build a ``pd.DataFrame`` from the DataFrame interchange object.
 
@@ -176,6 +212,15 @@ def _from_dataframe(df: DataFrameXchg, allow_copy: bool = True) -> pd.DataFrame:
 
 
 def protocol_df_chunk_to_pandas(df: DataFrameXchg) -> pd.DataFrame:
+# [FUNCTION DOC]
+# Convert one protocol chunk to a pandas frame. Parameter df: a protocol frame.
+# Iterates over the column names; raises a value error if a name is not a string
+# or appears twice. Each column is dispatched on its dtype kind: primitive
+# kinds (int, uint, float, bool), categorical, string and datetime go to
+# their converters, any other kind raises a not-implemented error. Builds the
+# frame from the resulting mapping and stores the list of buffers (to keep the
+# memory alive) in the frame's attrs under the interchange-buffers key.
+# Returns the frame.
     """
     Convert interchange protocol chunk to ``pd.DataFrame``.
 
@@ -220,6 +265,12 @@ def protocol_df_chunk_to_pandas(df: DataFrameXchg) -> pd.DataFrame:
 
 
 def primitive_column_to_ndarray(col: Column) -> tuple[np.ndarray, Any]:
+# [FUNCTION DOC]
+# Convert a column of primitive kind (int, uint, float, bool) to a numpy array.
+# Parameter col: a protocol column. Fetches the column buffers, builds the
+# array from the data buffer using the column's offset and size, then applies
+# null handling with the validity buffer. Returns a pair of (array, buffers
+# mapping which is the memory owner to keep alive).
     """
     Convert a column holding one of the primitive dtypes to a NumPy array.
 
@@ -247,6 +298,17 @@ def primitive_column_to_ndarray(col: Column) -> tuple[np.ndarray, Any]:
 
 
 def categorical_column_to_series(col: Column) -> tuple[pd.Series, Any]:
+# [FUNCTION DOC]
+# Convert a categorical column to a pandas series. Parameter col: protocol
+# column. Raises a not-implemented error if the description is not
+# dictionary-style, or if the categories column has no private underlying
+# series attribute (the only supported way to read categories). Reads the codes
+# from the data buffer, maps each code to a category using the code modulo the
+# number of categories (so out-of-range sentinels do not raise an index error;
+# with zero categories the codes themselves are used), builds a categorical with
+# the description's orderedness, wraps it in a series and applies null
+# handling. Returns a pair of (series, buffers).
+# KNOWN ISSUE: sentinel-coded nulls (code minus one) are mapped by the modulo to the last category, and null handling returns early when the column has no validity buffer, which is the case for the sentinel null representation, so such nulls are not restored.
     """
     Convert a column holding categorical data to a pandas Series.
 
@@ -299,6 +361,18 @@ def categorical_column_to_series(col: Column) -> tuple[pd.Series, Any]:
 
 
 def string_column_to_ndarray(col: Column) -> tuple[np.ndarray, Any]:
+# [FUNCTION DOC]
+# Convert a string column to an array of strings. Parameter col: protocol
+# column. Raises a not-implemented error unless the null kind is non-nullable,
+# bit mask or byte mask. Requires an offsets buffer (assertion) and a utf-8
+# format string (assertion). Reads the data as unsigned bytes and the offsets
+# for size plus one entries, computes null positions from the validity buffer
+# (inverting when the mask value is zero meaning valid), then decodes each
+# element from the byte range between consecutive offsets as utf-8, with null
+# positions set to not-a-number. Returns a pair of (result, buffers) where the
+# result is a series with the string dtype when the string dtype option is on,
+# else an object-dtype numpy array.
+# KNOWN ISSUE: the existing docstring says a NumPy array is returned, but a series is returned when the string dtype option is enabled.
     """
     Convert a column holding string data to a NumPy array.
 
@@ -394,6 +468,16 @@ def string_column_to_ndarray(col: Column) -> tuple[np.ndarray, Any]:
 
 
 def parse_datetime_format_str(format_str, data) -> pd.Series | np.ndarray:
+# [FUNCTION DOC]
+# Interpret integer data using an Arrow C datetime format string.
+# Parameters: format_str (text), data (integer numpy array of time units since
+# the epoch). Timestamp formats (unit letter s, m, u or n, then a colon and an
+# optional timezone) cast to datetime64 of the matching unit and, if a
+# timezone is present, return a series localized to UTC then converted to that
+# timezone; otherwise a numpy array. Date formats: day format multiplies the
+# values (as unsigned 64-bit) by seconds per day and gives datetime64 in
+# seconds; millisecond format casts to datetime64 in milliseconds. Any other
+# format raises a not-implemented error. Returns an array or a series.
     """Parse datetime `format_str` to interpret the `data`."""
     # timestamp 'ts{unit}:tz'
     timestamp_meta = re.match(r"ts([smun]):(.*)", format_str)
@@ -427,6 +511,13 @@ def parse_datetime_format_str(format_str, data) -> pd.Series | np.ndarray:
 
 
 def datetime_column_to_ndarray(col: Column) -> tuple[np.ndarray | pd.Series, Any]:
+# [FUNCTION DOC]
+# Convert a datetime column to a numpy datetime array (or a series when the
+# format has a timezone). Parameter col: protocol column. Reads the data buffer
+# as signed integers of the column's bit width using column offset and size,
+# parses them with the format string from the column dtype, then applies null
+# handling. Returns a pair of (result, buffers).
+# KNOWN ISSUE: the existing docstring says only a NumPy array is returned, but a series is returned for timezone-aware formats.
     """
     Convert a column holding DateTime data to a NumPy array.
 
@@ -470,6 +561,19 @@ def buffer_to_ndarray(
     length: int,
     offset: int = 0,
 ) -> np.ndarray:
+# [FUNCTION DOC]
+# Build a numpy array viewing the memory of a buffer, without copying.
+# Parameters: buffer (protocol buffer); dtype (protocol dtype tuple of kind,
+# bit width, format string, endianness); length (keyword-only, required, number
+# of elements); offset (keyword-only, default zero, elements to skip).
+# Raises a not-implemented error if the kind and width have no numpy type.
+# For bit width one (a bit mask) requires pyarrow, builds a boolean array from
+# the foreign buffer pointer with the given length and offset, and returns it
+# as numpy. Otherwise casts the pointer, shifted by offset times the width in
+# bytes, to a ctypes pointer and wraps it as an array of the given length (an
+# empty array if the length is zero).
+# The array does not own the memory; the caller must keep the buffer owner alive.
+# KNOWN ISSUE: the existing docstring says the length parameter is optional and only matters for bit masks, but it is required and is used for all dtypes.
     """
     Build a NumPy array from the passed buffer.
 
@@ -532,6 +636,8 @@ def set_nulls(
     validity: tuple[Buffer, tuple[DtypeKind, int, str, str]] | None,
     allow_modify_inplace: bool = ...,
 ) -> np.ndarray: ...
+    # [FUNCTION DOC]
+    # Typing overload stub for numpy array input and output; see the implementation below.
 
 
 @overload
@@ -541,6 +647,8 @@ def set_nulls(
     validity: tuple[Buffer, tuple[DtypeKind, int, str, str]] | None,
     allow_modify_inplace: bool = ...,
 ) -> pd.Series: ...
+    # [FUNCTION DOC]
+    # Typing overload stub for series input and output; see the implementation below.
 
 
 @overload
@@ -550,6 +658,8 @@ def set_nulls(
     validity: tuple[Buffer, tuple[DtypeKind, int, str, str]] | None,
     allow_modify_inplace: bool = ...,
 ) -> np.ndarray | pd.Series: ...
+    # [FUNCTION DOC]
+    # Typing overload stub for the general union input and output; see the implementation below.
 
 
 def set_nulls(
@@ -558,6 +668,23 @@ def set_nulls(
     validity: tuple[Buffer, tuple[DtypeKind, int, str, str]] | None,
     allow_modify_inplace: bool = True,
 ) -> np.ndarray | pd.Series:
+    # [FUNCTION DOC]
+    # Replace missing positions of converted data by nulls according to the column's
+    # null representation.
+    # Parameters: data (numpy array or series); col (protocol column describing
+    # the data); validity (the validity entry from the column's buffers, a pair of
+    # buffer and dtype, or None); allow_modify_inplace (default true; when false,
+    # a copy is modified).
+    # If validity is None, returns data unchanged. Otherwise reads the null
+    # description: for sentinel kind the null positions are where the data equals
+    # the sentinel; for bit mask or byte mask kinds the positions are read from the
+    # validity buffer (inverted when the mask value is zero, meaning valid);
+    # non-nullable and nan kinds do nothing; any other kind raises a not-implemented
+    # error. If any position is null the data (copied if inplace is disallowed) is
+    # assigned None at those positions; a type error from that assignment (non-
+    # nullable numpy dtype) makes it convert to float first and assign again.
+    # Returns the data.
+    # KNOWN ISSUE: the existing docstring refers to a method named for the column buffers that does not exist (the real method is the one returning buffers), and, since pandas producers give no validity buffer for sentinel-based columns, the sentinel branch is effectively unreachable for pandas data.
     """
     Set null values for the data according to the column null kind.
 

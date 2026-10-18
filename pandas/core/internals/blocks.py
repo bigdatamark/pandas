@@ -1,3 +1,18 @@
+# [MODULE DOC]
+# Block classes: the storage units of the internal block manager. A block holds
+# one array of homogeneous dtype (a numpy array of shape columns by rows, or an
+# extension array) plus the positions (placement) of its columns in the owning
+# manager, and exposes the operations the manager applies per block (casting,
+# filling, replacing, reducing, shifting, setting, where, putmask, interpolating,
+# quantile, take and so on).
+# Public contents: the base block class and its subclasses (numpy-backed
+# numeric/object block, extension block, datetime-like block and the
+# helper mixins), the factory and helper functions to pick block classes,
+# coerce values, ensure shapes and build new blocks, and the helper that
+# returns values for external (user-visible) consumption.
+# Module constant: a pre-built object dtype used for fast comparisons.
+# Depends on the compiled block base class, array algorithms, dtype helpers and
+# the extension array classes. No import-time side effects.
 from __future__ import annotations
 
 import inspect
@@ -136,6 +151,20 @@ _dtype_obj = np.dtype("object")
 
 
 class Block(PandasObject, libinternals.Block):
+    # [CLASS DOC]
+    # Base class for all blocks: a canonical n-dimensional unit of homogeneous
+    # dtype contained in a frame or series, ignorant of index labels (the
+    # container handles those). Inherits from the library's base object and the
+    # compiled block base class that supplies the constructor taking values,
+    # placement, ndim and refs, plus the placement and reference-tracking
+    # attributes. State: values (numpy or extension array), ndim, refs (copy-on-write
+    # reference tracker shared with views) and the placement. Declares no slots
+    # and a class attribute is_numeric (false) overridden by numeric subclasses.
+    # Many methods are final (not to be overridden).
+    # Key method groups: introspection (dtype, is_object, is_extension, fill value),
+    # construction of sibling blocks, slicing, apply/reduce/split, casting
+    # and conversion, copying with copy-on-write awareness, replace, setitem, where,
+    # putmask, fillna, interpolate, shift, diff, quantile, take and delete.
     """
     Canonical n-dimensional unit of homogeneous dtype contained in a pandas
     data structure
@@ -154,6 +183,9 @@ class Block(PandasObject, libinternals.Block):
     @final
     @cache_readonly
     def _validate_ndim(self) -> bool:
+        # [FUNCTION DOC]
+        # HELPER: cached property saying whether the dimensionality of the values should
+        # be validated: true unless the dtype is a 1D-only extension dtype.
         """
         We validate dimension for blocks that can hold 2D values, which for now
         means numpy dtypes or EA dtypes like DatetimeTZDtype and PeriodDtype.
@@ -163,27 +195,44 @@ class Block(PandasObject, libinternals.Block):
     @final
     @cache_readonly
     def is_object(self) -> bool:
+        # [FUNCTION DOC]
+        # Cached property: true if the values have object dtype (compared by identity-
+        # cheap dtype equality).
         return self.values.dtype == _dtype_obj
 
     @final
     @cache_readonly
     def is_extension(self) -> bool:
+        # [FUNCTION DOC]
+        # Cached property: true if the values are not a plain numpy array (extension
+        # array).
         return not lib.is_np_dtype(self.values.dtype)
 
     @final
     @cache_readonly
     def _can_consolidate(self) -> bool:
+        # [FUNCTION DOC]
+        # HELPER: cached property: whether this block can be merged with others of the
+        # same dtype during consolidation; true except for extension blocks (which are
+        # not consolidated, even tz-aware datetimes for now).
         # We _could_ consolidate for DatetimeTZDtype but don't for now.
         return not self.is_extension
 
     @final
     @cache_readonly
     def _consolidate_key(self):
+        # [FUNCTION DOC]
+        # HELPER: cached property: key used to group blocks for consolidation, the pair
+        # of the consolidation flag and the dtype name.
         return self._can_consolidate, self.dtype.name
 
     @final
     @cache_readonly
     def _can_hold_na(self) -> bool:
+        # [FUNCTION DOC]
+        # HELPER: cached property: whether missing values can be stored without casting.
+        # For numpy dtypes false for integer, unsigned and bool kinds; otherwise taken
+        # from the extension dtype's own flag.
         """
         Can we store NA values in this Block?
         """
@@ -195,6 +244,9 @@ class Block(PandasObject, libinternals.Block):
     @final
     @property
     def is_bool(self) -> bool:
+        # [FUNCTION DOC]
+        # Property: true if the values have numpy boolean dtype.
+        # KNOWN ISSUE: the existing docstring says a block with object dtype containing bool objects also counts, but only the bool dtype is checked.
         """
         We can be bool if a) we are bool dtype or b) object dtype with bool objects.
         """
@@ -202,16 +254,28 @@ class Block(PandasObject, libinternals.Block):
 
     @final
     def external_values(self):
+        # [FUNCTION DOC]
+        # Return the values in the form exposed to users, via the module-level external
+        # values helper (datetime-like arrays become numpy arrays, extension arrays that
+        # wrap numpy are unwrapped, and so on; no copy).
         return external_values(self.values)
 
     @final
     @cache_readonly
     def fill_value(self):
+        # [FUNCTION DOC]
+        # Cached property: the missing-value marker for this dtype, used when
+        # reindexing introduces missing rows (computed non-compat, so e.g. typed NaT for
+        # datetimes).
         # Used in reindex_indexer
         return na_value_for_dtype(self.dtype, compat=False)
 
     @final
     def _standardize_fill_value(self, value):
+        # [FUNCTION DOC]
+        # HELPER: normalizes a scalar to be set. For non-object blocks, a value that
+        # is a valid missing marker for the dtype (e.g. None) is replaced with the
+        # block's own fill value; everything else is returned unchanged.
         # if we are passed a scalar None, convert it here
         if self.dtype != _dtype_obj and is_valid_na_for_dtype(value, self.dtype):
             value = self.fill_value
@@ -219,10 +283,16 @@ class Block(PandasObject, libinternals.Block):
 
     @property
     def mgr_locs(self) -> BlockPlacement:
+        # [FUNCTION DOC]
+        # Property: the placement (positions of this block's columns in the manager),
+        # stored in the private placement attribute.
         return self._mgr_locs
 
     @mgr_locs.setter
     def mgr_locs(self, new_mgr_locs: BlockPlacement) -> None:
+        # [FUNCTION DOC]
+        # Setter for the placement property: stores the given block placement. Returns
+        # nothing and does not validate.
         self._mgr_locs = new_mgr_locs
 
     @final
@@ -232,6 +302,12 @@ class Block(PandasObject, libinternals.Block):
         placement: BlockPlacement | None = None,
         refs: BlockValuesRefs | None = None,
     ) -> Block:
+        # [FUNCTION DOC]
+        # Create a new block of whichever class suits the given values, keeping this
+        # block's dimensionality. Parameters: values; placement (default this block's
+        # placement); refs (optional reference tracker for copy-on-write). Extension
+        # blocks reshape the values to the block's ndim first. Delegates to the module's
+        # new-block factory, which infers the class from the dtype. Returns the new block.
         """
         Create a new block, with type inference propagate any values that are
         not specified
@@ -250,6 +326,11 @@ class Block(PandasObject, libinternals.Block):
         placement: BlockPlacement | None = None,
         refs: BlockValuesRefs | None = None,
     ) -> Self:
+        # [FUNCTION DOC]
+        # Create a new block of the same class as this one around the given values.
+        # Parameters: values (assumed already coerced, e.g. datetime-likes already
+        # wrapped); placement (default this block's); refs (optional). Returns the new
+        # block. Does no validation.
         """Wrap given values in a block of same type as self."""
         # Pre-2.0 we called ensure_wrapped_if_datetimelike because fastparquet
         #  relied on it, as of 2.0 the caller is responsible for this.
@@ -261,6 +342,10 @@ class Block(PandasObject, libinternals.Block):
 
     @final
     def __repr__(self) -> str:
+        # [FUNCTION DOC]
+        # Short text representation: class name and either the length and dtype (for
+        # 1D) or the placement indexer, the shape joined by multiplication signs and the
+        # dtype. Does not print values.
         # don't want to print out all of the items here
         name = type(self).__name__
         if self.ndim == 1:
@@ -273,10 +358,17 @@ class Block(PandasObject, libinternals.Block):
 
     @final
     def __len__(self) -> int:
+        # [FUNCTION DOC]
+        # Return the number of items along the first axis of the values (rows of the
+        # values array, which for 2D blocks is the number of columns held).
         return len(self.values)
 
     @final
     def slice_block_columns(self, slc: slice) -> Self:
+        # [FUNCTION DOC]
+        # Select a slice of the block's columns and return a block of the same class.
+        # Parameter slc: a slice over the first axis. The placement is sliced the same
+        # way, values are sliced as a view and the reference tracker is shared.
         """
         Perform __getitem__-like, return result as block.
         """
@@ -288,6 +380,11 @@ class Block(PandasObject, libinternals.Block):
 
     @final
     def take_block_columns(self, indices: npt.NDArray[np.intp]) -> Self:
+        # [FUNCTION DOC]
+        # Select columns by an array of integer positions and return a block of the same
+        # class. Parameter indices: integer position array. The placement and the
+        # values are indexed accordingly; the reference tracker is not shared (None).
+        # Only used by concatenation, never with single-column extension blocks.
         """
         Perform __getitem__-like, return result as block.
 
@@ -305,6 +402,12 @@ class Block(PandasObject, libinternals.Block):
     def getitem_block_columns(
         self, slicer: slice, new_mgr_locs: BlockPlacement, ref_inplace_op: bool = False
     ) -> Self:
+        # [FUNCTION DOC]
+        # Slice the block's columns with a new placement. Parameters: slicer (slice);
+        # new_mgr_locs (placement for the result); ref_inplace_op (default false).
+        # Returns a block of the same class whose values are the slice. The reference
+        # tracker is reused, except that when this is flagged as an in-place operation
+        # and nothing else references the data, no tracker is passed.
         """
         Perform __getitem__-like, return result as block.
 
@@ -316,12 +419,20 @@ class Block(PandasObject, libinternals.Block):
 
     @final
     def _can_hold_element(self, element: Any) -> bool:
+        # [FUNCTION DOC]
+        # HELPER: whether the given element could be stored in this block's values
+        # without casting. Unwraps pandas containers to arrays, then asks the dtype
+        # helper whether the values can hold the element.
         """require the same dtype as ourselves"""
         element = extract_array(element, extract_numpy=True)
         return can_hold_element(self.values, element)
 
     @final
     def should_store(self, value: ArrayLike) -> bool:
+        # [FUNCTION DOC]
+        # Whether the given array can be assigned into the values in place, i.e.
+        # whether its dtype equals this block's dtype; otherwise a cast is needed.
+        # Parameter value: numpy or extension array. Returns a boolean.
         """
         Should we set self.values[indexer] = value inplace or do we need to cast?
 
@@ -340,6 +451,12 @@ class Block(PandasObject, libinternals.Block):
 
     @final
     def apply(self, func, **kwargs) -> list[Block]:
+        # [FUNCTION DOC]
+        # Apply a function to the values. Parameters: func (callable taking the values
+        # array); extra keyword arguments passed through. The result is coerced to the
+        # canonical array classes (datetime-like to arrays) and wrapped into blocks;
+        # returns a list of blocks (one, or one per column when a two-dimensional
+        # extension array result must be split).
         """
         apply the function to my values; return a block if we are not
         one
@@ -351,6 +468,11 @@ class Block(PandasObject, libinternals.Block):
 
     @final
     def reduce(self, func) -> Block:
+        # [FUNCTION DOC]
+        # Apply a reducing function and return a single-row block with the same
+        # placement. Parameter func: callable taking the values. Asserts the block is 2D.
+        # For 2D values the result is reshaped to a column vector; 1D results are used
+        # as is. Squeezing is done by a higher level.
         # We will apply the function and reshape the result into a single-row
         #  Block with the same mgr_locs; squeezing will be done at a higher level
         assert self.ndim == 2
@@ -366,6 +488,12 @@ class Block(PandasObject, libinternals.Block):
 
     @final
     def _split_op_result(self, result: ArrayLike) -> list[Block]:
+        # [FUNCTION DOC]
+        # HELPER: wraps the result of an operation into blocks. If the result is a
+        # multi-dimensional extension array it is split into one block per column of
+        # this block (a row slice for 2D-capable extension dtypes, a single element
+        # otherwise), each with its own one-item placement. Otherwise one block with
+        # this block's placement. Returns a list of blocks.
         # See also: split_and_operate
         if result.ndim > 1 and isinstance(result.dtype, ExtensionDtype):
             # TODO(EA2D): unnecessary with 2D EAs
@@ -388,6 +516,11 @@ class Block(PandasObject, libinternals.Block):
 
     @final
     def _split(self) -> Generator[Block]:
+        # [FUNCTION DOC]
+        # HELPER: generator splitting a 2D block into single-column blocks. Asserts
+        # 2D. Yields, for each column position, a block of the same class holding that
+        # row slice of the values with a one-column placement and the shared reference
+        # tracker.
         """
         Split a block into a list of single-column blocks.
         """
@@ -402,6 +535,12 @@ class Block(PandasObject, libinternals.Block):
 
     @final
     def split_and_operate(self, func, *args, **kwargs) -> list[Block]:
+        # [FUNCTION DOC]
+        # Split the block into single-column blocks and apply a block method to each.
+        # Parameters: func (callable taking a block plus extra arguments and returning
+        # a list of blocks); extra positional and keyword arguments passed through.
+        # Asserts the block is 2D and has more than one column. Returns the flat list of
+        # all resulting blocks.
         """
         Split the block and apply func column-by-column.
 
@@ -428,6 +567,19 @@ class Block(PandasObject, libinternals.Block):
 
     @final
     def coerce_to_target_dtype(self, other, raise_on_upcast: bool) -> Block:
+        # [FUNCTION DOC]
+        # Cast this block to a dtype that can hold the given value.
+        # Parameters: other (the value or array that must fit); raise_on_upcast
+        # (boolean; if true a type error is raised instead of casting).
+        # Computes the result dtype; raises an assertion error if it equals the current
+        # dtype (guards infinite recursion). Disables the upcast error for a missing
+        # scalar set into integer data (excluding NaT-like values) and for a 1D float
+        # array of only integers or NaN set into integer data. Otherwise, when upcast
+        # errors are on, raises a type error naming the value and dtype. Then casts
+        # via the block astype; an out-of-bounds datetime error is re-raised with a
+        # message asking for an explicit cast. Returns the new block.
+        # KNOWN ISSUE: the existing docstring says the method does not raise and may return the same block, but it can raise type, assertion and out-of-bounds errors and never returns an unchanged block.
+        # KNOWN ISSUE: the second assertion (new dtype equal to the current dtype) repeats the first check made earlier in the method, so it can never trigger.
         """
         coerce the current block to a dtype compat for other
         we will return a block, possibly object, and not raise
@@ -486,6 +638,14 @@ class Block(PandasObject, libinternals.Block):
 
     @final
     def convert(self) -> list[Block]:
+        # [FUNCTION DOC]
+        # Try to convert object-dtype data to a better dtype. No parameters. Returns a
+        # list of blocks. Non-object blocks give a shallow copy. Multi-column object
+        # blocks are split and each column converted, returning a single shallow copy
+        # if nothing changed. For a one-column block, converts object values (including
+        # non-numeric inference such as datetimes) and reshapes/coerces them; the
+        # reference tracker is shared if the conversion returned the same data.
+        # KNOWN ISSUE: the existing docstring mentions a copy flag, but the method has no parameters.
         """
         Attempt to coerce any object types to better types. Return a copy
         of the block (if copy = True).
@@ -530,6 +690,15 @@ class Block(PandasObject, libinternals.Block):
         convert_floating: bool = True,
         dtype_backend: DtypeBackend = "numpy_nullable",
     ) -> list[Block]:
+        # [FUNCTION DOC]
+        # Convert to the best nullable dtypes. Parameters (all default true except the
+        # backend): infer_objects, convert_string, convert_integer, convert_boolean,
+        # convert_floating; dtype_backend (default the numpy-nullable backend).
+        # Runs object inference first if requested and the block is object. If all four
+        # conversion flags are off returns shallow copies. Otherwise determines the target
+        # dtype per column using the dtype conversion helper; if none changes, returns
+        # shallow copies; else casts each column separately (squeezing to 1D when the
+        # block is 2D). Returns a list of blocks.
         if infer_objects and self.is_object:
             blks = self.convert()
         else:
@@ -573,6 +742,8 @@ class Block(PandasObject, libinternals.Block):
     @final
     @cache_readonly
     def dtype(self) -> DtypeObj:
+        # [FUNCTION DOC]
+        # Cached property: the dtype of the values.
         return self.values.dtype
 
     @final
@@ -582,6 +753,14 @@ class Block(PandasObject, libinternals.Block):
         errors: IgnoreRaise = "raise",
         squeeze: bool = False,
     ) -> Block:
+        # [FUNCTION DOC]
+        # Cast to a new dtype and return a new block. Parameters: dtype; errors
+        # (default raise; ignore suppresses errors and returns the original values);
+        # squeeze (default false; for a 1D-only extension target squeezes a single-
+        # column 2D array to 1D, raising a value error if there are several columns).
+        # Coerces the result array classes, shares the reference tracker when the cast
+        # is a view, and builds the block through the sibling factory. Raises a type
+        # error if the result shape differs from the original shape.
         """
         Coerce to the new dtype.
 
@@ -625,6 +804,11 @@ class Block(PandasObject, libinternals.Block):
     def get_values_for_csv(
         self, *, float_format, date_format, decimal, na_rep: str = "nan", quoting=None
     ) -> Block:
+        # [FUNCTION DOC]
+        # Convert to a block of strings for CSV output. Keyword-only parameters:
+        # float_format, date_format, decimal (required), na_rep (default the text "nan"),
+        # quoting (optional). Delegates to the index-level helper of the same purpose and
+        # wraps the result as a block.
         """convert to our native types format"""
         result = get_values_for_csv(
             self.values,
@@ -638,6 +822,11 @@ class Block(PandasObject, libinternals.Block):
 
     @final
     def copy(self, *, deep: bool) -> Self:
+        # [FUNCTION DOC]
+        # Copy constructor. Keyword-only parameter deep (required). A deep copy copies the
+        # values and starts a fresh reference tracker; a shallow copy makes a view of
+        # the values that shares the tracker. The new block has the same placement and
+        # ndim. Returns the new block.
         """copy constructor"""
         values = self.values
         refs: BlockValuesRefs | None
@@ -653,12 +842,21 @@ class Block(PandasObject, libinternals.Block):
     # Copy-on-Write Helpers
 
     def _maybe_copy(self, inplace: bool, deep: bool = True) -> Self:
+        # [FUNCTION DOC]
+        # HELPER: copy-on-write helper. Parameters: inplace; deep (default true). If
+        # in-place and nothing else references this block's data, returns self; otherwise
+        # returns a copy of the requested depth.
         if inplace and not self.refs.has_reference():
             return self
         return self.copy(deep=deep)
 
     @final
     def _get_refs_and_copy(self, inplace: bool):
+        # [FUNCTION DOC]
+        # HELPER: copy-on-write helper. Parameter inplace. Returns a pair of (whether to
+        # copy, refs to pass to the new block): for a non-inplace operation (True, None);
+        # for in-place with other references (True, None); for in-place without them
+        # (False, this block's tracker).
         refs = None
         copy = not inplace
         if inplace:
@@ -680,6 +878,19 @@ class Block(PandasObject, libinternals.Block):
         # mask may be pre-computed if we're called from replace_list
         mask: npt.NDArray[np.bool_] | None = None,
     ) -> list[Block]:
+        # [FUNCTION DOC]
+        # Replace a scalar value with another in this block, possibly producing several
+        # blocks. Parameters: to_replace (scalar); value (scalar); inplace (default
+        # false); mask (optional precomputed boolean mask of positions equal to
+        # to_replace, supplied by the list replacement routine). Lists never arrive here.
+        # If the block cannot hold to_replace, or the mask is empty, returns a single
+        # copy (or self when in place and unreferenced). If the block can hold the value
+        # (or is the string dtype and the value is a compiled pattern), does an in-place
+        # mask assignment on a copy-on-write-aware copy. Otherwise, for one-column
+        # blocks, casts to object (when the value is None or the missing marker) or to
+        # a dtype that fits the value, then replaces again in place with the same mask;
+        # for multi-column blocks, splits into columns and replaces column by column
+        # with a row of the mask each. Returns a list of blocks.
         """
         replace the to_replace value with value, possible to create new
         blocks here this is just a call to putmask.
@@ -746,6 +957,16 @@ class Block(PandasObject, libinternals.Block):
         inplace: bool = False,
         mask=None,
     ) -> list[Block]:
+        # [FUNCTION DOC]
+        # HELPER: regex-based replacement. Parameters: to_replace (pattern text or
+        # compiled pattern); value (replacement); inplace (default false); mask
+        # (optional boolean array limiting positions).
+        # Returns a shallow copy unchanged if to_replace is neither a pattern nor
+        # holdable, or if it is a pattern and the dtype is not object or string. If the
+        # block cannot hold the replacement it is cast to object first; otherwise a
+        # copy-on-write-aware copy is used. The pattern is compiled and applied with the
+        # regex replacement routine on the values. Returns a one-element list.
+        # KNOWN ISSUE: the existing docstring says that true in the mask means the element is ignored, but the regex replacement routine and the callers treat true as the positions to process.
         """
         Replace elements by the given value.
 
@@ -794,6 +1015,21 @@ class Block(PandasObject, libinternals.Block):
         inplace: bool = False,
         regex: bool = False,
     ) -> list[Block]:
+        # [FUNCTION DOC]
+        # Replace several values at once. Parameters: src_list (values or patterns to
+        # find); dest_list (replacement values of the same length; a strict zip raises on
+        # mismatch); inplace (default false); regex (default false).
+        # Pairs whose source this block cannot hold are dropped (string dtype blocks
+        # keep pattern sources); with no pairs returns a shallow copy. For string-like
+        # dtypes the masks come from a pattern-or-equality search that skips missing
+        # values, otherwise from the missing-aware equality mask; masks are
+        # materialized when working in place because replacements change data. Then
+        # applies each pair in order on the current list of result blocks (a block
+        # can be split into columns by a replacement, so mask rows are matched to
+        # blocks by position), using the single-pair coercing replace. Between pairs
+        # (not after the last), temporary reference-tracking entries are cleaned: this
+        # block is removed from the shared tracker if a result still shares it, or the
+        # tracker is cleared if the result was copied. Returns the final list of blocks.
         """
         See BlockManager.replace_list docstring.
         """
@@ -887,6 +1123,17 @@ class Block(PandasObject, libinternals.Block):
         inplace: bool = True,
         regex: bool = False,
     ) -> list[Block]:
+        # [FUNCTION DOC]
+        # HELPER: replace the positions selected by a mask with a value.
+        # Parameters: to_replace; value; mask (boolean array of positions to process);
+        # inplace (default true); regex (default false).
+        # If the regex test says to use patterns, delegates to the regex replacement.
+        # Otherwise, if value is None: with any true mask position, casts to object,
+        # copies when not in place or when both the original and the cast block are
+        # referenced, assigns None under the mask and returns it; with no true position
+        # returns a shallow copy. For other values delegates to the scalar replace with the
+        # given mask. Returns a list of blocks.
+        # KNOWN ISSUE: the existing docstring says that true in the mask means the element is ignored, but the assignments use true as the positions to replace.
         """
         Replace value corresponding to the given boolean array with another
         value.
@@ -941,12 +1188,18 @@ class Block(PandasObject, libinternals.Block):
     #  but not ExtensionBlock
 
     def _maybe_squeeze_arg(self, arg: np.ndarray) -> np.ndarray:
+        # [FUNCTION DOC]
+        # HELPER: hook for 1D-only extension arrays; in this base (2D-capable) class it
+        # returns its argument unchanged. Parameter arg: array.
         """
         For compatibility with 1D-only ExtensionArrays.
         """
         return arg
 
     def _unwrap_setitem_indexer(self, indexer):
+        # [FUNCTION DOC]
+        # HELPER: hook for 1D-only extension arrays; in this base (2D-capable) class it
+        # returns the indexer unchanged.
         """
         For compatibility with 1D-only ExtensionArrays.
         """
@@ -956,9 +1209,16 @@ class Block(PandasObject, libinternals.Block):
     #  new .values that can have different shape GH#42631
     @property
     def shape(self) -> Shape:
+        # [FUNCTION DOC]
+        # Property: the shape of the values array. Deliberately not cached because
+        # the manager can replace the values with differently shaped ones.
         return self.values.shape
 
     def iget(self, i: int | tuple[int, int] | tuple[slice, int]) -> np.ndarray:
+        # [FUNCTION DOC]
+        # Return the element or sub-array at position i of the values. Parameter i: an
+        # integer, or a pair of integers or of a full slice and an integer (2D blocks
+        # only). No copying or checking.
         # In the case where we have a tuple[slice, int], the slice will always
         #  be slice(None)
         # Note: only reached with self.ndim == 2
@@ -970,11 +1230,19 @@ class Block(PandasObject, libinternals.Block):
     def _slice(
         self, slicer: slice | npt.NDArray[np.bool_] | npt.NDArray[np.intp]
     ) -> ArrayLike:
+        # [FUNCTION DOC]
+        # HELPER: returns the values indexed by the slicer (slice, boolean array or
+        # integer array); may be a view or copy as numpy decides.
         """return a slice of my values"""
 
         return self.values[slicer]
 
     def set_inplace(self, locs, values: ArrayLike, copy: bool = False) -> None:
+        # [FUNCTION DOC]
+        # Modify values in place at the given locations. Parameters: locs (indexer);
+        # values (array, caller guarantees the dtype matches the block's); copy
+        # (default false; if true the underlying values are first replaced by a copy,
+        # for copy-on-write). Never creates a new block. Returns nothing.
         """
         Modify block values in-place with new item value.
 
@@ -1000,6 +1268,16 @@ class Block(PandasObject, libinternals.Block):
         new_mgr_locs: BlockPlacement | None = None,
         fill_value=lib.no_default,
     ) -> Block:
+        # [FUNCTION DOC]
+        # Take values by an indexer and return a block. Parameters: indexer (integer
+        # position array, with minus one meaning missing when a fill value is given);
+        # axis; new_mgr_locs (optional; required when axis is zero, or when the block is
+        # a one-dimensional extension block); fill_value (default: sentinel meaning
+        # no filling, in which case the dtype's own fill value is used and negative
+        # indices are not treated as missing).
+        # Delegates to the array take routine (which may upcast). If the resulting dtype
+        # differs from the block's a block class is inferred; otherwise a block of the
+        # same class is made. Returns the block.
         """
         Take values according to indexer and return them as a block.
         """
@@ -1039,6 +1317,16 @@ class Block(PandasObject, libinternals.Block):
         new_placement: npt.NDArray[np.intp],
         needs_masking: npt.NDArray[np.bool_],
     ):
+        # [FUNCTION DOC]
+        # HELPER: unstack the block's values using an unstacker object.
+        # Parameters: unstacker (the reshape unstacker); fill_value; new_placement
+        # (integer array of destination positions); needs_masking (boolean array,
+        # accepted but unused).
+        # Gets the new values and a mask from the unstacker, keeps only columns where any
+        # mask entry is set (so the count of kept columns equals the total new
+        # placement length), and builds one two-dimensional block. Returns a pair of
+        # (list with the new block, the column mask).
+        # KNOWN ISSUE: the existing docstring lists an allow-fill parameter that does not exist, describes the fill value as an integer, and the needs_masking parameter is not used.
         """
         Return a list of unstacked blocks of self
 
@@ -1079,6 +1367,19 @@ class Block(PandasObject, libinternals.Block):
     # ---------------------------------------------------------------------
 
     def setitem(self, indexer, value) -> Block:
+        # [FUNCTION DOC]
+        # Set values at an indexer, possibly creating a new array or block.
+        # Parameters: indexer (positional indexer for the value array; for 2D blocks
+        # interpreted on the transposed layout); value (compatible shape).
+        # Standardizes missing markers, checks lengths, and tries to cast the value to
+        # the block's numpy dtype without loss. If that fails, the block is cast to a
+        # dtype that holds the value (raising a type error as upcasts are not
+        # silent) and the set is retried. If it succeeds, for object blocks
+        # datetime-like values are adjusted for list-like targets; a copy-on-write-aware
+        # copy is made, a single-element 1D array is reduced to a scalar and the
+        # assignment is made, converting a type or value error into a value error about
+        # setting an element with a sequence when the value is list-like. Returns the
+        # block holding the data (self or the copy).
         """
         Attempt self.values[indexer] = value, possibly creating a new array.
 
@@ -1142,6 +1443,18 @@ class Block(PandasObject, libinternals.Block):
         return self
 
     def putmask(self, mask, new) -> list[Block]:
+        # [FUNCTION DOC]
+        # Assign new values where a boolean mask is true; may change dtype. Parameters:
+        # mask (boolean array, sparse or nullable boolean array); new (scalar or array;
+        # the sentinel for no default means the block's fill value). Returns a list of
+        # blocks. Asserts new is not a pandas container.
+        # Validates the mask; if nothing is selected returns a shallow copy. Otherwise
+        # tries to cast new to the dtype without loss and assigns on a copy-on-write-
+        # aware copy. On lossy failure: for single-column blocks, a scalar new
+        # upcasts the block and retries, while a list-like new uses the setitem path with
+        # the selected entries; multi-column blocks are split into columns and each
+        # column is handled with its own mask column and, for arrays, its own value
+        # column.
         """
         putmask the data to the block; it is possible that we may create a
         new dtype of block
@@ -1209,6 +1522,20 @@ class Block(PandasObject, libinternals.Block):
                 return res_blocks
 
     def where(self, other, cond) -> list[Block]:
+        # [FUNCTION DOC]
+        # Keep values where cond is true, otherwise use other. Parameters: other
+        # (scalar or array, or the sentinel for no default meaning the fill value);
+        # cond (boolean array, same ndim as the block). Asserts those conditions and
+        # that other is not a pandas container. Returns a list of blocks.
+        # If nothing would be replaced returns a shallow copy. Tries to cast other to the
+        # numpy dtype; on failure single-column blocks are cast to a dtype fitting
+        # other and the operation retried, multi-column blocks are split by column. On
+        # success, datetime-like compat is applied and the replacement uses a masked
+        # assignment on a copy (raising a value error via a dummy array operation if a
+        # list-like other is too short), or otherwise the expression engine's
+        # conditional (with a list-like other broadcast column-like when its length
+        # matches the number of rows). Returns one block built from the result
+        # (transposed back for 2D).
         """
         evaluate the block; return result block(s) from the result
 
@@ -1317,6 +1644,14 @@ class Block(PandasObject, libinternals.Block):
         limit: int | None = None,
         inplace: bool = False,
     ) -> list[Block]:
+        # [FUNCTION DOC]
+        # Fill missing values. Parameters: value (scalar or array); limit (optional
+        # positive integer cap on the number of consecutive fills per column; the caller
+        # validates it); inplace (default false, validated as a boolean).
+        # Blocks that cannot hold missing values or have none return a shallow copy.
+        # Otherwise the missing mask is built, limited by cumulative count if a limit is
+        # given, then filled by assignment under the mask if in place, or by the
+        # conditional keep-where otherwise. Returns the flattened list of blocks.
         """
         fillna on the block with the value. If we fail, then convert to
         block to hold objects instead and try again
@@ -1352,6 +1687,13 @@ class Block(PandasObject, libinternals.Block):
         limit: int | None = None,
         limit_area: Literal["inside", "outside"] | None = None,
     ) -> list[Block]:
+        # [FUNCTION DOC]
+        # Forward or backward fill. Keyword-only parameters: method (fill option);
+        # inplace (default false); limit (optional); limit_area (optional: inside or
+        # outside). Blocks that cannot hold missing values return a shallow copy.
+        # Otherwise dispatches to the numpy extension array's padding routine on the
+        # transposed array, with copy-on-write handling of copy and references, and
+        # returns a one-block list of the same class around the result.
         if not self._can_hold_na:
             # If there are no NAs, then interpolate is a no-op
             return [self.copy(deep=False)]
@@ -1383,6 +1725,18 @@ class Block(PandasObject, libinternals.Block):
         limit_area: Literal["inside", "outside"] | None = None,
         **kwargs,
     ) -> list[Block]:
+        # [FUNCTION DOC]
+        # Interpolate missing values. Keyword-only parameters: method (interpolation
+        # option); index (Index used for index-based methods); inplace (default
+        # false, validated as boolean); limit (optional); limit_direction (default
+        # forward); limit_area (optional: inside or outside); extra keyword arguments
+        # forwarded to the array method.
+        # For the as-frequency method calls the fill-method cleaner (which rejects it).
+        # Blocks that cannot hold missing values return a shallow copy; object-dtype
+        # blocks raise a type error saying a series or frame cannot interpolate with
+        # object dtype. Otherwise computes copy-on-write copy/reference handling and
+        # dispatches to the interpolate method of the array view of the values along the
+        # last axis, then returns a one-block list of the same class.
         inplace = validate_bool_kwarg(inplace, "inplace")
         # error: Non-overlapping equality check [...]
         if method == "asfreq":  # type: ignore[comparison-overlap]
@@ -1416,6 +1770,11 @@ class Block(PandasObject, libinternals.Block):
 
     @final
     def diff(self, n: int) -> list[Block]:
+        # [FUNCTION DOC]
+        # Return a block with the difference of the values along the row direction.
+        # Parameter n: integer period. Only used with 2D blocks; transposes, takes
+        # the array difference along the first axis, transposes back and builds the
+        # block through the inferring factory.
         """return block for the diff of the values"""
         # only reached with ndim == 2
         # TODO(EA2D): transpose will be unnecessary with 2D EAs
@@ -1423,6 +1782,15 @@ class Block(PandasObject, libinternals.Block):
         return [self.make_block(values=new_values)]
 
     def shift(self, periods: int, fill_value: Any = None) -> list[Block]:
+        # [FUNCTION DOC]
+        # Shift the block's values along rows, possibly upcasting. Parameters: periods
+        # (integer, never zero here); fill_value (default None, must be a scalar unless
+        # the block is object dtype, else a value error is raised).
+        # The fill value is standardized, then cast to the dtype without loss. If lossy:
+        # emits a pandas 4 deprecation warning unless the dtype is integer-like and
+        # the fill is a missing marker, then casts the block to fit and shifts again.
+        # Otherwise shifts with the array shift helper and returns a one-block list of
+        # the same class.
         """shift the block by periods, possibly upcast"""
         # convert integer to float if necessary. need to do a lot more than
         # that, handle boolean etc also
@@ -1474,6 +1842,12 @@ class Block(PandasObject, libinternals.Block):
         qs: Index,  # with dtype float64
         interpolation: QuantileInterpolation = "linear",
     ) -> Block:
+        # [FUNCTION DOC]
+        # Compute quantiles of the values. Parameters: qs (float64 Index of quantiles to
+        # compute; list-like); interpolation (default linear). Asserts a 2D block.
+        # Calls the compat quantile routine on the values, makes the result 2D and
+        # returns a new inferring-factory block with this block's placement.
+        # KNOWN ISSUE: the existing docstring summary is truncated ("compute the quantiles of the").
         """
         compute the quantiles of the
 
@@ -1500,6 +1874,12 @@ class Block(PandasObject, libinternals.Block):
 
     @final
     def round(self, decimals: int) -> Self:
+        # [FUNCTION DOC]
+        # Round the values. Parameter decimals: integer (caller validates). For blocks
+        # that are not numeric or are boolean, returns a shallow copy, after emitting a
+        # user warning if the values are datetime, timedelta or period arrays. Otherwise
+        # rounds the values; the reference tracker is shared if rounding returned the
+        # same object. Returns the block.
         """
         Rounds the values.
         If the block is not of an integer or float dtype, nothing happens.
@@ -1539,6 +1919,15 @@ class Block(PandasObject, libinternals.Block):
     # Abstract Methods Overridden By EABackedBlock and NumpyBlock
 
     def delete(self, loc) -> list[Block]:
+        # [FUNCTION DOC]
+        # Remove columns from the block and return the remaining pieces. Parameter loc:
+        # a position or an increasing list of positions.
+        # For 1D blocks, deletes the elements and the corresponding placement and
+        # returns one block. For 2D blocks, raises an index error if a position is out
+        # of range; otherwise splits the block into blocks for each run of kept
+        # columns, each a view of the original data (so no data is copied), with the
+        # matching placement and, if the data is referenced elsewhere, the shared
+        # reference tracker. Returns a list of blocks (possibly empty).
         """Deletes the locs from the block.
 
         We split the block to avoid copying the underlying data. We create new
@@ -1590,17 +1979,28 @@ class Block(PandasObject, libinternals.Block):
 
     @property
     def is_view(self) -> bool:
+        # [FUNCTION DOC]
+        # Abstract property: whether the values may be a view of other data. Subclasses
+        # implement it; this base raises the abstract method error.
         """return a boolean if I am possibly a view"""
         raise AbstractMethodError(self)
 
     @property
     def array_values(self) -> ExtensionArray:
+        # [FUNCTION DOC]
+        # Abstract property: the extension-array view of the values (what a series'
+        # array accessor returns). Subclasses implement it; this base raises the abstract
+        # method error.
         """
         The array that Series.array returns. Always an ExtensionArray.
         """
         raise AbstractMethodError(self)
 
     def get_values(self, dtype: DtypeObj | None = None) -> np.ndarray:
+        # [FUNCTION DOC]
+        # Abstract method: return the values in a plain internal format (numpy array).
+        # Parameter dtype: optional; object means box values. Subclasses implement it;
+        # this base raises the abstract method error.
         """
         return an internal format, currently just the ndarray
         this is often overridden to handle to_dense like operations
@@ -1609,6 +2009,12 @@ class Block(PandasObject, libinternals.Block):
 
 
 class EABackedBlock(Block):
+    # [CLASS DOC]
+    # Mixin base for blocks whose values are an extension array (extension and
+    # array-backed blocks). Subclass of the base block. Overrides shift, setitem,
+    # where, putmask, delete, array values, get values and pad/backfill to dispatch
+    # to the extension array methods and, unlike the base class, setitem never
+    # changes the block dtype (except for Interval and ndarray-backed arrays).
     """
     Mixin for Block subclasses backed by ExtensionArray.
     """
@@ -1617,6 +2023,10 @@ class EABackedBlock(Block):
 
     @final
     def shift(self, periods: int, fill_value: Any = None) -> list[Block]:
+        # [FUNCTION DOC]
+        # Shift by periods using the extension array's shift (transposed since the
+        # array shifts along its first axis) with the given fill_value. Returns a one-
+        # block list of the same class. No dtype upcasting is done here.
         """
         Shift the block by `periods`.
 
@@ -1630,6 +2040,15 @@ class EABackedBlock(Block):
 
     @final
     def setitem(self, indexer, value):
+        # [FUNCTION DOC]
+        # Set values at an indexer without changing dtype where possible.
+        # Parameters: indexer (positional indexer; adapted from 2D to 1D for 1D-only
+        # arrays); value (squeezed likewise).
+        # Checks lengths, then assigns into the (transposed if 2D) values. On a value or
+        # type error, for interval dtype or ndarray-backed blocks casts the block
+        # to a dtype that holds the value (raising a type error if the upcast is
+        # not allowed) and retries; other errors propagate. Returns the block (this
+        # object when the assignment succeeded in place).
         """
         Attempt self.values[indexer] = value, possibly creating a new array.
 
@@ -1685,6 +2104,15 @@ class EABackedBlock(Block):
 
     @final
     def where(self, other, cond) -> list[Block]:
+        # [FUNCTION DOC]
+        # Keep values where cond is true, otherwise use other, using the extension
+        # array's conditional operation. Parameters: other (scalar/array or the
+        # no-default sentinel meaning the fill value); cond (boolean array).
+        # Returns a list of blocks. If nothing is replaced, returns a shallow copy. On
+        # a value or type error: for one-column blocks of interval or string dtype and
+        # for ndarray-backed blocks, casts to a fitting dtype and retries (with the
+        # condition made 2D when needed); other dtypes re-raise; multi-column blocks are
+        # split and handled per column. Out-of-bounds datetime errors propagate.
         arr = self.values.T
 
         cond = extract_bool_array(cond)
@@ -1751,6 +2179,15 @@ class EABackedBlock(Block):
 
     @final
     def putmask(self, mask, new) -> list[Block]:
+        # [FUNCTION DOC]
+        # Assign new values under a mask using the extension array's private putmask
+        # (see the base class description of this operation). Parameters: mask (boolean
+        # array); new (value or array, or the no-default sentinel meaning the fill
+        # value). If the mask has no true entries returns a shallow copy. Otherwise works
+        # on a copy-on-write-aware copy. On a type or value error: one-column interval
+        # or ndarray-backed blocks are cast to fit (raising on disallowed upcasts) and
+        # retried; other dtypes re-raise; multi-column blocks are split by column.
+        # Returns a list of blocks.
         """
         See Block.putmask.__doc__
         """
@@ -1813,6 +2250,11 @@ class EABackedBlock(Block):
 
     @final
     def delete(self, loc) -> list[Block]:
+        # [FUNCTION DOC]
+        # Delete columns. Parameter loc. For 1D blocks, deletes from the array and the
+        # placement and returns one block. For 2D blocks whose array is 1D (reached via
+        # the Stata writer) returns an empty list. Otherwise defers to the base class
+        # implementation.
         # This will be unnecessary if/when __array_function__ is implemented
         if self.ndim == 1:
             values = self.values.delete(loc)
@@ -1826,10 +2268,17 @@ class EABackedBlock(Block):
     @final
     @cache_readonly
     def array_values(self) -> ExtensionArray:
+        # [FUNCTION DOC]
+        # Cached property: the values themselves (they already are an extension array).
         return self.values
 
     @final
     def get_values(self, dtype: DtypeObj | None = None) -> np.ndarray:
+        # [FUNCTION DOC]
+        # Return the values as a plain numpy array shaped like the block. Parameter
+        # dtype: if object, the values are first converted to object (boxed scalars such
+        # as timestamps); other values are ignored. Returns the array reshaped to the
+        # block shape.
         """
         return object dtype as boxed values, such as Timestamps/Timedelta
         """
@@ -1848,6 +2297,14 @@ class EABackedBlock(Block):
         limit: int | None = None,
         limit_area: Literal["inside", "outside"] | None = None,
     ) -> list[Block]:
+        # [FUNCTION DOC]
+        # Forward or backward fill using the extension array's padding method.
+        # Keyword-only parameters: method; inplace (default false, accepted but not used
+        # to avoid copies); limit (optional); limit_area (optional). If the array's
+        # method accepts the area argument it is passed; if it does not and an area was
+        # requested, raises a not-implemented error telling third-party authors to add
+        # it. 2D arrays are transposed around the call. Returns a one-block list of the
+        # same class.
         values = self.values
 
         kwargs: dict[str, Any] = {"method": method, "limit": limit}
@@ -1869,6 +2326,13 @@ class EABackedBlock(Block):
 
 
 class ExtensionBlock(EABackedBlock):
+    # [CLASS DOC]
+    # Block for third-party and most internal extension arrays. Subclass of the
+    # extension-backed block mixin; values are a one-dimensional extension array, so
+    # a 2D block always holds exactly one item. Overrides fillna, shape, row access,
+    # in-place set, argument squeezing, setitem indexer unwrapping, slicing and
+    # unstack for the 1D layout. Never treated as a view; is_numeric comes from the
+    # dtype.
     """
     Block for holding extension types.
 
@@ -1888,6 +2352,15 @@ class ExtensionBlock(EABackedBlock):
         limit: int | None = None,
         inplace: bool = False,
     ) -> list[Block]:
+        # [FUNCTION DOC]
+        # Fill missing values. Parameters: value; limit (optional); inplace (default
+        # false). For interval and string dtypes defers to the base implementation
+        # (an interval dtype with a limit raises a value error). If the dtype can hold
+        # missing values and the array has none, returns a block sharing the same values
+        # and references. Otherwise calls the array's fill with the copy decision from
+        # copy-on-write handling; if the array does not accept the copy keyword (a type
+        # error) retries without it and emits a pandas 4 deprecation warning. Returns a
+        # one-block list of the same class.
         if isinstance(self.dtype, (IntervalDtype, StringDtype)):
             # Block.fillna handles coercion (test_fillna_interval)
             if isinstance(self.dtype, IntervalDtype) and limit is not None:
@@ -1926,12 +2399,21 @@ class ExtensionBlock(EABackedBlock):
 
     @cache_readonly
     def shape(self) -> Shape:
+        # [FUNCTION DOC]
+        # Cached property: block shape. A 1D block gives a one-tuple of the array length;
+        # a 2D block gives (number of placement items, array length).
         # TODO(EA2D): override unnecessary with 2D EAs
         if self.ndim == 1:
             return (len(self.values),)
         return len(self._mgr_locs), len(self.values)
 
     def iget(self, i: int | tuple[int, int] | tuple[slice, int]):
+        # [FUNCTION DOC]
+        # Return the values for an item index. Parameter i: zero, a pair of (zero or a
+        # full slice, row position) (2D blocks only). A nonzero column raises an index
+        # error saying the block has one item. A pair with a full slice returns a one-
+        # row slice view (negative row positions are wrapped); a pair with an integer
+        # returns that element; a plain zero returns the whole array.
         # In the case where we have a tuple[slice, int], the slice will always
         #  be slice(None)
         # We _could_ make the annotation more specific, but mypy would
@@ -1960,6 +2442,11 @@ class ExtensionBlock(EABackedBlock):
             return self.values
 
     def set_inplace(self, locs, values: ArrayLike, copy: bool = False) -> None:
+        # [FUNCTION DOC]
+        # Replace all values in place. Parameters: locs (expected to refer only to
+        # position zero; not used); values (array assigned over the entire array); copy
+        # (default false; if true the stored array is first replaced by a copy for
+        # copy-on-write). Returns nothing.
         # When an ndarray, we should have locs.tolist() == [0]
         # When a BlockPlacement we should have list(locs) == [0]
         if copy:
@@ -1967,6 +2454,12 @@ class ExtensionBlock(EABackedBlock):
         self.values[:] = values
 
     def _maybe_squeeze_arg(self, arg):
+        # [FUNCTION DOC]
+        # HELPER: reduce an argument with one extra dimension to the block's value
+        # dimensionality. A numpy or extension array with one more dimension than the
+        # values (shape with second axis length one, asserted) becomes its first
+        # column; a frame argument (asserted single column) becomes the values of its
+        # column; anything else is returned unchanged.
         """
         If necessary, squeeze a (N, 1) ndarray to (N,)
         """
@@ -1989,6 +2482,15 @@ class ExtensionBlock(EABackedBlock):
         return arg
 
     def _unwrap_setitem_indexer(self, indexer):
+        # [FUNCTION DOC]
+        # HELPER: adapt a two-dimensional indexer for use with one-dimensional values.
+        # Used by setitem only. Non-tuples and tuples that are not length two pass
+        # through. For a pair of 2D integer arrays (from grid-style indexing), the second
+        # must be a single zero (else not-implemented error) and the first column is
+        # used; for a pair where the second element is the integer zero, a null slice,
+        # or a one-element boolean mask (true keeps the first element, false gives an
+        # empty indexer), or a list-like starting with zero, the first element is used;
+        # anything else raises a not-implemented error asking for a bug report.
         """
         Adapt a 2D-indexer to our 1D values.
 
@@ -2038,17 +2540,29 @@ class ExtensionBlock(EABackedBlock):
 
     @property
     def is_view(self) -> bool:
+        # [FUNCTION DOC]
+        # Property: always false; extension arrays are never treated as views.
         """Extension arrays are never treated as views."""
         return False
 
     # error: Cannot override writeable attribute with read-only property
     @cache_readonly
     def is_numeric(self) -> bool:  # type: ignore[override]
+        # [FUNCTION DOC]
+        # Cached property: whether the dtype is numeric, from the dtype's own flag
+        # (overrides the class attribute of the base).
         return self.values.dtype._is_numeric
 
     def _slice(
         self, slicer: slice | npt.NDArray[np.bool_] | npt.NDArray[np.intp]
     ) -> ExtensionArray:
+        # [FUNCTION DOC]
+        # HELPER: return the sliced values. Parameter slicer: slice, integer array or
+        # boolean array (boolean only for 1D series blocks). For 2D blocks only slices
+        # are accepted and only those that select the single item (checked against a
+        # one-element range, so reversed slices work) are valid; anything else raises
+        # an assertion error; the whole array is then returned. For 1D blocks indexes
+        # the array with the slicer.
         """
         Return a slice of my values.
 
@@ -2088,6 +2602,10 @@ class ExtensionBlock(EABackedBlock):
 
     @final
     def slice_block_rows(self, slicer: slice) -> Self:
+        # [FUNCTION DOC]
+        # Slice along the row axis. Parameter slicer: slice. Returns a block of the same
+        # class around the sliced array with the same placement, ndim and shared
+        # reference tracker.
         """
         Perform __getitem__-like specialized to slicing along index.
         """
@@ -2103,6 +2621,16 @@ class ExtensionBlock(EABackedBlock):
         new_placement: npt.NDArray[np.intp],
         needs_masking: npt.NDArray[np.bool_],
     ):
+        # [FUNCTION DOC]
+        # HELPER: unstack for extension blocks. Parameters: unstacker (provides an
+        # arange-style integer result and a mask); fill_value; new_placement (integer
+        # positions); needs_masking (per-output-column flags saying whether any
+        # missing index is present, which selects the fast take path).
+        # Unstacks an array of integer positions, keeps masked columns (so the number
+        # of kept columns matches the placement length), and builds one block per
+        # output column by taking from the values with those positions. Returns a pair of
+        # (list of blocks, mask). The caller guarantees the unstacker index length matches
+        # the block's row count.
         # ExtensionArray-safe unstack.
         # We override Block._unstack, which unstacks directly on the
         # values of the array. For EA-backed blocks, this would require
@@ -2141,25 +2669,39 @@ class ExtensionBlock(EABackedBlock):
 
 
 class NumpyBlock(Block):
+    # [CLASS DOC]
+    # Block backed by a plain numpy array (numeric, bool, object and so on).
+    # Subclass of the base block; declares no slots. Implements the view check, the
+    # array-values wrapper, object-dtype conversion and the numeric flag.
     values: np.ndarray
     __slots__ = ()
 
     @property
     def is_view(self) -> bool:
+        # [FUNCTION DOC]
+        # Property: true if the numpy array has a base object, meaning it may be a view.
         """return a boolean if I am possibly a view"""
         return self.values.base is not None
 
     @property
     def array_values(self) -> ExtensionArray:
+        # [FUNCTION DOC]
+        # Property: the values wrapped as a numpy-backed extension array (no copy).
         return NumpyExtensionArray(self.values)
 
     def get_values(self, dtype: DtypeObj | None = None) -> np.ndarray:
+        # [FUNCTION DOC]
+        # Return the values as numpy. Parameter dtype: if object, returns a converted
+        # copy; any other value returns the values unchanged.
         if dtype == _dtype_obj:
             return self.values.astype(_dtype_obj)
         return self.values
 
     @cache_readonly
     def is_numeric(self) -> bool:  # type: ignore[override]
+        # [FUNCTION DOC]
+        # Cached property: true for float, complex, integer, unsigned integer and bool
+        # kinds.
         dtype = self.values.dtype
         kind = dtype.kind
 
@@ -2167,6 +2709,10 @@ class NumpyBlock(Block):
 
 
 class NDArrayBackedExtensionBlock(EABackedBlock):
+    # [CLASS DOC]
+    # Block backed by an array-backed extension array (datetime-like and period
+    # arrays). Subclass of the extension-backed mixin; values are of the array-
+    # backed extension kind; adds the view check.
     """
     Block backed by an NDArrayBackedExtensionArray
     """
@@ -2175,12 +2721,19 @@ class NDArrayBackedExtensionBlock(EABackedBlock):
 
     @property
     def is_view(self) -> bool:
+        # [FUNCTION DOC]
+        # Property: true if the underlying numpy array of the values has a base object,
+        # meaning it may be a view.
         """return a boolean if I am possibly a view"""
         # check the ndarray values of the DatetimeIndex values
         return self.values._ndarray.base is not None
 
 
 class DatetimeLikeBlock(NDArrayBackedExtensionBlock):
+    # [CLASS DOC]
+    # Block for datetime, timedelta and timezone-aware datetime arrays. Subclass of
+    # the ndarray-backed block; declares no slots; class attribute is_numeric is
+    # false. Values are a datetime or timedelta array.
     """Block for datetime64[ns], timedelta64[ns]."""
 
     __slots__ = ()
@@ -2193,6 +2746,15 @@ class DatetimeLikeBlock(NDArrayBackedExtensionBlock):
 
 
 def maybe_coerce_values(values: ArrayLike) -> ArrayLike:
+    # [FUNCTION DOC]
+    # Validate and normalize values passed to a block constructor.
+    # Parameter values: numpy or extension array (numpy-extension arrays must have
+    # been unwrapped by the caller). A numpy array is wrapped into datetime or
+    # timedelta arrays when its dtype is a date-like numpy dtype, and fixed-width
+    # unicode string arrays are converted to object arrays. Datetime and timedelta
+    # arrays have their frequency cleared (frequency is only kept on indexes). Returns
+    # the values.
+    # KNOWN ISSUE: the existing docstring says datetime and timedelta dtypes are converted to nanoseconds, but the code does not convert units; it only wraps and drops the frequency.
     """
     Input validation for values passed to __init__. Ensure that
     any datetime64/timedelta64 dtypes are in nanoseconds.  Ensure
@@ -2222,6 +2784,12 @@ def maybe_coerce_values(values: ArrayLike) -> ArrayLike:
 
 
 def get_block_type(dtype: DtypeObj) -> type[Block]:
+    # [FUNCTION DOC]
+    # Choose the block class for a dtype. Parameter dtype. Timezone-aware datetime
+    # dtype gives the datetime-like block; period dtype gives the array-backed
+    # extension block; any other extension dtype gives the generic extension block;
+    # numpy date-like kinds give the datetime-like block; everything else gives the
+    # numpy block. Returns the class.
     """
     Find the appropriate Block subclass to use for the given values and dtype.
 
@@ -2253,6 +2821,11 @@ def get_block_type(dtype: DtypeObj) -> type[Block]:
 def new_block_2d(
     values: ArrayLike, placement: BlockPlacement, refs: BlockValuesRefs | None = None
 ) -> Block:
+    # [FUNCTION DOC]
+    # Fast block factory for the 2D case. Parameters: values (array already shaped
+    # and checked); placement (a block placement); refs (optional reference
+    # tracker). Picks the class from the dtype, normalizes the values and builds the
+    # block with ndim two.
     # new_block specialized to case with
     #  ndim=2
     #  isinstance(placement, BlockPlacement)
@@ -2270,6 +2843,11 @@ def new_block(
     ndim: int,
     refs: BlockValuesRefs | None = None,
 ) -> Block:
+    # [FUNCTION DOC]
+    # General block factory. Parameters: values (not a numpy-extension array, already
+    # shaped and normalized); placement; ndim (keyword-only); refs (keyword-only,
+    # optional). Picks the class from the values' dtype and builds the block without
+    # further validation.
     # caller is responsible for ensuring:
     # - values is NOT a NumpyExtensionArray
     # - check_ndim/ensure_block_shape already checked
@@ -2279,6 +2857,14 @@ def new_block(
 
 
 def check_ndim(values, placement: BlockPlacement, ndim: int) -> None:
+    # [FUNCTION DOC]
+    # Validate that values, ndim and placement agree. Parameters: values; placement;
+    # ndim. Raises a value error if the values have more dimensions than ndim. For
+    # dtypes that can be 2D, raises a value error if the dimensions differ or if
+    # the item count differs from the placement length. For 1D-only extension
+    # dtypes with ndim two, raises a value error asking the caller to split if the
+    # placement is not a single item. Returns nothing (despite the "inference" in its
+    # docstring summary, nothing is inferred).
     """
     ndim inference and validation.
 
@@ -2322,6 +2908,11 @@ def check_ndim(values, placement: BlockPlacement, ndim: int) -> None:
 def extract_pandas_array(
     values: ArrayLike, dtype: DtypeObj | None, ndim: int
 ) -> tuple[ArrayLike, DtypeObj | None]:
+    # [FUNCTION DOC]
+    # Strip numpy-extension wrappers. Parameters: values; dtype (optional); ndim.
+    # A numpy-extension array is converted to a numpy array (made at least 2D when
+    # ndim is above one); a numpy-extension dtype is replaced by its numpy dtype.
+    # Returns a pair of (values, dtype).
     """
     Ensure that we don't allow NumpyExtensionArray / NumpyEADtype in internals.
     """
@@ -2342,6 +2933,11 @@ def extract_pandas_array(
 
 
 def extend_blocks(result, blocks=None) -> list[Block]:
+    # [FUNCTION DOC]
+    # Flatten block results into a list. Parameters: result (a block or a list of
+    # blocks and lists of blocks); blocks (optional list to extend; a new list is
+    # used if None). Lists are flattened one level; a non-list must be a block
+    # (asserted). Returns the accumulated list.
     """return a new extended blocks, given the result"""
     if blocks is None:
         blocks = []
@@ -2358,6 +2954,11 @@ def extend_blocks(result, blocks=None) -> list[Block]:
 
 
 def ensure_block_shape(values: ArrayLike, ndim: int = 1) -> ArrayLike:
+    # [FUNCTION DOC]
+    # Reshape values to at least the requested dimensionality. Parameters: values;
+    # ndim (default 1). If values has fewer dimensions and is not a 1D-only
+    # extension array, it is reshaped to one row by the number of elements.
+    # Returns the values (other cases unchanged).
     """
     Reshape if possible to have values.ndim == ndim.
     """
@@ -2374,6 +2975,13 @@ def ensure_block_shape(values: ArrayLike, ndim: int = 1) -> ArrayLike:
 
 
 def external_values(values: ArrayLike) -> ArrayLike:
+    # [FUNCTION DOC]
+    # Return the array exposed as the public values of a series or frame.
+    # Parameter values. Period and interval arrays become object numpy arrays;
+    # datetime and timedelta arrays become their underlying numpy array (so tz-aware
+    # data are returned as naive UTC datetime64). A numpy array result is returned
+    # as a read-only view; extension arrays are returned unchanged (read-only
+    # behavior is undecided). Returns the array.
     """
     The array that Series.values returns (public attribute).
 

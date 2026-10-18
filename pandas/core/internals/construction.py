@@ -2,6 +2,18 @@
 Functions for preparing various inputs passed to the DataFrame or Series
 constructors before passing them to a BlockManager.
 """
+# [MODULE DOC]
+# Preparation of constructor inputs (dicts, ndarrays, record arrays, nested
+# lists, series, dataclass records) into the arrays, axes and block managers
+# used by the frame and series constructors.
+# Public (internal API) contents: functions building a manager from column
+# arrays, record arrays, ndarray-like data and dicts; helpers for nested-list
+# detection and conversion (nested_data_to_arrays, treat_as_nested, to_arrays),
+# column reordering, dataclass-to-dict conversion and object-array soft
+# conversion. Private helpers deal with homogenizing arrays against an index,
+# inferring an index, building default axes and validating columns.
+# Depends on the managers and blocks modules, the array construction
+# functions and the index API. No import-time side effects.
 
 from __future__ import annotations
 
@@ -102,6 +114,21 @@ def arrays_to_mgr(
     verify_integrity: bool = True,
     consolidate: bool = True,
 ) -> Manager:
+    # [FUNCTION DOC]
+    # Build a block manager from a list of column arrays.
+    # Parameters: arrays (list of 1D array-likes, series or dicts, one per column);
+    # columns (Index of column labels); index (row labels or None); dtype (keyword-only,
+    # optional dtype to coerce to); verify_integrity (keyword-only, default true);
+    # consolidate (keyword-only, default true; whether blocks of the same dtype are
+    # merged).
+    # With verify_integrity: the index is inferred from the arrays if None, else
+    # coerced to an Index; arrays are homogenized (aligned, coerced, checked to be
+    # 1D arrays of the index length) and block references collected. Without it
+    # (path used by the private frame-from-arrays constructor) the index is coerced,
+    # arrays are unwrapped, no references are kept, and each array must be a numpy
+    # or extension array, 1D, of index length, else a value error is raised.
+    # Raises a value error if the number of columns differs from the number of
+    # arrays. Returns the manager made from the arrays with axes columns and index.
     """
     Segregate Series based on type and coerce into matrices.
 
@@ -159,6 +186,14 @@ def rec_array_to_mgr(
     dtype: DtypeObj | None,
     copy: bool,
 ) -> Manager:
+    # [FUNCTION DOC]
+    # Build a manager from a record array (possibly masked).
+    # Parameters: data (record array or structured array); index (optional);
+    # columns (optional); dtype (optional dtype); copy (boolean).
+    # Takes the underlying data of a masked array, builds the index (default if
+    # None), converts the data to column arrays and column labels, reorders them to
+    # the requested columns (filling missing ones with all-missing object arrays),
+    # and builds the manager. If copy, returns a deep copy.
     """
     Extract from a masked rec array and create the manager.
     """
@@ -193,6 +228,34 @@ def rec_array_to_mgr(
 def ndarray_to_mgr(
     values, index, columns, dtype: DtypeObj | None, copy: bool
 ) -> Manager:
+    # [FUNCTION DOC]
+    # Build a manager from array-like data for the frame constructor.
+    # Parameters: values (ndarray, list, series, index or extension array);
+    # index and columns (optional axis labels); dtype (optional); copy (boolean).
+    # Object columns are only inferred when values is not a series, index or
+    # extension array.
+    # Series input: takes the name as the single column label if no columns were
+    # given, uses its index or reindexes to the given index, and for an empty
+    # series with columns uses an empty two-dimensional object array.
+    # If the data or requested dtype is a 1D-only extension dtype, the data is
+    # split into one array per column (a 2D input gets one array per column), each
+    # is copied if requested, default column labels are generated if none and
+    # the result is built through the column-arrays route, consolidating only when
+    # copy is true.
+    # Otherwise: records references of series/index input when not copying and the
+    # dtype conversion would be a view; extension-typed input is unwrapped and made
+    # 2D; series and index input use their values; numpy and extension arrays are
+    # converted to a plain (Fortran-ordered copy if requested and a later cast
+    # would not already copy) array and made 2D; other inputs go through the list
+    # preparation routine. A value error is raised for input that is not 1D or 2D.
+    # If a dtype is given and differs, values are coerced with the array sanitizer.
+    # Axes are created or coerced, the shape is checked against them, and values
+    # are transposed to block layout. Without a dtype, object data from raw
+    # containers is inferred column by column for date-like values, and when
+    # nothing converts a single block is built; unicode string data with the
+    # string dtype option on becomes one string-dtype block per column; otherwise a
+    # single block. If there are no columns the block list is emptied. Returns the
+    # manager (built without integrity verification).
     # used in DataFrame.__init__
     # input must be an ndarray, list, Series, Index, ExtensionArray
     infer_object = not isinstance(values, (ABCSeries, Index, ExtensionArray))
@@ -357,6 +420,12 @@ def ndarray_to_mgr(
 def _check_values_indices_shape_match(
     values: np.ndarray, index: Index, columns: Index
 ) -> None:
+    # [FUNCTION DOC]
+    # HELPER: checks that the 2D values shape matches the lengths of index (rows) and
+    # columns. Raises a value error with the message about empty data passed with
+    # indices if values have no rows but an index was given, or otherwise a value
+    # error stating the shape of the passed values and the shape implied by the
+    # indices. Returns nothing.
     """
     Check that the shape implied by our axes matches the actual shape of the
     data.
@@ -380,6 +449,22 @@ def dict_to_mgr(
     dtype: DtypeObj | None = None,
     copy: bool = True,
 ) -> Manager:
+    # [FUNCTION DOC]
+    # Build a manager from a dict mapping column labels to array-likes.
+    # Parameters: data (dict); index and columns (optional labels); dtype (keyword-
+    # only, optional); copy (keyword-only, default true).
+    # With columns: for each requested column the matching dict entry is used;
+    # absent entries and scalar missing values are filled later with the dtype's
+    # missing value (or NaN for numpy dtypes). If no index is given it is
+    # inferred from the non-missing entries (a value error is raised if only scalars
+    # were given); the filled columns are built as constant arrays of the index length
+    # with the given dtype or object, unless the dtype is an integer dtype.
+    # Without columns: labels come from the keys (a range index if the keys
+    # form a range, empty default index if no keys), and values are converted to
+    # lists if they are iterables.
+    # If copy: extension arrays, indexes and extension-typed series are copied (other
+    # arrays are copied at consolidation). Returns the manager from the column-arrays
+    # route, consolidating only if copy.
     """
     Segregate Series based on type and coerce into matrices.
     Needs to handle a lot of exceptional cases.
@@ -466,6 +551,16 @@ def nested_data_to_arrays(
     index: Index | None,
     dtype: DtypeObj | None,
 ) -> tuple[list[ArrayLike], Index, Index]:
+    # [FUNCTION DOC]
+    # Convert a sequence of row-like objects to column arrays.
+    # Parameters: data (non-empty sequence whose first element is list-like; the
+    # caller already checked this with the nested check); columns (optional); index
+    # (optional); dtype (optional).
+    # If the first row is a named tuple and no columns given, the tuple fields are
+    # the columns. Converts through the generic converter. If no index is given: for
+    # series rows it is built from the row names (unnamed ones get generated labels),
+    # else a default index of the number of rows. Returns a triple of
+    # (list of column arrays, columns, index).
     """
     Convert a single sequence of arrays to multiple arrays.
     """
@@ -487,6 +582,10 @@ def nested_data_to_arrays(
 
 
 def treat_as_nested(data) -> bool:
+    # [FUNCTION DOC]
+    # Returns true if data should be treated as a sequence of rows (nested):
+    # it is non-empty, its first element is list-like with at most one dimension
+    # (or no dimension attribute), and it is not a two-dimensional extension array.
     """
     Check if we should use nested_data_to_arrays.
     """
@@ -502,6 +601,15 @@ def treat_as_nested(data) -> bool:
 
 
 def _prep_ndarraylike(values, copy: bool = True) -> np.ndarray:
+    # [FUNCTION DOC]
+    # HELPER: convert list-like data that is not an ndarray, extension array, index
+    # or series (and not nested) into a 2D array. Parameters: values; copy
+    # (default true; unused in the body).
+    # Empty input gives an empty 0 by 0 object array. A range becomes a one-column
+    # integer array. Otherwise, if the first element is list-like or a zero-dimension
+    # array, each element is converted and stacked; else the whole is converted;
+    # the result is made 2D (a value error is raised if neither 1D nor 2D).
+    # KNOWN ISSUE: the copy parameter is accepted but never used in the body.
     # values is specifically _not_ ndarray, EA, Index, or Series
     # We only get here with `not treat_as_nested(values)`
 
@@ -514,6 +622,11 @@ def _prep_ndarraylike(values, copy: bool = True) -> np.ndarray:
         return arr[..., np.newaxis]
 
     def convert(v):
+        # [FUNCTION DOC]
+        # HELPER (nested in the list preparation routine): converts one element. Non-list-
+        # likes and frames are returned unchanged; others are unwrapped from pandas
+        # containers and converted to a platform-dtype array with object preservation.
+        # Does not infer object columns; that happens later per column.
         if not is_list_like(v) or isinstance(v, ABCDataFrame):
             return v
 
@@ -540,6 +653,10 @@ def _prep_ndarraylike(values, copy: bool = True) -> np.ndarray:
 
 
 def _ensure_2d(values: np.ndarray) -> np.ndarray:
+    # [FUNCTION DOC]
+    # HELPER: returns a 2D array. A 1D array becomes a single column; a 2D array is
+    # returned unchanged; any other dimension raises a value error stating the
+    # shape.
     """
     Reshape 1D values, raise on anything else other than 2D.
     """
@@ -553,6 +670,19 @@ def _ensure_2d(values: np.ndarray) -> np.ndarray:
 def _homogenize(
     data, index: Index, dtype: DtypeObj | None
 ) -> tuple[list[ArrayLike], list[Any]]:
+    # [FUNCTION DOC]
+    # HELPER: align and coerce each input to a 1D array of the index length.
+    # Parameters: data (iterable of series, indexes, dicts or other array-likes);
+    # index (target Index); dtype (optional).
+    # Series/index inputs are cast to the dtype if given, series are reindexed
+    # unless they already share the index object, and their references are recorded.
+    # Other inputs: dicts are expanded to one value per index label (using the
+    # fast multi-get over the index as objects, with datetime-aware key handling
+    # for datetime/timedelta indexes; if the index is not a multi-index and has
+    # missing labels, the dict is made a series and reindexed), then everything is
+    # sanitized with the array sanitizer (no copy) and checked for matching length;
+    # None is recorded as the reference. Returns a pair of (list of arrays,
+    # list of references).
     oindex = None
     homogenized = []
     # if the original array-like in `data` is a Series, keep track of this Series' refs
@@ -603,6 +733,16 @@ def _homogenize(
 
 
 def _extract_index(data) -> Index:
+    # [FUNCTION DOC]
+    # HELPER: infer a row Index from column data. Parameter data: iterable of
+    # columns. Empty data gives an empty default index. Series contribute their
+    # index; dicts contribute their keys; 1D list-likes contribute their length;
+    # arrays with more than one dimension raise a value error; if there is only
+    # scalar input a value error asks for an index. Series (or dicts, unsorted)
+    # indexes are united; raw arrays must all have the same length (else value
+    # error), cannot be mixed with dicts (value error about ambiguous ordering),
+    # must match the union index length when series are present (value error), and
+    # otherwise give a default index of that length. Returns the index.
     """
     Try to infer an Index from the passed data, raise ValueError on failure.
     """
@@ -663,6 +803,14 @@ def _extract_index(data) -> Index:
 def reorder_arrays(
     arrays: list[ArrayLike], arr_columns: Index, columns: Index | None, length: int
 ) -> tuple[list[ArrayLike], Index]:
+    # [FUNCTION DOC]
+    # Reorder arrays to match the requested columns. Parameters: arrays (list);
+    # arr_columns (Index of current labels); columns (optional Index to reorder to);
+    # length (row count used for filler). If columns is given and differs from the
+    # current labels, a new list is built where each requested label takes the
+    # matching array or an all-missing object array of the given length if absent;
+    # the columns become the requested ones. Otherwise nothing changes. Returns
+    # a pair of (arrays, columns).
     """
     Preemptively (cheaply) reindex arrays with new columns.
     """
@@ -688,6 +836,12 @@ def reorder_arrays(
 
 
 def _get_names_from_index(data) -> Index:
+    # [FUNCTION DOC]
+    # HELPER: derive an index from the names of the series (or objects with a
+    # name attribute) in data. If none has a name, a default index of the data length
+    # is returned. Otherwise each unnamed element is labelled with the text
+    # "Unnamed" followed by a running counter of unnamed ones, and named ones keep
+    # their name. Returns an Index.
     has_some_name = any(getattr(s, "name", None) is not None for s in data)
     if not has_some_name:
         return default_index(len(data))
@@ -708,6 +862,11 @@ def _get_names_from_index(data) -> Index:
 def _get_axes(
     N: int, K: int, index: Index | None, columns: Index | None
 ) -> tuple[Index, Index]:
+    # [FUNCTION DOC]
+    # HELPER: create axes for a frame. Parameters: N (number of rows); K (number of
+    # columns); index and columns (optional). Missing axes become default range
+    # indexes of length N and K; given ones are coerced to an Index. Returns a pair
+    # of (index, columns).
     # helper to create the axes as indexes
     # return axes or defaults
 
@@ -724,6 +883,10 @@ def _get_axes(
 
 
 def dataclasses_to_dicts(data):
+    # [FUNCTION DOC]
+    # Convert a list of dataclass instances into a list of dictionaries, one per
+    # instance, by applying the standard dataclass-to-dict conversion (recursive for
+    # nested dataclasses). Parameter data: iterable of dataclass instances.
     """
     Converts a list of dataclass instances to a list of dictionaries.
 
@@ -759,6 +922,19 @@ def dataclasses_to_dicts(data):
 def to_arrays(
     data, columns: Index | None, dtype: DtypeObj | None = None
 ) -> tuple[list[ArrayLike], Index]:
+    # [FUNCTION DOC]
+    # Convert row-like data into column arrays and column labels.
+    # Parameters: data (sequence of rows, a structured array or empty); columns
+    # (optional Index); dtype (optional).
+    # Empty input: a structured numpy array gives its fields as columns (flattening
+    # accidental 2D field arrays), anything else gives no arrays and an empty index.
+    # A non-empty structured array gives its fields (restricted to columns when
+    # given, taken as given labels). For rows, dispatch on the first element: list or
+    # tuple, mapping (columns may be inferred), series (columns may be inferred), or
+    # else each row is turned into a tuple. The 2D object result is then finalized
+    # (columns validated, object columns softly converted). Returns a pair of (list of
+    # column arrays, Index of labels).
+    # KNOWN ISSUE: the existing docstring notes say it ensures the number of arrays equals the length of the result index, but there is no index here; the number of arrays equals the number of columns.
     """
     Return list of arrays, columns.
 
@@ -814,6 +990,10 @@ def to_arrays(
 
 
 def _list_to_arrays(data: list[tuple | list]) -> np.ndarray:
+    # [FUNCTION DOC]
+    # HELPER: convert a non-empty list of tuples or of lists into a 2D object array
+    # with one row per record, choosing the tuple or list routine from the type of
+    # the first element. Parameter data.
     # Returned np.ndarray has ndim = 2
     # Note: we already check len(data) > 0 before getting hre
     if isinstance(data[0], tuple):
@@ -828,6 +1008,14 @@ def _list_of_series_to_arrays(
     data: list,
     columns: Index | None,
 ) -> tuple[np.ndarray, Index]:
+    # [FUNCTION DOC]
+    # HELPER: convert a list of series (or series-like objects) into a 2D object-
+    # or common-dtype array aligned on the columns. Parameters: data; columns
+    # (optional; if None the unsorted combined axis of the series/frames is used).
+    # Each element's index (default if it has none) is matched to columns with an
+    # indexer, cached per index object identity; values are taken in that order
+    # with missing filled, then stacked vertically. Returns a pair of (2D array,
+    # columns).
     # returned np.ndarray has ndim == 2
 
     if columns is None:
@@ -859,6 +1047,14 @@ def _list_of_dict_to_arrays(
     data: list[dict],
     columns: Index | None,
 ) -> tuple[np.ndarray, Index]:
+    # [FUNCTION DOC]
+    # HELPER: convert a list of dict-likes into a 2D object array.
+    # Parameters: data (list of mappings); columns (optional Index).
+    # Every mapping is first converted to a plain dict. When columns is None the
+    # column labels are the unique keys in order of first appearance, and the exact
+    # keys are retained for the array building; otherwise the given columns are used.
+    # Returns a pair of (2D object array, columns).
+    # KNOWN ISSUE: the existing docstring says dict-likes that are not ordinary dicts get lexically sorted keys, but all items are converted to plain dicts before the sort flag is computed, so the flag is always false and the sorted branch is unreachable.
     """
     Convert list of dicts to numpy arrays
 
@@ -902,6 +1098,13 @@ def _finalize_columns_and_data(
     columns: Index | None,
     dtype: DtypeObj | None,
 ) -> tuple[list[ArrayLike], Index]:
+    # [FUNCTION DOC]
+    # HELPER: finish conversion of a 2D object array into column arrays.
+    # Parameters: content (2D array); columns (optional); dtype (optional).
+    # Splits into a list of columns, validates or generates columns (an
+    # assertion error from validation is re-raised as a value error), and if the
+    # first column is of object dtype converts all columns softly with the object
+    # array converter. Returns a pair of (list of arrays, columns).
     """
     Ensure we have valid columns, cast object dtypes if possible.
     """
@@ -922,6 +1125,15 @@ def _finalize_columns_and_data(
 def _validate_or_indexify_columns(
     content: list[np.ndarray], columns: Index | None
 ) -> Index:
+    # [FUNCTION DOC]
+    # HELPER: ensure there is a valid column Index for the data. Parameters:
+    # content (list of column arrays); columns (optional).
+    # Returns a default positional index if columns is None. Otherwise raises an
+    # assertion error (described as caller responsibility, not covered by tests) if
+    # the number of labels differs from the number of columns of data, unless the
+    # labels are a list of lists (multi-index style), in which case a value error is
+    # raised if the inner lists differ in length or the inner length differs from
+    # the data column count. Returns the columns.
     """
     If columns is None, make numbers as column names; Otherwise, validate that
     columns have valid length.
@@ -980,6 +1192,13 @@ def convert_object_array(
     dtype_backend: str = "numpy",
     coerce_float: bool = False,
 ) -> list[ArrayLike]:
+    # [FUNCTION DOC]
+    # Softly convert object-dtype arrays to better dtypes.
+    # Parameters: content (list of object arrays); dtype (requested dtype or None);
+    # dtype_backend (default the plain numpy backend; any other value requests
+    # nullable types); coerce_float (default false; passed as the float-conversion
+    # attempt flag).
+    # Returns a list of converted arrays. See the nested converter for the rules.
     """
     Internal function to convert object array.
 
@@ -997,6 +1216,18 @@ def convert_object_array(
     # provide soft conversion of object dtypes
 
     def convert(arr):
+        # [FUNCTION DOC]
+        # HELPER (nested): converts one array. If the requested dtype is not object:
+        # runs the object conversion (nullable output when a non-numpy backend or a
+        # masked dtype is requested). With no dtype: if still object, tries
+        # non-numeric conversion (dates etc., all-missing becomes second-resolution
+        # datetime), and with a nullable backend converts leftover object data to the
+        # string dtype; if not object and the backend is not numpy, integer, unsigned,
+        # float and bool arrays become nullable extension arrays. With an extension
+        # dtype: builds it from the sequence without copying. With a datetime or
+        # timedelta dtype: casts with the datetime cast routine. Other dtypes leave the
+        # array as is. Object requested dtype leaves the array unchanged. Returns the
+        # array.
         if dtype != np.dtype("O"):
             # e.g. if dtype is UInt32 then we want to cast Nones to NA instead of
             #  NaN in maybe_convert_objects.

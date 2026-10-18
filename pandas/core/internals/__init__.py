@@ -1,3 +1,15 @@
+# [PACKAGE DOC]
+# Internal block-management layer of pandas: stores the data of a frame or
+# series as one or more typed blocks coordinated by a manager.
+# Submodules: api (pseudo-public helpers for downstream libraries), blocks
+# (block classes), concat (joining managers), construction (building managers
+# from arrays, dicts, records), managers (manager classes), ops (block-wise
+# operations).
+# Re-exports: the pseudo-public block factory, the function that concatenates
+# managers, the two manager classes. The names for the base block class and
+# the extension and tz-aware datetime block classes are listed as exported but
+# are not bound here; they are provided lazily through a module attribute hook.
+# No import-time side effects other than importing those submodules.
 from pandas.core.internals.api import make_block  # 2023-09-18 pyarrow uses this
 from pandas.core.internals.concat import concatenate_managers
 from pandas.core.internals.managers import (
@@ -17,6 +29,15 @@ __all__ = [
 
 
 def __getattr__(name: str):
+    # [FUNCTION DOC]
+    # Module-level attribute hook (lazy, deprecated attribute access).
+    # Parameter name: the missing attribute name. For the manager-from-blocks
+    # creation function and for the three block class names, it emits a future
+    # deprecation warning (the pandas 4 warning class) at stack level 2 telling
+    # users to use public APIs, then lazily imports and returns the object (the
+    # tz-aware datetime block comes from the api module, the other blocks from the
+    # blocks module, the creator from the managers module). Any other name raises
+    # an attribute error naming this module.
     # GH#55139
     import warnings
 

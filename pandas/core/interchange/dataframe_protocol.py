@@ -1,6 +1,21 @@
 """
 A verbatim copy (vendored) of the spec from https://github.com/data-apis/dataframe-api
 """
+# [MODULE DOC]
+# Vendored definition of the dataframe interchange protocol: enums, typed
+# dictionaries and abstract base classes that describe what an exporting
+# dataframe library must provide.
+# Public contents: an enum of DLPack device codes; an enum of dtype kinds
+# (ints, unsigned, floats, then bool, string, datetime, categorical with the
+# latter codes starting at twenty); an enum of null representations; two typed
+# mappings (the buffers of a column, and the description of a categorical); and
+# three abstract classes: Buffer, Column and DataFrame. The pandas
+# implementations of these are in the buffer, column and dataframe modules,
+# and the consumer side is in from_dataframe. Only the frame class is tagged
+# as public (published under the public interchange API namespace).
+# The only import-time effect is applying the module-renaming decorator to the
+# frame class.
+# KNOWN ISSUE: the module docstring calls this a verbatim copy of the upstream specification, but the frame class carries a pandas-specific decorator and the chunk docstrings were adapted, so it is not strictly verbatim.
 
 from __future__ import annotations
 
@@ -25,6 +40,10 @@ if TYPE_CHECKING:
 
 
 class DlpackDeviceType(enum.IntEnum):
+    # [CLASS DOC]
+    # Integer enum of device type codes matching the DLPack standard: CPU, CUDA,
+    # pinned CPU, OpenCL, Vulkan, Metal, VPI, ROCm. Used as the first element of
+    # the pair returned by the buffer's device query.
     """Integer enum for device type codes matching DLPack."""
 
     CPU = 1
@@ -38,6 +57,11 @@ class DlpackDeviceType(enum.IntEnum):
 
 
 class DtypeKind(enum.IntEnum):
+    # [CLASS DOC]
+    # Integer enum of protocol data type kinds: signed int (0), unsigned int (1),
+    # float (2), bool (20), utf-8 string (21), datetime (22), categorical (23).
+    # The values align with DLPack for the first three and leave a gap before the
+    # rest for future extensions.
     """
     Integer enum for data types.
 
@@ -69,6 +93,11 @@ class DtypeKind(enum.IntEnum):
 
 
 class ColumnNullType(enum.IntEnum):
+    # [CLASS DOC]
+    # Integer enum of null representations: non-nullable (0), explicit float
+    # not-a-number (1), a sentinel value other than not-a-number (2), a bit mask
+    # (3) and a byte mask (4). Returned by the column's null description together
+    # with an associated value.
     """
     Integer enum for null type representation.
 
@@ -94,6 +123,12 @@ class ColumnNullType(enum.IntEnum):
 
 
 class ColumnBuffers(TypedDict):
+    # [CLASS DOC]
+    # Typed mapping describing the buffers of one column: a data entry holding a
+    # pair of (buffer, dtype tuple); a validity entry that is such a pair or None
+    # when the null representation is not a bit or byte mask; an offsets entry that
+    # is such a pair or None when the data has no offsets buffer (used for
+    # variable-length data like strings). Has no behavior.
     # first element is a buffer containing the column data;
     # second element is the data buffer's associated dtype
     data: tuple[Buffer, Any]
@@ -111,6 +146,11 @@ class ColumnBuffers(TypedDict):
 
 
 class CategoricalDescription(TypedDict):
+    # [CLASS DOC]
+    # Typed mapping describing a categorical column: a flag telling whether the
+    # ordering of the codes is meaningful, a flag telling whether a dictionary-style
+    # mapping from codes to values exists, and the column of categories (None if
+    # not dictionary-style). Has no behavior.
     # whether the ordering of dictionary indices is semantically meaningful
     is_ordered: bool
     # whether a dictionary-style mapping of categorical values to other objects exists
@@ -121,6 +161,11 @@ class CategoricalDescription(TypedDict):
 
 
 class Buffer(ABC):
+    # [CLASS DOC]
+    # Abstract base for a contiguous block of memory exchanged between libraries.
+    # Subclasses must provide size in bytes, start address, a DLPack export and the
+    # device. A buffer has no dtype; dtype information comes from the owning
+    # column (or from the DLPack export where supported).
     """
     Data in the buffer is guaranteed to be contiguous in memory.
 
@@ -138,6 +183,8 @@ class Buffer(ABC):
     @property
     @abstractmethod
     def bufsize(self) -> int:
+        # [FUNCTION DOC]
+        # Abstract property: buffer size in bytes (integer).
         """
         Buffer size in bytes.
         """
@@ -145,12 +192,18 @@ class Buffer(ABC):
     @property
     @abstractmethod
     def ptr(self) -> int:
+        # [FUNCTION DOC]
+        # Abstract property: address of the first byte of the buffer as an integer.
         """
         Pointer to start of the buffer as an integer.
         """
 
     @abstractmethod
     def __dlpack__(self):
+        # [FUNCTION DOC]
+        # Abstract method: produce a DLPack capsule for the buffer. Subclasses may
+        # raise a type error for unsupported dtypes or a not-implemented error when
+        # DLPack is unsupported. The base body raises a not-implemented error.
         """
         Produce DLPack capsule (see array API standard).
 
@@ -166,6 +219,10 @@ class Buffer(ABC):
 
     @abstractmethod
     def __dlpack_device__(self) -> tuple[DlpackDeviceType, int | None]:
+        # [FUNCTION DOC]
+        # Abstract method: return a pair of (device type code, optional device id)
+        # describing where the data resides. Must be implemented even when the DLPack
+        # export is not.
         """
         Device type and device ID for where the data in the buffer resides.
         Uses device type codes matching DLPack.
@@ -174,6 +231,14 @@ class Buffer(ABC):
 
 
 class Column(ABC):
+    # [CLASS DOC]
+    # Abstract base for one column of an interchange frame. A column may consist of
+    # one or more chunks and each chunk can have up to three buffers: data, a mask
+    # (depending on the null representation) and offsets (for variable-size
+    # binary data). Subclasses supply size, offset, dtype, categorical and null
+    # descriptions, null count, metadata, chunk handling and the buffers. The
+    # column has no versioning of its own because it is only obtained from a
+    # frame export.
     """
     A column object, with only the methods and properties required by the
     interchange protocol defined.
@@ -219,6 +284,9 @@ class Column(ABC):
 
     @abstractmethod
     def size(self) -> int:
+        # [FUNCTION DOC]
+        # Abstract method: number of elements of the column (or of this chunk if the
+        # column is split).
         """
         Size of the column, in elements.
 
@@ -229,6 +297,9 @@ class Column(ABC):
     @property
     @abstractmethod
     def offset(self) -> int:
+        # [FUNCTION DOC]
+        # Abstract property: offset of the first element; may be positive when chunks
+        # are used (chunk number times the common chunk length).
         """
         Offset of first element.
 
@@ -240,6 +311,11 @@ class Column(ABC):
     @property
     @abstractmethod
     def dtype(self) -> tuple[DtypeKind, int, str, str]:
+        # [FUNCTION DOC]
+        # Abstract property: dtype description as a tuple of (kind, bit width, Arrow C
+        # format string, endianness character). Masks must be boolean with width one for
+        # bit masks or eight for byte masks; only native endianness is currently
+        # supported; complex, Arrow null, binary, decimal and nested types are excluded.
         """
         Dtype description as a tuple ``(kind, bit-width, format string, endianness)``.
 
@@ -271,6 +347,10 @@ class Column(ABC):
     @property
     @abstractmethod
     def describe_categorical(self) -> CategoricalDescription:
+        # [FUNCTION DOC]
+        # Abstract property: for categorical columns return a categorical description
+        # (ordering flag, dictionary flag, categories column); raises a type error if
+        # the column is not categorical.
         """
         If the dtype is categorical, there are two options:
         - There are only values in the data buffer.
@@ -293,6 +373,11 @@ class Column(ABC):
     @property
     @abstractmethod
     def describe_null(self) -> tuple[ColumnNullType, Any]:
+        # [FUNCTION DOC]
+        # Abstract property: return a pair (null kind, value). The value is the
+        # sentinel when the kind is sentinel-based, the mask value (zero or one) that
+        # marks a missing entry when the kind is a bit or byte mask, and None
+        # otherwise.
         """
         Return the missing value (or "null") representation the column dtype
         uses, as a tuple ``(kind, value)``.
@@ -305,6 +390,8 @@ class Column(ABC):
     @property
     @abstractmethod
     def null_count(self) -> int | None:
+        # [FUNCTION DOC]
+        # Abstract property: number of missing elements, or None when unknown.
         """
         Number of null elements, if known.
 
@@ -314,18 +401,26 @@ class Column(ABC):
     @property
     @abstractmethod
     def metadata(self) -> dict[str, Any]:
+        # [FUNCTION DOC]
+        # Abstract property: mapping of library-specific metadata for the column; see
+        # the frame's metadata for key naming rules.
         """
         The metadata for the column. See `DataFrame.metadata` for more details.
         """
 
     @abstractmethod
     def num_chunks(self) -> int:
+        # [FUNCTION DOC]
+        # Abstract method: return the number of chunks of the column.
         """
         Return the number of chunks the column consists of.
         """
 
     @abstractmethod
     def get_chunks(self, n_chunks: int | None = None) -> Iterable[Column]:
+        # [FUNCTION DOC]
+        # Abstract method: return an iterable of column chunks. Parameter n_chunks:
+        # optional integer; semantics are those of the frame's chunk method.
         """
         Return an iterator yielding the chunks.
 
@@ -334,6 +429,10 @@ class Column(ABC):
 
     @abstractmethod
     def get_buffers(self) -> ColumnBuffers:
+        # [FUNCTION DOC]
+        # Abstract method: return the buffers mapping (data, validity, offsets) of the
+        # column, each entry a pair of buffer and its dtype tuple, or None where
+        # there is no such buffer.
         """
         Return a dictionary containing the underlying buffers.
 
@@ -366,6 +465,12 @@ class Column(ABC):
 
 @set_module("pandas.api.interchange")
 class DataFrame(ABC):
+    # [CLASS DOC]
+    # Abstract base for an interchange frame: an ordered collection of columns with
+    # unique string names, accessible by name or by position. Class attribute
+    # version (integer, zero) gives the protocol version. Subclasses supply
+    # metadata, counts, column access and selection, and chunking. Published in
+    # the public interchange namespace.
     """
     A data frame class, with only the methods required by the interchange
     protocol defined.
@@ -384,11 +489,18 @@ class DataFrame(ABC):
 
     @abstractmethod
     def __dataframe__(self, nan_as_null: bool = False, allow_copy: bool = True):
+        # [FUNCTION DOC]
+        # Abstract method: construct a new interchange object, possibly with changed
+        # parameters. Parameters: nan_as_null (default false) and allow_copy (default
+        # true).
         """Construct a new interchange object, potentially changing the parameters."""
 
     @property
     @abstractmethod
     def metadata(self) -> dict[str, Any]:
+        # [FUNCTION DOC]
+        # Abstract property: mapping with string keys of library-specific metadata for
+        # roundtripping; keys should be prefixed with the library name and a period.
         """
         The metadata for the data frame, as a dictionary with string keys. The
         contents of `metadata` may be anything, they are meant for a library
@@ -401,12 +513,17 @@ class DataFrame(ABC):
 
     @abstractmethod
     def num_columns(self) -> int:
+        # [FUNCTION DOC]
+        # Abstract method: number of columns.
         """
         Return the number of columns in the DataFrame.
         """
 
     @abstractmethod
     def num_rows(self) -> int | None:
+        # [FUNCTION DOC]
+        # Abstract method: number of rows, or None if not available (it may be
+        # expensive to compute).
         # TODO: not happy with Optional, but need to flag it may be expensive
         #       why include it if it may be None - what do we expect consumers
         #       to do here?
@@ -416,48 +533,68 @@ class DataFrame(ABC):
 
     @abstractmethod
     def num_chunks(self) -> int:
+        # [FUNCTION DOC]
+        # Abstract method: number of chunks of the frame.
         """
         Return the number of chunks the DataFrame consists of.
         """
 
     @abstractmethod
     def column_names(self) -> Iterable[str]:
+        # [FUNCTION DOC]
+        # Abstract method: iterable of the column names.
         """
         Return an iterator yielding the column names.
         """
 
     @abstractmethod
     def get_column(self, i: int) -> Column:
+        # [FUNCTION DOC]
+        # Abstract method: return the column at integer position i.
         """
         Return the column at the indicated position.
         """
 
     @abstractmethod
     def get_column_by_name(self, name: str) -> Column:
+        # [FUNCTION DOC]
+        # Abstract method: return the column with the given name.
         """
         Return the column whose name is the indicated name.
         """
 
     @abstractmethod
     def get_columns(self) -> Iterable[Column]:
+        # [FUNCTION DOC]
+        # Abstract method: iterable of all columns in order.
         """
         Return an iterator yielding the columns.
         """
 
     @abstractmethod
     def select_columns(self, indices: Sequence[int]) -> DataFrame:
+        # [FUNCTION DOC]
+        # Abstract method: return a new frame holding the columns at the given
+        # sequence of integer positions.
         """
         Create a new DataFrame by selecting a subset of columns by index.
         """
 
     @abstractmethod
     def select_columns_by_name(self, names: Sequence[str]) -> DataFrame:
+        # [FUNCTION DOC]
+        # Abstract method: return a new frame holding the columns with the given
+        # sequence of names.
         """
         Create a new DataFrame by selecting a subset of columns by name.
         """
 
     @abstractmethod
     def get_chunks(self, n_chunks: int | None = None) -> Iterable[DataFrame]:
+        # [FUNCTION DOC]
+        # Abstract method: iterable of frame chunks. Parameter n_chunks (optional
+        # integer): None yields the producer's own chunks; if given it must be a
+        # multiple of the number of chunks and the producer subdivides each chunk.
         """
         Return an iterator yielding the chunks.
 

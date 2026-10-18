@@ -1,6 +1,15 @@
 """
 Utility functions and objects for implementing the interchange API.
 """
+# [MODULE DOC]
+# HELPER: internal support module for the interchange implementation.
+# Contents: a mapping from pyarrow type names to Arrow C data interface format
+# strings; an enum-like class of Arrow C format strings; an enum-like class of
+# byte-order characters; a function converting a pandas dtype to an Arrow C
+# format string; and a function that merges multi-chunk pyarrow-backed series.
+# Used by the column and from_dataframe modules. No import-time side effects
+# beyond importing pandas itself.
+# KNOWN ISSUE: in the pyarrow type-name mapping the entry for the signed 16-bit integer uses the uppercase letter that denotes unsigned 16-bit in the Arrow C format (the same value as the unsigned entry); the signed format letter is lowercase, as defined in the format class below.
 
 from __future__ import annotations
 
@@ -59,6 +68,11 @@ PYARROW_CTYPES = {
 
 
 class ArrowCTypes:
+    # [CLASS DOC]
+    # HELPER: namespace of string constants (no instances intended) holding Apache
+    # Arrow C data interface format strings for null, boolean, signed and unsigned
+    # integers, floats, strings, dates, plus template strings for timestamp (taking
+    # a resolution letter and a timezone) and time (taking a resolution letter).
     """
     Enum for Apache Arrow C type format strings.
 
@@ -93,6 +107,9 @@ class ArrowCTypes:
 
 
 class Endianness:
+    # [CLASS DOC]
+    # HELPER: namespace of string constants (no instances intended) naming the
+    # byte-order characters little, big, native and not-applicable.
     """Enum indicating the byte-order of a data-type."""
 
     LITTLE = "<"
@@ -102,6 +119,21 @@ class Endianness:
 
 
 def dtype_to_arrow_c_fmt(dtype: DtypeObj) -> str:
+    # [FUNCTION DOC]
+    # Convert a pandas or numpy dtype object into its Apache Arrow C format string.
+    # Parameter dtype: the dtype to describe. Returns a string.
+    # Rules in order: categorical dtypes map to the signed 64-bit integer code (the
+    # codes format); object dtype maps to the utf-8 string code; Arrow-backed dtypes
+    # map decimals to a decimal string with precision and scale, tz-aware
+    # timestamps to a timestamp string with the first letter of the unit and the
+    # timezone, and otherwise use the pyarrow type name lookup table when it has an
+    # entry; then any dtype whose name, uppercased, is a constant of the format
+    # class is mapped to it; then the string extension dtype maps to the utf-8 code
+    # (a pending note says large string should be used for pyarrow storage);
+    # numpy datetimes map to a timestamp string with the first letter of the
+    # resolution and empty timezone; tz-aware datetime dtypes map to a timestamp
+    # string with unit letter and timezone; nullable boolean maps to the boolean
+    # code. Raises a not-implemented error for anything else.
     """
     Represent pandas `dtype` as a format string in Apache Arrow C notation.
 
@@ -158,6 +190,13 @@ def dtype_to_arrow_c_fmt(dtype: DtypeObj) -> str:
 
 
 def maybe_rechunk(series: pd.Series, *, allow_copy: bool) -> pd.Series | None:
+    # [FUNCTION DOC]
+    # Rechunk a pyarrow-backed series into a single chunk if needed.
+    # Parameters: series (a Series); allow_copy (keyword-only, required boolean).
+    # Returns None when the dtype is not Arrow-backed or the underlying chunked
+    # array already has exactly one chunk. Otherwise, if allow_copy is false, raises
+    # a runtime error asking the caller to rechunk first. If allowed, combines the
+    # chunks and returns a new Series with the same dtype, name and index.
     """
     Rechunk a multi-chunk pyarrow array into a single-chunk array, if necessary.
 

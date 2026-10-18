@@ -6,6 +6,14 @@ authors
 2) Use only functions exposed here (or in core.internals)
 
 """
+# [MODULE DOC]
+# Pseudo-public API of the internals for downstream libraries (for example
+# pyarrow, which uses the block factory). Contents: a private block factory
+# that normalizes shape and datetime-like classes, a private tz-aware datetime
+# block subclass kept for backward compatibility, the deprecated public block
+# factory, and a private plus a deprecated public function for inferring block
+# dimensionality. Builds on the blocks module and the block placement type.
+# No import-time side effects.
 
 from __future__ import annotations
 
@@ -48,6 +56,15 @@ if TYPE_CHECKING:
 
 
 def _make_block(values: ArrayLike, placement: np.ndarray) -> Block:
+    # [FUNCTION DOC]
+    # HELPER: internal analogue of the new-block constructors used inside pandas.
+    # Parameters: values (numpy array already shaped as columns by rows, or an
+    # extension array that may be one-dimensional), placement (integer array of
+    # positions). Returns a block of the class chosen for the values dtype.
+    # Wraps placement in a block placement; for extension dtypes that support
+    # two dimensions, and for datetime and timedelta arrays, reshapes values to
+    # two dimensions; then converts datetime-like numpy values to their array
+    # classes. No other validation is done.
     """
     This is an analogue to blocks.new_block(_2d) that ensures:
     1) correct dimension for EAs that support 2D (`ensure_block_shape`), and
@@ -77,6 +94,10 @@ def _make_block(values: ArrayLike, placement: np.ndarray) -> Block:
 
 
 class _DatetimeTZBlock(DatetimeLikeBlock):
+    # [CLASS DOC]
+    # HELPER: datetime-with-timezone block kept only so legacy callers can still
+    # request it by class. Subclass of the datetime-like block; holds a datetime
+    # array; defines no slots or behavior of its own.
     """implement a datetime64 block with a tz attribute"""
 
     values: DatetimeArray
@@ -87,6 +108,19 @@ class _DatetimeTZBlock(DatetimeLikeBlock):
 def make_block(
     values, placement, klass=None, ndim=None, dtype: Dtype | None = None
 ) -> Block:
+    # [FUNCTION DOC]
+    # Deprecated downstream-facing block factory.
+    # Parameters: values (array-like), placement (positions or a block placement),
+    # klass (optional block class, default None meaning infer from dtype), ndim
+    # (optional int, inferred if None), dtype (optional dtype, default None).
+    # Always emits the pandas 4 deprecation warning at stack level 2. Converts
+    # dtype via the dtype lookup, unwraps pandas-numpy arrays, and chooses the
+    # block class: the extension block is replaced by inference for period dtype
+    # data; with no class given the class comes from the dtype; if the legacy
+    # tz-aware class is requested for values lacking a tz dtype, values are wrapped
+    # in a datetime array with the given dtype. Wraps placement, infers ndim,
+    # reshapes period and tz-aware values to the block shape, checks ndim against
+    # placement, coerces values and returns a block built from them.
     """
     This is a pseudo-public analogue to blocks.new_block.
 
@@ -150,6 +184,11 @@ def make_block(
 
 
 def _maybe_infer_ndim(values, placement: BlockPlacement, ndim: int | None) -> int:
+    # [FUNCTION DOC]
+    # HELPER: infer dimensionality for block creation. Parameters: values, placement,
+    # ndim (optional). If ndim is given it is returned unchanged. Otherwise, for
+    # extension dtypes returns 1 when the placement has other than one item and 2
+    # when it has one; for numpy dtypes returns the values dimensionality.
     """
     If `ndim` is not provided, infer it from placement and values.
     """
@@ -166,6 +205,10 @@ def _maybe_infer_ndim(values, placement: BlockPlacement, ndim: int | None) -> in
 
 
 def maybe_infer_ndim(values, placement: BlockPlacement, ndim: int | None) -> int:
+    # [FUNCTION DOC]
+    # Deprecated public wrapper: emits the pandas 4 deprecation warning at stack
+    # level 2 and returns the result of the private inference helper for the same
+    # arguments (values, placement, ndim).
     """
     If `ndim` is not provided, infer it from placement and values.
     """

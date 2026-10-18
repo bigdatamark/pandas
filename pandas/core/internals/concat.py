@@ -1,3 +1,14 @@
+# [MODULE DOC]
+# Concatenation of block managers, the engine behind row-wise and column-wise
+# concatenation of frames and series.
+# Public content: the function that concatenates managers (used by the
+# top-level concatenation routine). Internal content: helpers to reindex
+# columns using placeholder (void dtype) blocks, a fast path for managers
+# that each hold a single float block, planning functions that align blocks
+# across managers, and the join-unit class that wraps one block participating in
+# a concatenation, plus helpers choosing a common dtype and the matching
+# missing value. Depends on the blocks and managers modules and on dtype
+# casting and concatenation utilities. No import-time side effects.
 from __future__ import annotations
 
 from typing import (
@@ -61,6 +72,26 @@ if TYPE_CHECKING:
 def concatenate_managers(
     mgrs_indexers, axes: list[Index], concat_axis: AxisInt, copy: bool
 ) -> BlockManager:
+    # [FUNCTION DOC]
+    # Concatenate block managers into one manager.
+    # Parameters: mgrs_indexers (list of pairs of a manager and a mapping from axis
+    # number to indexer array; the caller guarantees the concat axis is not in the
+    # mappings); axes (list of the result's axis indexes); concat_axis (integer axis
+    # along which to join, zero meaning columns); copy (boolean).
+    # Copies are made only when copy is true and the axis is zero.
+    # Axis zero: reindexes all managers to the result columns (void placeholders for
+    # missing columns) and joins them horizontally with the first manager's
+    # horizontal-concat method.
+    # Other axes: if the first manager has blocks whose first dtype is a 64- or 32-bit
+    # float, there is more than one manager and all managers are single-block,
+    # contiguous and of that dtype, uses the float fast path and returns a manager
+    # with a single block. Otherwise reindexes columns; a single manager yields a
+    # shallow copy with the axes replaced. For several managers, plans per-placement
+    # join units; blocks of uniform type are joined directly (numpy join for non-
+    # extension blocks, the compat concat for extension ones, reshaped to 2D for
+    # 1D-only extension dtypes) and keep the block class if the dtype is unchanged;
+    # others go through the generic join-unit concatenation and make a new 2D block.
+    # Returns a manager from the blocks and axes.
     """
     Concatenate block managers into one.
 
@@ -160,6 +191,14 @@ def _maybe_reindex_columns_na_proxy(
     mgrs_indexers: list[tuple[BlockManager, dict[int, np.ndarray]]],
     needs_copy: bool,
 ) -> list[BlockManager]:
+    # [FUNCTION DOC]
+    # HELPER: reindexes every manager along the axes in its indexer mapping so that
+    # all managers match the result axes.
+    # Parameters: axes (result axes), mgrs_indexers (list of pairs of manager and
+    # indexer mapping), needs_copy (whether managers without indexers should be
+    # deep-copied). Reindexing uses placeholder columns of void dtype (ignored when
+    # choosing the final dtype), slice-only and allows duplicates. Returns a new list
+    # of managers in the same order.
     """
     Reindex along columns so that all of the BlockManagers being concatenated
     have matching columns.
@@ -189,6 +228,10 @@ def _maybe_reindex_columns_na_proxy(
 
 
 def _is_homogeneous_mgr(mgr: BlockManager, first_dtype: DtypeObj) -> bool:
+    # [FUNCTION DOC]
+    # HELPER: returns true if the manager can be treated as one contiguous array of
+    # the given dtype: exactly one block, whose locations are a slice with step one,
+    # and whose dtype equals first_dtype.
     """
     Check if this Manager can be treated as a single ndarray.
     """
@@ -204,6 +247,16 @@ def _is_homogeneous_mgr(mgr: BlockManager, first_dtype: DtypeObj) -> bool:
 def _concat_homogeneous_fastpath(
     mgrs_indexers, shape: Shape, first_dtype: np.dtype
 ) -> Block:
+    # [FUNCTION DOC]
+    # HELPER: float fast path for concatenating managers along the rows.
+    # Parameters: mgrs_indexers (list of pairs; each manager is homogeneous per the
+    # check helper), shape (tuple of the result lengths), first_dtype (numpy 64- or
+    # 32-bit float dtype). If no manager needs reindexing, transposes the block
+    # values, joins them and transposes back. Otherwise allocates an uninitialised
+    # output array and fills a slice for each manager, either with the float take
+    # routine for the matching width and the column indexer, or by direct copy.
+    # Returns a single new block covering all columns.
+    # KNOWN ISSUE: the existing docstring ends with an unfinished sentence and a placeholder in brackets and does not describe the behavior.
     """
     With single-Block managers with homogeneous dtypes (that can already hold nan),
     we avoid [...]
@@ -251,6 +304,12 @@ def _concat_homogeneous_fastpath(
 def _get_combined_plan(
     mgrs: list[BlockManager],
 ) -> Generator[tuple[BlockPlacement, list[JoinUnit]]]:
+    # [FUNCTION DOC]
+    # HELPER: generator planning the concatenation. Parameter mgrs: the managers
+    # (already reindexed to the same columns). Gets from the compiled helper the
+    # groups of consecutive column positions that map to the same block number in
+    # each manager, and yields, for each group, a pair of the placement and a list
+    # with one join unit per manager built from the corresponding block piece.
     max_len = mgrs[0].shape[0]
 
     blknos_list = [mgr.blknos for mgr in mgrs]
@@ -273,6 +332,14 @@ def _get_combined_plan(
 def _get_block_for_concat_plan(
     mgr: BlockManager, bp: BlockPlacement, blkno: int, *, max_len: int
 ) -> Block:
+    # [FUNCTION DOC]
+    # HELPER: returns the piece of the manager's block selected by a placement.
+    # Parameters: mgr, bp (block placement of the columns wanted), blkno (block
+    # number in the manager), max_len (keyword-only number of columns of the result).
+    # If the placement covers exactly all of the block's locations and these are a
+    # contiguous slice, returns the block itself. Otherwise, converts the placement
+    # to positions within the block and returns a column slice of the block when the
+    # positions form a slice, else takes the columns.
     blk = mgr.blocks[blkno]
     # Assertions disabled for performance:
     #  assert bp.is_slice_like
@@ -299,13 +366,31 @@ def _get_block_for_concat_plan(
 
 
 class JoinUnit:
+    # [CLASS DOC]
+    # HELPER: wrapper around one block taking part in a concatenation. State: the
+    # block. Provides the repr, a check for being all missing of a compatible
+    # type, the cached missing flag and a method returning the values to be joined.
     def __init__(self, block: Block) -> None:
+        # [FUNCTION DOC]
+        # Store the block on the instance. Parameter block: the block.
         self.block = block
 
     def __repr__(self) -> str:
+        # [FUNCTION DOC]
+        # Return a string with the class name and the representation of the block.
         return f"{type(self).__name__}({self.block!r})"
 
     def _is_valid_na_for(self, dtype: DtypeObj) -> bool:
+        # [FUNCTION DOC]
+        # HELPER: returns true if this unit is all missing with a missing type that is
+        # compatible with the given dtype. Parameter dtype: target dtype.
+        # False if the unit is not all missing. True for void-dtype blocks. For object
+        # blocks, true if every element is a valid missing value for the dtype. For
+        # datetime-like missing values the block's dtype must equal the target dtype
+        # (datetime vs timedelta are not interchangeable). The extension missing value
+        # is rejected when the target needs integer-based datetime handling. Otherwise
+        # tests the block's fill value against the dtype.
+        # KNOWN ISSUE: the code marks the nullable-missing-value rejection as a kludge that exists only to satisfy one test.
         """
         Check that we are all-NA of a type/dtype that is compatible with this dtype.
         Augments `self.is_na` with an additional check of the type of NA values.
@@ -339,12 +424,24 @@ class JoinUnit:
 
     @cache_readonly
     def is_na(self) -> bool:
+        # [FUNCTION DOC]
+        # Cached property: true if the block has void dtype (a placeholder for missing
+        # columns); false otherwise.
         blk = self.block
         if blk.dtype.kind == "V":
             return True
         return False
 
     def get_reindexed_values(self, empty_dtype: DtypeObj, upcasted_na) -> ArrayLike:
+        # [FUNCTION DOC]
+        # Return the values to use in the join. Parameters: empty_dtype (the common
+        # result dtype), upcasted_na (missing value to fill with, or None if no upcasting
+        # is necessary).
+        # If upcasted_na is None and the block is not a void block, returns the block's
+        # values unchanged. Otherwise, if the unit is all-missing and valid for empty_dtype,
+        # returns a freshly built missing array of that dtype and the block's shape; for an
+        # object block whose first element is None, None is used as fill instead of the
+        # given value. Otherwise returns the block's values unchanged.
         values: ArrayLike
 
         if upcasted_na is None and self.block.dtype.kind != "V":
@@ -371,6 +468,14 @@ class JoinUnit:
 
 
 def _concatenate_join_units(join_units: list[JoinUnit], copy: bool) -> ArrayLike:
+    # [FUNCTION DOC]
+    # HELPER: generic concatenation of the units' values along columns of the 2D
+    # layout. Parameters: join_units (list), copy (accepted but unused).
+    # Determines the common dtype and the missing value for it, obtains each unit's
+    # values, and if any are 1D-only extension arrays reduces the others to 1D (first
+    # row) and joins with the compat concat reshaped to 2D, otherwise joins along
+    # axis one. Returns the joined array.
+    # KNOWN ISSUE: the copy parameter is never used in the body.
     """
     Concatenate values from several join units along axis=1.
     """
@@ -403,6 +508,13 @@ def _concatenate_join_units(join_units: list[JoinUnit], copy: bool) -> ArrayLike
 
 
 def _dtype_to_na_value(dtype: DtypeObj, has_none_blocks: bool):
+    # [FUNCTION DOC]
+    # HELPER: returns the missing value used to fill in for the dtype.
+    # Parameters: dtype; has_none_blocks (true if any unit is a void block). Extension
+    # dtypes use their own missing value; datetime/timedelta dtypes use a typed
+    # NaT of the same unit; float and complex use typed NaN; bool returns None (no
+    # upcast); integers return None unless void blocks exist, in which case plain NaN;
+    # object returns NaN. Any other kind raises a not-implemented error.
     """
     Find the NA value to go with this dtype.
     """
@@ -426,6 +538,12 @@ def _dtype_to_na_value(dtype: DtypeObj, has_none_blocks: bool):
 
 
 def _get_empty_dtype(join_units: Sequence[JoinUnit]) -> DtypeObj:
+    # [FUNCTION DOC]
+    # HELPER: picks the dtype for the joined result. Parameter join_units (sequence).
+    # If all unit dtypes are equal, that dtype is returned. Otherwise computes the
+    # common type over the dtypes of units that are not all missing, and widens it
+    # to hold missing values if there are void blocks.
+    # KNOWN ISSUE: the existing docstring says it returns a dtype and missing values and mentions a missing value that may be None, but only the dtype is returned.
     """
     Return dtype and N/A values to use when concatenating specified units.
 
@@ -451,6 +569,12 @@ def _get_empty_dtype(join_units: Sequence[JoinUnit]) -> DtypeObj:
 
 
 def _is_uniform_join_units(join_units: list[JoinUnit]) -> bool:
+    # [FUNCTION DOC]
+    # HELPER: returns true if the join units can be joined by direct concatenation
+    # of the block values rather than the generic path. Parameter join_units (list).
+    # False if the first block is void. Otherwise true only if all blocks are of
+    # exactly the same block class, all dtypes are equal or integer, unsigned or
+    # boolean kinds, and no unit is all missing unless its block is an extension block.
     """
     Check if the join units consist of blocks of uniform type that can
     be concatenated using Block.concat_same_type instead of the generic

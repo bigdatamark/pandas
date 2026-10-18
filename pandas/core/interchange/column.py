@@ -1,3 +1,16 @@
+# [MODULE DOC]
+# Pandas implementation of the interchange protocol's column object.
+# Public content: the column wrapper class (subclass of the protocol column).
+# Private module constants: a mapping from numpy dtype kind letters to protocol
+# dtype kinds (ints, unsigned, floats, bools, unicode strings, and both
+# datetime and timedelta kinds map to the datetime kind); a mapping from
+# protocol dtype kind to a pair of (null representation, sentinel/mask value)
+# for non-extension data (floats use not-a-number, datetimes use the integer
+# minimum sentinel, ints/uints/bools are non-nullable, categoricals use a
+# sentinel of minus one, strings use a byte mask whose valid value is zero);
+# and a mapping from null representation to the message explaining why there
+# is no validity buffer. Depends on the buffer, protocol and utils modules.
+# No import-time side effects.
 from __future__ import annotations
 
 from typing import (
@@ -72,6 +85,14 @@ _NO_VALIDITY_BUFFER = {
 
 
 class PandasColumn(Column):
+    # [CLASS DOC]
+    # Interchange-protocol view of one pandas series; subclass of the protocol
+    # column. State: a private series and a private flag stating whether copies
+    # are allowed. A column is always a single chunk unless split by get_chunks,
+    # and can expose up to three buffers: data, validity mask and offsets (for
+    # strings). Only creatable from the frame wrapper. Key methods: dtype
+    # (protocol dtype tuple), describe_null, describe_categorical, null_count,
+    # get_buffers and the private buffer builders for data, validity and offsets.
     """
     A column object, with only the methods and properties required by the
     interchange protocol defined.
@@ -84,6 +105,13 @@ class PandasColumn(Column):
     """
 
     def __init__(self, column: pd.Series, allow_copy: bool = True) -> None:
+        # [FUNCTION DOC]
+        # Wrap a series. Parameters: column (a Series); allow_copy (default true).
+        # Raises a type error with an explanatory message if a frame is passed
+        # (typically because duplicated column names after text conversion made
+        # column selection return a frame), and a not-implemented error for any other
+        # non-series type. Stores the series and the flag; returns nothing.
+        # KNOWN ISSUE: the existing docstring says extension arrays are not handled, but the other methods of this class explicitly handle masked and Arrow-backed extension dtypes.
         """
         Note: doesn't deal with extension arrays yet, just assume a regular
         Series/ndarray for now.
@@ -104,6 +132,8 @@ class PandasColumn(Column):
         self._allow_copy = allow_copy
 
     def size(self) -> int:
+        # [FUNCTION DOC]
+        # Return the number of elements in the column (the series size).
         """
         Size of the column, in elements.
         """
@@ -111,6 +141,8 @@ class PandasColumn(Column):
 
     @property
     def offset(self) -> int:
+        # [FUNCTION DOC]
+        # Property: offset of the first element, always zero.
         """
         Offset of first element. Always zero.
         """
@@ -119,6 +151,16 @@ class PandasColumn(Column):
 
     @cache_readonly
     def dtype(self) -> tuple[DtypeKind, int, str, str]:
+        # [FUNCTION DOC]
+        # Cached property: the protocol dtype tuple of (kind, bit width, Arrow C format
+        # string, byte order).
+        # Categorical series report the categorical kind with the bit width, format
+        # string of the integer codes dtype and native byte order. String-like dtypes
+        # report the string kind with width 8, the format string for the dtype and
+        # native byte order, but only if the inferred content type is string or empty;
+        # otherwise a not-implemented error says non-string object dtypes are
+        # unsupported. Every other dtype is delegated to the private dtype
+        # converter.
         dtype = self._col.dtype
 
         if isinstance(dtype, pd.CategoricalDtype):
@@ -148,6 +190,18 @@ class PandasColumn(Column):
             return self._dtype_from_pandasdtype(dtype)
 
     def _dtype_from_pandasdtype(self, dtype) -> tuple[DtypeKind, int, str, str]:
+        # [FUNCTION DOC]
+        # HELPER: converts a numpy or extension dtype to the protocol dtype tuple used
+        # by the dtype property. Parameter dtype: the dtype.
+        # Looks up the protocol kind from the numpy kind letter (a missing kind raises
+        # a value error saying the type is unsupported; complex, bytes and void kinds
+        # are therefore unsupported). The byte order comes from the numpy dtype
+        # (for Arrow, masked and tz-aware dtypes from the underlying numpy or base
+        # dtype). The pyarrow boolean dtype returns early with its unscaled item size
+        # (because it is a bitmask) and the boolean format. All other dtypes return
+        # the kind, the item size times eight bits, the Arrow C format string from the
+        # utils function and the byte order.
+        # KNOWN ISSUE: a comment in the unsupported-kind branch says to check whether it is categorical, but categoricals are handled by the caller; the comment is stale.
         """
         See `self.dtype` for details.
         """
@@ -182,6 +236,12 @@ class PandasColumn(Column):
 
     @property
     def describe_categorical(self):
+        # [FUNCTION DOC]
+        # Property describing a categorical column. Raises a type error if the
+        # column's protocol kind is not categorical. Returns a mapping with three
+        # entries: whether the categories are ordered (from the series), a
+        # dictionary flag that is always true, and a column wrapper over a new series
+        # of the categories (created with the default copy flag).
         """
         If the dtype is categorical, there are two options:
         - There are only values in the data buffer.
@@ -211,6 +271,14 @@ class PandasColumn(Column):
 
     @property
     def describe_null(self):
+        # [FUNCTION DOC]
+        # Property returning a pair (null representation, value) describing how
+        # missing values are encoded.
+        # Masked extension dtypes give a byte mask with null marker one. Arrow-backed
+        # dtypes (assumed to be single-chunk) give non-nullable with no value when the
+        # array has no validity buffer, otherwise a bit mask with marker zero. All
+        # others look up the protocol kind in the private null mapping; an unknown kind
+        # raises a not-implemented error that names the kind.
         if isinstance(self._col.dtype, BaseMaskedDtype):
             column_null_dtype = ColumnNullType.USE_BYTEMASK
             null_value = 1
@@ -231,6 +299,10 @@ class PandasColumn(Column):
 
     @cache_readonly
     def null_count(self) -> int:
+        # [FUNCTION DOC]
+        # Cached property: number of missing elements, computed from the series' null
+        # mask sum. The result is converted to a plain scalar unless the global option
+        # for python scalars is on.
         """
         Number of null elements. Should always be known.
         """
@@ -241,18 +313,30 @@ class PandasColumn(Column):
 
     @property
     def metadata(self) -> dict[str, pd.Index]:
+        # [FUNCTION DOC]
+        # Property: library-specific metadata, a mapping with one entry keyed by the
+        # pandas index key whose value is the series' row index.
         """
         Store specific metadata of the column.
         """
         return {"pandas.index": self._col.index}
 
     def num_chunks(self) -> int:
+        # [FUNCTION DOC]
+        # Return the number of chunks; always 1.
         """
         Return the number of chunks the column consists of.
         """
         return 1
 
     def get_chunks(self, n_chunks: int | None = None):
+        # [FUNCTION DOC]
+        # Generator yielding column wrappers for consecutive row slices.
+        # Parameter n_chunks: optional integer. When it is greater than 1 the rows are
+        # split into n_chunks pieces whose length is the ceiling of size divided by
+        # n_chunks; each piece is a positional slice wrapped with this object's copy
+        # flag. Otherwise yields this object once.
+        # KNOWN ISSUE: for an empty column and n_chunks above 1 the chunk length is zero and the range used for iteration has a zero step, which raises a value error.
         """
         Return an iterator yielding the chunks.
         See `DataFrame.get_chunks` for details on ``n_chunks``.
@@ -270,6 +354,11 @@ class PandasColumn(Column):
             yield self
 
     def get_buffers(self) -> ColumnBuffers:
+        # [FUNCTION DOC]
+        # Return a mapping with keys for data, validity and offsets, each a pair of
+        # (buffer, dtype tuple) or None. The data entry is always built (errors from
+        # the data builder propagate). Validity and offsets are attempted and set to
+        # None if the corresponding builder signals that no such buffer is present.
         """
         Return a dictionary containing the underlying buffers.
         The returned dictionary has the following contents:
@@ -309,6 +398,23 @@ class PandasColumn(Column):
     def _get_data_buffer(
         self,
     ) -> tuple[Buffer, tuple[DtypeKind, int, str, str]]:
+        # [FUNCTION DOC]
+        # HELPER: builds the data buffer and its dtype tuple for get_buffers.
+        # Datetime kind: converts to a numpy array (after dropping the timezone to
+        # UTC when the format string is longer than four characters, i.e. includes a
+        # timezone) and wraps it in a numpy buffer using the copy flag; the reported
+        # dtype is a native-endian signed 64-bit integer.
+        # Integer, unsigned, float and bool kinds: reports the column's own dtype; for
+        # Arrow-backed series (assumed single chunk) wraps the first chunk's data
+        # buffer in a pyarrow buffer and returns immediately; for masked dtypes uses
+        # the raw data array; otherwise the backing numpy array; wrapped with the copy
+        # flag.
+        # Categorical: wraps the integer codes, dtype taken from the codes dtype.
+        # String: concatenates the utf-8 encodings of all str values (missing or non-str
+        # entries contribute nothing) into one unsigned 8-bit buffer (default copy
+        # flag) with a native-endian dtype. Raises a not-implemented error for other
+        # kinds.
+        # KNOWN ISSUE: a comment says the dtype reported for the string data buffer will need correcting (see the upstream issue about it) and that the encoding loop is slow.
         """
         Return the buffer containing the data and the buffer's associated dtype.
         """
@@ -382,6 +488,19 @@ class PandasColumn(Column):
         return buffer, dtype
 
     def _get_validity_buffer(self) -> tuple[Buffer, Any] | None:
+        # [FUNCTION DOC]
+        # HELPER: builds the validity buffer and dtype for get_buffers.
+        # Returns a pair (buffer, dtype) or None. Raises a no-buffer-present error when
+        # the null representation is non-nullable, nan-based or sentinel-based (the
+        # message says why), and a not-implemented error for a null representation
+        # that is neither of those nor handled below.
+        # Arrow-backed series: dtype is a one-bit boolean; returns None when the first
+        # chunk has no validity buffer, otherwise wraps that bitmap in a pyarrow
+        # buffer. Masked dtypes: wraps the extension array's boolean mask (default copy
+        # flag) with an 8-bit boolean dtype. Strings: builds a boolean array with one
+        # entry per element that holds the valid encoding for str entries and the
+        # invalid encoding otherwise, where the valid encoding is whether the null
+        # value from describe_null equals zero.
         """
         Return the buffer containing the mask values indicating missing data and
         the buffer's associated dtype.
@@ -439,6 +558,13 @@ class PandasColumn(Column):
         raise NoBufferPresent(msg)
 
     def _get_offsets_buffer(self) -> tuple[PandasBuffer, Any]:
+        # [FUNCTION DOC]
+        # HELPER: builds the offsets buffer for variable-size data.
+        # For string kind returns (buffer, dtype) where the buffer is a 64-bit integer
+        # array of length n plus one holding cumulative utf-8 byte lengths of the
+        # values, missing and non-str entries adding zero length, and dtype is native
+        # signed 64-bit integer. For any other kind raises the no-buffer-present error
+        # saying fixed-length dtypes have no offsets.
         """
         Return the buffer containing the offset values for variable-size binary
         data (e.g., variable-length strings) and the buffer's associated dtype.
