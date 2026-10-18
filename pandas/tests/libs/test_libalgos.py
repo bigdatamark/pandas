@@ -1,3 +1,10 @@
+# [MODULE DOC]
+# Tests for the compiled algorithms library (aliased as libalgos): platform
+# integer coercion, lexsort checking, group sort indexer, pad/backfill indexers
+# for sorted arrays, and the Infinity / NegInfinity sentinel classes that
+# provide a consistent ordering. Public contents are test functions and the
+# TestPadBackfill and TestInfinity classes. No import-time side effects.
+
 from datetime import datetime
 from itertools import permutations
 
@@ -9,6 +16,9 @@ import pandas._testing as tm
 
 
 def test_ensure_platform_int():
+    # [FUNCTION DOC]
+    # Passing an array already of platform integer type to the coercion helper
+    # returns the very same object (no copy).
     arr = np.arange(100, dtype=np.intp)
 
     result = libalgos.ensure_platform_int(arr)
@@ -16,6 +26,9 @@ def test_ensure_platform_int():
 
 
 def test_is_lexsorted():
+    # [FUNCTION DOC]
+    # Builds two integer key arrays whose lexicographic order is not sorted
+    # (descending blocks) and checks the lexsorted check returns false.
     failure = [
         np.array(
             ([3] * 32) + ([2] * 32) + ([1] * 32) + ([0] * 32),
@@ -31,6 +44,11 @@ def test_is_lexsorted():
 
 
 def test_groupsort_indexer():
+    # [FUNCTION DOC]
+    # Uses random integer arrays with a fixed seed. The group sort indexer for a
+    # single key with 1000 groups must equal a stable argsort converted to platform
+    # integers. For a combined key of two arrays with 1000000 groups, it must equal
+    # numpy's lexicographic sort order.
     a = np.random.default_rng(2).integers(0, 1000, 100).astype(np.intp)
     b = np.random.default_rng(2).integers(0, 1000, 100).astype(np.intp)
 
@@ -56,7 +74,15 @@ def test_groupsort_indexer():
 
 
 class TestPadBackfill:
+    # [CLASS DOC]
+    # Tests of the pad (forward fill) and backfill index computations between two
+    # sorted arrays.
     def test_backfill(self):
+        # [FUNCTION DOC]
+        # Backfill indexer: for each new value gives the position of the next old value
+        # greater or equal, or minus one if none. Checked on values 0..11 against old
+        # values 1, 5, 10, and on a corner case where all new values exceed all old
+        # values, giving all minus one.
         old = np.array([1, 5, 10], dtype=np.int64)
         new = np.array(list(range(12)), dtype=np.int64)
 
@@ -74,6 +100,11 @@ class TestPadBackfill:
         tm.assert_numpy_array_equal(filler, expect_filler)
 
     def test_pad(self):
+        # [FUNCTION DOC]
+        # Pad indexer: for each new value gives the position of the last old value less
+        # than or equal, or minus one if none. Checked on values 0..11 against old
+        # values 1, 5, 10, and on a corner case where all new values precede all old
+        # values, giving all minus one.
         old = np.array([1, 5, 10], dtype=np.int64)
         new = np.array(list(range(12)), dtype=np.int64)
 
@@ -90,6 +121,10 @@ class TestPadBackfill:
         tm.assert_numpy_array_equal(filler, expect_filler)
 
     def test_pad_backfill_object_segfault(self):
+        # [FUNCTION DOC]
+        # Regression for a crash with object arrays: pad and backfill on object
+        # arrays where either side is empty. An empty old side gives minus one for each
+        # new value; an empty new side gives an empty result.
         old = np.array([], dtype="O")
         new = np.array([datetime(2010, 12, 31)], dtype="O")
 
@@ -111,7 +146,15 @@ class TestPadBackfill:
 
 
 class TestInfinity:
+    # [CLASS DOC]
+    # Tests of the Infinity and NegInfinity ordering sentinels.
     def test_infinity_sort(self):
+        # [FUNCTION DOC]
+        # GH#13445. Checks the sentinels order consistently against floats and each
+        # other: the positive sentinel is greater than or equal to everything and equal
+        # only to itself, the negative sentinel the reverse; new instances compare
+        # equal; every permutation of the reference list sorts back to the reference
+        # order; and sorting arrays of 32 sentinels does not fail.
         # GH#13445
         # numpy's argsort can be unhappy if something is less than
         # itself.  Instead, let's give our infinities a self-consistent
@@ -144,6 +187,9 @@ class TestInfinity:
         np.array([libalgos.NegInfinity()] * 32).argsort()
 
     def test_infinity_against_nan(self):
+        # [FUNCTION DOC]
+        # Checks that both sentinels compare as neither greater, smaller nor equal to
+        # NaN (all ordering and equality comparisons false) while inequality is true.
         Inf = libalgos.Infinity()
         NegInf = libalgos.NegInfinity()
 

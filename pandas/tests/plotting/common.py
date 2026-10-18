@@ -2,6 +2,18 @@
 Module consolidating common testing functions for checking plotting.
 """
 
+# [MODULE DOC]
+# Shared helper functions for the plotting tests: assertion helpers that
+# inspect matplotlib axes, artists, legends, ticks, colors, scales, layout,
+# error bars, box plot return types and grid settings, plus small accessors for
+# shared axes and generators that drive a plotting function on one or two
+# subplots. Almost everything here is a private helper imported by the other
+# plotting test modules; the two public names are the shared-axis accessors and
+# the plot return object validator. Matplotlib is imported lazily inside the
+# functions, and only typing-only imports are used at module level, so
+# importing this module does not require matplotlib. No import-time side
+# effects.
+
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
@@ -21,6 +33,14 @@ if TYPE_CHECKING:
 
 
 def _check_legend_labels(axes, labels=None, visible=True):
+    # [FUNCTION DOC]
+    # HELPER: assertion used by plotting tests. Checks legend labels of one axes or
+    # a collection of axes (only visible axes are examined). Parameters: axes is
+    # an axes object or list-like of them; labels is the list-like of expected
+    # legend text (default none); visible says whether a legend is expected
+    # (default true). Raises a value error if a legend is expected but no labels are
+    # given. When visible, each axes must have a legend and its texts must equal the
+    # labels; otherwise each axes must have no legend. Returns nothing.
     """
     Check each axes has expected legend labels
 
@@ -45,6 +65,14 @@ def _check_legend_labels(axes, labels=None, visible=True):
 
 
 def _check_legend_marker(ax, expected_markers=None, visible=True):
+    # [FUNCTION DOC]
+    # HELPER: assertion for legend markers of a single axes. Parameters: ax is the
+    # axes; expected_markers is the list of expected marker symbols (default none);
+    # visible is whether a legend is expected (default true). Raises a value error
+    # if visible and no markers given. When visible, asserts the marker of each
+    # legend handle equals the expected list; otherwise asserts there is no legend.
+    # KNOWN ISSUE: the docstring says labels are checked only when visible, but
+    # the function checks markers, not labels.
     """
     Check ax has expected legend markers
 
@@ -68,6 +96,10 @@ def _check_legend_marker(ax, expected_markers=None, visible=True):
 
 
 def _check_data(xp, rs):
+    # [FUNCTION DOC]
+    # HELPER: compares two axes line by line. Parameters xp (expected) and rs
+    # (result) are axes. Asserts both have the same number of lines and that the
+    # plotted x/y data of each corresponding pair of lines are almost equal.
     """
     Check each axes has identical lines
 
@@ -87,6 +119,11 @@ def _check_data(xp, rs):
 
 
 def _check_visible(collections, visible=True):
+    # [FUNCTION DOC]
+    # HELPER: checks the visibility of artists. Parameters: collections is a single
+    # artist or a list-like of artists (a matplotlib collection counts as a single
+    # artist); visible is the expected visibility (default true). Asserts each
+    # artist's visibility equals the expectation.
     """
     Check each artist is visible or not
 
@@ -107,6 +144,10 @@ def _check_visible(collections, visible=True):
 
 
 def _check_patches_all_filled(axes: Axes | Sequence[Axes], filled: bool = True) -> None:
+    # [FUNCTION DOC]
+    # HELPER: checks fill state of patches. Parameters: axes is an axes or a
+    # sequence of them (flattened to visible axes); filled is the expected fill
+    # flag (default true). Asserts every patch on every visible axes has that fill.
     """
     Check for each artist whether it is filled or not
 
@@ -124,6 +165,12 @@ def _check_patches_all_filled(axes: Axes | Sequence[Axes], filled: bool = True) 
 
 
 def _get_colors_mapped(series, colors):
+    # [FUNCTION DOC]
+    # HELPER for the color checks: given a series of grouping keys and a list of
+    # colors, maps each distinct key (in order of first appearance) to a color with
+    # pairing truncated to the shorter of the two, and returns a list with the
+    # mapped color for every value of the series (a key without a color raises a
+    # key error).
     unique = series.unique()
     # unique and colors length can be differed
     # depending on slice value
@@ -132,6 +179,17 @@ def _get_colors_mapped(series, colors):
 
 
 def _check_colors(collections, linecolors=None, facecolors=None, mapping=None):
+    # [FUNCTION DOC]
+    # HELPER: checks line and face colors of artists. Parameters: collections is a
+    # list-like of artists; linecolors and facecolors are optional lists of
+    # expected colors with the same length as collections; mapping is an optional
+    # series used as grouping key so that the color lists are expanded per group
+    # (used for the Andrews curves, parallel coordinates and radviz tests) and then
+    # truncated to the number of artists. Colors are compared after conversion to
+    # RGBA tuples. Line colors: for line objects the line color, for polygon or line
+    # collections the first edge color, otherwise the edge color. Face colors: for
+    # collections the first face color, otherwise the face color. Raises assertion
+    # errors on length or color mismatch.
     """
     Check each artist has expected line colors and face colors
 
@@ -196,6 +254,11 @@ def _check_colors(collections, linecolors=None, facecolors=None, mapping=None):
 
 
 def _check_text_labels(texts, expected):
+    # [FUNCTION DOC]
+    # HELPER: checks text artists. Parameters: texts is a single text object or a
+    # list-like of them; expected is a string (for single text) or list-like of the
+    # same length. Asserts the text contents equal the expectation, including the
+    # count for list inputs.
     """
     Check each text has expected labels
 
@@ -216,6 +279,14 @@ def _check_text_labels(texts, expected):
 
 
 def _check_ticks_props(axes, xlabelsize=None, xrot=None, ylabelsize=None, yrot=None):
+    # [FUNCTION DOC]
+    # HELPER: checks tick label properties. Parameters: axes (axes or list-like);
+    # xlabelsize, xrot, ylabelsize, yrot are optional expected font sizes and
+    # rotations for x and y tick labels (none means not checked). For each visible
+    # axes, collects the major tick labels and also the minor ones unless the minor
+    # formatter is the null formatter (in which case rotation and size are not
+    # kept), then asserts each label's size or rotation is almost equal to the
+    # expected value.
     """
     Check each axes has expected tick properties
 
@@ -263,6 +334,10 @@ def _check_ticks_props(axes, xlabelsize=None, xrot=None, ylabelsize=None, yrot=N
 
 
 def _check_ax_scales(axes, xaxis="linear", yaxis="linear"):
+    # [FUNCTION DOC]
+    # HELPER: checks axis scales. Parameters: axes (axes or list-like) and the
+    # expected scale names for x and y (default linear; log is the other value).
+    # Asserts every visible axes has those scales.
     """
     Check each axes has expected scales
 
@@ -281,6 +356,13 @@ def _check_ax_scales(axes, xaxis="linear", yaxis="linear"):
 
 
 def _check_axes_shape(axes, axes_num=None, layout=None, figsize=None):
+    # [FUNCTION DOC]
+    # HELPER: checks number and layout of axes. Parameters: axes (axes or
+    # list-like); axes_num optional expected count of visible axes (each must have
+    # drawn children); layout optional (rows, columns) tuple estimated from the
+    # distinct x and y positions of all flattened axes; figsize optional expected
+    # size in inches, defaulting to matplotlib's default of 6.4 by 4.8. Asserts the
+    # figure size of the first visible axes equals the expected size.
     """
     Check expected number of axes is drawn in expected layout
 
@@ -325,6 +407,10 @@ def _check_axes_shape(axes, axes_num=None, layout=None, figsize=None):
 
 
 def _flatten_visible(axes: Axes | Sequence[Axes]) -> Sequence[Axes]:
+    # [FUNCTION DOC]
+    # HELPER: returns the visible axes from an axes or a sequence/array of axes
+    # (possibly nested/2D). Flattens the input with the plotting tools function and
+    # returns a list containing only the visible ones.
     """
     Flatten axes, and filter only visible
 
@@ -341,6 +427,11 @@ def _flatten_visible(axes: Axes | Sequence[Axes]) -> Sequence[Axes]:
 
 
 def _check_has_errorbars(axes, xerr=0, yerr=0):
+    # [FUNCTION DOC]
+    # HELPER: counts error bar containers. Parameters: axes (axes or list-like);
+    # xerr and yerr are the expected number of containers having horizontal and
+    # vertical error bars (default zero). For each visible axes, asserts the counts
+    # of containers flagged as having x errors and y errors equal the expectations.
     """
     Check axes has expected number of errorbars
 
@@ -371,6 +462,21 @@ def _check_has_errorbars(axes, xerr=0, yerr=0):
 def _check_box_return_type(
     returned, return_type, expected_keys=None, check_ax_title=True
 ):
+    # [FUNCTION DOC]
+    # HELPER: validates the return type of box plot or plot calls. Parameters:
+    # returned is the object to check; return_type is the return type requested
+    # (none, or one of the names for dict, axes or both); expected_keys is the
+    # optional list of group labels (when absent a single axes is assumed);
+    # check_ax_title says whether to verify each axes' title equals its key (should
+    # be disabled for the normal plot function, which sets no title). With no keys:
+    # a missing return type is treated as dict, and the returned object must be an
+    # instance of the matching type (for both: a tuple with an axes and a dict of
+    # lines). With keys: a missing return type means every visible element must be
+    # an axes and the function returns; otherwise the result must be a series whose
+    # sorted keys equal the sorted expected keys and whose values have the
+    # requested type, with titles checked (for dict results the title is read from
+    # the axes of the first median line). An unexpected return type raises an
+    # assertion error.
     """
     Check box returned type is correct
 
@@ -430,11 +536,24 @@ def _check_box_return_type(
 
 
 def _check_grid_settings(obj, kinds, kws=None):
+    # [FUNCTION DOC]
+    # HELPER: checks the grid defaults of plotting (GH 9792). Parameters: obj is a
+    # series or frame with a plot method; kinds is a list of plot kind names; kws is
+    # optional extra keyword arguments (default none). For every kind it draws on
+    # consecutive subplots of one figure, with the global grid setting off then on:
+    # with the grid keyword false the grid must be off even if the setting is on;
+    # for kinds other than pie, hexbin and scatter, the setting alone must turn the
+    # grid on, and requesting the grid true must turn it on even if the setting is
+    # off. Side effects: changes the global axes grid setting and clears the current
+    # figure after each case; the setting is not restored.
     # Make sure plot defaults to rcParams['axes.grid'] setting, GH 9792
 
     import matplotlib as mpl
 
     def is_grid_on():
+        # [FUNCTION DOC]
+        # HELPER: inner function of the grid check. Looks at the major ticks of the
+        # current axes and returns true unless all x and all y grid lines are invisible.
         xticks = mpl.pyplot.gca().xaxis.get_major_ticks()
         yticks = mpl.pyplot.gca().yaxis.get_major_ticks()
         xoff = all(not g.gridline.get_visible() for g in xticks)
@@ -477,6 +596,9 @@ def _check_grid_settings(obj, kinds, kws=None):
 
 
 def _unpack_cycler(rcParams, field="color"):
+    # [FUNCTION DOC]
+    # HELPER: returns the list of values of one property (default color) from the
+    # property cycle in the given rc parameters mapping, in order.
     """
     Auxiliary function for correctly unpacking cycler after MPL >= 1.5
     """
@@ -484,14 +606,27 @@ def _unpack_cycler(rcParams, field="color"):
 
 
 def get_x_axis(ax):
+    # [FUNCTION DOC]
+    # Returns the group of axes sharing the x axis with the given axes (from the
+    # axes' shared-axes registry). Uses a private matplotlib attribute.
     return ax._shared_axes["x"]
 
 
 def get_y_axis(ax):
+    # [FUNCTION DOC]
+    # Returns the group of axes sharing the y axis with the given axes (from the
+    # axes' shared-axes registry). Uses a private matplotlib attribute.
     return ax._shared_axes["y"]
 
 
 def assert_is_valid_plot_return_object(objs) -> None:
+    # [FUNCTION DOC]
+    # Validates the object returned from a plot call. If objs is a series or array,
+    # every element must be an axes or a dict (series are unwrapped to their
+    # values and arrays flattened); otherwise objs must be an artist, tuple or
+    # dict. Raises assertion errors with descriptive messages.
+    # KNOWN ISSUE: the message for the non-array case contains the typo
+    # "ArtistArtist" (doubled word).
     from matplotlib.artist import Artist
     from matplotlib.axes import Axes
 
@@ -514,6 +649,16 @@ def assert_is_valid_plot_return_object(objs) -> None:
 
 
 def _check_plot_works(f, default_axes=False, **kwargs):
+    # [FUNCTION DOC]
+    # HELPER: runs a plotting callable and checks that its results are valid.
+    # Parameters: f is the plotting function; default_axes (default false) selects
+    # whether to just call it with the keyword arguments (letting it create all axes
+    # itself) or, when false, to call it twice: first on a new top subplot of a 2x1
+    # grid (unless an axes is passed) and then on a new bottom subplot; all other
+    # keyword arguments are forwarded to f. Clears the figure (taken from the
+    # figure keyword or the current figure) before plotting, validates every
+    # returned object with the plot return validator, and returns the object
+    # returned by the last call. Side effects: clears and draws on a figure.
     """
     Create plot and ensure that plot return object is valid.
 
@@ -558,6 +703,10 @@ def _check_plot_works(f, default_axes=False, **kwargs):
 
 
 def _gen_default_plot(f, fig, **kwargs):
+    # [FUNCTION DOC]
+    # HELPER: generator for the default-axes mode of the plot works check. Yields
+    # the result of calling the function once with the keyword arguments; the figure
+    # argument is not used.
     """
     Create plot in a default way.
     """
@@ -565,6 +714,12 @@ def _gen_default_plot(f, fig, **kwargs):
 
 
 def _gen_two_subplots(f, fig, **kwargs):
+    # [FUNCTION DOC]
+    # HELPER: generator for the two-subplot mode of the plot works check. Adds a
+    # top subplot if no axes was given and yields the function's result; then, for
+    # the bootstrap plot function only, asserts no axes was given, otherwise sets
+    # the axes keyword to a new bottom subplot; yields the function's result again.
+    # Side effects: adds subplots to the figure and mutates the keyword mapping.
     """
     Create plot on two subplots forcefully created.
     """

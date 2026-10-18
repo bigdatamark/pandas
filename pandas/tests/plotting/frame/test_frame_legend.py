@@ -1,3 +1,11 @@
+# [MODULE DOC]
+# Tests of legend behavior for frame plotting: legend handles, labels with
+# secondary axes and time series, legend titles from column index names,
+# legend suppression, and legend markers when several frames are drawn on one
+# axes. Uses the shared plotting check helpers. Skipped when matplotlib is
+# missing (import-or-skip at module level, which also binds the module as mpl).
+# No other import-time side effects.
+
 import numpy as np
 import pytest
 
@@ -17,6 +25,8 @@ mpl = pytest.importorskip("matplotlib")
 
 
 class TestFrameLegend:
+    # [CLASS DOC]
+    # Tests of legends produced by frame plotting.
     @pytest.mark.xfail(
         reason=(
             "Open bug in matplotlib "
@@ -24,6 +34,11 @@ class TestFrameLegend:
         )
     )
     def test_mixed_yerr(self):
+        # [FUNCTION DOC]
+        # Expected to fail (marked xfail due to an open matplotlib bug, issue 11357;
+        # pandas issue 39522). Plots one series with error bars and one without on one
+        # axes; the legend's first handle should be a line collection (error bars) and
+        # the second a plain line.
         # https://github.com/pandas-dev/pandas/issues/39522
         df = DataFrame([{"x": 1, "a": 1, "b": 1}, {"x": 2, "a": 2, "b": 3}])
 
@@ -37,6 +52,11 @@ class TestFrameLegend:
         assert isinstance(result_handles[1], mpl.lines.Line2D)
 
     def test_legend_false(self):
+        # [FUNCTION DOC]
+        # Pandas issue 40044. Plots a frame with two columns using a color mapping and
+        # the second column on the secondary axis, then another frame onto the same axes
+        # with its own color mapping; the legend handle colors must be blue, green, red
+        # in that order.
         # https://github.com/pandas-dev/pandas/issues/40044
         df = DataFrame({"a": [1, 1], "b": [2, 3]})
         df2 = DataFrame({"d": [2.5, 2.5]})
@@ -51,6 +71,12 @@ class TestFrameLegend:
 
     @pytest.mark.parametrize("kind", ["line", "bar", "barh", "kde", "area", "hist"])
     def test_df_legend_labels(self, kind):
+        # [FUNCTION DOC]
+        # Parametrized over kind (line, bar, barh, kde, area, hist); requires scipy.
+        # Draws four frames of random data on the same axes with different legend
+        # settings: true shows the first frame's columns, false for the second adds no
+        # entries, true for the third adds its columns (union of column labels), and a
+        # legend value of reverse adds the fourth frame's labels in reversed order.
         pytest.importorskip("scipy")
         df = DataFrame(np.random.default_rng(2).random((3, 3)), columns=["a", "b", "c"])
         df2 = DataFrame(
@@ -77,6 +103,11 @@ class TestFrameLegend:
         _check_legend_labels(ax, labels=expected)
 
     def test_df_legend_labels_secondary_y(self):
+        # [FUNCTION DOC]
+        # Requires scipy. Legend labels with a column drawn on the secondary axis get a
+        # suffix marking the right axis. Adding a second frame with no legend adds no
+        # entries; adding a bar plot of a third frame with its own secondary column adds
+        # its labels, again with the suffix for the secondary column.
         pytest.importorskip("scipy")
         df = DataFrame(np.random.default_rng(2).random((3, 3)), columns=["a", "b", "c"])
         df2 = DataFrame(
@@ -94,6 +125,11 @@ class TestFrameLegend:
         _check_legend_labels(ax, labels=["a", "b (right)", "c", "g", "h (right)", "i"])
 
     def test_df_legend_labels_time_series(self):
+        # [FUNCTION DOC]
+        # Requires scipy. Same idea as the secondary axis test but with a datetime
+        # index (time series plotting): secondary column labelled with the right suffix,
+        # a second frame without legend adds nothing, a third with legend adds its labels
+        # (no suffix).
         # Time Series
         pytest.importorskip("scipy")
         ind = date_range("1/1/2014", periods=3)
@@ -120,6 +156,10 @@ class TestFrameLegend:
         _check_legend_labels(ax, labels=["a", "b (right)", "c", "g", "h", "i"])
 
     def test_df_legend_labels_time_series_scatter(self):
+        # [FUNCTION DOC]
+        # Requires scipy. Scatter plots with explicit labels on a datetime-indexed
+        # frames: the first label is shown; a second scatter with legend disabled adds
+        # no entry; a third with a label adds it.
         # Time Series
         pytest.importorskip("scipy")
         ind = date_range("1/1/2014", periods=3)
@@ -147,6 +187,12 @@ class TestFrameLegend:
         _check_legend_labels(ax, labels=["data1", "data3"])
 
     def test_df_legend_labels_time_series_no_mutate(self):
+        # [FUNCTION DOC]
+        # Requires scipy. Label arguments pass through without mutating data: after
+        # setting an index column, plotting a column gives that column name as the
+        # legend label, the label keyword overrides it, the x axis label is the index
+        # name, a second plot onto the same axes adds its label, and the frame's columns
+        # remain unchanged.
         pytest.importorskip("scipy")
         ind = date_range("1/1/2014", periods=3)
         df = DataFrame(
@@ -168,6 +214,10 @@ class TestFrameLegend:
         assert df5.columns.tolist() == ["b", "c"]
 
     def test_missing_marker_multi_plots_on_same_ax(self):
+        # [FUNCTION DOC]
+        # GH 18222. Three subplots, each receiving three lines drawn in a different
+        # order, with different line widths and markers. In each subplot the legend
+        # labels and legend markers follow the drawing order.
         # GH 18222
         df = DataFrame(data=[[1, 1, 1, 1], [2, 2, 4, 8]], columns=["x", "r", "g", "b"])
         _, ax = mpl.pyplot.subplots(nrows=1, ncols=3)
@@ -191,6 +241,11 @@ class TestFrameLegend:
         _check_legend_marker(ax[2], expected_markers=["x", "o", "o"])
 
     def test_legend_name(self):
+        # [FUNCTION DOC]
+        # Frame with two-level column names: the legend title is the level names joined
+        # by a comma. Drawing another frame with legend on the same axes keeps the
+        # original title; setting a column name and drawing with legend disabled keeps
+        # it; drawing with legend enabled then uses the new column name as title.
         multi = DataFrame(
             np.random.default_rng(2).standard_normal((4, 4)),
             columns=[np.array(["a", "a", "b", "b"]), np.array(["x", "y", "x", "y"])],
@@ -227,11 +282,18 @@ class TestFrameLegend:
         ],
     )
     def test_no_legend(self, kind):
+        # [FUNCTION DOC]
+        # Parametrized over kind (line, bar, barh, kde which needs scipy, area, hist).
+        # With legend disabled, no axes has a legend.
         df = DataFrame(np.random.default_rng(2).random((3, 3)), columns=["a", "b", "c"])
         ax = df.plot(kind=kind, legend=False)
         _check_legend_labels(ax, visible=False)
 
     def test_missing_markers_legend(self):
+        # [FUNCTION DOC]
+        # Issue 14958. Three columns plotted one after another onto one axes with
+        # different markers and line styles: the legend labels list all three and the
+        # markers follow the plot order.
         # 14958
         df = DataFrame(
             np.random.default_rng(2).standard_normal((8, 3)), columns=["A", "B", "C"]
@@ -244,6 +306,10 @@ class TestFrameLegend:
         _check_legend_marker(ax, expected_markers=["x", "o", "<"])
 
     def test_missing_markers_legend_using_style(self):
+        # [FUNCTION DOC]
+        # Issue 14563. Four-column frame; three columns plotted with the style option
+        # set to a dot marker onto one axes with explicit labels: the labels are the
+        # three column names and every legend marker is a dot.
         # 14563
         df = DataFrame(
             {

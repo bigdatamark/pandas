@@ -1,5 +1,13 @@
 """Test cases for DataFrame.plot"""
 
+# [MODULE DOC]
+# Tests for frame plotting with subplots: tick/label visibility with shared
+# axes, layouts, passing existing axes, time series and duplicate columns,
+# log-scale bar plots, box plot return types, axis labels and bar alignment.
+# Public contents: the TestDataFramePlotsSubplots class. The hist_df fixture
+# comes from the plotting conftest. Skipped if matplotlib is missing
+# (import-or-skip at module level). No other import-time side effects.
+
 import string
 
 import numpy as np
@@ -31,9 +39,18 @@ plt = pytest.importorskip("matplotlib.pyplot")
 
 
 class TestDataFramePlotsSubplots:
+    # [CLASS DOC]
+    # Test class for subplot-related behavior of DataFrame.plot, with one private
+    # helper method for the bar alignment checks.
     @pytest.mark.slow
     @pytest.mark.parametrize("kind", ["bar", "barh", "line", "area"])
     def test_subplots(self, kind):
+        # [FUNCTION DOC]
+        # Marked slow. Parametrized over kind (bar, barh, line, area). Plots three
+        # columns with subplots and shared x: three axes in a column layout, one axes
+        # per column with legend label equal to the column name. Axes other than the last
+        # two hide x tick labels and x axis label (minor tick labels too, except for
+        # bar plots, issue 26714) while y labels stay visible; the last axes shows all.
         df = DataFrame(
             np.random.default_rng(2).random((10, 3)),
             index=list(string.ascii_letters[:10]),
@@ -64,6 +81,9 @@ class TestDataFramePlotsSubplots:
     @pytest.mark.slow
     @pytest.mark.parametrize("kind", ["bar", "barh", "line", "area"])
     def test_subplots_no_share_x(self, kind):
+        # [FUNCTION DOC]
+        # Marked slow. Parametrized over kind. With sharex disabled, every subplot
+        # shows x axis, x tick labels (major and minor), x label and y tick labels.
         df = DataFrame(
             np.random.default_rng(2).random((10, 3)),
             index=list(string.ascii_letters[:10]),
@@ -79,6 +99,9 @@ class TestDataFramePlotsSubplots:
     @pytest.mark.slow
     @pytest.mark.parametrize("kind", ["bar", "barh", "line", "area"])
     def test_subplots_no_legend(self, kind):
+        # [FUNCTION DOC]
+        # Marked slow. Parametrized over kind. With legend disabled for subplots, no
+        # axes has a legend.
         df = DataFrame(
             np.random.default_rng(2).random((10, 3)),
             index=list(string.ascii_letters[:10]),
@@ -89,6 +112,10 @@ class TestDataFramePlotsSubplots:
 
     @pytest.mark.parametrize("kind", ["line", "area"])
     def test_subplots_timeseries(self, kind):
+        # [FUNCTION DOC]
+        # Parametrized over kind (line, area). Time-indexed frame with subplots and
+        # shared x (GH 7801): same visibility pattern as for the first test (only
+        # bottom shows x labels) and x tick rotation zero.
         idx = date_range(start="2014-07-01", freq="ME", periods=10)
         df = DataFrame(np.random.default_rng(2).random((10, 3)), index=idx)
 
@@ -112,6 +139,9 @@ class TestDataFramePlotsSubplots:
 
     @pytest.mark.parametrize("kind", ["line", "area"])
     def test_subplots_timeseries_rot(self, kind):
+        # [FUNCTION DOC]
+        # Parametrized over kind (line, area). Time series subplots without sharing, with
+        # rotation 45 and font size 7: all x elements visible and tick properties match.
         idx = date_range(start="2014-07-01", freq="ME", periods=10)
         df = DataFrame(np.random.default_rng(2).random((10, 3)), index=idx)
         axes = df.plot(kind=kind, subplots=True, sharex=False, rot=45, fontsize=7)
@@ -127,6 +157,10 @@ class TestDataFramePlotsSubplots:
         "col", ["numeric", "timedelta", "datetime_no_tz", "datetime_all_tz"]
     )
     def test_subplots_timeseries_y_axis(self, col):
+        # [FUNCTION DOC]
+        # GH16953. Parametrized over column type (numeric, timedelta, naive datetime,
+        # tz-aware datetime). Plotting that column on the y axis yields line data equal
+        # to the column values.
         # GH16953
         data = {
             "numeric": np.array([1, 2, 5]),
@@ -155,6 +189,9 @@ class TestDataFramePlotsSubplots:
         assert (result == expected).all()
 
     def test_subplots_timeseries_y_text_error(self):
+        # [FUNCTION DOC]
+        # GH16953. Plotting a text column as y raises a type error saying there is no
+        # numeric data to plot.
         # GH16953
         data = {
             "numeric": np.array([1, 2, 5]),
@@ -167,6 +204,10 @@ class TestDataFramePlotsSubplots:
 
     @pytest.mark.xfail(reason="not support for period, categorical, datetime_mixed_tz")
     def test_subplots_timeseries_y_axis_not_supported(self):
+        # [FUNCTION DOC]
+        # Expected to fail (xfail: unsupported period, categorical and mixed-timezone
+        # data on the y axis). Plots those y types and asserts the line data equals the
+        # column values.
         """
         This test will fail for:
             period:
@@ -228,6 +269,10 @@ class TestDataFramePlotsSubplots:
         ],
     )
     def test_subplots_layout_multi_column(self, layout, exp_layout):
+        # [FUNCTION DOC]
+        # GH 6667. Parametrized over (requested layout, expected layout). With three
+        # columns, a requested layout (with -1 meaning inferred) results in the
+        # expected shape of axes array and layout.
         # GH 6667
         df = DataFrame(
             np.random.default_rng(2).random((10, 3)),
@@ -239,6 +284,9 @@ class TestDataFramePlotsSubplots:
         assert axes.shape == exp_layout
 
     def test_subplots_layout_multi_column_error(self):
+        # [FUNCTION DOC]
+        # GH 6667. A layout too small for three subplots raises a value error giving
+        # the size; a layout without positive dimension raises a value error.
         # GH 6667
         df = DataFrame(
             np.random.default_rng(2).random((10, 3)),
@@ -263,6 +311,10 @@ class TestDataFramePlotsSubplots:
     def test_subplots_layout_single_column(
         self, kwargs, expected_axes_num, expected_layout, expected_shape
     ):
+        # [FUNCTION DOC]
+        # GH 6667. Parametrized over keywords. For one column with subplots: default
+        # gives one axes with shape of one; a (3, 3) layout gives a 3 by 3 axes array
+        # with only one axes in use.
         # GH 6667
         df = DataFrame(
             np.random.default_rng(2).random((10, 1)),
@@ -279,12 +331,18 @@ class TestDataFramePlotsSubplots:
     @pytest.mark.slow
     @pytest.mark.parametrize("idx", [range(5), date_range("1/1/2000", periods=5)])
     def test_subplots_warnings(self, idx):
+        # [FUNCTION DOC]
+        # Marked slow. GH 9464. Parametrized over integer and date index. Plotting with
+        # subplots and a layout larger than needed emits no warning.
         # GH 9464
         with tm.assert_produces_warning(None):
             df = DataFrame(np.random.default_rng(2).standard_normal((5, 4)), index=idx)
             df.plot(subplots=True, layout=(3, 2))
 
     def test_subplots_multiple_axes(self):
+        # [FUNCTION DOC]
+        # GH 5353, 6970, 7069. Draws the same frame twice on rows of a 2x3 grid of
+        # existing axes with subplots: each call returns three axes in the same figure.
         # GH 5353, 6970, GH 7069
         fig, axes = mpl.pyplot.subplots(2, 3)
         df = DataFrame(
@@ -304,6 +362,9 @@ class TestDataFramePlotsSubplots:
         _check_axes_shape(axes, axes_num=6, layout=(2, 3))
 
     def test_subplots_multiple_axes_error(self):
+        # [FUNCTION DOC]
+        # GH 5353, 6970, 7069. Passing six axes for three subplots raises a value
+        # error saying the number of passed axes must be 3.
         # GH 5353, 6970, GH 7069
         df = DataFrame(
             np.random.default_rng(2).random((10, 3)),
@@ -325,6 +386,10 @@ class TestDataFramePlotsSubplots:
         ],
     )
     def test_subplots_multiple_axes_2_dim(self, layout, exp_layout):
+        # [FUNCTION DOC]
+        # Parametrized over (layout, expected layout). Passing a 2x2 array of axes with
+        # an invalid layout emits a user warning that the layout keyword is ignored and
+        # returns the four axes in a flat array.
         # GH 5353, 6970, GH 7069
         # pass 2-dim axes and invalid layout
         # invalid layout should not affect to input and return value
@@ -343,6 +408,9 @@ class TestDataFramePlotsSubplots:
             assert returned.shape == (4,)
 
     def test_subplots_multiple_axes_single_col(self):
+        # [FUNCTION DOC]
+        # Single column plotted into a one-element list of axes with subplots: returns
+        # a shape-one array.
         # GH 5353, 6970, GH 7069
         # single column
         _, axes = mpl.pyplot.subplots(1, 1)
@@ -356,6 +424,9 @@ class TestDataFramePlotsSubplots:
         assert axes.shape == (1,)
 
     def test_subplots_ts_share_axes(self):
+        # [FUNCTION DOC]
+        # GH 3964. Nine time series drawn on a shared 3x3 grid of axes: only the bottom
+        # row shows x tick labels and only the first column shows y tick labels.
         # GH 3964
         _, axes = mpl.pyplot.subplots(3, 3, sharex=True, sharey=True)
         mpl.pyplot.subplots_adjust(left=0.05, right=0.95, hspace=0.3, wspace=0.3)
@@ -385,6 +456,10 @@ class TestDataFramePlotsSubplots:
             _check_visible(ax.get_yticklabels(), visible=False)
 
     def test_subplots_sharex_axes_existing_axes(self):
+        # [FUNCTION DOC]
+        # GH 9158. Plotting two columns as subplots then a third on a secondary axis of
+        # the first axes: the first axes keeps x labels hidden, second visible, all y
+        # labels visible.
         # GH 9158
         d = {"A": [1.0, 2.0, 3.0, 4.0], "B": [4.0, 3.0, 2.0, 1.0], "C": [5, 1, 3, 4]}
         df = DataFrame(d, index=date_range("2014 10 11", "2014 10 14"))
@@ -398,6 +473,9 @@ class TestDataFramePlotsSubplots:
             _check_visible(ax.get_yticklabels(), visible=True)
 
     def test_subplots_dup_columns(self):
+        # [FUNCTION DOC]
+        # GH 10962. Frame with duplicate column labels plotted as subplots: each axes
+        # has legend label a and one line.
         # GH 10962
         df = DataFrame(np.random.default_rng(2).random((5, 5)), columns=list("aaaaa"))
         axes = df.plot(subplots=True)
@@ -406,6 +484,9 @@ class TestDataFramePlotsSubplots:
             assert len(ax.lines) == 1
 
     def test_subplots_dup_columns_secondary_y(self):
+        # [FUNCTION DOC]
+        # GH 10962. As above with secondary y for the duplicated column: per-subplot
+        # legend label has no right-axis suffix (suffix only without subplots), one line each.
         # GH 10962
         df = DataFrame(np.random.default_rng(2).random((5, 5)), columns=list("aaaaa"))
         axes = df.plot(subplots=True, secondary_y="a")
@@ -415,6 +496,10 @@ class TestDataFramePlotsSubplots:
             assert len(ax.lines) == 1
 
     def test_subplots_dup_columns_secondary_y_no_subplot(self):
+        # [FUNCTION DOC]
+        # GH 10962. Duplicated columns with secondary y and no subplots: the main axes
+        # has no lines, the right axes has five lines, and the legend has five labels
+        # carrying the right-axis suffix.
         # GH 10962
         df = DataFrame(np.random.default_rng(2).random((5, 5)), columns=list("aaaaa"))
         ax = df.plot(secondary_y="a")
@@ -428,6 +513,10 @@ class TestDataFramePlotsSubplots:
         strict=False,
     )
     def test_bar_log_no_subplots(self):
+        # [FUNCTION DOC]
+        # GH3254, GH3298. Non-strict xfail on Linux (rounding issues). Bar plot with a
+        # log scale and grid: the y axis tick locations equal the expected decade
+        # values, with the last tick dropped for matplotlib 3.11 and later (GH#65918).
         # GH3254, GH3298 matplotlib/matplotlib#1882, #1892
         # regressions in 1.2.1
         # matplotlib 3.11 no longer pads log-axis ticks a decade past the
@@ -449,6 +538,10 @@ class TestDataFramePlotsSubplots:
         strict=False,
     )
     def test_bar_log_subplots(self):
+        # [FUNCTION DOC]
+        # Non-strict xfail on Linux. Log-scale bar plot with subplots: every subplot's
+        # y tick locations equal the expected decade values (one fewer for matplotlib
+        # 3.11 and later).
         # matplotlib 3.11 no longer pads log-axis ticks a decade past the
         #  view limits, so the outermost tick is dropped (GH#65918)
         expected = (
@@ -465,6 +558,9 @@ class TestDataFramePlotsSubplots:
         tm.assert_numpy_array_equal(ax[1].yaxis.get_ticklocs(), expected)
 
     def test_boxplot_subplots_return_type_default(self, hist_df):
+        # [FUNCTION DOC]
+        # Box plot with subplots and no return type gives a series of axes keyed by
+        # the plotted columns.
         df = hist_df
 
         # normal style: return_type=None
@@ -476,6 +572,9 @@ class TestDataFramePlotsSubplots:
 
     @pytest.mark.parametrize("rt", ["dict", "axes", "both"])
     def test_boxplot_subplots_return_type(self, hist_df, rt):
+        # [FUNCTION DOC]
+        # Parametrized over return type (dict, axes, both). Box plot with subplots
+        # returns the matching type per column (axes titles are not checked).
         df = hist_df
         returned = df.plot.box(return_type=rt, subplots=True)
         _check_box_return_type(
@@ -486,6 +585,10 @@ class TestDataFramePlotsSubplots:
         )
 
     def test_df_subplots_patterns_minorticks(self):
+        # [FUNCTION DOC]
+        # GH 10657. Two shared subplots from existing axes of a time series: each axes
+        # has one line and visible y labels; the first axes hides its x labels (major and
+        # minor) and the second shows them.
         # GH 10657
         df = DataFrame(
             np.random.default_rng(2).standard_normal((10, 2)),
@@ -506,6 +609,10 @@ class TestDataFramePlotsSubplots:
         _check_visible(axes[1].get_xticklabels(minor=True), visible=True)
 
     def test_df_subplots_patterns_minorticks_1st_ax_hidden(self):
+        # [FUNCTION DOC]
+        # GH 10657. Unshared existing axes with sharex requested: a user warning that
+        # sharex and sharey are ignored is emitted; result has first axes hiding x labels
+        # and second showing them.
         # GH 10657
         df = DataFrame(
             np.random.default_rng(2).standard_normal((10, 2)),
@@ -525,6 +632,9 @@ class TestDataFramePlotsSubplots:
         _check_visible(axes[1].get_xticklabels(minor=True), visible=True)
 
     def test_df_subplots_patterns_minorticks_not_shared(self):
+        # [FUNCTION DOC]
+        # GH 10657. Unshared existing axes with no sharing requested: all labels
+        # (x major and minor, y) are visible.
         # GH 10657
         df = DataFrame(
             np.random.default_rng(2).standard_normal((10, 2)),
@@ -541,6 +651,9 @@ class TestDataFramePlotsSubplots:
             _check_visible(ax.get_xticklabels(minor=True), visible=True)
 
     def test_subplots_sharex_false(self):
+        # [FUNCTION DOC]
+        # GH 25160. With sharex disabled and data in different row ranges per column
+        # (missing values), the two axes have different x ticks.
         # test when sharex is set to False, two plots should have different
         # labels, GH 25160
         df = DataFrame(np.random.default_rng(2).random((10, 2)))
@@ -557,6 +670,10 @@ class TestDataFramePlotsSubplots:
         tm.assert_numpy_array_equal(axs[1].get_xticks(), expected_ax2)
 
     def test_subplots_constrained_layout(self, temp_file):
+        # [FUNCTION DOC]
+        # GH 25261. Takes the temp file fixture. Plots on a figure with constrained
+        # layout (if supported by the installed matplotlib) and saves the figure to a
+        # temp file; no warning may be emitted.
         # GH 25261
         idx = date_range(start="now", periods=10)
         df = DataFrame(np.random.default_rng(2).random((10, 3)), index=idx)
@@ -583,6 +700,11 @@ class TestDataFramePlotsSubplots:
     def test_xlabel_ylabel_dataframe_subplots(
         self, kind, index_name, old_label, new_label
     ):
+        # [FUNCTION DOC]
+        # GH 9093. Parametrized over index name with old and new labels and over kind
+        # (line, area, bar). Subplots show no y label and the x label equal to the old
+        # label (the index name or empty); passing x and y labels overrides them with
+        # their string forms.
         # GH 9093
         df = DataFrame([[1, 2], [2, 5]], columns=["Type A", "Type B"])
         df.index.name = index_name
@@ -631,6 +753,10 @@ class TestDataFramePlotsSubplots:
         ],
     )
     def test_bar_align_multiple_columns(self, kwargs):
+        # [FUNCTION DOC]
+        # GH2157. Parametrized over many keyword sets (bar and barh; stacked, side by
+        # side or subplots; default or wider width; center or edge alignment). Checks
+        # bar alignment for a two-column frame.
         # GH2157
         df = DataFrame({"A": [3] * 5, "B": list(range(5))}, index=range(5))
         self._check_bar_alignment(df, **kwargs)
@@ -647,6 +773,9 @@ class TestDataFramePlotsSubplots:
         ],
     )
     def test_bar_align_single_column(self, kwargs):
+        # [FUNCTION DOC]
+        # Parametrized over bar and barh with stacked, unstacked or subplots. Checks bar
+        # alignment for a one-column random frame.
         df = DataFrame(np.random.default_rng(2).standard_normal(5))
         self._check_bar_alignment(df, **kwargs)
 
@@ -662,11 +791,18 @@ class TestDataFramePlotsSubplots:
         ],
     )
     def test_bar_barwidth_position(self, kwargs):
+        # [FUNCTION DOC]
+        # Parametrized as above. Checks bar alignment with width 0.9 and position 0.2
+        # for a five-column random frame.
         df = DataFrame(np.random.default_rng(2).standard_normal((5, 5)))
         self._check_bar_alignment(df, width=0.9, position=0.2, **kwargs)
 
     @pytest.mark.parametrize("w", [1, 1.0])
     def test_bar_barwidth_position_int(self, w):
+        # [FUNCTION DOC]
+        # GH 12979. Parametrized over integer and float width 1. Stacked bar plot: tick
+        # locations are the five integers, the x limits are -0.75 to 4.75, and the first
+        # and last bar left edges are -0.5 and 3.5.
         # GH 12979
         df = DataFrame(np.random.default_rng(2).standard_normal((5, 5)))
         ax = df.plot.bar(stacked=True, width=w)
@@ -688,6 +824,9 @@ class TestDataFramePlotsSubplots:
         ],
     )
     def test_bar_barwidth_position_int_width_1(self, kind, kwargs):
+        # [FUNCTION DOC]
+        # GH 12979. Parametrized over kind and keywords. Checks bar alignment with
+        # integer width 1.
         # GH 12979
         df = DataFrame(np.random.default_rng(2).standard_normal((5, 5)))
         self._check_bar_alignment(df, kind=kind, width=1, **kwargs)
@@ -702,6 +841,18 @@ class TestDataFramePlotsSubplots:
         width=0.5,
         position=0.5,
     ):
+        # [FUNCTION DOC]
+        # HELPER: verifies the bar position/alignment of a bar or horizontal bar plot
+        # of the frame. Parameters: df is the frame; kind is bar or barh (default bar);
+        # stacked, subplots (default false); align (center or edge, default center);
+        # width (default 0.5); position (default 0.5). Plots with grid enabled, then for
+        # each visible axes: the axis limits must extend 0.25 beyond the outermost bar
+        # edges (GH 7498), tick locations must equal the integer range of the row count,
+        # and the first tick must sit at the center of the first bar (center
+        # alignment) or at its edge (edge alignment), computing the center from the bar
+        # width, the position and, for unstacked bars, the number of columns. Raises a
+        # value error for an unsupported kind or alignment. Returns the flattened
+        # visible axes.
         axes = df.plot(
             kind=kind,
             stacked=stacked,

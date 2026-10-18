@@ -1,3 +1,11 @@
+# [MODULE DOC]
+# Tests for the by argument of histogram and box plot kinds of the frame
+# plot accessor (GH 15079): titles, legends, tick labels, subplot layouts,
+# errors for empty or invalid keys or layouts, shared axes and figure size.
+# Public contents are the local hist_df fixture and the TestHistWithBy and
+# TestBoxWithBy classes. Skipped if matplotlib is missing (import-or-skip at
+# module level). No other import-time side effects.
+
 import re
 
 import numpy as np
@@ -17,6 +25,12 @@ pytest.importorskip("matplotlib")
 
 @pytest.fixture
 def hist_df():
+    # [FUNCTION DOC]
+    # Fixture returning a frame with 30 rows: two random normal columns A and B and
+    # two random categorical columns C and D with values a, b, c (fixed seed).
+    # KNOWN ISSUE: this fixture has the same name as a fixture in the plotting
+    # conftest module but returns different data and shadows that one for this
+    # module.
     df = DataFrame(
         np.random.default_rng(2).standard_normal((30, 2)), columns=["A", "B"]
     )
@@ -26,6 +40,8 @@ def hist_df():
 
 
 class TestHistWithBy:
+    # [CLASS DOC]
+    # Tests for histograms drawn with the by argument.
     @pytest.mark.slow
     @pytest.mark.parametrize(
         "by, column, titles, legends",
@@ -66,6 +82,11 @@ class TestHistWithBy:
         ],
     )
     def test_hist_plot_by_argument(self, by, column, titles, legends, hist_df):
+        # [FUNCTION DOC]
+        # GH 15079. Marked slow; parametrized over by (one or two columns), column
+        # (single, list or none), expected titles and legend texts. Plots histograms
+        # with default axes, expects one axes per group (titles are the group labels,
+        # or tuple-style labels for two keys) and legends listing the plotted columns.
         # GH 15079
         axes = _check_plot_works(
             hist_df.plot.hist, column=column, by=by, default_axes=True
@@ -96,6 +117,10 @@ class TestHistWithBy:
         ],
     )
     def test_hist_plot_by_0(self, by, column, titles, legends, hist_df):
+        # [FUNCTION DOC]
+        # GH 15079. Parametrized by key (integer 0 or a list mixing 0 and a column
+        # name). Renames column C to the integer 0 and checks titles and legends as in
+        # the previous test, so integer column labels work as by keys.
         # GH 15079
         df = hist_df.copy()
         df = df.rename(columns={"C": 0})
@@ -119,6 +144,10 @@ class TestHistWithBy:
         ],
     )
     def test_hist_plot_empty_list_string_tuple_by(self, by, column, hist_df):
+        # [FUNCTION DOC]
+        # GH 15079. Parametrized over empty list or tuple by keys and column choices.
+        # Plotting with such a by value must raise a value error saying no group keys
+        # were passed.
         # GH 15079
         msg = "No group keys passed"
         with pytest.raises(ValueError, match=msg):
@@ -144,6 +173,11 @@ class TestHistWithBy:
         ],
     )
     def test_hist_plot_layout_with_by(self, by, column, layout, axes_num, hist_df):
+        # [FUNCTION DOC]
+        # GH 15079. Marked slow; parametrized over (by, column, layout, axes_num). The
+        # plot is expected to emit a user warning (because the helper adds an axes,
+        # GH 13188); the resulting axes number and layout shape are checked against
+        # the given values.
         # GH 15079
         # _check_plot_works adds an ax so catch warning. see GH #13188
         with tm.assert_produces_warning(UserWarning, check_stacklevel=False):
@@ -161,6 +195,10 @@ class TestHistWithBy:
         ],
     )
     def test_hist_plot_invalid_layout_with_by_raises(self, msg, by, layout, hist_df):
+        # [FUNCTION DOC]
+        # GH 15079. Parametrized over (message, by, layout): a layout too small for the
+        # groups, a layout that is not a two-tuple, or a layout without a positive
+        # dimension. Each raises a value error with the matching message.
         # GH 15079, test if error is raised when invalid layout is given
 
         with pytest.raises(ValueError, match=msg):
@@ -168,6 +206,9 @@ class TestHistWithBy:
 
     @pytest.mark.slow
     def test_axis_share_x_with_by(self, hist_df):
+        # [FUNCTION DOC]
+        # GH 15079. Marked slow. With sharex true, the three axes share the x axis
+        # (pairwise joined) and none shares the y axis.
         # GH 15079
         ax1, ax2, ax3 = hist_df.plot.hist(column="A", by="C", sharex=True)
 
@@ -185,6 +226,9 @@ class TestHistWithBy:
 
     @pytest.mark.slow
     def test_axis_share_y_with_by(self, hist_df):
+        # [FUNCTION DOC]
+        # GH 15079. Marked slow. With sharey true, the three axes share the y axis and
+        # none shares the x axis.
         # GH 15079
         ax1, ax2, ax3 = hist_df.plot.hist(column="A", by="C", sharey=True)
 
@@ -202,12 +246,17 @@ class TestHistWithBy:
 
     @pytest.mark.parametrize("figsize", [(12, 8), (20, 10)])
     def test_figure_shape_hist_with_by(self, figsize, hist_df):
+        # [FUNCTION DOC]
+        # GH 15079. Parametrized over figsize. The three axes are drawn in a figure of
+        # the requested size.
         # GH 15079
         axes = hist_df.plot.hist(column="A", by="C", figsize=figsize)
         _check_axes_shape(axes, axes_num=3, figsize=figsize)
 
 
 class TestBoxWithBy:
+    # [CLASS DOC]
+    # Tests for box plots drawn with the by argument.
     @pytest.mark.parametrize(
         "by, column, titles, xticklabels",
         [
@@ -242,6 +291,10 @@ class TestBoxWithBy:
         ],
     )
     def test_box_plot_by_argument(self, by, column, titles, xticklabels, hist_df):
+        # [FUNCTION DOC]
+        # GH 15079. Parametrized over (by, column, titles, xticklabels). Box plots with
+        # default axes: one axes per plotted column titled by the column name, x tick
+        # labels are the group labels (tuple-style for two keys).
         # GH 15079
         axes = _check_plot_works(
             hist_df.plot.box, default_axes=True, column=column, by=by
@@ -274,6 +327,9 @@ class TestBoxWithBy:
         ],
     )
     def test_box_plot_by_0(self, by, column, titles, xticklabels, hist_df):
+        # [FUNCTION DOC]
+        # GH 15079. Same as the previous test with an integer 0 column label used as
+        # a by key (alone or together with a name).
         # GH 15079
         df = hist_df.copy()
         df = df.rename(columns={"C": 0})
@@ -297,6 +353,9 @@ class TestBoxWithBy:
         ],
     )
     def test_box_plot_with_none_empty_list_by(self, by, column, hist_df):
+        # [FUNCTION DOC]
+        # GH 15079. Empty list or tuple by values raise a value error saying no group
+        # keys were passed.
         # GH 15079
         msg = "No group keys passed"
         with pytest.raises(ValueError, match=msg):
@@ -315,6 +374,9 @@ class TestBoxWithBy:
         ],
     )
     def test_box_plot_layout_with_by(self, by, column, layout, axes_num, hist_df):
+        # [FUNCTION DOC]
+        # GH 15079. Marked slow; parametrized over (by, column, layout, axes_num).
+        # Checks the number of axes and layout of grouped box plots.
         # GH 15079
         axes = _check_plot_works(
             hist_df.plot.box, default_axes=True, column=column, by=by, layout=layout
@@ -330,6 +392,9 @@ class TestBoxWithBy:
         ],
     )
     def test_box_plot_invalid_layout_with_by_raises(self, msg, by, layout, hist_df):
+        # [FUNCTION DOC]
+        # GH 15079. A too small layout, a layout not a two-tuple, or a layout without
+        # a positive dimension each raises a value error with the matching message.
         # GH 15079, test if error is raised when invalid layout is given
 
         with pytest.raises(ValueError, match=msg):
@@ -337,6 +402,11 @@ class TestBoxWithBy:
 
     @pytest.mark.parametrize("figsize", [(12, 8), (20, 10)])
     def test_figure_shape_hist_with_by(self, figsize, hist_df):
+        # [FUNCTION DOC]
+        # GH 15079. Parametrized over figsize. A box plot by group yields one axes in a
+        # figure of the requested size.
+        # KNOWN ISSUE: the test name says histogram but it tests box plots, and it has
+        # the same name as a test in the histogram class.
         # GH 15079
         axes = hist_df.plot.box(column="A", by="C", figsize=figsize)
         _check_axes_shape(axes, axes_num=1, figsize=figsize)
