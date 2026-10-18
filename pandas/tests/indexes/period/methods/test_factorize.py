@@ -1,3 +1,5 @@
+# [MODULE DOC]
+# Tests for PeriodIndex.factorize.
 import numpy as np
 
 from pandas import PeriodIndex
@@ -5,7 +7,12 @@ import pandas._testing as tm
 
 
 class TestFactorize:
+    # [CLASS DOC]
+    # Groups factorize tests.
     def test_factorize_period(self):
+        # [FUNCTION DOC]
+        # Monotonic repeated monthly periods give codes and uniques in order, with or
+        # without sorting.
         idx1 = PeriodIndex(
             ["2014-01", "2014-01", "2014-02", "2014-02", "2014-03", "2014-03"],
             freq="M",
@@ -23,6 +30,9 @@ class TestFactorize:
         tm.assert_index_equal(idx, exp_idx)
 
     def test_factorize_period_nonmonotonic(self):
+        # [FUNCTION DOC]
+        # Non-monotonic input: sorting yields sorted uniques with codes pointing to
+        # them; no sorting yields uniques in order of appearance.
         idx2 = PeriodIndex(
             ["2014-03", "2014-03", "2014-02", "2014-01", "2014-03", "2014-01"],
             freq="M",

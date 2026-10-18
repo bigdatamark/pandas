@@ -1,3 +1,6 @@
+# [MODULE DOC]
+# Tests of set operations on PeriodIndex (union, intersection, difference),
+# including sort variants, frequency preservation and duplicates.
 import numpy as np
 import pytest
 
@@ -11,11 +14,23 @@ import pandas._testing as tm
 
 
 def _permute(obj):
+    # [FUNCTION DOC]
+    # HELPER: used by the union and intersection tests to shuffle an index.
+    # Takes an index and returns a new index containing the same elements in a random
+    # order, using a fixed-seed random generator so results are reproducible. Does not
+    # modify its argument.
     return obj.take(np.random.default_rng(2).permutation(len(obj)))
 
 
 class TestPeriodIndex:
+    # [CLASS DOC]
+    # Groups set operation tests.
     def test_union(self, sort):
+        # [FUNCTION DOC]
+        # Uses the sort fixture. Eight scenarios (adjacent ranges in swapped order,
+        # overlapping, empty operand, hourly, minute, monthly, yearly, unordered daily).
+        # Each union equals the expected index; when sort is none the expected index is
+        # sorted first.
         # union
         other1 = period_range("1/1/2000", freq="D", periods=5)
         rng1 = period_range("1/6/2000", freq="D", periods=5)
@@ -135,6 +150,10 @@ class TestPeriodIndex:
             tm.assert_index_equal(result_union, expected)
 
     def test_union_misc(self, sort):
+        # [FUNCTION DOC]
+        # Union of slices (ordered and shuffled; with sort disabled the result is
+        # compared after sorting) and union of indexes with different frequencies, which
+        # falls back to object dtype.
         index = period_range("1/1/2000", "1/20/2000", freq="D")
 
         result = index[:-5].union(index[10:], sort=sort)
@@ -155,6 +174,9 @@ class TestPeriodIndex:
         tm.assert_index_equal(result, expected)
 
     def test_intersection(self, sort):
+        # [FUNCTION DOC]
+        # Intersection of overlapping ordered and shuffled slices; for different
+        # frequencies or a multiple the result is an empty object index.
         index = period_range("1/1/2000", "1/20/2000", freq="D")
 
         result = index[:-5].intersection(index[10:], sort=sort)
@@ -182,6 +204,10 @@ class TestPeriodIndex:
         tm.assert_index_equal(result, expected)
 
     def test_intersection_cases(self, sort):
+        # [FUNCTION DOC]
+        # Name handling (kept only when equal), empty results keeping frequency,
+        # non-monotonic operands, and empty intersection with an empty slice.
+        # KNOWN ISSUE: the final "empty same freq" block builds a minute-frequency date range rather than a period range, so it does not test period behavior.
         base = period_range("6/1/2000", "6/30/2000", freq="D", name="idx")
 
         # if target has the same name, it is preserved
@@ -250,6 +276,9 @@ class TestPeriodIndex:
         assert len(result) == 0
 
     def test_difference(self, sort):
+        # [FUNCTION DOC]
+        # Seven scenarios of differences, sorted when sort is none and the other operand
+        # is non-empty (GH#24959 notes that empty operands are not sorted).
         # diff
         period_rng = ["1/3/2000", "1/2/2000", "1/1/2000", "1/5/2000", "1/4/2000"]
         rng1 = PeriodIndex(period_rng, freq="D")
@@ -315,6 +344,8 @@ class TestPeriodIndex:
             tm.assert_index_equal(result_difference, expected)
 
     def test_difference_freq(self, sort):
+        # [FUNCTION DOC]
+        # The difference of period indexes preserves the frequency attribute (GH14323).
         # GH14323: difference of Period MUST preserve frequency
         # but the ability to union results must be preserved
 
@@ -333,6 +364,9 @@ class TestPeriodIndex:
         tm.assert_attr_equal("freq", idx_diff, expected)
 
     def test_intersection_equal_duplicates(self):
+        # [FUNCTION DOC]
+        # Intersecting an index with duplicates with itself returns the de-duplicated
+        # index (GH#38302).
         # GH#38302
         idx = period_range("2011-01-01", periods=2)
         idx_dup = idx.append(idx)
@@ -341,6 +375,8 @@ class TestPeriodIndex:
 
     @pytest.mark.filterwarnings(r"ignore:PeriodDtype\[B\] is deprecated:FutureWarning")
     def test_union_duplicates(self):
+        # [FUNCTION DOC]
+        # Union of two indexes with duplicates keeps the duplicates, sorted (GH#36289).
         # GH#36289
         idx = period_range("2011-01-01", periods=2)
         idx_dup = idx.append(idx)

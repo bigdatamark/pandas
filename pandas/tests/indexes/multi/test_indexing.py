@@ -1,3 +1,10 @@
+# [MODULE DOC]
+# Tests for lookup and indexing behavior of MultiIndex: slice_locs, putmask,
+# get_indexer (with fill methods, missing values, categorical levels), element
+# access, get_loc / get_loc_level, where, membership tests, slice bounds with
+# missing values, the integer-packing lookup engine and get_locs ordering.
+# Uses the shared "idx" fixture from the multi-index conftest plus
+# pandas testing helpers. No import-time side effects.
 from collections import namedtuple
 from datetime import timedelta
 import re
@@ -20,7 +27,13 @@ import pandas._testing as tm
 
 
 class TestSliceLocs:
+    # [CLASS DOC]
+    # Groups tests of the slice_locs method on a MultiIndex.
     def test_slice_locs_partial(self, idx):
+        # [FUNCTION DOC]
+        # Sorts the fixture index by its first level, then checks that slice_locs with
+        # partial tuples, a missing start/end (none), and bare first-level labels
+        # returns the expected (start, stop) positions.
         sorted_idx, _ = idx.sortlevel(0)
 
         result = sorted_idx.slice_locs(("foo", "two"), ("qux", "one"))
@@ -36,6 +49,10 @@ class TestSliceLocs:
         assert result == (2, 4)
 
     def test_slice_locs(self):
+        # [FUNCTION DOC]
+        # Stacks a business-day frame to build a two-level index, then verifies that
+        # slice_locs on timestamps (exact, and shifted by seconds so they fall between
+        # labels) yields positions matching the equivalent row-slice of the frame.
         df = DataFrame(
             np.random.default_rng(2).standard_normal((50, 4)),
             columns=Index(list("ABCD"), dtype=object),
@@ -60,6 +77,11 @@ class TestSliceLocs:
         tm.assert_almost_equal(sliced.values, expected.values)
 
     def test_slice_locs_with_type_mismatch(self):
+        # [FUNCTION DOC]
+        # Verifies slice_locs raises a type error beginning with "Level type mismatch"
+        # when a key's type does not match the level (tuples too short, a timedelta
+        # against a string level, etc.), for both datetime-based and string-based
+        # stacked indexes.
         df = DataFrame(
             np.random.default_rng(2).standard_normal((10, 4)),
             columns=Index(list("ABCD"), dtype=object),
@@ -85,6 +107,10 @@ class TestSliceLocs:
             idx.slice_locs(df.index[1], (16, "a"))
 
     def test_slice_locs_not_sorted(self):
+        # [FUNCTION DOC]
+        # On a MultiIndex that is not lexsorted, slice_locs with a key longer than the
+        # lexsort depth must raise a key error; after sorting by level 0 the same call
+        # must succeed (only checked for no error).
         index = MultiIndex(
             levels=[Index(np.arange(4)), Index(np.arange(4)), Index(np.arange(4))],
             codes=[
@@ -103,6 +129,10 @@ class TestSliceLocs:
         sorted_index.slice_locs((1, 0, 1), (2, 1, 0))
 
     def test_slice_locs_not_contained(self):
+        # [FUNCTION DOC]
+        # Checks slice_locs when the bounds are not present in the index (searchsorted
+        # semantics), for tuple and scalar bounds and for bounds outside the whole
+        # range; asserts the exact (start, stop) pairs.
         # some searchsorted action
 
         index = MultiIndex(
@@ -142,6 +172,10 @@ class TestSliceLocs:
     def test_slice_locs_with_missing_value(
         self, index_arr, expected, start_idx, end_idx
     ):
+        # [FUNCTION DOC]
+        # Parametrized over index arrays containing missing values, expected bounds and
+        # start/end keys (scalar missing, tuples, none). Verifies slice_locs returns
+        # the expected pair (GH 19132).
         # issue 19132
         idx = MultiIndex.from_arrays(index_arr)
         result = idx.slice_locs(start=start_idx, end=end_idx)
@@ -149,7 +183,13 @@ class TestSliceLocs:
 
 
 class TestPutmask:
+    # [CLASS DOC]
+    # Groups tests of MultiIndex.putmask.
     def test_putmask_with_wrong_mask(self, idx):
+        # [FUNCTION DOC]
+        # A mask whose length differs from the index (longer, shorter) or a non-array
+        # string must raise a value error about mask and data needing the same size
+        # (GH18368).
         # GH18368
 
         msg = "putmask: mask and data must be the same size"
@@ -163,6 +203,10 @@ class TestPutmask:
             idx.putmask("foo", 1)
 
     def test_putmask_multiindex_other(self):
+        # [FUNCTION DOC]
+        # putmask where the replacement value is itself a MultiIndex: masked positions
+        # take values from the other index and unmasked positions keep original values
+        # (GH#43212).
         # GH#43212 `value` is also a MultiIndex
 
         left = MultiIndex.from_tuples([(np.nan, 6), (np.nan, 6), ("a", 4)])
@@ -175,6 +219,10 @@ class TestPutmask:
         tm.assert_index_equal(result, expected)
 
     def test_putmask_keep_dtype(self, any_numeric_ea_dtype):
+        # [FUNCTION DOC]
+        # Parametrized over numeric extension dtypes. putmask with a same-length
+        # MultiIndex replacement must preserve the extension dtype of the first level
+        # (GH#49830).
         # GH#49830
         midx = MultiIndex.from_arrays(
             [pd.Series([1, 2, 3], dtype=any_numeric_ea_dtype), [10, 11, 12]]
@@ -189,6 +237,9 @@ class TestPutmask:
         tm.assert_index_equal(result, expected)
 
     def test_putmask_keep_dtype_shorter_value(self, any_numeric_ea_dtype):
+        # [FUNCTION DOC]
+        # Same as the keep-dtype test but the replacement MultiIndex has length one;
+        # it is broadcast over the masked positions and dtype is preserved (GH#49830).
         # GH#49830
         midx = MultiIndex.from_arrays(
             [pd.Series([1, 2, 3], dtype=any_numeric_ea_dtype), [10, 11, 12]]
@@ -204,7 +255,15 @@ class TestPutmask:
 
 
 class TestGetIndexer:
+    # [CLASS DOC]
+    # Groups tests of MultiIndex.get_indexer.
     def test_get_indexer(self):
+        # [FUNCTION DOC]
+        # Exercises get_indexer between MultiIndex objects with exact matching and with
+        # pad/ffill and backfill/bfill methods (including reversed targets), passing a
+        # plain array of tuples or list, and checks that duplicated non-Multi indexes
+        # raise an invalid-index error about reindexing only valid with uniquely
+        # valued Index objects.
         major_axis = Index(np.arange(4))
         minor_axis = Index(np.arange(2))
 
@@ -257,6 +316,9 @@ class TestGetIndexer:
             idx1.get_indexer(idx2)
 
     def test_get_indexer_nearest(self):
+        # [FUNCTION DOC]
+        # The nearest method and the tolerance argument are not implemented for
+        # MultiIndex and must raise not-implemented errors with specific messages.
         midx = MultiIndex.from_tuples([("a", 1), ("b", 2)])
         msg = (
             "method='nearest' not implemented yet for MultiIndex; see GitHub issue 9365"
@@ -268,6 +330,9 @@ class TestGetIndexer:
             midx.get_indexer(["a"], method="pad", tolerance=2)
 
     def test_get_indexer_categorical_time(self):
+        # [FUNCTION DOC]
+        # get_indexer of a MultiIndex built from categorical levels (one of them
+        # datetimes) against itself returns the identity positions (GH 21390).
         # https://github.com/pandas-dev/pandas/issues/21390
         midx = MultiIndex.from_product(
             [
@@ -296,12 +361,20 @@ class TestGetIndexer:
         ],
     )
     def test_get_indexer_with_missing_value(self, index_arr, labels, expected):
+        # [FUNCTION DOC]
+        # Parametrized over index arrays with missing values, target labels and the
+        # expected positions; verifies missing values match only when given inside full
+        # tuples and that non-tuple labels yield -1 (GH 19132).
         # issue 19132
         idx = MultiIndex.from_arrays(index_arr)
         result = idx.get_indexer(labels)
         tm.assert_numpy_array_equal(result, expected)
 
     def test_get_indexer_methods(self):
+        # [FUNCTION DOC]
+        # Checks get_indexer without a fill method, with backfill/bfill and with
+        # pad/ffill for a target index falling between entries of a 2-level source;
+        # legacy aliases must give identical results (GH 29896).
         # https://github.com/pandas-dev/pandas/issues/29896
         # test getting an indexer for another index with different methods
         # confirms that getting an indexer without a filling method, getting an
@@ -355,6 +428,10 @@ class TestGetIndexer:
 
     @pytest.mark.parametrize("method", ["pad", "ffill", "backfill", "bfill", "nearest"])
     def test_get_indexer_methods_raise_for_non_monotonic(self, method):
+        # [FUNCTION DOC]
+        # Parametrized over the fill methods. On a non-monotonic MultiIndex, pad, ffill,
+        # backfill and bfill raise a value error requiring a monotonic index, while
+        # nearest raises a not-implemented error.
         # 53452
         mi = MultiIndex.from_arrays([[0, 4, 2], [0, 4, 2]])
         if method == "nearest":
@@ -367,6 +444,11 @@ class TestGetIndexer:
             mi.get_indexer([(1, 1)], method=method)
 
     def test_get_indexer_three_or_more_levels(self):
+        # [FUNCTION DOC]
+        # Verifies get_indexer with no fill, backfill and pad between two sorted unique
+        # three-level indexes, in both directions, and asserts the ordering
+        # relationships between the entries first as a sanity check (GH 29896).
+        # KNOWN ISSUE: the explanatory comment lists the fifth row of the second index as (2, 7, 6) but the code constructs (2, 7, 7).
         # https://github.com/pandas-dev/pandas/issues/29896
         # tests get_indexer() on MultiIndexes with 3+ levels
         # visually, these are
@@ -466,6 +548,10 @@ class TestGetIndexer:
         tm.assert_almost_equal(expected, pad_indexer)
 
     def test_get_indexer_crossing_levels(self):
+        # [FUNCTION DOC]
+        # Corner case where get_indexer with bfill/ffill must carry across levels with
+        # correct tuple ordering on 4-level indexes; checks exact, backfilled and
+        # padded results (GH 29896).
         # https://github.com/pandas-dev/pandas/issues/29896
         # tests a corner case with get_indexer() with MultiIndexes where, when we
         # need to "carry" across levels, proper tuple ordering is respected
@@ -512,6 +598,9 @@ class TestGetIndexer:
         tm.assert_almost_equal(expected, pad_indexer)
 
     def test_get_indexer_kwarg_validation(self):
+        # [FUNCTION DOC]
+        # Passing a limit or a tolerance without a fill method must raise a value error
+        # saying the argument is only valid for pad, backfill or nearest (GH#41918).
         # GH#41918
         mi = MultiIndex.from_product([range(3), ["A", "B"]])
 
@@ -524,6 +613,10 @@ class TestGetIndexer:
             mi.get_indexer(mi[:-1], tolerance="piano")
 
     def test_get_indexer_nan(self):
+        # [FUNCTION DOC]
+        # Indexers between two product indexes differing by a missing value in the
+        # second level return -1 for the NaN row and the matching position otherwise,
+        # in both directions (GH#37222). Dtype of the result is not compared.
         # GH#37222
         idx1 = MultiIndex.from_product([["A"], [1.0, 2.0]], names=["id1", "id2"])
         idx2 = MultiIndex.from_product([["A"], [np.nan, 2.0]], names=["id1", "id2"])
@@ -535,6 +628,10 @@ class TestGetIndexer:
 
 
 def test_getitem(idx):
+    # [FUNCTION DOC]
+    # Tests element access on the fixture index: scalar position returns a tuple,
+    # slices and integer/boolean list or array selections return indexes equal to
+    # the expected subset.
     # scalar
     assert idx[2] == ("bar", "one")
 
@@ -552,6 +649,9 @@ def test_getitem(idx):
 
 
 def test_getitem_group_select(idx):
+    # [FUNCTION DOC]
+    # After sorting by level 0, get_loc of a first-level label returns the slice
+    # covering that group.
     sorted_idx, _ = idx.sortlevel(0)
     assert sorted_idx.get_loc("baz") == slice(3, 4)
     assert sorted_idx.get_loc("foo") == slice(0, 2)
@@ -559,6 +659,10 @@ def test_getitem_group_select(idx):
 
 @pytest.mark.parametrize("box", [list, Index])
 def test_getitem_bool_index_all(box):
+    # [FUNCTION DOC]
+    # Parametrized over list and Index as the boolean container. Selecting with an
+    # all-true mask returns the full index and a mixed mask returns the matching
+    # subset (GH#22533).
     # GH#22533
     ind1 = box([True] * 5)
     idx = MultiIndex.from_tuples([(10, 1), (20, 2), (30, 3), (40, 4), (50, 5)])
@@ -571,6 +675,10 @@ def test_getitem_bool_index_all(box):
 
 @pytest.mark.parametrize("box", [list, Index])
 def test_getitem_bool_index_single(box):
+    # [FUNCTION DOC]
+    # Parametrized over list and Index. On a one-element MultiIndex, a true mask
+    # returns the same index and a false mask returns an empty MultiIndex with
+    # empty integer levels (GH#22533).
     # GH#22533
     ind1 = box([True])
     idx = MultiIndex.from_tuples([(10, 1)])
@@ -585,7 +693,13 @@ def test_getitem_bool_index_single(box):
 
 
 class TestGetLoc:
+    # [CLASS DOC]
+    # Groups tests of MultiIndex.get_loc and get_loc_level.
     def test_get_loc(self, idx):
+        # [FUNCTION DOC]
+        # Full-key lookups return an integer position, partial keys return slices, and
+        # missing keys raise key errors whose messages show the key; covers the fixture
+        # index and a three-level index.
         assert idx.get_loc(("foo", "two")) == 1
         assert idx.get_loc(("baz", "two")) == 3
         with pytest.raises(KeyError, match=r"^\('bar', 'two'\)$"):
@@ -607,6 +721,10 @@ class TestGetLoc:
         assert index.get_loc((2, 0)) == slice(3, 5)
 
     def test_get_loc_duplicates(self):
+        # [FUNCTION DOC]
+        # Checks get_loc on a flat Index with duplicates (slice for a monotonic
+        # duplicate run, integer for unique, key error for missing).
+        # KNOWN ISSUE: despite living in the MultiIndex test module, this test builds plain Index objects, not MultiIndex.
         index = Index([2, 2, 2, 2])
         result = index.get_loc(2)
         expected = slice(0, 4)
@@ -621,6 +739,10 @@ class TestGetLoc:
             index.get_loc(2)
 
     def test_get_loc_level(self):
+        # [FUNCTION DOC]
+        # Checks get_loc_level with partial and full keys: returned location (slice or
+        # integer), the remaining index (none when all levels are consumed), key errors
+        # for missing and unused labels (GH 22221), and a slice key on a lower level.
         index = MultiIndex(
             levels=[Index(np.arange(4)), Index(np.arange(4)), Index(np.arange(4))],
             codes=[
@@ -661,6 +783,9 @@ class TestGetLoc:
     @pytest.mark.parametrize("dtype1", [int, float, bool, str])
     @pytest.mark.parametrize("dtype2", [int, float, bool, str])
     def test_get_loc_multiple_dtypes(self, dtype1, dtype2):
+        # [FUNCTION DOC]
+        # Parametrized over pairs of level dtypes (int, float, bool, str). get_loc of
+        # an element taken from the index itself returns its position (GH 18520).
         # GH 18520
         levels = [np.array([0, 1]).astype(dtype1), np.array([0, 1]).astype(dtype2)]
         idx = MultiIndex.from_product(levels)
@@ -669,6 +794,10 @@ class TestGetLoc:
     @pytest.mark.parametrize("level", [0, 1])
     @pytest.mark.parametrize("dtypes", [[int, float], [float, int]])
     def test_get_loc_implicit_cast(self, level, dtypes):
+        # [FUNCTION DOC]
+        # Parametrized over level and dtype combinations. A key whose component has a
+        # different numeric type (int vs float) than the level still locates the right
+        # row (GH 18818, GH 15994).
         # GH 18818, GH 15994 : as flat index, cast int to float and vice-versa
         levels = [["a", "b"], ["c", "d"]]
         key = ["b", "d"]
@@ -680,6 +809,11 @@ class TestGetLoc:
 
     @pytest.mark.parametrize("dtype", [bool, object])
     def test_get_loc_cast_bool(self, dtype):
+        # [FUNCTION DOC]
+        # Parametrized over bool and object dtype for the first level. For bool dtype
+        # integers are not cast to bool and lookups raise key errors; for object dtype
+        # python equality makes zero equal false and one equal true. Lookups with bool
+        # keys against integer second level always raise key errors (GH 19086).
         # GH 19086 : int is casted to bool, but not vice-versa (for object dtype)
         #  With bool dtype, we don't cast in either direction.
         levels = [Index([False, True], dtype=dtype), np.arange(2, dtype="int64")]
@@ -702,6 +836,9 @@ class TestGetLoc:
 
     @pytest.mark.parametrize("level", [0, 1])
     def test_get_loc_nan(self, level, nulls_fixture):
+        # [FUNCTION DOC]
+        # Parametrized over level position and the null-values fixture. A key with a
+        # null in either level locates the row correctly (GH 18485).
         # GH 18485 : NaN in MultiIndex
         levels = [["a", "b"], ["c", "d"]]
         key = ["b", "d"]
@@ -711,6 +848,9 @@ class TestGetLoc:
         assert idx.get_loc(tuple(key)) == 3
 
     def test_get_loc_missing_nan(self):
+        # [FUNCTION DOC]
+        # Partial scalar key returns a slice; absent scalar or NaN raises key errors;
+        # a list key raises an invalid-index error (GH 8569).
         # GH 8569
         idx = MultiIndex.from_arrays([[1.0, 2.0], [3.0, 4.0]])
         assert isinstance(idx.get_loc(1), slice)
@@ -723,6 +863,9 @@ class TestGetLoc:
             idx.get_loc([np.nan])
 
     def test_get_loc_with_values_including_missing_values(self):
+        # [FUNCTION DOC]
+        # get_loc with NaN as partial key returns a slice for product indexes and a
+        # boolean mask for a single-level index; tuple keys with NaN return slices.
         # issue 19132
         idx = MultiIndex.from_product([[np.nan, 1]] * 2)
         expected = slice(0, 2, None)
@@ -737,6 +880,10 @@ class TestGetLoc:
         assert idx.get_loc((np.nan, 1)) == expected
 
     def test_get_loc_duplicates2(self):
+        # [FUNCTION DOC]
+        # Partial key on a first level with a repeated label returns the slice of that
+        # label.
+        # KNOWN ISSUE: the in-code TODO suggests this duplicates test_get_loc_duplicates, which does not actually use a MultiIndex.
         # TODO: de-duplicate with test_get_loc_duplicates above?
         index = MultiIndex(
             levels=[["D", "B", "C"], [0, 26, 27, 37, 57, 67, 75, 82]],
@@ -747,6 +894,9 @@ class TestGetLoc:
         assert index.get_loc("D") == slice(0, 3)
 
     def test_get_loc_past_lexsort_depth(self, performance_warning):
+        # [FUNCTION DOC]
+        # Looking up a key longer than the lexsort depth works but emits a performance
+        # warning (via the fixture); the result is the single-row slice (GH#30053).
         # GH#30053
         idx = MultiIndex(
             levels=[["a"], [0, 7], [1]],
@@ -763,6 +913,8 @@ class TestGetLoc:
         assert result == slice(0, 1, None)
 
     def test_multiindex_get_loc_list_raises(self):
+        # [FUNCTION DOC]
+        # get_loc with an empty list raises an invalid-index error (GH#35878).
         # GH#35878
         idx = MultiIndex.from_tuples([("a", 1), ("b", 2)])
         msg = r"\[\]"
@@ -770,6 +922,9 @@ class TestGetLoc:
             idx.get_loc([])
 
     def test_get_loc_nested_tuple_raises_keyerror(self):
+        # [FUNCTION DOC]
+        # A key containing a nested tuple must raise a key error (not a type error)
+        # whose message matches the key text.
         # raise KeyError, not TypeError
         mi = MultiIndex.from_product([range(3), range(4), range(5), range(6)])
         key = ((2, 3, 4), "foo")
@@ -779,7 +934,11 @@ class TestGetLoc:
 
 
 class TestWhere:
+    # [CLASS DOC]
+    # Groups tests of MultiIndex.where.
     def test_where(self):
+        # [FUNCTION DOC]
+        # where is unsupported on MultiIndex and raises a not-implemented error.
         i = MultiIndex.from_tuples([("A", 1), ("A", 2)])
 
         msg = r"\.where is not supported for MultiIndex operations"
@@ -787,6 +946,9 @@ class TestWhere:
             i.where(True)
 
     def test_where_array_like(self, listlike_box):
+        # [FUNCTION DOC]
+        # Same as above, with the condition supplied via each list-like container from
+        # the listlike_box fixture.
         mi = MultiIndex.from_tuples([("A", 1), ("A", 2)])
         cond = [False, True]
         msg = r"\.where is not supported for MultiIndex operations"
@@ -795,12 +957,19 @@ class TestWhere:
 
 
 class TestContains:
+    # [CLASS DOC]
+    # Groups tests of membership (the in operator) on MultiIndex.
     def test_contains_top_level(self):
+        # [FUNCTION DOC]
+        # A top-level label is contained in the index but not in the lookup engine.
         midx = MultiIndex.from_product([["A", "B"], [1, 2]])
         assert "A" in midx
         assert "A" not in midx._engine
 
     def test_contains_with_nat(self):
+        # [FUNCTION DOC]
+        # Index containing a NaT in a datetime level: full-key membership of the
+        # timestamp and of every value in the index holds.
         # MI with a NaT
         mi = MultiIndex(
             levels=[["C"], date_range("2012-01-01", periods=5)],
@@ -812,11 +981,16 @@ class TestContains:
             assert val in mi
 
     def test_contains(self, idx):
+        # [FUNCTION DOC]
+        # Membership of present and absent tuples and of none on the fixture index.
         assert ("foo", "two") in idx
         assert ("bar", "two") not in idx
         assert None not in idx
 
     def test_contains_with_missing_value(self):
+        # [FUNCTION DOC]
+        # Missing values as top-level or tuple components are contained only where
+        # actually present (GH#19132).
         # GH#19132
         idx = MultiIndex.from_arrays([[1, np.nan, 2]])
         assert np.nan in idx
@@ -826,6 +1000,9 @@ class TestContains:
         assert (1, np.nan) in idx
 
     def test_multiindex_contains_dropped(self):
+        # [FUNCTION DOC]
+        # After dropping a label, it is no longer contained in the index although the
+        # levels still keep it; checked for integers and strings (GH#19027).
         # GH#19027
         # test that dropped MultiIndex levels are not in the MultiIndex
         # despite continuing to be in the MultiIndex's levels
@@ -846,6 +1023,9 @@ class TestContains:
         assert "a" not in idx
 
     def test_contains_td64_level(self):
+        # [FUNCTION DOC]
+        # Membership with timedelta level: timestamp-like element and string
+        # representation present, unrelated string absent (GH#24570).
         # GH#24570
         tx = pd.timedelta_range("09:30:00", "16:00:00", freq="30 min")
         idx = MultiIndex.from_arrays([tx, np.arange(len(tx))])
@@ -854,6 +1034,9 @@ class TestContains:
         assert "0 day 09:30:00" in idx
 
     def test_large_mi_contains(self, monkeypatch):
+        # [FUNCTION DOC]
+        # With the engine size cutoff patched small via monkeypatch, a large index
+        # does not contain an absent tuple (GH#10645). Patch is undone afterwards.
         # GH#10645
         with monkeypatch.context():
             monkeypatch.setattr(libindex, "_SIZE_CUTOFF", 10)
@@ -862,6 +1045,9 @@ class TestContains:
 
 
 def test_timestamp_multiindex_indexer():
+    # [FUNCTION DOC]
+    # Label-based loc slicing with a string date slice on a datetime first level
+    # of a three-level index returns the expected series (GH 26944).
     # https://github.com/pandas-dev/pandas/issues/26944
     idx = MultiIndex.from_product(
         [
@@ -897,6 +1083,9 @@ def test_timestamp_multiindex_indexer():
     ],
 )
 def test_get_slice_bound_with_missing_value(index_arr, expected, target, algo):
+    # [FUNCTION DOC]
+    # Parametrized over index arrays with missing values, expected bounds, targets
+    # and sides. Checks get_slice_bound handles NaN labels (issue 19132).
     # issue 19132
     idx = MultiIndex.from_arrays(index_arr)
     result = idx.get_slice_bound(target, side=algo)
@@ -913,6 +1102,9 @@ def test_get_slice_bound_with_missing_value(index_arr, expected, target, algo):
     ],
 )
 def test_slice_indexer_with_missing_value(index_arr, expected, start_idx, end_idx):
+    # [FUNCTION DOC]
+    # Parametrized over index arrays with missing values and start/end keys. Checks
+    # slice_indexer returns the expected slice (issue 19132).
     # issue 19132
     idx = MultiIndex.from_arrays(index_arr)
     result = idx.slice_indexer(start=start_idx, end=end_idx)
@@ -930,6 +1122,12 @@ def test_slice_indexer_with_missing_value(index_arr, expected, start_idx, end_id
     ],
 )
 def test_pyint_engine(N, expected_dtype):
+    # [FUNCTION DOC]
+    # Parametrized over multiplier N and expected engine dtype. Builds keys whose
+    # combined level codes need 8 to over 64 bits and verifies the engine's value
+    # dtype grows (uint8 up to uint64, then Python object), and that get_loc and
+    # get_indexer return correct positions without collisions, including for a
+    # missing key (GH#18519).
     # GH#18519 : when combinations of codes cannot be represented in 64
     # bits, the index underlying the MultiIndex engine works with Python
     # integers, rather than uint64.
@@ -982,6 +1180,9 @@ def test_pyint_engine(N, expected_dtype):
     ],
 )
 def test_get_locs_reordering(keys, expected):
+    # [FUNCTION DOC]
+    # Parametrized over key tuples and expected positions. get_locs honors the
+    # order of list-like selectors rather than index order (GH48384).
     # GH48384
     idx = MultiIndex.from_arrays(
         [
@@ -995,6 +1196,10 @@ def test_get_locs_reordering(keys, expected):
 
 
 def test_get_indexer_for_multiindex_with_nans(nulls_fixture):
+    # [FUNCTION DOC]
+    # Using the null-values fixture, get_indexer between indexes that differ by a
+    # null in the second level returns -1 for the null row, in both directions
+    # (GH37222).
     # GH37222
     idx1 = MultiIndex.from_product([["A"], [1.0, 2.0]], names=["id1", "id2"])
     idx2 = MultiIndex.from_product([["A"], [nulls_fixture, 2.0]], names=["id1", "id2"])
@@ -1009,6 +1214,10 @@ def test_get_indexer_for_multiindex_with_nans(nulls_fixture):
 
 
 def test_get_loc_namedtuple_behaves_like_tuple():
+    # [FUNCTION DOC]
+    # Lookups with named tuples and plain tuples find the same positions, for both
+    # a MultiIndex built from named tuples or plain tuples and its flat
+    # (tuple-object) index (GH57922).
     # GH57922
     NamedIndex = namedtuple("NamedIndex", ("a", "b"))
     multi_idx = MultiIndex.from_tuples(

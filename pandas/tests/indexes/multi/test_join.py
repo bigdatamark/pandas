@@ -1,3 +1,7 @@
+# [MODULE DOC]
+# Tests for join on MultiIndex: joining on a level, self joins, joining a
+# MultiIndex with a flat index or another MultiIndex (overlapping names), indexer
+# return values, interval levels, extension dtypes, NaN keys and level preservation.
 import numpy as np
 import pytest
 
@@ -14,6 +18,12 @@ import pandas._testing as tm
 
 @pytest.mark.parametrize("other", [["three", "one", "two"], ["one"], ["one", "three"]])
 def test_join_level(idx, other, join_type):
+    # [FUNCTION DOC]
+    # Parametrized over three flat indexes and the join-type fixture. Joins the flat
+    # index to the fixture MultiIndex on the level named "second" with indexers.
+    # Checks the result keeps the first level, joins the second level as a flat join
+    # would, keeps only rows whose second-level value survives, and for inner/outer
+    # that the reversed join gives the same index and swapped indexers.
     other = Index(other)
     join_index, lidx, ridx = other.join(
         idx, how=join_type, level="second", return_indexers=True
@@ -43,6 +53,10 @@ def test_join_level(idx, other, join_type):
 
 
 def test_join_level_corner_case(idx):
+    # [FUNCTION DOC]
+    # Joining a flat index to a MultiIndex on a named level yields a MultiIndex;
+    # joining a MultiIndex to itself on a numeric level is ambiguous and raises a
+    # type error.
     # some corner cases
     index = Index(["three", "one", "two"])
     result = index.join(idx, level="second")
@@ -53,6 +67,9 @@ def test_join_level_corner_case(idx):
 
 
 def test_join_self(idx, join_type):
+    # [FUNCTION DOC]
+    # Parametrized over the join-type fixture. Joining the fixture index with itself
+    # returns the index itself (sorted for outer joins).
     result = idx.join(idx, how=join_type)
     expected = idx
     if join_type == "outer":
@@ -61,6 +78,11 @@ def test_join_self(idx, join_type):
 
 
 def test_join_multi():
+    # [FUNCTION DOC]
+    # Joins a two-level index and a flat index sharing a level name (GH 10665):
+    # inner keeps matching rows with expected left/right indexers, in both
+    # orientations; left/right joins keep the MultiIndex with a missing left indexer
+    # and the expected right indexer.
     # GH 10665
     midx = MultiIndex.from_product([np.arange(4), np.arange(4)], names=["a", "b"])
     idx = Index([1, 2, 5], name="b")
@@ -95,6 +117,10 @@ def test_join_multi():
 
 
 def test_join_multi_wrong_order():
+    # [FUNCTION DOC]
+    # Joining two MultiIndexes with the same names in a different order returns the
+    # left index with no left indexer and an all-missing right indexer (GH 25760,
+    # GH 28956).
     # GH 25760
     # GH 28956
 
@@ -111,6 +137,9 @@ def test_join_multi_wrong_order():
 
 
 def test_join_multi_return_indexers():
+    # [FUNCTION DOC]
+    # Joining a three-level index with a two-level index with indexers disabled
+    # returns just the index, equal to the left one (GH 34074).
     # GH 34074
 
     midx1 = MultiIndex.from_product([[1, 2], [3, 4], [5, 6]], names=["a", "b", "c"])
@@ -121,6 +150,9 @@ def test_join_multi_return_indexers():
 
 
 def test_join_overlapping_interval_level():
+    # [FUNCTION DOC]
+    # Outer join of two MultiIndexes with interval levels given in different
+    # order returns the sorted union (GH 44096).
     # GH 44096
     idx_1 = MultiIndex.from_tuples(
         [
@@ -163,6 +195,9 @@ def test_join_overlapping_interval_level():
 
 
 def test_join_midx_ea():
+    # [FUNCTION DOC]
+    # Inner join of two MultiIndexes with nullable integer levels and one shared name
+    # keeps extension dtypes and adds the new level (GH#49277).
     # GH#49277
     midx = MultiIndex.from_arrays(
         [Series([1, 1, 3], dtype="Int64"), Series([1, 2, 3], dtype="Int64")],
@@ -184,6 +219,8 @@ def test_join_midx_ea():
 
 
 def test_join_midx_string():
+    # [FUNCTION DOC]
+    # Same as the nullable integer case but for string-dtype levels (GH#49277).
     # GH#49277
     midx = MultiIndex.from_arrays(
         [
@@ -209,6 +246,9 @@ def test_join_midx_string():
 
 
 def test_join_multi_with_nan():
+    # [FUNCTION DOC]
+    # Joining frames whose MultiIndexes differ by NaN in a level keeps the left index
+    # and gives NaN in the right column where no match exists (GH29252).
     # GH29252
     df1 = DataFrame(
         data={"col1": [1.1, 1.2]},
@@ -228,6 +268,10 @@ def test_join_multi_with_nan():
 
 @pytest.mark.parametrize("val", [0, 5])
 def test_join_dtypes(any_numeric_ea_dtype, val):
+    # [FUNCTION DOC]
+    # Parametrized over a value (zero or five) and numeric extension dtypes. Outer join
+    # of MultiIndexes preserves the extension dtype of the first level and returns a
+    # sorted union (GH#49830).
     # GH#49830
     midx = MultiIndex.from_arrays([Series([1, 2], dtype=any_numeric_ea_dtype), [3, 4]])
     midx2 = MultiIndex.from_arrays(
@@ -241,6 +285,9 @@ def test_join_dtypes(any_numeric_ea_dtype, val):
 
 
 def test_join_dtypes_all_nan(any_numeric_ea_dtype):
+    # [FUNCTION DOC]
+    # Same with an all-NaN second level; result keeps the extension dtype and all NaN
+    # second level values (GH#49830).
     # GH#49830
     midx = MultiIndex.from_arrays(
         [Series([1, 2], dtype=any_numeric_ea_dtype), [np.nan, np.nan]]
@@ -259,6 +306,9 @@ def test_join_dtypes_all_nan(any_numeric_ea_dtype):
 
 
 def test_join_index_levels():
+    # [FUNCTION DOC]
+    # Outer join with duplicate left entries keeps duplicates, sorted, and the second
+    # result level equals the expected levels (GH#53093).
     # GH#53093
     midx = MultiIndex.from_tuples([("a", "2019-02-01"), ("a", "2019-02-01")])
     midx2 = MultiIndex.from_tuples([("a", "2019-01-31")])

@@ -1,3 +1,8 @@
+# [MODULE DOC]
+# Tests of set operations (union, intersection, difference, symmetric difference)
+# on MultiIndex: input validation, sort argument semantics, name handling, missing
+# values, extension dtypes, duplicates, categorical levels and the private name
+# matching helper. Uses the idx and sort fixtures from the shared conftests.
 import numpy as np
 import pytest
 
@@ -22,6 +27,10 @@ from pandas.api.types import (
     "method", ["intersection", "union", "difference", "symmetric_difference"]
 )
 def test_set_ops_error_cases(idx, case, sort, method):
+    # [FUNCTION DOC]
+    # Parametrized over non-iterable inputs (a float and a string) and the four set
+    # methods, combined with the sort fixture. Each must raise a type error stating the
+    # input must be an Index or array-like.
     # non-iterable input
     msg = "Input must be Index or array-like"
     with pytest.raises(TypeError, match=msg):
@@ -30,6 +39,11 @@ def test_set_ops_error_cases(idx, case, sort, method):
 
 @pytest.mark.parametrize("klass", [MultiIndex, np.array, Series, list])
 def test_intersection_base(idx, sort, klass):
+    # [FUNCTION DOC]
+    # Parametrized over how the second operand is passed (MultiIndex, array, Series,
+    # list). Intersection with a reversed head of the fixture equals that head, sorted
+    # when sort is none; a list of scalars raises a type error requiring a MultiIndex or
+    # list of tuples.
     first = idx[2::-1]  # first 3 elements reversed
     second = idx[:5]
 
@@ -51,6 +65,10 @@ def test_intersection_base(idx, sort, klass):
 @pytest.mark.arm_slow
 @pytest.mark.parametrize("klass", [MultiIndex, np.array, Series, list])
 def test_union_base(idx, sort, klass):
+    # [FUNCTION DOC]
+    # Same parametrization for union: union of a reversed index and its head equals the
+    # reversed index (sorted if sort is none); list of scalars raises the same type
+    # error.
     first = idx[::-1]
     second = idx[:5]
 
@@ -70,6 +88,11 @@ def test_union_base(idx, sort, klass):
 
 
 def test_difference_base(idx, sort):
+    # [FUNCTION DOC]
+    # Difference of the fixture and its tail equals its head (sorted if sort is none),
+    # also
+    # for array, Series and list operands (GH 10149); list of scalars raises a type
+    # error.
     second = idx[4:]
     answer = idx[:4]
     result = idx.difference(second, sort=sort)
@@ -92,6 +115,10 @@ def test_difference_base(idx, sort):
 
 
 def test_symmetric_difference(idx, sort):
+    # [FUNCTION DOC]
+    # Symmetric difference of two overlapping slices gives the two end elements (sorted
+    # if sort is none), also for other operand containers (GH 10149); bad operand raises
+    # a type error.
     first = idx[1:]
     second = idx[:-1]
     answer = idx[[-1, 0]]
@@ -114,6 +141,9 @@ def test_symmetric_difference(idx, sort):
 
 
 def test_multiindex_symmetric_difference():
+    # [FUNCTION DOC]
+    # The result keeps names when both operands share them, and has none when names
+    # differ (GH 13490).
     # GH 13490
     idx = MultiIndex.from_product([["a", "b"], ["A", "B"]], names=["a", "b"])
     result = idx.symmetric_difference(idx)
@@ -125,12 +155,25 @@ def test_multiindex_symmetric_difference():
 
 
 def test_empty(idx):
+    # [FUNCTION DOC]
+    # The empty property is false for the fixture and true for a zero-length slice (GH
+    # 15270).
     # GH 15270
     assert not idx.empty
     assert idx[:0].empty
 
 
 def test_difference(idx, sort):
+    # [FUNCTION DOC]
+    # Broad difference test: normal difference (names kept, sorted by sort option),
+    # empty
+    # results for self, superset and empty receiver, names dropped when operand names
+    # differ, empty with a differently sorted equal index, non-MultiIndex operands,
+    # empty
+    # list operand and list of tuples operand, and invalid scalar list raising a type
+    # error.
+    # KNOWN ISSUE: the comment says an exception is raised for a non-MultiIndex operand, but the code asserts a normal empty result.
+    # KNOWN ISSUE: in the final non-empty list case an expected index is built but never compared with the result; only the names are compared.
     first = idx
     result = first.difference(idx[-3:], sort=sort)
     vals = idx[:-3].values
@@ -196,6 +239,9 @@ def test_difference(idx, sort):
 
 
 def test_difference_sort_special():
+    # [FUNCTION DOC]
+    # Default sort: difference with an empty list returns the index unchanged in its
+    # original (unsorted) order (GH-24959).
     # GH-24959
     idx = MultiIndex.from_product([[1, 0], ["a", "b"]])
     # sort=None, the default
@@ -204,6 +250,8 @@ def test_difference_sort_special():
 
 
 def test_difference_sort_special_true():
+    # [FUNCTION DOC]
+    # With sort enabled, difference with an empty list returns the index sorted.
     idx = MultiIndex.from_product([[1, 0], ["a", "b"]])
     result = idx.difference([], sort=True)
     expected = MultiIndex.from_product([[0, 1], ["a", "b"]])
@@ -211,6 +259,10 @@ def test_difference_sort_special_true():
 
 
 def test_difference_sort_incomparable():
+    # [FUNCTION DOC]
+    # Levels with incomparable objects: default sort emits a runtime warning that sort
+    # order is undefined, and the result equals the original; sort disabled returns it
+    # without warning (GH-24959).
     # GH-24959
     idx = MultiIndex.from_product([[1, pd.Timestamp("2000"), 2], ["a", "b"]])
 
@@ -227,6 +279,9 @@ def test_difference_sort_incomparable():
 
 
 def test_difference_sort_incomparable_true():
+    # [FUNCTION DOC]
+    # Forcing sort on incomparable levels raises a type error about unordered values.
+    # KNOWN ISSUE: a TODO in the test notes the error arises from constructing a categorical during safe sort and may deserve a clearer message; the test pins the current message.
     idx = MultiIndex.from_product([[1, pd.Timestamp("2000"), 2], ["a", "b"]])
     other = MultiIndex.from_product([[3, pd.Timestamp("2000"), 4], ["c", "d"]])
 
@@ -238,6 +293,10 @@ def test_difference_sort_incomparable_true():
 
 
 def test_union(idx, sort):
+    # [FUNCTION DOC]
+    # Union of overlapping pieces matches the full index (sorted unless sort is
+    # enabled); unions with self, with empty, and with an array of tuples behave as
+    # expected.
     piece1 = idx[:5][::-1]
     piece2 = idx[3:]
 
@@ -264,6 +323,10 @@ def test_union(idx, sort):
 
 
 def test_union_with_regular_index(idx, using_infer_string):
+    # [FUNCTION DOC]
+    # A flat index unioned with a MultiIndex gives a flat result containing the tuples
+    # and scalars; the reverse order either raises a not-implemented error (infer-string
+    # mode) or warns about unorderable values and gives a non-equal result.
     other = Index(["A", "B", "C"])
 
     result = other.union(idx)
@@ -283,6 +346,9 @@ def test_union_with_regular_index(idx, using_infer_string):
 
 
 def test_intersection(idx, sort):
+    # [FUNCTION DOC]
+    # Intersection of overlapping pieces; sort none or true gives sorted overlap,
+    # otherwise order-insensitive; self, disjoint (empty), and array-of-tuples cases.
     piece1 = idx[:5][::-1]
     piece2 = idx[3:]
 
@@ -311,6 +377,10 @@ def test_intersection(idx, sort):
     "method", ["intersection", "union", "difference", "symmetric_difference"]
 )
 def test_setop_with_categorical(idx, sort, method):
+    # [FUNCTION DOC]
+    # Parametrized over four set methods. A flat categorical of tuples as operand
+    # behaves like the MultiIndex itself, with result names reset to none, also for a
+    # shorter operand.
     other = idx.to_flat_index().astype("category")
     res_names = [None] * idx.nlevels
 
@@ -324,6 +394,9 @@ def test_setop_with_categorical(idx, sort, method):
 
 
 def test_intersection_non_object(idx, sort):
+    # [FUNCTION DOC]
+    # Intersection with a numeric flat index yields an empty MultiIndex without names;
+    # with an empty array it keeps names; with a non-empty array it raises a type error.
     other = Index(range(3), name="foo")
 
     result = idx.intersection(other, sort=sort)
@@ -342,6 +415,9 @@ def test_intersection_non_object(idx, sort):
 
 
 def test_intersect_equal_sort():
+    # [FUNCTION DOC]
+    # Intersection of an equal index with sort disabled or none returns the original
+    # order (GH-24959).
     # GH-24959
     idx = MultiIndex.from_product([[1, 0], ["a", "b"]])
     tm.assert_index_equal(idx.intersection(idx, sort=False), idx)
@@ -349,6 +425,8 @@ def test_intersect_equal_sort():
 
 
 def test_intersect_equal_sort_true():
+    # [FUNCTION DOC]
+    # With sort enabled the result is sorted.
     idx = MultiIndex.from_product([[1, 0], ["a", "b"]])
     expected = MultiIndex.from_product([[0, 1], ["a", "b"]])
     result = idx.intersection(idx, sort=True)
@@ -357,6 +435,9 @@ def test_intersect_equal_sort_true():
 
 @pytest.mark.parametrize("slice_", [slice(None), slice(0)])
 def test_union_sort_other_empty(slice_):
+    # [FUNCTION DOC]
+    # Parametrized over a full slice and an empty slice. Default and disabled sort
+    # return the original unsorted index in both directions (GH 24959).
     # https://github.com/pandas-dev/pandas/issues/24959
     idx = MultiIndex.from_product([[1, 0], ["a", "b"]])
 
@@ -370,6 +451,8 @@ def test_union_sort_other_empty(slice_):
 
 
 def test_union_sort_other_empty_sort():
+    # [FUNCTION DOC]
+    # Sort enabled with an empty operand sorts the result.
     idx = MultiIndex.from_product([[1, 0], ["a", "b"]])
     other = idx[:0]
     result = idx.union(other, sort=True)
@@ -378,6 +461,9 @@ def test_union_sort_other_empty_sort():
 
 
 def test_union_sort_other_incomparable():
+    # [FUNCTION DOC]
+    # Incomparable level values: default sort warns about unorderable values and returns
+    # the unsorted union; sort disabled does not warn (GH 24959).
     # https://github.com/pandas-dev/pandas/issues/24959
     idx = MultiIndex.from_product([[1, pd.Timestamp("2000")], ["a", "b"]])
 
@@ -392,6 +478,9 @@ def test_union_sort_other_incomparable():
 
 
 def test_union_sort_other_incomparable_sort():
+    # [FUNCTION DOC]
+    # Sort enabled with incomparable values raises a type error about comparing
+    # Timestamp and int.
     idx = MultiIndex.from_product([[1, pd.Timestamp("2000")], ["a", "b"]])
     msg = "'<' not supported between instances of 'Timestamp' and 'int'"
     with pytest.raises(TypeError, match=msg):
@@ -399,6 +488,9 @@ def test_union_sort_other_incomparable_sort():
 
 
 def test_union_non_object_dtype_raises():
+    # [FUNCTION DOC]
+    # Union with a non-tuple flat index (an integer level) raises a not-implemented
+    # error (GH#32646).
     # GH#32646 raise NotImplementedError instead of less-informative error
     mi = MultiIndex.from_product([["a", "b"], [1, 2]])
 
@@ -410,6 +502,9 @@ def test_union_non_object_dtype_raises():
 
 
 def test_union_empty_self_different_names():
+    # [FUNCTION DOC]
+    # Union of an empty one-level index with a two-level index returns the second index
+    # with no names (GH#38423).
     # GH#38423
     mi = MultiIndex.from_arrays([[]])
     mi2 = MultiIndex.from_arrays([[1, 2], [3, 4]], names=["a", "b"])
@@ -419,6 +514,9 @@ def test_union_empty_self_different_names():
 
 
 def test_union_multiindex_empty_rangeindex():
+    # [FUNCTION DOC]
+    # Union with an empty range index in either order returns the MultiIndex (names not
+    # compared) (GH#41234).
     # GH#41234
     mi = MultiIndex.from_arrays([[1, 2], [3, 4]], names=["a", "b"])
     ri = pd.RangeIndex(0)
@@ -434,6 +532,10 @@ def test_union_multiindex_empty_rangeindex():
     "method", ["union", "intersection", "difference", "symmetric_difference"]
 )
 def test_setops_sort_validation(method):
+    # [FUNCTION DOC]
+    # Parametrized over the four methods. An invalid sort value raises a value error
+    # about allowed values; sort enabled runs without error.
+    # KNOWN ISSUE: the trailing comment contains an unresolved placeholder issue reference.
     idx1 = MultiIndex.from_product([["a", "b"], [1, 2]])
     idx2 = MultiIndex.from_product([["b", "c"], [1, 2]])
 
@@ -446,6 +548,10 @@ def test_setops_sort_validation(method):
 
 @pytest.mark.parametrize("val", [pd.NA, 100])
 def test_difference_keep_ea_dtypes(any_numeric_ea_dtype, val):
+    # [FUNCTION DOC]
+    # Parametrized over an NA or large value and numeric extension dtypes. Difference of
+    # MultiIndexes keeps extension dtype, including for an empty result (names retained)
+    # (GH#48606).
     # GH#48606
     midx = MultiIndex.from_arrays(
         [Series([1, 2], dtype=any_numeric_ea_dtype), [2, 1]], names=["a", None]
@@ -467,6 +573,8 @@ def test_difference_keep_ea_dtypes(any_numeric_ea_dtype, val):
 
 @pytest.mark.parametrize("val", [pd.NA, 5])
 def test_symmetric_difference_keeping_ea_dtype(any_numeric_ea_dtype, val):
+    # [FUNCTION DOC]
+    # Symmetric difference preserves extension dtypes of the first level (GH#48607).
     # GH#48607
     midx = MultiIndex.from_arrays(
         [Series([1, 2], dtype=any_numeric_ea_dtype), [2, 1]], names=["a", None]
@@ -493,6 +601,9 @@ def test_symmetric_difference_keeping_ea_dtype(any_numeric_ea_dtype, val):
     ],
 )
 def test_intersect_with_duplicates(tuples, exp_tuples):
+    # [FUNCTION DOC]
+    # Parametrized over left tuple lists. Intersection removes duplicates and keeps the
+    # left order (GH#36915).
     # GH#36915
     left = MultiIndex.from_tuples(tuples, names=["first", "second"])
     right = MultiIndex.from_tuples(
@@ -520,6 +631,10 @@ def test_intersect_with_duplicates(tuples, exp_tuples):
     ],
 )
 def test_maybe_match_names(data, names, expected):
+    # [FUNCTION DOC]
+    # Parametrized over tuple data, names and expected result. The private helper
+    # returns, per level, the shared name when both indexes agree at that position, else
+    # none; if level counts differ all entries are none (GH#38323).
     # GH#38323
     mi = MultiIndex.from_tuples([], names=["a", "b"])
     mi2 = MultiIndex.from_tuples([data], names=names)
@@ -528,6 +643,9 @@ def test_maybe_match_names(data, names, expected):
 
 
 def test_intersection_equal_different_names():
+    # [FUNCTION DOC]
+    # Intersection of equal values with partly different names keeps only names that
+    # match (GH#30302).
     # GH#30302
     mi1 = MultiIndex.from_arrays([[1, 2], [3, 4]], names=["c", "b"])
     mi2 = MultiIndex.from_arrays([[1, 2], [3, 4]], names=["a", "b"])
@@ -538,6 +656,9 @@ def test_intersection_equal_different_names():
 
 
 def test_intersection_different_names():
+    # [FUNCTION DOC]
+    # Intersecting a named with an unnamed equal index returns the unnamed one
+    # (GH#38323).
     # GH#38323
     mi = MultiIndex.from_arrays([[1], [3]], names=["c", "b"])
     mi2 = MultiIndex.from_arrays([[1], [3]])
@@ -546,6 +667,9 @@ def test_intersection_different_names():
 
 
 def test_intersection_with_missing_values_on_both_sides(nulls_fixture):
+    # [FUNCTION DOC]
+    # Using the nulls fixture, intersection matches rows where both sides have missing
+    # values in the same position (GH#38623).
     # GH#38623
     mi1 = MultiIndex.from_arrays([[3, nulls_fixture, 4, nulls_fixture], [1, 2, 4, 2]])
     mi2 = MultiIndex.from_arrays([[3, nulls_fixture, 3], [1, 2, 4]])
@@ -555,6 +679,9 @@ def test_intersection_with_missing_values_on_both_sides(nulls_fixture):
 
 
 def test_union_with_missing_values_on_both_sides(nulls_fixture):
+    # [FUNCTION DOC]
+    # Union with missing values on both sides keeps one missing entry and sorts it last
+    # (GH#38623).
     # GH#38623
     mi1 = MultiIndex.from_arrays([[1, nulls_fixture]])
     mi2 = MultiIndex.from_arrays([[1, nulls_fixture, 3]])
@@ -566,6 +693,10 @@ def test_union_with_missing_values_on_both_sides(nulls_fixture):
 @pytest.mark.parametrize("dtype", ["float64", "Float64"])
 @pytest.mark.parametrize("sort", [None, False])
 def test_union_nan_got_duplicated(dtype, sort):
+    # [FUNCTION DOC]
+    # Parametrized over float and nullable float dtypes and sort none or false. NaN must
+    # not be duplicated by union; with sort none the result is sorted, otherwise it
+    # equals the larger index (GH#38977, GH#49010).
     # GH#38977, GH#49010
     mi1 = MultiIndex.from_arrays([pd.array([1.0, np.nan], dtype=dtype), [2, 3]])
     mi2 = MultiIndex.from_arrays([pd.array([1.0, np.nan, 3.0], dtype=dtype), [2, 3, 4]])
@@ -581,6 +712,9 @@ def test_union_nan_got_duplicated(dtype, sort):
 
 @pytest.mark.parametrize("val", [4, 1])
 def test_union_keep_ea_dtype(any_numeric_ea_dtype, val):
+    # [FUNCTION DOC]
+    # Parametrized over a first-value choice; union keeps extension dtypes and merges
+    # overlaps (GH#48505).
     # GH#48505
 
     arr1 = Series([val, 2], dtype=any_numeric_ea_dtype)
@@ -601,6 +735,9 @@ def test_union_keep_ea_dtype(any_numeric_ea_dtype, val):
 
 @pytest.mark.parametrize("dupe_val", [3, pd.NA])
 def test_union_with_duplicates_keep_ea_dtype(dupe_val, any_numeric_ea_dtype):
+    # [FUNCTION DOC]
+    # Union with duplicate entries (value or NA) keeps extension dtypes and duplicate
+    # multiplicities (GH48900).
     # GH48900
     mi1 = MultiIndex.from_arrays(
         [
@@ -626,6 +763,11 @@ def test_union_with_duplicates_keep_ea_dtype(dupe_val, any_numeric_ea_dtype):
 
 @pytest.mark.filterwarnings(r"ignore:PeriodDtype\[B\] is deprecated:FutureWarning")
 def test_union_duplicates(index, request):
+    # [FUNCTION DOC]
+    # Uses the generic index fixture (skipped for empty, interval, categorical). Union
+    # of an index with a duplicate-containing index equals the sorted duplicated one in
+    # both directions, with level dtype adjustments for unsigned-integer and float cases
+    # (GH#38977, GH#47294).
     # GH#38977
     if index.empty or isinstance(index, (IntervalIndex, CategoricalIndex)):
         pytest.skip(f"No duplicates in an empty {type(index).__name__}")
@@ -660,6 +802,9 @@ def test_union_duplicates(index, request):
 
 
 def test_union_keep_dtype_precision(any_real_numeric_dtype):
+    # [FUNCTION DOC]
+    # Parametrized over real numeric dtypes; union preserves the narrow dtype and sorts
+    # (GH#48498).
     # GH#48498
     arr1 = Series([4, 1, 1], dtype=any_real_numeric_dtype)
     arr2 = Series([1, 4], dtype=any_real_numeric_dtype)
@@ -675,6 +820,9 @@ def test_union_keep_dtype_precision(any_real_numeric_dtype):
 
 
 def test_union_keep_ea_dtype_with_na(any_numeric_ea_dtype):
+    # [FUNCTION DOC]
+    # Union of indexes both containing NA keeps extension dtype and duplicate NA entries
+    # (GH#48498).
     # GH#48498
     arr1 = Series([4, pd.NA], dtype=any_numeric_ea_dtype)
     arr2 = Series([1, pd.NA], dtype=any_numeric_ea_dtype)
@@ -688,6 +836,9 @@ def test_union_keep_ea_dtype_with_na(any_numeric_ea_dtype):
 
 
 def test_union_duplicates_different_names():
+    # [FUNCTION DOC]
+    # Union of an index with duplicates and differently named index gives all entries,
+    # sorted, with no names (GH#62059).
     # GH#62059
     mi1 = MultiIndex.from_tuples([(1, "a"), (2, "b")], names=["x", "y"])
     mi2 = MultiIndex.from_tuples([(2, "b"), (3, "c"), (2, "b")])
@@ -712,6 +863,9 @@ def test_union_duplicates_different_names():
     ],
 )
 def test_intersection_lexsort_depth(levels1, levels2, codes1, codes2, names):
+    # [FUNCTION DOC]
+    # Parametrized with one case of levels, codes and names. The intersection has full
+    # lexsort depth of 2 (GH#25169).
     # GH#25169
     mi1 = MultiIndex(levels=levels1, codes=codes1, names=names)
     mi2 = MultiIndex(levels=levels2, codes=codes2, names=names)
@@ -725,6 +879,10 @@ def test_intersection_lexsort_depth(levels1, levels2, codes1, codes2, names):
 )
 @pytest.mark.parametrize("b_ordered", [True, False])
 def test_intersection_with_non_lex_sorted_categories(a, b_ordered):
+    # [FUNCTION DOC]
+    # Parametrized over categorical or plain first column and ordered flag. Intersection
+    # of MultiIndexes from frames, sorted or unsorted, gives the same expected result in
+    # all four combinations (GH#49974).
     # GH#49974
     other = ["1", "2"]
     b = pd.Categorical(["a", "b"], categories=["b", "a"], ordered=b_ordered)
@@ -752,6 +910,9 @@ def test_intersection_with_non_lex_sorted_categories(a, b_ordered):
 
 @pytest.mark.parametrize("val", [pd.NA, 100])
 def test_intersection_keep_ea_dtypes(val, any_numeric_ea_dtype):
+    # [FUNCTION DOC]
+    # Intersection preserves extension dtypes, with an NA or integer extra value in the
+    # other operand (GH#48604).
     # GH#48604
     midx = MultiIndex.from_arrays(
         [Series([1, 2], dtype=any_numeric_ea_dtype), [2, 1]], names=["a", None]
@@ -765,6 +926,9 @@ def test_intersection_keep_ea_dtypes(val, any_numeric_ea_dtype):
 
 
 def test_union_with_na_when_constructing_dataframe():
+    # [FUNCTION DOC]
+    # Constructing a frame from two series with MultiIndexes containing missing keys
+    # unions their indexes into columns correctly (GH43222).
     # GH43222
     series1 = Series(
         (1,),

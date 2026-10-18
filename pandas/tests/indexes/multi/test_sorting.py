@@ -1,3 +1,7 @@
+# [MODULE DOC]
+# Tests for sorting-related behavior of MultiIndex: sortlevel, argsort, sort_values
+# (missing values, incomparable values), lexsort errors on slicing, monotonic level
+# reconstruction and removal of unused levels.
 import numpy as np
 import pytest
 
@@ -17,6 +21,11 @@ from pandas.core.indexes.frozen import FrozenList
 
 
 def test_sortlevel(idx):
+    # [FUNCTION DOC]
+    # Shuffles the fixture's tuples, builds an index and checks sortlevel on level 0 and
+    # level 1, ascending and descending, against python-sorted expectations (second
+    # level
+    # sorts break ties by the first).
     tuples = list(idx)
     np.random.default_rng(2).shuffle(tuples)
 
@@ -39,12 +48,19 @@ def test_sortlevel(idx):
 
 
 def test_sortlevel_not_sort_remaining():
+    # [FUNCTION DOC]
+    # With the sort_remaining option disabled, sorting on level "A" leaves an index
+    # already
+    # ordered by that level unchanged.
     mi = MultiIndex.from_tuples([[1, 1, 3], [1, 1, 1]], names=list("ABC"))
     sorted_idx, _ = mi.sortlevel("A", sort_remaining=False)
     assert sorted_idx.equals(mi)
 
 
 def test_sortlevel_deterministic():
+    # [FUNCTION DOC]
+    # Same checks as the shuffled variant but with a fixed tuple list, ensuring a
+    # deterministic result.
     tuples = [
         ("bar", "one"),
         ("foo", "two"),
@@ -73,6 +89,9 @@ def test_sortlevel_deterministic():
 
 
 def test_sortlevel_na_position():
+    # [FUNCTION DOC]
+    # sortlevel with na_position last places the entry with missing value after the
+    # others (GH#51612).
     # GH#51612
     midx = MultiIndex.from_tuples([(1, np.nan), (1, 1)])
     result = midx.sortlevel(level=[0, 1], na_position="last")[0]
@@ -81,6 +100,12 @@ def test_sortlevel_na_position():
 
 
 def test_numpy_argsort(idx):
+    # [FUNCTION DOC]
+    # numpy's argsort function on the index equals the argsort method. Additional checks
+    # that
+    # unsupported axis/kind/order parameters raise value errors are meant for
+    # categorical/range indexes.
+    # KNOWN ISSUE: the condition applies isinstance to the type of the index rather than the index, so it is always false and the error-parameter checks never run.
     result = np.argsort(idx)
     expected = idx.argsort()
     tm.assert_numpy_array_equal(result, expected)
@@ -107,6 +132,10 @@ def test_numpy_argsort(idx):
 
 
 def test_unsortedindex():
+    # [FUNCTION DOC]
+    # Label-based loc on an unsorted MultiIndex: scalar-key row access works, slicing a
+    # lower level raises an unsorted-index error about lexsort depth; after sort_index
+    # slicing works; an absent key raises a key error (GH 11897, GH 16734).
     # GH 11897
     mi = MultiIndex.from_tuples(
         [("z", "a"), ("x", "a"), ("y", "b"), ("x", "b"), ("y", "a"), ("z", "b")],
@@ -133,6 +162,11 @@ def test_unsortedindex():
 
 
 def test_unsortedindex_doc_examples(performance_warning):
+    # [FUNCTION DOC]
+    # Mirrors the documentation example: full-key lookup on an unsorted index warns via
+    # the performance_warning fixture; range slicing raises an unsorted-index error
+    # saying key length exceeds lexsort depth; lexsort depth is 1 before and 2 after
+    # sorting.
     # https://pandas.pydata.org/pandas-docs/stable/advanced.html#sorting-a-multiindex
     dfm = DataFrame(
         {
@@ -163,6 +197,10 @@ def test_unsortedindex_doc_examples(performance_warning):
 
 
 def test_reconstruct_sort():
+    # [FUNCTION DOC]
+    # The private level-sort routine returns the same object for an already monotonic
+    # index, and a non-monotonic but equal index for unsortable cases (equality of index
+    # and values preserved).
     # starts off lexsorted & monotonic
     mi = MultiIndex.from_arrays([["A", "A", "B", "B", "B"], [1, 2, 1, 2, 3]])
     assert mi.is_monotonic_increasing
@@ -198,6 +236,9 @@ def test_reconstruct_sort():
 
 
 def test_reconstruct_remove_unused():
+    # [FUNCTION DOC]
+    # After filtering rows, unused levels remain until remove_unused_levels is called;
+    # calling it again is idempotent and returns the same object (xref GH 2770).
     # xref to GH 2770
     df = DataFrame(
         [["deleteMe", 1, 9], ["keepMe", 2, 9], ["keepMeToo", 3, 9]],
@@ -233,6 +274,10 @@ def test_reconstruct_remove_unused():
     "first_type,second_type", [("int64", "int64"), ("datetime64[D]", "str")]
 )
 def test_remove_unused_levels_large(first_type, second_type):
+    # [FUNCTION DOC]
+    # Parametrized over integer and date/string level types. Using a large seeded random
+    # group-by frame filtered to small values, remove_unused_levels shrinks both levels,
+    # stays equal to the original and equal to the reset/set-index rebuild (GH16556).
     # GH16556
 
     # because tests should be deterministic (and this test in particular
@@ -265,6 +310,10 @@ def test_remove_unused_levels_large(first_type, second_type):
     "level1", [["w", "x", "y", "z"], ["w", "x", "y", "z", "unused"]]
 )
 def test_remove_unused_nan(level0, level1):
+    # [FUNCTION DOC]
+    # Parametrized over level lists with and without an "unused" entry.
+    # remove_unused_levels on an index with negative (missing) codes leaves values equal
+    # and drops the unused entry (GH 18417).
     # GH 18417
     mi = MultiIndex(levels=[level0, level1], codes=[[0, 2, -1, 1, -1], [0, 1, 2, 3, 2]])
 
@@ -275,12 +324,17 @@ def test_remove_unused_nan(level0, level1):
 
 
 def test_argsort(idx):
+    # [FUNCTION DOC]
+    # argsort of the fixture equals argsort of its values.
     result = idx.argsort()
     expected = idx.values.argsort()
     tm.assert_numpy_array_equal(result, expected)
 
 
 def test_remove_unused_levels_with_nan():
+    # [FUNCTION DOC]
+    # After setting levels with NaN and removing unused ones, the resulting levels
+    # compare equal as text to the expected frozen list (GH 37510).
     # GH 37510
     idx = Index([(1, np.nan), (3, 4)]).rename(["id1", "id2"])
     idx = idx.set_levels(["a", np.nan], level="id1")
@@ -291,6 +345,9 @@ def test_remove_unused_levels_with_nan():
 
 
 def test_sort_values_nan():
+    # [FUNCTION DOC]
+    # sort_values places entries with missing codes correctly and keeps levels (GH48495,
+    # GH48626).
     # GH48495, GH48626
     midx = MultiIndex(levels=[["A", "B", "C"], ["D"]], codes=[[1, 0, 2], [-1, -1, 0]])
     result = midx.sort_values()
@@ -301,6 +358,9 @@ def test_sort_values_nan():
 
 
 def test_sort_values_incomparable():
+    # [FUNCTION DOC]
+    # sort_values on mixed int/Timestamp level values raises a type error about
+    # unsupported comparison (GH48495).
     # GH48495
     mi = MultiIndex.from_arrays(
         [
@@ -316,6 +376,9 @@ def test_sort_values_incomparable():
 @pytest.mark.parametrize("na_position", ["first", "last"])
 @pytest.mark.parametrize("dtype", ["float64", "Int64", "Float64"])
 def test_sort_values_with_na_na_position(dtype, na_position):
+    # [FUNCTION DOC]
+    # Parametrized over na_position and float/nullable dtypes. sort_values puts the row
+    # with a missing second-level value first or last as requested (51612).
     # 51612
     arrays = [
         Series([1, 1, 2], dtype=dtype),
@@ -338,6 +401,10 @@ def test_sort_values_with_na_na_position(dtype, na_position):
 
 
 def test_sort_unnecessary_warning():
+    # [FUNCTION DOC]
+    # sort_values on an index whose first level was replaced by values including NaN
+    # returns the expected sorted index (GH#55386).
+    # KNOWN ISSUE: although named after an unnecessary warning, the test does not explicitly assert that no warning is emitted.
     # GH#55386
     midx = MultiIndex.from_tuples([(1.5, 2), (3.5, 3), (0, 1)])
     midx = midx.set_levels([2.5, np.nan, 1], level=0)

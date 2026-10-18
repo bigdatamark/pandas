@@ -1,3 +1,7 @@
+# [MODULE DOC]
+# Tests for PeriodIndex.asfreq: conversions between all standard frequencies,
+# missing values, multiples, combined frequencies, interplay with astype and
+# rejection of unsupported frequencies.
 import re
 
 import pytest
@@ -13,7 +17,18 @@ from pandas.tseries import offsets
 
 
 class TestPeriodIndex:
+    # [CLASS DOC]
+    # Groups asfreq tests on PeriodIndex.
     def test_asfreq(self):
+        # [FUNCTION DOC]
+        # Builds one-element period indexes at year, quarter, month, day, hour, minute
+        # and second frequency all representing the same start moment, then verifies
+        # that converting each to every other frequency (using start-of-period,
+        # case-insensitive aliases) equals the corresponding index. An invalid how
+        # option raises a value error. Multiples of month are accepted and the result
+        # keeps the multiple in its frequency string while having the same ordinals as
+        # the plain monthly version.
+        # KNOWN ISSUE: the first quarterly conversion assertion is duplicated verbatim.
         pi1 = period_range(freq="Y", start="1/1/2001", end="1/1/2001")
         pi2 = period_range(freq="Q", start="1/1/2001", end="1/1/2001")
         pi3 = period_range(freq="M", start="1/1/2001", end="1/1/2001")
@@ -84,6 +99,8 @@ class TestPeriodIndex:
         assert result2.freqstr == "M"
 
     def test_asfreq_nat(self):
+        # [FUNCTION DOC]
+        # Missing values stay missing when converting monthly to quarterly.
         idx = PeriodIndex(["2011-01", "2011-02", "NaT", "2011-04"], freq="M")
         result = idx.asfreq(freq="Q")
         expected = PeriodIndex(["2011Q1", "2011Q1", "NaT", "2011Q2"], freq="Q")
@@ -91,6 +108,10 @@ class TestPeriodIndex:
 
     @pytest.mark.parametrize("freq", ["D", "3D"])
     def test_asfreq_mult_pi(self, freq):
+        # [FUNCTION DOC]
+        # Parametrized over a day frequency and a multiple of days. A 2-month index
+        # converts to end-of-period days by default and to start-of-period days with the
+        # start option; the frequency of the result matches the target.
         pi = PeriodIndex(["2001-01", "2001-02", "NaT", "2001-03"], freq="2M")
 
         result = pi.asfreq(freq)
@@ -104,6 +125,11 @@ class TestPeriodIndex:
         assert result.freq == exp.freq
 
     def test_asfreq_combined_pi(self):
+        # [FUNCTION DOC]
+        # Hour-frequency data converted to combined frequencies (day-plus-hour,
+        # hour-plus-day) with start/end options gives a 25-hour frequency index; the
+        # reverse conversion from combined frequency to hours shifts as expected; the
+        # frequencies equal the expected ones.
         pi = PeriodIndex(["2001-01-01 00:00", "2001-01-02 02:00", "NaT"], freq="h")
         exp = PeriodIndex(["2001-01-01 00:00", "2001-01-02 02:00", "NaT"], freq="25h")
         for freq, how in zip(["1D1h", "1h1D"], ["S", "E"]):
@@ -125,6 +151,9 @@ class TestPeriodIndex:
             assert result.freq == exp.freq
 
     def test_astype_asfreq(self):
+        # [FUNCTION DOC]
+        # asfreq and astype to a period dtype give the same results, including for a
+        # multiple of months.
         pi1 = PeriodIndex(["2011-01-01", "2011-02-01", "2011-03-01"], freq="D")
         exp = PeriodIndex(["2011-01", "2011-02", "2011-03"], freq="M")
         tm.assert_index_equal(pi1.asfreq("M"), exp)
@@ -135,6 +164,9 @@ class TestPeriodIndex:
         tm.assert_index_equal(pi1.astype("period[3M]"), exp)
 
     def test_asfreq_with_different_n(self):
+        # [FUNCTION DOC]
+        # A series indexed by a 2-month period index converted by asfreq to monthly
+        # shifts the index labels to the end of each multi-month period.
         ser = Series([1, 2], index=PeriodIndex(["2020-01", "2020-03"], freq="2M"))
         result = ser.asfreq("M")
 
@@ -152,6 +184,10 @@ class TestPeriodIndex:
         ],
     )
     def test_pi_asfreq_not_supported_frequency(self, freq):
+        # [FUNCTION DOC]
+        # Parametrized over frequencies (strings and offsets) not supported as period
+        # frequencies. asfreq raises a value error with one of several messages
+        # (GH#55785, GH#56945).
         # GH#55785, GH#56945
         msg = "|".join(
             [
@@ -174,6 +210,9 @@ class TestPeriodIndex:
         ],
     )
     def test_pi_asfreq_invalid_frequency(self, freq):
+        # [FUNCTION DOC]
+        # Parametrized over invalid frequency strings. asfreq raises a value error
+        # stating the frequency is invalid (GH#55785).
         # GH#55785
         msg = f"Invalid frequency: {freq}"
 

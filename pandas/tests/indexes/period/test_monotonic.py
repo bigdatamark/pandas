@@ -1,3 +1,5 @@
+# [MODULE DOC]
+# Tests for monotonicity flags of PeriodIndex.
 from pandas import (
     Period,
     PeriodIndex,
@@ -5,6 +7,10 @@ from pandas import (
 
 
 def test_is_monotonic_increasing():
+    # [FUNCTION DOC]
+    # Four ordered or reverse-ordered indexes (with and without ties) plus an unordered
+    # one; checks the increasing flag is true only for the non-decreasing ones
+    # (GH#17717).
     # GH#17717
     p0 = Period("2017-09-01")
     p1 = Period("2017-09-02")
@@ -24,6 +30,9 @@ def test_is_monotonic_increasing():
 
 
 def test_is_monotonic_decreasing():
+    # [FUNCTION DOC]
+    # Same indexes; checks the decreasing flag is true only for the non-increasing ones
+    # (GH#17717).
     # GH#17717
     p0 = Period("2017-09-01")
     p1 = Period("2017-09-02")

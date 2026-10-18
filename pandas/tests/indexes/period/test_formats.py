@@ -1,3 +1,6 @@
+# [MODULE DOC]
+# Tests for text and CSV-oriented formatting of PeriodIndex: values prepared for
+# CSV output, representation, representation inside a Series, and summary text.
 import numpy as np
 import pytest
 
@@ -10,6 +13,9 @@ import pandas._testing as tm
 
 
 def test_get_values_for_csv():
+    # [FUNCTION DOC]
+    # The private CSV helper returns an object array of strings; missing-value text
+    # applies only to missing entries; a date format string is honored.
     index = PeriodIndex(["2017-01-01", "2017-01-02", "2017-01-03"], freq="D")
 
     # First, with no arguments.
@@ -42,8 +48,14 @@ def test_get_values_for_csv():
 
 
 class TestPeriodIndexRendering:
+    # [CLASS DOC]
+    # Groups rendering tests.
     @pytest.mark.parametrize("method", ["__repr__", "__str__"])
     def test_representation(self, method):
+        # [FUNCTION DOC]
+        # Parametrized over the repr and str methods. Compares the textual form for
+        # empty, single, multiple, yearly, hourly with NaT, quarterly and
+        # multiple-frequency indexes (GH#7601).
         # GH#7601
         idx1 = PeriodIndex([], freq="D")
         idx2 = PeriodIndex(["2011-01-01"], freq="D")
@@ -90,6 +102,10 @@ class TestPeriodIndexRendering:
 
     # TODO: These are Series.__repr__ tests
     def test_representation_to_series(self):
+        # [FUNCTION DOC]
+        # Compares the representation of a Series built from various period indexes
+        # (GH#10971).
+        # KNOWN ISSUE: a TODO says these are Series representation tests misplaced in the index test module.
         # GH#10971
         idx1 = PeriodIndex([], freq="D")
         idx2 = PeriodIndex(["2011-01-01"], freq="D")
@@ -146,6 +162,9 @@ dtype: period[Q-DEC]"""
             assert result == expected
 
     def test_summary(self):
+        # [FUNCTION DOC]
+        # Compares the private summary text for the same family of indexes: entry count,
+        # range and frequency (GH#9116).
         # GH#9116
         idx1 = PeriodIndex([], freq="D")
         idx2 = PeriodIndex(["2011-01-01"], freq="D")

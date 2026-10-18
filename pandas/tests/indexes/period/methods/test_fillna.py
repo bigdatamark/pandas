@@ -1,3 +1,5 @@
+# [MODULE DOC]
+# Tests for PeriodIndex.fillna.
 from pandas import (
     Index,
     NaT,
@@ -8,7 +10,13 @@ import pandas._testing as tm
 
 
 class TestFillNA:
+    # [CLASS DOC]
+    # Groups fillna tests.
     def test_fillna_period(self):
+        # [FUNCTION DOC]
+        # An hourly index with a missing value: filling with an hourly Period keeps
+        # period dtype; filling with a string or a period of a different frequency
+        # produces an object index (GH#11343).
         # GH#11343
         idx = PeriodIndex(["2011-01-01 09:00", NaT, "2011-01-01 11:00"], freq="h")
 

@@ -1,3 +1,7 @@
+# [MODULE DOC]
+# Tests for indexing behavior of numeric Index objects (int64, uint64, float64 and
+# masked or arrow-backed numeric extension types): get_loc, get_indexer with fill
+# methods and tolerance, where, take, membership, slice_locs and slice bounds.
 import numpy as np
 import pytest
 
@@ -18,16 +22,25 @@ from pandas.core.arrays import (
 
 
 class TestGetLoc:
+    # [CLASS DOC]
+    # Groups get_loc tests for numeric indexes.
     def test_get_loc(self):
+        # [FUNCTION DOC]
+        # Position lookup of an existing integer label.
         index = Index([0, 1, 2])
         assert index.get_loc(1) == 1
 
     def test_get_loc_raises_bad_label(self):
+        # [FUNCTION DOC]
+        # A list-like label raises an invalid-index error showing the list.
         index = Index([0, 1, 2])
         with pytest.raises(InvalidIndexError, match=r"\[1, 2\]"):
             index.get_loc([1, 2])
 
     def test_get_loc_float64(self):
+        # [FUNCTION DOC]
+        # On a float index, strings, absent floats and booleans raise key errors showing
+        # the key.
         idx = Index([0.0, 1.0, 2.0], dtype=np.float64)
 
         with pytest.raises(KeyError, match="^'foo'$"):
@@ -40,6 +53,10 @@ class TestGetLoc:
             idx.get_loc(False)
 
     def test_get_loc_na(self):
+        # [FUNCTION DOC]
+        # NaN lookups in float indexes: unique NaN gives its position; with repeated
+        # NaN, slice_locs on NaN raises a key error saying the left bound is non-unique,
+        # both when the NaN positions could be a slice and when they cannot.
         idx = Index([np.nan, 1, 2], dtype=np.float64)
         assert idx.get_loc(1) == 1
         assert idx.get_loc(np.nan) == 0
@@ -59,6 +76,9 @@ class TestGetLoc:
             idx.slice_locs(np.nan)
 
     def test_get_loc_missing_nan(self):
+        # [FUNCTION DOC]
+        # Absent label and NaN raise key errors; list-like raises an invalid-index error
+        # (GH#8569).
         # GH#8569
         idx = Index([1, 2], dtype=np.float64)
         assert idx.get_loc(1) == 0
@@ -72,6 +92,9 @@ class TestGetLoc:
 
     @pytest.mark.parametrize("vals", [[1], [1.0], [Timestamp("2019-12-31")], ["test"]])
     def test_get_loc_float_index_nan_with_method(self, vals):
+        # [FUNCTION DOC]
+        # Parametrized over index value kinds. get_loc of NaN raises a key error
+        # (GH#39382).
         # GH#39382
         idx = Index(vals)
         with pytest.raises(KeyError, match="nan"):
@@ -79,6 +102,10 @@ class TestGetLoc:
 
     @pytest.mark.parametrize("dtype", ["f8", "i8", "u8"])
     def test_get_loc_numericindex_none_raises(self, dtype):
+        # [FUNCTION DOC]
+        # Parametrized over float, signed and unsigned dtypes with a very large index.
+        # get_loc of none raises a key error when the lookup goes through ordered
+        # search.
         # case that goes through searchsorted and key is non-comparable to values
         arr = np.arange(10**7, dtype=dtype)
         idx = Index(arr)
@@ -86,6 +113,9 @@ class TestGetLoc:
             idx.get_loc(None)
 
     def test_get_loc_overflows(self):
+        # [FUNCTION DOC]
+        # A key beyond the 64-bit integer limit raises key errors both from the index
+        # and from its engine.
         # unique but non-monotonic goes through IndexEngine.mapping.get_item
         idx = Index([0, 2, 1])
 
@@ -98,7 +128,11 @@ class TestGetLoc:
 
 
 class TestGetIndexer:
+    # [CLASS DOC]
+    # Groups get_indexer tests for numeric indexes.
     def test_get_indexer(self):
+        # [FUNCTION DOC]
+        # Exact-match indexer positions with -1 for absent labels.
         index1 = Index([1, 2, 3, 4, 5])
         index2 = Index([2, 4, 6])
 
@@ -117,6 +151,9 @@ class TestGetIndexer:
         ],
     )
     def test_get_indexer_methods(self, reverse, expected, method):
+        # [FUNCTION DOC]
+        # Parametrized over reversal and the pad, ffill, backfill, bfill methods. Checks
+        # fill positions, and that reversing the target reverses the result.
         index1 = Index([1, 2, 3, 4, 5])
         index2 = Index([2, 4, 6])
         expected = np.array(expected, dtype=np.intp)
@@ -128,6 +165,8 @@ class TestGetIndexer:
         tm.assert_almost_equal(result, expected)
 
     def test_get_indexer_invalid(self):
+        # [FUNCTION DOC]
+        # A tolerance or limit without a fill method raises a value error (GH10411).
         # GH10411
         index = Index(np.arange(10))
 
@@ -158,6 +197,10 @@ class TestGetIndexer:
         ],
     )
     def test_get_indexer_nearest(self, method, tolerance, indexer, expected):
+        # [FUNCTION DOC]
+        # Parametrized over fill method, scalar tolerance, target values and expected
+        # positions. Checks pad, backfill and nearest results for exact and fractional
+        # targets and tolerances.
         index = Index(np.arange(10))
 
         actual = index.get_indexer(indexer, method=method, tolerance=tolerance)
@@ -175,6 +218,10 @@ class TestGetIndexer:
     def test_get_indexer_nearest_listlike_tolerance(
         self, tolerance, expected, listtype
     ):
+        # [FUNCTION DOC]
+        # Parametrized over container type (list, tuple, Series, array) and tolerance
+        # values. Nearest lookup with an element-wise tolerance gives expected
+        # positions.
         index = Index(np.arange(10))
 
         actual = index.get_indexer(
@@ -183,6 +230,9 @@ class TestGetIndexer:
         tm.assert_numpy_array_equal(actual, np.array(expected, dtype=np.intp))
 
     def test_get_indexer_nearest_error(self):
+        # [FUNCTION DOC]
+        # Nearest with a limit raises a value error; a tolerance of different length
+        # than the target raises a value error about size.
         index = Index(np.arange(10))
         with pytest.raises(ValueError, match="limit argument"):
             index.get_indexer([1, 0], method="nearest", limit=1)
@@ -195,6 +245,10 @@ class TestGetIndexer:
         [("pad", [8, 7, 0]), ("backfill", [9, 8, 1]), ("nearest", [9, 7, 0])],
     )
     def test_get_indexer_nearest_decreasing(self, method, expected):
+        # [FUNCTION DOC]
+        # Parametrized over method and expected positions. On a decreasing index exact
+        # targets map to expected positions and fractional targets follow
+        # pad/backfill/nearest semantics.
         index = Index(np.arange(10))[::-1]
 
         actual = index.get_indexer([0, 5, 9], method=method)
@@ -206,6 +260,10 @@ class TestGetIndexer:
     @pytest.mark.parametrize("idx_dtype", ["int64", "float64", "uint64", "range"])
     @pytest.mark.parametrize("method", ["get_indexer", "get_indexer_non_unique"])
     def test_get_indexer_numeric_index_boolean_target(self, method, idx_dtype):
+        # [FUNCTION DOC]
+        # Parametrized over index types (including a range) and both indexer methods. A
+        # boolean target never matches numeric values: all -1, and for the non-unique
+        # variant all targets reported as missing (GH 16877).
         # GH 16877
 
         if idx_dtype == "range":
@@ -226,6 +284,9 @@ class TestGetIndexer:
 
     @pytest.mark.parametrize("method", ["pad", "backfill", "nearest"])
     def test_get_indexer_with_method_numeric_vs_bool(self, method):
+        # [FUNCTION DOC]
+        # Using a fill method between numeric and boolean indexes (either direction)
+        # raises a type error about comparison.
         left = Index([1, 2, 3])
         right = Index([True, False])
 
@@ -236,6 +297,9 @@ class TestGetIndexer:
             right.get_indexer(left, method=method)
 
     def test_get_indexer_numeric_vs_bool(self):
+        # [FUNCTION DOC]
+        # Without a fill method, numeric versus boolean gives all -1 in both directions
+        # for both indexer methods.
         left = Index([1, 2, 3])
         right = Index([True, False])
 
@@ -256,6 +320,9 @@ class TestGetIndexer:
         tm.assert_numpy_array_equal(res, expected)
 
     def test_get_indexer_float64(self):
+        # [FUNCTION DOC]
+        # Float index indexer for exact match and for pad, backfill, nearest on
+        # fractional targets.
         idx = Index([0.0, 1.0, 2.0], dtype=np.float64)
         tm.assert_numpy_array_equal(
             idx.get_indexer(idx), np.array([0, 1, 2], dtype=np.intp)
@@ -273,12 +340,16 @@ class TestGetIndexer:
         )
 
     def test_get_indexer_nan(self):
+        # [FUNCTION DOC]
+        # Indexer of NaN in a float index returns the NaN position (GH#7820).
         # GH#7820
         result = Index([1, 2, np.nan], dtype=np.float64).get_indexer([np.nan])
         expected = np.array([2], dtype=np.intp)
         tm.assert_numpy_array_equal(result, expected)
 
     def test_get_indexer_int64(self):
+        # [FUNCTION DOC]
+        # Integer index indexer for exact, pad and backfill.
         index = Index(range(0, 20, 2), dtype=np.int64)
         target = Index(np.arange(10), dtype=np.int64)
         indexer = index.get_indexer(target)
@@ -296,6 +367,8 @@ class TestGetIndexer:
         tm.assert_numpy_array_equal(indexer, expected)
 
     def test_get_indexer_uint64(self):
+        # [FUNCTION DOC]
+        # Same for large unsigned values.
         index_large = Index(
             [2**63, 2**63 + 10, 2**63 + 15, 2**63 + 20, 2**63 + 25],
             dtype=np.uint64,
@@ -317,6 +390,10 @@ class TestGetIndexer:
 
     @pytest.mark.parametrize("val, val2", [(4, 5), (4, 4), (4, NA), (NA, NA)])
     def test_get_loc_masked(self, val, val2, any_numeric_ea_and_arrow_dtype):
+        # [FUNCTION DOC]
+        # Parametrized over trailing value pairs and numeric extension or arrow dtypes.
+        # get_loc finds an existing value and raises a key error for an absent value
+        # (GH#39133).
         # GH#39133
         idx = Index([1, 2, 3, val, val2], dtype=any_numeric_ea_and_arrow_dtype)
         result = idx.get_loc(2)
@@ -326,6 +403,9 @@ class TestGetIndexer:
             idx.get_loc(9)
 
     def test_get_loc_masked_na(self, any_numeric_ea_and_arrow_dtype):
+        # [FUNCTION DOC]
+        # get_loc of NA returns the single position, a boolean mask for repeated NA, and
+        # raises a key error when none exists (GH#39133).
         # GH#39133
         idx = Index([1, 2, NA], dtype=any_numeric_ea_and_arrow_dtype)
         result = idx.get_loc(NA)
@@ -340,6 +420,11 @@ class TestGetIndexer:
             idx.get_loc(NA)
 
     def test_get_loc_masked_na_and_nan(self, using_nan_is_na):
+        # [FUNCTION DOC]
+        # Index of nullable floats with both a masked NA and a real NaN. Depending on
+        # the nan-is-na option NA and NaN are treated as the same (mask result) or
+        # separately (distinct positions, key errors when only the other is present)
+        # (GH#39133).
         # GH#39133
         mask = np.array([False, False, True, False])
         if using_nan_is_na:
@@ -386,6 +471,9 @@ class TestGetIndexer:
 
     @pytest.mark.parametrize("val", [4, 2])
     def test_get_indexer_masked_na(self, any_numeric_ea_and_arrow_dtype, val):
+        # [FUNCTION DOC]
+        # Parametrized over a trailing value. get_indexer_for finds masked NA position
+        # among other labels (GH#39133).
         # GH#39133
         idx = Index([1, 2, NA, 3, val], dtype=any_numeric_ea_and_arrow_dtype)
         result = idx.get_indexer_for([1, NA, 5])
@@ -394,6 +482,10 @@ class TestGetIndexer:
 
     @pytest.mark.parametrize("dtype", ["boolean", "bool[pyarrow]"])
     def test_get_indexer_masked_na_boolean(self, dtype):
+        # [FUNCTION DOC]
+        # Parametrized over masked-boolean and pyarrow boolean (skipped if pyarrow is
+        # unavailable). get_loc finds False and NA (GH#39133).
+        # KNOWN ISSUE: named as an indexer test, but it calls the location lookup method.
         # GH#39133
         if dtype == "bool[pyarrow]":
             pytest.importorskip("pyarrow")
@@ -404,6 +496,10 @@ class TestGetIndexer:
         assert result == 2
 
     def test_get_indexer_arrow_dictionary_target(self):
+        # [FUNCTION DOC]
+        # Skipped without pyarrow. A dictionary-encoded arrow target is matched by value
+        # in both get_indexer and get_indexer_non_unique, with the missing position
+        # reported by the latter.
         pa = pytest.importorskip("pyarrow")
         target = Index(
             ArrowExtensionArray(
@@ -426,6 +522,8 @@ class TestGetIndexer:
 
 
 class TestWhere:
+    # [CLASS DOC]
+    # Groups where tests for numeric indexes.
     @pytest.mark.parametrize(
         "index",
         [
@@ -435,6 +533,11 @@ class TestWhere:
         ],
     )
     def test_where(self, listlike_box, index):
+        # [FUNCTION DOC]
+        # Parametrized over float, signed and unsigned indexes and the list-like
+        # fixture. A condition with one false entry yields a float index with a missing
+        # value there.
+        # KNOWN ISSUE: the result for the all-true condition is computed but never asserted.
         cond = [True] * len(index)
         expected = index
         result = index.where(listlike_box(cond))
@@ -445,6 +548,9 @@ class TestWhere:
         tm.assert_index_equal(result, expected)
 
     def test_where_uint64(self):
+        # [FUNCTION DOC]
+        # where and putmask on an unsigned index with a signed replacement keep the
+        # unsigned dtype.
         idx = Index([0, 6, 2], dtype=np.uint64)
         mask = np.array([False, True, False])
         other = np.array([1], dtype=np.int64)
@@ -458,6 +564,9 @@ class TestWhere:
         tm.assert_index_equal(result, expected)
 
     def test_where_infers_type_instead_of_trying_to_convert_string_to_float(self):
+        # [FUNCTION DOC]
+        # where with string replacement values falls back to a mixed object index rather
+        # than failing (GH 32413).
         # GH 32413
         index = Index([1, np.nan])
         cond = index.notna()
@@ -470,13 +579,21 @@ class TestWhere:
 
 
 class TestTake:
+    # [CLASS DOC]
+    # Groups take tests for numeric indexes.
     @pytest.mark.parametrize("idx_dtype", [np.float64, np.int64, np.uint64])
     def test_take_preserve_name(self, idx_dtype):
+        # [FUNCTION DOC]
+        # Parametrized over dtypes; take keeps the name.
         index = Index([1, 2, 3, 4], dtype=idx_dtype, name="foo")
         taken = index.take([3, 0, 1])
         assert index.name == taken.name
 
     def test_take_fill_value_float64(self):
+        # [FUNCTION DOC]
+        # take with a negative position wraps, with fill enabled uses NaN, with fill
+        # disabled wraps; positions below -1 with fill raise value errors; out-of-bounds
+        # raises an index error (GH 12631).
         # GH 12631
         idx = Index([1.0, 2.0, 3.0], name="xxx", dtype=np.float64)
         result = idx.take(np.array([1, 0, -1]))
@@ -507,6 +624,10 @@ class TestTake:
 
     @pytest.mark.parametrize("dtype", [np.int64, np.uint64])
     def test_take_fill_value_ints(self, dtype):
+        # [FUNCTION DOC]
+        # Parametrized over signed and unsigned. Wrapping works; fill with value raises
+        # a value error that integer indexes cannot hold NA; fill disabled wraps
+        # (gh-12631).
         # see gh-12631
         idx = Index([1, 2, 3], dtype=dtype, name="xxx")
         result = idx.take(np.array([1, 0, -1]))
@@ -536,24 +657,38 @@ class TestTake:
 
 
 class TestContains:
+    # [CLASS DOC]
+    # Groups membership tests for numeric indexes.
     @pytest.mark.parametrize("dtype", [np.float64, np.int64, np.uint64])
     def test_contains_none(self, dtype):
+        # [FUNCTION DOC]
+        # Parametrized over dtypes. none is not contained and no error is raised
+        # (GH#35788).
         # GH#35788 should return False, not raise TypeError
         index = Index([0, 1, 2, 3, 4], dtype=dtype)
         assert None not in index
 
     def test_contains_float64_nans(self):
+        # [FUNCTION DOC]
+        # NaN is contained in a float index holding NaN.
         index = Index([1.0, 2.0, np.nan], dtype=np.float64)
         assert np.nan in index
 
     def test_contains_float64_not_nans(self):
+        # [FUNCTION DOC]
+        # An ordinary float is contained in an index that also holds NaN.
         index = Index([1.0, 2.0, np.nan], dtype=np.float64)
         assert 1.0 in index
 
 
 class TestSliceLocs:
+    # [CLASS DOC]
+    # Groups slice_locs tests for numeric indexes.
     @pytest.mark.parametrize("dtype", [int, float])
     def test_slice_locs(self, dtype):
+        # [FUNCTION DOC]
+        # Parametrized over int and float. Start/end positions for several bounds,
+        # including reversed index.
         index = Index(np.array([0, 1, 2, 5, 6, 7, 9, 10], dtype=dtype))
         n = len(index)
 
@@ -571,6 +706,8 @@ class TestSliceLocs:
 
     @pytest.mark.parametrize("dtype", [int, float])
     def test_slice_locs_float_locs(self, dtype):
+        # [FUNCTION DOC]
+        # Parametrized over int and float. Fractional bounds, also reversed.
         index = Index(np.array([0, 1, 2, 5, 6, 7, 9, 10], dtype=dtype))
         n = len(index)
         assert index.slice_locs(5.0, 10.0) == (3, n)
@@ -582,6 +719,9 @@ class TestSliceLocs:
 
     @pytest.mark.parametrize("dtype", [int, float])
     def test_slice_locs_dup_numeric(self, dtype):
+        # [FUNCTION DOC]
+        # Parametrized over int and float. Duplicated labels yield spans covering the
+        # duplicates, also reversed.
         index = Index(np.array([10, 12, 12, 14], dtype=dtype))
         assert index.slice_locs(12, 12) == (1, 3)
         assert index.slice_locs(11, 13) == (1, 3)
@@ -591,6 +731,8 @@ class TestSliceLocs:
         assert index2.slice_locs(13, 11) == (1, 3)
 
     def test_slice_locs_na(self):
+        # [FUNCTION DOC]
+        # Bounds with NaN work when NaN values are first or in the middle of the index.
         index = Index([np.nan, 1, 2])
         assert index.slice_locs(1) == (1, 3)
         assert index.slice_locs(np.nan) == (0, 3)
@@ -599,6 +741,9 @@ class TestSliceLocs:
         assert index.slice_locs(np.nan) == (1, 5)
 
     def test_slice_locs_na_raises(self):
+        # [FUNCTION DOC]
+        # Missing label bounds on an index with NaN raise key errors about a
+        # non-monotonic index with a missing label.
         index = Index([np.nan, 1, 2])
         msg = "non-monotonic index with a missing label 1.5"
         with pytest.raises(KeyError, match=msg):
@@ -609,8 +754,13 @@ class TestSliceLocs:
 
 
 class TestGetSliceBounds:
+    # [CLASS DOC]
+    # Groups get_slice_bound tests for numeric indexes.
     @pytest.mark.parametrize("side, expected", [("left", 4), ("right", 5)])
     def test_get_slice_bounds_within(self, side, expected):
+        # [FUNCTION DOC]
+        # Parametrized over side. A bound inside the range returns the left or right
+        # insertion point.
         index = Index(range(6))
         result = index.get_slice_bound(4, side=side)
         assert result == expected
@@ -618,6 +768,9 @@ class TestGetSliceBounds:
     @pytest.mark.parametrize("side", ["left", "right"])
     @pytest.mark.parametrize("bound, expected", [(-1, 0), (10, 6)])
     def test_get_slice_bounds_outside(self, side, expected, bound):
+        # [FUNCTION DOC]
+        # Parametrized over side and out-of-range bounds. Bounds below return zero,
+        # above return the length.
         index = Index(range(6))
         result = index.get_slice_bound(bound, side=side)
         assert result == expected

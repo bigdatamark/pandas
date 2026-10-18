@@ -1,3 +1,9 @@
+# [MODULE DOC]
+# Tests of MultiIndex internal consistency and integrity: integer code dtypes,
+# boxed values, hash-table/engine behavior with a patched size cutoff, immutability
+# of metadata, cache resets when levels change, and a few misc checks
+# (memory usage, number of levels, isna). Several tests patch the engine size
+# cutoff in the index library through monkeypatch; patches are reverted on exit.
 import re
 
 import numpy as np
@@ -18,6 +24,9 @@ import pandas._testing as tm
 
 
 def test_labels_dtypes():
+    # [FUNCTION DOC]
+    # Verifies that the integer code arrays use the smallest signed integer type
+    # (8-bit up to 32-bit as levels grow) and contain no negative values (GH 8456).
     # GH 8456
     i = MultiIndex.from_tuples([("A", 1), ("A", 2)])
     assert i.codes[0].dtype == "int8"
@@ -36,6 +45,10 @@ def test_labels_dtypes():
 
 
 def test_values_boxed():
+    # [FUNCTION DOC]
+    # The values of a MultiIndex of integer/timestamp tuples (with a NaT) equal an
+    # object array of the tuples, and a sliced index's values agree with slicing the
+    # values, so both boxing code branches agree.
     tuples = [
         (1, pd.Timestamp("2000-01-01")),
         (2, pd.NaT),
@@ -52,6 +65,10 @@ def test_values_boxed():
 
 
 def test_values_multiindex_datetimeindex():
+    # [FUNCTION DOC]
+    # Values of a MultiIndex with naive and timezone-aware datetime levels
+    # round-trip into the original datetime indexes, both for the full index and for
+    # a slice (where levels are longer than codes).
     # Test to ensure we hit the boxing / nobox part of MI.values
     ints = np.arange(10**18, 10**18 + 5)
     naive = pd.DatetimeIndex(ints)
@@ -78,6 +95,9 @@ def test_values_multiindex_datetimeindex():
 
 
 def test_values_multiindex_periodindex():
+    # [FUNCTION DOC]
+    # Same as above for an integer level and a period level; the values round-trip
+    # into the original integer index and period index, for the full index and a slice.
     # Test to ensure we hit the boxing / nobox part of MI.values
     ints = np.arange(2007, 2012)
     pidx = pd.PeriodIndex(ints, freq="D")
@@ -102,6 +122,10 @@ def test_values_multiindex_periodindex():
 
 
 def test_consistency():
+    # [FUNCTION DOC]
+    # Builds a MultiIndex with 70000 major entries and checks it constructs; then
+    # builds one with repeated code pairs and asserts it reports non-unique.
+    # KNOWN ISSUE: the first constructed index is assigned but never asserted on or used; only successful construction is exercised.
     # need to construct an overflow
     major_axis = list(range(70000))
     minor_axis = list(range(10))
@@ -126,6 +150,10 @@ def test_consistency():
 
 @pytest.mark.slow
 def test_hash_collisions(monkeypatch):
+    # [FUNCTION DOC]
+    # Slow test. With the engine size cutoff patched to 50, a 64-entry product index
+    # must map all of its own values to their positions via the indexer and the
+    # first/last few entries via get_loc, i.e. no hash collisions.
     # non-smoke test that we don't get hash collisions
     size_cutoff = 50
     with monkeypatch.context() as m:
@@ -142,10 +170,15 @@ def test_hash_collisions(monkeypatch):
 
 
 def test_dims():
+    # [FUNCTION DOC]
+    # Placeholder test with no body; verifies nothing.
     pass
 
 
 def test_take_invalid_kwargs():
+    # [FUNCTION DOC]
+    # take on a MultiIndex rejects unknown keyword arguments (type error) and the
+    # unsupported out and mode parameters (value errors with specific messages).
     vals = [["A", "B"], [pd.Timestamp("2011-01-01"), pd.Timestamp("2011-01-02")]]
     idx = MultiIndex.from_product(vals, names=["str", "dt"])
     indices = [1, 2]
@@ -164,6 +197,9 @@ def test_take_invalid_kwargs():
 
 
 def test_isna_behavior(idx):
+    # [FUNCTION DOC]
+    # The module-level isna function applied to a MultiIndex raises a not-implemented
+    # error saying isna is not defined for MultiIndex (must not crash, GH5123).
     # should not segfault GH5123
     # NOTE: if MI representation changes, may make sense to allow
     # isna(MI)
@@ -173,6 +209,10 @@ def test_isna_behavior(idx):
 
 
 def test_large_multiindex_error(monkeypatch):
+    # [FUNCTION DOC]
+    # With the engine cutoff patched to 50, label lookups through loc with missing
+    # keys must raise key errors showing the tuple, for frames whose index is just
+    # below and just above the cutoff (GH12527).
     # GH12527
     size_cutoff = 50
     with monkeypatch.context() as m:
@@ -198,6 +238,10 @@ def test_large_multiindex_error(monkeypatch):
 
 
 def test_mi_hashtable_populated_attribute_error(monkeypatch):
+    # [FUNCTION DOC]
+    # After the cutoff is patched to 50 and a frame with a 50-element MultiIndex is
+    # built, accessing a missing attribute on a column Series must raise the normal
+    # attribute error and not an engine-related error (GH 18165).
     # GH 18165
     monkeypatch.setattr(libindex, "_SIZE_CUTOFF", 50)
     r = range(50)
@@ -209,11 +253,18 @@ def test_mi_hashtable_populated_attribute_error(monkeypatch):
 
 
 def test_can_hold_identifiers(idx):
+    # [FUNCTION DOC]
+    # The helper reporting whether an index can hold identifiers and holds a given
+    # name returns true for the first element of the fixture index.
     key = idx[0]
     assert idx._can_hold_identifiers_and_holds_name(key) is True
 
 
 def test_metadata_immutable(idx):
+    # [FUNCTION DOC]
+    # Levels, codes and names are exposed as frozen containers: item assignment
+    # raises a type error about mutable operations, and assigning into a code array
+    # raises a value error about a read-only destination.
     levels, codes = idx.levels, idx.codes
     # shouldn't be able to set at either the top level or base level
     mutable_regex = re.compile("does not support mutable operations")
@@ -233,6 +284,9 @@ def test_metadata_immutable(idx):
 
 
 def test_level_setting_resets_attributes():
+    # [FUNCTION DOC]
+    # Setting new levels that change ordering resets the cached monotonic property
+    # (index no longer monotonic increasing).
     ind = MultiIndex.from_arrays([["A", "A", "B", "B", "B"], [1, 2, 1, 2, 3]])
     assert ind.is_monotonic_increasing
     ind = ind.set_levels([["A", "B"], [1, 3, 2]])
@@ -241,6 +295,10 @@ def test_level_setting_resets_attributes():
 
 
 def test_rangeindex_fallback_coercion_bug():
+    # [FUNCTION DOC]
+    # Concatenating two stacked frames along columns yields a frame with a MultiIndex
+    # whose levels, once named, equal the expected product index and whose level
+    # values retain integer dtype (GH 12893).
     # GH 12893
     df1 = pd.DataFrame(np.arange(100).reshape((10, 10)))
     df2 = pd.DataFrame(np.arange(100).reshape((10, 10)))
@@ -266,6 +324,10 @@ def test_rangeindex_fallback_coercion_bug():
 
 
 def test_memory_usage(idx):
+    # [FUNCTION DOC]
+    # Memory usage grows after the engine is built by a lookup (and further with
+    # deep inspection for object-like data); an empty index reports zero.
+    # KNOWN ISSUE: the isinstance check against RangeIndex/IntervalIndex and the object inferred-type branch are never relevant for MultiIndex fixtures, so they are effectively dead code copied from the generic base test.
     result = idx.memory_usage()
     if len(idx):
         idx.get_loc(idx[0])
@@ -286,4 +348,6 @@ def test_memory_usage(idx):
 
 
 def test_nlevels(idx):
+    # [FUNCTION DOC]
+    # The fixture index has two levels.
     assert idx.nlevels == 2

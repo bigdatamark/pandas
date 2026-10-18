@@ -1,3 +1,5 @@
+# [MODULE DOC]
+# Tests of conversion of PeriodIndex to ordinals and lists.
 import numpy as np
 import pytest
 
@@ -10,6 +12,8 @@ import pandas._testing as tm
 
 
 class TestPeriodRepresentation:
+    # [CLASS DOC]
+    # Groups tests that period ordinals match numpy unit semantics.
     """
     Wish to match NumPy units
     """
@@ -35,6 +39,10 @@ class TestPeriodRepresentation:
         "ignore:Period with BDay freq is deprecated:FutureWarning"
     )
     def test_freq(self, freq, base_date):
+        # [FUNCTION DOC]
+        # Parametrized over frequency and base date. A range of ten periods starting at
+        # the epoch has ordinals zero through nine; business-day deprecation warnings
+        # ignored.
         rng = period_range(start=base_date, periods=10, freq=freq)
         exp = np.arange(10, dtype=np.int64)
 
@@ -42,7 +50,11 @@ class TestPeriodRepresentation:
 
 
 class TestPeriodIndexConversion:
+    # [CLASS DOC]
+    # Groups conversion tests.
     def test_tolist(self):
+        # [FUNCTION DOC]
+        # tolist returns Period objects that rebuild an equal index.
         index = period_range(freq="Y", start="1/1/2001", end="12/1/2009")
         rs = index.tolist()
         for x in rs:

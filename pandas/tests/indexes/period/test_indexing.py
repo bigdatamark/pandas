@@ -1,3 +1,8 @@
+# [MODULE DOC]
+# Tests for indexing PeriodIndex: element and slice access (including partial
+# string slicing), get_loc, get_indexer with mismatched dtypes and fill methods,
+# where, take, containment and asof_locs. At import time it builds three
+# module-level date and integer indexes used to parametrize a fixture.
 from datetime import datetime
 import re
 
@@ -40,16 +45,29 @@ rng = pd.Index(range(3))
     ]
 )
 def non_comparable_idx(request):
+    # [FUNCTION DOC]
+    # HELPER: parametrized fixture for the get_indexer mismatch tests.
+    # Yields, one at a time, a length-3 index that cannot be compared to a daily period
+    # index: date index, timezone-aware date index, weekly period index, timedelta
+    # index, integer-range index, integer index, float index, unsigned index and an
+    # interval index.
     # All have length 3
     return request.param
 
 
 class TestGetItem:
+    # [CLASS DOC]
+    # Groups tests of element and slice access.
     def test_getitem_slice_keeps_name(self):
+        # [FUNCTION DOC]
+        # Slicing keeps the index name.
         idx = period_range("20010101", periods=10, freq="D", name="bob")
         assert idx.name == idx[1:].name
 
     def test_getitem(self):
+        # [FUNCTION DOC]
+        # Scalar, slice, strided, negative-start and reversed access on a daily range
+        # return the expected Periods or PeriodIndex with name and freq kept.
         idx1 = period_range("2011-01-01", "2011-01-31", freq="D", name="idx")
 
         for idx in [idx1]:
@@ -96,6 +114,9 @@ class TestGetItem:
             assert result.freq == "D"
 
     def test_getitem_index(self):
+        # [FUNCTION DOC]
+        # Integer list and boolean mask selections return the matching subset with name
+        # and freq.
         idx = period_range("2007-01", periods=10, freq="M", name="x")
 
         result = idx[[1, 3, 5]]
@@ -109,6 +130,10 @@ class TestGetItem:
         tm.assert_index_equal(result, exp)
 
     def test_getitem_partial(self):
+        # [FUNCTION DOC]
+        # Series with monthly period index: partial year/month/quarter strings and
+        # slices select the expected counts; unknown year raises a key error; a
+        # duplicated non-unique index raises a key error about the left slice bound.
         rng = period_range("2007-01", periods=50, freq="M")
         ts = Series(np.random.default_rng(2).standard_normal(len(rng)), rng)
 
@@ -143,6 +168,9 @@ class TestGetItem:
             ts[slice("2008", "2009")]
 
     def test_getitem_datetime(self):
+        # [FUNCTION DOC]
+        # Slicing a weekly series with datetime bounds beyond the data range returns the
+        # whole series.
         rng = period_range(start="2012-01-01", periods=10, freq="W-MON")
         ts = Series(range(len(rng)), index=rng)
 
@@ -153,6 +181,9 @@ class TestGetItem:
         tm.assert_series_equal(rs, ts)
 
     def test_getitem_nat(self):
+        # [FUNCTION DOC]
+        # NaT element in an index: positional access gives NaT, label access with NaT
+        # works for both a numeric and a Period-valued Series.
         idx = PeriodIndex(["2011-01", "NaT", "2011-02"], freq="M")
         assert idx[0] == Period("2011-01", freq="M")
         assert idx[1] is NaT
@@ -165,6 +196,8 @@ class TestGetItem:
         assert s[NaT] is NaT
 
     def test_getitem_list_periods(self):
+        # [FUNCTION DOC]
+        # A list of Period labels on a series selects the matching row (GH 7710).
         # GH 7710
         rng = period_range(start="2012-01-01", periods=10, freq="D")
         ts = Series(range(len(rng)), index=rng)
@@ -173,6 +206,12 @@ class TestGetItem:
 
     @pytest.mark.arm_slow
     def test_getitem_seconds(self):
+        # [FUNCTION DOC]
+        # Slow-marked on ARM. For a datetime index and a period index at second
+        # resolution, indexing the index itself with a string raises an index error
+        # about integers and slices; Series partial string selection returns expected
+        # time slices (GH#6716).
+        # KNOWN ISSUE: the comment says indexing the index raises a value error while the code expects an index error.
         # GH#6716
         didx = date_range(start="2013/01/01 09:00:00", freq="s", periods=4000)
         pidx = period_range(start="2013/01/01 09:00:00", freq="s", periods=4000)
@@ -207,6 +246,12 @@ class TestGetItem:
         ],
     )
     def test_getitem_day(self, idx_range):
+        # [FUNCTION DOC]
+        # Parametrized over date range and period range. Same checks at daily
+        # resolution: string indexing on the index raises an index error; partial
+        # strings on a Series select month/year slices; finer strings raise key errors
+        # (GH#6716).
+        # KNOWN ISSUE: the comment says a value error is raised for indexing the index, but the code expects an index error.
         # GH#6716
         # Confirm DatetimeIndex and PeriodIndex works identically
         # getitem against index should raise ValueError
@@ -237,7 +282,12 @@ class TestGetItem:
 
 
 class TestGetLoc:
+    # [CLASS DOC]
+    # Groups get_loc tests.
     def test_get_loc_msg(self):
+        # [FUNCTION DOC]
+        # A missing Period raises a key error whose text and first argument contain the
+        # period.
         idx = period_range("2000-1-1", freq="Y", periods=10)
         bad_period = Period("2012", "Y")
         with pytest.raises(KeyError, match=r"^Period\('2012', 'Y-DEC'\)$"):
@@ -249,6 +299,9 @@ class TestGetLoc:
             assert inst.args[0] == bad_period
 
     def test_get_loc_nat(self):
+        # [FUNCTION DOC]
+        # Date and period indexes both find NaT with any missing marker (NaT, none,
+        # float NaN).
         didx = DatetimeIndex(["2011-01-01", "NaT", "2011-01-03"])
         pidx = PeriodIndex(["2011-01-01", "NaT", "2011-01-03"], freq="M")
 
@@ -260,6 +313,11 @@ class TestGetLoc:
             assert idx.get_loc(np.nan) == 1
 
     def test_get_loc(self):
+        # [FUNCTION DOC]
+        # Positions for unique increasing, duplicated increasing (slice), and
+        # non-monotonic duplicated (mask) indexes, for Period and string keys; unknown
+        # string or float keys raise key errors; an index as key raises an invalid-index
+        # error (GH 17717).
         # GH 17717
         p0 = Period("2017-09-01")
         p1 = Period("2017-09-02")
@@ -318,6 +376,8 @@ class TestGetLoc:
         tm.assert_numpy_array_equal(idx2.get_loc(str(p2)), expected_idx2_p2)
 
     def test_get_loc_integer(self):
+        # [FUNCTION DOC]
+        # Integer keys equal to ordinals raise key errors (not interpreted as periods).
         dti = date_range("2016-01-01", periods=3)
         pi = dti.to_period("D")
         with pytest.raises(KeyError, match="16801"):
@@ -328,6 +388,9 @@ class TestGetLoc:
             pi2.get_loc(46)
 
     def test_get_loc_invalid_string_raises_keyerror(self):
+        # [FUNCTION DOC]
+        # A non-period-like string raises a key error in get_loc, loc and getitem, and
+        # is not contained (GH#34240).
         # GH#34240
         pi = period_range("2000", periods=3, name="A")
         with pytest.raises(KeyError, match="A"):
@@ -344,6 +407,9 @@ class TestGetLoc:
         assert "A" not in pi
 
     def test_get_loc_mismatched_freq(self):
+        # [FUNCTION DOC]
+        # A Period with a different frequency raises a key error even if the integer
+        # representation matches.
         # see also test_get_indexer_mismatched_dtype testing we get analogous
         # behavior for get_loc
         dti = date_range("2016-01-01", periods=3)
@@ -360,7 +426,12 @@ class TestGetLoc:
 
 
 class TestGetIndexer:
+    # [CLASS DOC]
+    # Groups get_indexer tests.
     def test_get_indexer(self):
+        # [FUNCTION DOC]
+        # Exact, pad, backfill and nearest lookups, plus nearest with a tolerance, on a
+        # period index (GH 17717).
         # GH 17717
         p1 = Period("2017-09-01")
         p2 = Period("2017-09-04")
@@ -392,6 +463,9 @@ class TestGetIndexer:
         tm.assert_numpy_array_equal(res, np.array([0, 0, 1, -1], dtype=np.intp))
 
     def test_get_indexer_mismatched_dtype(self):
+        # [FUNCTION DOC]
+        # Indexers between period, date and different-frequency period indexes are all
+        # -1 in either direction, for get_indexer and get_indexer_non_unique.
         # Check that we return all -1s and do not raise or cast incorrectly
 
         dti = date_range("2016-01-01", periods=3)
@@ -421,6 +495,9 @@ class TestGetIndexer:
         tm.assert_numpy_array_equal(result, expected)
 
     def test_get_indexer_mismatched_dtype_different_length(self, non_comparable_idx):
+        # [FUNCTION DOC]
+        # Using the non-comparable fixture and no fill method, the result is all -1
+        # without raising.
         # without method we aren't checking inequalities, so get all-missing
         #  but do not raise
         dti = date_range("2016-01-01", periods=3)
@@ -434,6 +511,11 @@ class TestGetIndexer:
 
     @pytest.mark.parametrize("method", ["pad", "backfill", "nearest"])
     def test_get_indexer_mismatched_dtype_with_method(self, non_comparable_idx, method):
+        # [FUNCTION DOC]
+        # Parametrized over fill methods. With a fill method, mismatched dtypes raise a
+        # type error about comparing dtypes; casting the other index to object or
+        # category raises a type error with one of two messages, except object cast of
+        # period indexes which is skipped.
         dti = date_range("2016-01-01", periods=3)
         pi = dti.to_period("D")
 
@@ -461,6 +543,9 @@ class TestGetIndexer:
                 pi.get_indexer(other2, method=method)
 
     def test_get_indexer_non_unique(self):
+        # [FUNCTION DOC]
+        # Non-unique index returns the matching positions and a missing array pointing
+        # to absent targets (GH 17717).
         # GH 17717
         p1 = Period("2017-09-02")
         p2 = Period("2017-09-03")
@@ -479,6 +564,11 @@ class TestGetIndexer:
 
     # TODO: This method came from test_period; de-dup with version above
     def test_get_indexer2(self):
+        # [FUNCTION DOC]
+        # Hourly index with targets between entries: pad, backfill, nearest, tolerances
+        # as strings, mismatched tolerance units raising an incompatible-frequency
+        # error, and list-like tolerances.
+        # KNOWN ISSUE: a TODO says this test came from another module and should be merged with the simpler indexer test above.
         idx = period_range("2000-01-01", periods=3).asfreq("h", how="start")
         tm.assert_numpy_array_equal(
             idx.get_indexer(idx), np.array([0, 1, 2], dtype=np.intp)
@@ -532,7 +622,12 @@ class TestGetIndexer:
 
 
 class TestWhere:
+    # [CLASS DOC]
+    # Groups where tests.
     def test_where(self, listlike_box):
+        # [FUNCTION DOC]
+        # Parametrized over list-like containers. An all-true condition returns the same
+        # index; a condition with one false gives NaT at that position.
         i = period_range("20130101", periods=5, freq="D")
         cond = [True] * len(i)
         expected = i
@@ -545,6 +640,10 @@ class TestWhere:
         tm.assert_index_equal(result, expected)
 
     def test_where_other(self):
+        # [FUNCTION DOC]
+        # Replacement with missing markers or with another period index/array replaces
+        # masked values.
+        # KNOWN ISSUE: in the second and third blocks the copy assigned to the replacement index is immediately overwritten and unused.
         i = period_range("20130101", periods=5, freq="D")
         for arr in [np.nan, NaT]:
             result = i.where(notna(i), other=arr)
@@ -562,6 +661,10 @@ class TestWhere:
         tm.assert_index_equal(result, i2)
 
     def test_where_invalid_dtypes(self):
+        # [FUNCTION DOC]
+        # Replacement of incompatible types (integers, timedelta array, datetime index,
+        # timedelta scalar) yields an object index containing those values in masked
+        # positions.
         pi = period_range("20130101", periods=5, freq="D")
 
         tail = pi[2:].tolist()
@@ -592,6 +695,9 @@ class TestWhere:
         tm.assert_index_equal(result, expected)
 
     def test_where_mismatched_nat(self):
+        # [FUNCTION DOC]
+        # Replacement by a timedelta NaT yields an object index holding that NaT in
+        # masked positions.
         pi = period_range("20130101", periods=5, freq="D")
         cond = np.array([True, False, True, True, False])
 
@@ -603,7 +709,12 @@ class TestWhere:
 
 
 class TestTake:
+    # [CLASS DOC]
+    # Groups take tests.
     def test_take(self):
+        # [FUNCTION DOC]
+        # Single, multiple, unordered and negative positions return the expected periods
+        # with name and freq kept (GH#10295).
         # GH#10295
         idx1 = period_range("2011-01-01", "2011-01-31", freq="D", name="idx")
 
@@ -653,6 +764,8 @@ class TestTake:
             assert result.freq == "D"
 
     def test_take_misc(self):
+        # [FUNCTION DOC]
+        # take and list indexing agree, keep the PeriodIndex type, freq and name.
         index = period_range(start="1/1/10", end="12/31/12", freq="D", name="idx")
         expected = PeriodIndex(
             [
@@ -675,6 +788,10 @@ class TestTake:
             assert taken.name == expected.name
 
     def test_take_fill_value(self):
+        # [FUNCTION DOC]
+        # Negative position wraps; with fill enabled becomes NaT; with fill disabled
+        # wraps; positions below -1 with fill raise value errors; far out-of-bounds
+        # raises an index error (GH#12631).
         # GH#12631
         idx = PeriodIndex(
             ["2011-01-01", "2011-02-01", "2011-03-01"], name="xxx", freq="D"
@@ -713,8 +830,15 @@ class TestTake:
 
 
 class TestGetValue:
+    # [CLASS DOC]
+    # Groups tests of datetime lookup on period-indexed series.
     @pytest.mark.parametrize("freq", ["h", "D"])
     def test_get_value_datetime_hourly(self, freq):
+        # [FUNCTION DOC]
+        # Parametrized over hourly and daily frequency. A timestamp at the start of the
+        # first period is found; a timestamp three hours later is found for daily
+        # frequency but raises a key error for hourly frequency.
+        # KNOWN ISSUE: a TODO notes the test originally covered a removed method and may be redundant; its name still mentions get_value.
         # get_loc and get_value should treat datetime objects symmetrically
         # TODO: this test used to test get_value, which is removed in 2.0.
         #  should this test be moved somewhere, or is what's left redundant?
@@ -743,7 +867,12 @@ class TestGetValue:
 
 
 class TestContains:
+    # [CLASS DOC]
+    # Groups containment tests.
     def test_contains(self):
+        # [FUNCTION DOC]
+        # Periods and their strings are contained, higher-resolution keys are not
+        # (get_loc raises key error), a month string is (GH 17717, GH#31172).
         # GH 17717
         p0 = Period("2017-09-01")
         p1 = Period("2017-09-02")
@@ -769,6 +898,8 @@ class TestContains:
         assert p3 not in idx0
 
     def test_contains_freq_mismatch(self):
+        # [FUNCTION DOC]
+        # A Period with a different frequency or multiple is not contained.
         rng = period_range("2007-01", freq="M", periods=10)
 
         assert Period("2007-01", freq="M") in rng
@@ -776,6 +907,8 @@ class TestContains:
         assert Period("2007-01", freq="2M") not in rng
 
     def test_contains_nat(self):
+        # [FUNCTION DOC]
+        # NaT-like keys are contained only if the index has a missing value (gh-13582).
         # see gh-13582
         idx = period_range("2007-01", freq="M", periods=10)
         assert NaT not in idx
@@ -791,7 +924,13 @@ class TestContains:
 
 
 class TestAsOfLocs:
+    # [CLASS DOC]
+    # Groups asof_locs tests.
     def test_asof_locs_mismatched_type(self):
+        # [FUNCTION DOC]
+        # Passing integer, float or timedelta index raises a type error requiring
+        # datetime or period index; a period index of different frequency raises an
+        # incompatible-frequency error.
         dti = date_range("2016-01-01", periods=3)
         pi = dti.to_period("D")
         pi2 = dti.to_period("h")

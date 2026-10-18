@@ -1,3 +1,6 @@
+# [MODULE DOC]
+# Tests for constructing RangeIndex: argument forms, invalid arguments, copying
+# and pass-through, from_range, names and invalid dtypes or element types.
 from datetime import datetime
 
 import numpy as np
@@ -12,6 +15,8 @@ import pandas._testing as tm
 
 
 class TestRangeIndexConstructors:
+    # [CLASS DOC]
+    # Groups RangeIndex construction tests.
     @pytest.mark.parametrize("name", [None, "foo"])
     @pytest.mark.parametrize(
         "args, kwargs, start, stop, step",
@@ -26,6 +31,11 @@ class TestRangeIndexConstructors:
         ],
     )
     def test_constructor(self, args, kwargs, start, stop, step, name):
+        # [FUNCTION DOC]
+        # Parametrized over name and several argument combinations (stop only, start and
+        # stop, with step, zero-length, keyword forms). Result is a RangeIndex whose
+        # underlying range and values equal the expected, and whose name is the very
+        # object passed.
         result = RangeIndex(*args, name=name, **kwargs)
         expected = Index(np.arange(start, stop, step, dtype=np.int64), name=name)
         assert isinstance(result, RangeIndex)
@@ -34,6 +44,9 @@ class TestRangeIndexConstructors:
         tm.assert_index_equal(result, expected, exact="equiv")
 
     def test_constructor_invalid_args(self):
+        # [FUNCTION DOC]
+        # No arguments, or only a name, raise a type error saying integers are required;
+        # the generic Index with a scalar raises a type error asking for a collection.
         msg = "RangeIndex\\(\\.\\.\\.\\) must be called with integers"
         with pytest.raises(TypeError, match=msg):
             RangeIndex()
@@ -62,17 +75,27 @@ class TestRangeIndexConstructors:
         ],
     )
     def test_constructor_additional_invalid_args(self, args):
+        # [FUNCTION DOC]
+        # Parametrized over Index, Series, arrays and lists. Passing a non-scalar as the
+        # first argument raises a type error naming the container type.
         msg = f"Value needs to be a scalar value, was type {type(args).__name__}"
         with pytest.raises(TypeError, match=msg):
             RangeIndex(args)
 
     @pytest.mark.parametrize("args", ["foo", datetime(2000, 1, 1, 0, 0)])
     def test_constructor_invalid_args_wrong_type(self, args):
+        # [FUNCTION DOC]
+        # Parametrized over a string and a datetime. Raises a type error stating the
+        # wrong type for the value.
         msg = f"Wrong type {type(args)} for value {args}"
         with pytest.raises(TypeError, match=msg):
             RangeIndex(args)
 
     def test_constructor_same(self):
+        # [FUNCTION DOC]
+        # Constructing from a RangeIndex passes through (identical without copying) or
+        # copies; requesting a float dtype raises a value error requiring signed
+        # integer.
         # pass thru w and w/o copy
         index = RangeIndex(1, 5, 2)
         result = RangeIndex(index, copy=False)
@@ -91,11 +114,17 @@ class TestRangeIndexConstructors:
             RangeIndex(index, dtype="float64")
 
     def test_constructor_range_object(self):
+        # [FUNCTION DOC]
+        # Constructing from a range object equals the equivalent start, stop and step.
         result = RangeIndex(range(1, 5, 2))
         expected = RangeIndex(1, 5, 2)
         tm.assert_index_equal(result, expected, exact=True)
 
     def test_constructor_range(self):
+        # [FUNCTION DOC]
+        # from_range handles ranges, a one-element range, an invalid (empty) range
+        # normalized to start zero, and a stop-only range; the generic Index converts a
+        # range to a RangeIndex; passing copy raises a type error.
         result = RangeIndex.from_range(range(1, 5, 2))
         expected = RangeIndex(1, 5, 2)
         tm.assert_index_equal(result, expected, exact=True)
@@ -124,6 +153,9 @@ class TestRangeIndexConstructors:
             RangeIndex.from_range(range(10), copy=True)
 
     def test_constructor_name(self):
+        # [FUNCTION DOC]
+        # Names are independent between an original, a copy and an Index built from it
+        # (GH#12288).
         # GH#12288
         orig = RangeIndex(10)
         orig.name = "original"
@@ -143,6 +175,10 @@ class TestRangeIndexConstructors:
         assert new.name == "new"
 
     def test_constructor_corner(self):
+        # [FUNCTION DOC]
+        # Equality with an integer-cast object array index; strings or floats as
+        # arguments raise type errors about wrong types; float dtype raises a value
+        # error.
         arr = np.array([1, 2, 3, 4], dtype=object)
         index = RangeIndex(1, 5)
         assert index.values.dtype == np.int64

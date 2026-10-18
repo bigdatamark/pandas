@@ -1,3 +1,7 @@
+# [MODULE DOC]
+# Tests for Index.join on 64-bit integer and unsigned 64-bit indexes: non-unique
+# keys, inner/left/right/outer joins with monotonic and non-monotonic operands,
+# indexer outputs and joins with object-dtype indexes.
 import numpy as np
 import pytest
 
@@ -6,7 +10,12 @@ from pandas.core.indexes.api import Index
 
 
 class TestJoinInt64Index:
+    # [CLASS DOC]
+    # Groups join tests for signed 64-bit integer indexes.
     def test_join_non_unique(self):
+        # [FUNCTION DOC]
+        # Self join of a non-unique index yields the duplicated cross product and
+        # matching left and right indexers.
         left = Index([4, 4, 3, 3])
 
         joined, lidx, ridx = left.join(left, return_indexers=True)
@@ -21,6 +30,10 @@ class TestJoinInt64Index:
         tm.assert_numpy_array_equal(ridx, exp_ridx)
 
     def test_join_inner(self):
+        # [FUNCTION DOC]
+        # Inner join of a range-based index with monotonic and non-monotonic partners;
+        # checks result (with left name), dtype and both indexers, and that the
+        # monotonic case equals the intersection.
         index = Index(range(0, 20, 2), dtype=np.int64, name="lhs")
         other = Index([7, 12, 25, 1, 2, 5], dtype=np.int64, name="rhs")
         other_mono = Index([1, 2, 5, 7, 12, 25], dtype=np.int64, name="rhs")
@@ -51,6 +64,10 @@ class TestJoinInt64Index:
         tm.assert_numpy_array_equal(ridx, eridx)
 
     def test_join_left(self):
+        # [FUNCTION DOC]
+        # Left join with non-monotonic, monotonic and non-unique partners: result is the
+        # left index (or expanded duplicates), left indexer none unless duplicates
+        # exist, with expected right indexers.
         index = Index(range(0, 20, 2), dtype=np.int64, name="lhs")
         other = Index([7, 12, 25, 1, 2, 5], dtype=np.int64, name="rhs")
         other_mono = Index([1, 2, 5, 7, 12, 25], dtype=np.int64, name="rhs")
@@ -85,6 +102,10 @@ class TestJoinInt64Index:
         tm.assert_numpy_array_equal(ridx, eridx)
 
     def test_join_right(self):
+        # [FUNCTION DOC]
+        # Right join mirror of the left test; result is the right index, right indexer
+        # is none unless duplicates exist.
+        # KNOWN ISSUE: in the monotonic-case and non-monotonic-case type assertions the check inspects the input partner instead of the result.
         index = Index(range(0, 20, 2), dtype=np.int64, name="lhs")
         other = Index([7, 12, 25, 1, 2, 5], dtype=np.int64, name="rhs")
         other_mono = Index([1, 2, 5, 7, 12, 25], dtype=np.int64, name="rhs")
@@ -120,6 +141,9 @@ class TestJoinInt64Index:
         tm.assert_numpy_array_equal(ridx, eridx)
 
     def test_join_non_int_index(self):
+        # [FUNCTION DOC]
+        # Joins an integer index with an object index in all four modes, both
+        # orientations; results are order-consistent and cast to object where required.
         index = Index(range(0, 20, 2), dtype=np.int64)
         other = Index([3, 6, 7, 8, 10], dtype=object)
 
@@ -148,6 +172,9 @@ class TestJoinInt64Index:
         tm.assert_index_equal(right2, index.astype(object))
 
     def test_join_outer(self):
+        # [FUNCTION DOC]
+        # Outer join with non-monotonic and monotonic partners checks the sorted union,
+        # equality with a join without indexers, and both indexers.
         index = Index(range(0, 20, 2), dtype=np.int64)
         other = Index([7, 12, 25, 1, 2, 5], dtype=np.int64)
         other_mono = Index([1, 2, 5, 7, 12, 25], dtype=np.int64)
@@ -185,13 +212,22 @@ class TestJoinInt64Index:
 
 
 class TestJoinUInt64Index:
+    # [CLASS DOC]
+    # Groups join tests for unsigned 64-bit indexes with values above the signed range.
     @pytest.fixture
     def index_large(self):
+        # [FUNCTION DOC]
+        # HELPER: fixture for TestJoinUInt64Index.
+        # Returns an unsigned 64-bit index of five values just above the signed 64-bit
+        # limit; used because no compatibility with signed or float dtypes is needed.
         # large values used in TestUInt64Index where no compat needed with int64/float64
         large = [2**63, 2**63 + 10, 2**63 + 15, 2**63 + 20, 2**63 + 25]
         return Index(large, dtype=np.uint64)
 
     def test_join_inner(self, index_large):
+        # [FUNCTION DOC]
+        # Unsigned-int version of the inner join test; results are sorted before
+        # comparison because no sort guarantee exists for the non-monotonic case.
         other = Index(2**63 + np.array([7, 12, 25, 1, 2, 10], dtype="uint64"))
         other_mono = Index(2**63 + np.array([1, 2, 7, 10, 12, 25], dtype="uint64"))
 
@@ -230,6 +266,8 @@ class TestJoinUInt64Index:
         tm.assert_numpy_array_equal(ridx, eridx)
 
     def test_join_left(self, index_large):
+        # [FUNCTION DOC]
+        # Unsigned-int version of the left join test including the non-unique case.
         other = Index(2**63 + np.array([7, 12, 25, 1, 2, 10], dtype="uint64"))
         other_mono = Index(2**63 + np.array([1, 2, 7, 10, 12, 25], dtype="uint64"))
 
@@ -267,6 +305,9 @@ class TestJoinUInt64Index:
         tm.assert_numpy_array_equal(ridx, eridx)
 
     def test_join_right(self, index_large):
+        # [FUNCTION DOC]
+        # Unsigned-int version of the right join test including the non-unique case.
+        # KNOWN ISSUE: the type assertions inspect the input partner rather than the result.
         other = Index(2**63 + np.array([7, 12, 25, 1, 2, 10], dtype="uint64"))
         other_mono = Index(2**63 + np.array([1, 2, 7, 10, 12, 25], dtype="uint64"))
 
@@ -307,6 +348,9 @@ class TestJoinUInt64Index:
         tm.assert_numpy_array_equal(ridx, eridx)
 
     def test_join_non_int_index(self, index_large):
+        # [FUNCTION DOC]
+        # Unsigned-int index joined with an object-dtype index in all modes and
+        # orientations.
         other = Index(2**63 + np.array([1, 5, 7, 10, 20], dtype="uint64"), dtype=object)
 
         outer = index_large.join(other, how="outer")
@@ -334,6 +378,9 @@ class TestJoinUInt64Index:
         tm.assert_index_equal(right2, index_large.astype(object))
 
     def test_join_outer(self, index_large):
+        # [FUNCTION DOC]
+        # Unsigned-int version of the outer join test: sorted union and indexers for
+        # non-monotonic and monotonic partners.
         other = Index(2**63 + np.array([7, 12, 25, 1, 2, 10], dtype="uint64"))
         other_mono = Index(2**63 + np.array([1, 2, 7, 10, 12, 25], dtype="uint64"))
 

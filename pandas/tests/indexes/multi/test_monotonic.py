@@ -1,3 +1,6 @@
+# [MODULE DOC]
+# Tests for monotonicity properties (increasing, decreasing, strict variants) of
+# MultiIndex, comparing against the equivalent flat index of tuples.
 import numpy as np
 import pytest
 
@@ -8,6 +11,9 @@ from pandas import (
 
 
 def test_is_monotonic_increasing_lexsorted(lexsorted_two_level_string_multiindex):
+    # [FUNCTION DOC]
+    # Uses the lexsorted string fixture; verifies it is not monotonic increasing,
+    # nor strictly, both as a MultiIndex and as a flat index of its values.
     # string ordering
     mi = lexsorted_two_level_string_multiindex
     assert mi.is_monotonic_increasing is False
@@ -17,6 +23,11 @@ def test_is_monotonic_increasing_lexsorted(lexsorted_two_level_string_multiindex
 
 
 def test_is_monotonic_increasing():
+    # [FUNCTION DOC]
+    # Several MultiIndexes (sorted product, descending in either level, with NaN, string
+    # levels, mixed-type levels that trigger a comparison error, and empty). Asserts the
+    # increasing and strictly-increasing flags agree with the flat tuple index.
+    # KNOWN ISSUE: in the first and second blocks one assertion repeats the strict MultiIndex check where the neighboring lines check the flat index, so the strict flat-index check is omitted there.
     i = MultiIndex.from_product([np.arange(10), np.arange(10)], names=["one", "two"])
     assert i.is_monotonic_increasing is True
     assert i._is_strictly_monotonic_increasing is True
@@ -83,6 +94,10 @@ def test_is_monotonic_increasing():
 
 
 def test_is_monotonic_decreasing():
+    # [FUNCTION DOC]
+    # Mirror of the increasing test for the decreasing and strictly-decreasing flags,
+    # covering reversed products, NaN, string levels, mixed-type levels and empty.
+    # KNOWN ISSUE: in the first block one assertion repeats the strict MultiIndex check instead of checking the flat index.
     i = MultiIndex.from_product(
         [np.arange(9, -1, -1), np.arange(9, -1, -1)], names=["one", "two"]
     )
@@ -162,6 +177,8 @@ def test_is_monotonic_decreasing():
 
 
 def test_is_strictly_monotonic_increasing():
+    # [FUNCTION DOC]
+    # An index with duplicate entries is monotonic increasing but not strictly.
     idx = MultiIndex(
         levels=[["bar", "baz"], ["mom", "next"]], codes=[[0, 0, 1, 1], [0, 0, 0, 1]]
     )
@@ -170,6 +187,9 @@ def test_is_strictly_monotonic_increasing():
 
 
 def test_is_strictly_monotonic_decreasing():
+    # [FUNCTION DOC]
+    # An index with duplicate entries in decreasing order is monotonic decreasing but
+    # not strictly.
     idx = MultiIndex(
         levels=[["baz", "bar"], ["next", "mom"]], codes=[[0, 0, 1, 1], [0, 0, 0, 1]]
     )
@@ -183,6 +203,9 @@ def test_is_strictly_monotonic_decreasing():
     [[(np.nan,), (1,), (2,)], [(1,), (np.nan,), (2,)], [(1,), (2,), (np.nan,)]],
 )
 def test_is_monotonic_with_nans(values, attr):
+    # [FUNCTION DOC]
+    # Parametrized over the attribute (increasing, decreasing) and tuple lists with a
+    # NaN in each position. Both attributes must be false (GH: 37220).
     # GH: 37220
     idx = MultiIndex.from_tuples(values, names=["test"])
     assert getattr(idx, attr) is False

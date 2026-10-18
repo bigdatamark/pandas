@@ -1,3 +1,6 @@
+# [MODULE DOC]
+# Tests for partial string slicing of period-indexed objects and the bound
+# casting used by it.
 import numpy as np
 import pytest
 
@@ -14,7 +17,13 @@ import pandas._testing as tm
 
 
 class TestPeriodIndex:
+    # [CLASS DOC]
+    # Groups partial slicing tests.
     def test_getitem_periodindex_duplicates_string_slice(self):
+        # [FUNCTION DOC]
+        # String selection of a duplicated year on monotonic and non-monotonic indexes
+        # returns the right rows; modifying the result of a monotonic selection must not
+        # change the original series.
         # monotonic
         idx = PeriodIndex([2000, 2007, 2007, 2009, 2009], freq="Y-JUN")
         ts = Series(np.random.default_rng(2).standard_normal(len(idx)), index=idx)
@@ -35,12 +44,17 @@ class TestPeriodIndex:
         tm.assert_series_equal(result, expected)
 
     def test_getitem_periodindex_quarter_string(self):
+        # [FUNCTION DOC]
+        # A quarter string in reversed order resolves to the matching element.
+        # KNOWN ISSUE: a to-do comment says the accessor should be fixed, which indicates the string form accepted here is a known oddity.
         pi = PeriodIndex(["2Q05", "3Q05", "4Q05", "1Q06", "2Q06"], freq="Q")
         ser = Series(np.random.default_rng(2).random(len(pi)), index=pi).cumsum()
         # Todo: fix these accessors!
         assert ser["05Q4"] == ser.iloc[2]
 
     def test_pindex_slice_index(self):
+        # [FUNCTION DOC]
+        # Year strings select twelve monthly entries.
         pi = period_range(start="1/1/10", end="12/31/12", freq="M")
         s = Series(np.random.default_rng(2).random(len(pi)), index=pi)
         res = s["2010"]
@@ -52,6 +66,11 @@ class TestPeriodIndex:
 
     @pytest.mark.parametrize("make_range", [date_range, period_range])
     def test_range_slice_day(self, make_range):
+        # [FUNCTION DOC]
+        # Parametrized over date and period ranges. Using string slices on the index
+        # itself raises a type error about slice indices; on a series, partial strings
+        # select expected positional ranges (GH#6716).
+        # KNOWN ISSUE: the comment says an index error is raised, but the test expects a type error. The message depends on whether the interpreter is at least Python 3.15.
         # GH#6716
         idx = make_range(start="2013/01/01", freq="D", periods=400)
 
@@ -85,6 +104,9 @@ class TestPeriodIndex:
 
     @pytest.mark.parametrize("make_range", [date_range, period_range])
     def test_range_slice_seconds(self, make_range):
+        # [FUNCTION DOC]
+        # Same as day version at second resolution with time-bound slices (GH#6716).
+        # KNOWN ISSUE: the comment says an index error is raised, but the test expects a type error.
         # GH#6716
         idx = make_range(start="2013/01/01 09:00:00", freq="s", periods=4000)
         if PY315:
@@ -115,6 +137,9 @@ class TestPeriodIndex:
 
     @pytest.mark.parametrize("make_range", [date_range, period_range])
     def test_range_slice_outofbounds(self, make_range):
+        # [FUNCTION DOC]
+        # Parametrized over date and period ranges. Slices outside or partly outside the
+        # data return empty frames or the overlapping rows (GH#5407).
         # GH#5407
         idx = make_range(start="2013/10/01", freq="D", periods=10)
 
@@ -132,6 +157,10 @@ class TestPeriodIndex:
 
     @pytest.mark.parametrize("make_range", [date_range, period_range])
     def test_maybe_cast_slice_bound(self, make_range, frame_or_series):
+        # [FUNCTION DOC]
+        # Parametrized over range type and the frame-or-series fixture. A non-date
+        # string bound raises a type error about slice indexing, from the private bound
+        # caster, the slice bound lookup, plain getitem and loc.
         idx = make_range(start="2013/10/01", freq="D", periods=10)
 
         obj = DataFrame({"units": [100 + i for i in range(10)]}, index=idx)
@@ -158,6 +187,11 @@ class TestPeriodIndex:
             obj.loc["foo":"2013/09/30"]
 
     def test_partial_slice_doesnt_require_monotonicity(self):
+        # [FUNCTION DOC]
+        # Partial string lookups (year, month-year) work on a shuffled, non-monotonic
+        # period index through get_loc, loc and getitem, returning the manually
+        # identified positions.
+        # KNOWN ISSUE: the complement check uses a bitwise inversion on an integer position array, which does not produce the complementary positions, so that assertion does not test what the code intends.
         # See also: DatetimeIndex test ofm the same name
         dti = date_range("2014-01-01", periods=30, freq="30D")
         pi = dti.to_period("D")

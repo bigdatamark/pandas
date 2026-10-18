@@ -1,3 +1,6 @@
+# [MODULE DOC]
+# Tests for MultiIndex.take: basic behavior, rejected keyword arguments and
+# fill-value semantics.
 import numpy as np
 import pytest
 
@@ -6,6 +9,9 @@ import pandas._testing as tm
 
 
 def test_take(idx):
+    # [FUNCTION DOC]
+    # take with a position list equals position indexing; the index has no frequency
+    # attribute (GH 10791).
     indexer = [4, 3, 0, 2]
     result = idx.take(indexer)
     expected = idx[indexer]
@@ -18,6 +24,9 @@ def test_take(idx):
 
 
 def test_take_invalid_kwargs(idx):
+    # [FUNCTION DOC]
+    # take rejects unknown keywords with a type error and the numpy-compat out and mode
+    # parameters with value errors.
     indices = [1, 2]
 
     msg = r"take\(\) got an unexpected keyword argument 'foo'"
@@ -34,6 +43,11 @@ def test_take_invalid_kwargs(idx):
 
 
 def test_take_fill_value():
+    # [FUNCTION DOC]
+    # Takes with a negative position: wraps from the end by default; with fill enabled,
+    # negative one becomes a missing tuple; with fill disabled it wraps again. Positions
+    # below negative one with fill raise a value error; far out-of-bound positions raise
+    # an index error (GH 12631).
     # GH 12631
     vals = [["A", "B"], [pd.Timestamp("2011-01-01"), pd.Timestamp("2011-01-02")]]
     idx = pd.MultiIndex.from_product(vals, names=["str", "dt"])

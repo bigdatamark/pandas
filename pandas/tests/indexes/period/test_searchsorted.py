@@ -1,3 +1,5 @@
+# [MODULE DOC]
+# Tests for PeriodIndex.searchsorted.
 import numpy as np
 import pytest
 
@@ -12,8 +14,14 @@ import pandas._testing as tm
 
 
 class TestSearchsorted:
+    # [CLASS DOC]
+    # Groups searchsorted tests.
     @pytest.mark.parametrize("freq", ["D", "2D"])
     def test_searchsorted(self, freq):
+        # [FUNCTION DOC]
+        # Parametrized over daily and 2-day multiple frequency. Searching a Period gives
+        # the insertion position, NaT goes to the end, and a Period with different
+        # frequency (hour, 5-day) raises an incompatible-frequency error.
         pidx = PeriodIndex(
             ["2014-01-01", "2014-01-02", "2014-01-03", "2014-01-04", "2014-01-05"],
             freq=freq,
@@ -36,6 +44,9 @@ class TestSearchsorted:
             pidx.searchsorted(Period("2014-01-01", freq="5D"))
 
     def test_searchsorted_different_argument_classes(self, listlike_box):
+        # [FUNCTION DOC]
+        # Uses the list-like container fixture. Searching the index's own values in any
+        # container, on the index and its backing array, returns identity positions.
         pidx = PeriodIndex(
             ["2014-01-01", "2014-01-02", "2014-01-03", "2014-01-04", "2014-01-05"],
             freq="D",
@@ -48,6 +59,9 @@ class TestSearchsorted:
         tm.assert_numpy_array_equal(result, expected)
 
     def test_searchsorted_invalid(self):
+        # [FUNCTION DOC]
+        # Searching integers, timedelta/datetime arrays and scalars raises a type error
+        # about the value needing to be a Period, NaT or array of those.
         pidx = PeriodIndex(
             ["2014-01-01", "2014-01-02", "2014-01-03", "2014-01-04", "2014-01-05"],
             freq="D",

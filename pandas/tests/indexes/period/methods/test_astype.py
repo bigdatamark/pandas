@@ -1,3 +1,6 @@
+# [MODULE DOC]
+# Tests for PeriodIndex.astype: invalid targets, object, integer, string, category,
+# boolean fallback, unsigned errors and conversion to timezone-aware datetimes.
 import numpy as np
 import pytest
 
@@ -14,8 +17,13 @@ import pandas._testing as tm
 
 
 class TestPeriodIndexAsType:
+    # [CLASS DOC]
+    # Groups astype tests on PeriodIndex.
     @pytest.mark.parametrize("dtype", [float, "timedelta64", "timedelta64[ns]"])
     def test_astype_raises(self, dtype):
+        # [FUNCTION DOC]
+        # Parametrized over float and timedelta dtypes. Raises a type error saying the
+        # PeriodIndex cannot be cast (GH#13149, GH#13209).
         # GH#13149, GH#13209
         idx = PeriodIndex(["2016-05-16", "NaT", NaT, np.nan], freq="D")
         msg = "Cannot cast PeriodIndex to dtype"
@@ -23,6 +31,12 @@ class TestPeriodIndexAsType:
             idx.astype(dtype)
 
     def test_astype_conversion(self, using_infer_string):
+        # [FUNCTION DOC]
+        # Casting an index with missing values to object gives Period objects (missing
+        # as Period NaT), to 64-bit integer gives ordinals with the minimum integer as
+        # missing, to string gives text per element (missing as none under
+        # infer-string); casting yearly periods to an integer string alias returns the
+        # ordinals index with its name.
         # GH#13149, GH#13209
         idx = PeriodIndex(["2016-05-16", "NaT", NaT, np.nan], freq="D", name="idx")
 
@@ -55,6 +69,9 @@ class TestPeriodIndexAsType:
         tm.assert_numpy_array_equal(result.values, idx.asi8)
 
     def test_astype_uint(self):
+        # [FUNCTION DOC]
+        # Casting to 64- or 32-bit unsigned integers raises a type error advising to
+        # cast to signed 64-bit first.
         arr = period_range("2000", periods=2, name="idx")
 
         with pytest.raises(TypeError, match=r"Do obj.astype\('int64'\)"):
@@ -63,6 +80,9 @@ class TestPeriodIndexAsType:
             arr.astype("uint32")
 
     def test_astype_object(self):
+        # [FUNCTION DOC]
+        # Empty, monthly with NaT and daily with NaT indexes cast to object give arrays
+        # of Period objects; the matplotlib representation helper gives the same array.
         idx = PeriodIndex([], freq="M")
 
         exp = np.array([], dtype=object)
@@ -83,6 +103,11 @@ class TestPeriodIndexAsType:
     # TODO: de-duplicate this version (from test_ops) with the one above
     # (from test_period)
     def test_astype_object2(self):
+        # [FUNCTION DOC]
+        # Casting a monthly then a daily index with NaT to object gives an object Index
+        # of periods with preserved name; NaT elements are the NaT singleton; tolist
+        # matches.
+        # KNOWN ISSUE: a TODO says this duplicates the earlier object test (from another test module).
         idx = period_range(start="2013-01-01", periods=4, freq="M", name="idx")
         expected_list = [
             Period("2013-01-31", freq="M"),
@@ -123,6 +148,9 @@ class TestPeriodIndexAsType:
         assert result_list[2] is NaT
 
     def test_astype_category(self):
+        # [FUNCTION DOC]
+        # Casting to category yields a CategoricalIndex of periods with the name; the
+        # underlying array cast gives the equal categorical.
         obj = period_range("2000", periods=2, name="idx")
         result = obj.astype("category")
         expected = CategoricalIndex(
@@ -135,6 +163,9 @@ class TestPeriodIndexAsType:
         tm.assert_categorical_equal(result, expected)
 
     def test_astype_array_fallback(self):
+        # [FUNCTION DOC]
+        # Casting to boolean falls back to array behavior: all true for non-missing
+        # periods, on both the index and its backing array.
         obj = period_range("2000", periods=2, name="idx")
         result = obj.astype(bool)
         expected = Index(np.array([True, True]), name="idx")
@@ -145,6 +176,10 @@ class TestPeriodIndexAsType:
         tm.assert_numpy_array_equal(result, expected)
 
     def test_period_astype_to_timestamp(self, unit):
+        # [FUNCTION DOC]
+        # Parametrized over datetime resolution unit. Casting to a timezone-aware
+        # datetime dtype converts to start-of-period timestamps localized to the zone
+        # with the same frequency (GH#55958).
         # GH#55958
         pi = PeriodIndex(["2011-01", "2011-02", "2011-03"], freq="M")
 

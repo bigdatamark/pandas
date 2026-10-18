@@ -1,3 +1,7 @@
+# [MODULE DOC]
+# Tests for joins involving RangeIndex: result types (range preserved or plain
+# integer index), indexers, non-integer and non-unique partners, self joins and a
+# parametrized check of range preservation.
 import numpy as np
 import pytest
 
@@ -9,7 +13,13 @@ import pandas._testing as tm
 
 
 class TestJoin:
+    # [CLASS DOC]
+    # Groups join tests for RangeIndex.
     def test_join_outer(self):
+        # [FUNCTION DOC]
+        # Outer join with integer index and with a RangeIndex: result is a plain integer
+        # index (not a range), equal to a join without indexers, with the expected union
+        # and both indexers.
         # join with Index[int64]
         index = RangeIndex(start=0, stop=20, step=2)
         other = Index(np.arange(25, 14, -1, dtype=np.int64))
@@ -50,6 +60,10 @@ class TestJoin:
         tm.assert_numpy_array_equal(ridx, eridx)
 
     def test_join_inner(self):
+        # [FUNCTION DOC]
+        # Inner join with integer index (sorted before comparison) and with a descending
+        # RangeIndex (result is a RangeIndex) gives common values 16 and 18 and their
+        # indexers.
         # Join with non-RangeIndex
         index = RangeIndex(start=0, stop=20, step=2)
         other = Index(np.arange(25, 14, -1, dtype=np.int64))
@@ -82,6 +96,10 @@ class TestJoin:
         tm.assert_numpy_array_equal(ridx, eridx)
 
     def test_join_left(self):
+        # [FUNCTION DOC]
+        # Left join returns the left RangeIndex and no left indexer, with the expected
+        # right indexer.
+        # KNOWN ISSUE: the second block is commented as joining a RangeIndex, but it constructs the same integer index again, so it merely repeats the first block.
         # Join with Index[int64]
         index = RangeIndex(start=0, stop=20, step=2)
         other = Index(np.arange(25, 14, -1, dtype=np.int64))
@@ -106,6 +124,9 @@ class TestJoin:
         tm.assert_numpy_array_equal(ridx, eridx)
 
     def test_join_right(self):
+        # [FUNCTION DOC]
+        # Right join returns the right operand, a left indexer and no right indexer.
+        # KNOWN ISSUE: the type assertions inspect the partner operand rather than the result.
         # Join with Index[int64]
         index = RangeIndex(start=0, stop=20, step=2)
         other = Index(np.arange(25, 14, -1, dtype=np.int64))
@@ -131,6 +152,9 @@ class TestJoin:
         assert ridx is None
 
     def test_join_non_int_index(self):
+        # [FUNCTION DOC]
+        # Joins with an object-dtype integer index in all modes and both orientations;
+        # results are integer or object indexes with expected values.
         index = RangeIndex(start=0, stop=20, step=2)
         other = Index([3, 6, 7, 8, 10], dtype=object)
 
@@ -159,6 +183,9 @@ class TestJoin:
         tm.assert_index_equal(right2, index.astype(object))
 
     def test_join_non_unique(self):
+        # [FUNCTION DOC]
+        # Joining with a non-unique index returns the repeated values and matching
+        # indexers.
         index = RangeIndex(start=0, stop=20, step=2)
         other = Index([4, 4, 3, 3])
 
@@ -173,6 +200,8 @@ class TestJoin:
         tm.assert_numpy_array_equal(ridx, eridx)
 
     def test_join_self(self, join_type):
+        # [FUNCTION DOC]
+        # Parametrized by the join-type fixture. A self join returns the same object.
         index = RangeIndex(start=0, stop=20, step=2)
         joined = index.join(index, how=join_type)
         assert index is joined
@@ -219,6 +248,11 @@ class TestJoin:
 def test_join_preserves_rangeindex(
     left, right, expected, expected_lidx, expected_ridx, how, right_type
 ):
+    # [FUNCTION DOC]
+    # Parametrized over many left/right range pairs and join types, and over the right
+    # operand as a RangeIndex or as an equivalent integer index. Checks the result
+    # equals the expected range exactly (preserved as a range where possible) and both
+    # indexers match (none, or arrays).
     result, lidx, ridx = left.join(right_type(right), how=how, return_indexers=True)
     tm.assert_index_equal(result, expected, exact=True)
 

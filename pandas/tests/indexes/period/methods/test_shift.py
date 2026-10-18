@@ -1,3 +1,6 @@
+# [MODULE DOC]
+# Tests for PeriodIndex.shift, which also underlies addition and subtraction of
+# integers.
 import numpy as np
 import pytest
 
@@ -9,10 +12,15 @@ import pandas._testing as tm
 
 
 class TestPeriodIndexShift:
+    # [CLASS DOC]
+    # Groups shift tests.
     # ---------------------------------------------------------------
     # PeriodIndex.shift is used by __add__ and __sub__
 
     def test_pi_shift_ndarray(self):
+        # [FUNCTION DOC]
+        # Shifting by an array of per-element amounts (positive and mixed signs) shifts
+        # each period individually, keeps missing values and the name.
         idx = PeriodIndex(
             ["2011-01", "2011-02", "NaT", "2011-04"], freq="M", name="idx"
         )
@@ -29,6 +37,10 @@ class TestPeriodIndexShift:
         tm.assert_index_equal(result, expected)
 
     def test_shift(self):
+        # [FUNCTION DOC]
+        # Shifts yearly, monthly and daily ranges by zero, one and minus one; each
+        # result equals the equivalent range moved by one period and has the same
+        # length.
         pi1 = period_range(freq="Y", start="1/1/2001", end="12/1/2009")
         pi2 = period_range(freq="Y", start="1/1/2002", end="12/1/2010")
 
@@ -63,6 +75,10 @@ class TestPeriodIndexShift:
         tm.assert_index_equal(pi1.shift(-1), pi2)
 
     def test_shift_corner_cases(self):
+        # [FUNCTION DOC]
+        # Empty index shifts return empty; passing a freq argument raises a type error
+        # saying freq is not supported; hourly index shifts by 0, 3 and -3 match the
+        # expected indexes (GH#9903).
         # GH#9903
         idx = PeriodIndex([], name="xxx", freq="h")
 
@@ -94,6 +110,8 @@ class TestPeriodIndexShift:
         tm.assert_index_equal(idx.shift(-3), exp)
 
     def test_shift_nat(self):
+        # [FUNCTION DOC]
+        # Missing values remain missing after shift; the name is preserved.
         idx = PeriodIndex(
             ["2011-01", "2011-02", "NaT", "2011-04"], freq="M", name="idx"
         )
@@ -105,6 +123,8 @@ class TestPeriodIndexShift:
         assert result.name == expected.name
 
     def test_shift_gh8083(self):
+        # [FUNCTION DOC]
+        # A daily range shifted by one equals the range moved one day (GH#8083).
         # test shift for PeriodIndex
         # GH#8083
         drange = period_range("20130101", periods=5, freq="D")
@@ -116,6 +136,8 @@ class TestPeriodIndexShift:
         tm.assert_index_equal(result, expected)
 
     def test_shift_periods(self):
+        # [FUNCTION DOC]
+        # The periods keyword and positional argument give the same result (GH #22458).
         # GH #22458 : argument 'n' was deprecated in favor of 'periods'
         idx = period_range(freq="Y", start="1/1/2001", end="12/1/2009")
         tm.assert_index_equal(idx.shift(periods=0), idx)

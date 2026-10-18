@@ -1,3 +1,6 @@
+# [MODULE DOC]
+# Tests for MultiIndex.isin: NaN handling, tuple membership, the level keyword,
+# empty and generator inputs.
 import numpy as np
 import pytest
 
@@ -6,6 +9,8 @@ import pandas._testing as tm
 
 
 def test_isin_nan():
+    # [FUNCTION DOC]
+    # Tuples containing NaN (numpy or python float NaN) are found by isin.
     idx = MultiIndex.from_arrays([["foo", "bar"], [1.0, np.nan]])
     tm.assert_numpy_array_equal(idx.isin([("bar", np.nan)]), np.array([False, True]))
     tm.assert_numpy_array_equal(
@@ -14,6 +19,9 @@ def test_isin_nan():
 
 
 def test_isin_missing(nulls_fixture):
+    # [FUNCTION DOC]
+    # Parametrized over the null-values fixture. Values with a null do not match
+    # non-null tuples in isin of another MultiIndex (GH48905).
     # GH48905
     mi1 = MultiIndex.from_tuples([(1, nulls_fixture)])
     mi2 = MultiIndex.from_tuples([(1, 1), (1, 2)])
@@ -23,6 +31,9 @@ def test_isin_missing(nulls_fixture):
 
 
 def test_isin():
+    # [FUNCTION DOC]
+    # isin with a list of tuples gives a boolean array of matches; an empty
+    # MultiIndex gives an empty boolean result.
     values = [("foo", 2), ("bar", 3), ("quux", 4)]
 
     idx = MultiIndex.from_arrays([["qux", "baz", "foo", "bar"], np.arange(4)])
@@ -38,6 +49,12 @@ def test_isin():
 
 
 def test_isin_level_kwarg():
+    # [FUNCTION DOC]
+    # isin restricted to a level (positive/negative number or name) matches level
+    # values;
+    # out-of-range integer levels raise an index error about too many levels;
+    # unknown numbers/floats/names raise key errors about the level not being found;
+    # names set later become usable.
     idx = MultiIndex.from_arrays([["qux", "baz", "foo", "bar"], np.arange(4)])
 
     vals_0 = ["foo", "bar", "quux"]
@@ -81,6 +98,9 @@ def test_isin_level_kwarg():
     ],
 )
 def test_isin_multi_index_with_missing_value(labels, expected, level):
+    # [FUNCTION DOC]
+    # Parametrized over labels, expected mask and level. isin with NaN labels matches
+    # missing values, either as tuple or per-level (GH 19132).
     # GH 19132
     midx = MultiIndex.from_arrays([[np.nan, "a", "b"], ["c", "d", np.nan]])
     result = midx.isin(labels, level=level)
@@ -89,6 +109,8 @@ def test_isin_multi_index_with_missing_value(labels, expected, level):
 
 
 def test_isin_empty():
+    # [FUNCTION DOC]
+    # isin with an empty list returns all-false (GH#51599).
     # GH#51599
     midx = MultiIndex.from_arrays([[1, 2], [3, 4]])
     result = midx.isin([])
@@ -97,6 +119,8 @@ def test_isin_empty():
 
 
 def test_isin_generator():
+    # [FUNCTION DOC]
+    # isin accepts a generator of tuples (GH#52568).
     # GH#52568
     midx = MultiIndex.from_tuples([(1, 2)])
     result = midx.isin(x for x in [(1, 2)])

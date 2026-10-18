@@ -1,3 +1,5 @@
+# [MODULE DOC]
+# Tests for PeriodIndex.repeat.
 import numpy as np
 import pytest
 
@@ -9,6 +11,8 @@ import pandas._testing as tm
 
 
 class TestRepeat:
+    # [CLASS DOC]
+    # Groups repeat tests.
     @pytest.mark.parametrize("use_numpy", [True, False])
     @pytest.mark.parametrize(
         "index",
@@ -19,6 +23,10 @@ class TestRepeat:
         ],
     )
     def test_repeat_freqstr(self, index, use_numpy):
+        # [FUNCTION DOC]
+        # Parametrized over using the numpy function or the method and over three
+        # indexes (daily, 2-day multiple, monthly with NaT). Each element is repeated
+        # three times consecutively and the frequency string is preserved (GH#10183).
         # GH#10183
         expected = PeriodIndex([per for per in index for _ in range(3)])
         result = np.repeat(index, 3) if use_numpy else index.repeat(3)

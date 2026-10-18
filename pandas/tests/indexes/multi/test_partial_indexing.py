@@ -1,3 +1,7 @@
+# [MODULE DOC]
+# Tests for partial string indexing on a MultiIndex whose level includes
+# datetimes: single-level partial strings, get_loc with partial timestamps,
+# slices with IndexSlice and resolution rules.
 import numpy as np
 import pytest
 
@@ -12,6 +16,11 @@ import pandas._testing as tm
 
 @pytest.fixture
 def df():
+    # [FUNCTION DOC]
+    # HELPER: fixture for the tests in this module.
+    # Returns a frame with one integer column holding the numbers zero to fourteen,
+    # indexed by the product of twelve-hourly timestamps from 2016-01-01 to 2016-01-03
+    # and the labels "a", "b", "c" (15 rows).
     #                        c1
     # 2016-01-01 00:00:00 a   0
     #                     b   1
@@ -36,6 +45,10 @@ def df():
 
 
 def test_partial_string_matching_single_index(df):
+    # [FUNCTION DOC]
+    # Swapping levels in several ways and sorting, then selecting the label "a" and
+    # a partial date string, gives the same rows as selecting the corresponding part of
+    # the original frame.
     # partial string matching on a single index
     for df_swap in [df.swaplevel(), df.swaplevel(0), df.swaplevel(0, 1)]:
         df_swap = df_swap.sort_index()
@@ -47,6 +60,11 @@ def test_partial_string_matching_single_index(df):
 
 
 def test_get_loc_partial_timestamp_multiindex(df):
+    # [FUNCTION DOC]
+    # get_loc with (partial date string, label) tuples returns boolean masks marking the
+    # matching rows, for day, month and year strings, also on a non-monotonic
+    # (reordered)
+    # index.
     mi = df.index
     key = ("2016-01-01", "a")
     loc = mi.get_loc(key)
@@ -83,6 +101,14 @@ def test_get_loc_partial_timestamp_multiindex(df):
 
 
 def test_partial_string_timestamp_multiindex(df):
+    # [FUNCTION DOC]
+    # Many partial-string selections on the datetime level (slice, year, day, hour,
+    # tuple with label, secondary level after level swap). Verifies expected row subsets
+    # and
+    # that hour resolution drops the level, and that a date key on the wrong level
+    # raises a
+    # key error (GH10331).
+    # KNOWN ISSUE: the expected value in the tuple-selector case is assigned twice; the first assignment (without dropping a level) is dead code.
     # GH10331
     df_swap = df.swaplevel(0, 1).sort_index()
     SLC = IndexSlice
@@ -133,6 +159,9 @@ def test_partial_string_timestamp_multiindex(df):
 
 
 def test_partial_string_timestamp_multiindex_str_key_raises(df):
+    # [FUNCTION DOC]
+    # Selecting a column-style date string directly on the frame raises a key error
+    # (deliberately not supported for MultiIndex).
     # Even though this syntax works on a single index, this is somewhat
     # ambiguous and we don't want to extend this behavior forward to work
     # in multi-indexes. This would amount to selecting a scalar from a
@@ -142,6 +171,10 @@ def test_partial_string_timestamp_multiindex_str_key_raises(df):
 
 
 def test_partial_string_timestamp_multiindex_daily_resolution(df):
+    # [FUNCTION DOC]
+    # Slices the frame by a March 2013 month range and compares with rows from a
+    # position range (GH12685).
+    # KNOWN ISSUE: the frame fixture only covers three days of January 2016, so the selection and the expected position range are both empty and the test is effectively vacuous.
     # GH12685 (partial string with daily resolution or below)
     result = df.loc[IndexSlice["2013-03":"2013-03", :], :]
     expected = df.iloc[118:180]

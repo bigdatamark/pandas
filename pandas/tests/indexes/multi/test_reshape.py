@@ -1,3 +1,6 @@
+# [MODULE DOC]
+# Tests for shape-changing operations on MultiIndex: insert, append (including with
+# flat indexes and mismatched names), repeat and delete.
 from datetime import datetime
 import zoneinfo
 
@@ -13,6 +16,15 @@ import pandas._testing as tm
 
 
 def test_insert(idx):
+    # [FUNCTION DOC]
+    # Inserting a key already in all levels keeps levels equal; a new key extends the
+    # levels
+    # and keeps names; a key of wrong length raises a value error. Then label-based
+    # setting
+    # with enlargement on a frame and a series with a two-level index matches the
+    # expected
+    # rows (dtype of the frame comparison relaxed because of intermediate missing
+    # values).
     # key contained in all levels
     new_index = idx.insert(0, ("bar", "two"))
     assert new_index.equal_levels(idx)
@@ -73,6 +85,9 @@ def test_insert(idx):
 
 
 def test_insert2():
+    # [FUNCTION DOC]
+    # Enlarging a series with a MultiIndex through setting new tuple labels yields the
+    # expected series (GH9250).
     # GH9250
     idx = (
         [("test1", i) for i in range(5)]
@@ -91,6 +106,9 @@ def test_insert2():
 
 
 def test_append(idx):
+    # [FUNCTION DOC]
+    # Appending pieces (one index, a list of indexes, an empty list) reproduces the
+    # fixture index.
     result = idx[:3].append(idx[3:])
     assert result.equals(idx)
 
@@ -104,6 +122,10 @@ def test_append(idx):
 
 
 def test_append_index():
+    # [FUNCTION DOC]
+    # Appending flat indexes and MultiIndexes of differing nesting. Mixed appends give a
+    # flat object index of tuples and scalars; two same-depth indexes give a MultiIndex;
+    # different depth falls back to tuples (gh-7112).
     idx1 = Index([1.1, 1.2, 1.3])
     idx2 = pd.date_range("2011-01-01", freq="D", periods=3, tz="Asia/Tokyo")
     idx3 = Index(["A", "B", "C"])
@@ -152,6 +174,10 @@ def test_append_index():
 
 @pytest.mark.parametrize("name, exp", [("b", "b"), ("c", None)])
 def test_append_names_match(name, exp):
+    # [FUNCTION DOC]
+    # Parametrized over a second-index name and expected result. Names are kept when
+    # they
+    # match positionally and replaced by none when they differ (GH#48288).
     # GH#48288
     midx = MultiIndex.from_arrays([[1, 2], [3, 4]], names=["a", "b"])
     midx2 = MultiIndex.from_arrays([[3], [5]], names=["a", name])
@@ -161,6 +187,8 @@ def test_append_names_match(name, exp):
 
 
 def test_append_names_dont_match():
+    # [FUNCTION DOC]
+    # Appending when no names match gives a MultiIndex without names (GH#48288).
     # GH#48288
     midx = MultiIndex.from_arrays([[1, 2], [3, 4]], names=["a", "b"])
     midx2 = MultiIndex.from_arrays([[3], [5]], names=["x", "y"])
@@ -170,6 +198,9 @@ def test_append_names_dont_match():
 
 
 def test_append_overlapping_interval_levels():
+    # [FUNCTION DOC]
+    # Appending MultiIndexes with overlapping interval levels keeps all tuples in order
+    # (GH 54934).
     # GH 54934
     ivl1 = pd.IntervalIndex.from_breaks([0.0, 1.0, 2.0])
     ivl2 = pd.IntervalIndex.from_breaks([0.5, 1.5, 2.5])
@@ -192,6 +223,11 @@ def test_append_overlapping_interval_levels():
 
 
 def test_repeat():
+    # [FUNCTION DOC]
+    # repeat on a MultiIndex repeats each entry the requested number of times
+    # consecutively;
+    # compares with a product index whose second level was repeated.
+    # KNOWN ISSUE: the names argument is a numpy array of the second-level values, used as the index names, an unusual choice rather than distinct name strings.
     reps = 2
     numbers = [1, 2, 3]
     names = np.array(["foo", "bar"])
@@ -202,6 +238,9 @@ def test_repeat():
 
 
 def test_insert_base(idx):
+    # [FUNCTION DOC]
+    # Inserting the first element of the fixture back at position zero into a slice
+    # reconstructs the longer slice.
     result = idx[1:4]
 
     # test 0th element
@@ -209,6 +248,10 @@ def test_insert_base(idx):
 
 
 def test_delete_base(idx):
+    # [FUNCTION DOC]
+    # Deleting the first and last positions yields the expected slices with the same
+    # name;
+    # deleting an out-of-bounds position raises an index error.
     expected = idx[1:]
     result = idx.delete(0)
     assert result.equals(expected)

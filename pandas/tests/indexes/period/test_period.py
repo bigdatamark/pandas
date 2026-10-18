@@ -1,3 +1,7 @@
+# [MODULE DOC]
+# Miscellaneous PeriodIndex tests: integer views, values, calendar field accessors,
+# identity, unique, NaT in field accessors, multiples, iteration, use as a
+# MultiIndex level, map, timedelta conversion and array conversion.
 import numpy as np
 import pytest
 
@@ -17,7 +21,12 @@ import pandas._testing as tm
 
 
 class TestPeriodIndex:
+    # [CLASS DOC]
+    # Groups miscellaneous PeriodIndex tests.
     def test_view_asi8(self):
+        # [FUNCTION DOC]
+        # Integer view and ordinal array for empty, monthly with NaT and daily with NaT
+        # indexes.
         idx = PeriodIndex([], freq="M")
 
         exp = np.array([], dtype=np.int64)
@@ -36,6 +45,9 @@ class TestPeriodIndex:
         tm.assert_numpy_array_equal(idx.asi8, exp)
 
     def test_values(self):
+        # [FUNCTION DOC]
+        # Object values and numpy conversion are Period arrays (NaT as missing) while
+        # the ordinal array carries the minimum integer for NaT.
         idx = PeriodIndex([], freq="M")
 
         exp = np.array([], dtype=object)
@@ -97,6 +109,11 @@ class TestPeriodIndex:
         ],
     )
     def test_fields(self, periodindex, field):
+        # [FUNCTION DOC]
+        # Parametrized over many field names and indexes of differing frequency. Each
+        # field on the index and on the Series accessor matches the same field of each
+        # element.
+        # KNOWN ISSUE: the early return for an empty series can never trigger since every parametrized index is non-empty.
         periods = list(periodindex)
         ser = Series(periodindex)
 
@@ -114,6 +131,10 @@ class TestPeriodIndex:
             assert getattr(x, field) == val
 
     def test_is_(self):
+        # [FUNCTION DOC]
+        # identity relation: an index is itself and its views, not a copy, slice,
+        # frequency conversion or arithmetic result; a view shares identity even after
+        # renaming.
         create_index = lambda: period_range(freq="Y", start="1/1/2001", end="12/1/2009")
         index = create_index()
         assert index.is_(index)
@@ -132,12 +153,17 @@ class TestPeriodIndex:
         assert not index.is_(index - 0)
 
     def test_index_unique(self):
+        # [FUNCTION DOC]
+        # unique drops duplicates keeping frequency; the number of unique values is
+        # three.
         idx = PeriodIndex([2000, 2007, 2007, 2009, 2009], freq="Y-JUN")
         expected = PeriodIndex([2000, 2007, 2009], freq="Y-JUN")
         tm.assert_index_equal(idx.unique(), expected)
         assert idx.nunique() == 3
 
     def test_pindex_fieldaccessor_nat(self):
+        # [FUNCTION DOC]
+        # Year and month accessors return -1 for NaT, with name preserved.
         idx = PeriodIndex(
             ["2011-01", "2011-02", "NaT", "2012-03", "2012-04"], freq="D", name="name"
         )
@@ -148,6 +174,9 @@ class TestPeriodIndex:
         tm.assert_index_equal(idx.month, exp)
 
     def test_pindex_multiples(self):
+        # [FUNCTION DOC]
+        # Multiples of month in period_range from start/end and from start/periods give
+        # the expected index, offset and frequency string.
         expected = PeriodIndex(
             ["2011-01", "2011-03", "2011-05", "2011-07", "2011-09", "2011-11"],
             freq="2M",
@@ -166,6 +195,9 @@ class TestPeriodIndex:
     @pytest.mark.filterwarnings(r"ignore:PeriodDtype\[B\] is deprecated:FutureWarning")
     @pytest.mark.filterwarnings("ignore:Period with BDay freq:FutureWarning")
     def test_iteration(self):
+        # [FUNCTION DOC]
+        # Iteration yields Period objects with the index frequency (business-day
+        # deprecation warnings ignored).
         index = period_range(start="1/1/10", periods=4, freq="B")
 
         result = list(index)
@@ -173,6 +205,9 @@ class TestPeriodIndex:
         assert result[0].freq == index.freq
 
     def test_with_multi_index(self):
+        # [FUNCTION DOC]
+        # A period index and an hour array used as a multi-level index keep the period
+        # type for the first level and elements (#1705).
         # #1705
         index = date_range("1/1/2012", periods=4, freq="12h")
         index_as_arrays = [index.to_period(freq="D"), index.hour]
@@ -184,6 +219,8 @@ class TestPeriodIndex:
         assert isinstance(s.index.values[0][0], Period)
 
     def test_map(self):
+        # [FUNCTION DOC]
+        # Mapping a function over the index gives an index of its results (ordinals).
         # test_map_dictlike generally tests
 
         index = PeriodIndex([2005, 2007, 2009], freq="Y")
@@ -193,6 +230,10 @@ class TestPeriodIndex:
 
 
 def test_maybe_convert_timedelta():
+    # [FUNCTION DOC]
+    # The private helper converts a day offset or integer into the integer number of
+    # periods, and raises an incompatible-frequency error for an offset of different
+    # frequency.
     pi = PeriodIndex(["2000", "2001"], freq="D")
     offset = offsets.Day(2)
     assert pi._maybe_convert_timedelta(offset) == 2
@@ -206,6 +247,10 @@ def test_maybe_convert_timedelta():
 
 @pytest.mark.parametrize("array", [True, False])
 def test_dunder_array(array):
+    # [FUNCTION DOC]
+    # Parametrized over index versus backing array. numpy conversion gives an object
+    # array of Periods; integer dtypes give ordinals; other dtypes (float, 32-bit
+    # integer, unsigned) raise a type error.
     obj = PeriodIndex(["2000-01-01", "2001-01-01"], freq="D")
     if array:
         obj = obj._data
