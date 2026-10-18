@@ -1,4 +1,32 @@
 # pyright: reportPropertyTypeMismatch=false
+# [MODULE DOC]
+# Defines NDFrame, the shared base class of Series and DataFrame, plus a few
+# module-level helpers.
+# NDFrame holds a single internal data manager (the block or array manager), a
+# free-form attribute dictionary and a flags object, and implements everything that is
+# common to one- and N-dimensional labeled containers: axis bookkeeping, renaming,
+# reindexing, sorting, selection helpers (head, tail, sample, filter, xs, take, get),
+# missing-data handling (fillna, ffill, bfill, replace, interpolate, isna family,
+# dropna-related helpers), type conversion (astype, convert_dtypes, infer_objects),
+# alignment, where/mask, shift, time-series helpers (resample, asfreq, tz handling,
+# at_time, between_time), reductions and accumulations, window entry points (rolling,
+# expanding, ewm), in-place arithmetic operators, pickling, and the whole family of
+# to_* serialization methods that delegate to the pandas.io modules.
+# Concrete subclasses (Series in pandas.core.series, DataFrame in pandas.core.frame)
+# supply the axis metadata (axis order, axis lengths, info axis) and the constructor
+# hooks that this module only declares abstractly.
+# Module level contents: a private copy of the shared docstring templates, a
+# dictionary of default docstring substitution values used by the doc decorator, the
+# NDFrame class, and a function that builds the docstring for a reduction or
+# accumulation by name.
+# Import-time side effects: makes a private copy of the shared docstring dictionary
+# and builds a number of docstring template strings for reductions and accumulations.
+# Many methods are wrapped by docstring-substitution decorators at class creation
+# time.
+# KNOWN ISSUE: the documentation generator function at the bottom of the module and
+# several of the module-level reduction docstring templates are not referenced by any
+# code in the repository, and the reduction methods defined here carry no docstrings
+# of their own.
 from __future__ import annotations
 
 import collections
@@ -226,6 +254,24 @@ _shared_doc_kwargs = {
 
 
 class NDFrame(PandasObject, indexing.IndexingMixin):
+    # [CLASS DOC]
+    # Base class for Series and DataFrame; inherits the generic object behavior from
+    # PandasObject and the label and position based indexers from IndexingMixin.
+    # State: the internal manager that stores the data (set through direct object
+    # attribute assignment to bypass the custom attribute hooks), a dictionary of user
+    # attributes, and a flags object bound to the instance. Class level attributes
+    # list the internal attribute names, the accessor names, hidden attribute names
+    # and the metadata attribute names propagated by the finalize hook; subclasses
+    # override the axis description attributes (axis order, axis-name to number
+    # mapping, info axis, number of axes).
+    # The class is abstract in the sense that the constructor-related properties raise
+    # an abstract-method error until a subclass overrides them.
+    # Invariants: instances are unhashable, the array priority is high so that numpy
+    # defers binary operations to pandas, and truth-value testing always raises.
+    # Key method groups: construction and axis helpers, rename, equality, unary
+    # operators, label-or-level helpers, iteration, pickling, rendering, I/O (to_*),
+    # selection, reindex, sort, fill, replace, astype, time series, reductions,
+    # windowing, in-place operators.
     """
     N-dimensional analogue of DataFrame. Store multi-dimensional in a
     size-mutable, labeled data structure
@@ -256,6 +302,15 @@ class NDFrame(PandasObject, indexing.IndexingMixin):
     # Constructors
 
     def __init__(self, data: Manager) -> None:
+        # [FUNCTION DOC]
+        # Initialize the instance with an already-built data manager.
+        # Parameters: data is the block or array manager to wrap (no validation or
+        # copy is made).
+        # Sets, by writing directly to the object dictionary to avoid the custom
+        # attribute setter, the manager, an empty attribute dictionary, and a flags
+        # object that allows duplicate labels.
+        # Subclasses are expected to call this (or the from-manager constructor, which
+        # calls it on a bare instance).
         object.__setattr__(self, "_mgr", data)
         object.__setattr__(self, "_attrs", {})
         object.__setattr__(self, "_flags", Flags(self, allows_duplicate_labels=True))
@@ -269,6 +324,19 @@ class NDFrame(PandasObject, indexing.IndexingMixin):
         dtype: DtypeObj | None = None,
         copy: bool = False,
     ) -> Manager:
+        # [FUNCTION DOC]
+        # HELPER: used by the Series and DataFrame constructors to normalize a
+        # manager.
+        # Parameters: mgr is the manager to adjust; axes is a mapping from axis name
+        # (index or columns) to labels or None; dtype is an optional dtype to coerce
+        # to; copy says whether to deep copy the manager first.
+        # For each axis with non-None labels the labels are converted to an Index and
+        # the manager is reindexed along the matching manager axis (translated from
+        # the user axis). If copy is true the manager is deep-copied. If dtype is
+        # given, the manager is cast to it unless it is a block manager with exactly
+        # one block already having that dtype.
+        # Returns the resulting manager. No mutation of the input manager besides what
+        # reindex and astype return as new objects.
         """passed a manager and a axes dict"""
         for a, axe in axes.items():
             if axe is not None:
@@ -294,6 +362,13 @@ class NDFrame(PandasObject, indexing.IndexingMixin):
     @final
     @classmethod
     def _from_mgr(cls, mgr: Manager, axes: list[Index]) -> Self:
+        # [FUNCTION DOC]
+        # HELPER: Class method that builds a new instance of the calling class from a
+        # manager and a list of axes.
+        # Parameters: mgr is the manager to wrap; axes is the list of axes (not used
+        # by this base implementation, it is accepted for subclasses that need it).
+        # Creates a bare instance without calling the subclass constructor and then
+        # runs the base initializer on it with the manager. Returns the new object.
         """
         Construct a new object of this type from a Manager object and axes.
 
@@ -317,6 +392,12 @@ class NDFrame(PandasObject, indexing.IndexingMixin):
 
     @property
     def attrs(self) -> dict[Hashable, Any]:
+        # [FUNCTION DOC]
+        # Property getter returning the dictionary of global user attributes
+        # (metadata) stored on the object.
+        # Returns the live internal dictionary (not a copy), so in-place changes are
+        # visible. Attributes are propagated by the finalize hook to results of many
+        # operations.
         """
         Dictionary of global attributes of this dataset.
 
@@ -355,11 +436,19 @@ class NDFrame(PandasObject, indexing.IndexingMixin):
 
     @attrs.setter
     def attrs(self, value: Mapping[Hashable, Any]) -> None:
+        # [FUNCTION DOC]
+        # Property setter for the user attribute dictionary.
+        # Parameters: value is any mapping; it is copied into a fresh dictionary which
+        # replaces the stored one.
         self._attrs = dict(value)
 
     @final
     @property
     def flags(self) -> Flags:
+        # [FUNCTION DOC]
+        # Property getter returning the flags object bound to this instance (currently
+        # exposing whether duplicate labels are allowed).
+        # Returns the stored flags instance, not a copy.
         """
         Get the properties associated with this pandas object.
 
@@ -405,6 +494,16 @@ class NDFrame(PandasObject, indexing.IndexingMixin):
         copy: bool | lib.NoDefault = lib.no_default,
         allows_duplicate_labels: bool | None = None,
     ) -> Self:
+        # [FUNCTION DOC]
+        # Return a new object (shallow copy) with updated flags.
+        # Parameters (keyword only): copy is a deprecated placeholder that is
+        # validated by the shared deprecation check (any explicitly passed value
+        # triggers the deprecation handling); allows_duplicate_labels is an optional
+        # bool that, when not None, is assigned to the flag of the same name on the
+        # new object.
+        # The original object is not modified. Setting the flag to disallow duplicates
+        # raises through the flags machinery if the object currently has duplicate
+        # labels. Returns the new object.
         """
         Return a new object with updated flags.
 
@@ -472,6 +571,13 @@ class NDFrame(PandasObject, indexing.IndexingMixin):
     @final
     @classmethod
     def _validate_dtype(cls, dtype) -> DtypeObj | None:
+        # [FUNCTION DOC]
+        # HELPER: validates a dtype argument for the constructors.
+        # Parameters: dtype is None or anything convertible to a dtype.
+        # None is passed through. Otherwise the argument is converted to a pandas
+        # dtype object. Compound (structured, kind V) numpy dtypes that are not
+        # extension dtypes are rejected with a not-implemented error naming the class.
+        # Returns the dtype object or None.
         """validate the passed dtype"""
         if dtype is not None:
             dtype = pandas_dtype(dtype)
@@ -491,6 +597,12 @@ class NDFrame(PandasObject, indexing.IndexingMixin):
     # error: Signature of "_constructor" incompatible with supertype "PandasObject"
     @property
     def _constructor(self) -> Callable[..., Self]:  # type: ignore[override]
+        # [FUNCTION DOC]
+        # HELPER: Abstract property: the callable used to build a result of the same
+        # dimensionality as this object.
+        # Always raises an abstract-method error in the base class; Series and
+        # DataFrame override it to return their own class (or a subclass-aware
+        # constructor).
         """
         Used when a manipulation result has the same dimensions as the
         original.
@@ -509,6 +621,13 @@ class NDFrame(PandasObject, indexing.IndexingMixin):
     def _construct_axes_dict(
         self, axes: Sequence[Axis] | None = None, **kwargs: AxisInt
     ) -> dict:
+        # [FUNCTION DOC]
+        # HELPER: builds a dictionary of axis name to axis labels for this object.
+        # Parameters: axes is an optional sequence of axis identifiers (defaults to
+        # all axes in the class axis order); extra keyword arguments are merged into
+        # the result afterwards and override entries of the same key.
+        # Returns a new dictionary mapping each requested axis to the corresponding
+        # index object.
         """Return an axes dictionary for myself."""
         d = {a: self._get_axis(a) for a in (axes or self._AXIS_ORDERS)}
         # error: Argument 1 to "update" of "MutableMapping" has incompatible type
@@ -519,6 +638,12 @@ class NDFrame(PandasObject, indexing.IndexingMixin):
     @final
     @classmethod
     def _get_axis_number(cls, axis: Axis) -> AxisInt:
+        # [FUNCTION DOC]
+        # HELPER: class method translating an axis identifier to its integer position.
+        # Parameters: axis is a number or an alias accepted by the class level mapping
+        # (for example an axis name or alias).
+        # Returns the integer axis number. Raises a value error naming the class when
+        # the identifier is not in the mapping.
         try:
             return cls._AXIS_TO_AXIS_NUMBER[axis]
         except KeyError as err:
@@ -529,11 +654,23 @@ class NDFrame(PandasObject, indexing.IndexingMixin):
     @final
     @classmethod
     def _get_axis_name(cls, axis: Axis) -> Literal["index", "columns"]:
+        # [FUNCTION DOC]
+        # HELPER: class method translating an axis identifier to the canonical axis
+        # name.
+        # Parameters: axis is any identifier accepted by the axis number helper.
+        # Returns the name (index or columns) at that position in the class axis
+        # order. Propagates the value error of the number helper for invalid axes.
         axis_number = cls._get_axis_number(axis)
         return cls._AXIS_ORDERS[axis_number]
 
     @final
     def _get_axis(self, axis: Axis) -> Index:
+        # [FUNCTION DOC]
+        # HELPER: returns the Index object for an axis.
+        # Parameters: axis is any axis identifier.
+        # Converts it to a number, asserts that it is 0 or 1, and returns the index
+        # for 0 and the columns for 1 (so for a Series only axis 0 is meaningful since
+        # the columns attribute does not exist).
         axis_number = self._get_axis_number(axis)
         assert axis_number in {0, 1}
         return self.index if axis_number == 0 else self.columns
@@ -541,6 +678,13 @@ class NDFrame(PandasObject, indexing.IndexingMixin):
     @final
     @classmethod
     def _get_block_manager_axis(cls, axis: Axis) -> AxisInt:
+        # [FUNCTION DOC]
+        # HELPER: class method mapping a user-facing axis to the axis number used by
+        # the internal manager.
+        # Parameters: axis is any axis identifier.
+        # For two-dimensional objects the manager stores axes reversed, so the result
+        # is one minus the user axis number; for one-dimensional objects the number is
+        # returned unchanged.
         """Map the axis to the block_manager axis."""
         axis = cls._get_axis_number(axis)
         ndim = cls._AXIS_LEN
@@ -551,6 +695,15 @@ class NDFrame(PandasObject, indexing.IndexingMixin):
 
     @final
     def _get_axis_resolvers(self, axis: str) -> dict[str, Series | MultiIndex]:
+        # [FUNCTION DOC]
+        # HELPER: builds the name resolution mapping used by expression evaluation
+        # (query and eval) for one axis.
+        # Parameters: axis is the attribute name of the axis (index or columns).
+        # For each level of that axis, a series of the level values indexed by the
+        # full axis is created, keyed by the level name, or by the first letter of the
+        # axis followed by the text level_ and the level position when the level is
+        # unnamed. The axis itself is added under the axis name (kept as a MultiIndex
+        # if it is one, otherwise converted to a series). Returns the dictionary.
         # index or columns
         axis_index = getattr(self, axis)
         d = {}
@@ -582,6 +735,12 @@ class NDFrame(PandasObject, indexing.IndexingMixin):
 
     @final
     def _get_index_resolvers(self) -> dict[Hashable, Series | MultiIndex]:
+        # [FUNCTION DOC]
+        # HELPER: collects the resolvers for all axes for expression evaluation.
+        # Merges the per-axis resolver dictionaries, drops integer keys, and
+        # normalizes every remaining key into a valid identifier using the column-name
+        # cleaner from the computation parsing module (imported lazily). Returns the
+        # resulting dictionary.
         from pandas.core.computation.parsing import clean_column_name
 
         d: dict[str, Series | MultiIndex] = {}
@@ -592,6 +751,12 @@ class NDFrame(PandasObject, indexing.IndexingMixin):
 
     @final
     def _get_cleaned_column_resolvers(self) -> dict[Hashable, Series]:
+        # [FUNCTION DOC]
+        # HELPER: returns resolvers for expression evaluation that map
+        # special-character-free column names to data.
+        # For a Series, a single entry keyed by the cleaned series name is returned;
+        # otherwise each column is keyed by its cleaned name. The cleaner is imported
+        # lazily from the computation parsing module.
         """
         Return the special character free column resolvers of a DataFrame.
 
@@ -609,10 +774,17 @@ class NDFrame(PandasObject, indexing.IndexingMixin):
     @final
     @property
     def _info_axis(self) -> Index:
+        # [FUNCTION DOC]
+        # HELPER property: the info axis, i.e. the Index that is iterated and used for
+        # membership tests (index for Series, columns for DataFrame), looked up
+        # through the class level info-axis name.
         return getattr(self, self._info_axis_name)
 
     @property
     def shape(self) -> tuple[int, ...]:
+        # [FUNCTION DOC]
+        # Property returning a tuple with the length of every axis in class axis
+        # order.
         """
         Return a tuple of axis dimensions
         """
@@ -620,6 +792,9 @@ class NDFrame(PandasObject, indexing.IndexingMixin):
 
     @property
     def axes(self) -> list[Index]:
+        # [FUNCTION DOC]
+        # Property returning a list of the axis index objects in class axis order
+        # (index first, then columns for a DataFrame).
         """
         Return index label(s) of the internal NDFrame
         """
@@ -630,6 +805,9 @@ class NDFrame(PandasObject, indexing.IndexingMixin):
     @final
     @property
     def ndim(self) -> int:
+        # [FUNCTION DOC]
+        # Property returning the number of dimensions as reported by the manager (1
+        # for Series, 2 for DataFrame).
         """
         Return an int representing the number of axes / array dimensions.
 
@@ -654,6 +832,9 @@ class NDFrame(PandasObject, indexing.IndexingMixin):
     @final
     @property
     def size(self) -> int:
+        # [FUNCTION DOC]
+        # Property returning the total number of elements, computed as the product of
+        # the axis lengths converted to a plain int.
         """
         Return an int representing the number of elements in this object.
 
@@ -684,6 +865,14 @@ class NDFrame(PandasObject, indexing.IndexingMixin):
         axis: Axis = 0,
         copy: bool | lib.NoDefault = lib.no_default,
     ) -> Self:
+        # [FUNCTION DOC]
+        # Assign new labels to the given axis and return a new object.
+        # Parameters (keyword only for axis and copy): labels is the new index-like
+        # labels; axis selects the axis (default 0); copy is a deprecated placeholder
+        # handled by the shared deprecation check.
+        # The labels are validated for length by the underlying axis setter. The
+        # original is not modified; a shallow copy with the labels replaced is
+        # returned.
         """
         Assign desired index to given axis.
 
@@ -727,16 +916,39 @@ class NDFrame(PandasObject, indexing.IndexingMixin):
     @overload
     def _set_axis_nocheck(
         self, labels, axis: Axis, inplace: Literal[False]
-    ) -> Self: ...
+    ) -> Self:
+        # [FUNCTION DOC]
+        # HELPER: Typing overload stub only (body is a placeholder); the behavior is
+        # defined by the implementation that follows these overloads. Variant for
+        # inplace false returning the same type.
+        ...
 
     @overload
-    def _set_axis_nocheck(self, labels, axis: Axis, inplace: Literal[True]) -> None: ...
+    def _set_axis_nocheck(self, labels, axis: Axis, inplace: Literal[True]) -> None:
+        # [FUNCTION DOC]
+        # HELPER: Typing overload stub only (body is a placeholder); the behavior is
+        # defined by the implementation that follows these overloads. Variant for
+        # inplace true returning nothing.
+        ...
 
     @overload
-    def _set_axis_nocheck(self, labels, axis: Axis, inplace: bool) -> Self | None: ...
+    def _set_axis_nocheck(self, labels, axis: Axis, inplace: bool) -> Self | None:
+        # [FUNCTION DOC]
+        # HELPER: Typing overload stub only (body is a placeholder); the behavior is
+        # defined by the implementation that follows these overloads. Variant for a
+        # general boolean returning an optional object.
+        ...
 
     @final
     def _set_axis_nocheck(self, labels, axis: Axis, inplace: bool) -> Self | None:
+        # [FUNCTION DOC]
+        # HELPER: sets labels on an axis with no extra validation or deprecation
+        # handling.
+        # Parameters: labels is the new label container; axis is any axis identifier;
+        # inplace selects whether to modify self.
+        # If inplace, the axis attribute (looked up by canonical name) is assigned on
+        # self and None is returned. Otherwise a shallow copy is made, the attribute
+        # assigned on the copy, and the copy returned.
         if inplace:
             setattr(self, self._get_axis_name(axis), labels)
             return None
@@ -746,6 +958,14 @@ class NDFrame(PandasObject, indexing.IndexingMixin):
 
     @final
     def _set_axis(self, axis: AxisInt, labels: AnyArrayLike | list) -> None:
+        # [FUNCTION DOC]
+        # HELPER: low-level axis setter invoked from compiled code when the index or
+        # columns attribute is assigned.
+        # Parameters: axis is the integer manager-level axis; labels is any array-like
+        # or list.
+        # Converts the labels to an Index and passes them to the manager axis setter.
+        # Mutates self. Returns nothing. The manager raises if the length does not
+        # match.
         """
         This is called from the cython code when we set the `index` attribute
         directly, e.g. `series.index = [1, 2, 3]`.
@@ -755,6 +975,14 @@ class NDFrame(PandasObject, indexing.IndexingMixin):
 
     @final
     def droplevel(self, level: IndexLabel, axis: Axis = 0) -> Self:
+        # [FUNCTION DOC]
+        # Return a new object with the requested level(s) removed from the index or
+        # the columns.
+        # Parameters: level is an int, label or list of these identifying levels of a
+        # MultiIndex; axis selects which axis is modified (default 0).
+        # Takes the axis labels, drops the levels with the index droplevel operation,
+        # and returns the object with the new labels set on that axis. Raises (from
+        # the index) if levels are invalid or all levels would be removed.
         """
         Return Series/DataFrame with requested index / column level(s) removed.
 
@@ -824,6 +1052,13 @@ class NDFrame(PandasObject, indexing.IndexingMixin):
         return self.set_axis(new_labels, axis=axis)
 
     def pop(self, item: Hashable) -> Series | Any:
+        # [FUNCTION DOC]
+        # Remove an item from the info axis in place and return it.
+        # Parameters: item is a label of the info axis (column for DataFrame, index
+        # label for Series).
+        # Looks up the item, deletes it from self through the item deletion operator,
+        # and returns the looked up value. Raises a key error from lookup or deletion
+        # if the label is absent. No docstring is defined for this method.
         result = self[item]
         del self[item]
 
@@ -831,6 +1066,15 @@ class NDFrame(PandasObject, indexing.IndexingMixin):
 
     @final
     def squeeze(self, axis: Axis | None = None) -> Scalar | Series | DataFrame:
+        # [FUNCTION DOC]
+        # Reduce axes of length one to scalars.
+        # Parameters: axis is None (all axes) or a single axis identifier restricting
+        # the squeeze.
+        # For each selected axis whose length is exactly one the positional indexer
+        # takes position zero; other axes are kept whole. If the result is still an
+        # NDFrame it is passed through the finalize hook with the method name squeeze.
+        # Returns a scalar, a Series or the DataFrame depending on how many axes were
+        # squeezed. Does not modify self.
         """
         Squeeze 1 dimensional axis objects into scalars.
 
@@ -958,7 +1202,12 @@ class NDFrame(PandasObject, indexing.IndexingMixin):
         inplace: Literal[False] = ...,
         level: Level | None = ...,
         errors: str = ...,
-    ) -> Self: ...
+    ) -> Self:
+        # [FUNCTION DOC]
+        # HELPER: Typing overload stub only (body is a placeholder); the behavior is
+        # defined by the implementation that follows these overloads. Private rename;
+        # variant for inplace false.
+        ...
 
     @overload
     def _rename(
@@ -971,7 +1220,12 @@ class NDFrame(PandasObject, indexing.IndexingMixin):
         inplace: Literal[True],
         level: Level | None = ...,
         errors: str = ...,
-    ) -> None: ...
+    ) -> None:
+        # [FUNCTION DOC]
+        # HELPER: Typing overload stub only (body is a placeholder); the behavior is
+        # defined by the implementation that follows these overloads. Private rename;
+        # variant for inplace true.
+        ...
 
     @overload
     def _rename(
@@ -984,7 +1238,12 @@ class NDFrame(PandasObject, indexing.IndexingMixin):
         inplace: bool,
         level: Level | None = ...,
         errors: str = ...,
-    ) -> Self | None: ...
+    ) -> Self | None:
+        # [FUNCTION DOC]
+        # HELPER: Typing overload stub only (body is a placeholder); the behavior is
+        # defined by the implementation that follows these overloads. Private rename;
+        # variant for a general boolean inplace.
+        ...
 
     @final
     def _rename(
@@ -998,6 +1257,25 @@ class NDFrame(PandasObject, indexing.IndexingMixin):
         level: Level | None = None,
         errors: str = "ignore",
     ) -> Self | None:
+        # [FUNCTION DOC]
+        # HELPER: shared implementation of the public rename methods of Series and
+        # DataFrame.
+        # Parameters (keyword only except mapper): mapper is a dict-like or function
+        # applied to the axis chosen by axis; index and columns are alternative
+        # per-axis mappers; axis selects the axis for mapper (default behavior applies
+        # mapper to the index); inplace says whether to modify self; level restricts
+        # renaming to one level of a MultiIndex; errors is ignore or raise, and when
+        # raise a key error is raised for dict-like mappers with labels not found in
+        # the axis.
+        # Raises a type error if no mapper of any kind is given, or if axis is
+        # combined with index or columns, or mapper with either of them. Raises a
+        # value error if a Series mapper has a non-unique index. The in-place path
+        # first checks that duplicate labels are allowed.
+        # For each requested axis a rename function is derived from the mapper, the
+        # new labels are computed by transforming the existing axis and assigned
+        # without validation to a shallow copy (or self). If inplace the result is
+        # merged back into self and None is returned; otherwise the copy is returned
+        # after the finalize hook with method rename.
         # called by Series.rename and DataFrame.rename
 
         if mapper is None and index is None and columns is None:
@@ -1069,7 +1347,12 @@ class NDFrame(PandasObject, indexing.IndexingMixin):
         axis: Axis = ...,
         copy: bool | lib.NoDefault = lib.no_default,
         inplace: Literal[False] = ...,
-    ) -> Self: ...
+    ) -> Self:
+        # [FUNCTION DOC]
+        # Typing overload stub only (body is a placeholder); the behavior is defined
+        # by the implementation that follows these overloads. rename_axis variant for
+        # inplace false.
+        ...
 
     @overload
     def rename_axis(
@@ -1081,7 +1364,12 @@ class NDFrame(PandasObject, indexing.IndexingMixin):
         axis: Axis = ...,
         copy: bool | lib.NoDefault = lib.no_default,
         inplace: Literal[True],
-    ) -> None: ...
+    ) -> None:
+        # [FUNCTION DOC]
+        # Typing overload stub only (body is a placeholder); the behavior is defined
+        # by the implementation that follows these overloads. rename_axis variant for
+        # inplace true.
+        ...
 
     @overload
     def rename_axis(
@@ -1093,7 +1381,12 @@ class NDFrame(PandasObject, indexing.IndexingMixin):
         axis: Axis = ...,
         copy: bool | lib.NoDefault = lib.no_default,
         inplace: bool = ...,
-    ) -> Self | None: ...
+    ) -> Self | None:
+        # [FUNCTION DOC]
+        # Typing overload stub only (body is a placeholder); the behavior is defined
+        # by the implementation that follows these overloads. rename_axis variant for
+        # general boolean inplace.
+        ...
 
     def rename_axis(
         self,
@@ -1105,6 +1398,20 @@ class NDFrame(PandasObject, indexing.IndexingMixin):
         copy: bool | lib.NoDefault = lib.no_default,
         inplace: bool = False,
     ) -> Self | None:
+        # [FUNCTION DOC]
+        # Set the name(s) of the index or column axis.
+        # Parameters (keyword only except mapper): mapper is a scalar or list-like of
+        # new names applied to the axis given by axis; index and columns give per-axis
+        # values (scalar, list-like, or a dict-like/function transformer applied to
+        # the existing names); axis is the axis for mapper (default 0); copy is a
+        # deprecated placeholder; inplace chooses in-place modification.
+        # When mapper is supplied: scalar or non-dict list-like values set the axis
+        # names, anything else raises a value error telling the user to use rename.
+        # Otherwise each of index and columns that was supplied is applied: scalars
+        # and non-dict list-likes become the names directly, other values are turned
+        # into a rename function applied to each current name of that axis. Axes left
+        # at the sentinel default are skipped.
+        # Returns the modified copy, or None when inplace.
         """
         Set the name of the axis for the index or columns.
 
@@ -1265,22 +1572,45 @@ class NDFrame(PandasObject, indexing.IndexingMixin):
     @overload
     def _set_axis_name(
         self, name, axis: Axis = ..., *, inplace: Literal[False] = ...
-    ) -> Self: ...
+    ) -> Self:
+        # [FUNCTION DOC]
+        # HELPER: Typing overload stub only (body is a placeholder); the behavior is
+        # defined by the implementation that follows these overloads. Private name
+        # setter; variant for inplace false.
+        ...
 
     @overload
     def _set_axis_name(
         self, name, axis: Axis = ..., *, inplace: Literal[True]
-    ) -> None: ...
+    ) -> None:
+        # [FUNCTION DOC]
+        # HELPER: Typing overload stub only (body is a placeholder); the behavior is
+        # defined by the implementation that follows these overloads. Private name
+        # setter; variant for inplace true.
+        ...
 
     @overload
     def _set_axis_name(
         self, name, axis: Axis = ..., *, inplace: bool
-    ) -> Self | None: ...
+    ) -> Self | None:
+        # [FUNCTION DOC]
+        # HELPER: Typing overload stub only (body is a placeholder); the behavior is
+        # defined by the implementation that follows these overloads. Private name
+        # setter; variant for general boolean inplace.
+        ...
 
     @final
     def _set_axis_name(
         self, name, axis: Axis = 0, *, inplace: bool = False
     ) -> Self | None:
+        # [FUNCTION DOC]
+        # HELPER: sets the name(s) of an axis, used by rename_axis and other callers.
+        # Parameters: name is a scalar or list-like of names; axis is the axis
+        # identifier (default 0); inplace (keyword only) selects in-place
+        # modification.
+        # Builds new axis labels with the names applied, validates the inplace flag as
+        # a boolean, and assigns them to the index or columns of either self or a
+        # shallow copy. Returns the copy, or None when inplace.
         """
         Set the name(s) of the axis.
 
@@ -1349,12 +1679,24 @@ class NDFrame(PandasObject, indexing.IndexingMixin):
 
     @final
     def _indexed_same(self, other) -> bool:
+        # [FUNCTION DOC]
+        # HELPER: returns whether every axis of self equals the corresponding axis of
+        # other (labels and order). other must provide the same axes. Used by
+        # alignment and comparison code.
         return all(
             self._get_axis(a).equals(other._get_axis(a)) for a in self._AXIS_ORDERS
         )
 
     @final
     def equals(self, other: object) -> bool:
+        # [FUNCTION DOC]
+        # Test whether two objects have the same shape and elements, treating missing
+        # values in the same location as equal.
+        # Parameters: other is any object. If it is not an instance of the same class
+        # (checking in both directions of subclassing) False is returned. Otherwise
+        # the managers are compared, which requires equal axes and equal values with
+        # dtype-aware comparison. Returns a bool and never raises for mismatched
+        # types.
         """
         Test whether two objects contain the same elements.
 
@@ -1455,7 +1797,18 @@ class NDFrame(PandasObject, indexing.IndexingMixin):
 
     @final
     def __neg__(self) -> Self:
+        # [FUNCTION DOC]
+        # Unary minus. Applies a block-wise function through the manager: boolean
+        # blocks are logically inverted, other blocks are arithmetically negated.
+        # Wraps the new manager in an object of the same kind and runs the finalize
+        # hook with method name for negation. Returns the new object; self is
+        # unchanged.
         def blk_func(values: ArrayLike):
+            # [FUNCTION DOC]
+            # HELPER: block-level function used by the negation operator.
+            # Parameters: values is the array of one block. Boolean dtype values are
+            # inverted (logical not); all other dtypes are negated arithmetically.
+            # Returns the new array.
             if is_bool_dtype(values.dtype):
                 # error: Argument 1 to "inv" has incompatible type "Union
                 # [ExtensionArray, ndarray[Any, Any]]"; expected
@@ -1473,7 +1826,17 @@ class NDFrame(PandasObject, indexing.IndexingMixin):
 
     @final
     def __pos__(self) -> Self:
+        # [FUNCTION DOC]
+        # Unary plus. Applies a block-wise function through the manager (copy for
+        # booleans, positive operator otherwise), rebuilds an object of the same kind
+        # and runs the finalize hook with the method name for unary plus. Returns the
+        # new object.
         def blk_func(values: ArrayLike):
+            # [FUNCTION DOC]
+            # HELPER: block-level function used by the unary plus operator.
+            # Parameters: values is the array of one block. Boolean values are
+            # returned as a copy; other dtypes go through the numeric positive
+            # operation. Returns the new array.
             if is_bool_dtype(values.dtype):
                 return values.copy()
             else:
@@ -1488,6 +1851,12 @@ class NDFrame(PandasObject, indexing.IndexingMixin):
 
     @final
     def __invert__(self) -> Self:
+        # [FUNCTION DOC]
+        # Bitwise inversion (the tilde operator). If the object has zero elements a
+        # shallow copy is returned without applying the operation (because inversion
+        # fails on empty data). Otherwise the invert operator is applied through the
+        # manager block by block, and the result is finalized with the method name for
+        # invert. Returns a new object of the same kind.
         if not self.size:
             # inv fails with 0 len
             return self.copy(deep=False)
@@ -1498,6 +1867,13 @@ class NDFrame(PandasObject, indexing.IndexingMixin):
 
     @final
     def __bool__(self) -> NoReturn:
+        # [FUNCTION DOC]
+        # Truth-value testing is always an error: raises a value error stating that
+        # the truth value of the object (naming its class) is ambiguous and suggesting
+        # alternatives.
+        # KNOWN ISSUE: the message suggests a bool method of the object, but that
+        # method no longer exists on Series or DataFrame in current pandas, so the
+        # advice is outdated.
         raise ValueError(
             f"The truth value of a {type(self).__name__} is ambiguous. "
             "Use a.empty, a.bool(), a.item(), a.any() or a.all()."
@@ -1505,6 +1881,14 @@ class NDFrame(PandasObject, indexing.IndexingMixin):
 
     @final
     def abs(self) -> Self:
+        # [FUNCTION DOC]
+        # Return the absolute value of each element.
+        # Applies the numpy absolute function to every block through the manager and
+        # rebuilds an object of the same kind.
+        # KNOWN ISSUE: the finalize hook is called with a keyword named name instead
+        # of method, so the method argument stays None; the name keyword is swallowed
+        # by the extra keyword arguments, so the operation name is never recorded.
+        # Returns the new object.
         """
         Return a Series/DataFrame with absolute numeric value of each element.
 
@@ -1576,10 +1960,19 @@ class NDFrame(PandasObject, indexing.IndexingMixin):
 
     @final
     def __abs__(self) -> Self:
+        # [FUNCTION DOC]
+        # Implements the built-in absolute value operation by delegating to the abs
+        # method. Returns a new object.
         return self.abs()
 
     @final
     def __round__(self, decimals: int = 0) -> Self:
+        # [FUNCTION DOC]
+        # Implements the built-in round operation.
+        # Parameters: decimals is the number of decimals (default 0).
+        # Delegates to the round method of the concrete class, then runs the finalize
+        # hook with the method name for the built-in round. Returns the rounded
+        # object.
         return self.round(decimals).__finalize__(self, method="__round__")
 
     # -------------------------------------------------------------------------
@@ -1592,6 +1985,12 @@ class NDFrame(PandasObject, indexing.IndexingMixin):
 
     @final
     def _is_level_reference(self, key: Level, axis: Axis = 0) -> bool:
+        # [FUNCTION DOC]
+        # HELPER: tests whether a key refers to an index level on the given axis.
+        # Parameters: key is a level name; axis is the axis identifier (default 0).
+        # True only if the key is not None, is hashable, is among the names of the
+        # axis, and is not also a label on any other axis (labels take precedence over
+        # levels in ambiguous cases). Returns a bool.
         """
         Test whether a key is a level reference for a given axis.
 
@@ -1623,6 +2022,11 @@ class NDFrame(PandasObject, indexing.IndexingMixin):
 
     @final
     def _is_label_reference(self, key: Level, axis: Axis = 0) -> bool:
+        # [FUNCTION DOC]
+        # HELPER: tests whether a key is a label of one of the axes other than the
+        # given axis (for example a column label when axis is the index).
+        # Parameters: key; axis (default 0). Requires the key to be hashable. Returns
+        # a bool.
         """
         Test whether a key is a label reference for a given axis.
 
@@ -1649,6 +2053,10 @@ class NDFrame(PandasObject, indexing.IndexingMixin):
 
     @final
     def _is_label_or_level_reference(self, key: Level, axis: AxisInt = 0) -> bool:
+        # [FUNCTION DOC]
+        # HELPER: returns true if the key is either a level reference or a label
+        # reference for the given axis. Parameters: key; axis as an integer (default
+        # 0).
         """
         Test whether a key is a label or level reference for a given axis.
 
@@ -1674,6 +2082,13 @@ class NDFrame(PandasObject, indexing.IndexingMixin):
 
     @final
     def _check_label_or_level_ambiguity(self, key: Level, axis: Axis = 0) -> None:
+        # [FUNCTION DOC]
+        # HELPER: raises when a key is simultaneously a level name on the given axis
+        # and a label on another axis.
+        # Parameters: key; axis (default 0).
+        # Returns None if there is no ambiguity. Raises a value error with a message
+        # built around the correct article and the words index and column describing
+        # both roles.
         """
         Check whether `key` is ambiguous.
 
@@ -1718,6 +2133,16 @@ class NDFrame(PandasObject, indexing.IndexingMixin):
 
     @final
     def _get_label_or_level_values(self, key: Level, axis: AxisInt = 0) -> ArrayLike:
+        # [FUNCTION DOC]
+        # HELPER: returns a one-dimensional array of the values for a key that names a
+        # label or a level of the given axis.
+        # Parameters: key; axis as an integer (default 0).
+        # If the key is a label reference, ambiguity is checked first and the values
+        # are cross-sectioned from the first other axis; if it is a level reference
+        # the level values of that axis are taken; otherwise a key error is raised. A
+        # value error is raised if all axes match (no other axis exists) or if the
+        # resulting values are multi-dimensional (the label is not unique), with an
+        # extra hint for MultiIndex labels. Returns the underlying array.
         """
         Return a 1-D array of values associated with `key`, a label or level
         from the given `axis`.
@@ -1785,6 +2210,18 @@ class NDFrame(PandasObject, indexing.IndexingMixin):
 
     @final
     def _drop_labels_or_levels(self, keys, axis: AxisInt = 0):
+        # [FUNCTION DOC]
+        # HELPER: drops the given labels and/or levels along an axis and returns a new
+        # object.
+        # Parameters: keys is a single key or list of keys (converted to a list); axis
+        # as an integer (default 0).
+        # Raises a value error listing keys that are not valid labels or levels.
+        # Levels to drop are keys that are level references; the rest are labels. A
+        # shallow copy is made once and modified in place: for axis 0, index levels
+        # are removed by resetting the index with drop, and column labels are dropped;
+        # for axis 1, levels are dropped from a MultiIndex of columns or, for a flat
+        # column index, the columns are replaced with a default range index, and index
+        # labels are dropped. Returns the modified copy.
         """
         Drop labels and/or levels for the given `axis`.
 
@@ -1868,6 +2305,9 @@ class NDFrame(PandasObject, indexing.IndexingMixin):
     __hash__: ClassVar[None]  # type: ignore[assignment]
 
     def __iter__(self) -> Iterator:
+        # [FUNCTION DOC]
+        # Iterate over the info axis: returns an iterator over the labels (the column
+        # labels of a DataFrame, the index values of a Series).
         """
         Iterate over info axis.
 
@@ -1893,6 +2333,9 @@ class NDFrame(PandasObject, indexing.IndexingMixin):
 
     # can we get a better explanation of this?
     def keys(self) -> Index:
+        # [FUNCTION DOC]
+        # Return the info axis (the index for a Series, the columns for a DataFrame)
+        # as an Index.
         """
         Get the 'info axis' (see Indexing for more).
 
@@ -1924,6 +2367,10 @@ class NDFrame(PandasObject, indexing.IndexingMixin):
         return self._info_axis
 
     def items(self):
+        # [FUNCTION DOC]
+        # Generator yielding pairs of each info axis label and the data stored under
+        # it (a column for DataFrame, a scalar for Series). Looks every label up with
+        # the item getter, so duplicate labels yield the looked-up result each time.
         """
         Iterate over (label, values) on info axis
 
@@ -1937,16 +2384,24 @@ class NDFrame(PandasObject, indexing.IndexingMixin):
             yield h, self[h]
 
     def __len__(self) -> int:
+        # [FUNCTION DOC]
+        # Returns the length of the info axis.
         """Returns length of info axis"""
         return len(self._info_axis)
 
     @final
     def __contains__(self, key) -> bool:
+        # [FUNCTION DOC]
+        # Membership test: returns whether the key is in the info axis (labels, not
+        # values).
         """True if the key is in the info axis"""
         return key in self._info_axis
 
     @property
     def empty(self) -> bool:
+        # [FUNCTION DOC]
+        # Property: true if any axis has length zero. Note a frame that holds only
+        # missing values is not empty.
         """
         Indicator whether Series/DataFrame is empty.
 
@@ -2015,6 +2470,18 @@ class NDFrame(PandasObject, indexing.IndexingMixin):
     def __array__(
         self, dtype: npt.DTypeLike | None = None, copy: bool | None = None
     ) -> np.ndarray:
+        # [FUNCTION DOC]
+        # Implements the numpy array conversion protocol.
+        # Parameters: dtype is an optional target numpy dtype; copy is None (copy if
+        # needed), True (force) or False (never copy).
+        # If copy is false and the data span several blocks and the object is
+        # non-empty, raises a value error since a copy is unavoidable. The values are
+        # fetched from the internal values property; without a copy flag they are
+        # converted with the as-array function, otherwise with the array constructor
+        # honoring the flag. When copying is not forced, the dtype change is a
+        # view-compatible one and the object has a single block, a read-only view of
+        # the result is returned so that later numpy writes cannot corrupt the pandas
+        # data. Returns an ndarray.
         if copy is False and not self._mgr.is_single_block and not self.empty:
             # check this manually, otherwise ._values will already return a copy
             # and np.array(values, copy=False) will not raise an error
@@ -2045,6 +2512,12 @@ class NDFrame(PandasObject, indexing.IndexingMixin):
     def __array_ufunc__(
         self, ufunc: np.ufunc, method: str, *inputs: Any, **kwargs: Any
     ):
+        # [FUNCTION DOC]
+        # Implements the numpy universal function protocol by delegating to the
+        # array-like helper.
+        # Parameters: ufunc is the numpy function; method is the call style name;
+        # inputs are positional arguments; kwargs are keyword arguments. Returns
+        # whatever the helper returns (a pandas object, tuple, or NotImplemented).
         return arraylike.array_ufunc(self, ufunc, method, *inputs, **kwargs)
 
     # ----------------------------------------------------------------------
@@ -2052,6 +2525,11 @@ class NDFrame(PandasObject, indexing.IndexingMixin):
 
     @final
     def __getstate__(self) -> dict[str, Any]:
+        # [FUNCTION DOC]
+        # Pickle support: returns the state dictionary used to serialize the object.
+        # Contains the manager, the type tag, the list of metadata names, the user
+        # attributes, a dictionary of flag values, and every metadata attribute value
+        # (missing metadata attributes are stored as None).
         meta = {k: getattr(self, k, None) for k in self._metadata}
         return {
             "_mgr": self._mgr,
@@ -2064,6 +2542,19 @@ class NDFrame(PandasObject, indexing.IndexingMixin):
 
     @final
     def __setstate__(self, state) -> None:
+        # [FUNCTION DOC]
+        # Pickle support: restores the object from state.
+        # Parameters: state is a manager (old style), or a dictionary produced by the
+        # getstate method (or an older equivalent where the manager is stored under
+        # the key data), or a legacy tuple.
+        # Manager state is installed directly. For dictionary state with a type tag:
+        # user attributes (a None value is replaced by an empty dictionary) and flags
+        # are rebuilt, then internal names and metadata present in the state are set
+        # first (in a stable-ish set order, skipping the flags entry) and all
+        # remaining entries are set afterwards, all via direct attribute assignment.
+        # Dictionaries without a type tag, and two-element legacy states, raise a
+        # not-implemented error saying pickles older than 0.12 are unsupported.
+        # Mutates self.
         if isinstance(state, BlockManager):
             self._mgr = state
         elif isinstance(state, dict):
@@ -2102,6 +2593,10 @@ class NDFrame(PandasObject, indexing.IndexingMixin):
     # Rendering Methods
 
     def __repr__(self) -> str:
+        # [FUNCTION DOC]
+        # Fallback string representation: the class name followed by brackets
+        # containing the comma separated printable forms of the iterated items of the
+        # info axis. Concrete classes override this with richer output.
         # string representation based upon iterating over self
         # (since, by definition, `PandasContainers` are iterable)
         prepr = f"[{','.join(map(pprint_thing, self))}]"
@@ -2109,6 +2604,11 @@ class NDFrame(PandasObject, indexing.IndexingMixin):
 
     @final
     def _repr_latex_(self):
+        # [FUNCTION DOC]
+        # HELPER: notebook hook returning a LaTeX representation. Returns the output
+        # of the latex export if the display option for the styler render
+        # representation is set to latex, otherwise returns None. Intended for
+        # nbconvert use.
         """
         Returns a LaTeX representation for a particular object.
         Mainly for use with nbconvert (jupyter notebook conversion to pdf).
@@ -2120,6 +2620,12 @@ class NDFrame(PandasObject, indexing.IndexingMixin):
 
     @final
     def _repr_data_resource_(self):
+        # [FUNCTION DOC]
+        # HELPER: notebook-style data resource representation (not a real Jupyter hook
+        # name). If the display option for the HTML table schema is enabled, takes the
+        # first rows (limited by the maximum rows display option), serializes them to
+        # JSON in table orientation and parses that JSON back into an ordered
+        # dictionary, which is returned. Otherwise returns None.
         """
         Not a real Jupyter special repr method, but we use the same
         naming convention.
@@ -2156,6 +2662,23 @@ class NDFrame(PandasObject, indexing.IndexingMixin):
         engine_kwargs: dict[str, Any] | None = None,
         autofilter: bool = False,
     ) -> None:
+        # [FUNCTION DOC]
+        # Write the object to an Excel sheet.
+        # Parameters (all keyword-only except the first): excel_writer is a path,
+        # buffer or an existing writer; sheet_name (default Sheet1); na_rep text for
+        # missing values; float_format format string for floats; columns subset of
+        # columns to write; header bool or alias list for column labels; index whether
+        # to write the row labels; index_label column label(s) for index columns;
+        # startrow and startcol give the zero-based upper-left cell; engine selects
+        # openpyxl or xlsxwriter; merge_cells writes multi-level labels as merged
+        # cells; inf_rep text for infinity; freeze_panes a tuple of rows and columns
+        # to freeze; storage_options for remote file systems; engine_kwargs extra
+        # options for the engine; autofilter whether to add a filter to the header
+        # row.
+        # A Series is first converted to a one-column frame. A formatter object from
+        # the excel formatting module (imported lazily) is created from the frame and
+        # the formatting arguments, and it performs the write. Returns None. Side
+        # effect: writes a file or buffer.
         """
         Write object to an Excel sheet.
 
@@ -2327,6 +2850,26 @@ class NDFrame(PandasObject, indexing.IndexingMixin):
         storage_options: StorageOptions | None = None,
         mode: Literal["a", "w"] = "w",
     ) -> str | None:
+        # [FUNCTION DOC]
+        # Convert the object to a JSON string or write it to a path or buffer.
+        # Parameters (keyword only except the first): path_or_buf is a path, writable
+        # buffer or None to return a string; orient selects the layout (split,
+        # records, index, table, columns, values; default depends on the type);
+        # date_format is iso or epoch (defaulted below); double_precision decimal
+        # places for floats; force_ascii escape non-ascii characters; date_unit time
+        # unit of epoch/iso output; default_handler callable for unserializable
+        # objects; lines write line-delimited records (requires the records
+        # orientation); compression, storage_options and mode for the output target;
+        # index whether to include the index; indent number of spaces for pretty
+        # printing.
+        # Date format handling: when it is None, table orient selects iso, otherwise
+        # epoch is selected and, if any column (or the Series) has a datetime or
+        # timedelta dtype, a deprecation warning is emitted saying the default epoch
+        # format will go away. An explicit epoch value also emits the deprecation
+        # warning. Both warnings use the future-version warning class of pandas.
+        # The indent is validated as a non-negative integer and replaced by zero when
+        # None. Delegates to the JSON writer in the io package. Returns a string when
+        # no target is given, otherwise None.
         """
         Convert the object to a JSON string.
 
@@ -2656,6 +3199,17 @@ class NDFrame(PandasObject, indexing.IndexingMixin):
         errors: OpenFileErrors = "strict",
         encoding: str = "UTF-8",
     ) -> None:
+        # [FUNCTION DOC]
+        # Write the object to an HDF5 file through an HDFStore.
+        # Parameters: path_or_buf is a file path or an open store; key (keyword only,
+        # required) is the group identifier; mode is a, w or r+; complevel and complib
+        # set compression; append adds to an existing table; format is fixed or table;
+        # index creates table indexes; min_itemsize sets minimum string column widths;
+        # nan_rep is the string used for missing values; dropna drops all-missing rows
+        # when appending; data_columns lists columns to make queryable; errors and
+        # encoding control string encoding.
+        # Pure delegation to the pytables module (imported lazily); all arguments are
+        # forwarded unchanged. Returns None. Side effect: writes a file.
         """
         Write the contained data to an HDF5 file using HDFStore.
 
@@ -2805,6 +3359,17 @@ class NDFrame(PandasObject, indexing.IndexingMixin):
         dtype: DtypeArg | None = None,
         method: Literal["multi"] | Callable | None = None,
     ) -> int | None:
+        # [FUNCTION DOC]
+        # Write the records of the object to a SQL database.
+        # Parameters: name is the target table name; con is a SQLAlchemy connectable,
+        # a DBAPI connection or similar; schema is an optional database schema;
+        # if_exists says what to do if the table exists (fail, replace, append,
+        # delete_rows); index whether to write the index as a column; index_label
+        # column label(s) for the index; chunksize rows per batch; dtype column type
+        # mapping; method selects the insertion strategy (None, multi, or a callable).
+        # Delegates to the sql module (imported lazily). Returns the number of
+        # affected rows when the driver reports it, otherwise None. Side effect:
+        # executes statements on the database.
         """
         Write records stored in a DataFrame to a SQL database.
 
@@ -3059,6 +3624,13 @@ class NDFrame(PandasObject, indexing.IndexingMixin):
         protocol: int = pickle.HIGHEST_PROTOCOL,
         storage_options: StorageOptions | None = None,
     ) -> None:
+        # [FUNCTION DOC]
+        # Serialize the object to a pickle file.
+        # Parameters: path is a file path or a binary buffer; compression is infer or
+        # a compression specification; protocol is the pickle protocol (default
+        # highest available); storage_options for remote files.
+        # Delegates to the pickle io module (imported lazily). Returns None. Side
+        # effect: writes the file.
         """
         Pickle (serialize) object to file.
 
@@ -3148,6 +3720,14 @@ class NDFrame(PandasObject, indexing.IndexingMixin):
     def to_clipboard(
         self, *, excel: bool = True, sep: str | None = None, **kwargs
     ) -> None:
+        # [FUNCTION DOC]
+        # Copy the object to the system clipboard as text.
+        # Parameters (keyword only): excel (default true) writes tab-separated text
+        # that pastes into spreadsheets; sep is an optional field delimiter (None lets
+        # the clipboard module choose); extra keyword arguments are passed through to
+        # the underlying csv-style writer.
+        # Delegates to the clipboards module (imported lazily). Returns None. Side
+        # effect: modifies the clipboard.
         r"""
         Copy object to the system clipboard.
 
@@ -3220,6 +3800,12 @@ class NDFrame(PandasObject, indexing.IndexingMixin):
 
     @final
     def to_xarray(self):
+        # [FUNCTION DOC]
+        # Convert the object to an xarray container.
+        # Imports the optional xarray dependency (raising the standard
+        # missing-dependency import error if unavailable). A one-dimensional object
+        # becomes a data array built from the series; a two-dimensional one becomes a
+        # dataset built from the frame. Returns that xarray object.
         """
         Return an xarray object from the pandas object.
 
@@ -3334,7 +3920,12 @@ class NDFrame(PandasObject, indexing.IndexingMixin):
         caption: str | tuple[str, str] | None = ...,
         label: str | None = ...,
         position: str | None = ...,
-    ) -> str: ...
+    ) -> str:
+        # [FUNCTION DOC]
+        # Typing overload stub only (body is a placeholder); the behavior is defined
+        # by the implementation that follows these overloads. to_latex variant with no
+        # buffer; returns the LaTeX text as a string.
+        ...
 
     @overload
     def to_latex(
@@ -3361,7 +3952,12 @@ class NDFrame(PandasObject, indexing.IndexingMixin):
         caption: str | tuple[str, str] | None = ...,
         label: str | None = ...,
         position: str | None = ...,
-    ) -> None: ...
+    ) -> None:
+        # [FUNCTION DOC]
+        # Typing overload stub only (body is a placeholder); the behavior is defined
+        # by the implementation that follows these overloads. to_latex variant with a
+        # path or buffer; returns nothing.
+        ...
 
     @final
     def to_latex(
@@ -3389,6 +3985,35 @@ class NDFrame(PandasObject, indexing.IndexingMixin):
         label: str | None = None,
         position: str | None = None,
     ) -> str | None:
+        # [FUNCTION DOC]
+        # Render the object to a LaTeX table by configuring a Styler and delegating to
+        # its LaTeX export.
+        # Parameters: buf is a path or text buffer (None returns a string); all
+        # remaining parameters are keyword only: columns subset to output; header
+        # bool, or list of aliases whose length must equal the number of output
+        # columns; index whether to show row labels; na_rep text for missing values
+        # (default NaN); formatters is a per-column list, a dict keyed by column (with
+        # optional special keys for the index and column labels), or a callable;
+        # float_format is a format string or callable applied to floats and complex
+        # numbers; sparsify, multicolumn, multicolumn_format, multirow, longtable,
+        # escape control layout and escaping and default (when None) to the matching
+        # styler configuration options; index_names whether to show index names;
+        # bold_rows bold row labels; column_format the LaTeX column spec string;
+        # encoding, decimal, caption, label and position are forwarded.
+        # A Series is first converted to a frame. Raises a value error if
+        # column_format is not a string, or if the number of header aliases differs
+        # from the number of columns written.
+        # Builds argument lists for hiding columns not selected, hiding the header or
+        # index or index names, relabelling columns, formatting data and labels, and
+        # render options (horizontal rules on, environment longtable if requested,
+        # alignment variants prefixed with a naive marker when multicolumn or multirow
+        # is disabled, cline setting only for multirow with a MultiIndex). A string
+        # float_format is converted into a function applying percent formatting; when
+        # float_format is given, floating values bypass the per-column formatter.
+        # Side effect: when formatters is a dict, that caller-supplied dict is mutated
+        # in place (the special index and columns keys are popped and entries for
+        # float columns lacking a formatter are added).
+        # Returns the string, or None when a buffer was supplied.
         r"""
         Render object to a LaTeX tabular, longtable, or nested table.
 
@@ -3571,6 +4196,12 @@ class NDFrame(PandasObject, indexing.IndexingMixin):
             float_format_ = float_format
 
         def _wrap(x, alt_format_):
+            # [FUNCTION DOC]
+            # HELPER: wraps a per-column formatter so that floats and complex values
+            # use the float format function when one was given.
+            # Parameters: x is the value to format; alt_format_ is the fallback
+            # formatter used for all other values (or for floats when no float format
+            # was given). Returns the formatted value.
             if isinstance(x, (float, complex)) and float_format_ is not None:
                 return float_format_(x)
             else:
@@ -3663,6 +4294,22 @@ class NDFrame(PandasObject, indexing.IndexingMixin):
         format_index_names: dict | list[dict] | None = None,
         render_kwargs: dict | None = None,
     ):
+        # [FUNCTION DOC]
+        # HELPER: builds a Styler for the object and renders it as LaTeX; used by the
+        # LaTeX export and shared with other callers.
+        # Parameters: buf is the output target; hide, relabel_index, format,
+        # format_index and format_index_names are each a dict of keyword arguments or
+        # a list of such dicts, applied in order to the matching Styler method (hide,
+        # relabel index, format, format index, format index names); render_kwargs is a
+        # dict of keyword arguments for the Styler LaTeX export and must contain the
+        # bold_rows entry, which is removed from it before rendering.
+        # The object is treated as a DataFrame and given an empty uuid. The Styler
+        # methods to call are looked up by name and the arguments located using the
+        # local variable namespace. If bold rows is requested a map over index labels
+        # adds a bold text-style directive. Returns the result of the Styler LaTeX
+        # export (a string, or None when writing to a buffer).
+        # Raises a key error if the bold_rows entry is missing from the render
+        # options.
         """
         Render object to a LaTeX tabular, longtable, or nested table.
 
@@ -3751,7 +4398,12 @@ class NDFrame(PandasObject, indexing.IndexingMixin):
         decimal: str = ...,
         errors: OpenFileErrors = ...,
         storage_options: StorageOptions = ...,
-    ) -> str: ...
+    ) -> str:
+        # [FUNCTION DOC]
+        # Typing overload stub only (body is a placeholder); the behavior is defined
+        # by the implementation that follows these overloads. to_csv variant with no
+        # target; returns the CSV text as a string.
+        ...
 
     @overload
     def to_csv(
@@ -3778,7 +4430,12 @@ class NDFrame(PandasObject, indexing.IndexingMixin):
         decimal: str = ...,
         errors: OpenFileErrors = ...,
         storage_options: StorageOptions = ...,
-    ) -> None: ...
+    ) -> None:
+        # [FUNCTION DOC]
+        # Typing overload stub only (body is a placeholder); the behavior is defined
+        # by the implementation that follows these overloads. to_csv variant with a
+        # path or buffer; returns nothing.
+        ...
 
     @final
     def to_csv(
@@ -3806,6 +4463,20 @@ class NDFrame(PandasObject, indexing.IndexingMixin):
         errors: OpenFileErrors = "strict",
         storage_options: StorageOptions | None = None,
     ) -> str | None:
+        # [FUNCTION DOC]
+        # Write the object to a comma-separated values file or return the text.
+        # Parameters: path_or_buf is a path or binary or text buffer (None returns a
+        # string); keyword only: sep field delimiter; na_rep missing-value text;
+        # float_format format string or callable for floats; columns subset to write;
+        # header bool or list of aliases; index include the row labels; index_label
+        # header label(s) for index columns; mode file mode; encoding; compression;
+        # quoting csv quoting constant; quotechar; lineterminator; chunksize rows per
+        # write batch; date_format; doublequote; escapechar; decimal separator; errors
+        # encoding error handling; storage_options for remote targets.
+        # A Series is converted to a frame first. A formatter configured with header,
+        # index, missing-value text, float format and decimal is built, and a renderer
+        # object does the writing with the remaining arguments. Returns the text when
+        # no target was given, otherwise None. Side effect: writes a file or buffer.
         r"""
         Write object to a comma-separated values (csv) file.
 
@@ -3997,6 +4668,18 @@ class NDFrame(PandasObject, indexing.IndexingMixin):
 
     @final
     def take(self, indices, axis: Axis = 0, **kwargs) -> Self:
+        # [FUNCTION DOC]
+        # Select elements by integer position along an axis.
+        # Parameters: indices is an array-like of integer positions (negative values
+        # count from the end); axis is the axis identifier (default 0); extra keyword
+        # arguments exist only for numpy compatibility and are validated to be empty
+        # or numpy-compatible defaults.
+        # Raises a type error if indices is a slice. Positions are converted to a
+        # platform integer array. When the axis is zero and the positions form the
+        # identity range covering the whole length, a shallow copy is returned without
+        # copying data. Otherwise the manager performs the take with bounds
+        # verification (raising an index error if out of bounds) and the result is
+        # finalized with the method name take. Returns a new object of the same kind.
         """
         Return the elements in the given *positional* indices along an axis.
 
@@ -4103,6 +4786,27 @@ class NDFrame(PandasObject, indexing.IndexingMixin):
         level: IndexLabel | None = None,
         drop_level: bool = True,
     ) -> Self:
+        # [FUNCTION DOC]
+        # Return a cross-section of the object by label.
+        # Parameters: key is a label or tuple of labels (a list is rejected); axis is
+        # the axis to take from (default 0); level (for MultiIndex) names the level or
+        # levels the key applies to; drop_level (default true) says whether the
+        # matched levels are removed from the result.
+        # Raises a type error for a list key, and a type error when level is given but
+        # the axis is not a MultiIndex.
+        # With level: the matching positions and the new axis are computed by the
+        # MultiIndex level lookup, the rows or columns are selected by position and
+        # the new axis is installed on the result.
+        # Without level on columns with drop_level, the item getter is used. Otherwise
+        # on a MultiIndex axis the first-level lookup is used (and, when not dropping,
+        # the matching entries are kept as the new index), and on a flat axis the
+        # label location is found. A location returned as an array (boolean mask or
+        # positions) is routed to the take method. A scalar location on axis 0 yields
+        # the underlying element for one-dimensional objects, or the row as a Series
+        # named after the label (via the manager fast cross-section, with finalize)
+        # for frames; a scalar location on axis 1 yields a one-column slice; other
+        # non-scalar locations select by position, installing the new index for rows.
+        # Returns a scalar, Series or DataFrame accordingly.
         """
         Return cross-section from the Series/DataFrame.
 
@@ -4274,10 +4978,20 @@ class NDFrame(PandasObject, indexing.IndexingMixin):
         return result
 
     def __getitem__(self, item):
+        # [FUNCTION DOC]
+        # Abstract item getter; always raises an abstract-method error. Series and
+        # DataFrame provide the real implementation.
         raise AbstractMethodError(self)
 
     @final
     def _getitem_slice(self, key: slice) -> Self:
+        # [FUNCTION DOC]
+        # HELPER: item lookup for a slice key.
+        # Parameters: key is a slice object of labels or positions.
+        # The index decides whether the slice is positional or label based and
+        # converts it to a positional slice or, for some index types (such as
+        # datetime), a positional array. An array is condensed to a slice when
+        # possible, otherwise take is used. Returns the sliced object.
         """
         __getitem__ for the case where the key is a slice object.
         """
@@ -4294,6 +5008,12 @@ class NDFrame(PandasObject, indexing.IndexingMixin):
         return self._slice(slobj)
 
     def _slice(self, slobj: slice, axis: AxisInt = 0) -> Self:
+        # [FUNCTION DOC]
+        # HELPER: constructs a positional slice of this object along an axis.
+        # Parameters: slobj is a slice (asserted); axis is the user-facing axis number
+        # (default 0), translated to the manager axis.
+        # Takes a slice of the manager (a view under copy-on-write), builds an object
+        # of the same kind and finalizes it. Returns the new object.
         """
         Construct a slice of this container.
 
@@ -4308,6 +5028,16 @@ class NDFrame(PandasObject, indexing.IndexingMixin):
 
     @final
     def __delitem__(self, key) -> None:
+        # [FUNCTION DOC]
+        # Delete an item from the info axis in place.
+        # Parameters: key is a column label (or, for a frame with MultiIndex columns,
+        # possibly a partial key).
+        # For a frame with MultiIndex columns where the key is not itself a full key
+        # of the column engine, the key is treated as a prefix: every column tuple
+        # that starts with the key is deleted recursively. If nothing was deleted by
+        # that path, or the shortcut did not apply, the location of the key on the
+        # last axis is looked up (raising a key error if absent) and that position is
+        # deleted from the manager. Mutates self.
         """
         Delete item
         """
@@ -4343,6 +5073,11 @@ class NDFrame(PandasObject, indexing.IndexingMixin):
 
     @final
     def _check_inplace_and_allows_duplicate_labels(self, inplace: bool) -> None:
+        # [FUNCTION DOC]
+        # HELPER: guard used by in-place operations.
+        # Parameters: inplace is the caller's in-place flag. Raises a value error if
+        # inplace is true and the flags forbid duplicate labels; otherwise returns
+        # None.
         if inplace and not self.flags.allows_duplicate_labels:
             raise ValueError(
                 "Cannot specify 'inplace=True' when "
@@ -4351,6 +5086,11 @@ class NDFrame(PandasObject, indexing.IndexingMixin):
 
     @final
     def get(self, key, default=None):
+        # [FUNCTION DOC]
+        # Get an item by key, returning a default if it cannot be retrieved.
+        # Parameters: key is a label; default (None) is returned on failure.
+        # Calls the item getter and returns its result, swallowing key errors, value
+        # errors and index errors, in which case the default is returned.
         """
         Get item from object for given key (ex: DataFrame column).
 
@@ -4419,6 +5159,12 @@ class NDFrame(PandasObject, indexing.IndexingMixin):
 
     @staticmethod
     def _check_copy_deprecation(copy):
+        # [FUNCTION DOC]
+        # HELPER: static method that implements the deprecation of the copy keyword.
+        # Parameters: copy is the value the caller received. If it is anything other
+        # than the no-default sentinel a deprecation warning (future-version class of
+        # pandas) is emitted, attributed via the stack-level finder to the user's
+        # call. Returns None.
         if copy is not lib.no_default:
             warnings.warn(
                 "The copy keyword is deprecated and will be removed in a future "
@@ -4440,6 +5186,15 @@ class NDFrame(PandasObject, indexing.IndexingMixin):
         limit: int | None = None,
         tolerance=None,
     ) -> Self:
+        # [FUNCTION DOC]
+        # Return an object conformed to the axes of another object.
+        # Parameters: other is the object whose axes are used; method (deprecated,
+        # through the decorator, with no replacement) is the fill method; copy is a
+        # deprecated placeholder; limit is the maximum number of fills; tolerance is
+        # the maximum label distance for inexact matches.
+        # Collects the axes of other that match this object's axis order, together
+        # with the method, limit and tolerance, and calls reindex with them. Returns
+        # the reindexed object.
         """
         Return an object with matching indices as other object.
 
@@ -4568,7 +5323,12 @@ class NDFrame(PandasObject, indexing.IndexingMixin):
         level: Level | None = ...,
         inplace: Literal[True],
         errors: IgnoreRaise = ...,
-    ) -> None: ...
+    ) -> None:
+        # [FUNCTION DOC]
+        # Typing overload stub only (body is a placeholder); the behavior is defined
+        # by the implementation that follows these overloads. drop variant for inplace
+        # true; returns nothing.
+        ...
 
     @overload
     def drop(
@@ -4581,7 +5341,12 @@ class NDFrame(PandasObject, indexing.IndexingMixin):
         level: Level | None = ...,
         inplace: Literal[False] = ...,
         errors: IgnoreRaise = ...,
-    ) -> Self: ...
+    ) -> Self:
+        # [FUNCTION DOC]
+        # Typing overload stub only (body is a placeholder); the behavior is defined
+        # by the implementation that follows these overloads. drop variant for inplace
+        # false; returns an object.
+        ...
 
     @overload
     def drop(
@@ -4594,7 +5359,12 @@ class NDFrame(PandasObject, indexing.IndexingMixin):
         level: Level | None = ...,
         inplace: bool = ...,
         errors: IgnoreRaise = ...,
-    ) -> Self | None: ...
+    ) -> Self | None:
+        # [FUNCTION DOC]
+        # Typing overload stub only (body is a placeholder); the behavior is defined
+        # by the implementation that follows these overloads. drop variant for general
+        # boolean inplace.
+        ...
 
     def drop(
         self,
@@ -4607,6 +5377,21 @@ class NDFrame(PandasObject, indexing.IndexingMixin):
         inplace: bool = False,
         errors: IgnoreRaise = "raise",
     ) -> Self | None:
+        # [FUNCTION DOC]
+        # Remove labels from one or both axes (no docstring here; subclasses document
+        # it).
+        # Parameters (keyword only except labels): labels single label or list to drop
+        # along axis; axis (default 0); index and columns are alternatives to specify
+        # labels per axis; level is the MultiIndex level to match; inplace modifies
+        # self; errors is raise (default, missing labels raise) or ignore.
+        # Raises a value error if labels is combined with index or columns, if axis
+        # equal to one is combined with index or columns, or if none of labels, index,
+        # columns is given. Only the index axis is considered for one-dimensional
+        # objects.
+        # Each requested axis is processed in turn with the private drop helper. When
+        # inplace, the result's internals replace self and None is returned; otherwise
+        # the new object is returned.
+        # Validates the inplace flag as a boolean.
         inplace = validate_bool_kwarg(inplace, "inplace")
 
         if labels is not None:
@@ -4646,6 +5431,21 @@ class NDFrame(PandasObject, indexing.IndexingMixin):
         errors: IgnoreRaise = "raise",
         only_slice: bool = False,
     ) -> Self:
+        # [FUNCTION DOC]
+        # HELPER: drops labels from a single axis; used by drop and other internals.
+        # Parameters: labels to remove; axis identifier; level (for MultiIndex axes);
+        # errors raise or ignore; only_slice says the manager may return a view when
+        # the result is a slice.
+        # For a unique axis the index drop operation computes the new axis and indexer
+        # (a non-MultiIndex axis with a level raises an assertion error). For a
+        # non-unique axis a boolean mask is computed manually: with a level, rows
+        # whose level value is in labels are removed (raising a key error if errors is
+        # raise and nothing matches); with a MultiIndex and non-tuple object labels
+        # the first level is matched; otherwise membership on the axis is used and a
+        # key error is raised if any label is missing and errors is raise. Extension
+        # boolean masks are converted to numpy. The manager is reindexed with the
+        # indexer allowing duplicates, the name is restored for a Series, and the
+        # result is finalized from self. Returns the new object.
         """
         Drop labels from specified axis. Used in the ``drop`` method
         internally.
@@ -4725,6 +5525,10 @@ class NDFrame(PandasObject, indexing.IndexingMixin):
 
     @final
     def _update_inplace(self, result) -> None:
+        # [FUNCTION DOC]
+        # HELPER: replaces the internal manager of self with the manager of result,
+        # used by in-place variants. Deliberately does not propagate metadata through
+        # the finalize hook. Mutates self; returns None.
         """
         Replace self internals with result.
 
@@ -4738,6 +5542,13 @@ class NDFrame(PandasObject, indexing.IndexingMixin):
 
     @final
     def add_prefix(self, prefix: str, axis: Axis | None = None) -> Self:
+        # [FUNCTION DOC]
+        # Prefix labels of an axis with a string.
+        # Parameters: prefix is the text to prepend (applied to the string form of
+        # every label); axis selects the axis (default None means the info axis).
+        # Builds a function formatting each label with the prefix and applies it
+        # through the private rename on the selected axis. Returns a new object; self
+        # is unchanged.
         """
         Prefix labels with string `prefix`.
 
@@ -4810,6 +5621,13 @@ class NDFrame(PandasObject, indexing.IndexingMixin):
 
     @final
     def add_suffix(self, suffix: str, axis: Axis | None = None) -> Self:
+        # [FUNCTION DOC]
+        # Suffix labels of an axis with a string.
+        # Parameters: suffix is the text to append (applied to the string form of
+        # every label); axis selects the axis (default None means the info axis).
+        # Builds a function formatting each label with the suffix and applies it
+        # through the private rename on the selected axis. Returns a new object; self
+        # is unchanged.
         """
         Suffix labels with string `suffix`.
 
@@ -4890,7 +5708,12 @@ class NDFrame(PandasObject, indexing.IndexingMixin):
         na_position: NaPosition = ...,
         ignore_index: bool = ...,
         key: ValueKeyFunc = ...,
-    ) -> Self: ...
+    ) -> Self:
+        # [FUNCTION DOC]
+        # Typing overload stub only (body is a placeholder); the behavior is defined
+        # by the implementation that follows these overloads. sort_values variant for
+        # inplace false.
+        ...
 
     @overload
     def sort_values(
@@ -4903,7 +5726,12 @@ class NDFrame(PandasObject, indexing.IndexingMixin):
         na_position: NaPosition = ...,
         ignore_index: bool = ...,
         key: ValueKeyFunc = ...,
-    ) -> None: ...
+    ) -> None:
+        # [FUNCTION DOC]
+        # Typing overload stub only (body is a placeholder); the behavior is defined
+        # by the implementation that follows these overloads. sort_values variant for
+        # inplace true.
+        ...
 
     @overload
     def sort_values(
@@ -4916,7 +5744,12 @@ class NDFrame(PandasObject, indexing.IndexingMixin):
         na_position: NaPosition = ...,
         ignore_index: bool = ...,
         key: ValueKeyFunc = ...,
-    ) -> Self | None: ...
+    ) -> Self | None:
+        # [FUNCTION DOC]
+        # Typing overload stub only (body is a placeholder); the behavior is defined
+        # by the implementation that follows these overloads. sort_values variant for
+        # general boolean inplace.
+        ...
 
     def sort_values(
         self,
@@ -4929,6 +5762,11 @@ class NDFrame(PandasObject, indexing.IndexingMixin):
         ignore_index: bool = False,
         key: ValueKeyFunc | None = None,
     ) -> Self | None:
+        # [FUNCTION DOC]
+        # Abstract declaration of sorting by values; always raises an abstract-method
+        # error. The parameters (axis, ascending, inplace, kind, na_position,
+        # ignore_index, key) are documented for the concrete implementations in Series
+        # and DataFrame, which override this method.
         """
         Sort by the values along either axis.
 
@@ -5098,7 +5936,12 @@ class NDFrame(PandasObject, indexing.IndexingMixin):
         sort_remaining: bool = ...,
         ignore_index: bool = ...,
         key: IndexKeyFunc = ...,
-    ) -> None: ...
+    ) -> None:
+        # [FUNCTION DOC]
+        # Typing overload stub only (body is a placeholder); the behavior is defined
+        # by the implementation that follows these overloads. sort_index variant for
+        # inplace true.
+        ...
 
     @overload
     def sort_index(
@@ -5113,7 +5956,12 @@ class NDFrame(PandasObject, indexing.IndexingMixin):
         sort_remaining: bool = ...,
         ignore_index: bool = ...,
         key: IndexKeyFunc = ...,
-    ) -> Self: ...
+    ) -> Self:
+        # [FUNCTION DOC]
+        # Typing overload stub only (body is a placeholder); the behavior is defined
+        # by the implementation that follows these overloads. sort_index variant for
+        # inplace false.
+        ...
 
     @overload
     def sort_index(
@@ -5128,7 +5976,12 @@ class NDFrame(PandasObject, indexing.IndexingMixin):
         sort_remaining: bool = ...,
         ignore_index: bool = ...,
         key: IndexKeyFunc = ...,
-    ) -> Self | None: ...
+    ) -> Self | None:
+        # [FUNCTION DOC]
+        # Typing overload stub only (body is a placeholder); the behavior is defined
+        # by the implementation that follows these overloads. sort_index variant for
+        # general boolean inplace.
+        ...
 
     def sort_index(
         self,
@@ -5143,6 +5996,22 @@ class NDFrame(PandasObject, indexing.IndexingMixin):
         ignore_index: bool = False,
         key: IndexKeyFunc | None = None,
     ) -> Self | None:
+        # [FUNCTION DOC]
+        # Sort the object by its index labels.
+        # Parameters (keyword only): axis (default 0); level is a level or list of
+        # levels for MultiIndex sorting; ascending bool or list of bools per level;
+        # inplace; kind is the sorting algorithm; na_position is first or last;
+        # sort_remaining sorts by remaining levels after the chosen ones; ignore_index
+        # relabels the sorted axis with a default range; key is a function applied to
+        # the labels before sorting.
+        # Validates the inplace flag and ascending value. A sorting indexer is
+        # computed by the sorting helper; if it is None (already sorted) the object
+        # itself or a shallow copy is returned, with a fresh default index applied if
+        # ignore_index (columns when axis is one). Otherwise the manager is taken with
+        # the indexer, the sorted axis is rebuilt (with MultiIndex levels made
+        # monotonic or replaced by a default index when ignoring the index) and the
+        # result is built. Returns None when inplace, otherwise the finalized new
+        # object with the method name sort_index.
         inplace = validate_bool_kwarg(inplace, "inplace")
         axis = self._get_axis_number(axis)
         ascending = validate_ascending(ascending)
@@ -5200,6 +6069,27 @@ class NDFrame(PandasObject, indexing.IndexingMixin):
         limit: int | None = None,
         tolerance=None,
     ) -> Self:
+        # [FUNCTION DOC]
+        # Conform the object to new labels with optional fill logic.
+        # Parameters: labels is the new labels for the axis chosen by axis; keyword
+        # only: index and columns give per-axis labels; axis; method is the
+        # fill/nearest method for inexact matching (None means no fill); copy is a
+        # deprecated placeholder; level is the MultiIndex level to broadcast across;
+        # fill_value is used for new missing entries (default missing marker); limit
+        # caps consecutive fills; tolerance caps label distance.
+        # Raises a type error if labels, index and columns are all given, or if axis
+        # is combined with index or columns. Labels are mapped to the index (default)
+        # or columns (when axis is one); when both index and columns are given along
+        # with labels, labels fill whichever is missing.
+        # When reindexing a non-MultiIndex index to a MultiIndex target whose level
+        # names include the current index name and no level was given, that level is
+        # selected automatically.
+        # If every requested axis is identical (labels, names and dtype) to the
+        # existing one a shallow copy is returned. If all axes are requested and no
+        # method or level is used and a fast transpose is possible the multi-axis path
+        # (abstract here, implemented by DataFrame) is used. Otherwise the axes are
+        # reindexed one at a time. The method name is normalized by the missing-value
+        # helper. Result is finalized with the method name reindex.
         """
         Conform Series/DataFrame to new index with optional filling logic.
 
@@ -5475,6 +6365,14 @@ class NDFrame(PandasObject, indexing.IndexingMixin):
         method,
         fill_value: Scalar | None,
     ) -> Self:
+        # [FUNCTION DOC]
+        # HELPER: performs the reindex for each axis that has requested labels.
+        # Parameters: axes is a mapping from axis name to new labels (or None to
+        # skip); level, limit, tolerance, method, fill_value are forwarded.
+        # For each axis in order, the axis reindex computes the new labels and an
+        # indexer, and the indexer is applied to the data through the
+        # reindex-with-indexers helper without allowing duplicates. Returns the final
+        # object.
         """Perform the reindex for all the axes."""
         obj = self
         for a in self._AXIS_ORDERS:
@@ -5497,6 +6395,12 @@ class NDFrame(PandasObject, indexing.IndexingMixin):
         return obj
 
     def _needs_reindex_multi(self, axes, method, level: Level | None) -> bool:
+        # [FUNCTION DOC]
+        # HELPER: decides whether the multi-axis reindex fast path applies.
+        # Parameters: axes mapping of axis name to labels; method; level. True only if
+        # labels were given for every axis, method and level are None, and the object
+        # can be transposed cheaply (cheap access to the values array). Returns a
+        # bool.
         """Check if we do need a multi reindex."""
         return (
             (common.count_not_none(*axes.values()) == self._AXIS_LEN)
@@ -5508,6 +6412,9 @@ class NDFrame(PandasObject, indexing.IndexingMixin):
         )
 
     def _reindex_multi(self, axes, fill_value):
+        # [FUNCTION DOC]
+        # HELPER: abstract hook for reindexing all axes at once; always raises an
+        # abstract-method error. DataFrame provides the implementation.
         raise AbstractMethodError(self)
 
     @final
@@ -5517,6 +6424,16 @@ class NDFrame(PandasObject, indexing.IndexingMixin):
         fill_value=None,
         allow_dups: bool = False,
     ) -> Self:
+        # [FUNCTION DOC]
+        # HELPER: applies precomputed indexers to the data, one axis at a time in
+        # sorted axis order.
+        # Parameters: reindexers maps an axis number to a pair of new labels and a
+        # position indexer (either may be None; entries with None labels are skipped);
+        # fill_value is inserted at positions with indexer -1; allow_dups says
+        # duplicates in the labels are permitted (internal calls).
+        # The labels are converted to an Index and the indexer to a platform integer
+        # array before calling the manager reindex. If nothing changed, the manager is
+        # shallow-copied. Returns a new object finalized from self.
         """allow_dups indicates an internal call here"""
         # reindex doing multiple operations on different axes if indicated
         new_data = self._mgr
@@ -5554,6 +6471,20 @@ class NDFrame(PandasObject, indexing.IndexingMixin):
         regex: str | None = None,
         axis: Axis | None = None,
     ) -> Self:
+        # [FUNCTION DOC]
+        # Subset the object by labels of an axis.
+        # Parameters: items is a list of labels to keep; like keeps labels containing
+        # that substring; regex keeps labels matching the regular expression (search
+        # semantics); axis defaults to the info axis (columns for frames, index for
+        # Series).
+        # Raises a type error if more than one of items, like, regex is given, or if
+        # none is truthy-given (empty like or regex counts as not given for the
+        # selection branches). Does not check that selected labels exist; items not
+        # present are ignored via an intersection that preserves the dtype of the
+        # labels when empty.
+        # items go through reindex; like and regex map a predicate over the string
+        # forms of the labels and select with a boolean mask via the label indexer on
+        # that axis. Returns a new object.
         """
         Subset the DataFrame or Series according to the specified index labels.
 
@@ -5643,6 +6574,10 @@ class NDFrame(PandasObject, indexing.IndexingMixin):
         elif like:
 
             def f(x) -> bool:
+                # [FUNCTION DOC]
+                # HELPER: predicate used by the filter method when like is given.
+                # Parameters: x is a label. Returns whether the like substring is
+                # contained in the string form of the label.
                 assert like is not None  # needed for mypy
                 return like in ensure_str(x)
 
@@ -5651,6 +6586,10 @@ class NDFrame(PandasObject, indexing.IndexingMixin):
         elif regex:
 
             def f(x) -> bool:
+                # [FUNCTION DOC]
+                # HELPER: predicate used by the filter method when regex is given.
+                # Parameters: x is a label. Returns whether the compiled pattern finds
+                # a match anywhere in the string form of the label.
                 return matcher.search(ensure_str(x)) is not None
 
             matcher = re.compile(regex)
@@ -5661,6 +6600,12 @@ class NDFrame(PandasObject, indexing.IndexingMixin):
 
     @final
     def head(self, n: int = 5) -> Self:
+        # [FUNCTION DOC]
+        # Return the first n rows.
+        # Parameters: n is the number of rows (default 5); a negative value means all
+        # rows except the last absolute n.
+        # Uses positional slicing and returns a copy (a lazily copied object under
+        # copy-on-write).
         """
         Return the first `n` rows.
 
@@ -5750,6 +6695,12 @@ class NDFrame(PandasObject, indexing.IndexingMixin):
 
     @final
     def tail(self, n: int = 5) -> Self:
+        # [FUNCTION DOC]
+        # Return the last n rows.
+        # Parameters: n is the number of rows (default 5); a negative value means all
+        # rows except the first absolute n.
+        # Zero returns an empty slice (copy); otherwise positional slicing from the
+        # end is used and the result is copied.
         """
         Return the last `n` rows.
 
@@ -5849,6 +6800,19 @@ class NDFrame(PandasObject, indexing.IndexingMixin):
         axis: Axis | None = None,
         ignore_index: bool = False,
     ) -> Self:
+        # [FUNCTION DOC]
+        # Return a random sample of items along an axis.
+        # Parameters: n is the number of items (mutually exclusive with frac); frac is
+        # a fraction of the axis length (rounded to the nearest integer count);
+        # replace allows sampling the same item more than once; weights is a per-item
+        # probability (a name, array-like or Series aligned on the axis); random_state
+        # is a seed or generator; axis defaults to 0; ignore_index replaces the
+        # sampled index with a default range.
+        # The count is validated by the sampling helper module (which raises a value
+        # error for invalid combinations such as both n and frac, or n larger than the
+        # axis without replacement). Weights are preprocessed and validated. Random
+        # positions are drawn using the helper and used with take. Returns a new
+        # object.
         """
         Return a random sample of items from an axis of object.
 
@@ -5999,7 +6963,12 @@ class NDFrame(PandasObject, indexing.IndexingMixin):
         func: Callable[Concatenate[Self, P], T],
         *args: P.args,
         **kwargs: P.kwargs,
-    ) -> T: ...
+    ) -> T:
+        # [FUNCTION DOC]
+        # Typing overload stub only (body is a placeholder); the behavior is defined
+        # by the implementation that follows these overloads. pipe variant where func
+        # is a callable.
+        ...
 
     @overload
     def pipe(
@@ -6007,7 +6976,12 @@ class NDFrame(PandasObject, indexing.IndexingMixin):
         func: tuple[Callable[..., T], str],
         *args: Any,
         **kwargs: Any,
-    ) -> T: ...
+    ) -> T:
+        # [FUNCTION DOC]
+        # Typing overload stub only (body is a placeholder); the behavior is defined
+        # by the implementation that follows these overloads. pipe variant where func
+        # is a pair of a callable and the keyword name receiving the object.
+        ...
 
     @final
     def pipe(
@@ -6016,6 +6990,15 @@ class NDFrame(PandasObject, indexing.IndexingMixin):
         *args: Any,
         **kwargs: Any,
     ) -> T:
+        # [FUNCTION DOC]
+        # Apply a function to the object in a chain.
+        # Parameters: func is a callable taking the object as first argument, or a
+        # pair of a callable and a string naming the keyword argument that should
+        # receive the object; extra positional and keyword arguments are passed
+        # through.
+        # Calls the shared pipe helper with a shallow copy of the object. Returns
+        # whatever the function returns. Raises a value error if the keyword name
+        # given in the pair is also among the keyword arguments (from the helper).
         r"""
         Apply chainable functions that expect Series or DataFrames.
 
@@ -6118,6 +7101,19 @@ class NDFrame(PandasObject, indexing.IndexingMixin):
 
     @final
     def __finalize__(self, other, method: str | None = None, **kwargs) -> Self:
+        # [FUNCTION DOC]
+        # Propagate metadata from another object to self (the default hook used after
+        # most operations).
+        # Parameters: other is the source; method is an optional operation name for
+        # subclass overrides (not used here); extra keyword arguments are accepted and
+        # ignored.
+        # If other is an NDFrame: its attrs are deep-copied onto self only when
+        # non-empty; the duplicate-labels flag becomes the logical and of both flags;
+        # and every metadata attribute name shared by both classes is copied by
+        # reference. If other instead exposes a list of input objects (for example a
+        # concat or merge operation record): attrs are propagated only if all inputs
+        # have non-empty equal attrs, and the duplicate-labels flag becomes true only
+        # if every input allows duplicates. Returns self (mutated).
         """
         Propagate metadata from other to self.
 
@@ -6178,6 +7174,14 @@ class NDFrame(PandasObject, indexing.IndexingMixin):
 
     @final
     def __getattr__(self, name: str):
+        # [FUNCTION DOC]
+        # Attribute fallback giving access to items of the info axis (for example
+        # columns) as attributes.
+        # Parameters: name is the attribute name that regular lookup failed to find.
+        # If the name is not an internal, metadata or accessor name and the info axis
+        # can hold identifiers and contains the name, the item getter result is
+        # returned; otherwise the ordinary object attribute lookup is run again, which
+        # raises the standard attribute error.
         """
         After regular attribute access, try looking up the name
         This allows simpler access to columns for interactive use.
@@ -6195,6 +7199,17 @@ class NDFrame(PandasObject, indexing.IndexingMixin):
 
     @final
     def __setattr__(self, name: str, value) -> None:
+        # [FUNCTION DOC]
+        # Attribute assignment that also supports setting items of the info axis.
+        # Parameters: name; value.
+        # First tries ordinary assignment when the attribute already exists on the
+        # object. Otherwise internal and metadata names are set directly; for other
+        # names, the existing value is looked up: if it is an Index it is set as a
+        # plain attribute, if the name is in the info axis it is assigned as an item,
+        # otherwise set as a plain attribute. If the lookup fails with an attribute or
+        # type error, a DataFrame given a list-like value gets a warning (default user
+        # warning class) that columns cannot be created through new attribute names,
+        # and the value is set as a plain attribute anyway. Mutates self.
         """
         After regular attribute access, try setting the name
         This allows simpler access to columns for interactive use.
@@ -6237,6 +7252,10 @@ class NDFrame(PandasObject, indexing.IndexingMixin):
 
     @final
     def _dir_additions(self) -> set[str]:
+        # [FUNCTION DOC]
+        # HELPER: extends the attribute names offered by directory listing and
+        # completion with the string labels of the info axis (for a MultiIndex, its
+        # first level values). Returns the combined set of names.
         """
         add the string-like attributes from the info_axis.
         If info_axis is a MultiIndex, its first level values are used.
@@ -6251,12 +7270,19 @@ class NDFrame(PandasObject, indexing.IndexingMixin):
 
     @final
     def _consolidate_inplace(self) -> None:
+        # [FUNCTION DOC]
+        # HELPER: consolidates the manager in place (merges same-dtype blocks) by
+        # replacing the stored manager with the consolidated one. Mutates self;
+        # returns None.
         """Consolidate data in place and return None"""
 
         self._mgr = self._mgr.consolidate()
 
     @final
     def _consolidate(self):
+        # [FUNCTION DOC]
+        # HELPER: returns a new object with consolidated internals (blocks of the same
+        # dtype merged), finalized from self.
         """
         Compute NDFrame with "consolidated" internals (data of each dtype
         grouped together in a single ndarray).
@@ -6273,6 +7299,11 @@ class NDFrame(PandasObject, indexing.IndexingMixin):
     @final
     @property
     def _is_mixed_type(self) -> bool:
+        # [FUNCTION DOC]
+        # HELPER property: true if the data is heterogeneous in a way that prevents
+        # consolidation into one array. A single block manager is never mixed; a
+        # manager containing extension types counts as mixed; otherwise it is true
+        # when more than one distinct dtype is present among the columns.
         if self._mgr.is_single_block:
             # Includes all Series cases
             return False
@@ -6286,11 +7317,17 @@ class NDFrame(PandasObject, indexing.IndexingMixin):
 
     @final
     def _get_numeric_data(self) -> Self:
+        # [FUNCTION DOC]
+        # HELPER: returns a new object with only the numeric blocks of the manager
+        # (the numeric subset of columns), finalized from self.
         new_mgr = self._mgr.get_numeric_data()
         return self._constructor_from_mgr(new_mgr, axes=new_mgr.axes).__finalize__(self)
 
     @final
     def _get_bool_data(self):
+        # [FUNCTION DOC]
+        # HELPER: returns a new object with only the boolean blocks of the manager,
+        # finalized from self.
         new_mgr = self._mgr.get_bool_data()
         return self._constructor_from_mgr(new_mgr, axes=new_mgr.axes).__finalize__(self)
 
@@ -6299,15 +7336,28 @@ class NDFrame(PandasObject, indexing.IndexingMixin):
 
     @property
     def values(self):
+        # [FUNCTION DOC]
+        # Abstract property for the public values array; always raises an
+        # abstract-method error here. Series and DataFrame override it.
         raise AbstractMethodError(self)
 
     @property
     def _values(self) -> ArrayLike:
+        # [FUNCTION DOC]
+        # HELPER: abstract property for the internal array of values (may be an
+        # extension array); always raises an abstract-method error here. Subclasses
+        # override it.
         """internal implementation"""
         raise AbstractMethodError(self)
 
     @property
     def dtypes(self):
+        # [FUNCTION DOC]
+        # Property returning the dtype of each column (or of the Series element) as a
+        # Series.
+        # Gets the dtypes from the manager and builds a Series of object dtype indexed
+        # by the info axis using the sliced constructor (so a DataFrame returns a
+        # Series, a Series returns a one-element container).
         """
         Return the dtypes in the DataFrame.
 
@@ -6352,6 +7402,27 @@ class NDFrame(PandasObject, indexing.IndexingMixin):
         copy: bool | lib.NoDefault = lib.no_default,
         errors: IgnoreRaise = "raise",
     ) -> Self:
+        # [FUNCTION DOC]
+        # Cast to the given dtype.
+        # Parameters: dtype is a dtype, a type, or a dict-like mapping column names to
+        # dtypes (for a Series only its own name is valid as the key); copy is a
+        # deprecated placeholder; errors is raise (default) or ignore for conversion
+        # failures.
+        # Raises a key error when a Series dict mapping has more than one key or a key
+        # other than the series name, or when a frame mapping names a column that does
+        # not exist. Value errors from per-column conversions get a message suffix
+        # naming the column.
+        # Dict-like dtype: for a Series the single mapped dtype is applied; for a
+        # frame each column is cast separately to its mapped dtype and columns without
+        # a mapping (missing values after reindexing the mapping to the columns) are
+        # shallow copied, then the results are concatenated along the column axis,
+        # wrapped in the original class and given the original columns (preserving
+        # duplicate names).
+        # Extension dtype on a frame: if every block already has that dtype a shallow
+        # copy is returned, else each column is converted separately and concatenated.
+        # Otherwise the manager casts all blocks at once. An empty list of per-column
+        # results gives a shallow copy. Results are finalized with the method name
+        # astype. Returns a new object.
         """
         Cast a pandas object to a specified dtype ``dtype``.
 
@@ -6547,6 +7618,12 @@ class NDFrame(PandasObject, indexing.IndexingMixin):
 
     @final
     def copy(self, deep: bool = True) -> Self:
+        # [FUNCTION DOC]
+        # Return a copy of the object.
+        # Parameters: deep (default true) says whether data are copied; under
+        # copy-on-write semantics a shallow copy shares memory lazily and a deep copy
+        # is eager. Returns a new object, finalized from self with the method name
+        # copy.
         """
         Make a copy of this object's indices and data.
 
@@ -6655,10 +7732,17 @@ class NDFrame(PandasObject, indexing.IndexingMixin):
 
     @final
     def __copy__(self) -> Self:
+        # [FUNCTION DOC]
+        # Implements the standard library shallow copy protocol by returning a shallow
+        # pandas copy.
         return self.copy(deep=False)
 
     @final
     def __deepcopy__(self, memo=None) -> Self:
+        # [FUNCTION DOC]
+        # Implements the standard library deep copy protocol.
+        # Parameters: memo is the standard memo dictionary, ignored. Returns a deep
+        # pandas copy.
         """
         Parameters
         ----------
@@ -6669,6 +7753,12 @@ class NDFrame(PandasObject, indexing.IndexingMixin):
 
     @final
     def infer_objects(self, copy: bool | lib.NoDefault = lib.no_default) -> Self:
+        # [FUNCTION DOC]
+        # Attempt to infer better dtypes for object columns.
+        # Parameters: copy is a deprecated placeholder. Converts object blocks through
+        # the manager conversion (soft conversion that tries to infer numeric,
+        # datetime and similar dtypes) and returns a new object finalized with the
+        # method name infer_objects. Non-object columns are left unchanged.
         """
         Attempt to infer better dtypes for object columns.
 
@@ -6737,6 +7827,16 @@ class NDFrame(PandasObject, indexing.IndexingMixin):
         convert_floating: bool = True,
         dtype_backend: DtypeBackend = "numpy_nullable",
     ) -> Self:
+        # [FUNCTION DOC]
+        # Convert to dtypes that support missing values natively.
+        # Parameters: infer_objects (default true) first infer dtypes of object
+        # columns; convert_string, convert_integer, convert_boolean, convert_floating
+        # (all default true) enable conversion to the string, integer, boolean and
+        # floating extension dtypes respectively; dtype_backend selects numpy_nullable
+        # (default) or pyarrow flavored dtypes and is validated by the shared helper
+        # (an invalid value raises a value error).
+        # The manager does the conversion block by block. Returns a new object
+        # finalized with the method name convert_dtypes.
         """
         Convert columns from numpy dtypes to the best dtypes that support ``pd.NA``.
 
@@ -6890,6 +7990,23 @@ class NDFrame(PandasObject, indexing.IndexingMixin):
         limit: None | int = None,
         limit_area: Literal["inside", "outside"] | None = None,
     ):
+        # [FUNCTION DOC]
+        # HELPER: shared implementation of forward and backward fill.
+        # Parameters (keyword only except method): method is ffill, bfill, pad or
+        # backfill (normalized by the missing-data helper); axis (default 0, None
+        # treated as 0); inplace; limit maximum number of consecutive fills;
+        # limit_area restricts filling to inside or outside the valid-value range.
+        # Axis one: raises a not-implemented error if inplace is requested on a
+        # multi-block object; otherwise the transpose is filled along its rows and
+        # transposed back.
+        # KNOWN ISSUE: on the axis one path the inplace flag is never forwarded to the
+        # transposed call, so even for a single-block object a new object is returned
+        # and self is not modified, and the result is not finalized.
+        # Axis zero: the manager fills (in place if requested); if inplace the
+        # internals of self are replaced and self is returned, otherwise the new
+        # object is returned after finalizing.
+        # KNOWN ISSUE: the finalize call uses the method name fillna for ffill and
+        # bfill as well, so the recorded operation name is not the actual one.
         if axis is None:
             axis = 0
         axis = self._get_axis_number(axis)
@@ -6927,6 +8044,35 @@ class NDFrame(PandasObject, indexing.IndexingMixin):
         inplace: bool = False,
         limit: int | None = None,
     ) -> Self:
+        # [FUNCTION DOC]
+        # Fill missing values with a given value.
+        # Parameters (keyword only except value): value is a scalar, dict, Series (for
+        # frames also a DataFrame) giving the replacements; axis (default 0) matters
+        # for dict/Series values on frames and for scalar fill; inplace; limit is the
+        # maximum number of fills per column (or consecutive positions for the value,
+        # depending on manager).
+        # When inplace is true and the chained-assignment warning has not been
+        # disabled globally, the reference count of the object is inspected and, if it
+        # indicates the call is made on a temporary (a chained assignment) rather than
+        # a local variable of the caller, a chained-assignment warning is emitted at
+        # stack level two.
+        # Raises a type error for list or tuple values (and, for a Series, for any
+        # list-like value other than dict or Series). Raises a value error for other
+        # invalid fill value types, and, for dict or Series values on a frame with
+        # axis one, if the columns have more than one dtype or the value cannot be
+        # held by the frame dtype.
+        # Series: dict or Series values are aligned to the index (an empty one is a
+        # no-op copy); the manager performs the fill. Frame with dict or Series value:
+        # columns are filled one by one (keys not present are skipped); in non-inplace
+        # mode the column is replaced; in-place mode writes back into the existing
+        # column when the dtype is unchanged (handling duplicate column names through
+        # positional location), otherwise replaces the column; returns the result
+        # directly. Frame with scalar: axis one fills the transpose; otherwise the
+        # manager fills. Frame with a DataFrame value: a conditional replacement keeps
+        # original non-missing values and takes the value elsewhere.
+        # Finally the manager result is wrapped; in-place replaces the internals of
+        # self and returns self; otherwise returns the new finalized object (method
+        # name fillna).
         """
         Fill NA/NaN values with `value`.
 
@@ -7166,6 +8312,17 @@ class NDFrame(PandasObject, indexing.IndexingMixin):
         limit: None | int = None,
         limit_area: Literal["inside", "outside"] | None = None,
     ) -> Self:
+        # [FUNCTION DOC]
+        # Fill missing values by propagating the last valid observation forward.
+        # Parameters (keyword only): axis (default None means 0); inplace; limit
+        # maximum consecutive fills; limit_area inside or outside restriction.
+        # When inplace is true and the chained-assignment warning has not been
+        # disabled globally, the reference count of the object is inspected and, if it
+        # indicates the call is made on a temporary (a chained assignment) rather than
+        # a local variable of the caller, a chained-assignment warning is emitted at
+        # stack level two. Delegates to the private pad-or-backfill helper with the
+        # forward method. Returns the filled object, or self when in-place (see the
+        # helper for the exception on axis one).
         """
         Fill NA/NaN values by propagating the last valid observation to next valid.
 
@@ -7268,6 +8425,16 @@ class NDFrame(PandasObject, indexing.IndexingMixin):
         limit: None | int = None,
         limit_area: Literal["inside", "outside"] | None = None,
     ) -> Self:
+        # [FUNCTION DOC]
+        # Fill missing values using the next valid observation (backward fill).
+        # Parameters (keyword only): axis (default None means 0); inplace; limit;
+        # limit_area as for forward fill.
+        # When inplace is true and the chained-assignment warning has not been
+        # disabled globally, the reference count of the object is inspected and, if it
+        # indicates the call is made on a temporary (a chained assignment) rather than
+        # a local variable of the caller, a chained-assignment warning is emitted at
+        # stack level two. Delegates to the private pad-or-backfill helper with the
+        # backward method. Returns the filled object.
         """
         Fill NA/NaN values by using the next valid observation to fill the gap.
 
@@ -7381,6 +8548,35 @@ class NDFrame(PandasObject, indexing.IndexingMixin):
         inplace: bool = False,
         regex: bool = False,
     ) -> Self:
+        # [FUNCTION DOC]
+        # Replace values with other values.
+        # Parameters: to_replace is a scalar, list-like, dict-like, regular expression
+        # string or None; value is the replacement (scalar, list-like or dict-like),
+        # left unset when a mapping carries the values; keyword only: inplace; regex
+        # says to interpret string to_replace values as regular expressions (a bool,
+        # or, when to_replace is None, a pattern/list/dict).
+        # Validation: a value error if regex is not a bool while to_replace is not
+        # None; a type error if to_replace is not a scalar,
+        # regular-expression-compilable object or list-like; a value error if value is
+        # unset and neither to_replace nor regex is dict-like. The chained-assignment
+        # check applies when inplace.
+        # Unset value: a dict-like to_replace (or the regex dict, which is moved into
+        # to_replace with regex enabled) is split into keys and values; a nested
+        # mapping (all top-level values must be mappings, otherwise a type error)
+        # becomes per-column replacement lists; the method then calls itself with
+        # these.
+        # Value given: empty objects are returned as copies. A dict-like to_replace
+        # with dict-like value maps per column (value error for a Series; only columns
+        # present in both and in the object are processed); with scalar value is
+        # applied column-wise (value error for Series); list-like value raises a type
+        # error. A list-like to_replace requires an equal-length list-like value (a
+        # scalar value is broadcast) or raises a value error, and the manager replaces
+        # the list. A None to_replace requires a valid regex and delegates with the
+        # regex used as to_replace. A scalar to_replace with dict value acts per
+        # column (value error for Series). A scalar value uses regex or plain
+        # replacement according to whether regex use is warranted. Any other
+        # combination raises a type error.
+        # Returns a new finalized object (method name replace) or, when inplace, self.
         """
         Replace values given in `to_replace` with `value`.
 
@@ -7862,6 +9058,26 @@ class NDFrame(PandasObject, indexing.IndexingMixin):
         limit_area: Literal["inside", "outside"] | None = None,
         **kwargs,
     ) -> Self:
+        # [FUNCTION DOC]
+        # Fill NaN values using an interpolation method.
+        # Parameters: method names the technique (linear by default and many others);
+        # keyword only: axis (default 0); limit maximum consecutive fills; inplace;
+        # limit_direction forward, backward or both (default inferred from the
+        # method); limit_area inside or outside; extra keyword arguments are passed to
+        # the underlying method.
+        # When inplace is true and the chained-assignment warning has not been
+        # disabled globally, the reference count of the object is inspected and, if it
+        # indicates the call is made on a temporary (a chained assignment) rather than
+        # a local variable of the caller, a chained-assignment warning is emitted at
+        # stack level two.
+        # Empty objects are returned (self when inplace, otherwise a copy). Raises a
+        # value error when method is not a string, and when the index is a MultiIndex
+        # and the method is not linear. For axis one the transpose is interpolated and
+        # transposed back. The direction default is inferred from the method, and the
+        # interpolation index is derived from the method and the index. The manager
+        # interpolates block by block. In-place replaces the internals and returns
+        # self; otherwise returns the new object finalized with the method name
+        # interpolate.
         """
         Fill NaN values using an interpolation method.
 
@@ -8074,6 +9290,24 @@ class NDFrame(PandasObject, indexing.IndexingMixin):
 
     @final
     def asof(self, where, subset=None):
+        # [FUNCTION DOC]
+        # Return the last row(s) with no missing values at or before the requested
+        # label(s).
+        # Parameters: where is a label, Timestamp-like string (converted to a
+        # Timestamp) or list of labels; subset (frames only) restricts which columns
+        # must be non-missing (default all).
+        # Raises a value error if the index is not monotonic increasing, or if subset
+        # is given for a Series. A scalar before the first index label yields missing
+        # data (nan for a Series, an all-missing float Series for a frame). For a
+        # PeriodIndex a scalar is converted to a Period with the index frequency.
+        # A scalar on a Series uses a backwards scan from the right-most position not
+        # after the label to the first non-missing value. Otherwise the labels become
+        # an Index, a null mask is computed (any missing within subset for frames),
+        # and if everything is missing the result is built entirely of missing values
+        # with the matching shape. Otherwise the index finds the positions of the last
+        # valid labels, the rows are taken, labelled with the requested labels, and
+        # positions with no valid predecessor are set to missing. Returns the whole
+        # result for list input, otherwise the last (single) row/element.
         """
         Return the last row(s) without any NaNs before `where`.
 
@@ -8255,6 +9489,9 @@ class NDFrame(PandasObject, indexing.IndexingMixin):
     # Action Methods
 
     def isna(self) -> Self:
+        # [FUNCTION DOC]
+        # Detect missing values. Returns an object of the same shape of booleans (true
+        # where missing), finalized with the method name isna.
         """
         Detect missing values.
 
@@ -8326,6 +9563,9 @@ class NDFrame(PandasObject, indexing.IndexingMixin):
         return isna(self).__finalize__(self, method="isna")
 
     def isnull(self) -> Self:
+        # [FUNCTION DOC]
+        # Alias of the missing-value detector. Returns booleans (true where missing),
+        # finalized with the method name isnull.
         """
         Detect missing values.
 
@@ -8397,6 +9637,9 @@ class NDFrame(PandasObject, indexing.IndexingMixin):
         return isna(self).__finalize__(self, method="isnull")
 
     def notna(self) -> Self:
+        # [FUNCTION DOC]
+        # Detect non-missing values. Returns an object of the same shape of booleans
+        # (true where not missing), finalized with the method name notna.
         """
         Detect existing (non-missing) values.
 
@@ -8468,6 +9711,9 @@ class NDFrame(PandasObject, indexing.IndexingMixin):
         return notna(self).__finalize__(self, method="notna")
 
     def notnull(self) -> Self:
+        # [FUNCTION DOC]
+        # Alias of the non-missing detector. Returns booleans (true where not
+        # missing), finalized with the method name notnull.
         """
         Detect existing (non-missing) values.
 
@@ -8540,6 +9786,14 @@ class NDFrame(PandasObject, indexing.IndexingMixin):
 
     @final
     def _clip_with_scalar(self, lower, upper, inplace: bool = False):
+        # [FUNCTION DOC]
+        # HELPER: clip to scalar bounds.
+        # Parameters: lower and upper are scalar thresholds or None; inplace.
+        # Raises a value error if either bound is a missing value. Builds a mask of
+        # existing missing entries; for each bound present, values violating it are
+        # replaced by the bound using the conditional-replacement method while missing
+        # entries are preserved. Returns the resulting object (possibly self when
+        # inplace).
         if (lower is not None and np.any(isna(lower))) or (
             upper is not None and np.any(isna(upper))
         ):
@@ -8559,6 +9813,19 @@ class NDFrame(PandasObject, indexing.IndexingMixin):
 
     @final
     def _clip_with_one_bound(self, threshold, method, axis, inplace):
+        # [FUNCTION DOC]
+        # HELPER: clip with a single bound that may be a scalar, array-like or labeled
+        # object.
+        # Parameters: threshold; method is the comparison method of the object
+        # (less-or-equal for an upper bound, greater-or-equal for a lower bound;
+        # identified through its name); axis; inplace.
+        # Numeric scalars delegate to the scalar helper. List-likes that are not
+        # Series are converted into a labeled object (a Series with the same index, or
+        # by alignment along the axis for a frame). Missing threshold entries are
+        # replaced by plus or minus infinity so they do not clip. Values already
+        # satisfying the comparison, plus missing values, are kept; other values are
+        # replaced by the threshold via conditional replacement. Returns the resulting
+        # object.
         if axis is not None:
             axis = self._get_axis_number(axis)
 
@@ -8600,6 +9867,23 @@ class NDFrame(PandasObject, indexing.IndexingMixin):
         inplace: bool = False,
         **kwargs,
     ) -> Self:
+        # [FUNCTION DOC]
+        # Trim values at the given thresholds.
+        # Parameters: lower and upper are scalars, array-likes or None (missing bounds
+        # are treated as no bound; a list-like bound is ignored only if all its
+        # entries are missing); keyword only: axis along which to align array-like
+        # bounds; inplace; extra keyword arguments exist for numpy compatibility and
+        # are validated (the validation also may supply an axis).
+        # When inplace is true and the chained-assignment warning has not been
+        # disabled globally, the reference count of the object is inspected and, if it
+        # indicates the call is made on a temporary (a chained assignment) rather than
+        # a local variable of the caller, a chained-assignment warning is emitted at
+        # stack level two.
+        # If both bounds are scalars and reversed they are swapped. If both bounds are
+        # None or numeric the scalar fast path is used. Otherwise lower and upper are
+        # applied one after the other via the single-bound helper (in place the second
+        # step uses self). Returns the clipped object, or the object itself when
+        # inplace.
         """
         Trim values at input threshold(s).
 
@@ -8779,6 +10063,14 @@ class NDFrame(PandasObject, indexing.IndexingMixin):
         normalize: bool = False,
         fill_value: Hashable | None = None,
     ) -> Self:
+        # [FUNCTION DOC]
+        # Convert a time series to the specified frequency.
+        # Parameters: freq is an offset or frequency string; method is the fill method
+        # for new missing entries (pad/ffill, backfill/bfill, or None); how is start
+        # or end for period indexes; normalize resets times to midnight; fill_value
+        # fills missing entries introduced by upsampling (not those already existing).
+        # Delegates to the asfreq function in the resample module (imported lazily)
+        # and returns its result, a reindexed object.
         """
         Convert time series to specified frequency.
 
@@ -8897,6 +10189,13 @@ class NDFrame(PandasObject, indexing.IndexingMixin):
 
     @final
     def at_time(self, time, asof: bool = False, axis: Axis | None = None) -> Self:
+        # [FUNCTION DOC]
+        # Select values at a particular time of day.
+        # Parameters: time is a time object or string; asof (default false) uses the
+        # as-of matching rule; axis (default 0).
+        # Raises a type error if the chosen axis is not a datetime index. Takes the
+        # rows (or columns) at the matching positions from the index time lookup.
+        # Returns the subset.
         """
         Select values at particular time of day (e.g., 9:30AM).
 
@@ -8963,6 +10262,13 @@ class NDFrame(PandasObject, indexing.IndexingMixin):
         inclusive: IntervalClosedType = "both",
         axis: Axis | None = None,
     ) -> Self:
+        # [FUNCTION DOC]
+        # Select values between particular times of day.
+        # Parameters: start_time and end_time are time objects or strings; inclusive
+        # is both, neither, left or right (default both); axis (default 0).
+        # Raises a type error if the chosen axis is not a datetime index; the
+        # inclusive value is validated (a value error for an invalid value). Takes the
+        # matching positions from the index time-range lookup. Returns the subset.
         """
         Select values between particular times of the day (e.g., 9:00-9:30 AM).
 
@@ -9053,6 +10359,18 @@ class NDFrame(PandasObject, indexing.IndexingMixin):
         offset: TimedeltaConvertibleTypes | None = None,
         group_keys: bool = False,
     ) -> Resampler:
+        # [FUNCTION DOC]
+        # Create a resampler object for time-series resampling.
+        # Parameters: rule is the offset or frequency string; closed and label are
+        # left or right to choose which bin edge is closed/used as label (defaults
+        # depend on the rule); convention (start or end, default start) is used when
+        # resampling periods; on names a datetime-like column to use instead of the
+        # index; level names a level of a MultiIndex to use; origin (default
+        # start_day) and offset adjust bin boundaries; group_keys controls whether
+        # group keys are included in apply results (default false).
+        # Delegates to the resampler factory in the resample module (imported lazily)
+        # and returns the Resampler object; no computation happens until an
+        # aggregation is called.
         """
         Resample time-series data.
 
@@ -9431,6 +10749,15 @@ class NDFrame(PandasObject, indexing.IndexingMixin):
         ascending: bool = True,
         pct: bool = False,
     ) -> Self:
+        # [FUNCTION DOC]
+        # Compute numerical data ranks along an axis.
+        # Parameters: axis (default 0); method is average, min, max, first or dense
+        # for ties; numeric_only restricts to numeric columns; na_option is keep, top
+        # or bottom; ascending; pct returns percentile ranks.
+        # Raises a value error for an invalid na_option, and a type error if
+        # numeric_only is requested for a Series with a non-numeric dtype. Ranks are
+        # computed by the nested function on the whole object (or on the numeric
+        # subset). Returns an object of float ranks with the same axes.
         """
         Compute numerical data ranks (1 through n) along axis.
 
@@ -9540,6 +10867,14 @@ class NDFrame(PandasObject, indexing.IndexingMixin):
             raise ValueError(msg)
 
         def ranker(data):
+            # [FUNCTION DOC]
+            # HELPER: nested function of the rank method that does the actual ranking
+            # of an object using the closure parameters.
+            # Parameters: data is a Series or DataFrame. Extension array values use
+            # their own rank implementation; other arrays use the generic rank
+            # algorithm, both along the closure axis. The ranks are wrapped in the
+            # same class with the same axes and finalized with the method name rank.
+            # Returns the ranked object.
             if data.ndim == 2:
                 # i.e. DataFrame, we cast to ndarray
                 values = data.values
@@ -9589,6 +10924,24 @@ class NDFrame(PandasObject, indexing.IndexingMixin):
         keep_equal: bool = False,
         result_names: Suffixes = ("self", "other"),
     ):
+        # [FUNCTION DOC]
+        # Compare with another object of the same class and show the differences.
+        # Parameters: other must have exactly the same class as self (otherwise a type
+        # error naming both classes is raised); align_axis is 1 or columns to put
+        # differences side by side (default) or 0 or index to stack them; keep_shape
+        # keeps all rows and columns instead of only different ones; keep_equal keeps
+        # equal values instead of marking them missing; result_names is a tuple of two
+        # labels for the pieces (a type error for anything that is not a tuple).
+        # A difference mask treats positions where both are missing as equal. Unless
+        # equal values are kept, equal positions become missing in both. Unless the
+        # shape is kept, frames are reduced to rows and columns containing differences
+        # and Series are reduced to differing entries. The two pieces are concatenated
+        # along the chosen axis using the result names as keys. If this adds a new
+        # dimension (two Series side by side) it is returned. Otherwise the names of
+        # the combined axis are temporarily replaced by positions, the key level is
+        # moved to the innermost level, the original names are restored, and the
+        # entries are reordered so that corresponding self and other entries
+        # alternate. Returns the resulting object.
         """
         Compare to another Series/DataFrame and show the differences.
 
@@ -9699,6 +11052,18 @@ class NDFrame(PandasObject, indexing.IndexingMixin):
         copy: bool | lib.NoDefault = lib.no_default,
         fill_value: Hashable | None = None,
     ) -> tuple[Self, NDFrameT]:
+        # [FUNCTION DOC]
+        # Align two objects on their axes with the specified join method.
+        # Parameters: other is a Series or DataFrame (anything else raises a type
+        # error); join is outer (default), inner, left or right; axis restricts
+        # alignment to one axis (None means both); level is the MultiIndex level to
+        # broadcast across; copy is a deprecated placeholder; fill_value fills missing
+        # entries introduced by alignment.
+        # Dispatches to the frame or series alignment helper depending on the type of
+        # other. When aligning along the index of timezone-aware datetimes with
+        # differing time zones, both results get the join index (converted to UTC by
+        # the join) on shallow copies. Each result is finalized from the corresponding
+        # source. Returns a tuple of the aligned self and other.
         """
         Align two objects on their axes with the specified join method.
 
@@ -9866,6 +11231,15 @@ class NDFrame(PandasObject, indexing.IndexingMixin):
         level=None,
         fill_value=None,
     ) -> tuple[Self, DataFrame, Index | None]:
+        # [FUNCTION DOC]
+        # HELPER: aligns self with a DataFrame.
+        # Parameters: other (a frame); join; axis (None, 0 or 1); level; fill_value.
+        # For the index (axis None or 0) and for the columns (axis None or 1; not for
+        # a Series) the labels are joined when they differ, producing the joined
+        # labels and indexers for both sides. Both sides are reindexed with their
+        # indexers allowing duplicates and the fill value. Returns the aligned self,
+        # the aligned other and the joined index (None if the index did not need
+        # joining).
         # defaults
         join_index, join_columns = None, None
         ilidx, iridx = None, None
@@ -9912,6 +11286,18 @@ class NDFrame(PandasObject, indexing.IndexingMixin):
         level=None,
         fill_value=None,
     ) -> tuple[Self, Series, Index | None]:
+        # [FUNCTION DOC]
+        # HELPER: aligns self with a Series.
+        # Parameters: other (a Series); join; axis (0 or 1); level; fill_value.
+        # Raises a value error if a frame is aligned without an axis or the axis is
+        # not none, 0 or 1, and if a Series is aligned with axis one. When the axis is
+        # zero or None, the indexes are joined if they differ, and both sides are
+        # reindexed (a frame through its manager along the row axis; a Series through
+        # its own reindex-by-indexer helper). Otherwise (axis one with a frame) the
+        # frame columns are joined with the Series index and the frame manager is
+        # reindexed along the column axis, while the Series is reindexed to the joined
+        # labels. If fill_value is not missing both sides are filled with it. Returns
+        # the aligned self, aligned other and the joined labels.
         is_series = isinstance(self, ABCSeries)
 
         if (not is_series and axis is None) or axis not in [None, 0, 1]:
@@ -9976,6 +11362,39 @@ class NDFrame(PandasObject, indexing.IndexingMixin):
         axis: Axis | None = None,
         level=None,
     ) -> Self:
+        # [FUNCTION DOC]
+        # HELPER: shared implementation of where and mask; also used by item
+        # assignment. Unlike the public where, the replacement value is not called if
+        # it is a callable.
+        # Parameters: cond is a boolean-like object (callables are evaluated with
+        # self); other is the replacement (scalar, array-like, Series or DataFrame;
+        # unset means missing); keyword only: inplace; axis for aligning a
+        # lower-dimensional other; level for MultiIndex alignment.
+        # Condition processing: a labeled condition is aligned (a Series condition for
+        # a frame is broadcast across the columns first) with a right join onto self;
+        # an unlabeled condition must have exactly the shape of self or a value error
+        # is raised. Missing entries in the condition are filled with the in-place
+        # flag (so they count as true only when in place), then dtypes are inferred.
+        # For non-empty conditions every block must be boolean, otherwise a type error
+        # naming the dtype is raised (extension boolean frames are converted to plain
+        # boolean arrays); empty conditions are cast to boolean. For in-place
+        # operation the condition is inverted (since the put-mask operation overwrites
+        # where the mask is true). Finally the condition is reindexed to the info
+        # axis.
+        # Replacement processing: a labeled other with at most the dimensionality of
+        # self is aligned with a left join (an index mismatch with no axis given
+        # raises an invalid-index error); a lower-dimensional other along an axis is
+        # broadcast to the shape (for plain numpy arrays) or applied column by column
+        # (for extension arrays, building the result frame directly and returning it,
+        # in place or not). A higher-dimensional other raises a not-implemented error.
+        # Other index-like inputs are converted to arrays. An array-like other of
+        # different shape than self raises a value error for frames (one-dimensional
+        # objects may pass differing length), and one of the same shape is wrapped as
+        # a labeled object. If axis is None it defaults to 0, and alignment is flagged
+        # when dimensionality matches or when the axis is one.
+        # Execution: in place, the manager put-mask is applied, the internals replaced
+        # and self returned; otherwise the manager where operation produces a new
+        # object finalized from self (without a method name).
         """
         Equivalent to public method `where`, except that `other` is not
         applied as a function even if callable. Used in __setitem__.
@@ -10149,6 +11568,19 @@ class NDFrame(PandasObject, indexing.IndexingMixin):
         axis: Axis | None = None,
         level: Level | None = None,
     ) -> Self:
+        # [FUNCTION DOC]
+        # Keep values where the condition is true and replace the rest.
+        # Parameters: cond is a boolean Series/DataFrame, array-like or callable
+        # returning one; other is the replacement (scalar, labeled object, array-like
+        # or callable evaluated with self; unset means missing); keyword only:
+        # inplace; axis for alignment; level for MultiIndex alignment.
+        # When inplace is true and the chained-assignment warning has not been
+        # disabled globally, the reference count of the object is inspected and, if it
+        # indicates the call is made on a temporary (a chained assignment) rather than
+        # a local variable of the caller, a chained-assignment warning is emitted at
+        # stack level two.
+        # Evaluates a callable other and delegates to the shared where helper. Returns
+        # the new object, or self when in place.
         """
         Replace values where the condition is False.
 
@@ -10318,6 +11750,20 @@ class NDFrame(PandasObject, indexing.IndexingMixin):
         axis: Axis | None = None,
         level: Level | None = None,
     ) -> Self:
+        # [FUNCTION DOC]
+        # Replace values where the condition is true (the inverse of the where
+        # method).
+        # Parameters: cond, other, inplace, axis, level as for where; cond may be a
+        # callable.
+        # When inplace is true and the chained-assignment warning has not been
+        # disabled globally, the reference count of the object is inspected and, if it
+        # indicates the call is made on a temporary (a chained assignment) rather than
+        # a local variable of the caller, a chained-assignment warning is emitted at
+        # stack level two.
+        # Callable cond and other are evaluated with self. A condition lacking the
+        # invert protocol (for example a plain list) is converted to a numpy array.
+        # The inverted condition is passed to the shared where helper. Returns the new
+        # object, or self when in place.
         """
         Replace values where the condition is True.
 
@@ -10492,6 +11938,23 @@ class NDFrame(PandasObject, indexing.IndexingMixin):
         fill_value: Hashable = lib.no_default,
         suffix: str | None = None,
     ) -> Self | DataFrame:
+        # [FUNCTION DOC]
+        # Shift data (or the index, when a frequency is given) by a number of periods.
+        # Parameters: periods is an int (negative shifts backwards) or, for Series
+        # only, a list of ints (a frame with one shifted column per period is
+        # produced); freq is an offset or string, or infer, to shift the index instead
+        # of the data; axis (default 0); fill_value is the value for newly created
+        # positions (unset uses the dtype missing value); suffix is a column name
+        # suffix used by subclasses in the multi-period case.
+        # Raises a value error if both freq and fill_value are given. Zero periods
+        # returns a shallow copy. A list of periods on a Series is handled by
+        # converting to a frame and shifting that. Without freq the manager shifts the
+        # data along the row axis (only axis zero is expected here; frames handle axis
+        # one themselves) and the result is finalized with the method name shift. With
+        # freq the index is shifted by the private helper.
+        # KNOWN ISSUE: the suffix parameter is accepted but never used in this
+        # implementation (it is not forwarded in the list-of-periods path either).
+        # Returns the shifted object.
         """
         Shift index by desired number of periods with an optional time `freq`.
 
@@ -10636,6 +12099,18 @@ class NDFrame(PandasObject, indexing.IndexingMixin):
 
     @final
     def _shift_with_freq(self, periods: int, axis: int, freq) -> Self:
+        # [FUNCTION DOC]
+        # HELPER: shifts the labels of an axis instead of the data.
+        # Parameters: periods number of steps (int); axis integer axis; freq an
+        # offset, string, or infer.
+        # For infer the frequency is taken from the index freq attribute, then from
+        # its inferred frequency, and a value error is raised if neither is available.
+        # A string is converted to an offset (period-aware for PeriodIndex). For a
+        # PeriodIndex a frequency not equal to the index frequency raises a value
+        # error naming both; the index shift ignores freq in that case. Otherwise the
+        # index is shifted by the given number of periods of the frequency. The new
+        # axis is set on a copy, which is finalized with the method name shift and
+        # returned.
         # see shift.__doc__
         # when freq is given, index is shifted, data is not
         index = self._get_axis(axis)
@@ -10678,6 +12153,16 @@ class NDFrame(PandasObject, indexing.IndexingMixin):
         axis: Axis | None = None,
         copy: bool | lib.NoDefault = lib.no_default,
     ) -> Self:
+        # [FUNCTION DOC]
+        # Truncate to the rows (or columns) between two index values.
+        # Parameters: before and after are the inclusive bounds (None means
+        # unbounded); axis defaults to 0; copy is a deprecated placeholder.
+        # Raises a value error if the axis is not monotonic (increasing or
+        # decreasing), and if before is greater than after. If the axis consists of
+        # date-like labels the bounds are converted with the datetime parser. For a
+        # decreasing axis with more than one distinct value the bounds are swapped. A
+        # label-based slice is taken along the axis; for a MultiIndex the axis is also
+        # truncated by its own truncate method. Returns a shallow copy of the slice.
         """
         Truncate a Series or DataFrame before and after some index value.
 
@@ -10860,6 +12345,15 @@ class NDFrame(PandasObject, indexing.IndexingMixin):
         level=None,
         copy: bool | lib.NoDefault = lib.no_default,
     ) -> Self:
+        # [FUNCTION DOC]
+        # Convert a time-zone aware axis to another time zone.
+        # Parameters: tz is the target zone (string, tzinfo or None); axis (default
+        # 0); level is the MultiIndex level to convert (required to be valid for a
+        # MultiIndex); copy is a deprecated placeholder.
+        # Raises a type error from the nested helper if a non-empty axis is not a
+        # datetime-like index, and a value error if level is not None, 0 or the axis
+        # name for a flat axis. Returns a shallow copy with the converted axis,
+        # finalized with the method name tz_convert.
         """
         Convert tz-aware axis to target time zone.
 
@@ -10925,6 +12419,13 @@ class NDFrame(PandasObject, indexing.IndexingMixin):
         ax = self._get_axis(axis)
 
         def _tz_convert(ax, tz):
+            # [FUNCTION DOC]
+            # HELPER: nested function of tz_convert that converts one index to a time
+            # zone.
+            # Parameters: ax is an index (or MultiIndex level); tz is the target zone.
+            # If the object has no convert method: an empty index becomes an empty
+            # timezone-aware datetime index, otherwise a type error naming the axis is
+            # raised. Returns the converted index.
             if not hasattr(ax, "tz_convert"):
                 if len(ax) > 0:
                     ax_name = self._get_axis_name(axis)
@@ -10961,6 +12462,16 @@ class NDFrame(PandasObject, indexing.IndexingMixin):
         ambiguous: TimeAmbiguous = "raise",
         nonexistent: TimeNonexistent = "raise",
     ) -> Self:
+        # [FUNCTION DOC]
+        # Localize a time-zone naive axis to a time zone.
+        # Parameters: tz target zone (None removes localization); axis; level for
+        # MultiIndex; copy deprecated placeholder; ambiguous is raise, infer, NaT, or
+        # a boolean array handling repeated wall times; nonexistent is raise, NaT,
+        # shift_forward, shift_backward or a timedelta handling skipped wall times.
+        # Raises a value error for an invalid nonexistent option, for an invalid
+        # level, and a type error from the nested helper if a non-empty axis is not
+        # datetime-like. Returns a shallow copy with the localized axis, finalized
+        # with the method name tz_localize.
         """
         Localize time zone naive index of a Series or DataFrame to target time zone.
 
@@ -11136,6 +12647,13 @@ class NDFrame(PandasObject, indexing.IndexingMixin):
         ax = self._get_axis(axis)
 
         def _tz_localize(ax, tz, ambiguous, nonexistent):
+            # [FUNCTION DOC]
+            # HELPER: nested function of tz_localize that localizes one index.
+            # Parameters: ax is an index; tz target zone; ambiguous and nonexistent
+            # handling options forwarded.
+            # If the object has no localization method: an empty index becomes an
+            # empty timezone-aware datetime index, otherwise a type error naming the
+            # axis is raised. Returns the localized index.
             if not hasattr(ax, "tz_localize"):
                 if len(ax) > 0:
                     ax_name = self._get_axis_name(axis)
@@ -11172,6 +12690,14 @@ class NDFrame(PandasObject, indexing.IndexingMixin):
         include=None,
         exclude=None,
     ) -> Self:
+        # [FUNCTION DOC]
+        # Generate descriptive statistics.
+        # Parameters: percentiles is a list of numbers between 0 and 1 (default
+        # quartiles); include and exclude select dtypes (all, a list of dtypes or
+        # None).
+        # Delegates to the describe helper in the methods package and finalizes the
+        # result with the method name describe. Returns a Series or DataFrame of
+        # summary statistics.
         """
         Generate descriptive statistics.
 
@@ -11426,6 +12952,15 @@ class NDFrame(PandasObject, indexing.IndexingMixin):
         freq=None,
         **kwargs,
     ) -> Self:
+        # [FUNCTION DOC]
+        # Fractional change between the current and a prior element.
+        # Parameters: periods number of steps (default 1); fill_method must be None;
+        # freq is an optional offset for time-based shifting; extra keyword arguments
+        # may include axis (default index) and are passed to the shift.
+        # Raises a value error if fill_method is anything other than None. Computes
+        # the object divided by its shifted version minus one. With a frequency,
+        # duplicated labels are dropped from the result and it is reindexed like the
+        # original. Returns the new object finalized with the method name pct_change.
         """
         Fractional change between the current and a prior element.
 
@@ -11576,6 +13111,18 @@ class NDFrame(PandasObject, indexing.IndexingMixin):
         skipna: bool = True,
         **kwargs,
     ) -> Series | bool:
+        # [FUNCTION DOC]
+        # HELPER: shared implementation of any and all.
+        # Parameters: name is the operation name (any or all); func is the null-aware
+        # reduction function; axis (0, 1 or None); bool_only restrict to boolean data;
+        # skipna; extra keyword arguments are validated for numpy compatibility (an
+        # invalid one raises a type error).
+        # For a frame with axis None the reduction is applied along axis 0 and then
+        # again on the resulting Series to give a scalar. Axis None for
+        # one-dimensional data is axis 0. A fast path for axis one avoids a transpose
+        # when the frame has several blocks that are all two-dimensional and no extra
+        # keywords exist. Otherwise the subclass reduction machinery is called with
+        # the boolean filter type. Returns a Series or a bool.
         nv.validate_logical_func((), kwargs, fname=name)
         validate_bool_kwarg(skipna, "skipna", none_allowed=False)
 
@@ -11622,6 +13169,12 @@ class NDFrame(PandasObject, indexing.IndexingMixin):
         skipna: bool = True,
         **kwargs,
     ) -> Series | bool:
+        # [FUNCTION DOC]
+        # Return whether any element is true (no docstring here; it is attached by
+        # subclasses). Parameters (keyword only): axis (default 0, None means all
+        # axes); bool_only; skipna (default true); extra keywords for numpy
+        # compatibility. Delegates to the shared logical helper with the null-aware
+        # any reduction. Returns a Series or a bool.
         return self._logical_func(
             "any", nanops.nanany, axis, bool_only, skipna, **kwargs
         )
@@ -11634,6 +13187,14 @@ class NDFrame(PandasObject, indexing.IndexingMixin):
         skipna: bool = True,
         **kwargs,
     ) -> Series | bool:
+        # [FUNCTION DOC]
+        # Return whether all elements are true. Parameters (keyword only): axis
+        # (default 0); bool_only; skipna (default true); extra keywords for numpy
+        # compatibility. Delegates to the shared logical helper with the null-aware
+        # all reduction.
+        # KNOWN ISSUE: the axis annotation excludes None whereas the corresponding any
+        # method allows None; the shared helper handles None in both cases.
+        # Returns a Series or a bool.
         return self._logical_func(
             "all", nanops.nanall, axis, bool_only, skipna, **kwargs
         )
@@ -11648,6 +13209,16 @@ class NDFrame(PandasObject, indexing.IndexingMixin):
         *args,
         **kwargs,
     ):
+        # [FUNCTION DOC]
+        # HELPER: shared implementation of the cumulative operations.
+        # Parameters: name is the operation name; func is the numpy accumulate
+        # function used for plain arrays; axis (default None means 0); skipna; extra
+        # positional and keyword arguments are validated for numpy compatibility (also
+        # extracting skipna).
+        # Axis one is computed by transposing, accumulating along axis zero and
+        # transposing back. Otherwise a nested function is applied to every block of
+        # the manager. Returns a new object finalized with the method name equal to
+        # the operation name.
         skipna = nv.validate_cum_func_with_skipna(skipna, args, kwargs, name)
         if axis is None:
             axis = 0
@@ -11665,6 +13236,13 @@ class NDFrame(PandasObject, indexing.IndexingMixin):
             ).T
 
         def block_accum_func(blk_values):
+            # [FUNCTION DOC]
+            # HELPER: nested function of the cumulative helper applied to each block.
+            # Parameters: blk_values is the array of one block (transposed for
+            # two-dimensional storage). Extension arrays use their own accumulate
+            # method with the operation name and skipna; plain arrays use the
+            # null-aware accumulate helper with the numpy function. The result is
+            # transposed back if needed and returned.
             values = blk_values.T if hasattr(blk_values, "T") else blk_values
 
             result: np.ndarray | ExtensionArray
@@ -11683,19 +13261,36 @@ class NDFrame(PandasObject, indexing.IndexingMixin):
         )
 
     def cummax(self, axis: Axis = 0, skipna: bool = True, *args, **kwargs) -> Self:
+        # [FUNCTION DOC]
+        # Cumulative maximum (docstring attached by subclasses). Parameters: axis
+        # (default 0); skipna (default true); extra positional and keyword arguments
+        # for numpy compatibility. Delegates to the shared cumulative helper. Returns
+        # an object of the same shape.
         return self._accum_func(
             "cummax", np.maximum.accumulate, axis, skipna, *args, **kwargs
         )
 
     def cummin(self, axis: Axis = 0, skipna: bool = True, *args, **kwargs) -> Self:
+        # [FUNCTION DOC]
+        # Cumulative minimum. Parameters: axis (default 0); skipna (default true);
+        # extra positional and keyword arguments for numpy compatibility. Delegates to
+        # the shared cumulative helper. Returns an object of the same shape.
         return self._accum_func(
             "cummin", np.minimum.accumulate, axis, skipna, *args, **kwargs
         )
 
     def cumsum(self, axis: Axis = 0, skipna: bool = True, *args, **kwargs) -> Self:
+        # [FUNCTION DOC]
+        # Cumulative sum. Parameters: axis (default 0); skipna (default true); extra
+        # positional and keyword arguments for numpy compatibility. Delegates to the
+        # shared cumulative helper. Returns an object of the same shape.
         return self._accum_func("cumsum", np.cumsum, axis, skipna, *args, **kwargs)
 
     def cumprod(self, axis: Axis = 0, skipna: bool = True, *args, **kwargs) -> Self:
+        # [FUNCTION DOC]
+        # Cumulative product. Parameters: axis (default 0); skipna (default true);
+        # extra positional and keyword arguments for numpy compatibility. Delegates to
+        # the shared cumulative helper. Returns an object of the same shape.
         return self._accum_func("cumprod", np.cumprod, axis, skipna, *args, **kwargs)
 
     @final
@@ -11709,6 +13304,15 @@ class NDFrame(PandasObject, indexing.IndexingMixin):
         numeric_only: bool = False,
         **kwargs,
     ) -> Series | float:
+        # [FUNCTION DOC]
+        # HELPER: shared implementation of the reductions that take a
+        # degrees-of-freedom argument (sem, var, std).
+        # Parameters: name operation name; func null-aware reduction function; axis;
+        # skipna (must be a real bool, None not allowed, otherwise a value error);
+        # ddof divisor adjustment (default 1); numeric_only; extra keywords validated
+        # for numpy compatibility.
+        # Delegates to the subclass reduction with all arguments. Returns a Series or
+        # a scalar.
         nv.validate_stat_ddof_func((), kwargs, fname=name)
         validate_bool_kwarg(skipna, "skipna", none_allowed=False)
 
@@ -11725,6 +13329,10 @@ class NDFrame(PandasObject, indexing.IndexingMixin):
         numeric_only: bool = False,
         **kwargs,
     ) -> Series | float:
+        # [FUNCTION DOC]
+        # Standard error of the mean. Keyword only parameters: axis (default 0),
+        # skipna, ddof (default 1), numeric_only, extra keywords. Delegates to the
+        # degrees-of-freedom helper with the null-aware sem function.
         return self._stat_function_ddof(
             "sem", nanops.nansem, axis, skipna, ddof, numeric_only, **kwargs
         )
@@ -11738,6 +13346,10 @@ class NDFrame(PandasObject, indexing.IndexingMixin):
         numeric_only: bool = False,
         **kwargs,
     ) -> Series | float:
+        # [FUNCTION DOC]
+        # Variance. Keyword only parameters: axis (default 0), skipna, ddof (default
+        # 1), numeric_only, extra keywords. Delegates to the degrees-of-freedom helper
+        # with the null-aware var function.
         return self._stat_function_ddof(
             "var", nanops.nanvar, axis, skipna, ddof, numeric_only, **kwargs
         )
@@ -11751,6 +13363,10 @@ class NDFrame(PandasObject, indexing.IndexingMixin):
         numeric_only: bool = False,
         **kwargs,
     ) -> Series | float:
+        # [FUNCTION DOC]
+        # Standard deviation. Keyword only parameters: axis (default 0), skipna, ddof
+        # (default 1), numeric_only, extra keywords. Delegates to the
+        # degrees-of-freedom helper with the null-aware std function.
         return self._stat_function_ddof(
             "std", nanops.nanstd, axis, skipna, ddof, numeric_only, **kwargs
         )
@@ -11765,6 +13381,12 @@ class NDFrame(PandasObject, indexing.IndexingMixin):
         numeric_only: bool = False,
         **kwargs,
     ):
+        # [FUNCTION DOC]
+        # HELPER: shared implementation of median, mean, min, max, kurt and skew.
+        # Parameters: name (asserted to be one of those six); func the null-aware
+        # reduction; axis; skipna (must be a real bool); numeric_only; extra keywords
+        # validated for numpy compatibility.
+        # Delegates to the subclass reduction. Returns a Series or a scalar.
         assert name in ["median", "mean", "min", "max", "kurt", "skew"], name
         nv.validate_func(name, (), kwargs)
 
@@ -11782,6 +13404,9 @@ class NDFrame(PandasObject, indexing.IndexingMixin):
         numeric_only: bool = False,
         **kwargs,
     ):
+        # [FUNCTION DOC]
+        # Minimum. Keyword only: axis (default 0), skipna, numeric_only, extra
+        # keywords. Delegates to the shared statistic helper with the null-aware min.
         return self._stat_function(
             "min",
             nanops.nanmin,
@@ -11799,6 +13424,9 @@ class NDFrame(PandasObject, indexing.IndexingMixin):
         numeric_only: bool = False,
         **kwargs,
     ):
+        # [FUNCTION DOC]
+        # Maximum. Keyword only: axis (default 0), skipna, numeric_only, extra
+        # keywords. Delegates to the shared statistic helper with the null-aware max.
         return self._stat_function(
             "max",
             nanops.nanmax,
@@ -11816,6 +13444,9 @@ class NDFrame(PandasObject, indexing.IndexingMixin):
         numeric_only: bool = False,
         **kwargs,
     ) -> Series | float:
+        # [FUNCTION DOC]
+        # Mean. Keyword only: axis (default 0), skipna, numeric_only, extra keywords.
+        # Delegates to the shared statistic helper with the null-aware mean.
         return self._stat_function(
             "mean", nanops.nanmean, axis, skipna, numeric_only, **kwargs
         )
@@ -11828,6 +13459,10 @@ class NDFrame(PandasObject, indexing.IndexingMixin):
         numeric_only: bool = False,
         **kwargs,
     ) -> Series | float:
+        # [FUNCTION DOC]
+        # Median. Keyword only: axis (default 0), skipna, numeric_only, extra
+        # keywords. Delegates to the shared statistic helper with the null-aware
+        # median.
         return self._stat_function(
             "median", nanops.nanmedian, axis, skipna, numeric_only, **kwargs
         )
@@ -11840,6 +13475,10 @@ class NDFrame(PandasObject, indexing.IndexingMixin):
         numeric_only: bool = False,
         **kwargs,
     ) -> Series | float:
+        # [FUNCTION DOC]
+        # Unbiased skewness. Keyword only: axis (default 0), skipna, numeric_only,
+        # extra keywords. Delegates to the shared statistic helper with the null-aware
+        # skew.
         return self._stat_function(
             "skew", nanops.nanskew, axis, skipna, numeric_only, **kwargs
         )
@@ -11852,6 +13491,11 @@ class NDFrame(PandasObject, indexing.IndexingMixin):
         numeric_only: bool = False,
         **kwargs,
     ) -> Series | float:
+        # [FUNCTION DOC]
+        # Unbiased kurtosis (a module attribute below also exposes it under the longer
+        # alias). Keyword only: axis (default 0), skipna, numeric_only, extra
+        # keywords. Delegates to the shared statistic helper with the null-aware
+        # kurtosis.
         return self._stat_function(
             "kurt", nanops.nankurt, axis, skipna, numeric_only, **kwargs
         )
@@ -11869,6 +13513,14 @@ class NDFrame(PandasObject, indexing.IndexingMixin):
         min_count: int = 0,
         **kwargs,
     ):
+        # [FUNCTION DOC]
+        # HELPER: shared implementation of sum and product.
+        # Parameters: name (asserted to be sum or prod); func the null-aware
+        # reduction; axis; skipna (must be a real bool); numeric_only; min_count
+        # required number of valid values for a non-missing result (default 0); extra
+        # keywords validated for numpy compatibility.
+        # Delegates to the subclass reduction passing min_count. Returns a Series or a
+        # scalar.
         assert name in ["sum", "prod"], name
         nv.validate_func(name, (), kwargs)
 
@@ -11892,6 +13544,10 @@ class NDFrame(PandasObject, indexing.IndexingMixin):
         min_count: int = 0,
         **kwargs,
     ):
+        # [FUNCTION DOC]
+        # Sum. Keyword only: axis (default 0), skipna, numeric_only, min_count
+        # (default 0), extra keywords. Delegates to the min-count helper with the
+        # null-aware sum.
         return self._min_count_stat_function(
             "sum", nanops.nansum, axis, skipna, numeric_only, min_count, **kwargs
         )
@@ -11905,6 +13561,11 @@ class NDFrame(PandasObject, indexing.IndexingMixin):
         min_count: int = 0,
         **kwargs,
     ):
+        # [FUNCTION DOC]
+        # Product. Keyword only: axis (default 0), skipna, numeric_only, min_count
+        # (default 0), extra keywords. Delegates to the min-count helper with the
+        # null-aware product. A module attribute below exposes it also under the alias
+        # product.
         return self._min_count_stat_function(
             "prod",
             nanops.nanprod,
@@ -11929,6 +13590,19 @@ class NDFrame(PandasObject, indexing.IndexingMixin):
         step: int | None = None,
         method: str = "single",
     ) -> Window | Rolling:
+        # [FUNCTION DOC]
+        # Provide rolling window calculations.
+        # Parameters: window is an integer size, a time-based size (timedelta, offset
+        # or string), or a custom indexer object; min_periods is the minimum
+        # observations needed (default the window size, or 1 for time-based windows);
+        # center labels the window at its center; win_type names a weighting window
+        # type (scipy); on names a column to use instead of the index for time-based
+        # windows; closed says which window edges are closed; step evaluates every nth
+        # window; method is single or table (execution method).
+        # Creates a lazy window object. If win_type is given a weighted window object
+        # is created; otherwise a plain rolling object. No computation occurs until an
+        # aggregation is called. Argument validation happens in the window classes
+        # (they raise value or type errors).
         """
         Provide rolling window calculations.
 
@@ -12211,6 +13885,11 @@ class NDFrame(PandasObject, indexing.IndexingMixin):
         min_periods: int = 1,
         method: Literal["single", "table"] = "single",
     ) -> Expanding:
+        # [FUNCTION DOC]
+        # Provide expanding window calculations.
+        # Parameters: min_periods minimum observations needed (default 1); method
+        # single or table.
+        # Returns a lazy expanding window object bound to self.
         """
         Provide expanding window calculations.
 
@@ -12292,6 +13971,16 @@ class NDFrame(PandasObject, indexing.IndexingMixin):
         times: np.ndarray | DataFrame | Series | None = None,
         method: Literal["single", "table"] = "single",
     ) -> ExponentialMovingWindow:
+        # [FUNCTION DOC]
+        # Provide exponentially weighted window calculations (docstring supplied by a
+        # decorator copying it from the window class).
+        # Parameters: com, span, halflife, alpha give mutually exclusive decay
+        # specifications; min_periods minimum observations (default 0); adjust whether
+        # to divide by decaying adjustment factor; ignore_na whether missing values
+        # are ignored when computing weights; times optional timestamps for the
+        # observations; method single or table.
+        # Returns a lazy exponential window object bound to self. Argument validation
+        # happens in the window class.
         return ExponentialMovingWindow(
             self,
             com=com,
@@ -12310,6 +13999,13 @@ class NDFrame(PandasObject, indexing.IndexingMixin):
 
     @final
     def _inplace_method(self, other, op) -> Self:
+        # [FUNCTION DOC]
+        # HELPER: implements in-place arithmetic operators.
+        # Parameters: other is the right operand; op is the unbound binary operation
+        # of the class.
+        # Computes the ordinary result, reindexes it to look like self, and replaces
+        # the internals of self with it, so the object keeps its identity and its
+        # axes. Returns self.
         """
         Wrap arithmetic method to operate inplace.
         """
@@ -12322,21 +14018,33 @@ class NDFrame(PandasObject, indexing.IndexingMixin):
 
     @final
     def __iadd__(self, other) -> Self:
+        # [FUNCTION DOC]
+        # In-place addition. Delegates to the in-place helper with the class addition
+        # operation. Returns self.
         # error: Unsupported left operand type for + ("Type[NDFrame]")
         return self._inplace_method(other, type(self).__add__)  # type: ignore[operator]
 
     @final
     def __isub__(self, other) -> Self:
+        # [FUNCTION DOC]
+        # In-place subtraction. Delegates to the in-place helper with the class
+        # subtraction operation. Returns self.
         # error: Unsupported left operand type for - ("Type[NDFrame]")
         return self._inplace_method(other, type(self).__sub__)  # type: ignore[operator]
 
     @final
     def __imul__(self, other) -> Self:
+        # [FUNCTION DOC]
+        # In-place multiplication. Delegates to the in-place helper with the class
+        # multiplication operation. Returns self.
         # error: Unsupported left operand type for * ("Type[NDFrame]")
         return self._inplace_method(other, type(self).__mul__)  # type: ignore[operator]
 
     @final
     def __itruediv__(self, other) -> Self:
+        # [FUNCTION DOC]
+        # In-place true division. Delegates to the in-place helper with the class true
+        # division operation. Returns self.
         # error: Unsupported left operand type for / ("Type[NDFrame]")
         return self._inplace_method(
             other,
@@ -12345,6 +14053,9 @@ class NDFrame(PandasObject, indexing.IndexingMixin):
 
     @final
     def __ifloordiv__(self, other) -> Self:
+        # [FUNCTION DOC]
+        # In-place floor division. Delegates to the in-place helper with the class
+        # floor division operation. Returns self.
         # error: Unsupported left operand type for // ("Type[NDFrame]")
         return self._inplace_method(
             other,
@@ -12353,25 +14064,40 @@ class NDFrame(PandasObject, indexing.IndexingMixin):
 
     @final
     def __imod__(self, other) -> Self:
+        # [FUNCTION DOC]
+        # In-place modulo. Delegates to the in-place helper with the class modulo
+        # operation. Returns self.
         # error: Unsupported left operand type for % ("Type[NDFrame]")
         return self._inplace_method(other, type(self).__mod__)  # type: ignore[operator]
 
     @final
     def __ipow__(self, other) -> Self:
+        # [FUNCTION DOC]
+        # In-place exponentiation. Delegates to the in-place helper with the class
+        # power operation. Returns self.
         # error: Unsupported left operand type for ** ("Type[NDFrame]")
         return self._inplace_method(other, type(self).__pow__)  # type: ignore[operator]
 
     @final
     def __iand__(self, other) -> Self:
+        # [FUNCTION DOC]
+        # In-place bitwise and. Delegates to the in-place helper with the class and
+        # operation. Returns self.
         # error: Unsupported left operand type for & ("Type[NDFrame]")
         return self._inplace_method(other, type(self).__and__)  # type: ignore[operator]
 
     @final
     def __ior__(self, other) -> Self:
+        # [FUNCTION DOC]
+        # In-place bitwise or. Delegates to the in-place helper with the class or
+        # operation. Returns self.
         return self._inplace_method(other, type(self).__or__)
 
     @final
     def __ixor__(self, other) -> Self:
+        # [FUNCTION DOC]
+        # In-place bitwise exclusive or. Delegates to the in-place helper with the
+        # class xor operation. Returns self.
         # error: Unsupported left operand type for ^ ("Type[NDFrame]")
         return self._inplace_method(other, type(self).__xor__)  # type: ignore[operator]
 
@@ -12380,6 +14106,12 @@ class NDFrame(PandasObject, indexing.IndexingMixin):
 
     @final
     def _find_valid_index(self, *, how: str) -> Hashable:
+        # [FUNCTION DOC]
+        # HELPER: finds the first or last label with a valid entry.
+        # Parameters (keyword only): how is first or last.
+        # Builds the array of non-missing flags, asks the missing-data helper for the
+        # position of the first or last valid entry, and returns the index label at
+        # that position, or None when there is none.
         """
         Retrieves the index of the first valid value.
 
@@ -12400,6 +14132,10 @@ class NDFrame(PandasObject, indexing.IndexingMixin):
 
     @final
     def first_valid_index(self) -> Hashable:
+        # [FUNCTION DOC]
+        # Return the index label of the first non-missing value, or None if there is
+        # none (also None for empty objects). Delegates to the private finder with the
+        # first mode.
         """
         Return index for first non-missing value or None, if no value is found.
 
@@ -12487,6 +14223,9 @@ class NDFrame(PandasObject, indexing.IndexingMixin):
 
     @final
     def last_valid_index(self) -> Hashable:
+        # [FUNCTION DOC]
+        # Return the index label of the last non-missing value, or None if there is
+        # none. Delegates to the private finder with the last mode.
         """
         Return index for last non-missing value or None, if no value is found.
 
@@ -13389,6 +15128,20 @@ min_count : int, default 0
 
 
 def make_doc(name: str, ndim: int) -> str:
+    # [FUNCTION DOC]
+    # Generate the docstring text for a reduction or accumulation.
+    # Parameters: name is one of any, all, min, max, sum, prod, median, mean, var,
+    # std, sem, skew, kurt, cumsum, cumprod, cummin, cummax; ndim is 1 for Series
+    # (scalar results) or anything else for DataFrame (Series results).
+    # Selects the matching template, description, see-also, examples and extra
+    # substitution values for the name and formats the template with the object kind
+    # names and axis description. Raises a not-implemented error for an unknown name.
+    # Returns the formatted string.
+    # KNOWN ISSUE: nothing in the repository calls this function.
+    # KNOWN ISSUE: for the variance, the chosen template contains a placeholder for
+    # the return description but no value for it is supplied, so formatting would fail
+    # with a missing-key error; the notes constant for the standard deviation template
+    # is defined but an empty notes value is passed instead.
     """
     Generate the docstring for a Series/DataFrame reduction.
     """
