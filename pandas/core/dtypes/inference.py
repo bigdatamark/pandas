@@ -1,5 +1,15 @@
 """basic inference routines"""
 
+# [MODULE DOC]
+# Basic predicates that classify arbitrary Python objects (number, file-like,
+# regex, list-like, dict-like, hashable, sequence, data class, and so on).
+# Public contents: several names re-bound directly to the compiled helper
+# library implementations (bool, integer, float, complex, scalar, decimal,
+# list-like and iterator checks), plus pure-Python predicates defined here.
+# Many are re-exported in the public api.types namespace (the decorator that
+# sets the public module name is applied to those). Used widely across core
+# for argument validation. Import-time side effects: none beyond binding names.
+
 from __future__ import annotations
 
 from collections import abc
@@ -38,6 +48,10 @@ is_iterator = lib.is_iterator
 
 @set_module("pandas.api.types")
 def is_number(obj: object) -> TypeGuard[Number | np.number]:
+    # [FUNCTION DOC]
+    # Returns true when obj is an instance of the standard numeric abstract base class
+    # or a numpy numeric scalar type. Booleans count as numbers; strings do not. Never
+    # raises.
     """
     Check if the object is a number.
 
@@ -79,6 +93,10 @@ def is_number(obj: object) -> TypeGuard[Number | np.number]:
 
 
 def iterable_not_string(obj: object) -> bool:
+    # [FUNCTION DOC]
+    # Returns true when obj is iterable (per the standard iterable abstract base class)
+    # and is not a text string. Byte strings are still treated as iterable. Never
+    # raises.
     """
     Check if the object is an iterable but not a string.
 
@@ -105,6 +123,11 @@ def iterable_not_string(obj: object) -> bool:
 
 @set_module("pandas.api.types")
 def is_file_like(obj: object) -> bool:
+    # [FUNCTION DOC]
+    # Returns true when obj has a read or a write attribute and also has an iteration
+    # attribute; otherwise false. Only attribute presence is tested, nothing is called.
+    # # KNOWN ISSUE: the docstring says the object must be an iterator, but the code
+    # only requires the iteration protocol method to exist, not the next-item method.
     """
     Check if the object is a file-like object.
 
@@ -153,6 +176,9 @@ def is_file_like(obj: object) -> bool:
 
 @set_module("pandas.api.types")
 def is_re(obj: object) -> TypeGuard[Pattern]:
+    # [FUNCTION DOC]
+    # Returns true when obj is an instance of the compiled regular-expression pattern
+    # type; strings are not patterns. Never raises.
     """
     Check if the object is a regex pattern instance.
 
@@ -190,6 +216,13 @@ def is_re(obj: object) -> TypeGuard[Pattern]:
 
 @set_module("pandas.api.types")
 def is_re_compilable(obj: object) -> bool:
+    # [FUNCTION DOC]
+    # Tries to compile obj as a regular expression and returns true on success, false
+    # when compilation raises a type error (for example a non-string, non-pattern
+    # object). No state is kept.
+    # # KNOWN ISSUE: only the type error is caught, so a string that is not a valid
+    # pattern propagates the regex compile error instead of returning false, contrary to
+    # the docstring.
     """
     Check if the object can be compiled into a regex pattern instance.
 
@@ -225,6 +258,9 @@ def is_re_compilable(obj: object) -> bool:
 
 @set_module("pandas.api.types")
 def is_array_like(obj: object) -> bool:
+    # [FUNCTION DOC]
+    # Returns true when obj is list-like (per the list-like helper) and also has a dtype
+    # attribute. Plain lists and tuples are therefore not array-like.
     """
     Check if the object is array-like.
 
@@ -257,6 +293,11 @@ def is_array_like(obj: object) -> bool:
 
 
 def is_nested_list_like(obj: object) -> bool:
+    # [FUNCTION DOC]
+    # Returns true when obj is list-like, defines a length, has at least one element,
+    # and every element is itself list-like. Objects without a length (such as
+    # generators) return false so that they are never consumed; empty containers return
+    # false.
     """
     Check if the object is list-like, and that all of its elements
     are also list-like.
@@ -305,6 +346,9 @@ def is_nested_list_like(obj: object) -> bool:
 
 @set_module("pandas.api.types")
 def is_dict_like(obj: object) -> bool:
+    # [FUNCTION DOC]
+    # Returns true when obj has all of the item-access, keys and containment attributes
+    # and is not itself a class. Only attribute presence is tested.
     """
     Check if the object is dict-like.
 
@@ -348,6 +392,9 @@ def is_dict_like(obj: object) -> bool:
 
 @set_module("pandas.api.types")
 def is_named_tuple(obj: object) -> bool:
+    # [FUNCTION DOC]
+    # Returns true when obj is a sequence instance that has a field-names attribute (the
+    # marker of named tuples). Never raises.
     """
     Check if the object is a named tuple.
 
@@ -386,6 +433,13 @@ def is_named_tuple(obj: object) -> bool:
 
 @set_module("pandas.api.types")
 def is_hashable(obj: object, allow_slice: bool = True) -> TypeGuard[Hashable]:
+    # [FUNCTION DOC]
+    # Parameters: obj is any object; allow_slice (default true) controls whether slices
+    # are acceptable. When allow_slice is false, a slice, or a tuple containing a slice
+    # at the top level, returns false immediately. Otherwise obj is hashed and the
+    # result is true on success and false if hashing raises a type error. Other
+    # exceptions propagate. Uses a real hash attempt because the abstract base class
+    # test is unreliable for numpy scalars.
     """
     Return True if hash(obj) will succeed, False otherwise.
 
@@ -450,6 +504,11 @@ def is_hashable(obj: object, allow_slice: bool = True) -> TypeGuard[Hashable]:
 
 
 def is_sequence(obj: object) -> bool:
+    # [FUNCTION DOC]
+    # Returns true when obj can be iterated and has a length and is not a text or byte
+    # string; false if iterating or taking the length raises a type error or attribute
+    # error. Iterators and generators are not sequences because they have no length.
+    # Note that iterating is only started, not consumed.
     """
     Check if the object is a sequence of objects.
     String types are not included as sequences here.
@@ -483,6 +542,12 @@ def is_sequence(obj: object) -> bool:
 
 
 def is_dataclass(item: object) -> bool:
+    # [FUNCTION DOC]
+    # Returns true when obj is an instance of a data class and not the data class type
+    # itself. Imports the data class support module lazily; returns false if that import
+    # fails.
+    # # KNOWN ISSUE: the import failure branch is effectively dead since the module is
+    # part of the standard library.
     """
     Checks if the object is a data-class instance
 

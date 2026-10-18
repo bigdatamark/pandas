@@ -2,6 +2,26 @@
 Common type operations.
 """
 
+# [MODULE DOC]
+# Common dtype classification and conversion utilities. Public contents (many exposed in
+# the public types namespace): the family of dtype predicates (object, datetime64,
+# timedelta64, period, interval, categorical, string, integer signed/unsigned, int64,
+# float, complex, bool, numeric, extension), the dtype normalization function
+# (pandas_dtype), dtype equality, a helper inferring a numpy scalar type from a
+# dtype-like, and small validators and converters. Also re-binds compiled
+# array-conversion helpers (ensure to float64, int64, int32, int16, int8, platform int,
+# object, uint64) and the object-inference predicates from the inference module, and
+# defines nanosecond dtype constants. The exported-name list at the bottom is the
+# module's intended surface.
+# Relationships: builds on the dtypes module (concrete dtype classes), the base module
+# (the extension dtype registry), generic ABCs and inference predicates. Heavily
+# imported across pandas. Most predicates accept either array-likes or dtype-likes and
+# funnel through the private dtype extraction and condition helpers defined near the
+# end. Several predicates are deprecated and emit a pandas-4 deprecation warning.
+# Import-time side effects: defines constants and one module-level cache variable for
+# the lazily imported sparse-matrix checker (empty until first use).
+
+
 from __future__ import annotations
 
 from typing import (
@@ -83,6 +103,10 @@ ensure_uint64 = algos.ensure_uint64
 
 
 def ensure_str(value: bytes | Any) -> str:
+    # [FUNCTION DOC]
+    # Parameter: value, bytes or any object. Bytes are decoded as UTF-8; a non-string is
+    # converted with the default string conversion; a string is returned as is. Returns
+    # a str. Raises a decoding error for invalid UTF-8 bytes.
     """
     Ensure that bytes and non-strings get converted into ``str`` objects.
     """
@@ -94,6 +118,12 @@ def ensure_str(value: bytes | Any) -> str:
 
 
 def ensure_python_int(value: int | np.integer) -> int:
+    # [FUNCTION DOC]
+    # Parameter: value, an integer or numpy integer (floats that are integral also
+    # pass). Returns a Python int. Raises a type error when the value is not an integer
+    # or float (with a distinct message if it is not a scalar), or if converting to int
+    # changes the value (for example a non-integral float or NaN), implemented via an
+    # assertion that is caught.
     """
     Ensure that a value is a python int.
 
@@ -124,11 +154,20 @@ def ensure_python_int(value: int | np.integer) -> int:
 
 
 def classes(*klasses) -> Callable:
+    # [FUNCTION DOC]
+    # Factory. Parameter: klasses, any number of classes. Returns a predicate (a
+    # function of one type argument) that is true when the argument is a subclass of at
+    # least one of those classes. The returned function is an anonymous function and has
+    # no body of its own to document.
     """Evaluate if the tipo is a subclass of the klasses."""
     return lambda tipo: issubclass(tipo, klasses)
 
 
 def _classes_and_not_datetimelike(*klasses) -> Callable:
+    # [FUNCTION DOC]
+    # HELPER: like the classes factory but the returned predicate also requires that the
+    # type is not a subclass of numpy datetime64 or timedelta64 (these are numpy integer
+    # subclasses and would otherwise match integer checks).
     """
     Evaluate if the tipo is a subclass of the klasses
     and not a datetimelike.
@@ -141,6 +180,9 @@ def _classes_and_not_datetimelike(*klasses) -> Callable:
 
 @set_module("pandas.api.types")
 def is_object_dtype(arr_or_dtype) -> bool:
+    # [FUNCTION DOC]
+    # Public. Parameter: arr_or_dtype, an array-like or dtype-like. Returns true when
+    # its dtype resolves to numpy object dtype; false for none or unresolvable input.
     """
     Check whether an array-like or dtype is of the object dtype.
 
@@ -187,6 +229,13 @@ def is_object_dtype(arr_or_dtype) -> bool:
 
 @set_module("pandas.api.types")
 def is_sparse(arr) -> bool:
+    # [FUNCTION DOC]
+    # Public, deprecated. Parameter: arr, an array-like. Always emits a pandas-4
+    # deprecation warning, then returns whether its dtype (or itself if it has none) is
+    # an instance of the sparse dtype.
+    # KNOWN ISSUE: the docstring ends with a statement that false is returned for arrays
+    # with more than one dimension, but the code only checks the dtype and does not look
+    # at the number of dimensions.
     """
     Check whether an array-like is a 1-D pandas sparse array.
 
@@ -248,6 +297,11 @@ def is_sparse(arr) -> bool:
 
 
 def is_scipy_sparse(arr) -> bool:
+    # [FUNCTION DOC]
+    # Parameter: arr, an array-like. Returns whether it is a scipy sparse matrix. On
+    # first call it lazily imports the checker from scipy and caches it in a
+    # module-level variable; if scipy is unavailable, the cached checker is a function
+    # always returning false. Side effect: sets that global.
     """
     Check whether an array-like is a scipy.sparse.spmatrix instance.
 
@@ -287,6 +341,10 @@ def is_scipy_sparse(arr) -> bool:
 
 @set_module("pandas.api.types")
 def is_datetime64_dtype(arr_or_dtype) -> bool:
+    # [FUNCTION DOC]
+    # Public. Parameter: arr_or_dtype. A numpy dtype is checked directly by kind
+    # (datetime); anything else goes through the generic type check with the numpy
+    # datetime64 class (so timezone-aware pandas dtypes are not matched).
     """
     Check whether an array-like or dtype is of the datetime64 dtype.
 
@@ -329,6 +387,10 @@ def is_datetime64_dtype(arr_or_dtype) -> bool:
 
 @set_module("pandas.api.types")
 def is_datetime64tz_dtype(arr_or_dtype) -> bool:
+    # [FUNCTION DOC]
+    # Public, deprecated. Always emits a deprecation warning. Returns true for a
+    # timezone-aware datetime dtype instance, false for none, otherwise defers to the
+    # dtype's own is-dtype test.
     """
     Check whether an array-like or dtype is of a DatetimeTZDtype dtype.
 
@@ -391,6 +453,9 @@ def is_datetime64tz_dtype(arr_or_dtype) -> bool:
 
 @set_module("pandas.api.types")
 def is_timedelta64_dtype(arr_or_dtype) -> bool:
+    # [FUNCTION DOC]
+    # Public. Numpy dtypes are checked directly by kind (timedelta); anything else goes
+    # through the generic type check with the numpy timedelta64 class.
     """
     Check whether an array-like or dtype is of the timedelta64 dtype.
 
@@ -434,6 +499,10 @@ def is_timedelta64_dtype(arr_or_dtype) -> bool:
 
 @set_module("pandas.api.types")
 def is_period_dtype(arr_or_dtype) -> bool:
+    # [FUNCTION DOC]
+    # Public, deprecated. Always emits a deprecation warning. For extension dtype
+    # objects returns whether their scalar type is Period; none gives false; otherwise
+    # defers to the period dtype's is-dtype test.
     """
     Check whether an array-like or dtype is of the Period dtype.
 
@@ -488,6 +557,10 @@ def is_period_dtype(arr_or_dtype) -> bool:
 
 @set_module("pandas.api.types")
 def is_interval_dtype(arr_or_dtype) -> bool:
+    # [FUNCTION DOC]
+    # Public, deprecated. Always emits a deprecation warning. For extension dtype
+    # objects returns whether their scalar type is Interval; none gives false; otherwise
+    # defers to the interval dtype's is-dtype test.
     """
     Check whether an array-like or dtype is of the Interval dtype.
 
@@ -547,6 +620,10 @@ def is_interval_dtype(arr_or_dtype) -> bool:
 
 @set_module("pandas.api.types")
 def is_categorical_dtype(arr_or_dtype) -> bool:
+    # [FUNCTION DOC]
+    # Public, deprecated. Always emits a deprecation warning. For extension dtype
+    # objects returns whether the name is the categorical name; none gives false;
+    # otherwise defers to the categorical dtype's is-dtype test.
     """
     Check whether an array-like or dtype is of the Categorical dtype.
 
@@ -601,6 +678,9 @@ def is_categorical_dtype(arr_or_dtype) -> bool:
 
 
 def is_string_or_object_np_dtype(dtype: np.dtype) -> bool:
+    # [FUNCTION DOC]
+    # Fast check assuming a numpy dtype. Returns true for object dtype or for bytes and
+    # unicode kinds.
     """
     Faster alternative to is_string_dtype, assumes we have an np.dtype object.
     """
@@ -609,6 +689,12 @@ def is_string_or_object_np_dtype(dtype: np.dtype) -> bool:
 
 @set_module("pandas.api.types")
 def is_string_dtype(arr_or_dtype) -> bool:
+    # [FUNCTION DOC]
+    # Public. Parameter: arr_or_dtype. If the input has a dtype attribute that resolves
+    # to object dtype, the result is whether all elements are strings (via the
+    # all-strings helper, which inspects data). Otherwise the dtype is tested: true for
+    # numpy object, bytes or unicode dtypes or any dtype equal to the string alias
+    # (comparison errors give false).
     """
     Check whether the provided array or dtype is of the string dtype.
 
@@ -650,6 +736,10 @@ def is_string_dtype(arr_or_dtype) -> bool:
         return is_all_strings(arr_or_dtype)
 
     def condition(dtype) -> bool:
+        # [FUNCTION DOC]
+        # HELPER: predicate passed to the dtype-condition helper; true for
+        # object/bytes/unicode numpy dtypes, else whether the dtype compares equal to
+        # the string dtype name, treating comparison type errors as false.
         if is_string_or_object_np_dtype(dtype):
             return True
         try:
@@ -662,6 +752,13 @@ def is_string_dtype(arr_or_dtype) -> bool:
 
 @set_module("pandas.api.types")
 def is_dtype_equal(source, target) -> bool:
+    # [FUNCTION DOC]
+    # Public. Parameters: source and target, dtype-likes (types, names, dtype objects or
+    # arrays). If target is a string and source is not, an extension dtype from source
+    # is compared directly with the string (so a categorical dtype equals its name); if
+    # source is a string and target not, the roles are swapped. Otherwise both are
+    # normalized to dtype objects and compared. Any type, attribute or import error
+    # during normalization gives false instead of raising.
     """
     Check if two dtypes are equal.
 
@@ -727,6 +824,12 @@ def is_dtype_equal(source, target) -> bool:
 
 @set_module("pandas.api.types")
 def is_integer_dtype(arr_or_dtype) -> bool:
+    # [FUNCTION DOC]
+    # Public. True for numpy integer dtypes excluding datetime-like ones, or extension
+    # dtypes whose kind code is signed or unsigned integer. Nullable integer dtypes
+    # count. Parameter: arr_or_dtype.
+    # KNOWN ISSUE: the docstring contrasts this function with a function named for
+    # any-integer checks that does not exist in the code base.
     """
     Check whether the provided array or dtype is of an integer dtype.
 
@@ -794,6 +897,10 @@ def is_integer_dtype(arr_or_dtype) -> bool:
 
 @set_module("pandas.api.types")
 def is_signed_integer_dtype(arr_or_dtype) -> bool:
+    # [FUNCTION DOC]
+    # Public. True for numpy signed integer dtypes excluding datetime-like ones, or
+    # extension dtypes of signed-integer kind. Parameter: arr_or_dtype.
+    # KNOWN ISSUE: the docstring refers to a nonexistent any-integer check function.
     """
     Check whether the provided array or dtype is of a signed integer dtype.
 
@@ -863,6 +970,9 @@ def is_signed_integer_dtype(arr_or_dtype) -> bool:
 
 @set_module("pandas.api.types")
 def is_unsigned_integer_dtype(arr_or_dtype) -> bool:
+    # [FUNCTION DOC]
+    # Public. True for numpy unsigned integer dtypes excluding datetime-like ones, or
+    # extension dtypes of unsigned-integer kind. Parameter: arr_or_dtype.
     """
     Check whether the provided array or dtype is of an unsigned integer dtype.
 
@@ -923,6 +1033,10 @@ def is_unsigned_integer_dtype(arr_or_dtype) -> bool:
 
 @set_module("pandas.api.types")
 def is_int64_dtype(arr_or_dtype) -> bool:
+    # [FUNCTION DOC]
+    # Public, deprecated. Always emits a deprecation warning, then returns whether the
+    # resolved type is the 64-bit signed integer (including nullable Int64 via the type
+    # check).
     """
     Check whether the provided array or dtype is of the int64 dtype.
 
@@ -997,6 +1111,11 @@ def is_int64_dtype(arr_or_dtype) -> bool:
 
 @set_module("pandas.api.types")
 def is_datetime64_any_dtype(arr_or_dtype) -> bool:
+    # [FUNCTION DOC]
+    # Public. Numpy dtype or extension dtype objects are decided by their kind code
+    # (datetime); none gives false; other inputs are normalized (failure with a type
+    # error gives false) and match if numpy datetime, timezone-aware datetime dtype, or
+    # an extension dtype of datetime kind.
     """
     Check whether the provided array or dtype is of the datetime64 dtype.
 
@@ -1060,6 +1179,10 @@ def is_datetime64_any_dtype(arr_or_dtype) -> bool:
 
 @set_module("pandas.api.types")
 def is_datetime64_ns_dtype(arr_or_dtype) -> bool:
+    # [FUNCTION DOC]
+    # Public. None gives false; otherwise normalizes the input (type errors give false)
+    # and returns true for numpy datetime64 with nanosecond unit, or a timezone-aware
+    # datetime dtype with nanosecond unit.
     """
     Check whether the provided array or dtype is of the datetime64[ns] dtype.
 
@@ -1116,6 +1239,10 @@ def is_datetime64_ns_dtype(arr_or_dtype) -> bool:
 
 @set_module("pandas.api.types")
 def is_timedelta64_ns_dtype(arr_or_dtype) -> bool:
+    # [FUNCTION DOC]
+    # Public. Returns true only when the resolved dtype equals the nanosecond timedelta
+    # dtype constant; other timedelta units, generic timedelta, none and unresolvable
+    # input give false.
     """
     Check whether the provided array or dtype is of the timedelta64[ns] dtype.
 
@@ -1154,6 +1281,11 @@ def is_timedelta64_ns_dtype(arr_or_dtype) -> bool:
 
 # This exists to silence numpy deprecation warnings, see GH#29553
 def is_numeric_v_string_like(a: ArrayLike, b) -> bool:
+    # [FUNCTION DOC]
+    # Detects comparisons that numpy handles badly, to avoid its warnings. Parameters: a
+    # and b, array-likes or scalars. Returns true if one operand is a numeric/bool numpy
+    # array and the other is a string scalar (only for b) or a bytes/unicode numpy
+    # array; strings are only recognized as scalars in the second position.
     """
     Check if we are comparing a string-like object to a numeric ndarray.
     NumPy doesn't like to compare such objects, especially numeric arrays
@@ -1202,6 +1334,11 @@ def is_numeric_v_string_like(a: ArrayLike, b) -> bool:
 
 
 def needs_i8_conversion(dtype: DtypeObj | None) -> bool:
+    # [FUNCTION DOC]
+    # Parameter: dtype, a dtype object or none. Returns true for numpy
+    # datetime64/timedelta64 dtypes and for period and timezone-aware datetime dtypes,
+    # meaning their data are stored as 64-bit integers; false for everything else
+    # including type objects and arrays.
     """
     Check whether the dtype should be converted to int64.
 
@@ -1244,6 +1381,10 @@ def needs_i8_conversion(dtype: DtypeObj | None) -> bool:
 
 @set_module("pandas.api.types")
 def is_numeric_dtype(arr_or_dtype) -> bool:
+    # [FUNCTION DOC]
+    # Public. True for numpy number or bool types excluding datetime-like, or extension
+    # dtypes whose internal numeric flag is set. Booleans count as numeric. Parameter:
+    # arr_or_dtype.
     """
     Check whether the provided array or dtype is of a numeric dtype.
 
@@ -1299,6 +1440,9 @@ def is_numeric_dtype(arr_or_dtype) -> bool:
 
 @set_module("pandas.api.types")
 def is_any_real_numeric_dtype(arr_or_dtype) -> bool:
+    # [FUNCTION DOC]
+    # Public. True when the dtype is numeric but neither complex nor boolean. Parameter:
+    # arr_or_dtype.
     """
     Check whether the provided array or dtype is of a real number dtype.
 
@@ -1343,6 +1487,9 @@ def is_any_real_numeric_dtype(arr_or_dtype) -> bool:
 
 @set_module("pandas.api.types")
 def is_float_dtype(arr_or_dtype) -> bool:
+    # [FUNCTION DOC]
+    # Public. True for numpy floating types or extension dtypes of floating kind.
+    # Parameter: arr_or_dtype.
     """
     Check whether the provided array or dtype is of a float dtype.
 
@@ -1391,6 +1538,13 @@ def is_float_dtype(arr_or_dtype) -> bool:
 
 @set_module("pandas.api.types")
 def is_bool_dtype(arr_or_dtype) -> bool:
+    # [FUNCTION DOC]
+    # Public. Parameter: arr_or_dtype. None or unresolvable input gives false.
+    # Categorical dtypes are judged by their categories (as an Index). For an Index,
+    # true when its inferred type is boolean; an object-dtype Index of booleans
+    # additionally emits a pandas-4 deprecation warning because this will become false.
+    # For extension dtypes returns their internal boolean flag; otherwise numpy bool
+    # subclass check.
     """
     Check whether the provided array or dtype is of a boolean dtype.
 
@@ -1471,6 +1625,11 @@ def is_bool_dtype(arr_or_dtype) -> bool:
 
 
 def is_1d_only_ea_dtype(dtype: DtypeObj | None) -> bool:
+    # [FUNCTION DOC]
+    # Parameter: dtype, a dtype or none. Returns true for extension dtypes that do not
+    # support two-dimensional arrays; false for everything else.
+    # KNOWN ISSUE: the docstring says it excludes the timezone-aware datetime dtype; in
+    # fact it excludes every dtype that reports support for two dimensions.
     """
     Analogue to is_extension_array_dtype but excluding DatetimeTZDtype.
     """
@@ -1479,6 +1638,11 @@ def is_1d_only_ea_dtype(dtype: DtypeObj | None) -> bool:
 
 @set_module("pandas.api.types")
 def is_extension_array_dtype(arr_or_dtype) -> bool:
+    # [FUNCTION DOC]
+    # Public. Parameter: arr_or_dtype. Takes the dtype attribute if present; an
+    # extension dtype gives true and a numpy dtype gives false; other objects are
+    # normalized with the dtype converter (with user warnings suppressed; type or value
+    # errors give false) and tested for being an extension dtype.
     """
     Check if an object is a pandas extension array type.
 
@@ -1545,6 +1709,10 @@ def is_extension_array_dtype(arr_or_dtype) -> bool:
 
 
 def is_ea_or_datetimelike_dtype(dtype: DtypeObj | None) -> bool:
+    # [FUNCTION DOC]
+    # Parameter: dtype or none. True for extension dtype instances or numpy
+    # datetime64/timedelta64 dtypes. Only dtype objects are recognized, not strings or
+    # types.
     """
     Check for ExtensionDtype, datetime64 dtype, or timedelta64 dtype.
 
@@ -1557,6 +1725,9 @@ def is_ea_or_datetimelike_dtype(dtype: DtypeObj | None) -> bool:
 
 @set_module("pandas.api.types")
 def is_complex_dtype(arr_or_dtype) -> bool:
+    # [FUNCTION DOC]
+    # Public. True when the resolved type is a numpy complex floating type. Parameter:
+    # arr_or_dtype.
     """
     Check whether the provided array or dtype is of a complex dtype.
 
@@ -1598,6 +1769,11 @@ def is_complex_dtype(arr_or_dtype) -> bool:
 
 
 def _is_dtype(arr_or_dtype, condition) -> bool:
+    # [FUNCTION DOC]
+    # HELPER: shared by the dtype predicates. Parameters: arr_or_dtype, anything;
+    # condition, a function applied to the resolved dtype. Returns false for none and
+    # for inputs whose dtype cannot be resolved (type or value errors); otherwise the
+    # condition's result.
     """
     Return true if the condition is satisfied for the arr_or_dtype.
 
@@ -1622,6 +1798,11 @@ def _is_dtype(arr_or_dtype, condition) -> bool:
 
 
 def _get_dtype(arr_or_dtype) -> DtypeObj:
+    # [FUNCTION DOC]
+    # HELPER: resolves a dtype instance. Raises a type error for none. Numpy dtypes pass
+    # through; Python or numpy type objects become numpy dtypes; objects with a dtype
+    # attribute use it; the result is normalized with the dtype converter. Returns a
+    # numpy or extension dtype.
     """
     Get the dtype instance associated with an array
     or dtype object.
@@ -1657,6 +1838,14 @@ def _get_dtype(arr_or_dtype) -> DtypeObj:
 
 
 def _is_dtype_type(arr_or_dtype, condition) -> bool:
+    # [FUNCTION DOC]
+    # HELPER: like the dtype condition helper, but the condition receives a scalar type
+    # class (the type attribute of the dtype) instead of the dtype. None gives the
+    # condition applied to the none type; numpy dtypes use their scalar type; type
+    # objects are converted (extension dtype classes via their scalar type); objects
+    # with a dtype attribute use it, and other list-likes evaluate the condition on the
+    # none type; remaining inputs are normalized and their type taken, with type or
+    # value errors giving the none type for scalars and false otherwise.
     """
     Return true if the condition is satisfied for the arr_or_dtype.
 
@@ -1701,6 +1890,19 @@ def _is_dtype_type(arr_or_dtype, condition) -> bool:
 
 
 def infer_dtype_from_object(dtype) -> type:
+    # [FUNCTION DOC]
+    # Parameter: dtype, a dtype, scalar type class or string alias. Returns a
+    # numpy-scalar-style class. Numpy scalar classes are returned directly. numpy and
+    # extension dtype instances are validated for date-likeness (type errors ignored, so
+    # unit errors from too specific units may propagate as value errors), then return
+    # their numpy type (for masked/arrow dtypes the type of their numpy dtype).
+    # Otherwise the input is normalized (type errors ignored); extension dtypes return
+    # their type; strings handle aliases (timezone-aware datetime aliases, the datetime
+    # and timedelta shorthands, a period alias raises a not-implemented error) and
+    # otherwise try to find a numpy attribute of that name; finally falls back to
+    # recursion on the numpy dtype built from the input.
+    # KNOWN ISSUE: the docstring says object is returned when no dtype can be found, but
+    # the code never does so; failures propagate from the numpy dtype constructor.
     """
     Get a numpy dtype.type-style object for a dtype object.
 
@@ -1768,6 +1970,10 @@ def infer_dtype_from_object(dtype) -> type:
 
 
 def _validate_date_like_dtype(dtype) -> None:
+    # [FUNCTION DOC]
+    # HELPER: for infer_dtype_from_object. Parameter: dtype. Raises a type error if
+    # numpy cannot read a time unit from it (the original value error is wrapped), and a
+    # value error when the unit is neither generic nor nanosecond. Returns nothing.
     """
     Check whether the dtype is a date-like dtype. Raises an error if invalid.
 
@@ -1794,6 +2000,11 @@ def _validate_date_like_dtype(dtype) -> None:
 
 
 def validate_all_hashable(*args, error_name: str | None = None) -> None:
+    # [FUNCTION DOC]
+    # Parameters: any number of positional values; error_name (optional keyword), a
+    # label used in the message. Raises a type error if any argument is unhashable
+    # (using the hashability predicate), with a message naming error_name if given, else
+    # a generic message. Returns nothing.
     """
     Return None if all args are hashable, else raise a TypeError.
 
@@ -1820,6 +2031,17 @@ def validate_all_hashable(*args, error_name: str | None = None) -> None:
 
 @set_module("pandas.api.types")
 def pandas_dtype(dtype) -> DtypeObj:
+    # [FUNCTION DOC]
+    # Public. Normalizes a dtype-like into a numpy dtype or extension dtype. Parameter:
+    # dtype, any object. Steps: numpy arrays give their dtype; dtype instances pass
+    # through; the builtin string type maps to the NaN-flavored string dtype when the
+    # string-dtype option is on; the extension registry is consulted (a registered dtype
+    # class, rather than instance, is instantiated with no arguments and a user warning
+    # is issued); otherwise numpy builds the dtype (with deprecation warnings enabled),
+    # value errors are converted to type errors saying the data type was not understood,
+    # and numpy object dtype is only accepted for a fixed list of object spellings, with
+    # any other result of object kind raising a type error. Raises a type error for
+    # anything that is not a dtype.
     """
     Convert input into a pandas only dtype object or a numpy dtype object.
 
@@ -1910,6 +2132,12 @@ def pandas_dtype(dtype) -> DtypeObj:
 
 
 def is_all_strings(value: ArrayLike) -> bool:
+    # [FUNCTION DOC]
+    # Parameter: value, an array. True for an object-dtype numpy array consisting solely
+    # of strings (an empty object array counts as true; nonobject empty arrays are
+    # false; numpy bytes or unicode arrays are not included), for categoricals whose
+    # categories are inferred as strings, and for arrays whose dtype equals the string
+    # dtype name; false otherwise.
     """
     Check if this is an array of strings that we should try parsing.
 

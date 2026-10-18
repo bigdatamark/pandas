@@ -2,6 +2,22 @@
 Extend pandas with custom array types.
 """
 
+# [MODULE DOC]
+# Extension point for custom array types: defines the abstract dtype base class that
+# third-party and internal extension dtypes derive from, an intermediate base for
+# storage-parameterized dtypes, a registry mapping string aliases to dtype classes, and
+# the class decorator that registers dtypes in that registry.
+# Public contents: ExtensionDtype, register_extension_dtype (both exposed in the public
+# extensions namespace). Internal: StorageExtensionDtype, Registry and the module-level
+# registry instance.
+# Relationships: pairs with the extension array base class in the arrays package;
+# concrete dtypes live in the dtypes module of this package; the dtype lookup helpers in
+# the common module consult the registry. Depends on the generic ABC module for
+# container type checks.
+# Import-time side effects: creates the single module-level registry instance (empty
+# until dtypes register themselves).
+
+
 from __future__ import annotations
 
 from typing import (
@@ -44,6 +60,18 @@ if TYPE_CHECKING:
 
 @set_module("pandas.api.extensions")
 class ExtensionDtype:
+    # [CLASS DOC]
+    # Abstract base for all pandas extension dtypes. Deliberately does not use the
+    # abstract-base-class metaclass for performance; required members instead raise the
+    # abstract-method error. Subclasses must provide the scalar type, the name and the
+    # array-type constructor.
+    # State: the class attribute _metadata is a tuple of attribute names that define the
+    # dtype's identity; the default equality and hash use exactly these attributes.
+    # Default is empty, meaning all instances of one class compare equal.
+    # Overridable hooks with defaults: na_value (not-a-number float), kind (object
+    # code), names (none), numeric/boolean flags (both false), common-dtype resolution,
+    # NA capability (true), immutability (false), index class (plain Index), 2D support
+    # (false) and fast-transpose (false). The index_class hook is cached per instance.
     """
     A custom data type, to be paired with an ExtensionArray.
 
@@ -116,9 +144,18 @@ class ExtensionDtype:
     _metadata: tuple[str, ...] = ()
 
     def __str__(self) -> str:
+        # [FUNCTION DOC]
+        # Returns the dtype name (the name property); subclasses must supply it or the
+        # abstract-method error is raised.
         return self.name
 
     def __eq__(self, other: object) -> bool:
+        # [FUNCTION DOC]
+        # Equality with another object. A string is first converted via the string
+        # constructor; if that raises a type error the result is false. After that, the
+        # result is true only if other is an instance of the same class as self and
+        # every attribute named in _metadata compares equal on both; any other type
+        # gives false.
         """
         Check whether 'other' is equal to self.
 
@@ -148,15 +185,25 @@ class ExtensionDtype:
         return False
 
     def __hash__(self) -> int:
+        # [FUNCTION DOC]
+        # Hash of the tuple of values of the _metadata attributes, computed with the
+        # pandas object hash routine (not the builtin) so that different NaN objects
+        # hash identically.
         # different nan objects have different hashes
         # we need to avoid that and thus use hash function with old behavior
         return object_hash(tuple(getattr(self, attr) for attr in self._metadata))
 
     def __ne__(self, other: object) -> bool:
+        # [FUNCTION DOC]
+        # Returns the logical negation of equality.
         return not self.__eq__(other)
 
     @property
     def na_value(self) -> object:
+        # [FUNCTION DOC]
+        # Property. The user-facing (boxed) missing value for this dtype; default is the
+        # floating-point NaN. Used for example when filling on take. Not the physical
+        # storage sentinel.
         """
         Default NA value to use for this type.
 
@@ -168,6 +215,10 @@ class ExtensionDtype:
 
     @property
     def type(self) -> type_t[Any]:
+        # [FUNCTION DOC]
+        # Property, abstract. Must return the scalar class produced when indexing a
+        # single valid element of the paired array. Base implementation raises the
+        # abstract-method error.
         """
         The scalar type for the array, e.g. ``int``
 
@@ -180,6 +231,9 @@ class ExtensionDtype:
 
     @property
     def kind(self) -> str:
+        # [FUNCTION DOC]
+        # Property. Single-character code (numpy kind letters) describing the numpy
+        # dtype that results when converted to an ndarray. Default is the object code.
         """
         A character code (one of 'biufcmMOSUV'), default 'O'
 
@@ -196,6 +250,9 @@ class ExtensionDtype:
 
     @property
     def name(self) -> str:
+        # [FUNCTION DOC]
+        # Property, abstract. String identifying the dtype, used for display and for
+        # string-based lookup. Base implementation raises the abstract-method error.
         """
         A string identifying the data type.
 
@@ -205,6 +262,9 @@ class ExtensionDtype:
 
     @property
     def names(self) -> list[str] | None:
+        # [FUNCTION DOC]
+        # Property. Ordered field names for numpy structured compatibility; default none
+        # (no fields). Slated for possible removal.
         """
         Ordered list of field names, or None if there are no fields.
 
@@ -214,6 +274,9 @@ class ExtensionDtype:
         return None
 
     def construct_array_type(self) -> type_t[ExtensionArray]:
+        # [FUNCTION DOC]
+        # Abstract. Returns the extension array class paired with this dtype. Base
+        # implementation raises the abstract-method error.
         """
         Return the array type associated with this dtype.
 
@@ -224,6 +287,10 @@ class ExtensionDtype:
         raise AbstractMethodError(self)
 
     def empty(self, shape: Shape) -> ExtensionArray:
+        # [FUNCTION DOC]
+        # Parameters: shape is an int or tuple of ints. Returns a new, uninitialized
+        # extension array of this dtype and the given shape by delegating to the paired
+        # array class's private empty constructor with this dtype.
         """
         Construct an ExtensionArray of this dtype with the given shape.
 
@@ -242,6 +309,15 @@ class ExtensionDtype:
 
     @classmethod
     def construct_from_string(cls, string: str) -> Self:
+        # [FUNCTION DOC]
+        # Class method. Parameters: string, the dtype name to parse. Returns a new
+        # instance built with no arguments when the string equals the class's name;
+        # subclasses with parameters override this.
+        # Raises a type error if string is not a str, or if it does not equal the class
+        # name.
+        # Also asserts the class-level name is a str; for the abstract base itself
+        # (where name is a property object) this assertion fails with an assertion error
+        # rather than a type error.
         r"""
         Construct this type from a string.
 
@@ -298,6 +374,13 @@ class ExtensionDtype:
 
     @classmethod
     def is_dtype(cls, dtype: object) -> bool:
+        # [FUNCTION DOC]
+        # Class method. Parameter: dtype, any object. Returns true if dtype matches this
+        # class. Steps: take the dtype attribute of the object if it has one; return
+        # false for Series, Index, DataFrame or numpy dtype objects (to avoid
+        # element-wise comparison warnings) and for none; true if it is an instance of
+        # this class; if it is a string, true when the string constructor succeeds
+        # (false when it raises a type error); otherwise false.
         """
         Check if we match 'dtype'.
 
@@ -341,6 +424,9 @@ class ExtensionDtype:
 
     @property
     def _is_numeric(self) -> bool:
+        # [FUNCTION DOC]
+        # HELPER: internal flag read by operations that exclude non-numeric columns
+        # (reductions, plotting, etc.). Property; default false.
         """
         Whether columns with this dtype should be considered numeric.
 
@@ -352,6 +438,12 @@ class ExtensionDtype:
 
     @property
     def _is_boolean(self) -> bool:
+        # [FUNCTION DOC]
+        # HELPER: internal flag marking boolean dtypes, consulted by boolean checks and
+        # boolean indexing. Property; default false.
+        # KNOWN ISSUE: the docstring says that by default dtypes are assumed
+        # non-numeric, which is a copy-paste of the numeric flag's text; the default
+        # means non-boolean.
         """
         Whether this dtype should be considered boolean.
 
@@ -369,6 +461,11 @@ class ExtensionDtype:
         return False
 
     def _get_common_dtype(self, dtypes: list[DtypeObj]) -> DtypeObj | None:
+        # [FUNCTION DOC]
+        # HELPER: hook for the common-type finder (used e.g. in concatenation).
+        # Parameter: dtypes, a list of numpy or extension dtypes. Returns this dtype if
+        # the set of distinct dtypes has exactly one member (itself), otherwise none,
+        # which lets other dtypes decide; if all return none the result is object dtype.
         """
         Return the common dtype, if one exists.
 
@@ -398,6 +495,9 @@ class ExtensionDtype:
 
     @property
     def _can_hold_na(self) -> bool:
+        # [FUNCTION DOC]
+        # HELPER: property; whether arrays of this dtype can hold missing values.
+        # Default true.
         """
         Can arrays of this dtype hold NA values?
         """
@@ -405,6 +505,9 @@ class ExtensionDtype:
 
     @property
     def _is_immutable(self) -> bool:
+        # [FUNCTION DOC]
+        # HELPER: property; true if arrays of this dtype reject item assignment (raising
+        # a type error). Default false.
         """
         Can arrays with this dtype be modified with __setitem__? If not, return
         True.
@@ -415,6 +518,10 @@ class ExtensionDtype:
 
     @cache_readonly
     def index_class(self) -> type_t[Index]:
+        # [FUNCTION DOC]
+        # Cached read-only attribute (computed once per instance). Returns the Index
+        # class used by the Index constructor for this dtype; imports the plain Index
+        # class lazily and returns it.
         """
         The Index subclass to return from Index.__new__ when this dtype is
         encountered.
@@ -425,6 +532,10 @@ class ExtensionDtype:
 
     @property
     def _supports_2d(self) -> bool:
+        # [FUNCTION DOC]
+        # HELPER: property; whether arrays of this dtype may be two-dimensional. Default
+        # false. Authors returning true must support reshape and an axis keyword in
+        # concatenation and reductions.
         """
         Do ExtensionArrays with this dtype support 2D arrays?
 
@@ -443,6 +554,9 @@ class ExtensionDtype:
 
     @property
     def _can_fast_transpose(self) -> bool:
+        # [FUNCTION DOC]
+        # HELPER: property; whether transposing a 2D array of this dtype is zero-copy.
+        # Only meaningful when 2D is supported. Default false.
         """
         Is transposing an array with this dtype zero-copy?
 
@@ -452,40 +566,71 @@ class ExtensionDtype:
 
 
 class StorageExtensionDtype(ExtensionDtype):
+    # [CLASS DOC]
+    # Intermediate base for extension dtypes (such as string dtypes) that can be backed
+    # by more than one storage implementation. Subclasses must define a class-level
+    # name. State: the private storage string given at construction; the _metadata
+    # identity tuple is just the storage attribute. Overrides the NA value to the pandas
+    # NA singleton. Representation is the name followed by the storage in brackets; the
+    # name alone also compares equal.
     """ExtensionDtype that may be backed by more than one implementation."""
 
     name: str
     _metadata = ("storage",)
 
     def __init__(self, storage: str) -> None:
+        # [FUNCTION DOC]
+        # Parameter: storage, the string identifying the backing implementation. Stored
+        # without validation.
         self._storage = storage
 
     def __repr__(self) -> str:
+        # [FUNCTION DOC]
+        # Returns the name followed by the storage in square brackets.
         return f"{self.name}[{self.storage}]"
 
     def __str__(self) -> str:
+        # [FUNCTION DOC]
+        # Returns the dtype name only (without storage); redundant with the inherited
+        # behavior.
         return self.name
 
     def __eq__(self, other: object) -> bool:
+        # [FUNCTION DOC]
+        # True if other is a string equal to the dtype name (regardless of storage);
+        # otherwise defers to the parent comparison.
         if isinstance(other, str) and other == self.name:
             return True
         return super().__eq__(other)
 
     def __hash__(self) -> int:
+        # [FUNCTION DOC]
+        # Delegates to the parent hash; required because equality is overridden.
         # custom __eq__ so have to override __hash__
         return super().__hash__()
 
     @property
     def na_value(self) -> libmissing.NAType:
+        # [FUNCTION DOC]
+        # Property. Returns the pandas NA singleton (not NaN) as the missing value.
         return libmissing.NA
 
     @property
     def storage(self) -> str:
+        # [FUNCTION DOC]
+        # Property. Returns the storage string.
         return self._storage
 
 
 @set_module("pandas.api.extensions")
 def register_extension_dtype(cls: type_t[ExtensionDtypeT]) -> type_t[ExtensionDtypeT]:
+    # [FUNCTION DOC]
+    # Parameter: cls, an extension dtype class. Appends it to the module-level registry
+    # (raising a value error from the registry if it is not an extension dtype subclass)
+    # and returns the same class unchanged, so it works as a class decorator. Side
+    # effect: mutates the global registry.
+    # KNOWN ISSUE: the docstring's return section describes a callable class decorator,
+    # but the function itself is the decorator and returns the class it was given.
     """
     Register an ExtensionType with pandas as class decorator.
 
@@ -517,6 +662,11 @@ def register_extension_dtype(cls: type_t[ExtensionDtypeT]) -> type_t[ExtensionDt
 
 
 class Registry:
+    # [CLASS DOC]
+    # HELPER: internal registry mapping string aliases to extension dtype classes.
+    # State: the public list attribute dtypes holding registered classes in registration
+    # order. Lookup tries each class in order, so earlier registrations take priority.
+    # One module-level instance is used.
     """
     Registry for dtype inference.
 
@@ -533,9 +683,15 @@ class Registry:
     """
 
     def __init__(self) -> None:
+        # [FUNCTION DOC]
+        # HELPER: creates the registry with an empty list of dtype classes.
         self.dtypes: list[type_t[ExtensionDtype]] = []
 
     def register(self, dtype: type_t[ExtensionDtype]) -> None:
+        # [FUNCTION DOC]
+        # HELPER: Parameter: dtype, a class. Raises a value error if it is not a
+        # subclass of the extension dtype base; otherwise appends it to the list (no
+        # de-duplication).
         """
         Parameters
         ----------
@@ -547,22 +703,45 @@ class Registry:
         self.dtypes.append(dtype)
 
     @overload
-    def find(self, dtype: type_t[ExtensionDtypeT]) -> type_t[ExtensionDtypeT]: ...
+    def find(self, dtype: type_t[ExtensionDtypeT]) -> type_t[ExtensionDtypeT]:
+        # [FUNCTION DOC]
+        # HELPER: overload stub; see the implementation (last definition of find) for
+        # behavior. Class in, same class out.
+        ...
 
     @overload
-    def find(self, dtype: ExtensionDtypeT) -> ExtensionDtypeT: ...
+    def find(self, dtype: ExtensionDtypeT) -> ExtensionDtypeT:
+        # [FUNCTION DOC]
+        # HELPER: overload stub; see the implementation (last definition of find) for
+        # behavior. Instance in, same instance out.
+        ...
 
     @overload
-    def find(self, dtype: str) -> ExtensionDtype | None: ...
+    def find(self, dtype: str) -> ExtensionDtype | None:
+        # [FUNCTION DOC]
+        # HELPER: overload stub; see the implementation (last definition of find) for
+        # behavior. String in, extension dtype or none out.
+        ...
 
     @overload
     def find(
         self, dtype: npt.DTypeLike
-    ) -> type_t[ExtensionDtype] | ExtensionDtype | None: ...
+    ) -> type_t[ExtensionDtype] | ExtensionDtype | None:
+        # [FUNCTION DOC]
+        # HELPER: overload stub; see the implementation (last definition of find) for
+        # behavior. Generic dtype-like in, class or instance or none out.
+        ...
 
     def find(
         self, dtype: type_t[ExtensionDtype] | ExtensionDtype | npt.DTypeLike
     ) -> type_t[ExtensionDtype] | ExtensionDtype | None:
+        # [FUNCTION DOC]
+        # HELPER: lookup. Parameter: dtype, which may be a class, an instance, a string,
+        # a numpy dtype or a python type. Non-string input: returned unchanged if it is
+        # an extension dtype class or instance, otherwise none. String input: each
+        # registered class is asked, in order, to construct from the string; the first
+        # success is returned and type errors are swallowed; returns none if no class
+        # accepts it.
         """
         Parameters
         ----------

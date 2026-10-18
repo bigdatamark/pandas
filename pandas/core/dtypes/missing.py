@@ -2,6 +2,23 @@
 missing types & inference
 """
 
+# [MODULE DOC]
+# Missing-value detection and NA-related helpers. Public contents: isna and notna
+# (exposed at the top-level pandas namespace, with the legacy aliases isnull and notnull
+# bound to the same functions), array_equivalent and array_equals (NaN-aware array
+# equality), na_value_for_dtype, is_valid_na_for_dtype, isna_all, infer_fill_value,
+# maybe_fill, remove_na_arraylike and a helper constructing an all-missing array. Also
+# re-exports the scalar positive/negative infinity checkers from the compiled missing
+# module.
+# Relationships: scalar and object-array checks are delegated to the compiled missing
+# library; extension arrays supply their own missing-mask method; depends on the common
+# and dtypes modules in this package for dtype classification and on the generic ABC
+# classes for container detection. Some imports (take, array sanitizing, Index) are
+# deferred to function bodies to avoid cycles.
+# Import-time side effects: defines two module-level numpy dtype constants (object and
+# string) used for comparisons.
+
+
 from __future__ import annotations
 
 from decimal import Decimal
@@ -70,32 +87,57 @@ _dtype_str = np.dtype(str)
 
 
 @overload
-def isna(obj: Scalar | Pattern | NAType | NaTType) -> bool: ...
+def isna(obj: Scalar | Pattern | NAType | NaTType) -> bool:
+    # [FUNCTION DOC]
+    # Overload stub (scalar-like input gives a boolean); see the final definition of
+    # isna for behavior.
+    ...
 
 
 @overload
 def isna(
     obj: ArrayLike | Index | list,
-) -> npt.NDArray[np.bool_]: ...
+) -> npt.NDArray[np.bool_]:
+    # [FUNCTION DOC]
+    # Overload stub (array, index or list input gives a boolean ndarray); see the final
+    # definition of isna for behavior.
+    ...
 
 
 @overload
-def isna(obj: NDFrameT) -> NDFrameT: ...
+def isna(obj: NDFrameT) -> NDFrameT:
+    # [FUNCTION DOC]
+    # Overload stub (Series or DataFrame input gives the same type); see the final
+    # definition of isna for behavior.
+    ...
 
 
 # handle unions
 @overload
 def isna(
     obj: NDFrameT | ArrayLike | Index | list,
-) -> NDFrameT | npt.NDArray[np.bool_]: ...
+) -> NDFrameT | npt.NDArray[np.bool_]:
+    # [FUNCTION DOC]
+    # Overload stub (union of the container cases); see the final definition of isna for
+    # behavior.
+    ...
 
 
 @overload
-def isna(obj: object) -> bool | npt.NDArray[np.bool_] | NDFrame: ...
+def isna(obj: object) -> bool | npt.NDArray[np.bool_] | NDFrame:
+    # [FUNCTION DOC]
+    # Overload stub (arbitrary object); see the final definition of isna for behavior.
+    ...
 
 
 @set_module("pandas")
 def isna(obj: object) -> bool | npt.NDArray[np.bool_] | NDFrame:
+    # [FUNCTION DOC]
+    # Public entry point for missing-value detection; exposed at the top level.
+    # Parameter: obj, a scalar, array-like, Index, Series or DataFrame. Returns a bool
+    # for scalars and an object (boolean array, or Series/DataFrame of booleans)
+    # otherwise, by delegating entirely to the private implementation. Missing means
+    # NaN, None, NA or NaT as appropriate to the dtype.
     """
     Detect missing values for an array-like object.
 
@@ -178,6 +220,16 @@ isnull = isna
 
 
 def _isna(obj):
+    # [FUNCTION DOC]
+    # HELPER: implementation behind isna. Dispatch order: scalars use the compiled
+    # scalar check; a multi-level index raises a not-implemented error; a class object
+    # (type) yields false; numpy arrays and extension arrays use the array helper; other
+    # Index objects use their own cached mask method when the index cannot hold missing
+    # values, else the array helper on their values; a Series is checked on its values
+    # and re-wrapped with the same index and name without copying; a DataFrame uses its
+    # own mask method; a plain list is converted to an object array first; anything
+    # exposing an array conversion hook is converted to numpy; any other object yields
+    # false.
     """
     Detect missing values, treating None, NaN or NA as null.
 
@@ -221,6 +273,15 @@ def _isna(obj):
 
 
 def _isna_array(values: ArrayLike) -> npt.NDArray[np.bool_] | NDFrame:
+    # [FUNCTION DOC]
+    # HELPER: computes the boolean missing mask of an array. Parameter: values, a numpy
+    # array or extension array (the docstring names this parameter obj, which does not
+    # match the signature). Extension arrays use their own mask method; record arrays
+    # use a per-record helper; string/object dtypes use the string-dtype helper;
+    # datetime-like numpy dtypes compare the underlying integers to the NaT sentinel;
+    # all other dtypes use the elementwise NaN test.
+    # KNOWN ISSUE: the docstring's parameter section names the argument obj but the
+    # actual parameter is values.
     """
     Return an array indicating which values of the input array are NaN / NA.
 
@@ -258,6 +319,12 @@ def _isna_array(values: ArrayLike) -> npt.NDArray[np.bool_] | NDFrame:
 
 
 def _isna_string_dtype(values: np.ndarray) -> npt.NDArray[np.bool_]:
+    # [FUNCTION DOC]
+    # HELPER: mask for numpy bytes/unicode/object arrays. Fixed-width bytes and unicode
+    # arrays can never hold missing values, so the result is all false. Object arrays
+    # with one or two dimensions use the compiled object check; other dimensionalities
+    # (notably zero-dimensional) are raveled, checked and reshaped back. Works around a
+    # NumPy limitation with comparisons on such dtypes.
     # Working around NumPy ticket 1542
     dtype = values.dtype
 
@@ -274,6 +341,10 @@ def _isna_string_dtype(values: np.ndarray) -> npt.NDArray[np.bool_]:
 
 
 def _isna_recarray_dtype(values: np.rec.recarray) -> npt.NDArray[np.bool_]:
+    # [FUNCTION DOC]
+    # HELPER: mask for numpy record arrays (one flag per record). For each record,
+    # converts it to a plain array and flags the record if any field is missing. Returns
+    # a boolean array with the same shape as the input.
     result = np.zeros(values.shape, dtype=bool)
     for i, record in enumerate(values):
         record_as_array = np.array(record.tolist())
@@ -284,32 +355,57 @@ def _isna_recarray_dtype(values: np.rec.recarray) -> npt.NDArray[np.bool_]:
 
 
 @overload
-def notna(obj: Scalar | Pattern | NAType | NaTType) -> bool: ...
+def notna(obj: Scalar | Pattern | NAType | NaTType) -> bool:
+    # [FUNCTION DOC]
+    # Overload stub (scalar-like input gives a boolean); see the final definition of
+    # notna for behavior.
+    ...
 
 
 @overload
 def notna(
     obj: ArrayLike | Index | list,
-) -> npt.NDArray[np.bool_]: ...
+) -> npt.NDArray[np.bool_]:
+    # [FUNCTION DOC]
+    # Overload stub (array, index or list input gives a boolean ndarray); see the final
+    # definition of notna for behavior.
+    ...
 
 
 @overload
-def notna(obj: NDFrameT) -> NDFrameT: ...
+def notna(obj: NDFrameT) -> NDFrameT:
+    # [FUNCTION DOC]
+    # Overload stub (Series or DataFrame input gives the same type); see the final
+    # definition of notna for behavior.
+    ...
 
 
 # handle unions
 @overload
 def notna(
     obj: NDFrameT | ArrayLike | Index | list,
-) -> NDFrameT | npt.NDArray[np.bool_]: ...
+) -> NDFrameT | npt.NDArray[np.bool_]:
+    # [FUNCTION DOC]
+    # Overload stub (union of the container cases); see the final definition of notna
+    # for behavior.
+    ...
 
 
 @overload
-def notna(obj: object) -> bool | npt.NDArray[np.bool_] | NDFrame: ...
+def notna(obj: object) -> bool | npt.NDArray[np.bool_] | NDFrame:
+    # [FUNCTION DOC]
+    # Overload stub (arbitrary object); see the final definition of notna for behavior.
+    ...
 
 
 @set_module("pandas")
 def notna(obj: object) -> bool | npt.NDArray[np.bool_] | NDFrame:
+    # [FUNCTION DOC]
+    # Public inverse of the missing-value check; exposed at the top level. Parameter:
+    # obj as for the missing-value check. Computes the missing result and negates it: a
+    # boolean is negated with logical not, anything else with elementwise inversion (so
+    # Series, DataFrame and arrays come back as the same container of inverted
+    # booleans).
     """
     Detect non-missing values for an array-like object.
 
@@ -400,6 +496,23 @@ def array_equivalent(
     strict_nan: bool = False,
     dtype_equal: bool = False,
 ) -> bool:
+    # [FUNCTION DOC]
+    # Returns whether two arrays have equal non-missing elements with missing values in
+    # the same positions. Intended for arrays of the same dtype; results are undefined
+    # otherwise.
+    # Parameters: left and right, array-likes (converted to numpy arrays); strict_nan
+    # (default false), when true distinguishes different kinds of missing marker in
+    # object arrays (e.g. None versus NaN); dtype_equal (default false), a promise that
+    # dtypes are already known equal, enabling a fast path.
+    # Behavior: differing shapes give false. With dtype_equal: float/complex use the
+    # NaN-aware float comparison, datetime-like compare integer views, string/object use
+    # the object comparison, anything else uses plain array equality. Without it: if
+    # either side is object, bytes or unicode, use the object comparison; float/complex
+    # compare equal where equal or both missing (empty arrays are equal); datetime-like
+    # with differing dtypes are unequal, otherwise compared via integer views;
+    # structured dtypes with differing dtypes are unequal; the fallback is plain array
+    # equality. Note that the float slow path returns a numpy boolean scalar rather than
+    # a Python bool. Does not mutate inputs.
     """
     True if two arrays, left and right, have equal non-NaN elements, and NaNs
     in corresponding locations.  False otherwise. It is assumed that left and
@@ -481,16 +594,33 @@ def array_equivalent(
 
 
 def _array_equivalent_float(left: np.ndarray, right: np.ndarray) -> bool:
+    # [FUNCTION DOC]
+    # HELPER: for array_equivalent. Returns whether same-shaped float or complex arrays
+    # are equal everywhere, treating positions where both are NaN as equal.
     return bool(((left == right) | (np.isnan(left) & np.isnan(right))).all())
 
 
 def _array_equivalent_datetimelike(left: np.ndarray, right: np.ndarray) -> bool:
+    # [FUNCTION DOC]
+    # HELPER: for array_equivalent. Returns whether two datetime64/timedelta64 arrays
+    # are equal by comparing their underlying 64-bit integer views (so NaT equals NaT).
     return np.array_equal(left.view("i8"), right.view("i8"))
 
 
 def _array_equivalent_object(
     left: np.ndarray, right: np.ndarray, strict_nan: bool
 ) -> bool:
+    # [FUNCTION DOC]
+    # HELPER: for array_equivalent. Converts both inputs to object arrays and compares
+    # them. If strict_nan is true, positions where both are missing are masked out; the
+    # unmasked values are compared with the compiled object comparison and, if that
+    # succeeds, the masked-out pairs are then checked individually. If the compiled
+    # comparison raises a value error (e.g. nested arrays) all pairs are checked
+    # individually. Pairwise rules: NaT must match NaT; NA must match NA; a float NaN
+    # must match another float NaN; otherwise values are compared with inequality, any
+    # inequality gives false, an ambiguous-NA type error is treated as unequal, other
+    # type errors propagate, and value errors are treated as unequal. Numpy deprecation
+    # warnings are suppressed during comparison. Returns a bool.
     left = ensure_object(left)
     right = ensure_object(right)
 
@@ -542,6 +672,11 @@ def _array_equivalent_object(
 
 
 def array_equals(left: ArrayLike, right: ArrayLike) -> bool:
+    # [FUNCTION DOC]
+    # Compatibility wrapper around array_equivalent that supports extension arrays.
+    # Parameters: left and right arrays. Returns false if dtypes differ; for extension
+    # arrays returns the array's own equality method result; otherwise calls
+    # array_equivalent with dtype_equal set.
     """
     ExtensionArray-compatible implementation of array_equivalent.
     """
@@ -554,6 +689,14 @@ def array_equals(left: ArrayLike, right: ArrayLike) -> bool:
 
 
 def infer_fill_value(val):
+    # [FUNCTION DOC]
+    # Returns the missing-value scalar appropriate for the given value, for use when
+    # constructing blocks. Parameter: val, a scalar or list-like (scalars are wrapped in
+    # a list and everything is converted to a numpy array). Datetime-like dtypes give a
+    # zero-dimensional NaT array of that dtype; object arrays are examined via type
+    # inference (without skipping missing) and give a nanosecond NaT array for datetime
+    # or timedelta contents, otherwise an object array holding NaN; unicode arrays give
+    # an array holding NaN of that dtype; all other dtypes give plain NaN.
     """
     infer the fill value for the nan/NaT from the provided
     scalar/ndarray/list-like if we are a NaT, return the correct dtyped
@@ -579,6 +722,13 @@ def infer_fill_value(val):
 def construct_1d_array_from_inferred_fill_value(
     value: object, length: int
 ) -> ArrayLike:
+    # [FUNCTION DOC]
+    # HELPER: builds an all-missing one-dimensional array of the given length whose
+    # dtype is inferred from a scalar. Parameters: value, a scalar used to infer the
+    # dtype; length, the number of elements. Method: sanitize the value into a
+    # one-element array, then take with an index array of -1 repeated length times, so
+    # every position is filled with the dtype's missing value. Imports are deferred to
+    # avoid cycles.
     # Find our empty_value dtype by constructing an array
     #  from our value and doing a .take on it
     from pandas.core.algorithms import take_nd
@@ -591,6 +741,10 @@ def construct_1d_array_from_inferred_fill_value(
 
 
 def maybe_fill(arr: np.ndarray) -> np.ndarray:
+    # [FUNCTION DOC]
+    # Parameter: arr, a numpy array. Fills it in place with NaN unless its kind is
+    # integer, unsigned or boolean, in which case it is untouched. Returns the same
+    # array object. Side effect: mutates the input.
     """
     Fill numpy.ndarray with NaN, unless we have an integer or boolean dtype.
     """
@@ -600,6 +754,13 @@ def maybe_fill(arr: np.ndarray) -> np.ndarray:
 
 
 def na_value_for_dtype(dtype: DtypeObj, compat: bool = True):
+    # [FUNCTION DOC]
+    # Returns the missing-value scalar for a dtype. Parameters: dtype, a numpy dtype or
+    # extension dtype; compat (default true), controls whether integer and boolean
+    # dtypes get a representable sentinel. Extension dtypes return their own NA value;
+    # datetime-like numpy dtypes return NaT of the same unit; float and complex give
+    # NaN; integer gives zero when compat is true, else NaN; boolean gives false when
+    # compat, else NaN; everything else gives NaN.
     """
     Return a dtype compat na value
 
@@ -647,6 +808,10 @@ def na_value_for_dtype(dtype: DtypeObj, compat: bool = True):
 
 
 def remove_na_arraylike(arr: Series | Index | np.ndarray):
+    # [FUNCTION DOC]
+    # Parameter: arr, a Series, Index or numpy array. Returns the elements that are not
+    # missing (possibly empty) by boolean selection; for extension dtypes the missing
+    # test is applied on the object itself, otherwise on its numpy conversion.
     """
     Return array-like containing only true/non-NaN values, possibly empty.
     """
@@ -657,6 +822,18 @@ def remove_na_arraylike(arr: Series | Index | np.ndarray):
 
 
 def is_valid_na_for_dtype(obj, dtype: DtypeObj) -> bool:
+    # [FUNCTION DOC]
+    # Returns whether obj is a missing-value marker that is compatible with the given
+    # dtype (e.g. a timedelta NaT is not valid for datetime arrays). Parameters: obj,
+    # any object; dtype, a numpy or extension dtype. Returns false immediately unless
+    # obj is a scalar that is missing. Then by dtype: datetime64 rejects timedelta and
+    # Decimal values (and, for timezone-aware, datetime64 NaT too); timedelta64 rejects
+    # datetime64 and Decimal; numeric kinds reject NaT and datetime/timedelta values;
+    # boolean accepts only floats (NaN), None or NA; numpy string dtype rejects
+    # datetime-like, Decimal and float markers; object dtype accepts everything; period
+    # rejects datetime64, timedelta64 and Decimal; interval accepts floats, None or NA;
+    # categorical recurses on its categories' dtype; the fallback accepts anything
+    # except datetime64, timedelta64 and Decimal.
     """
     isna check that excludes incompatible dtypes
 
@@ -708,6 +885,14 @@ def is_valid_na_for_dtype(obj, dtype: DtypeObj) -> bool:
 
 
 def isna_all(arr: ArrayLike) -> bool:
+    # [FUNCTION DOC]
+    # Optimized equivalent of checking that every element is missing. Parameter: arr, a
+    # numpy or extension array. Returns a bool. Processes the array in chunks (size is
+    # the larger of one fortieth of the length and 1000) so that a non-missing value
+    # near the start stops early. Checker choice: NaN test for float numpy dtypes;
+    # integer-view comparison to the NaT sentinel for datetime-like numpy,
+    # timezone-aware and period dtypes; otherwise the general array mask helper. An
+    # empty array returns true.
     """
     Optimized equivalent to isna(arr).all()
     """

@@ -2,6 +2,19 @@
 Utility functions related to concat.
 """
 
+# [MODULE DOC]
+# Concatenation helpers for arrays of possibly different dtypes. Public contents:
+# concat_compat (concatenate a sequence of numpy or extension arrays with dtype
+# reconciliation) and union_categoricals (exposed in the public types namespace; combine
+# categorical-like inputs by unioning categories). Private: a helper that filters
+# empties and one that decides the result dtype.
+# Relationships: used by the block manager, Index and concat machinery; relies on the
+# dtype casting helpers in the cast and astype modules, on the categorical dtype, and on
+# the generic ABC classes. Categorical-specific functions are imported lazily inside
+# union_categoricals to avoid circular imports.
+# Import-time side effects: none.
+
+
 from __future__ import annotations
 
 from typing import (
@@ -42,6 +55,11 @@ if TYPE_CHECKING:
 
 
 def _is_nonempty(x: ArrayLike, axis: AxisInt) -> bool:
+    # [FUNCTION DOC]
+    # HELPER: for concat_compat. Parameters: x, an array; axis, the concatenation axis.
+    # Returns true if x has fewer dimensions than needed for the axis to exist
+    # (one-dimensional arrays are always kept), otherwise whether the length along that
+    # axis is greater than zero.
     # filter empty arrays
     # 1-d dtypes always are included here
     if x.ndim <= axis:
@@ -52,6 +70,27 @@ def _is_nonempty(x: ArrayLike, axis: AxisInt) -> bool:
 def concat_compat(
     to_concat: Sequence[ArrayLike], axis: AxisInt = 0, ea_compat_axis: bool = False
 ) -> ArrayLike:
+    # [FUNCTION DOC]
+    # Concatenates a sequence of arrays and returns a single array, trying to preserve
+    # the combined dtype.
+    # Parameters: to_concat, a sequence of numpy arrays or extension arrays; axis
+    # (default 0), the axis along which to join; ea_compat_axis (default false), when
+    # true extension arrays are joined as if they were one-dimensional and the axis
+    # keyword is never passed to them.
+    # Behavior: (1) Fast path when the sequence is non-empty and all dtypes are equal:
+    # numpy arrays go to the numpy concatenation; extension arrays use their same-type
+    # concatenation, passing the axis only when it is nonzero and ea_compat_axis is
+    # false. (2) Otherwise empty arrays along the axis are identified, and the result
+    # dtype is determined by the private result-dtype helper; if a target dtype was
+    # determined every input is cast to it without copying when possible. (3) If the
+    # first array is then an extension array, its class concatenates all (axis passed
+    # only when nonzero and not ea_compat_axis). (4) Otherwise numpy concatenates; if no
+    # extension arrays were present, boolean kinds were among the inputs and the result
+    # came out as integer, unsigned or float, the result is converted to object dtype to
+    # avoid turning booleans into numbers.
+    # Raises whatever the underlying concatenation raises (for example on an empty
+    # sequence in the slow path, indexing the first element fails with an index error).
+    # No inputs are mutated.
     """
     provide concatenation of an array of arrays each of which is a single
     'normalized' dtypes (in that for example, if it's object, then it is a
@@ -134,6 +173,18 @@ def concat_compat(
 def _get_result_dtype(
     to_concat: Sequence[ArrayLike], non_empties: Sequence[ArrayLike]
 ) -> tuple[bool, set[str], DtypeObj | None]:
+    # [FUNCTION DOC]
+    # HELPER: for concat_compat. Parameters: to_concat, all arrays; non_empties, those
+    # that are non-empty along the axis. Returns a 3-tuple: whether any input is an
+    # extension array, the set of numpy kind codes (possibly replaced by the object code
+    # when coerced to object), and the target dtype or none when no cast is needed.
+    # Rules: if any extension arrays are present and dtypes differ, the target is the
+    # common type of all dtypes, adjusted for categorical compatibility. If all inputs
+    # are numpy and all are empty with differing kinds, the target is object unless the
+    # kinds are all numeric (integer, unsigned, float) or all among boolean, integer,
+    # unsigned, in which case numpy is left to decide. If non-empty inputs mix booleans
+    # with other kinds, the target is object. Otherwise the target is the numpy common
+    # type of the distinct dtypes.
     target_dtype = None
 
     dtypes = {obj.dtype for obj in to_concat}
@@ -177,6 +228,31 @@ def _get_result_dtype(
 def union_categoricals(
     to_union, sort_categories: bool = False, ignore_order: bool = False
 ) -> Categorical:
+    # [FUNCTION DOC]
+    # Combines a list-like of categorical-like objects (Categorical, CategoricalIndex or
+    # categorical Series) into a single plain Categorical whose categories are the
+    # union.
+    # Parameters: to_union, the list-like of inputs; sort_categories (default false),
+    # sort the resulting categories (not allowed with ordered inputs unless order is
+    # ignored); ignore_order (default false), treat all inputs as unordered and return
+    # an unordered result.
+    # Returns a new Categorical built from concatenated codes and a new categorical
+    # dtype.
+    # Raises a value error for an empty input; a type error if any element is not
+    # categorical-like, if category dtypes differ, if sorting categories is requested
+    # with ordered inputs having identical categories, if inputs are ordered with
+    # different categories (unless order is ignored), or if some are ordered and some
+    # not.
+    # Algorithm: unwrap each input to its Categorical; if all share the same categories
+    # up to permutation, re-encode every input against the first one's categories,
+    # concatenate codes, and when sorting recode through the sorted categories;
+    # otherwise, when order is ignored or no input is ordered, append all category
+    # indexes, drop duplicates (first-appearance order), optionally sort, and recode
+    # each input; otherwise raise the matching error. Ordered flag is taken from the
+    # first input in the identical case and forced false when order is ignored. Inputs
+    # are not mutated.
+    # KNOWN ISSUE: the docstring example text mentions an option named ignore_ordered,
+    # but the parameter is actually named ignore_order.
     """
     Combine list-like of Categorical-like, unioning categories.
 
@@ -284,6 +360,10 @@ def union_categoricals(
         raise ValueError("No Categoricals to union")
 
     def _maybe_unwrap(x):
+        # [FUNCTION DOC]
+        # HELPER: for union_categoricals. Returns the underlying Categorical for a
+        # CategoricalIndex or Series (their internal values), returns a Categorical
+        # unchanged, and raises a type error for anything else.
         if isinstance(x, (ABCCategoricalIndex, ABCSeries)):
             return x._values
         elif isinstance(x, Categorical):
