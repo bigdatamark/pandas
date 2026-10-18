@@ -1,3 +1,8 @@
+# [MODULE DOC]
+# Tests for the optional-dependency import helper in the compat package: error
+# messages, the ignore and warn error modes, minimum version checks, submodule
+# handling, and missing version attributes. Several tests register fake modules in
+# the global module table and patch the minimum-versions mapping with monkeypatch.
 import sys
 import types
 
@@ -12,6 +17,10 @@ import pandas._testing as tm
 
 
 def test_import_optional():
+    # [FUNCTION DOC]
+    # Verifies that importing a nonexistent package raises an import error whose message
+    # mentions installing it with pip or conda, that the original import error is kept as
+    # the exception context, and that the ignore mode returns None instead.
     match = "Import .*notapackage.* pip .* conda .* notapackage"
     with pytest.raises(ImportError, match=match) as exc_info:
         import_optional_dependency("notapackage")
@@ -23,11 +32,20 @@ def test_import_optional():
 
 
 def test_xlrd_version_fallback():
+    # [FUNCTION DOC]
+    # Skipped when xlrd is absent. Verifies that importing xlrd through the helper
+    # succeeds (exercising the fallback path for determining its version) without error.
     pytest.importorskip("xlrd")
     import_optional_dependency("xlrd")
 
 
 def test_bad_version(monkeypatch):
+    # [FUNCTION DOC]
+    # Registers a fake module whose version is older than the required one (patching the
+    # minimum-version mapping). Verifies: an import error for the too-old version; an
+    # explicit lower minimum version accepts it; the warn mode emits a user warning and
+    # returns None; an exactly equal version is accepted; an explicit higher minimum
+    # version raises, warns, or returns None depending on the error mode.
     name = "fakemodule"
     module = types.ModuleType(name)
     module.__version__ = "0.9.0"
@@ -67,6 +85,11 @@ def test_bad_version(monkeypatch):
 
 def test_submodule(monkeypatch):
     # Create a fake module with a submodule
+    # [FUNCTION DOC]
+    # Registers a fake module with a submodule. Verifies that the version check applies
+    # to the top-level package when importing the dotted submodule name: error when too
+    # old, warning and None in warn mode, and the submodule object returned once the
+    # version is sufficient.
     name = "fakemodule"
     module = types.ModuleType(name)
     module.__version__ = "0.9.0"
@@ -91,6 +114,9 @@ def test_submodule(monkeypatch):
 
 
 def test_no_version_raises(monkeypatch):
+    # [FUNCTION DOC]
+    # Registers a fake module with no version attribute while a minimum version is
+    # required. Verifies an import error saying the version cannot be determined.
     name = "fakemodule"
     module = types.ModuleType(name)
     sys.modules[name] = module

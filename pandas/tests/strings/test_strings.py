@@ -1,3 +1,5 @@
+# [MODULE DOC]
+# Tests for the general string accessor methods on Series and Index (count, repeat, character-class predicates, length, index lookup, slicing, stripping, prefix/suffix removal, encode/decode, normalize, zero-fill, accessor validation, per-storage setitem) across the parametrized string dtype fixtures. Uses the helper that identifies object or NaN-based string dtypes to decide whether results are numpy-based (NaN for missing) or nullable (NA for missing). Also tests a regex-feature detector used by the Arrow string array mixin.
 from datetime import (
     datetime,
     timedelta,
@@ -25,6 +27,8 @@ from pandas.tests.strings import is_object_or_nan_string_dtype
 
 @pytest.mark.parametrize("pattern", [0, True, Series(["foo", "bar"])])
 def test_startswith_endswith_non_str_patterns(pattern):
+    # [FUNCTION DOC]
+    # Regression test for a GitHub issue. Parametrized over an integer, a boolean and a Series as the pattern. Verifies both starts-with and ends-with raise a type error saying a string or tuple was expected, naming the given type.
     # GH3485
     ser = Series(["foo", "bar"])
     msg = f"expected a string or tuple, not {type(pattern).__name__}"
@@ -35,6 +39,8 @@ def test_startswith_endswith_non_str_patterns(pattern):
 
 
 def test_iter_raises():
+    # [FUNCTION DOC]
+    # Regression test for a GitHub issue. Verifies iterating over the string accessor object raises a type error saying it is not iterable.
     # GH 54173
     ser = Series(["foo", "bar"])
     with pytest.raises(TypeError, match="'StringMethods' object is not iterable"):
@@ -45,6 +51,8 @@ def test_iter_raises():
 
 
 def test_count(any_string_dtype):
+    # [FUNCTION DOC]
+    # Uses the string dtype fixture. Verifies counting a regex pattern matches per element gives the expected counts, with a float result and NaN for missing on object-like dtypes and nullable Int64 with NA otherwise.
     ser = Series(["foo", "foofoo", np.nan, "foooofooofommmfoo"], dtype=any_string_dtype)
     result = ser.str.count("f[o]+")
     if is_object_or_nan_string_dtype(any_string_dtype):
@@ -59,6 +67,8 @@ def test_count(any_string_dtype):
 
 
 def test_count_mixed_object():
+    # [FUNCTION DOC]
+    # Verifies counting on an object Series containing non-strings (boolean, datetime, number, None, NaN) gives counts for strings and NaN for all non-strings.
     ser = Series(
         ["a", np.nan, "b", True, datetime.today(), "foo", None, 1, 2.0],
         dtype=object,
@@ -79,6 +89,8 @@ def test_count_mixed_object():
     ],
 )
 def test_count_lookarounds(any_string_dtype, pat, expected_data):
+    # [FUNCTION DOC]
+    # Regression test for a GitHub issue. Parametrized over lookahead and lookbehind patterns (positive and negative) and a plain pattern with expected counts. Verifies counts on a Series with a missing value, with float result for object-like dtypes and Int64 otherwise.
     # https://github.com/pandas-dev/pandas/issues/60833
     expected_dtype = (
         "float64" if is_object_or_nan_string_dtype(any_string_dtype) else "Int64"
@@ -90,6 +102,8 @@ def test_count_lookarounds(any_string_dtype, pat, expected_data):
 
 
 def test_count_end_of_string(any_string_dtype):
+    # [FUNCTION DOC]
+    # Regression test for a GitHub pull request. Verifies end-of-string handling in patterns: a dollar anchor matches before a trailing newline for Python-based dtypes but only at the very end for pyarrow-backed strings; the end-of-text escape matches only at the very end for all dtypes (it must be translated for pyarrow); and a literal backslash followed by the escape letter is still searchable.
     # https://github.com/pandas-dev/pandas/pull/63613
     expected_dtype = (
         "int64" if is_object_or_nan_string_dtype(any_string_dtype) else "Int64"
@@ -120,6 +134,8 @@ def test_count_end_of_string(any_string_dtype):
 
 
 def test_repeat(any_string_dtype):
+    # [FUNCTION DOC]
+    # Verifies repeating with a scalar count and with a per-element list of counts, preserving the missing values and the dtype.
     ser = Series(["a", "b", np.nan, "c", np.nan, "d"], dtype=any_string_dtype)
 
     result = ser.str.repeat(3)
@@ -136,6 +152,8 @@ def test_repeat(any_string_dtype):
 
 
 def test_repeat_mixed_object():
+    # [FUNCTION DOC]
+    # Verifies repeating on an object Series with non-strings gives repeated strings for strings and NaN (or None for the None element) for the rest.
     ser = Series(["a", np.nan, "b", True, datetime.today(), "foo", None, 1, 2.0])
     result = ser.str.repeat(3)
     expected = Series(
@@ -147,6 +165,8 @@ def test_repeat_mixed_object():
 
 @pytest.mark.parametrize("arg, repeat", [[None, 4], ["b", None]])
 def test_repeat_with_null(any_string_dtype, arg, repeat):
+    # [FUNCTION DOC]
+    # Regression test for a GitHub issue. Parametrized over a missing element value and a missing repeat count. Verifies repeating with a list of counts yields a missing value in the position where either the element or the count is missing.
     # GH: 31632
     ser = Series(["a", arg], dtype=any_string_dtype)
     result = ser.str.repeat([3, repeat])
@@ -155,6 +175,8 @@ def test_repeat_with_null(any_string_dtype, arg, repeat):
 
 
 def test_empty_str_methods(any_string_dtype):
+    # [FUNCTION DOC]
+    # Regression test for a GitHub issue about extract. Verifies that for an empty Series of the given dtype every string method returns the right empty result type: empty string Series, integer Series (numpy or Int64 per dtype family), boolean Series, object Series, an empty frame for partition and dummies, frames with the right number of columns for extract, inferred-string for decode, object for encode, and that concatenation of nothing returns an empty string.
     empty_str = empty = Series(dtype=any_string_dtype)
     empty_inferred_str = Series(dtype="str")
     if is_object_or_nan_string_dtype(any_string_dtype):
@@ -270,6 +292,9 @@ def test_empty_str_methods(any_string_dtype):
     ],
 )
 def test_ismethods(method, expected, any_string_dtype):
+    # [FUNCTION DOC]
+    # Parametrized over the nine character-class predicate method names (ascii, alphanumeric, alpha, digit, numeric, space, lower, upper, title) with expected lists for a ten-element sample. Verifies the result values and dtype (plain bool for object-like dtypes, boolean for nullable), that the results equal the Python standard library results per element, then sets four elements to NaN and recomputes the result.
+    # KNOWN ISSUE: the final section builds an expected result for the missing-value case in three branches by dtype but never compares it to the result, so the missing-value behavior is not actually asserted.
     ser = Series(
         ["A", "b", "Xy", "4", "3A", "", "TT", "55", "-", "  "], dtype=any_string_dtype
     )
@@ -307,6 +332,8 @@ def test_ismethods(method, expected, any_string_dtype):
     ],
 )
 def test_isnumeric_unicode(method, expected, any_string_dtype):
+    # [FUNCTION DOC]
+    # Parametrized over numeric, decimal and digit predicates with expected lists for a sample of unicode characters (superscript three, vulgar fraction, star, Ethiopic number, fullwidth digit, text). Verifies values and dtype; for the digit predicate on pyarrow-backed strings with a recent pyarrow, two positions are expected true because pyarrow differs from Python; for object and Python-storage dtypes also compares with the Python standard library results.
     # 0x00bc: ¼ VULGAR FRACTION ONE QUARTER
     # 0x2605: ★ not number
     # 0x1378: ፸ ETHIOPIC NUMBER SEVENTY
@@ -351,6 +378,8 @@ def test_isnumeric_unicode(method, expected, any_string_dtype):
     ],
 )
 def test_isnumeric_unicode_missing(method, expected, any_string_dtype):
+    # [FUNCTION DOC]
+    # Parametrized over numeric and decimal predicates. With a sample including NaN, verifies results: for the inferred string dtype missing counts as false in a boolean result; for object-like dtypes an object Series with NaN; otherwise boolean with missing.
     values = ["A", np.nan, "¼", "★", np.nan, "３", "four"]  # noqa: RUF001
     ser = Series(values, dtype=any_string_dtype)
     if any_string_dtype == "str":
@@ -366,6 +395,8 @@ def test_isnumeric_unicode_missing(method, expected, any_string_dtype):
 
 
 def test_split_join_roundtrip(any_string_dtype):
+    # [FUNCTION DOC]
+    # Verifies splitting by underscore then joining with underscore returns the original strings, as object dtype with the missing value kept.
     ser = Series(["a_b_c", "c_d_e", np.nan, "f_g_h"], dtype=any_string_dtype)
     result = ser.str.split("_").str.join("_")
     expected = ser.astype(object)
@@ -373,6 +404,8 @@ def test_split_join_roundtrip(any_string_dtype):
 
 
 def test_split_join_roundtrip_mixed_object():
+    # [FUNCTION DOC]
+    # Verifies the split-then-join roundtrip on an object Series with non-string values returns strings for strings and missing values for non-strings.
     ser = Series(
         ["a_b", np.nan, "asdf_cas_asdf", True, datetime.today(), "foo", None, 1, 2.0]
     )
@@ -385,6 +418,8 @@ def test_split_join_roundtrip_mixed_object():
 
 
 def test_len(any_string_dtype):
+    # [FUNCTION DOC]
+    # Verifies the string length (counting characters, including a multi-byte character and trailing newline) with float and NaN for object-like dtypes and Int64 with NA otherwise.
     ser = Series(
         ["foo", "fooo", "fooooo", np.nan, "fooooooo", "foo\n", "あ"],
         dtype=any_string_dtype,
@@ -401,6 +436,8 @@ def test_len(any_string_dtype):
 
 
 def test_len_mixed():
+    # [FUNCTION DOC]
+    # Verifies length on an object Series with non-strings gives lengths for strings and NaN for non-strings.
     ser = Series(
         ["a_b", np.nan, "asdf_cas_asdf", True, datetime.today(), "foo", None, 1, 2.0]
     )
@@ -421,6 +458,8 @@ def test_len_mixed():
     ],
 )
 def test_index(method, sub, start, end, index_or_series, any_string_dtype, expected):
+    # [FUNCTION DOC]
+    # Parametrized over first or last index lookup, substring, start, end and expected positions, with the Series-or-Index fixture and string dtype fixture. Verifies the result values and container type (integer, or Int64 for nullable), and equality with the Python standard library results per element.
     obj = index_or_series(
         ["ABCDEFG", "BCDEFEF", "DEFGHIJEF", "EFGHEF"], dtype=any_string_dtype
     )
@@ -442,6 +481,8 @@ def test_index(method, sub, start, end, index_or_series, any_string_dtype, expec
 
 
 def test_index_not_found_raises(index_or_series, any_string_dtype):
+    # [FUNCTION DOC]
+    # Verifies looking up a substring that is absent from some elements raises a value error saying the substring was not found.
     obj = index_or_series(
         ["ABCDEFG", "BCDEFEF", "DEFGHIJEF", "EFGHEF"], dtype=any_string_dtype
     )
@@ -451,6 +492,8 @@ def test_index_not_found_raises(index_or_series, any_string_dtype):
 
 @pytest.mark.parametrize("method", ["index", "rindex"])
 def test_index_wrong_type_raises(index_or_series, any_string_dtype, method):
+    # [FUNCTION DOC]
+    # Parametrized over first and last index lookup. Verifies a non-string substring raises a type error saying a string object was expected, not int, even on empty data.
     obj = index_or_series([], dtype=any_string_dtype)
     msg = "expected a string object, not int"
 
@@ -466,6 +509,8 @@ def test_index_wrong_type_raises(index_or_series, any_string_dtype, method):
     ],
 )
 def test_index_missing(any_string_dtype, method, exp):
+    # [FUNCTION DOC]
+    # Parametrized over first and last lookup with expected positions. Verifies a Series with a missing value gives positions plus NaN (float) for object-like dtypes or NA (Int64) otherwise.
     ser = Series(["abcb", "ab", "bcbe", np.nan], dtype=any_string_dtype)
     if is_object_or_nan_string_dtype(any_string_dtype):
         expected_dtype = np.float64
@@ -480,6 +525,8 @@ def test_index_missing(any_string_dtype, method, exp):
 
 
 def test_pipe_failures(any_string_dtype):
+    # [FUNCTION DOC]
+    # Regression test for a GitHub issue. Verifies a pipe character is treated literally by split and by a non-regex replace.
     # #2119
     ser = Series(["A|B|C"], dtype=any_string_dtype)
 
@@ -504,6 +551,8 @@ def test_pipe_failures(any_string_dtype):
     ],
 )
 def test_slice(start, stop, step, expected, any_string_dtype):
+    # [FUNCTION DOC]
+    # Parametrized over (start, stop, step, expected) including negative steps and out-of-range values. Verifies slicing each string with missing preserved and dtype kept.
     ser = Series(["aafootwo", "aabartwo", np.nan, "aabazqux"], dtype=any_string_dtype)
     result = ser.str.slice(start, stop, step)
     expected = Series(expected, dtype=any_string_dtype)
@@ -518,6 +567,8 @@ def test_slice(start, stop, step, expected, any_string_dtype):
     ],
 )
 def test_slice_mixed_object(start, stop, step, expected):
+    # [FUNCTION DOC]
+    # Parametrized over two slice specifications. Verifies slicing on an object Series with non-strings gives sliced strings, missing for non-strings (None stays None).
     ser = Series(["aafootwo", np.nan, "aabartwo", True, datetime.today(), None, 1, 2.0])
     result = ser.str.slice(start, stop, step)
     expected = Series(expected, dtype=object)
@@ -538,6 +589,8 @@ def test_slice_mixed_object(start, stop, step, expected):
     ],
 )
 def test_slice_replace(start, stop, repl, expected, any_string_dtype):
+    # [FUNCTION DOC]
+    # Parametrized over (start, stop, replacement, expected) including a missing replacement, empty ranges, negative positions and replacement beyond the string. Verifies the replaced strings and preserved missing value and dtype.
     ser = Series(
         ["short", "a bit longer", "evenlongerthanthat", "", np.nan],
         dtype=any_string_dtype,
@@ -556,6 +609,8 @@ def test_slice_replace(start, stop, repl, expected, any_string_dtype):
     ],
 )
 def test_strip_lstrip_rstrip(any_string_dtype, method, exp):
+    # [FUNCTION DOC]
+    # Parametrized over strip, left strip and right strip. Verifies whitespace (including newline) removal from the respective ends, with missing preserved.
     ser = Series(["  aa   ", " bb \n", np.nan, "cc  "], dtype=any_string_dtype)
 
     result = getattr(ser.str, method)()
@@ -572,6 +627,8 @@ def test_strip_lstrip_rstrip(any_string_dtype, method, exp):
     ],
 )
 def test_strip_lstrip_rstrip_mixed_object(method, exp):
+    # [FUNCTION DOC]
+    # Parametrized over the three strip methods. Verifies on object data with non-strings that strings are stripped and non-strings become missing (None stays None).
     ser = Series(["  aa  ", np.nan, " bb \t\n", True, datetime.today(), None, 1, 2.0])
 
     result = getattr(ser.str, method)()
@@ -588,6 +645,8 @@ def test_strip_lstrip_rstrip_mixed_object(method, exp):
     ],
 )
 def test_strip_lstrip_rstrip_args(any_string_dtype, method, exp):
+    # [FUNCTION DOC]
+    # Parametrized over the three strip methods. Verifies stripping a given character from the respective ends.
     ser = Series(["xxABCxx", "xx BNSD", "LDFJH xx"], dtype=any_string_dtype)
 
     result = getattr(ser.str, method)("x")
@@ -604,6 +663,8 @@ def test_strip_lstrip_rstrip_args(any_string_dtype, method, exp):
     ],
 )
 def test_removeprefix(any_string_dtype, prefix, expected):
+    # [FUNCTION DOC]
+    # Parametrized over prefixes (one letter, two letters, empty). Verifies the prefix is removed only from the start when present.
     ser = Series(["ab", "a b c", "bc"], dtype=any_string_dtype)
     result = ser.str.removeprefix(prefix)
     ser_expected = Series(expected, dtype=any_string_dtype)
@@ -619,6 +680,8 @@ def test_removeprefix(any_string_dtype, prefix, expected):
     ],
 )
 def test_removesuffix(any_string_dtype, suffix, expected):
+    # [FUNCTION DOC]
+    # Parametrized over suffixes (one letter, two letters, empty). Verifies the suffix is removed only from the end when present.
     ser = Series(["ab", "a b c", "bc"], dtype=any_string_dtype)
     result = ser.str.removesuffix(suffix)
     ser_expected = Series(expected, dtype=any_string_dtype)
@@ -626,6 +689,8 @@ def test_removesuffix(any_string_dtype, suffix, expected):
 
 
 def test_string_slice_get_syntax(any_string_dtype):
+    # [FUNCTION DOC]
+    # Verifies subscript syntax on the string accessor matches the element-get method for an integer index and the slice method for a stop-only slice and for a negative-step slice with a start.
     ser = Series(
         ["YYY", "B", "C", "YYYYYYbYYY", "BYYYcYYY", np.nan, "CYYYBYYY", "dog", "cYYYt"],
         dtype=any_string_dtype,
@@ -645,6 +710,8 @@ def test_string_slice_get_syntax(any_string_dtype):
 
 
 def test_string_slice_out_of_bounds_nested():
+    # [FUNCTION DOC]
+    # Verifies subscripting the accessor on a Series of tuples with an index beyond the shortest tuple gives the element where available and NaN otherwise.
     ser = Series([(1, 2), (1,), (3, 4, 5)])
     result = ser.str[1]
     expected = Series([2, np.nan, 4])
@@ -652,6 +719,8 @@ def test_string_slice_out_of_bounds_nested():
 
 
 def test_string_slice_out_of_bounds(any_string_dtype):
+    # [FUNCTION DOC]
+    # Verifies subscripting with an index beyond a string's length gives a missing value for that element and the character otherwise.
     ser = Series(["foo", "b", "ba"], dtype=any_string_dtype)
     result = ser.str[1]
     expected = Series(["o", np.nan, "a"], dtype=any_string_dtype)
@@ -659,6 +728,8 @@ def test_string_slice_out_of_bounds(any_string_dtype):
 
 
 def test_encode_decode(any_string_dtype):
+    # [FUNCTION DOC]
+    # Verifies encoding to UTF-8 bytes then decoding returns the original strings with the inferred string dtype.
     ser = Series(["a", "b", "a\xe4"], dtype=any_string_dtype).str.encode("utf-8")
     result = ser.str.decode("utf-8")
     expected = Series(["a", "b", "a\xe4"], dtype="str")
@@ -666,6 +737,8 @@ def test_encode_decode(any_string_dtype):
 
 
 def test_encode_errors_kwarg(any_string_dtype):
+    # [FUNCTION DOC]
+    # Verifies encoding with a code page that lacks a character raises a Unicode encode error with the codec's message, and that passing the errors mode ignore as second argument drops the character, matching mapping the standard encode.
     ser = Series(["a", "b", "a\x9d"], dtype=any_string_dtype)
 
     msg = (
@@ -681,6 +754,8 @@ def test_encode_errors_kwarg(any_string_dtype):
 
 
 def test_decode_errors_kwarg():
+    # [FUNCTION DOC]
+    # Verifies decoding invalid bytes with a code page raises a Unicode decode error with the codec's message, and that the errors mode ignore gives the expected decoded strings as string dtype.
     ser = Series([b"a", b"b", b"a\x9d"])
 
     msg = (
@@ -696,6 +771,8 @@ def test_decode_errors_kwarg():
 
 
 def test_decode_string_dtype(string_dtype):
+    # [FUNCTION DOC]
+    # Regression test for a GitHub pull request. Uses the string dtype fixture. Verifies decoding with an explicit dtype argument returns that dtype.
     # https://github.com/pandas-dev/pandas/pull/60940
     ser = Series([b"a", b"b"])
     result = ser.str.decode("utf-8", dtype=string_dtype)
@@ -704,6 +781,8 @@ def test_decode_string_dtype(string_dtype):
 
 
 def test_decode_object_dtype(object_dtype):
+    # [FUNCTION DOC]
+    # Regression test for a GitHub pull request. Uses the object dtype fixture. Verifies decoding bytes containing a literal backslash escape sequence with object dtype returns object dtype with the same text.
     # https://github.com/pandas-dev/pandas/pull/60940
     ser = Series([b"a", rb"\ud800"])
     result = ser.str.decode("utf-8", dtype=object_dtype)
@@ -712,6 +791,8 @@ def test_decode_object_dtype(object_dtype):
 
 
 def test_decode_bad_dtype():
+    # [FUNCTION DOC]
+    # Regression test for a GitHub pull request. Verifies passing an integer dtype raises a value error saying the dtype must be string or object.
     # https://github.com/pandas-dev/pandas/pull/60940
     ser = Series([b"a", b"b"])
     msg = "dtype must be string or object, got dtype='int64'"
@@ -727,6 +808,8 @@ def test_decode_bad_dtype():
     ],
 )
 def test_normalize(form, expected, any_string_dtype):
+    # [FUNCTION DOC]
+    # Parametrized over unicode normalization forms compatibility-composed and canonical-composed with expected results for full-width and half-width characters, with a missing value and custom index. Verifies the normalized Series.
     ser = Series(
         ["ABC", "ＡＢＣ", "１２３", np.nan, "ｱｲｴ"],  # noqa: RUF001
         index=["a", "b", "c", "d", "e"],
@@ -738,6 +821,8 @@ def test_normalize(form, expected, any_string_dtype):
 
 
 def test_normalize_bad_arg_raises(any_string_dtype):
+    # [FUNCTION DOC]
+    # Verifies an unknown normalization form raises a value error saying invalid normalization form.
     ser = Series(
         ["ABC", "ＡＢＣ", "１２３", np.nan, "ｱｲｴ"],  # noqa: RUF001
         index=["a", "b", "c", "d", "e"],
@@ -748,6 +833,8 @@ def test_normalize_bad_arg_raises(any_string_dtype):
 
 
 def test_normalize_index():
+    # [FUNCTION DOC]
+    # Verifies normalization on an Index of full-width characters with the compatibility form returns the expected Index.
     idx = Index(["ＡＢＣ", "１２３", "ｱｲｴ"])  # noqa: RUF001
     expected = Index(["ABC", "123", "アイエ"])
     result = idx.str.normalize("NFKC")
@@ -765,6 +852,8 @@ def test_normalize_index():
     ],
 )
 def test_index_str_accessor_visibility(values, inferred_type, index_or_series):
+    # [FUNCTION DOC]
+    # Parametrized over value lists (strings, strings with integer, float, mixed) and their inferred types. Verifies that for an Index the inferred type is as expected and the string accessor is available returning the accessor class.
     obj = index_or_series(values)
     if index_or_series is Index:
         assert obj.inferred_type == inferred_type
@@ -783,6 +872,8 @@ def test_index_str_accessor_visibility(values, inferred_type, index_or_series):
 def test_index_str_accessor_non_string_values_raises(
     values, inferred_type, index_or_series
 ):
+    # [FUNCTION DOC]
+    # Parametrized over non-string value lists (float with NaN, datetimes, timedeltas) with expected inferred types. Verifies the accessor raises an attribute error saying it can only be used with string values.
     obj = index_or_series(values)
     if index_or_series is Index:
         assert obj.inferred_type == inferred_type
@@ -793,6 +884,8 @@ def test_index_str_accessor_non_string_values_raises(
 
 
 def test_index_str_accessor_multiindex_raises():
+    # [FUNCTION DOC]
+    # Verifies a MultiIndex (inferred type mixed) raises an attribute error saying the accessor works on an Index, not a MultiIndex.
     # MultiIndex has mixed dtype, but not allow to use accessor
     idx = MultiIndex.from_tuples([("a", "b"), ("a", "b")])
     assert idx.inferred_type == "mixed"
@@ -803,6 +896,8 @@ def test_index_str_accessor_multiindex_raises():
 
 
 def test_str_accessor_no_new_attributes(any_string_dtype):
+    # [FUNCTION DOC]
+    # Regression test for a GitHub issue. Verifies assigning a new attribute on the accessor object raises an attribute error saying new attributes cannot be added.
     # https://github.com/pandas-dev/pandas/issues/10673
     ser = Series(list("aabbcde"), dtype=any_string_dtype)
     with pytest.raises(AttributeError, match="You cannot add any new attribute"):
@@ -810,6 +905,8 @@ def test_str_accessor_no_new_attributes(any_string_dtype):
 
 
 def test_cat_on_bytes_raises():
+    # [FUNCTION DOC]
+    # Verifies concatenating two Series of byte strings raises a type error saying the inferred dtype bytes is not allowed.
     lhs = Series(np.array(list("abc"), "S1").astype(object))
     rhs = Series(np.array(list("def"), "S1").astype(object))
     msg = "Cannot use .str.cat with values of inferred dtype 'bytes'"
@@ -818,6 +915,8 @@ def test_cat_on_bytes_raises():
 
 
 def test_str_accessor_in_apply_func():
+    # [FUNCTION DOC]
+    # Regression test for a GitHub issue. Verifies using the string accessor on each row inside a row-wise apply works, producing joined uppercase strings.
     # https://github.com/pandas-dev/pandas/issues/38979
     df = DataFrame(zip("abc", "def", strict=True))
     expected = Series(["A/D", "B/E", "C/F"])
@@ -826,6 +925,8 @@ def test_str_accessor_in_apply_func():
 
 
 def test_zfill():
+    # [FUNCTION DOC]
+    # Regression test for a GitHub issue. Verifies zero-fill pads after a sign to the requested width, leaves longer strings, and gives NaN for non-strings (a number) and missing values.
     # https://github.com/pandas-dev/pandas/issues/20868
     value = Series(["-1", "1", "1000", 10, np.nan])
     expected = Series(["-01", "001", "1000", np.nan, np.nan], dtype=object)
@@ -837,6 +938,8 @@ def test_zfill():
 
 
 def test_zfill_with_non_integer_argument():
+    # [FUNCTION DOC]
+    # Verifies a non-integer width raises a type error saying the width must be of integer type, naming the given type.
     value = Series(["-2", "+5"])
     wid = "a"
     msg = f"width must be of integer type, not {type(wid).__name__}"
@@ -845,12 +948,16 @@ def test_zfill_with_non_integer_argument():
 
 
 def test_zfill_with_leading_sign():
+    # [FUNCTION DOC]
+    # Verifies zero-fill puts zeros after a leading plus or minus sign, including for text after the sign.
     value = Series(["-cat", "-1", "+dog"])
     expected = Series(["-0cat", "-0001", "+0dog"])
     tm.assert_series_equal(value.str.zfill(5), expected)
 
 
 def test_get_with_dict_label():
+    # [FUNCTION DOC]
+    # Regression test for a GitHub issue. Verifies the element-get method with a key works on a Series of dictionaries, giving None where the key is missing.
     # GH47911
     s = Series(
         [
@@ -868,6 +975,8 @@ def test_get_with_dict_label():
 
 
 def test_series_str_decode():
+    # [FUNCTION DOC]
+    # Regression test for a GitHub issue. Verifies decoding bytes with explicit encoding and strict errors gives strings of the inferred string dtype.
     # GH 22613
     result = Series([b"x", b"y"]).str.decode(encoding="UTF-8", errors="strict")
     expected = Series(["x", "y"], dtype="str")
@@ -875,6 +984,8 @@ def test_series_str_decode():
 
 
 def test_decode_with_dtype_none():
+    # [FUNCTION DOC]
+    # With the option enabling inferred strings, verifies decoding with a None dtype gives the inferred string dtype.
     with option_context("future.infer_string", True):
         ser = Series([b"a", b"b", b"c"])
         result = ser.str.decode("utf-8", dtype=None)
@@ -883,6 +994,8 @@ def test_decode_with_dtype_none():
 
 
 def test_setitem_with_different_string_storage():
+    # [FUNCTION DOC]
+    # Regression test for a GitHub issue. Skips without pyarrow. Verifies assigning a slice of a Python-storage string Series from a pyarrow-storage Series and vice versa keeps the target's storage and writes the converted values, including a slice assignment containing a missing value.
     # GH#52987
     # Test setitem with values from different string storage type
     pytest.importorskip("pyarrow")
@@ -948,5 +1061,7 @@ def test_setitem_with_different_string_storage():
     ],
 )
 def test_has_regex_unsupported_code(pat, expected):
+    # [FUNCTION DOC]
+    # Regression test for a GitHub issue. Parametrized over about thirty regex patterns with an expected flag. Verifies the private helper of the Arrow string mixin reports true for patterns using lookaround assertions or backreferences (including named backreferences, nested lookaheads and lookaheads combined with alternation) and false for plain patterns, escaped parentheses, character classes containing lookahead syntax, inline comment groups, and lookaheads followed by a quantifier.
     # https://github.com/pandas-dev/pandas/issues/60833
     assert ArrowStringArrayMixin._has_unsupported_regex(pat) == expected

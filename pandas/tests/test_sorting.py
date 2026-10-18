@@ -1,3 +1,8 @@
+# [MODULE DOC]
+# Tests for the sorting helpers in the core sorting module and the safe-sort function in the algorithms module, plus
+# integration tests that exercise 64-bit integer overflow of combined group indexes in groupby and merge. Contains
+# classes for sorting/groupby, merge, and safe sorting, and module-level tests for group-index deconstruction and
+# sorting of mixed or null-containing values. Some tests are marked slow.
 from collections import defaultdict
 from datetime import datetime
 from itertools import product
@@ -28,6 +33,10 @@ from pandas.core.sorting import (
 
 @pytest.fixture
 def left_right():
+    # [FUNCTION DOC]
+    # HELPER: fixture. Builds a frame of about one million rows with seven random integer key columns (A to G, values from
+    # minus 1024 to 1023) and a "left" column holding the row sum, then a second frame that is a full random shuffle of it
+    # with the last column renamed "right" and negated. Returns the pair (left, right).
     low, high, n = -1 << 10, 1 << 10, 1 << 20
     left = DataFrame(
         np.random.default_rng(2).integers(low, high, (n, 7)), columns=list("ABCDEFG")
@@ -42,8 +51,14 @@ def left_right():
 
 
 class TestSorting:
+    # [CLASS DOC]
+    # Tests of groupby ordering under integer overflow of the group index, and of the lexicographic and argument-sort helpers.
     @pytest.mark.slow
     def test_int64_overflow(self):
+        # [FUNCTION DOC]
+        # Marked slow. Builds a 2500-row frame with eight key columns whose group-count product overflows 64 bits. Groups by the keys
+        # in forward and reverse order and sums values; verifies each result index is sorted, and that every group sum agrees between the
+        # two orders and with grouping by an array of key tuples; and the lengths agree.
         B = np.concatenate((np.arange(1000), np.arange(1000), np.arange(500)))
         A = np.arange(2500)
         df = DataFrame(
@@ -83,6 +98,8 @@ class TestSorting:
         assert len(left) == len(right)
 
     def test_int64_overflow_groupby_large_range(self):
+        # [FUNCTION DOC]
+        # Regression test for a GitHub issue. Groups a frame of four identical columns with 55109 distinct values and verifies the group count equals the number of rows.
         # GH9096
         values = range(55109)
         data = DataFrame.from_dict({"a": values, "b": values, "c": values, "d": values})
@@ -92,6 +109,9 @@ class TestSorting:
     @pytest.mark.slow
     @pytest.mark.parametrize("agg", ["mean", "median"])
     def test_int64_overflow_groupby_large_df_shuffled(self, agg):
+        # [FUNCTION DOC]
+        # Marked slow. Parametrized over the mean and median aggregations. Builds a shuffled frame of random integer keys with duplicated rows and two zero value columns;
+        # first asserts the grouping really can overflow the 64-bit group index; verifies the aggregation equals a zero frame indexed by the sorted unique key rows.
         rs = np.random.default_rng(2)
         arr = rs.integers(-1 << 12, 1 << 12, (1 << 15, 5))
         i = rs.choice(len(arr), len(arr) * 4)
@@ -146,6 +166,9 @@ class TestSorting:
         ],
     )
     def test_lexsort_indexer(self, order, na_position, exp):
+        # [FUNCTION DOC]
+        # Parametrized over (ascending order flag, NaN position, expected indexer). With a single key of five NaNs, one hundred numbers and five NaNs, verifies the lexicographic
+        # sort indexer places NaNs first or last as requested, reversing the non-NaN part when descending, and keeping NaNs in original order. Result must equal the expected array of platform integers.
         keys = [[np.nan] * 5 + list(range(100)) + [np.nan] * 5]
         result = lexsort_indexer(keys, orders=order, na_position=na_position)
         tm.assert_numpy_array_equal(result, np.array(exp, dtype=np.intp))
@@ -176,6 +199,8 @@ class TestSorting:
         ],
     )
     def test_nargsort(self, ascending, na_position, exp):
+        # [FUNCTION DOC]
+        # Parametrized over (ascending, NaN position, expected indexer) with the same layout as the lexsort test. Verifies the argument sort with a stable merge sort on an object-dtype array gives the expected positions (dtype not checked).
         # list places NaNs last, np.array(..., dtype="O") may not place NaNs first
         items = np.array([np.nan] * 5 + list(range(100)) + [np.nan] * 5, dtype="O")
 
@@ -194,7 +219,11 @@ class TestSorting:
 
 
 class TestMerge:
+    # [CLASS DOC]
+    # Merge tests involving integer overflow of the combined key index.
     def test_int64_overflow_outer_merge(self):
+        # [FUNCTION DOC]
+        # Regression test for a GitHub issue about combinatorial explosion. Outer-merges two random thousand-row frames sharing six key columns and verifies the result has two thousand rows (no matches).
         # #2690, combinatorial explosion
         df1 = DataFrame(
             np.random.default_rng(2).standard_normal((1000, 7)),
@@ -209,6 +238,8 @@ class TestMerge:
 
     @pytest.mark.slow
     def test_int64_overflow_check_sum_col(self, left_right):
+        # [FUNCTION DOC]
+        # Marked slow. Using the large left/right fixture, verifies an outer merge keeps the row count, that the left sum column equals the negated right column, and equals the sum of the key columns of the merged result (name ignored); result Series has no name.
         left, right = left_right
 
         out = merge(left, right, how="outer")
@@ -220,6 +251,8 @@ class TestMerge:
 
     @pytest.mark.slow
     def test_int64_overflow_how_merge(self, left_right, join_type):
+        # [FUNCTION DOC]
+        # Marked slow. Parametrized over the join type fixture. Verifies a sorted merge of the shuffled fixture frames for the given join type equals the sorted outer merge (all rows match, so every join type gives the same set).
         left, right = left_right
 
         out = merge(left, right, how="outer")
@@ -228,6 +261,8 @@ class TestMerge:
 
     @pytest.mark.slow
     def test_int64_overflow_sort_false_order(self, left_right):
+        # [FUNCTION DOC]
+        # Marked slow. Verifies a left merge without sorting keeps the left frame's row order and values for the left frame's columns, and the same in the swapped direction.
         left, right = left_right
 
         # check that left merge w/ sort=False maintains left frame order
@@ -239,6 +274,8 @@ class TestMerge:
 
     @pytest.mark.slow
     def test_int64_overflow_one_to_many_none_match(self, join_type, sort):
+        # [FUNCTION DOC]
+        # Marked slow. Parametrized over the join type and sort fixtures. Builds a left frame of random integer keys (first checking the key cardinality product can overflow), duplicates it, builds a right frame with duplicates and some overlap with the left, adds random value columns, and shuffles both. Computes the expected merge manually by dictionaries of key to values and a cross product per key, with NaN where no match; derives the row mask for the join type, then verifies the merge equals the manual result (with sort requested, also that the key columns are sorted stably).
         # one-2-many/none match
         how = join_type
         low, high, n = -1 << 10, 1 << 10, 1 << 11
@@ -342,6 +379,8 @@ class TestMerge:
     ],
 )
 def test_decons(codes_list, shape):
+    # [FUNCTION DOC]
+    # Parametrized over two (list of integer code arrays, shape) cases including one whose combined size overflows. Verifies that building the combined group index from codes, then deconstructing it with the same shape, returns the original code arrays.
     group_index = get_group_index(codes_list, shape, sort=True, xnull=True)
     codes_list2 = _decons_group_index(group_index, shape)
 
@@ -350,6 +389,8 @@ def test_decons(codes_list, shape):
 
 
 class TestSafeSort:
+    # [CLASS DOC]
+    # Tests for the safe-sort function, which sorts values (including mixed types) and optionally remaps integer codes.
     @pytest.mark.parametrize(
         "arg, exp",
         [
@@ -362,6 +403,8 @@ class TestSafeSort:
         ],
     )
     def test_basic_sort(self, arg, exp):
+        # [FUNCTION DOC]
+        # Parametrized over an integer list, an object array of letters, and an empty list. Verifies the sorted array result.
         result = safe_sort(np.array(arg))
         expected = np.array(exp)
         tm.assert_numpy_array_equal(result, expected)
@@ -375,6 +418,8 @@ class TestSafeSort:
         ],
     )
     def test_codes(self, verify, codes, exp_codes):
+        # [FUNCTION DOC]
+        # Parametrized over the verify flag and two code lists (one with a missing sentinel, one empty). Verifies sorting an integer array with codes returns the sorted array and codes remapped to the new positions, keeping the sentinel.
         values = np.array([3, 1, 2, 0, 4])
         expected = np.array([0, 1, 2, 3, 4])
 
@@ -386,6 +431,8 @@ class TestSafeSort:
         tm.assert_numpy_array_equal(result_codes, expected_codes)
 
     def test_codes_out_of_bound(self):
+        # [FUNCTION DOC]
+        # Verifies that codes beyond the number of values become the missing sentinel while valid codes are remapped.
         values = np.array([3, 1, 2, 0, 4])
         expected = np.array([0, 1, 2, 3, 4])
 
@@ -398,18 +445,24 @@ class TestSafeSort:
 
     @pytest.mark.parametrize("codes", [[-1, -1], [2, -1], [2, 2]])
     def test_codes_empty_array_out_of_bound(self, codes):
+        # [FUNCTION DOC]
+        # Parametrized over code lists. Verifies that with an empty values array all codes come out as the missing sentinel.
         empty_values = np.array([])
         expected_codes = -np.ones_like(codes, dtype=np.intp)
         _, result_codes = safe_sort(empty_values, codes)
         tm.assert_numpy_array_equal(result_codes, expected_codes)
 
     def test_mixed_integer(self):
+        # [FUNCTION DOC]
+        # Verifies an object array of integers and strings sorts with the numbers first, then the strings.
         values = np.array(["b", 1, 0, "a", 0, "b"], dtype=object)
         result = safe_sort(values)
         expected = np.array([0, 0, 1, "a", "b", "b"], dtype=object)
         tm.assert_numpy_array_equal(result, expected)
 
     def test_mixed_integer_with_codes(self):
+        # [FUNCTION DOC]
+        # Verifies mixed integer and string sorting with codes remaps the codes consistently, keeping the missing sentinel.
         values = np.array(["b", 1, 0, "a"], dtype=object)
         codes = [0, 1, 2, 3, 0, -1, 1]
         result, result_codes = safe_sort(values, codes)
@@ -419,6 +472,8 @@ class TestSafeSort:
         tm.assert_numpy_array_equal(result_codes, expected_codes)
 
     def test_unsortable(self):
+        # [FUNCTION DOC]
+        # Regression test for a GitHub issue. Verifies an object array mixing numbers with a datetime raises a type error saying comparison is not supported between instances.
         # GH 13714
         arr = np.array([1, 2, datetime.now(), 0, 3], dtype=object)
         msg = "'[<>]' not supported between instances of .*"
@@ -434,6 +489,8 @@ class TestSafeSort:
         ],
     )
     def test_exceptions(self, arg, codes, err, msg):
+        # [FUNCTION DOC]
+        # Parametrized over invalid argument combinations. Verifies: a non-array values argument raises a type error naming the accepted types; a non-list-like codes argument raises a type error; and non-unique values together with codes raises a value error.
         with pytest.raises(err, match=msg):
             safe_sort(values=arg, codes=codes)
 
@@ -441,6 +498,8 @@ class TestSafeSort:
         "arg, exp", [[[1, 3, 2], [1, 2, 3]], [[1, 3, NA, 2], [1, 2, 3, NA]]]
     )
     def test_extension_array(self, arg, exp):
+        # [FUNCTION DOC]
+        # Parametrized over lists without and with a missing value. Verifies sorting a nullable integer array returns a nullable integer array sorted with the missing value last.
         a = array(arg, dtype="Int64")
         result = safe_sort(a)
         expected = array(exp, dtype="Int64")
@@ -448,6 +507,8 @@ class TestSafeSort:
 
     @pytest.mark.parametrize("verify", [True, False])
     def test_extension_array_codes(self, verify):
+        # [FUNCTION DOC]
+        # Parametrized over the verify flag. Verifies sorting a nullable integer array with codes returns the sorted array and remapped codes, keeping the sentinel.
         a = array([1, 3, 2], dtype="Int64")
         result, codes = safe_sort(a, [0, 1, -1, 2], use_na_sentinel=True, verify=verify)
         expected_values = array([1, 2, 3], dtype="Int64")
@@ -457,6 +518,8 @@ class TestSafeSort:
 
 
 def test_mixed_str_null(nulls_fixture):
+    # [FUNCTION DOC]
+    # Uses the null-values fixture. Verifies sorting an object array of strings with one null object puts the null last after the sorted strings.
     values = np.array(["b", nulls_fixture, "a", "b"], dtype=object)
     result = safe_sort(values)
     expected = np.array(["a", "b", "b", nulls_fixture], dtype=object)
@@ -464,6 +527,8 @@ def test_mixed_str_null(nulls_fixture):
 
 
 def test_safe_sort_multiindex():
+    # [FUNCTION DOC]
+    # Regression test for a GitHub issue. Verifies safe sort of a MultiIndex with a nullable integer level containing missing values sorts rows with missing entries last.
     # GH#48412
     arr1 = Series([2, 1, NA, NA], dtype="Int64")
     arr2 = [2, 1, 3, 3]
