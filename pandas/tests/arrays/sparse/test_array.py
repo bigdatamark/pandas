@@ -1,3 +1,10 @@
+# [MODULE DOC]
+# Tests for general SparseArray behavior: shifting with fill values, setting the fill value, copy, dense conversion, shape,
+# pickling, iteration warnings, where, fillna, nonzero, cumulative sum, ufuncs, size in bytes, density, number of points, first fill value location,
+# unique, map, dropna, drop_duplicates, zero-valued sparse columns and the numpy array protocol. Defines fixtures arr_data (dense numpy data with
+# NaN), arr (its SparseArray) and zarr (integer SparseArray with fill value zero), and uses the temp_file fixture from the shared conftest. No
+# import-time side effects.
+
 import re
 
 import numpy as np
@@ -17,25 +24,35 @@ from pandas.core.arrays.sparse import SparseArray
 
 @pytest.fixture
 def arr_data():
+    # [FUNCTION DOC]
+    # HELPER: fixture returning a ten-element float numpy array with NaN at four positions.
     """Fixture returning numpy array with valid and missing entries"""
     return np.array([np.nan, np.nan, 1, 2, 3, np.nan, 4, 5, np.nan, 6])
 
 
 @pytest.fixture
 def arr(arr_data):
+    # [FUNCTION DOC]
+    # HELPER: fixture returning a SparseArray built from arr_data (NaN fill value).
     """Fixture returning SparseArray from 'arr_data'"""
     return SparseArray(arr_data)
 
 
 @pytest.fixture
 def zarr():
+    # [FUNCTION DOC]
+    # HELPER: fixture returning a ten-element integer SparseArray with fill value zero.
     """Fixture returning SparseArray with integer entries and 'fill_value=0'"""
     return SparseArray([0, 0, 1, 2, 3, 0, 4, 5, 0, 6], fill_value=0)
 
 
 class TestSparseArray:
+    # [CLASS DOC]
+    # Groups general SparseArray behavior tests. Stateless.
     @pytest.mark.parametrize("fill_value", [0, None, np.nan])
     def test_shift_fill_value(self, fill_value):
+        # [FUNCTION DOC]
+        # Parametrized over fill values zero, none and NaN. Shifting by one with a fill value inserts it at the front; a missing fill value becomes the dtype's NA value.
         # GH #24128
         sparse = SparseArray(np.array([1, 0, 0, 3, 0]), fill_value=8.0)
         res = sparse.shift(1, fill_value=fill_value)
@@ -45,6 +62,9 @@ class TestSparseArray:
         tm.assert_sp_array_equal(res, exp)
 
     def test_set_fill_value(self):
+        # [FUNCTION DOC]
+        # Assigning a new fill value to the attribute works when valid for the subtype (float, integer, boolean); an invalid one (non-integral float for integer, integer for boolean) raises a value error and leaves the
+        # old value; NaN is accepted.
         arr = SparseArray([1.0, np.nan, 2.0], fill_value=np.nan)
         arr.fill_value = 2
         assert arr.fill_value == 2
@@ -75,6 +95,8 @@ class TestSparseArray:
 
     @pytest.mark.parametrize("val", [[1, 2, 3], np.array([1, 2]), (1, 2, 3)])
     def test_set_fill_invalid_non_scalar(self, val):
+        # [FUNCTION DOC]
+        # Parametrized over a list, a numpy array and a tuple. Assigning a non-scalar fill value raises a value error saying it must be a scalar.
         arr = SparseArray([True, False, True], fill_value=False, dtype=np.bool_)
         msg = "fill_value must be a scalar"
 
@@ -82,11 +104,15 @@ class TestSparseArray:
             arr.fill_value = val
 
     def test_copy(self, arr):
+        # [FUNCTION DOC]
+        # A copy has new stored values but shares the sparse index object.
         arr2 = arr.copy()
         assert arr2.sp_values is not arr.sp_values
         assert arr2.sp_index is arr.sp_index
 
     def test_values_asarray(self, arr_data, arr):
+        # [FUNCTION DOC]
+        # Densifying the sparse array gives the original data.
         tm.assert_almost_equal(arr.to_dense(), arr_data)
 
     @pytest.mark.parametrize(
@@ -99,6 +125,8 @@ class TestSparseArray:
         ],
     )
     def test_shape(self, data, shape, dtype):
+        # [FUNCTION DOC]
+        # Parametrized over data lists of zeros, empty, single and an object dtype one. The shape is the one-dimensional length.
         # GH 21126
         out = SparseArray(data, dtype=dtype)
         assert out.shape == shape
@@ -113,6 +141,8 @@ class TestSparseArray:
     )
     @pytest.mark.parametrize("fill_value", [None, 0])
     def test_dense_repr(self, vals, fill_value):
+        # [FUNCTION DOC]
+        # Parametrized over value lists and fill value (none or zero). Densifying always returns the original numpy values.
         vals = np.array(vals)
         arr = SparseArray(vals, fill_value=fill_value)
 
@@ -121,17 +151,23 @@ class TestSparseArray:
 
     @pytest.mark.parametrize("fix", ["arr", "zarr"])
     def test_pickle(self, fix, request, temp_file):
+        # [FUNCTION DOC]
+        # Parametrized over the arr and zarr fixtures (by name). A pickle round trip through a temporary file gives an equal sparse array.
         obj = request.getfixturevalue(fix)
         unpickled = tm.round_trip_pickle(obj, temp_file)
         tm.assert_sp_array_equal(unpickled, obj)
 
     def test_generator_warnings(self):
+        # [FUNCTION DOC]
+        # Iterating over the array emits no warnings.
         sp_arr = SparseArray([1, 2, 3])
         with tm.assert_produces_warning(None):
             for _ in sp_arr:
                 pass
 
     def test_where_retain_fill_value(self):
+        # [FUNCTION DOC]
+        # The private where method and the Series where keep the array's fill value while replacing values.
         # GH#45691 don't lose fill_value on _where
         arr = SparseArray([np.nan, 1.0], fill_value=0)
 
@@ -146,6 +182,9 @@ class TestSparseArray:
         tm.assert_series_equal(res, pd.Series(exp))
 
     def test_fillna(self):
+        # [FUNCTION DOC]
+        # Filling missing values with minus one across combinations of NaN and zero fill values: for NaN fill the fill value becomes minus one; for a zero fill value NaN entries are replaced as stored values; all-NaN, an
+        # integer array (unchanged), and integer with NaN fill and no hole (only the fill value changes).
         s = SparseArray([1, np.nan, np.nan, 3, np.nan])
         res = s.fillna(-1)
         exp = SparseArray([1, -1, -1, 3, -1], fill_value=-1, dtype=np.float64)
@@ -206,6 +245,8 @@ class TestSparseArray:
         tm.assert_sp_array_equal(res, exp)
 
     def test_fillna_overlap(self):
+        # [FUNCTION DOC]
+        # Filling with a value equal to an existing stored value keeps that value stored and gives the expected dense content; with fill value zero the sparse result matches.
         s = SparseArray([1, np.nan, np.nan, 3, np.nan])
         # filling with existing value doesn't replace existing value with
         # fill_value, i.e. existing 3 remains in sp_values
@@ -219,6 +260,8 @@ class TestSparseArray:
         tm.assert_sp_array_equal(res, exp)
 
     def test_nonzero(self):
+        # [FUNCTION DOC]
+        # The nonzero method returns the positions of nonzero (and non-fill) entries as 32-bit integers, for NaN and zero fill values (regression).
         # Tests regression #21172.
         sa = SparseArray([float("nan"), float("nan"), 1, 0, 0, 2, 0, 0, 0, 3, 0, 0])
         expected = np.array([2, 5, 9], dtype=np.int32)
@@ -231,6 +274,8 @@ class TestSparseArray:
 
 
 class TestSparseArrayAnalytics:
+    # [CLASS DOC]
+    # Groups analytic tests (cumulative sum, ufuncs, size, density). Stateless.
     @pytest.mark.parametrize(
         "data,expected",
         [
@@ -246,6 +291,9 @@ class TestSparseArrayAnalytics:
     )
     @pytest.mark.parametrize("numpy", [True, False])
     def test_cumsum(self, data, expected, numpy):
+        # [FUNCTION DOC]
+        # Parametrized over data with and without NaN, and numpy function versus method. Cumulative sum gives the expected sparse array for default, NaN and non-NaN fill values; the numpy path rejects dtype and out arguments
+        # with value errors; the method rejects an out-of-range axis.
         cumsum = np.cumsum if numpy else lambda s: s.cumsum()
 
         out = cumsum(SparseArray(data))
@@ -272,6 +320,8 @@ class TestSparseArrayAnalytics:
                 SparseArray(data).cumsum(axis=axis)
 
     def test_ufunc(self):
+        # [FUNCTION DOC]
+        # Absolute value (builtin and numpy) and sine apply to both stored values and the fill value, for NaN fill and non-NaN fill values.
         # GH 13853 make sure ufunc is applied to fill_value
         sparse = SparseArray([1, np.nan, 2, np.nan, -2])
         result = SparseArray([1, np.nan, 2, np.nan, 2])
@@ -301,6 +351,8 @@ class TestSparseArrayAnalytics:
         tm.assert_sp_array_equal(np.sin(sparse), result)
 
     def test_ufunc_args(self):
+        # [FUNCTION DOC]
+        # A binary ufunc with a scalar (add one) applies to the stored values and the fill value.
         # GH 13853 make sure ufunc is applied to fill_value, including its arg
         sparse = SparseArray([1, np.nan, 2, np.nan, -2])
         result = SparseArray([2, np.nan, 3, np.nan, -1])
@@ -316,6 +368,8 @@ class TestSparseArrayAnalytics:
 
     @pytest.mark.parametrize("fill_value", [0.0, np.nan])
     def test_modf(self, fill_value):
+        # [FUNCTION DOC]
+        # Parametrized over fill values zero and NaN. The two-output modf ufunc returns two sparse arrays equal to the numpy results.
         # https://github.com/pandas-dev/pandas/issues/26946
         sparse = SparseArray([fill_value] * 10 + [1.1, 2.2], fill_value=fill_value)
         r1, r2 = np.modf(sparse)
@@ -324,12 +378,16 @@ class TestSparseArrayAnalytics:
         tm.assert_sp_array_equal(r2, SparseArray(e2, fill_value=fill_value))
 
     def test_nbytes_integer(self):
+        # [FUNCTION DOC]
+        # Size in bytes of an integer-index array with two stored values is 24 (two 8-byte values plus two 4-byte indices).
         arr = SparseArray([1, 0, 0, 0, 2], kind="integer")
         result = arr.nbytes
         # (2 * 8) + 2 * 4
         assert result == 24
 
     def test_nbytes_block(self):
+        # [FUNCTION DOC]
+        # Size in bytes of a block-index array is 24 (two 8-byte values plus block start and length).
         arr = SparseArray([1, 2, 0, 0, 0], kind="block")
         result = arr.nbytes
         # (2 * 8) + 4 + 4
@@ -337,19 +395,27 @@ class TestSparseArrayAnalytics:
         assert result == 24
 
     def test_asarray_datetime64(self):
+        # [FUNCTION DOC]
+        # Converting a datetime sparse array to numpy works (smoke test, no assertion).
         s = SparseArray(pd.to_datetime(["2012", None, None, "2013"]))
         np.asarray(s)
 
     def test_density(self):
+        # [FUNCTION DOC]
+        # Density is the fraction of stored points (one half).
         arr = SparseArray([0, 1])
         assert arr.density == 0.5
 
     def test_npoints(self):
+        # [FUNCTION DOC]
+        # The number of stored points counts non-fill values.
         arr = SparseArray([0, 1])
         assert arr.npoints == 1
 
 
 def test_setting_fill_value_fillna_still_works():
+    # [FUNCTION DOC]
+    # After changing the fill value from zero to NaN the missing-value mask still marks the NaN position (the sparse index differs, so compared after densifying).
     # This is why letting users update fill_value / dtype is bad
     # astype has the same problem.
     arr = SparseArray([1.0, np.nan, 1.0], fill_value=0.0)
@@ -364,6 +430,8 @@ def test_setting_fill_value_fillna_still_works():
 
 
 def test_cumsum_integer_no_recursion():
+    # [FUNCTION DOC]
+    # Regression for infinite recursion: cumulative sum on integer sparse arrays (with and without interleaved zeros) returns the expected arrays with NaN fill.
     # GH 62669: RecursionError in integer SparseArray.cumsum
     arr = SparseArray([1, 2, 3])
     result = arr.cumsum()
@@ -378,6 +446,8 @@ def test_cumsum_integer_no_recursion():
 
 
 def test_cumsum_float_fill_value_zero():
+    # [FUNCTION DOC]
+    # Cumulative sum of a float array with zero fill value and a NaN gives a NaN-filled sparse result with the NaN preserved.
     # GH 62669
     arr = pd.arrays.SparseArray([1.0, 0.0, np.nan, 3.0], fill_value=0.0)
     result = arr.cumsum()
@@ -386,6 +456,8 @@ def test_cumsum_float_fill_value_zero():
 
 
 def test_setting_fill_value_updates():
+    # [FUNCTION DOC]
+    # Changing the fill value to NaN on an array with a zero fill updates the array to match one built with the private constructor (the NaN is not stored).
     arr = SparseArray([0.0, np.nan], fill_value=0)
     arr.fill_value = np.nan
     # use private constructor to get the index right
@@ -416,6 +488,8 @@ def test_setting_fill_value_updates():
     ],
 )
 def test_first_fill_value_loc(arr, fill_value, loc):
+    # [FUNCTION DOC]
+    # Parametrized over arrays, fill value and expected location. The private first-fill-value-location method returns the first position holding the fill value or minus one if absent.
     result = SparseArray(arr, fill_value=fill_value)._first_fill_value_loc()
     assert result == loc
 
@@ -432,6 +506,8 @@ def test_first_fill_value_loc(arr, fill_value, loc):
 )
 @pytest.mark.parametrize("fill_value", [np.nan, 0, 1])
 def test_unique_na_fill(arr, fill_value):
+    # [FUNCTION DOC]
+    # Parametrized over arrays and fill values. Unique returns a SparseArray whose dense content equals the unique of the plain Series.
     a = SparseArray(arr, fill_value=fill_value).unique()
     b = pd.Series(arr).unique()
     assert isinstance(a, SparseArray)
@@ -440,6 +516,8 @@ def test_unique_na_fill(arr, fill_value):
 
 
 def test_unique_all_sparse():
+    # [FUNCTION DOC]
+    # Unique of an array whose values are all the fill value returns an array with a single fill value.
     # https://github.com/pandas-dev/pandas/issues/23168
     arr = SparseArray([0, 0])
     result = arr.unique()
@@ -448,6 +526,9 @@ def test_unique_all_sparse():
 
 
 def test_map():
+    # [FUNCTION DOC]
+    # Mapping with a dict returns a sparse array with the fill value mapped.
+    # KNOWN ISSUE: the part labelled function actually maps with a Series again, so mapping with a callable is not tested.
     arr = SparseArray([0, 1, 2])
     expected = SparseArray([10, 11, 12], fill_value=10)
 
@@ -466,6 +547,8 @@ def test_map():
 
 
 def test_map_missing():
+    # [FUNCTION DOC]
+    # Mapping with a dict missing one key gives NaN for that element and maps the fill value.
     arr = SparseArray([0, 1, 2])
     expected = SparseArray([10, 11, None], fill_value=10)
 
@@ -475,6 +558,8 @@ def test_map_missing():
 
 @pytest.mark.parametrize("fill_value", [np.nan, 1])
 def test_dropna(fill_value):
+    # [FUNCTION DOC]
+    # Parametrized over fill values NaN and one. Dropna on the array and on a frame holding it removes missing entries.
     # GH-28287
     arr = SparseArray([np.nan, 1], fill_value=fill_value)
     exp = SparseArray([1.0], fill_value=fill_value)
@@ -486,6 +571,8 @@ def test_dropna(fill_value):
 
 
 def test_drop_duplicates_fill_value():
+    # [FUNCTION DOC]
+    # drop_duplicates on a frame of sparse columns with zero fill value keeps one row and sparse dtype.
     # GH 11726
     df = pd.DataFrame(np.zeros((5, 5))).apply(lambda x: SparseArray(x, fill_value=0))
     result = df.drop_duplicates()
@@ -494,6 +581,8 @@ def test_drop_duplicates_fill_value():
 
 
 def test_zero_sparse_column():
+    # [FUNCTION DOC]
+    # Row selection by a boolean condition in a frame with sparse columns of zeros gives the same result as with other data and the expected frame (regression).
     # GH 27781
     df1 = pd.DataFrame({"A": SparseArray([0, 0, 0]), "B": [1, 2, 3]})
     df2 = pd.DataFrame({"A": SparseArray([0, 1, 0]), "B": [1, 2, 3]})
@@ -506,6 +595,9 @@ def test_zero_sparse_column():
 
 
 def test_array_interface(arr_data, arr):
+    # [FUNCTION DOC]
+    # Numpy conversion returns the dense data and always copies by default and with copy true. On numpy 2 or newer, requesting no copy raises a value error unless there are no filled values, in which case no copy is
+    # made. Returns early on old numpy.
     # https://github.com/pandas-dev/pandas/pull/60046
     result = np.asarray(arr)
     tm.assert_numpy_array_equal(result, arr_data)

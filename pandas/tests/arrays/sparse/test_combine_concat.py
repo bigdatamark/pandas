@@ -1,3 +1,6 @@
+# [MODULE DOC]
+# Tests for concatenating SparseArray and Series with sparse and non-sparse data. No import-time side effects.
+
 import numpy as np
 import pytest
 
@@ -7,8 +10,12 @@ from pandas.core.arrays.sparse import SparseArray
 
 
 class TestSparseArrayConcat:
+    # [CLASS DOC]
+    # Groups tests of the same-type concatenation of sparse arrays. Stateless.
     @pytest.mark.parametrize("kind", ["integer", "block"])
     def test_basic(self, kind):
+        # [FUNCTION DOC]
+        # Parametrized over index kind. Concatenating two arrays of the same kind keeps stored values in order and the kind (sparse index internals are not asserted).
         a = SparseArray([1, 0, 0, 2], kind=kind)
         b = SparseArray([1, 0, 2, 2], kind=kind)
 
@@ -22,6 +29,8 @@ class TestSparseArrayConcat:
 
     @pytest.mark.parametrize("kind", ["integer", "block"])
     def test_uses_first_kind(self, kind):
+        # [FUNCTION DOC]
+        # Parametrized over index kind. Concatenating arrays of different kinds yields the kind of the first array.
         other = "integer" if kind == "block" else "block"
         a = SparseArray([1, 0, 0, 2], kind=kind)
         b = SparseArray([1, 0, 2, 2], kind=other)
@@ -50,6 +59,9 @@ class TestSparseArrayConcat:
     ],
 )
 def test_concat_with_non_sparse(other, expected_dtype):
+    # [FUNCTION DOC]
+    # Parametrized over (other Series, expected dtype). Concatenating a sparse Series with a compatible integer Series keeps sparse, with floats gives a sparse float, with objects a sparse object, with
+    # categoricals the dense dtype of the categories (or object); checked in both orders.
     # https://github.com/pandas-dev/pandas/issues/34336
     s_sparse = pd.Series([1, 0, 2], dtype=pd.SparseDtype("int64", 0))
 

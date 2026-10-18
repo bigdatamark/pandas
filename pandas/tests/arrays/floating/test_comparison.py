@@ -1,3 +1,8 @@
+# [MODULE DOC]
+# Tests for comparison and equality of the nullable floating array. Reuses the shared comparison and numeric
+# operator test mixins from the masked-array shared test module. Uses fixtures comparison_op, dtype and
+# using_nan_is_na. No import-time side effects.
+
 import numpy as np
 import pytest
 
@@ -11,11 +16,18 @@ from pandas.tests.arrays.masked_shared import (
 
 
 class TestComparisonOps(NumericOps, ComparisonOps):
+    # [CLASS DOC]
+    # Test class composed of the shared numeric-operator and comparison-operator mixins (inherits all their tests
+    # for the floating array); only adds scalar parametrization and an integer-array comparison.
     @pytest.mark.parametrize("other", [True, False, pd.NA, -1.0, 0.0, 1])
     def test_scalar(self, other, comparison_op, dtype):
+        # [FUNCTION DOC]
+        # Parametrized over booleans, NA, floats and an integer scalar. Delegates to the shared comparison mixin scalar test with the given operator fixture and dtype.
         ComparisonOps.test_scalar(self, other, comparison_op, dtype)
 
     def test_compare_with_integerarray(self, comparison_op):
+        # [FUNCTION DOC]
+        # Comparing a nullable integer array with a nullable float array equals comparing it with the float array cast to integer, in both operand orders.
         op = comparison_op
         a = pd.array([0, 1, None] * 3, dtype="Int64")
         b = pd.array([0] * 3 + [1] * 3 + [None] * 3, dtype="Float64")
@@ -29,6 +41,8 @@ class TestComparisonOps(NumericOps, ComparisonOps):
 
 
 def test_equals():
+    # [FUNCTION DOC]
+    # Two arrays with the same values but different float dtypes (64-bit and 32-bit) are not equal according to the equality method.
     # GH-30652
     # equals is generally tested in /tests/extension/base/methods, but this
     # specifically tests that two arrays of the same class but different dtype
@@ -39,6 +53,10 @@ def test_equals():
 
 
 def test_equals_nan_vs_na(using_nan_is_na):
+    # [FUNCTION DOC]
+    # Constructing arrays directly from data and mask. Arrays with a NaN in the data compare equal to themselves and
+    # copies; without NaN-is-NA the NaN differs from a masked entry, with it the constructor-level mask makes them equal.
+    # Entries that are masked do not take part in the equality.
     # GH#44382
 
     mask = np.zeros(3, dtype=bool)

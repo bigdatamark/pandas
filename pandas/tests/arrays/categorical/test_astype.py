@@ -1,3 +1,8 @@
+# [MODULE DOC]
+# Tests for converting Categorical arrays with astype to other dtypes (integer, float, object,
+# datetime, extension dtypes) and to other categorical dtypes. Uses the ordered fixture from the
+# surrounding conftest and the shared testing utilities. No import-time side effects.
+
 import numpy as np
 import pytest
 
@@ -20,9 +25,15 @@ import pandas._testing as tm
 
 
 class TestAstype:
+    # [CLASS DOC]
+    # Groups astype tests for Categorical and CategoricalIndex. Stateless.
     @pytest.mark.parametrize("cls", [Categorical, CategoricalIndex])
     @pytest.mark.parametrize("values", [[1, np.nan], [Timestamp("2000"), NaT]])
     def test_astype_nan_to_int(self, cls, values):
+        # [FUNCTION DOC]
+        # Parametrized over Categorical and CategoricalIndex with numeric or datetime values containing a
+        # missing value. Converting to integer must raise a value or type error whose message says it cannot
+        # cast or convert.
         # GH#28406
         obj = cls(values)
 
@@ -41,6 +52,9 @@ class TestAstype:
         ],
     )
     def test_astype_category_to_extension_dtype(self, expected):
+        # [FUNCTION DOC]
+        # Parametrized over extension arrays (tz-aware datetime, timedelta, period, interval, nullable
+        # integer). Round-trips array to category and back to the original dtype and expects an equal array.
         # GH#28668
         result = expected.astype("category").astype(expected.dtype)
 
@@ -60,11 +74,17 @@ class TestAstype:
         ],
     )
     def test_astype_to_datetime64(self, dtype, expected):
+        # [FUNCTION DOC]
+        # Parametrized over datetime64 nanosecond and tz-aware dtype. Casting a Categorical of date strings
+        # to the dtype gives a value equal to the expected datetime array.
         # GH#28448
         result = Categorical(["2015-01-01"]).astype(dtype)
         assert result == expected
 
     def test_astype_str_int_categories_to_nullable_int(self):
+        # [FUNCTION DOC]
+        # Categorical with string-of-integer categories cast to nullable Int64 gives an integer array equal
+        # to the underlying codes.
         # GH#39616
         dtype = CategoricalDtype([str(i) for i in range(5)])
         codes = np.random.default_rng(2).integers(5, size=20)
@@ -75,6 +95,9 @@ class TestAstype:
         tm.assert_extension_array_equal(res, expected)
 
     def test_astype_str_int_categories_to_nullable_float(self):
+        # [FUNCTION DOC]
+        # Categorical with string-of-half-integer categories cast to nullable Float64 gives the codes
+        # divided by two as nullable floats.
         # GH#39616
         dtype = CategoricalDtype([str(i / 2) for i in range(5)])
         codes = np.random.default_rng(2).integers(5, size=20)
@@ -85,6 +108,10 @@ class TestAstype:
         tm.assert_extension_array_equal(res, expected)
 
     def test_astype(self, ordered):
+        # [FUNCTION DOC]
+        # With ordered fixture: casting string categories to object returns the values array; to float
+        # raises a value error; numeric categories cast to object, int and float equal the corresponding
+        # numpy conversions.
         # string
         cat = Categorical(list("abbaaccc"), ordered=ordered)
         result = cat.astype(object)
@@ -111,6 +138,11 @@ class TestAstype:
 
     @pytest.mark.parametrize("dtype_ordered", [True, False])
     def test_astype_category(self, dtype_ordered, ordered):
+        # [FUNCTION DOC]
+        # Parametrized over the target dtype ordered flag and the ordered fixture. Casting to a categorical
+        # dtype without categories keeps the categories; with different categories the result equals directly
+        # constructed one and a Pandas4Warning about values not in the categories is expected on both. The
+        # string alias category, tested only in the unordered case, returns an equal object.
         # GH#10696/GH#18593
         data = list("abcaacbab")
         cat = Categorical(data, categories=list("bac"), ordered=ordered)
@@ -137,6 +169,9 @@ class TestAstype:
             tm.assert_categorical_equal(result, expected)
 
     def test_astype_category_copy_false_nocopy_codes(self):
+        # [FUNCTION DOC]
+        # Regression test: casting to category with copy disabled shares memory of the codes with the source,
+        # while with copy enabled it does not.
         # GH#62000
         cat = Categorical([3, 2, 4, 1])
         new = cat.astype("category", copy=False)
@@ -145,6 +180,8 @@ class TestAstype:
         assert not tm.shares_memory(new.codes, cat.codes)
 
     def test_astype_object_datetime_categories(self):
+        # [FUNCTION DOC]
+        # Categorical of datetimes with NaT cast to object gives an object array of Timestamps and NaT.
         # GH#40754
         cat = Categorical(to_datetime(["2021-03-27", NaT]))
         result = cat.astype(object)
@@ -152,6 +189,8 @@ class TestAstype:
         tm.assert_numpy_array_equal(result, expected)
 
     def test_astype_object_timestamp_categories(self):
+        # [FUNCTION DOC]
+        # Categorical of a single Timestamp cast to object gives an object array holding a Timestamp.
         # GH#18024
         cat = Categorical([Timestamp("2014-01-01")])
         result = cat.astype(object)
@@ -159,6 +198,9 @@ class TestAstype:
         tm.assert_numpy_array_equal(result, expected)
 
     def test_astype_category_readonly_mask_values(self):
+        # [FUNCTION DOC]
+        # Regression test: casting a nullable integer array whose mask is read-only to category must work and
+        # equal the same cast on a fresh writable array.
         # GH#53658
         arr = array([0, 1, 2], dtype="Int64")
         arr._mask.flags["WRITEABLE"] = False

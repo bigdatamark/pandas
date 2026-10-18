@@ -1,3 +1,11 @@
+# [MODULE DOC]
+# Tests for arithmetic on the nullable integer array (IntegerArray): add, multiply, subtract, true and floor
+# division, modulo, division by zero, powers (scalar, array and reversed), zero-dimensional numpy operands,
+# invalid operand errors, scalar coercion, cross-type arithmetic, reductions to float, unary operators, NA
+# multiplication on large Series and bitwise operators. Uses fixtures dtype, data (from the local conftest) and
+# using_nan_is_na, all_arithmetic_operators, any_int_ea_dtype, any_signed_int_ea_dtype, using_python_scalars
+# (shared conftest). No import-time side effects.
+
 import operator
 
 import numpy as np
@@ -18,6 +26,9 @@ from pandas.core.arrays import FloatingArray
     ids=["add", "mul"],
 )
 def test_add_mul(dtype, opname, exp):
+    # [FUNCTION DOC]
+    # Parametrized over addition and multiplication with expected values. Two five-element integer arrays with missing at different
+    # places give missing where either side is missing; checked for the operator function and the reflected operator function from the ops module.
     a = pd.array([0, 1, None, 3, 4], dtype=dtype)
     b = pd.array([1, 2, 3, None, 5], dtype=dtype)
 
@@ -34,6 +45,8 @@ def test_add_mul(dtype, opname, exp):
 
 
 def test_sub(dtype):
+    # [FUNCTION DOC]
+    # Array subtraction propagates missing from either side.
     a = pd.array([1, 2, 3, None, 5], dtype=dtype)
     b = pd.array([0, 1, None, 3, 4], dtype=dtype)
 
@@ -43,6 +56,8 @@ def test_sub(dtype):
 
 
 def test_div(dtype):
+    # [FUNCTION DOC]
+    # True division of integer arrays gives a nullable Float64 array; division by zero gives positive infinity; missing propagates.
     a = pd.array([1, 2, 3, None, 5], dtype=dtype)
     b = pd.array([0, 1, None, 3, 4], dtype=dtype)
 
@@ -53,6 +68,9 @@ def test_div(dtype):
 
 @pytest.mark.parametrize("zero, negative", [(0, False), (0.0, False), (-0.0, True)])
 def test_divide_by_zero(zero, negative, using_nan_is_na):
+    # [FUNCTION DOC]
+    # Parametrized over integer zero, float zero and negative float zero. Dividing an Int64 array containing zero, positive, negative and missing by
+    # zero gives NaN, positive infinity, negative infinity and missing (signs flipped for negative zero); in NaN-is-NA mode the zero-over-zero entry is also masked.
     # https://github.com/pandas-dev/pandas/issues/27398, GH#22793
     a = pd.array([0, 1, -1, None], dtype="Int64")
     result = a / zero
@@ -69,6 +87,8 @@ def test_divide_by_zero(zero, negative, using_nan_is_na):
 
 
 def test_floordiv(dtype):
+    # [FUNCTION DOC]
+    # Floor division of integer arrays gives zero for division by zero (unlike Series, which would give infinity), and missing propagates.
     a = pd.array([1, 2, 3, None, 5], dtype=dtype)
     b = pd.array([0, 1, None, 3, 4], dtype=dtype)
 
@@ -79,6 +99,8 @@ def test_floordiv(dtype):
 
 
 def test_floordiv_by_int_zero_no_mask(any_int_ea_dtype):
+    # [FUNCTION DOC]
+    # Using any_int_ea_dtype. Integer one floor-divided by a nullable Series containing zero gives infinity then one as Float64; the same on the plain numpy-typed Series gives the equal float64 result.
     # GH 48223: Aligns with non-masked floordiv
     # but differs from numpy
     # https://github.com/pandas-dev/pandas/issues/30188#issuecomment-564452740
@@ -94,6 +116,8 @@ def test_floordiv_by_int_zero_no_mask(any_int_ea_dtype):
 
 
 def test_mod(dtype):
+    # [FUNCTION DOC]
+    # Modulo of integer arrays gives zero for modulo by zero and propagates missing.
     a = pd.array([1, 2, 3, None, 5], dtype=dtype)
     b = pd.array([0, 1, None, 3, 4], dtype=dtype)
 
@@ -103,6 +127,9 @@ def test_mod(dtype):
 
 
 def test_pow_scalar(using_nan_is_na):
+    # [FUNCTION DOC]
+    # Powers on an Int64 array with a missing value: exponent zero gives one everywhere, exponent one is identity, exponent NA gives missing except base one,
+    # exponent NaN gives floats (masked in NaN-is-NA mode); reversed scalar-base cases for zero, one, NA and NaN bases.
     a = pd.array([-1, 0, 1, None, 2], dtype="Int64")
     result = a**0
     expected = pd.array([1, 1, 1, 1, 1], dtype="Int64")
@@ -153,6 +180,8 @@ def test_pow_scalar(using_nan_is_na):
 
 
 def test_pow_array():
+    # [FUNCTION DOC]
+    # Element-wise power of two integer arrays covering zero, one and missing in both positions; zero exponent and unit base give one.
     a = pd.array([0, 0, 0, 1, 1, 1, None, None, None])
     b = pd.array([0, 1, None, 0, 1, None, 0, 1, None])
     result = a**b
@@ -161,6 +190,8 @@ def test_pow_array():
 
 
 def test_rpow_one_to_na():
+    # [FUNCTION DOC]
+    # A numpy float array raised to an all-missing nullable integer array gives Float64 with one where the base is one and missing elsewhere.
     # https://github.com/pandas-dev/pandas/issues/22022
     # https://github.com/pandas-dev/pandas/issues/29997
     arr = pd.array([pd.NA, pd.NA], dtype="Int64")
@@ -171,6 +202,8 @@ def test_rpow_one_to_na():
 
 @pytest.mark.parametrize("other", [0, 0.5])
 def test_numpy_zero_dim_ndarray(other):
+    # [FUNCTION DOC]
+    # Parametrized over an integer and a float scalar. Adding a zero-dimensional numpy array gives the same result as adding the scalar.
     arr = pd.array([1, None, 2])
     result = arr + np.array(other)
     expected = arr + other
@@ -182,6 +215,10 @@ def test_numpy_zero_dim_ndarray(other):
 
 
 def test_error_invalid_values(data, all_arithmetic_operators):
+    # [FUNCTION DOC]
+    # Uses data and all_arithmetic_operators fixtures. Operating on a Series with a string or timestamp raises a type error (of external origin); with a string
+    # Series multiplication works by repeating the string, other operators raise; with a datetime Series it raises.
+    # KNOWN ISSUE: a commented-out context manager line and comment remain in the body and have no effect.
     op = all_arithmetic_operators
     s = pd.Series(data)
     ops = getattr(s, op)
@@ -218,6 +255,9 @@ def test_error_invalid_values(data, all_arithmetic_operators):
 
 
 def test_arith_coerce_scalar(data, all_arithmetic_operators, using_nan_is_na):
+    # [FUNCTION DOC]
+    # Using data and all_arithmetic_operators. Operating a Series of nullable integers with a float scalar equals the same operation on the float conversion
+    # cast to Float64, with missing restored (and for the reflected modulo, entries where the original value was zero are unmasked because they become real NaN).
     op = tm.get_op_from_name(all_arithmetic_operators)
     s = pd.Series(data)
     other = 0.01
@@ -238,6 +278,8 @@ def test_arith_coerce_scalar(data, all_arithmetic_operators, using_nan_is_na):
 
 @pytest.mark.parametrize("other", [1.0, np.array(1.0)])
 def test_arithmetic_conversion(all_arithmetic_operators, other):
+    # [FUNCTION DOC]
+    # Parametrized over a python float and a zero-dimensional float array. Any arithmetic operator with a float operand on an Int64 Series gives a Float64 result.
     # if we have a float operand we should have a float result
     # if that is equal to an integer
     op = tm.get_op_from_name(all_arithmetic_operators)
@@ -248,6 +290,8 @@ def test_arithmetic_conversion(all_arithmetic_operators, other):
 
 
 def test_cross_type_arithmetic():
+    # [FUNCTION DOC]
+    # Adding Int64, UInt8 and plain integer columns gives nullable Int64 with missing propagating; a comparison gives nullable boolean.
     df = pd.DataFrame(
         {
             "A": pd.Series([1, 2, pd.NA], dtype="Int64"),
@@ -271,6 +315,9 @@ def test_cross_type_arithmetic():
 
 @pytest.mark.parametrize("op", ["mean"])
 def test_reduce_to_float(op, using_python_scalars):
+    # [FUNCTION DOC]
+    # Parametrized over the mean. A mean of a nullable integer column is a float scalar (numpy float, or python float when enabled), and groupby mean keeps
+    # the nullable Float64 dtype for it.
     # some reduce ops always return float, even if the result
     # is a rounded number
     df = pd.DataFrame(
@@ -307,6 +354,8 @@ def test_reduce_to_float(op, using_python_scalars):
     ],
 )
 def test_unary_int_operators(any_signed_int_ea_dtype, source, neg_target, abs_target):
+    # [FUNCTION DOC]
+    # Using any_signed_int_ea_dtype. Negation and absolute value give expected values (missing preserved); unary plus returns an equal copy without shared memory.
     dtype = any_signed_int_ea_dtype
     arr = pd.array(source, dtype=dtype)
     neg_result, pos_result, abs_result = -arr, +arr, abs(arr)
@@ -320,6 +369,8 @@ def test_unary_int_operators(any_signed_int_ea_dtype, source, neg_target, abs_ta
 
 
 def test_values_multiplying_large_series_by_NA():
+    # [FUNCTION DOC]
+    # Multiplying NA by a Series of ten thousand and one zeros gives a Series of NA (regression test for large input).
     # GH#33701
 
     result = pd.NA * pd.Series(np.zeros(10001))
@@ -329,6 +380,9 @@ def test_values_multiplying_large_series_by_NA():
 
 
 def test_bitwise(dtype):
+    # [FUNCTION DOC]
+    # Or, and and exclusive-or between integer arrays give element-wise results with missing wherever either is missing; combining with a Float64 array raises a type
+    # error for unsupported operands.
     left = pd.array([1, None, 3, 4], dtype=dtype)
     right = pd.array([None, 3, 5, 4], dtype=dtype)
 

@@ -1,3 +1,8 @@
+# [MODULE DOC]
+# Tests for converting the nullable floating array with astype to numpy dtypes, other nullable dtypes,
+# string and object, and for copy semantics of data and mask. Uses the dtype fixture from the local conftest
+# and using_infer_string from the shared conftest. No import-time side effects.
+
 import numpy as np
 import pytest
 
@@ -6,6 +11,9 @@ import pandas._testing as tm
 
 
 def test_astype():
+    # [FUNCTION DOC]
+    # With missing values, casting to a 64-bit integer or bool raises a value error, while casting to float gives NaN for
+    # missing. Without missing values, casting to integer truncates and to bool is true for nonzero.
     # with missing values
     arr = pd.array([0.1, 0.2, None], dtype="Float64")
 
@@ -31,6 +39,8 @@ def test_astype():
 
 
 def test_astype_to_floating_array():
+    # [FUNCTION DOC]
+    # Casting to the same dtype (by name or instance) returns an equal array; casting to 32-bit nullable float keeps the missing value.
     # astype to FloatingArray
     arr = pd.array([0.0, 1.0, None], dtype="Float64")
 
@@ -44,6 +54,8 @@ def test_astype_to_floating_array():
 
 
 def test_astype_to_boolean_array():
+    # [FUNCTION DOC]
+    # Casting to nullable boolean (by name or instance) gives false, true and missing.
     # astype to BooleanArray
     arr = pd.array([0.0, 1.0, None], dtype="Float64")
 
@@ -55,6 +67,8 @@ def test_astype_to_boolean_array():
 
 
 def test_astype_to_integer_array():
+    # [FUNCTION DOC]
+    # Casting to nullable Int64 truncates fractional values and keeps missing.
     # astype to IntegerArray
     arr = pd.array([0.0, 1.5, None], dtype="Float64")
 
@@ -64,6 +78,8 @@ def test_astype_to_integer_array():
 
 
 def test_astype_str(using_infer_string):
+    # [FUNCTION DOC]
+    # Casting to the string type gives a string extension array with NaN as missing if string inference is on, else a numpy array of text with the marker for NA in place of missing.
     a = pd.array([0.1, 0.2, None], dtype="Float64")
 
     if using_infer_string:
@@ -79,6 +95,10 @@ def test_astype_str(using_infer_string):
 
 
 def test_astype_copy():
+    # [FUNCTION DOC]
+    # Copy true gives an independent array whose data and mask are not shared (mutations do not reach the original);
+    # copy false on the same dtype returns the same object sharing both; casting to a different dtype always copies, including the mask,
+    # even with copy disabled.
     arr = pd.array([0.1, 0.2, None], dtype="Float64")
     orig = pd.array([0.1, 0.2, None], dtype="Float64")
 
@@ -115,6 +135,8 @@ def test_astype_copy():
 
 
 def test_astype_object(dtype):
+    # [FUNCTION DOC]
+    # Casting to object gives python floats and the NA singleton for missing.
     arr = pd.array([1.0, pd.NA], dtype=dtype)
 
     result = arr.astype(object)
@@ -126,6 +148,8 @@ def test_astype_object(dtype):
 
 
 def test_Float64_conversion():
+    # [FUNCTION DOC]
+    # A Series of numeric strings with object dtype cast to the nullable Float64 dtype parses the strings.
     # GH#40729
     testseries = pd.Series(["1", "2", "3", "4"], dtype="object")
     result = testseries.astype(pd.Float64Dtype())

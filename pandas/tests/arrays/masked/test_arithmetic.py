@@ -1,3 +1,10 @@
+# [MODULE DOC]
+# Tests that arithmetic on masked (nullable) integer, float and boolean arrays is equivalent across scalar, numpy array,
+# extension array, Series and DataFrame operands, plus error handling (invalid objects, length mismatch), unary operators not leaking
+# masks, and divmod with the NA scalar. Uses the all_arithmetic_operators fixture from the shared conftest.
+# Import-time side effects: builds module-level lists of arrays (one per integer extension dtype, per float extension dtype, and one boolean
+# array, each with a trailing missing value) and a parallel list of scalars, which are used to parametrize the data fixture.
+
 from __future__ import annotations
 
 from typing import Any
@@ -23,6 +30,8 @@ scalars += [False]
     params=zip(arrays, scalars, strict=True), ids=[a.dtype.name for a in arrays]
 )
 def data(request):
+    # [FUNCTION DOC]
+    # HELPER: fixture parametrized over the module-level (array, scalar) pairs, one per masked dtype; ids are the dtype names.
     """Fixture returning parametrized (array, scalar) tuple.
 
     Used to test equivalence of scalars, numpy arrays with array ops, and the
@@ -32,11 +41,15 @@ def data(request):
 
 
 def check_skip(data, op_name):
+    # [FUNCTION DOC]
+    # HELPER: skips the current test when the data is boolean and the operator name contains the subtraction marker, because subtraction is not implemented for boolean arrays. Takes the array and operator name; returns nothing.
     if isinstance(data.dtype, pd.BooleanDtype) and "sub" in op_name:
         pytest.skip("subtract not implemented for boolean")
 
 
 def is_bool_not_implemented(data, op_name):
+    # [FUNCTION DOC]
+    # HELPER: returns true when the array has boolean kind and the operator (stripped of underscores and a leading reflected marker) is power, true division or floor division, matching which operations non-masked booleans reject. Takes the array and operator name.
     # match non-masked behavior
     return data.dtype.kind == "b" and op_name.strip("_").lstrip("r") in [
         "pow",
@@ -50,6 +63,9 @@ def is_bool_not_implemented(data, op_name):
 
 
 def test_array_scalar_like_equivalence(data, all_arithmetic_operators):
+    # [FUNCTION DOC]
+    # Using data and all_arithmetic_operators. Operating on the array with a scalar (python scalar and dtype-typed scalar) equals operating with a same-dtype array filled with that scalar;
+    # for boolean arrays with unsupported operators both raise a not-implemented error.
     data, scalar = data
     op = tm.get_op_from_name(all_arithmetic_operators)
     check_skip(data, all_arithmetic_operators)
@@ -71,6 +87,8 @@ def test_array_scalar_like_equivalence(data, all_arithmetic_operators):
 
 
 def test_array_NA(data, all_arithmetic_operators):
+    # [FUNCTION DOC]
+    # Operating with the NA scalar equals operating with an all-NA array of the same dtype, and does not modify the operand's mask in place (regression); unsupported boolean operators raise.
     data, _ = data
     op = tm.get_op_from_name(all_arithmetic_operators)
     check_skip(data, all_arithmetic_operators)
@@ -99,6 +117,8 @@ def test_array_NA(data, all_arithmetic_operators):
 
 
 def test_numpy_array_equivalence(data, all_arithmetic_operators):
+    # [FUNCTION DOC]
+    # Operating with a numpy array equals operating with the equivalent extension array; unsupported boolean operators raise a not-implemented error for both.
     data, scalar = data
     op = tm.get_op_from_name(all_arithmetic_operators)
     check_skip(data, all_arithmetic_operators)
@@ -124,6 +144,8 @@ def test_numpy_array_equivalence(data, all_arithmetic_operators):
 
 
 def test_frame(data, all_arithmetic_operators):
+    # [FUNCTION DOC]
+    # A one-column DataFrame operated with a scalar equals a frame built from the array operated with that scalar; unsupported boolean operators raise.
     data, scalar = data
     op = tm.get_op_from_name(all_arithmetic_operators)
     check_skip(data, all_arithmetic_operators)
@@ -145,6 +167,8 @@ def test_frame(data, all_arithmetic_operators):
 
 
 def test_series(data, all_arithmetic_operators):
+    # [FUNCTION DOC]
+    # A Series operated with a scalar, numpy array, extension array or Series equals the Series built from the array operation; unsupported boolean operators raise.
     data, scalar = data
     op = tm.get_op_from_name(all_arithmetic_operators)
     check_skip(data, all_arithmetic_operators)
@@ -175,6 +199,8 @@ def test_series(data, all_arithmetic_operators):
 
 
 def test_error_invalid_object(data, all_arithmetic_operators):
+    # [FUNCTION DOC]
+    # A DataFrame operand makes the array operator return the not-implemented marker; a two-dimensional numpy array raises a not-implemented error about one-dimensional structures.
     data, _ = data
 
     op = all_arithmetic_operators
@@ -190,6 +216,9 @@ def test_error_invalid_object(data, all_arithmetic_operators):
 
 
 def test_error_len_mismatch(data, all_arithmetic_operators):
+    # [FUNCTION DOC]
+    # A list or numpy array shorter than the data raises: a value error about broadcasting, a type error for boolean subtraction, or a not-implemented error for unsupported boolean operators;
+    # checked on the array and on a Series.
     # operating with a list-like with non-matching length raises
     data, scalar = data
     op = tm.get_op_from_name(all_arithmetic_operators)
@@ -227,6 +256,9 @@ def test_error_len_mismatch(data, all_arithmetic_operators):
 
 @pytest.mark.parametrize("op", ["__neg__", "__abs__", "__invert__"])
 def test_unary_op_does_not_propagate_mask(data, op):
+    # [FUNCTION DOC]
+    # Parametrized over negation, absolute value and inversion. The result of a unary operator on a Series does not share its mask with the original (changing the original does not change
+    # the result); inversion of floats raises a type error, consistent with numpy.
     # https://github.com/pandas-dev/pandas/issues/39943
     data, _ = data
     ser = pd.Series(data)
@@ -252,6 +284,8 @@ def test_unary_op_does_not_propagate_mask(data, op):
 
 @pytest.mark.parametrize("dtype", ["Int64", "Int32", "Float32", "Float64"])
 def test_divmod_pdna(dtype):
+    # [FUNCTION DOC]
+    # Parametrized over four dtypes. Divmod with the NA scalar on either side gives a pair of all-NA Series equal to floor division and modulo with NA.
     # GH#62196
     ser = pd.Series([1, 2, 3], dtype=dtype)
     res = divmod(pd.NA, ser)

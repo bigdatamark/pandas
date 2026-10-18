@@ -1,3 +1,9 @@
+# [MODULE DOC]
+# Tests for indexing Categorical arrays: getitem, setitem (with unordered and ordered category
+# checks), boolean masks, membership tests, get_indexer_non_unique with categorical keys, where on
+# categorical Series and a Series scalar access. Also defines a monkeypatching fixture. Uses the shared
+# testing utilities and common helpers. No import-time side effects.
+
 import math
 
 import numpy as np
@@ -21,7 +27,11 @@ import pandas.core.common as com
 
 
 class TestCategoricalIndexingWithFactor:
+    # [CLASS DOC]
+    # Groups getitem and setitem tests, named for the historical Factor type. Stateless.
     def test_getitem(self):
+        # [FUNCTION DOC]
+        # Scalar and negative positions return the value; list and boolean-style indexing returns a Categorical with matching codes.
         factor = Categorical(["a", "b", "b", "a", "a", "c", "c", "c"], ordered=True)
         assert factor[0] == "a"
         assert factor[-1] == "c"
@@ -33,6 +43,8 @@ class TestCategoricalIndexingWithFactor:
         tm.assert_numpy_array_equal(subf._codes, np.array([2, 2, 2], dtype=np.int8))
 
     def test_setitem(self):
+        # [FUNCTION DOC]
+        # Setting by position (positive and negative) and by boolean mask assigns the value in place on a copy.
         factor = Categorical(["a", "b", "b", "a", "a", "c", "c", "c"], ordered=True)
         # int/positional
         c = factor.copy()
@@ -53,6 +65,9 @@ class TestCategoricalIndexingWithFactor:
 
     @pytest.mark.parametrize("categories", [None, ["b", "a"]])
     def test_setitem_same_but_unordered(self, categories):
+        # [FUNCTION DOC]
+        # Parametrized over categories (none or reversed). Assigning part of another Categorical with the same set of
+        # categories (any order) through a mask works and assigns by value.
         # GH-24142
         other = Categorical(["b", "a"], categories=categories)
         target = Categorical(["a", "b"], categories=["a", "b"])
@@ -71,6 +86,9 @@ class TestCategoricalIndexingWithFactor:
         ],
     )
     def test_setitem_different_unordered_raises(self, other):
+        # [FUNCTION DOC]
+        # Parametrized over Categoricals with different categories. Assigning from them raises a type error stating the
+        # categories must be identical.
         # GH-24142
         target = Categorical(["a", "b"], categories=["a", "b"])
         mask = np.array([True, False])
@@ -87,6 +105,9 @@ class TestCategoricalIndexingWithFactor:
         ],
     )
     def test_setitem_same_ordered_raises(self, other):
+        # [FUNCTION DOC]
+        # For an ordered target, assigning from unordered or differently ordered Categoricals raises a type error
+        # because categories are not identical.
         # Gh-24142
         target = Categorical(["a", "b"], categories=["a", "b"], ordered=True)
         mask = np.array([True, False])
@@ -95,6 +116,8 @@ class TestCategoricalIndexingWithFactor:
             target[mask] = other[mask]
 
     def test_setitem_tuple(self):
+        # [FUNCTION DOC]
+        # Assigning a tuple element to another position must not raise and gives the tuple value.
         # GH#20439
         cat = Categorical([(0, 1), (0, 2), (0, 1)])
 
@@ -103,6 +126,9 @@ class TestCategoricalIndexingWithFactor:
         assert cat[1] == (0, 1)
 
     def test_setitem_listlike(self):
+        # [FUNCTION DOC]
+        # Setting with a 64-bit integer array indexer on a large 8-bit-coded Categorical stores the code of the newly added
+        # category (code five).
         # GH#9469
         # properly coerce the input indexers
 
@@ -119,7 +145,11 @@ class TestCategoricalIndexingWithFactor:
 
 
 class TestCategoricalIndexing:
+    # [CLASS DOC]
+    # Groups indexing, where, indexer and period tests for Categorical. Stateless.
     def test_getitem_slice(self):
+        # [FUNCTION DOC]
+        # Integer indexing returns the scalar; slicing returns a Categorical that keeps all categories.
         cat = Categorical(["a", "b", "c", "d", "a", "b", "c"])
         sliced = cat[3]
         assert sliced == "d"
@@ -129,6 +159,8 @@ class TestCategoricalIndexing:
         tm.assert_categorical_equal(sliced, expected)
 
     def test_getitem_listlike(self):
+        # [FUNCTION DOC]
+        # Indexing with a 64-bit integer array gives the same codes as indexing the codes array directly.
         # GH 9469
         # properly coerce the input indexers
 
@@ -140,6 +172,9 @@ class TestCategoricalIndexing:
         tm.assert_numpy_array_equal(result, expected)
 
     def test_periodindex(self):
+        # [FUNCTION DOC]
+        # Categorical from a period index: categories are sorted unique periods, codes are positions, the string form
+        # works, and ordered works for unsorted input.
         idx1 = PeriodIndex(
             ["2014-01", "2014-01", "2014-02", "2014-02", "2014-03", "2014-03"],
             freq="M",
@@ -197,6 +232,10 @@ class TestCategoricalIndexing:
         [None, np.nan, NaT, NA, math.nan, "NaT", "nat", "NAT", "nan", "NaN", "NAN"],
     )
     def test_periodindex_on_null_types(self, null_val):
+        # [FUNCTION DOC]
+        # Parametrized over many null-like values (None, NaN, NaT, NA, strings of NaT/nan variants). A daily period index
+        # with a null becomes NaT in that position.
+        # KNOWN ISSUE: this tests the period index constructor rather than Categorical indexing, so it looks misplaced in this file.
         # GH 46673
         result = PeriodIndex(["2022-04-06", "2022-04-07", null_val], freq="D")
         expected = PeriodIndex(["2022-04-06", "2022-04-07", "NaT"], dtype="period[D]")
@@ -205,6 +244,10 @@ class TestCategoricalIndexing:
 
     @pytest.mark.parametrize("new_categories", [[1, 2, 3, 4], [1, 2]])
     def test_categories_assignments_wrong_length_raises(self, new_categories):
+        # [FUNCTION DOC]
+        # Parametrized over too-long and too-short lists. Expects a value error from renaming categories with the
+        # wrong number of items.
+        # KNOWN ISSUE: the name mentions category assignment but the body calls the rename method; it duplicates the test of the same behavior in the api tests.
         cat = Categorical(["a", "b", "c", "a"])
         msg = (
             "new categories need to have the same number of items "
@@ -222,6 +265,11 @@ class TestCategoricalIndexing:
     @pytest.mark.parametrize("key_class", [Categorical, CategoricalIndex])
     @pytest.mark.parametrize("dtype", [None, "category", "key"])
     def test_get_indexer_non_unique(self, idx_values, key_values, key_class, dtype):
+        # [FUNCTION DOC]
+        # Parametrized over index values (sorted/unsorted, unique/not), key values (present/missing/duplicate), key class
+        # (Categorical or categorical index) and index dtype (none, category, or the key dtype). Asserts the
+        # non-unique indexer and missing positions are the same when keys are categorical as when they are plain
+        # lists, and that the unique-index indexer agrees.
         # GH 21448
         key = key_class(key_values, categories=range(1, 6))
 
@@ -241,6 +289,8 @@ class TestCategoricalIndexing:
         tm.assert_numpy_array_equal(res_unique, exp_unique)
 
     def test_where_unobserved_nan(self):
+        # [FUNCTION DOC]
+        # Series where on categorical data with false entries yields missing values while keeping all categories, also when all are masked.
         ser = Series(Categorical(["a", "b"]))
         result = ser.where([True, False])
         expected = Series(Categorical(["a", None], categories=["a", "b"]))
@@ -253,12 +303,16 @@ class TestCategoricalIndexing:
         tm.assert_series_equal(result, expected)
 
     def test_where_unobserved_categories(self):
+        # [FUNCTION DOC]
+        # Where with a scalar replacement from the existing (unobserved) categories keeps the dtype and categories.
         ser = Series(Categorical(["a", "b", "c"], categories=["d", "c", "b", "a"]))
         result = ser.where([True, True, False], other="b")
         expected = Series(Categorical(["a", "b", "b"], categories=ser.cat.categories))
         tm.assert_series_equal(result, expected)
 
     def test_where_other_categorical(self):
+        # [FUNCTION DOC]
+        # Where with another Categorical with the same categories in a different order takes its values aligned to the original dtype.
         ser = Series(Categorical(["a", "b", "c"], categories=["d", "c", "b", "a"]))
         other = Categorical(["b", "c", "a"], categories=["a", "c", "b", "d"])
         result = ser.where([True, False, True], other)
@@ -266,12 +320,16 @@ class TestCategoricalIndexing:
         tm.assert_series_equal(result, expected)
 
     def test_where_new_category_raises(self):
+        # [FUNCTION DOC]
+        # Where with a scalar that is not an existing category raises a type error about setting a new category.
         ser = Series(Categorical(["a", "b", "c"]))
         msg = "Cannot setitem on a Categorical with a new category"
         with pytest.raises(TypeError, match=msg):
             ser.where([True, False, True], "d")
 
     def test_where_ordered_differs_rasies(self):
+        # [FUNCTION DOC]
+        # Where with an ordered Categorical whose category order differs raises a type error about non-identical categories.
         ser = Series(
             Categorical(["a", "b", "c"], categories=["d", "c", "b", "a"], ordered=True)
         )
@@ -283,7 +341,12 @@ class TestCategoricalIndexing:
 
 
 class TestContains:
+    # [CLASS DOC]
+    # Groups membership tests for Categorical. Stateless.
     def test_contains(self):
+        # [FUNCTION DOC]
+        # Membership works on category values only (not codes), missing value only when present, and an unhashable
+        # item raises a type error.
         # GH#21508
         cat = Categorical(list("aabbca"), categories=list("cab"))
 
@@ -313,12 +376,17 @@ class TestContains:
         ids=str,
     )
     def test_contains_interval(self, item, expected):
+        # [FUNCTION DOC]
+        # Parametrized over intervals, numbers, strings, timestamps and timedeltas. Membership in a Categorical of intervals
+        # is true for an exact interval or a number inside an interval, false otherwise, always returning a real boolean.
         # GH#23705
         cat = Categorical(IntervalIndex.from_breaks(range(3)))
         result = item in cat
         assert result is expected
 
     def test_contains_list(self):
+        # [FUNCTION DOC]
+        # A string is not contained; a list item raises a type error for unhashable type.
         # GH#21729
         cat = Categorical([1, 2, 3])
 
@@ -333,6 +401,9 @@ class TestContains:
 
 @pytest.mark.parametrize("index", [True, False])
 def test_mask_with_boolean(index):
+    # [FUNCTION DOC]
+    # Parametrized over Categorical and categorical index. A boolean-valued categorical is recognized as a boolean
+    # indexer and selects the same rows as its object conversion.
     ser = Series(range(3))
     idx = Categorical([True, False, True])
     if index:
@@ -346,6 +417,8 @@ def test_mask_with_boolean(index):
 
 @pytest.mark.parametrize("index", [True, False])
 def test_mask_with_boolean_na_treated_as_false(index):
+    # [FUNCTION DOC]
+    # A boolean categorical with a missing value used as an indexer treats the missing value as false.
     # https://github.com/pandas-dev/pandas/issues/31503
     ser = Series(range(3))
     idx = Categorical([True, False, None])
@@ -360,6 +433,10 @@ def test_mask_with_boolean_na_treated_as_false(index):
 
 @pytest.fixture
 def non_coercible_categorical(monkeypatch):
+    # [FUNCTION DOC]
+    # HELPER: pytest fixture (support code for tests). While active, the array conversion method of Categorical is replaced to raise a value error, ensuring
+    # no implicit coercion to numpy; restored at teardown by the monkeypatch context.
+    # KNOWN ISSUE: the fixture is not used by any test in this file; it appears to be unused here.
     """
     Monkeypatch Categorical.__array__ to ensure no implicit conversion.
 
@@ -372,6 +449,9 @@ def non_coercible_categorical(monkeypatch):
     # TODO(Categorical): identify other places where this may be
     # useful and move to a conftest.py
     def array(self, dtype=None):
+        # [FUNCTION DOC]
+        # HELPER: replacement array-conversion method installed by the non_coercible_categorical fixture; takes an
+        # optional dtype and always raises a value error saying it cannot be converted.
         raise ValueError("I cannot be converted.")
 
     with monkeypatch.context() as m:
@@ -380,6 +460,8 @@ def non_coercible_categorical(monkeypatch):
 
 
 def test_series_at():
+    # [FUNCTION DOC]
+    # Label-based scalar access on a Series of categorical data returns the plain value.
     arr = Categorical(["a", "b", "c"])
     ser = Series(arr)
     result = ser.at[0]

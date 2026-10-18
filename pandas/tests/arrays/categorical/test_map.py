@@ -1,3 +1,8 @@
+# [MODULE DOC]
+# Tests for the map method of Categorical, covering mapping through a callable, dictionary or Series,
+# the na_action option, and whether the result is categorical or a plain index. Uses the ordered and
+# na_action fixtures from the shared conftest. No import-time side effects.
+
 import numpy as np
 import pytest
 
@@ -19,6 +24,10 @@ import pandas._testing as tm
     ids=["string", "interval"],
 )
 def test_map_str(data, categories, ordered, na_action):
+    # [FUNCTION DOC]
+    # Parametrized over string data and interval data, plus the ordered and na_action fixtures. Mapping with
+    # the string conversion function must give a Categorical whose categories are the stringified categories
+    # and which keeps the ordered flag.
     # GH 31202 - override base class since we want to maintain categorical/ordered
     cat = Categorical(data, categories=categories, ordered=ordered)
     result = cat.map(str, na_action=na_action)
@@ -29,6 +38,11 @@ def test_map_str(data, categories, ordered, na_action):
 
 
 def test_map(na_action):
+    # [FUNCTION DOC]
+    # Mapping with a function keeps categorical type and order when the result is one-to-one (lower-casing,
+    # ordered or not); a constant-returning function gives an integer index instead; a function, Series or
+    # dict that changes category dtype gives a Categorical with the new categories in order of first
+    # mapping. Runs for each na_action fixture value.
     cat = Categorical(list("ABABC"), categories=list("CBA"), ordered=True)
     result = cat.map(lambda x: x.lower(), na_action=na_action)
     exp = Categorical(list("ababc"), categories=list("cba"), ordered=True)
@@ -48,6 +62,8 @@ def test_map(na_action):
     cat = Categorical(list("ABABC"), categories=list("BAC"), ordered=False)
 
     def f(x):
+        # [FUNCTION DOC]
+        # HELPER: mapping function for the test; looks up a letter in a fixed dictionary of numbers and returns missing when absent.
         return {"A": 10, "B": 20, "C": 30}.get(x)
 
     result = cat.map(f, na_action=na_action)
@@ -82,6 +98,11 @@ def test_map(na_action):
     ),
 )
 def test_map_with_nan_none(data, f, expected):  # GH 24241
+    # [FUNCTION DOC]
+    # Parametrized over data containing NaN with unique or distinct categories, and mapper (isna, dict, Series).
+    # With the missing-value action unset, the mapper is applied to missing values too; result is a Categorical
+    # when the mapping is one-to-one on categories and an index otherwise. Compares with the matching
+    # assertion helper.
     values = Categorical(data)
     result = values.map(f, na_action=None)
     if isinstance(expected, Categorical):
@@ -110,6 +131,9 @@ def test_map_with_nan_none(data, f, expected):  # GH 24241
     ),
 )
 def test_map_with_nan_ignore(data, f, expected):  # GH 24241
+    # [FUNCTION DOC]
+    # Same cases as the none variant but with the ignore action: missing values are left untouched. The result
+    # is a Categorical when the second value equals one (categories collapse) else an index.
     values = Categorical(data)
     result = values.map(f, na_action="ignore")
     if data[1] == 1:
@@ -119,6 +143,9 @@ def test_map_with_nan_ignore(data, f, expected):  # GH 24241
 
 
 def test_map_with_dict_or_series(na_action):
+    # [FUNCTION DOC]
+    # Mapping with a Series or a dictionary that lacks the last original key yields the mapped values in a
+    # Categorical with the expected categories (order may differ); runs for each na_action fixture value.
     orig_values = ["a", "B", 1, "a"]
     new_values = ["one", 2, 3.0, "one"]
     cat = Categorical(orig_values)

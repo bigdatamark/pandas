@@ -1,3 +1,10 @@
+# [MODULE DOC]
+# Tests for the public and semi-private API of the Categorical extension array: ordering flags,
+# renaming, reordering, adding, removing and setting categories, describe, code immutability and the
+# internal code recoding helper.
+# Imports the categorical recoding helper from the core categorical array module and uses the shared
+# testing utilities. The ordered fixture comes from the surrounding conftest. No import-time side effects.
+
 import re
 
 import numpy as np
@@ -18,7 +25,14 @@ from pandas.core.arrays.categorical import recode_for_categories
 
 
 class TestCategoricalAPI:
+    # [CLASS DOC]
+    # Groups tests of the category-manipulation methods of Categorical (ordered flags, rename, reorder,
+    # add, set and remove categories). Stateless; each test builds its own arrays.
     def test_ordered_api(self):
+        # [FUNCTION DOC]
+        # Verifies that the ordered argument of the constructor controls the ordered attribute, and that
+        # categories are sorted when not given and kept in the given order when given. Four combinations of
+        # explicit categories and ordered flag are checked through index and attribute comparisons.
         # GH 9347
         cat1 = Categorical(list("acb"), ordered=False)
         tm.assert_index_equal(cat1.categories, Index(["a", "b", "c"]))
@@ -37,6 +51,10 @@ class TestCategoricalAPI:
         assert cat4.ordered
 
     def test_set_ordered(self):
+        # [FUNCTION DOC]
+        # Checks conversion between ordered and unordered via as_ordered, as_unordered and set_ordered, each
+        # returning a new object with the matching flag. Also checks that assigning the ordered attribute
+        # directly raises an attribute error because the property has no setter.
         cat = Categorical(["a", "b", "c", "a"], ordered=True)
         cat2 = cat.as_unordered()
         assert not cat2.ordered
@@ -54,6 +72,10 @@ class TestCategoricalAPI:
             cat.ordered = False
 
     def test_rename_categories(self):
+        # [FUNCTION DOC]
+        # Verifies renaming categories from a list returns a new Categorical with the new categories and
+        # leaves the original values and categories unchanged. Also verifies that a callable mapping applied
+        # to each category is accepted (upper-casing strings).
         cat = Categorical(["a", "b", "c", "a"])
 
         # inplace=False: the old one must not be changed
@@ -76,6 +98,9 @@ class TestCategoricalAPI:
 
     @pytest.mark.parametrize("new_categories", [[1, 2, 3, 4], [1, 2]])
     def test_rename_categories_wrong_length_raises(self, new_categories):
+        # [FUNCTION DOC]
+        # Parametrized over a list that is too long and one that is too short. Expects a value error saying
+        # the new categories must have the same number of items as the old ones.
         cat = Categorical(["a", "b", "c", "a"])
         msg = (
             "new categories need to have the same number of items as the "
@@ -85,6 +110,9 @@ class TestCategoricalAPI:
             cat.rename_categories(new_categories)
 
     def test_rename_categories_series(self):
+        # [FUNCTION DOC]
+        # Checks that a Series, used as a mapping from old to new categories through its index, is accepted
+        # by rename_categories and produces the mapped categories.
         # https://github.com/pandas-dev/pandas/issues/17981
         c = Categorical(["a", "b"])
         result = c.rename_categories(Series([0, 1], index=["a", "b"]))
@@ -92,6 +120,10 @@ class TestCategoricalAPI:
         tm.assert_categorical_equal(result, expected)
 
     def test_rename_categories_dict(self):
+        # [FUNCTION DOC]
+        # Checks dictionary renaming: a full mapping; a partial mapping keeps unmapped categories as they are;
+        # a mapping with extra keys ignores the extras; a mapping with no matching keys leaves categories
+        # unchanged. Compares the resulting categories index only.
         # GH 17336
         cat = Categorical(["a", "b", "c", "d"])
         res = cat.rename_categories({"a": 4, "b": 3, "c": 2, "d": 1})
@@ -119,6 +151,9 @@ class TestCategoricalAPI:
         tm.assert_index_equal(res.categories, expected)
 
     def test_reorder_categories(self):
+        # [FUNCTION DOC]
+        # Reorders categories of an ordered Categorical to the reverse order; checks the original is unchanged
+        # and the result equals a Categorical constructed with that category order.
         cat = Categorical(["a", "b", "c", "a"], ordered=True)
         old = cat.copy()
         new = Categorical(
@@ -140,12 +175,20 @@ class TestCategoricalAPI:
         ],
     )
     def test_reorder_categories_raises(self, new_categories):
+        # [FUNCTION DOC]
+        # Parametrized over new category lists that are a strict subset, partially different, or a superset
+        # of the old categories. Expects a value error because the new categories must contain exactly the
+        # same items as the old ones.
         cat = Categorical(["a", "b", "c", "a"], ordered=True)
         msg = "items in new_categories are not the same as in old categories"
         with pytest.raises(ValueError, match=msg):
             cat.reorder_categories(new_categories)
 
     def test_add_categories(self):
+        # [FUNCTION DOC]
+        # Adds a category given as a scalar and as a list; original unchanged and result has the new category
+        # appended at the end. Also checks that Series, array, Index and list inputs of several new
+        # categories are all accepted and give equal results.
         cat = Categorical(["a", "b", "c", "a"], ordered=True)
         old = cat.copy()
         new = Categorical(
@@ -174,6 +217,9 @@ class TestCategoricalAPI:
         tm.assert_categorical_equal(res, expected)
 
     def test_add_categories_existing_raises(self):
+        # [FUNCTION DOC]
+        # Adding a category that already exists must raise a value error stating that new categories must
+        # not include old categories, naming the offending one.
         # new is in old categories
         cat = Categorical(["a", "b", "c", "d"], ordered=True)
         msg = re.escape("new categories must not include old categories: {'d'}")
@@ -181,6 +227,10 @@ class TestCategoricalAPI:
             cat.add_categories(["d"])
 
     def test_add_categories_losing_dtype_information(self):
+        # [FUNCTION DOC]
+        # Regression test: adding categories supplied as nullable integer or string dtype Series must keep
+        # that dtype in the resulting categories, so the result equals a Categorical built with the extended
+        # categories of the same dtype.
         # GH#48812
         cat = Categorical(Series([1, 2], dtype="Int64"))
         ser = Series([4], dtype="Int64")
@@ -200,6 +250,11 @@ class TestCategoricalAPI:
         tm.assert_categorical_equal(result, expected)
 
     def test_set_categories(self):
+        # [FUNCTION DOC]
+        # Broad test of set_categories: reassigning categories in a different order leaves values intact
+        # and original untouched; dropping categories turns their values into missing (code minus one);
+        # adding categories works; inspects internal integer codes (int8) after recoding; checks min and max
+        # respect the new order; checks the ordered argument is applied when given and preserved otherwise.
         cat = Categorical(["a", "b", "c", "a"], ordered=True)
         exp_categories = Index(["c", "b", "a"])
         exp_values = np.array(["a", "b", "c", "a"], dtype=np.object_)
@@ -291,6 +346,11 @@ class TestCategoricalAPI:
         ],
     )
     def test_set_categories_many(self, values, categories, new_categories, ordered):
+        # [FUNCTION DOC]
+        # Parametrized over (values, categories, new_categories) covering same, reordered, subset and
+        # disjoint categories, and the ordered fixture. Builds expected Categoricals directly (expecting the
+        # Pandas4Warning about values not in the dtype categories when applicable) and checks that
+        # set_categories with the ordered flag produces an equal Categorical.
         msg = "Constructing a Categorical with a dtype and values containing"
 
         warn1 = Pandas4Warning if set(values).difference(categories) else None
@@ -305,6 +365,9 @@ class TestCategoricalAPI:
         tm.assert_categorical_equal(result, expected)
 
     def test_set_categories_rename_less(self):
+        # [FUNCTION DOC]
+        # With rename enabled, setting fewer categories than exist renames the first ones and the leftover
+        # value becomes missing.
         # GH 24675
         cat = Categorical(["A", "B"])
         result = cat.set_categories(["A"], rename=True)
@@ -312,6 +375,9 @@ class TestCategoricalAPI:
         tm.assert_categorical_equal(result, expected)
 
     def test_set_categories_private(self):
+        # [FUNCTION DOC]
+        # Tests the private categories setter, with and without the fastpath flag: categories are replaced
+        # by the new list and the codes are kept, so values change accordingly (values mapped by position).
         cat = Categorical(["a", "b", "c"], categories=["a", "b", "c", "d"])
         cat._set_categories(["a", "c", "d", "e"])
         expected = Categorical(["a", "c", "d"], categories=list("acde"))
@@ -324,6 +390,9 @@ class TestCategoricalAPI:
         tm.assert_categorical_equal(cat, expected)
 
     def test_remove_categories(self):
+        # [FUNCTION DOC]
+        # Removes a category given as scalar or list; original unchanged and values in the removed category
+        # become missing, with remaining categories and ordered flag kept.
         cat = Categorical(["a", "b", "c", "a"], ordered=True)
         old = cat.copy()
         new = Categorical(["a", "b", np.nan, "a"], categories=["a", "b"], ordered=True)
@@ -338,6 +407,9 @@ class TestCategoricalAPI:
 
     @pytest.mark.parametrize("removals", [["c"], ["c", np.nan], "c", ["c", "c"]])
     def test_remove_categories_raises(self, removals):
+        # [FUNCTION DOC]
+        # Parametrized over removals that include a category not present (also a missing value, a bare
+        # scalar, or duplicates). Expects a value error that removals must all be in the old categories.
         cat = Categorical(["a", "b", "a"])
         message = re.escape("removals must all be in old categories: {'c'}")
 
@@ -345,6 +417,11 @@ class TestCategoricalAPI:
             cat.remove_categories(removals)
 
     def test_remove_unused_categories(self):
+        # [FUNCTION DOC]
+        # Checks removal of categories with no values: the result drops unused categories while the original
+        # is unchanged; handles missing values (codes stay minus one and remaining codes are renumbered);
+        # handles unordered categories keeping their order; and checks a large random object array round-trips
+        # to the same list of values.
         c = Categorical(["a", "b", "c", "d", "a"], categories=["a", "b", "c", "d", "e"])
         exp_categories_all = Index(["a", "b", "c", "d", "e"])
         exp_categories_dropped = Index(["a", "b", "c", "d"])
@@ -381,7 +458,14 @@ class TestCategoricalAPI:
 
 
 class TestCategoricalAPIWithFactor:
+    # [CLASS DOC]
+    # Tests of describe on Categorical, named for the historical Factor type. Stateless.
     def test_describe(self):
+        # [FUNCTION DOC]
+        # Checks describe returns a frame indexed by a categorical index named categories with count and
+        # frequency columns: for strings, with an unused category (count zero), for integers, and with missing
+        # values (reported as an additional row after the categories with counts and frequencies including
+        # missing).
         factor = Categorical(["a", "b", "b", "a", "a", "c", "c", "c"], ordered=True)
         # string type
         desc = factor.describe()
@@ -432,7 +516,13 @@ class TestCategoricalAPIWithFactor:
 
 
 class TestPrivateCategoricalAPI:
+    # [CLASS DOC]
+    # Tests of private behavior: read-only codes and the recode helper. Stateless.
     def test_codes_immutable(self):
+        # [FUNCTION DOC]
+        # Verifies the codes attribute is read only: assignment raises an attribute error, and writing into
+        # the returned array raises a value error about a read-only destination. Setting a value on the
+        # Categorical or writing into the private codes array still works and is reflected in the codes.
         # Codes should be read only
         c = Categorical(["a", "b", "c", "a", np.nan])
         exp = np.array([0, 1, 2, 0, -1], dtype="int8")
@@ -476,6 +566,10 @@ class TestPrivateCategoricalAPI:
         ],
     )
     def test_recode_to_categories(self, codes, old, new, expected):
+        # [FUNCTION DOC]
+        # Parametrized over (codes, old, new, expected). Calls the recoding helper with copy enabled and checks
+        # the output integer codes map each old category to its position in the new categories, using minus
+        # one for missing or removed categories. Codes and expected are 8-bit integers.
         codes = np.asanyarray(codes, dtype=np.int8)
         expected = np.asanyarray(expected, dtype=np.int8)
         old = Index(old)
@@ -484,6 +578,9 @@ class TestPrivateCategoricalAPI:
         tm.assert_numpy_array_equal(result, expected)
 
     def test_recode_to_categories_large(self):
+        # [FUNCTION DOC]
+        # Recoding a 1000-element code array where the new categories are the old ones reversed should give
+        # the reversed positions, as 16-bit integers (verifies dtype widening beyond the small-int range).
         N = 1000
         codes = np.arange(N)
         old = Index(codes)

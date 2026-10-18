@@ -1,3 +1,8 @@
+# [MODULE DOC]
+# Tests for astype on SparseArray: conversion between sparse dtypes (float, integer, bool, datetime, string, object), conversion to dense numpy dtypes, errors
+# for NaN to integer, copy semantics and datetime-to-integer parity with dense arrays. Uses the any_real_numpy_dtype fixture from the shared conftest. No
+# import-time side effects.
+
 import numpy as np
 import pytest
 
@@ -12,7 +17,11 @@ from pandas.core.arrays.sparse import SparseArray
 
 
 class TestAstype:
+    # [CLASS DOC]
+    # Groups astype tests for SparseArray. Stateless.
     def test_astype(self):
+        # [FUNCTION DOC]
+        # Casting a float array with NaN fill to a sparse float32 string dtype, to float64 or int64 with fill value zero (NaN positions become the new fill and are not stored), and raising a value error mentioning NA when NaN must become an integer.
         # float -> float
         arr = SparseArray([None, None, 0, 2])
         result = arr.astype("Sparse[float32]")
@@ -38,6 +47,8 @@ class TestAstype:
             arr.astype("Sparse[i8]")
 
     def test_astype_bool(self):
+        # [FUNCTION DOC]
+        # Casting to numpy bool gives a dense boolean array; casting to a sparse bool dtype with fill false gives a sparse boolean array.
         a = SparseArray([1, 0, 0, 1], dtype=SparseDtype(int, 0))
         result = a.astype(bool)
         expected = np.array([1, 0, 0, 1], dtype=bool)
@@ -51,6 +62,8 @@ class TestAstype:
         tm.assert_sp_array_equal(result, expected)
 
     def test_astype_all(self, any_real_numpy_dtype):
+        # [FUNCTION DOC]
+        # Using any_real_numpy_dtype. Casting to any real numpy dtype gives the dense array of that dtype.
         vals = np.array([1, 2, 3])
         arr = SparseArray(vals, fill_value=1)
         typ = np.dtype(any_real_numpy_dtype)
@@ -93,15 +106,21 @@ class TestAstype:
         ],
     )
     def test_astype_more(self, arr, dtype, expected):
+        # [FUNCTION DOC]
+        # Parametrized over (array, target dtype, expected). Casting through the dtype update method gives the expected sparse arrays for float, bool, datetime, string, object and string-to-float conversions with updated fill values.
         result = arr.astype(arr.dtype.update_dtype(dtype))
         tm.assert_sp_array_equal(result, expected)
 
     def test_astype_nan_raises(self):
+        # [FUNCTION DOC]
+        # Casting an array with NaN to dense integer raises a value error about non-finite values.
         arr = SparseArray([1.0, np.nan])
         with pytest.raises(ValueError, match="Cannot convert non-finite"):
             arr.astype(int)
 
     def test_astype_copy_false(self):
+        # [FUNCTION DOC]
+        # Casting with copy disabled to a sparse float dtype with fill value zero gives the correct values (regression for a view bug).
         # GH#34456 bug caused by using .view instead of .astype in astype_nansafe
         arr = SparseArray([1, 2, 3])
 
@@ -112,6 +131,8 @@ class TestAstype:
         tm.assert_sp_array_equal(result, expected)
 
     def test_astype_dt64_to_int64(self):
+        # [FUNCTION DOC]
+        # Casting datetime sparse arrays (default NaT fill, or a different fill value) to int64 or sparse int64 gives the same values as the dense cast, with NaT mapped to the minimum 64-bit integer.
         # GH#49631 match non-sparse behavior
         values = np.array(["NaT", "2016-01-02", "2016-01-03"], dtype="M8[ns]")
 

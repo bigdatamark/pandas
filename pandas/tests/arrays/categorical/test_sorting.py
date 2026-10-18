@@ -1,3 +1,7 @@
+# [MODULE DOC]
+# Tests for sorting Categorical arrays: argsort (method and numpy function) and sort_values with the
+# ascending, inplace and na_position options. No import-time side effects.
+
 import numpy as np
 import pytest
 
@@ -9,7 +13,11 @@ import pandas._testing as tm
 
 
 class TestCategoricalSort:
+    # [CLASS DOC]
+    # Groups sorting tests for Categorical. Stateless.
     def test_argsort(self):
+        # [FUNCTION DOC]
+        # Argsort of an ordered integer Categorical gives the positions that sort by category order, ascending or reversed (index dtype not checked).
         c = Categorical([5, 3, 1, 4, 2], ordered=True)
 
         expected = np.array([2, 4, 1, 3, 0])
@@ -23,6 +31,9 @@ class TestCategoricalSort:
         )
 
     def test_numpy_argsort(self):
+        # [FUNCTION DOC]
+        # The numpy argsort function works on a Categorical, accepts a kind argument, and raises a value error for the
+        # unsupported axis and order parameters.
         c = Categorical([5, 3, 1, 4, 2], ordered=True)
 
         expected = np.array([2, 4, 1, 3, 0])
@@ -41,6 +52,10 @@ class TestCategoricalSort:
             np.argsort(c, order="C")
 
     def test_sort_values(self):
+        # [FUNCTION DOC]
+        # Unordered Categoricals are sortable. Ordered ones sort ascending and descending by category order keeping
+        # categories; in-place sorting reuses the same codes array and sorts it; reversed with duplicates works.
+        # KNOWN ISSUE: after the in-place sort the categories assertion uses the earlier result object instead of the in-place sorted array, so it does not verify the in-place result.
         # unordered cats are sortable
         cat = Categorical(["a", "b", "b", "a"], ordered=False)
         cat.sort_values()
@@ -84,6 +99,9 @@ class TestCategoricalSort:
         tm.assert_index_equal(res.categories, exp_categories)
 
     def test_sort_values_na_position(self):
+        # [FUNCTION DOC]
+        # Numeric and string ordered Categoricals with missing values: default puts missing last; first or last
+        # placement and ascending or descending produce the expected order, and categories are unchanged.
         # see gh-12882
         cat = Categorical([5, 2, np.nan, 2, np.nan], ordered=True)
         exp_categories = Index([2, 5])

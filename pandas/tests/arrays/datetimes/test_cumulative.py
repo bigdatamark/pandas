@@ -1,3 +1,7 @@
+# [MODULE DOC]
+# Tests for cumulative operations (private accumulate method) on DatetimeArray. No import-time side
+# effects.
+
 import pytest
 
 import pandas._testing as tm
@@ -5,7 +9,11 @@ from pandas.core.arrays import DatetimeArray
 
 
 class TestAccumulator:
+    # [CLASS DOC]
+    # Groups accumulation tests for DatetimeArray. Stateless.
     def test_accumulators_freq(self):
+        # [FUNCTION DOC]
+        # Cumulative minimum and maximum of a daily array with an inferred frequency give the running min (all first date) and the unchanged increasing sequence.
         # GH#50297
         arr = DatetimeArray._from_sequence(
             [
@@ -32,6 +40,8 @@ class TestAccumulator:
 
     @pytest.mark.parametrize("func", ["cumsum", "cumprod"])
     def test_accumulators_disallowed(self, func):
+        # [FUNCTION DOC]
+        # Parametrized over cumsum and cumprod. Both raise a type error that the accumulation is not supported for datetimes.
         # GH#50297
         arr = DatetimeArray._from_sequence(
             [

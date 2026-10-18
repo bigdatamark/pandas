@@ -1,3 +1,8 @@
+# [MODULE DOC]
+# Tests for IntervalArray: the is_empty attribute, closed-side changes, where, shift, unique (with negatives and infinities),
+# setitem validation (NA and mismatched closed), and min/max reductions. Defines a fixture of left/right endpoint pairs of several
+# dtypes. Uses fixtures closed, other_closed and index_or_series_or_array from the shared conftest. No import-time side effects.
+
 import numpy as np
 import pytest
 
@@ -29,6 +34,8 @@ from pandas.core.arrays import IntervalArray
     ids=lambda x: str(x[0].dtype),
 )
 def left_right_dtypes(request):
+    # [FUNCTION DOC]
+    # HELPER: fixture parametrized over five pairs of endpoint indexes (integer, float, timedelta, naive datetime, tz-aware datetime) used to build interval arrays of several subtypes.
     """
     Fixture for building an IntervalArray from various dtypes
     """
@@ -36,6 +43,8 @@ def left_right_dtypes(request):
 
 
 class TestAttributes:
+    # [CLASS DOC]
+    # Groups tests of interval array attributes. Stateless.
     @pytest.mark.parametrize(
         "left, right",
         [
@@ -50,6 +59,9 @@ class TestAttributes:
     )
     @pytest.mark.parametrize("constructor", [IntervalArray, IntervalIndex])
     def test_is_empty(self, constructor, left, right, closed):
+        # [FUNCTION DOC]
+        # Parametrized over endpoint pairs (integer, timedelta, naive and tz-aware timestamp) and over IntervalArray and IntervalIndex, with the closed fixture. From tuples including a zero-length
+        # interval, a normal one and NaN, is_empty is true only for the zero-length interval when the closed side is not both, false otherwise.
         # GH27219
         tuples = [(left, left), (left, right), np.nan]
         expected = np.array([closed != "both", False, False])
@@ -58,7 +70,11 @@ class TestAttributes:
 
 
 class TestMethods:
+    # [CLASS DOC]
+    # Groups tests of interval array methods. Stateless.
     def test_set_closed(self, closed, other_closed):
+        # [FUNCTION DOC]
+        # Using closed and other_closed fixtures. Changing the closed side returns an array equal to one built with that closed side from the same breaks.
         # GH 21670
         array = IntervalArray.from_breaks(range(10), closed=closed)
         result = array.set_closed(other_closed)
@@ -73,6 +89,9 @@ class TestMethods:
         ],
     )
     def test_where_raises(self, other):
+        # [FUNCTION DOC]
+        # Parametrized over a right-closed interval and a right-closed array. The array-level private where method raises a value error when the replacement closed side differs
+        # from the array (left); the Series where coerces to object and gives the same result as doing so explicitly.
         # GH#45768 The IntervalArray methods raises; the Series method coerces
         ser = pd.Series(IntervalArray.from_breaks([1, 2, 3, 4], closed="left"))
         mask = np.array([True, False, True])
@@ -85,6 +104,8 @@ class TestMethods:
         tm.assert_series_equal(res, expected)
 
     def test_shift(self):
+        # [FUNCTION DOC]
+        # Shifting by default inserts a missing interval and converts integer endpoints to float; a fill value of NaT raises a type error saying only intervals and NA can be inserted.
         # https://github.com/pandas-dev/pandas/issues/31495, GH#22428, GH#31502
         a = IntervalArray.from_breaks([1, 2, 3])
         result = a.shift()
@@ -97,6 +118,8 @@ class TestMethods:
             a.shift(1, fill_value=pd.NaT)
 
     def test_shift_datetime(self):
+        # [FUNCTION DOC]
+        # Datetime interval array shifts match taking with fill (forward by two, backward by one); a numpy timedelta NaT fill value raises a type error.
         # GH#31502, GH#31504
         a = IntervalArray.from_breaks(date_range("2000", periods=4))
         result = a.shift(2)
@@ -112,6 +135,8 @@ class TestMethods:
             a.shift(1, fill_value=np.timedelta64("NaT", "ns"))
 
     def test_unique_with_negatives(self):
+        # [FUNCTION DOC]
+        # Unique on interval indexes with positive, negative and mixed endpoints keeps first occurrences in order (regression test).
         # GH#61917
         idx_pos = IntervalIndex.from_tuples(
             [(3, 4), (3, 4), (2, 3), (2, 3), (1, 2), (1, 2)]
@@ -144,6 +169,8 @@ class TestMethods:
         ],
     )
     def test_unique_with_infinty(self, data):
+        # [FUNCTION DOC]
+        # Parametrized over intervals with negative-infinite and positive-infinite endpoints. Unique returns the array unchanged, nunique is two and drop_duplicates returns the same Series.
         # https://github.com/pandas-dev/pandas/issues/63218
         s = pd.Series(data)
         tm.assert_interval_array_equal(s.unique(), s.array)
@@ -152,7 +179,12 @@ class TestMethods:
 
 
 class TestSetitem:
+    # [CLASS DOC]
+    # Groups tests of setting items on interval arrays. Stateless.
     def test_set_na(self, left_right_dtypes):
+        # [FUNCTION DOC]
+        # Using left_right_dtypes. Setting NaT into a non-datetimelike array raises a type error; setting NaN into an integer-backed array raises a type error; otherwise setting NaN makes the first
+        # interval missing, matching an array built with the NA value at the first position.
         left, right = left_right_dtypes
         result = IntervalArray.from_arrays(left, right, copy=True)
 
@@ -177,6 +209,9 @@ class TestSetitem:
         tm.assert_extension_array_equal(result, expected)
 
     def test_setitem_mismatched_closed(self):
+        # [FUNCTION DOC]
+        # Assigning intervals with a different closed side (single item, slices, empty slice, reversed array, list, object array, categorical) raises a value error; assigning an empty list is a no-op
+        # and leaves the array unchanged.
         arr = IntervalArray.from_breaks(range(4))
         orig = arr.copy()
         other = arr.set_closed("both")
@@ -203,7 +238,11 @@ class TestSetitem:
 
 
 class TestReductions:
+    # [CLASS DOC]
+    # Groups min and max reduction tests for interval arrays. Stateless.
     def test_min_max_invalid_axis(self, left_right_dtypes):
+        # [FUNCTION DOC]
+        # Using left_right_dtypes. An axis outside the dimensions raises a value error; a non-numeric axis raises a type error about comparison; for both min and max.
         left, right = left_right_dtypes
         arr = IntervalArray.from_arrays(left, right)
 
@@ -221,6 +260,9 @@ class TestReductions:
             arr.max(axis="foo")
 
     def test_min_max(self, left_right_dtypes, index_or_series_or_array):
+        # [FUNCTION DOC]
+        # Using left_right_dtypes and a container fixture (index, Series or array). On a shuffled monotonic array, min and max (with skipna true or false) return the first and last intervals; with an inserted NaN,
+        # skipna false returns NaN while skipping missing returns the same extremes.
         # GH#44746
         left, right = left_right_dtypes
         arr = IntervalArray.from_arrays(left, right)

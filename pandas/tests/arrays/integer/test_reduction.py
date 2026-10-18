@@ -1,3 +1,7 @@
+# [MODULE DOC]
+# Tests for reductions (sum, prod, min, max, mean, median, var, std, skew, kurt, any, all) on nullable integer data in
+# Series, DataFrame, groupby and mixed-dtype frames, checking the result types (integer, Float64 or boolean). No import-time side effects.
+
 import numpy as np
 import pytest
 
@@ -28,6 +32,8 @@ import pandas._testing as tm
     ],
 )
 def test_series_reductions(op, expected):
+    # [FUNCTION DOC]
+    # Parametrized over reductions with expected scalars. Reducing a two-element Int64 Series gives numpy integers for integer ops, floats for mean-like ones, NA for skew and kurtosis, and true for any and all.
     ser = Series([1, 2], dtype="Int64")
     result = getattr(ser, op)()
     tm.assert_equal(result, expected)
@@ -51,6 +57,8 @@ def test_series_reductions(op, expected):
     ],
 )
 def test_dataframe_reductions(op, expected):
+    # [FUNCTION DOC]
+    # Parametrized over reductions with expected Series. Reducing a one-column Int64 frame gives a Series indexed by column name with Int64, Float64 or boolean dtype as appropriate.
     df = DataFrame({"a": array([1, 2], dtype="Int64")})
     result = getattr(df, op)()
     tm.assert_series_equal(result, expected)
@@ -73,6 +81,8 @@ def test_dataframe_reductions(op, expected):
     ],
 )
 def test_groupby_reductions(op, expected):
+    # [FUNCTION DOC]
+    # Parametrized over reductions with expected arrays. Group-wise reduction of an Int64 column with a missing value gives a frame with the expected dtype per operation (Float64 for mean, median, variance and the like; boolean for any and all).
     df = DataFrame(
         {
             "A": ["a", "b", "b"],
@@ -103,6 +113,9 @@ def test_groupby_reductions(op, expected):
     ],
 )
 def test_mixed_reductions(op, expected):
+    # [FUNCTION DOC]
+    # Parametrized over reductions with expected Series. A frame with string, plain float and Int64 columns: the Series reduction equals the expected value for column C, and the frame reduction
+    # (restricted to numeric columns except for any and all) gives a Float64 Series for the numeric columns.
     df = DataFrame(
         {
             "A": ["a", "b", "b"],

@@ -1,3 +1,8 @@
+# [MODULE DOC]
+# Tests for missing-value handling in Categorical: isna, code minus one for missing, setting missing
+# values, fillna with iterables and arrays, comparisons involving missing values, and category
+# inference when everything is missing. No import-time side effects.
+
 import collections
 
 import numpy as np
@@ -18,7 +23,11 @@ import pandas._testing as tm
 
 
 class TestCategoricalMissing:
+    # [CLASS DOC]
+    # Groups missing-value tests for Categorical. Stateless.
     def test_isna(self):
+        # [FUNCTION DOC]
+        # The missing-value mask of a Categorical marks only the NaN entry.
         exp = np.array([False, False, True])
         cat = Categorical(["a", "b", np.nan])
         res = cat.isna()
@@ -26,6 +35,9 @@ class TestCategoricalMissing:
         tm.assert_numpy_array_equal(res, exp)
 
     def test_na_flags_int_categories(self):
+        # [FUNCTION DOC]
+        # Builds a Categorical from integer labels where every fifth is minus one with ten categories (expects the
+        # Pandas4Warning), takes its representation, and checks isna marks exactly the entries that were minus one.
         # #1457
 
         categories = list(range(10))
@@ -39,6 +51,9 @@ class TestCategoricalMissing:
         tm.assert_numpy_array_equal(isna(cat), labels == -1)
 
     def test_nan_handling(self):
+        # [FUNCTION DOC]
+        # Missing values have code minus one and are not categories; assigning NaN to an element sets its code to minus one.
+        # KNOWN ISSUE: the trailing comment says adding NaN to categories makes it point to a category, but the code just repeats the initial construction and asserts the same result, so that part tests nothing new.
         # Nans are represented as -1 in codes
         c = Categorical(["a", "b", np.nan, "a"])
         tm.assert_index_equal(c.categories, Index(["a", "b"]))
@@ -54,11 +69,15 @@ class TestCategoricalMissing:
         tm.assert_numpy_array_equal(c._codes, np.array([0, 1, -1, 0], dtype=np.int8))
 
     def test_set_dtype_nans(self):
+        # [FUNCTION DOC]
+        # Private dtype setter with new categories turns values not in them, and existing missing, into code minus one.
         c = Categorical(["a", "b", np.nan])
         result = c._set_dtype(CategoricalDtype(["a", "c"]), copy=True)
         tm.assert_numpy_array_equal(result.codes, np.array([0, -1, -1], dtype="int8"))
 
     def test_set_item_nan(self):
+        # [FUNCTION DOC]
+        # Assigning NaN by position yields missing at that position while keeping categories.
         cat = Categorical([1, 2, 3])
         cat[1] = np.nan
 
@@ -67,6 +86,9 @@ class TestCategoricalMissing:
 
     @pytest.mark.parametrize("named", [True, False])
     def test_fillna_iterable_category(self, named):
+        # [FUNCTION DOC]
+        # Parametrized over named tuples and plain tuples as category values. Fill with a tuple that is a category works; a
+        # tuple that is not a category must raise a type error about a new category.
         # https://github.com/pandas-dev/pandas/issues/21097
         if named:
             Point = collections.namedtuple("Point", "x y")
@@ -86,6 +108,9 @@ class TestCategoricalMissing:
             cat.fillna(Point(0, 0))
 
     def test_fillna_array(self):
+        # [FUNCTION DOC]
+        # Filling with a Categorical or numpy array of the right values fills element-wise and does not modify the
+        # original.
         # accept Categorical or ndarray value if it holds appropriate values
         cat = Categorical(["A", "B", "C", None, None])
 
@@ -108,6 +133,9 @@ class TestCategoricalMissing:
         ],
     )
     def test_compare_categorical_with_missing(self, a1, a2, categories):
+        # [FUNCTION DOC]
+        # Parametrized over string and integer data with NaN. Equality and inequality of two categorical Series
+        # give the same result as the same comparison on non-categorical Series.
         # GH 28384
         cat_type = CategoricalDtype(categories)
 
@@ -131,6 +159,9 @@ class TestCategoricalMissing:
         ],
     )
     def test_categorical_only_missing_values_no_cast(self, na_value, dtype):
+        # [FUNCTION DOC]
+        # Parametrized over NaT, None, NaN and NA. A Categorical of only missing values has empty categories of dtype
+        # datetime (for NaT) or float.
         # GH#44900
         result = Categorical([na_value, na_value])
         tm.assert_index_equal(result.categories, Index([], dtype=dtype))

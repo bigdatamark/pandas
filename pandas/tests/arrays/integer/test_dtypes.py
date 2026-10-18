@@ -1,3 +1,9 @@
+# [MODULE DOC]
+# Tests for dtype behavior of the nullable integer array: dtype properties, preserved dtypes in reductions, casting
+# (astype) to other integer, float, boolean, string, datetime and numpy types, copy semantics, index construction and to_numpy
+# conversions including read-only arrays. Uses fixtures dtype, all_data, dropna and using_python_scalars/using_infer_string. No
+# import-time side effects.
+
 import numpy as np
 import pytest
 
@@ -12,6 +18,8 @@ from pandas.core.arrays.integer import (
 
 
 def test_dtypes(dtype):
+    # [FUNCTION DOC]
+    # Smoke test: signed dtypes have numpy kind i, unsigned ones kind u, and every dtype has a name.
     # smoke tests on auto dtype construction
 
     if dtype.is_signed_integer:
@@ -23,6 +31,9 @@ def test_dtypes(dtype):
 
 @pytest.mark.parametrize("op", ["sum", "min", "max", "prod"])
 def test_preserve_dtypes(op, using_python_scalars):
+    # [FUNCTION DOC]
+    # Parametrized over sum, prod, min, max. A reduction of a nullable integer column returns an integer scalar (numpy int64, or python int when python scalars are
+    # enabled); groupby reduction keeps nullable Int64 for that column and gives float for a plain float column.
     # for ops that enable (mean would actually work here
     # but generally it is a float return value)
     df = pd.DataFrame(
@@ -51,6 +62,8 @@ def test_preserve_dtypes(op, using_python_scalars):
 
 
 def test_astype_nansafe():
+    # [FUNCTION DOC]
+    # Casting an Int8 array with a missing value to an unsigned numpy integer raises a value error that NA cannot be converted to integer.
     # see gh-22343
     arr = pd.array([pd.NA, 1, 2], dtype="Int8")
     msg = "cannot convert NA to integer"
@@ -60,6 +73,8 @@ def test_astype_nansafe():
 
 
 def test_construct_index(all_data, dropna):
+    # [FUNCTION DOC]
+    # Using all_data and dropna fixtures. Building an index from a nullable integer array (with or without missing values removed) keeps the extension dtype and equals the index built directly.
     # ensure that we do not coerce to different Index dtype or non-index
 
     all_data = all_data[:10]
@@ -76,6 +91,8 @@ def test_construct_index(all_data, dropna):
 
 
 def test_astype_index(all_data, dropna):
+    # [FUNCTION DOC]
+    # Casting a numpy-backed integer index to the nullable dtype equals casting via object first.
     # as an int/uint index to Index
 
     all_data = all_data[:10]
@@ -94,6 +111,9 @@ def test_astype_index(all_data, dropna):
 
 
 def test_astype(all_data):
+    # [FUNCTION DOC]
+    # Series casting: same dtype, a different nullable dtype (Int8) and the numpy dtype, for arrays with and without missing values; casting values with missing to numpy integer
+    # raises a value error; casting to object gives the object array.
     all_data = all_data[:10]
 
     ints = all_data[~all_data.isna()]
@@ -144,6 +164,9 @@ def test_astype(all_data):
 
 
 def test_astype_copy():
+    # [FUNCTION DOC]
+    # Copy true gives an independent array with distinct data and mask; copy false on the same dtype returns the same object sharing both; casting to a different dtype always
+    # copies, including the mask.
     arr = pd.array([1, 2, 3, None], dtype="Int64")
     orig = pd.array([1, 2, 3, None], dtype="Int64")
 
@@ -180,6 +203,8 @@ def test_astype_copy():
 
 
 def test_astype_to_larger_numpy():
+    # [FUNCTION DOC]
+    # Casting 32-bit nullable integers (signed and unsigned) to 64-bit numpy integers gives the matching numpy arrays.
     a = pd.array([1, 2], dtype="Int32")
     result = a.astype("int64")
     expected = np.array([1, 2], dtype="int64")
@@ -193,6 +218,8 @@ def test_astype_to_larger_numpy():
 
 @pytest.mark.parametrize("dtype", [Int8Dtype(), "Int8", UInt32Dtype(), "UInt32"])
 def test_astype_specific_casting(dtype):
+    # [FUNCTION DOC]
+    # Parametrized over dtype instances and names. A Series of Int64 (without and with missing) casts to Int8 or UInt32 equal to constructing with that dtype.
     s = pd.Series([1, 2, 3], dtype="Int64")
     result = s.astype(dtype)
     expected = pd.Series([1, 2, 3], dtype=dtype)
@@ -205,6 +232,8 @@ def test_astype_specific_casting(dtype):
 
 
 def test_astype_floating():
+    # [FUNCTION DOC]
+    # Casting to Float64 gives floats with missing preserved.
     arr = pd.array([1, 2, None], dtype="Int64")
     result = arr.astype("Float64")
     expected = pd.array([1.0, 2.0, None], dtype="Float64")
@@ -212,6 +241,8 @@ def test_astype_floating():
 
 
 def test_astype_dt64():
+    # [FUNCTION DOC]
+    # Integer nanosecond offsets (as multiples of a billion) with a missing value cast to datetime64 nanoseconds give the expected datetimes with NaT.
     # GH#32435
     arr = pd.array([1, 2, 3, pd.NA]) * 10**9
 
@@ -222,6 +253,8 @@ def test_astype_dt64():
 
 
 def test_construct_cast_invalid(dtype):
+    # [FUNCTION DOC]
+    # Using the dtype fixture. Constructing or casting non-integral floats (also with NA) raises a type error saying it cannot be cast safely.
     msg = "cannot safely"
     arr = [1.2, 2.3, 3.7]
     with pytest.raises(TypeError, match=msg):
@@ -240,6 +273,8 @@ def test_construct_cast_invalid(dtype):
 
 @pytest.mark.parametrize("in_series", [True, False])
 def test_to_numpy_na_nan(in_series):
+    # [FUNCTION DOC]
+    # Parametrized over array and Series. to_numpy with float dtype and NaN na_value, integer with minus one, and boolean with false each replace the missing value.
     a = pd.array([0, 1, None], dtype="Int64")
     if in_series:
         a = pd.Series(a)
@@ -260,6 +295,8 @@ def test_to_numpy_na_nan(in_series):
 @pytest.mark.parametrize("in_series", [True, False])
 @pytest.mark.parametrize("dtype", ["int32", "int64", "bool"])
 def test_to_numpy_dtype(dtype, in_series):
+    # [FUNCTION DOC]
+    # Parametrized over boxes and numpy dtypes (32 and 64-bit integer, bool). Conversion without missing values gives the expected array.
     a = pd.array([0, 1], dtype="Int64")
     if in_series:
         a = pd.Series(a)
@@ -271,12 +308,16 @@ def test_to_numpy_dtype(dtype, in_series):
 
 @pytest.mark.parametrize("dtype", ["int64", "bool"])
 def test_to_numpy_na_raises(dtype):
+    # [FUNCTION DOC]
+    # Parametrized over int64 and bool. Converting an array with a missing value raises a value error naming the dtype.
     a = pd.array([0, 1, None], dtype="Int64")
     with pytest.raises(ValueError, match=dtype):
         a.to_numpy(dtype=dtype)
 
 
 def test_to_numpy_readonly():
+    # [FUNCTION DOC]
+    # A read-only array converts to a read-only numpy array by default; a copy, a different dtype or an object dtype conversion is writeable.
     arr = pd.array([0, 1], dtype="Int64")
     arr._readonly = True
     result = arr.to_numpy()
@@ -293,6 +334,8 @@ def test_to_numpy_readonly():
 
 
 def test_astype_str(using_infer_string):
+    # [FUNCTION DOC]
+    # Casting to string gives a string extension array with NaN missing if string inference is on, else a native-endian unicode array with the NA marker.
     a = pd.array([1, 2, None], dtype="Int64")
 
     if using_infer_string:
@@ -308,6 +351,8 @@ def test_astype_str(using_infer_string):
 
 
 def test_astype_boolean():
+    # [FUNCTION DOC]
+    # Casting to nullable boolean maps nonzero to true, zero to false and keeps missing.
     # https://github.com/pandas-dev/pandas/issues/31102
     a = pd.array([1, 0, -1, 2, None], dtype="Int64")
     result = a.astype("boolean")

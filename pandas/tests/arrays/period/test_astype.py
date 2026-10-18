@@ -1,3 +1,7 @@
+# [MODULE DOC]
+# Tests for astype on PeriodArray: integer dtypes, copy behavior, categorical, other period frequencies and datetime/timedelta
+# dtypes. No import-time side effects.
+
 import numpy as np
 import pytest
 
@@ -10,6 +14,10 @@ from pandas.core.arrays import period_array
 
 @pytest.mark.parametrize("dtype", [int, np.int32, np.int64, "uint32", "uint64"])
 def test_astype_int(dtype):
+    # [FUNCTION DOC]
+    # Parametrized over integer dtypes (Python int, 32 and 64-bit signed, unsigned). Only 64-bit signed integer is accepted, returning the underlying ordinals; others raise a type error telling to cast to int64 (sign and size are not ignored
+    # despite the comment in the test).
+    # KNOWN ISSUE: the comment says sign and size of integers are ignored, but the test expects an error for every integer dtype other than signed 64-bit.
     # We choose to ignore the sign and size of integers for
     # Period/Datetime/Timedelta astype
     arr = period_array(["2000", "2001", None], freq="D")
@@ -25,6 +33,8 @@ def test_astype_int(dtype):
 
 
 def test_astype_copies():
+    # [FUNCTION DOC]
+    # Casting to int64 without copy returns a view whose base is the underlying array; with copy it returns a distinct array with the same values.
     arr = period_array(["2000", "2001", None], freq="D")
     result = arr.astype(np.int64, copy=False)
 
@@ -38,6 +48,8 @@ def test_astype_copies():
 
 
 def test_astype_categorical():
+    # [FUNCTION DOC]
+    # Casting to category gives a Categorical with period categories, with NaT as minus one.
     arr = period_array(["2000", "2001", "2001", None], freq="D")
     result = arr.astype("category")
     categories = pd.PeriodIndex(["2000", "2001"], freq="D")
@@ -46,6 +58,8 @@ def test_astype_categorical():
 
 
 def test_astype_period():
+    # [FUNCTION DOC]
+    # Casting to a period dtype with another frequency converts each period (NaT preserved).
     arr = period_array(["2000", "2001", None], freq="D")
     result = arr.astype(PeriodDtype("M"))
     expected = period_array(["2000", "2001", None], freq="M")
@@ -54,6 +68,8 @@ def test_astype_period():
 
 @pytest.mark.parametrize("dtype", ["datetime64[ns]", "timedelta64[ns]"])
 def test_astype_datetime(dtype):
+    # [FUNCTION DOC]
+    # Parametrized over datetime and timedelta nanosecond dtypes. Converting to datetime gives the timestamps at period starts with NaT; converting to timedelta raises a type error.
     arr = period_array(["2000", "2001", None], freq="D")
     # slice off the [ns] so that the regex matches.
     if dtype == "timedelta64[ns]":

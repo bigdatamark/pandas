@@ -1,3 +1,9 @@
+# [MODULE DOC]
+# Tests for converting masked arrays (integer, float, boolean) to and from pyarrow: array conversion, table round trips,
+# types-mapper conversion, zero-chunk tables, unsigned integer mismatches, sliced tables, the buffer-to-numpy-and-mask helper and null/mismatched
+# arrow input. The whole module is skipped if pyarrow is missing (import-time skip) and ignores a block-manager deprecation warning via a module marker.
+# Builds a module-level list of masked arrays used to parametrize the data fixture.
+
 import numpy as np
 import pytest
 
@@ -20,6 +26,8 @@ arrays += [pd.array([True, False, True, None], dtype="boolean")]
 
 @pytest.fixture(params=arrays, ids=[a.dtype.name for a in arrays])
 def data(request):
+    # [FUNCTION DOC]
+    # HELPER: fixture parametrized over arrays with a trailing missing value, one per integer extension dtype, float extension dtype, and boolean; ids are dtype names.
     """
     Fixture returning parametrized array from given dtype, including integer,
     float and boolean
@@ -28,6 +36,8 @@ def data(request):
 
 
 def test_arrow_array(data):
+    # [FUNCTION DOC]
+    # Converting a masked array to arrow equals an arrow array built from the object conversion with nulls and the matching numpy-derived type.
     arr = pa.array(data)
     expected = pa.array(
         data.to_numpy(object, na_value=None),
@@ -37,6 +47,8 @@ def test_arrow_array(data):
 
 
 def test_arrow_roundtrip(data):
+    # [FUNCTION DOC]
+    # A frame with the array column converted to an arrow table has the numpy-named arrow type for that column, and converting back restores the masked dtype and equal frame.
     df = pd.DataFrame({"a": data})
     table = pa.table(df)
     assert table.field("a").type == str(data.dtype.numpy_dtype)
@@ -47,7 +59,12 @@ def test_arrow_roundtrip(data):
 
 
 def test_dataframe_from_arrow_types_mapper():
+    # [FUNCTION DOC]
+    # Converting a record batch to pandas with a types-mapper callback (boolean to nullable boolean, integer to Int64, else default) yields nullable boolean, Int64 and an 8-bit
+    # column widened to Int64.
     def types_mapper(arrow_type):
+        # [FUNCTION DOC]
+        # HELPER: types-mapper callback for the test; takes an arrow type and returns the nullable boolean dtype for boolean, the Int64 dtype for any integer type, and nothing otherwise.
         if pa.types.is_boolean(arrow_type):
             return pd.BooleanDtype()
         elif pa.types.is_integer(arrow_type):
@@ -68,6 +85,8 @@ def test_dataframe_from_arrow_types_mapper():
 
 
 def test_arrow_load_from_zero_chunks(data):
+    # [FUNCTION DOC]
+    # A zero-length array table rebuilt with zero chunks converts back to an empty frame with the masked dtype (regression).
     # GH-41040
 
     df = pd.DataFrame({"a": data[0:0]})
@@ -82,6 +101,8 @@ def test_arrow_load_from_zero_chunks(data):
 
 
 def test_arrow_from_arrow_uint():
+    # [FUNCTION DOC]
+    # Converting a 64-bit signed arrow array through the unsigned 32-bit dtype hook yields the matching unsigned nullable array (type mismatch tolerated).
     # https://github.com/pandas-dev/pandas/issues/31896
     # possible mismatch in types
 
@@ -93,6 +114,8 @@ def test_arrow_from_arrow_uint():
 
 
 def test_arrow_sliced(data):
+    # [FUNCTION DOC]
+    # A table sliced from position two onward converts to the matching sliced frame, both with missing values and (after filling) without them.
     # https://github.com/pandas-dev/pandas/issues/38525
 
     df = pd.DataFrame({"a": data})
@@ -111,6 +134,9 @@ def test_arrow_sliced(data):
 
 @pytest.fixture
 def np_dtype_to_arrays(any_real_numpy_dtype):
+    # [FUNCTION DOC]
+    # HELPER: fixture parametrized over real numpy dtypes; returns the numpy dtype, an arrow array of the matching type holding zero, one, two and a null (which forces a validity bitmap),
+    # the expected first three numpy values and the expected validity mask.
     """
     Fixture returning actual and expected dtype, pandas and numpy arrays and
     mask from a given numpy dtype
@@ -128,6 +154,9 @@ def np_dtype_to_arrays(any_real_numpy_dtype):
 
 
 def test_pyarrow_array_to_numpy_and_mask(np_dtype_to_arrays):
+    # [FUNCTION DOC]
+    # Tests the helper that turns an arrow array into numpy data and a mask: the plain array, one with trailing padding in the data buffer, one with an array offset and a shifted validity bitmap,
+    # and an empty array with non-empty buffers must all give the expected first three values and mask.
     """
     Test conversion from pyarrow array to numpy array.
 
@@ -194,12 +223,16 @@ def test_pyarrow_array_to_numpy_and_mask(np_dtype_to_arrays):
     "arr", [pa.nulls(10), pa.chunked_array([pa.nulls(4), pa.nulls(6)])]
 )
 def test_from_arrow_null(data, arr):
+    # [FUNCTION DOC]
+    # Parametrized over an all-null array and a chunked all-null array. The dtype's arrow hook gives an array of ten missing values.
     res = data.dtype.__from_arrow__(arr)
     assert res.isna().all()
     assert len(res) == 10
 
 
 def test_from_arrow_type_error(data):
+    # [FUNCTION DOC]
+    # Passing a string-typed arrow array to the dtype's arrow hook raises a type error (message not checked).
     # ensure that __from_arrow__ returns a TypeError when getting a wrong
     # array type
 

@@ -1,3 +1,7 @@
+# [MODULE DOC]
+# Tests for concatenating Series of nullable integer dtypes with each other, with boolean and with numpy dtypes. The
+# result dtype should follow the promotion that non-masked dtypes would give, but stay nullable. No import-time side effects.
+
 import numpy as np
 import pytest
 
@@ -20,6 +24,9 @@ import pandas._testing as tm
     ],
 )
 def test_concat_series(to_concat_dtypes, result_dtype):
+    # [FUNCTION DOC]
+    # Parametrized over pairs of nullable dtype names (same width, different width, signed with unsigned, with Float64 result for 64-bit mix, and with
+    # boolean giving object) and the expected dtype. Concatenation in either order equals concatenating object Series and casting to the result dtype.
     # we expect the same dtypes as we would get with non-masked inputs,
     #  just masked where available.
 
@@ -54,6 +61,8 @@ def test_concat_series(to_concat_dtypes, result_dtype):
     ],
 )
 def test_concat_series_with_numpy(to_concat_dtypes, result_dtype):
+    # [FUNCTION DOC]
+    # Same promotion rules where the second Series has a plain numpy dtype; concatenation in either order equals the object-based cast expectation.
     # we expect the same dtypes as we would get with non-masked inputs,
     #  just masked where available.
 

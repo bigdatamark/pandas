@@ -1,3 +1,8 @@
+# [MODULE DOC]
+# Tests for SparseDtype: fill value inference, construction from another sparse dtype, equality and hashing (including NaN), string
+# parsing and construction, numeric flag, dtype updating, error cases and repr. Import-time side effects: a module-level block, run with a deprecation warning
+# filter (about arbitrary scalar fill values) active, builds the list of dtype pairs used to parametrize the inequality test.
+
 import re
 import warnings
 
@@ -20,6 +25,8 @@ from pandas import SparseDtype
     ],
 )
 def test_inferred_dtype(dtype, fill_value):
+    # [FUNCTION DOC]
+    # Parametrized over dtype and its expected inferred fill value (zero, NaN, false, NaN, NaT for datetime, NaT for timedelta). Checks value and, for missing values, the exact missing-value type.
     sparse_dtype = SparseDtype(dtype)
     result = sparse_dtype.fill_value
     if pd.isna(fill_value):
@@ -29,12 +36,16 @@ def test_inferred_dtype(dtype, fill_value):
 
 
 def test_from_sparse_dtype():
+    # [FUNCTION DOC]
+    # Constructing a sparse dtype from another keeps its fill value.
     dtype = SparseDtype("float", 0)
     result = SparseDtype(dtype)
     assert result.fill_value == 0
 
 
 def test_from_sparse_dtype_fill_value():
+    # [FUNCTION DOC]
+    # An explicit fill value overrides the one in the source sparse dtype.
     dtype = SparseDtype("int", 1)
     result = SparseDtype(dtype, fill_value=2)
     expected = SparseDtype("int", 2)
@@ -55,6 +66,8 @@ def test_from_sparse_dtype_fill_value():
     ],
 )
 def test_equal(dtype, fill_value):
+    # [FUNCTION DOC]
+    # Parametrized over dtypes and fill values (including none and mismatched NaN or zero). Two dtypes built identically compare equal in both directions.
     a = SparseDtype(dtype, fill_value)
     b = SparseDtype(dtype, fill_value)
     assert a == b
@@ -62,6 +75,8 @@ def test_equal(dtype, fill_value):
 
 
 def test_nans_equal():
+    # [FUNCTION DOC]
+    # Two NaN fill values (python and numpy) are equal.
     a = SparseDtype(float, float("nan"))
     b = SparseDtype(float, np.nan)
     assert a == b
@@ -69,6 +84,8 @@ def test_nans_equal():
 
 
 def test_nans_not_equal():
+    # [FUNCTION DOC]
+    # A zero fill value and NA fill value are not equal.
     # GH 54770
     a = SparseDtype(float, 0)
     b = SparseDtype(float, pd.NA)
@@ -93,10 +110,14 @@ with warnings.catch_warnings():
     tups,
 )
 def test_not_equal(a, b):
+    # [FUNCTION DOC]
+    # Parametrized over module-level dtype pairs (different subtype, fill value, datetime vs float, and a plain numpy dtype). The dtypes compare unequal.
     assert a != b
 
 
 def test_construct_from_string_raises():
+    # [FUNCTION DOC]
+    # An unknown string raises a type error that it cannot construct a SparseDtype from it.
     with pytest.raises(
         TypeError, match="Cannot construct a 'SparseDtype' from 'not a dtype'"
     ):
@@ -114,10 +135,14 @@ def test_construct_from_string_raises():
     ],
 )
 def test_is_numeric(dtype, expected):
+    # [FUNCTION DOC]
+    # Parametrized over integer, float, bool (true) and object, string (false). The private numeric flag reflects the subtype.
     assert SparseDtype(dtype)._is_numeric is expected
 
 
 def test_str_uses_object():
+    # [FUNCTION DOC]
+    # A string subtype is stored as object dtype.
     result = SparseDtype(str).subtype
     assert result == np.dtype("object")
 
@@ -134,6 +159,8 @@ def test_str_uses_object():
     ],
 )
 def test_construct_from_string(string, expected):
+    # [FUNCTION DOC]
+    # Parametrized over strings with expected dtypes: float, int, str, datetime subtypes, and the bare name giving float with NaN fill.
     result = SparseDtype.construct_from_string(string)
     assert result == expected
 
@@ -149,6 +176,8 @@ def test_construct_from_string(string, expected):
     ],
 )
 def test_hash_equal(a, b, expected):
+    # [FUNCTION DOC]
+    # Parametrized over pairs and expected result. Equality and hash equality agree: equal for same subtype and fill (including NaN), unequal for different fill or subtype.
     result = a == b
     assert result is expected
 
@@ -167,6 +196,8 @@ def test_hash_equal(a, b, expected):
     ],
 )
 def test_parse_subtype(string, expected):
+    # [FUNCTION DOC]
+    # Parametrized over strings with and without fill value. The private subtype parser returns the subtype part of the string.
     subtype, _ = SparseDtype._parse_subtype(string)
     assert subtype == expected
 
@@ -175,6 +206,8 @@ def test_parse_subtype(string, expected):
     "string", ["Sparse[int, 1]", "Sparse[float, 0.0]", "Sparse[bool, True]"]
 )
 def test_construct_from_string_fill_value_raises(string):
+    # [FUNCTION DOC]
+    # A string that includes a fill value (for int, float or bool) raises a type error that the fill value in the string is not supported.
     with pytest.raises(TypeError, match="fill_value in the string is not"):
         SparseDtype.construct_from_string(string)
 
@@ -189,6 +222,8 @@ def test_construct_from_string_fill_value_raises(string):
     ],
 )
 def test_update_dtype(original, dtype, expected):
+    # [FUNCTION DOC]
+    # Parametrized over (original, new subtype, expected). Updating the subtype converts the fill value to the new type (including to string and truncation to integer).
     result = original.update_dtype(dtype)
     assert result == expected
 
@@ -209,11 +244,15 @@ def test_update_dtype(original, dtype, expected):
     ],
 )
 def test_update_dtype_raises(original, dtype, expected_error_msg):
+    # [FUNCTION DOC]
+    # Updating NaN fill to integer, or a non-numeric string fill to integer, raises a value error with the corresponding message.
     with pytest.raises(ValueError, match=expected_error_msg):
         original.update_dtype(dtype)
 
 
 def test_repr():
+    # [FUNCTION DOC]
+    # String form includes the subtype and the fill value, quoted when a string.
     # GH-34352
     result = str(SparseDtype("int64", fill_value=0))
     expected = "Sparse[int64, 0]"
@@ -225,6 +264,8 @@ def test_repr():
 
 
 def test_sparse_dtype_subtype_must_be_numpy_dtype():
+    # [FUNCTION DOC]
+    # A categorical subtype raises a type error that the subtype must be a numpy dtype.
     # GH#53160
     msg = "SparseDtype subtype must be a numpy dtype"
     with pytest.raises(TypeError, match=msg):

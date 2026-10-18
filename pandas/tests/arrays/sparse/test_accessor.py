@@ -1,3 +1,8 @@
+# [MODULE DOC]
+# Tests for the sparse accessors on Series and DataFrame: densification, attribute access, conversion to and from scipy
+# sparse matrices (coordinate format and others), error cases, column-name conflicts and subclass preservation. Tests needing scipy skip if it is
+# missing. No import-time side effects.
+
 import string
 
 import numpy as np
@@ -10,7 +15,11 @@ from pandas.core.arrays.sparse import SparseArray
 
 
 class TestSeriesAccessor:
+    # [CLASS DOC]
+    # Groups tests of the Series sparse accessor. Stateless.
     def test_to_dense(self):
+        # [FUNCTION DOC]
+        # A frame of sparse columns with different fill values converts to the dense frame with the same values and index.
         ser = pd.Series([0, 1, 0, 10], dtype="Sparse[int64]")
         result = ser.sparse.to_dense()
         expected = pd.Series([0, 1, 0, 10])
@@ -18,6 +27,8 @@ class TestSeriesAccessor:
 
     @pytest.mark.parametrize("attr", ["npoints", "density", "fill_value", "sp_values"])
     def test_get_attributes(self, attr):
+        # [FUNCTION DOC]
+        # Parametrized over number of points, density, fill value and sparse values. The accessor attribute equals the same attribute on the underlying sparse array.
         arr = SparseArray([0, 1])
         ser = pd.Series(arr)
 
@@ -26,6 +37,8 @@ class TestSeriesAccessor:
         assert result == expected
 
     def test_from_coo(self):
+        # [FUNCTION DOC]
+        # Building a sparse Series from a scipy coordinate matrix gives values ordered by row then column, a two-level index of 32-bit integers, and sparse integer dtype.
         scipy_sparse = pytest.importorskip("scipy.sparse")
 
         row = [0, 3, 1, 0]
@@ -64,6 +77,8 @@ class TestSeriesAccessor:
     def test_to_coo(
         self, sort_labels, expected_rows, expected_cols, expected_values_pos
     ):
+        # [FUNCTION DOC]
+        # Parametrized over column labels (including duplicates, NA and floats) and dtype. A sparse frame converts to a coordinate matrix with the same entries as the original (no differing entries).
         sp_sparse = pytest.importorskip("scipy.sparse")
 
         values = SparseArray([0, np.nan, 1, 0, None, 3], fill_value=0)
@@ -92,13 +107,19 @@ class TestSeriesAccessor:
         assert cols == expected_cols
 
     def test_non_sparse_raises(self):
+        # [FUNCTION DOC]
+        # Using the accessor on a non-sparse Series raises an attribute error mentioning the accessor.
         ser = pd.Series([1, 2, 3])
         with pytest.raises(AttributeError, match=".sparse"):
             ser.sparse.density
 
 
 class TestFrameAccessor:
+    # [CLASS DOC]
+    # Groups tests of the DataFrame sparse accessor (plus two Series-from-coo tests). Stateless.
     def test_accessor_raises(self):
+        # [FUNCTION DOC]
+        # The accessor on a frame with non-sparse columns raises an attribute error.
         df = pd.DataFrame({"A": [0, 1]})
         with pytest.raises(AttributeError, match="sparse"):
             df.sparse
@@ -107,6 +128,8 @@ class TestFrameAccessor:
     @pytest.mark.parametrize("labels", [None, list(string.ascii_letters[:10])])
     @pytest.mark.parametrize("dtype", [np.complex128, np.float64, np.int64, bool])
     def test_from_spmatrix(self, format, labels, dtype):
+        # [FUNCTION DOC]
+        # Parametrized over scipy format (csc, csr, coo), index/column labels (none or ten letters) and dtype. An identity scipy matrix converts to a frame of sparse columns with the right fill value, labels and dtype.
         sp_sparse = pytest.importorskip("scipy.sparse")
 
         sp_dtype = SparseDtype(dtype)
@@ -124,6 +147,8 @@ class TestFrameAccessor:
     @pytest.mark.parametrize("format", ["csc", "csr", "coo"])
     @pytest.mark.parametrize("dtype", [np.int64, bool])
     def test_from_spmatrix_including_explicit_zero(self, format, dtype):
+        # [FUNCTION DOC]
+        # Parametrized over format and int/bool dtype. A random scipy matrix with an explicitly stored zero converts to the sparse frame equal to the dense data cast to the sparse dtype.
         sp_sparse = pytest.importorskip("scipy.sparse")
 
         sp_dtype = SparseDtype(dtype)
@@ -142,6 +167,8 @@ class TestFrameAccessor:
         [["a", "b"], pd.MultiIndex.from_product([["A"], ["a", "b"]]), ["a", "a"]],
     )
     def test_from_spmatrix_columns(self, columns):
+        # [FUNCTION DOC]
+        # Parametrized over plain, multi-level and duplicate column labels. Column labels are applied to the sparse frame.
         sp_sparse = pytest.importorskip("scipy.sparse")
 
         sp_dtype = SparseDtype(np.float64)
@@ -160,6 +187,8 @@ class TestFrameAccessor:
     )
     @pytest.mark.parametrize("dtype", [np.complex128, np.float64, np.int64, bool])
     def test_to_coo(self, columns, dtype):
+        # [FUNCTION DOC]
+        # Parametrized over column labels (including duplicates, NA and floats) and dtype. A sparse frame converts to a coordinate matrix with the same entries as the original (no differing entries).
         sp_sparse = pytest.importorskip("scipy.sparse")
 
         sp_dtype = SparseDtype(dtype)
@@ -174,6 +203,8 @@ class TestFrameAccessor:
         assert (result != expected).nnz == 0
 
     def test_to_coo_midx_categorical(self):
+        # [FUNCTION DOC]
+        # A sparse Series with a categorical multi-level index converts to a coordinate matrix with chosen row and column levels by name (regression).
         # GH#50996
         sp_sparse = pytest.importorskip("scipy.sparse")
 
@@ -192,6 +223,8 @@ class TestFrameAccessor:
         assert (result != expected).nnz == 0
 
     def test_to_dense(self):
+        # [FUNCTION DOC]
+        # A frame of sparse columns with different fill values converts to the dense frame with the same values and index.
         df = pd.DataFrame(
             {
                 "A": SparseArray([1, 0], dtype=SparseDtype("int64", 0)),
@@ -207,6 +240,8 @@ class TestFrameAccessor:
         tm.assert_frame_equal(result, expected)
 
     def test_density(self):
+        # [FUNCTION DOC]
+        # Frame density is the fraction of stored points over all cells (three quarters here).
         df = pd.DataFrame(
             {
                 "A": SparseArray([1, 0, 2, 1], fill_value=0),
@@ -220,6 +255,9 @@ class TestFrameAccessor:
     @pytest.mark.parametrize("dtype", ["int64", "float64"])
     @pytest.mark.parametrize("dense_index", [True, False])
     def test_series_from_coo(self, dtype, dense_index):
+        # [FUNCTION DOC]
+        # Parametrized over int and float dtype and dense_index. Creating a Series from an identity coordinate matrix gives a sparse Series with a pair index; with dense_index the series is reindexed to the full product of index levels.
+        # KNOWN ISSUE: this tests the Series class method but lives in the DataFrame accessor test class.
         sp_sparse = pytest.importorskip("scipy.sparse")
 
         A = sp_sparse.eye(3, format="coo", dtype=dtype)
@@ -239,6 +277,8 @@ class TestFrameAccessor:
         tm.assert_series_equal(result, expected)
 
     def test_series_from_coo_incorrect_format_raises(self):
+        # [FUNCTION DOC]
+        # Passing a compressed-row scipy matrix raises a type error saying a coordinate matrix was expected.
         # gh-26554
         sp_sparse = pytest.importorskip("scipy.sparse")
 
@@ -249,10 +289,14 @@ class TestFrameAccessor:
             pd.Series.sparse.from_coo(m)
 
     def test_with_column_named_sparse(self):
+        # [FUNCTION DOC]
+        # A frame with a column named sparse still exposes the accessor object (the accessor takes precedence).
         # https://github.com/pandas-dev/pandas/issues/30758
         df = pd.DataFrame({"sparse": pd.arrays.SparseArray([1, 2])})
         assert isinstance(df.sparse, pd.core.arrays.sparse.accessor.SparseFrameAccessor)
 
     def test_subclassing(self):
+        # [FUNCTION DOC]
+        # to_dense on a subclassed frame returns the same subclass.
         df = tm.SubclassedDataFrame({"sparse": pd.arrays.SparseArray([1, 2])})
         assert isinstance(df.sparse.to_dense(), tm.SubclassedDataFrame)

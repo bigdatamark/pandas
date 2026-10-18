@@ -1,3 +1,9 @@
+# [MODULE DOC]
+# Tests for operators on Categorical and categorical Series: comparisons (ordered, unordered, with scalars,
+# tuples, frames, Series, arrays, missing values) and rejection of arithmetic and reductions. Uses the
+# comparison_op and compare_operators_no_eq_ne fixtures from the shared conftest. No import-time side
+# effects.
+
 import numpy as np
 import pytest
 
@@ -13,11 +19,20 @@ import pandas._testing as tm
 
 
 class TestCategoricalOpsWithFactor:
+    # [CLASS DOC]
+    # Groups comparison tests, named for the historical Factor type. Stateless.
     def test_categories_none_comparisons(self):
+        # [FUNCTION DOC]
+        # An ordered Categorical compared for equality by the testing helper with itself passes.
         factor = Categorical(["a", "b", "b", "a", "a", "c", "c", "c"], ordered=True)
         tm.assert_categorical_equal(factor, factor)
 
     def test_comparisons(self):
+        # [FUNCTION DOC]
+        # Large test of comparison operators on an ordered Categorical against scalars (equality, inequality, orderings),
+        # a permuted copy, and a missing scalar; category order must drive ordered comparisons; comparing Categoricals
+        # with different categories or differing ordered flags raises a type error; comparison with a Series or an
+        # object array raises a type error in both directions; a zero-dimensional array is unboxed.
         factor = Categorical(["a", "b", "b", "a", "a", "c", "c", "c"], ordered=True)
         result = factor[factor == "a"]
         expected = factor[np.asarray(factor) == "a"]
@@ -128,11 +143,15 @@ class TestCategoricalOpsWithFactor:
 
 
 class TestCategoricalOps:
+    # [CLASS DOC]
+    # Groups operator tests for Categorical and categorical Series. Stateless.
     @pytest.mark.parametrize(
         "categories",
         [["a", "b"], [0, 1], [Timestamp("2019"), Timestamp("2020")]],
     )
     def test_not_equal_with_na(self, categories):
+        # [FUNCTION DOC]
+        # Parametrized over string, integer and timestamp categories. Inequality with a missing value on one side is true everywhere.
         # https://github.com/pandas-dev/pandas/issues/32276
         c1 = Categorical.from_codes([-1, 0], categories=categories)
         c2 = Categorical.from_codes([0, 1], categories=categories)
@@ -142,6 +161,8 @@ class TestCategoricalOps:
         assert result.all()
 
     def test_compare_frame(self):
+        # [FUNCTION DOC]
+        # A Categorical compared with a transposed frame defers to the frame and gives an element-wise frame result.
         # GH#24282 check that Categorical.__cmp__(DataFrame) defers to frame
         data = ["a", "b", 2, "a"]
         cat = Categorical(data)
@@ -157,6 +178,8 @@ class TestCategoricalOps:
         tm.assert_frame_equal(result, expected)
 
     def test_compare_frame_raises(self, comparison_op):
+        # [FUNCTION DOC]
+        # Uses the comparison_op fixture. Comparing with the untransposed frame raises a value error about coercing to a Series of length one.
         # alignment raises unless we transpose
         op = comparison_op
         cat = Categorical(["a", "b", 2, "a"])
@@ -166,17 +189,24 @@ class TestCategoricalOps:
             op(cat, df)
 
     def test_datetime_categorical_comparison(self):
+        # [FUNCTION DOC]
+        # Ordered datetime Categoricals compare with a scalar element in both directions.
         dt_cat = Categorical(date_range("2014-01-01", periods=3), ordered=True)
         tm.assert_numpy_array_equal(dt_cat > dt_cat[0], np.array([False, True, True]))
         tm.assert_numpy_array_equal(dt_cat[0] < dt_cat, np.array([False, True, True]))
 
     def test_reflected_comparison_with_scalars(self):
+        # [FUNCTION DOC]
+        # Ordered integer Categorical compares with a scalar on either side with equal results.
         # GH8658
         cat = Categorical([1, 2, 3], ordered=True)
         tm.assert_numpy_array_equal(cat > cat[0], np.array([False, True, True]))
         tm.assert_numpy_array_equal(cat[0] < cat, np.array([False, True, True]))
 
     def test_comparison_with_unknown_scalars(self):
+        # [FUNCTION DOC]
+        # Ordered comparisons with a scalar not in the categories raise a type error (both sides); equality and
+        # inequality give all false and all true.
         # https://github.com/pandas-dev/pandas/issues/9836#issuecomment-92123057
         # and following comparisons with scalars not in categories should raise
         # for unequal comps, but not for equal/not equal
@@ -196,6 +226,8 @@ class TestCategoricalOps:
         tm.assert_numpy_array_equal(cat != 4, np.array([True, True, True]))
 
     def test_comparison_with_tuple(self):
+        # [FUNCTION DOC]
+        # Equality and inequality with a string or a tuple scalar give boolean arrays of matches.
         cat = Categorical(np.array(["foo", (0, 1), 3, (0, 1)], dtype=object))
 
         result = cat == "foo"
@@ -213,6 +245,9 @@ class TestCategoricalOps:
     def test_comparison_of_ordered_categorical_with_nan_to_scalar(
         self, compare_operators_no_eq_ne
     ):
+        # [FUNCTION DOC]
+        # Uses compare_operators_no_eq_ne fixture; runtime warnings ignored. Ordered comparison of a Categorical having a
+        # missing value with a scalar equals the numpy result (missing compares false).
         # https://github.com/pandas-dev/pandas/issues/26504
         # BUG: fix ordered categorical comparison with missing values (#26504 )
         # and following comparisons with scalars in categories with missing
@@ -228,6 +263,8 @@ class TestCategoricalOps:
     def test_comparison_of_ordered_categorical_with_nan_to_listlike(
         self, compare_operators_no_eq_ne
     ):
+        # [FUNCTION DOC]
+        # Same as the scalar variant but compared with another ordered Categorical; missing positions compare false.
         # https://github.com/pandas-dev/pandas/issues/26504
         # and following comparisons of missing values in ordered Categorical
         # with listlike should be evaluated as False
@@ -243,6 +280,10 @@ class TestCategoricalOps:
         [(list("abc"), list("cba"), list("bbb")), ([1, 2, 3], [3, 2, 1], [2, 2, 2])],
     )
     def test_comparisons(self, data, reverse, base):
+        # [FUNCTION DOC]
+        # Parametrized over string and integer data. Same checks as the factor variant but with categorical Series:
+        # ordering-aware comparisons against Series, scalars; type errors when categories differ and when
+        # compared with Series or arrays (any side).
         cat_rev = Series(Categorical(data, categories=reverse, ordered=True))
         cat_rev_base = Series(Categorical(base, categories=reverse, ordered=True))
         cat = Series(Categorical(data, ordered=True))
@@ -309,6 +350,9 @@ class TestCategoricalOps:
 
     @pytest.mark.parametrize("box", [lambda x: x, Series])
     def test_unordered_different_order_equal(self, box):
+        # [FUNCTION DOC]
+        # Parametrized over the identity box and Series. Unordered Categoricals with the same categories in different order
+        # compare by value, not code.
         # https://github.com/pandas-dev/pandas/issues/16014
         c1 = box(Categorical(["a", "b"], categories=["a", "b"], ordered=False))
         c2 = box(Categorical(["a", "b"], categories=["b", "a"], ordered=False))
@@ -328,6 +372,8 @@ class TestCategoricalOps:
         tm.assert_numpy_array_equal(np.array(result), np.array([True, False]))
 
     def test_unordered_different_categories_raises(self):
+        # [FUNCTION DOC]
+        # Equality of unordered Categoricals with different category sets raises a type error.
         c1 = Categorical(["a", "b"], categories=["a", "b"], ordered=False)
         c2 = Categorical(["a", "c"], categories=["c", "a"], ordered=False)
 
@@ -335,6 +381,8 @@ class TestCategoricalOps:
             c1 == c2
 
     def test_compare_different_lengths(self):
+        # [FUNCTION DOC]
+        # Empty Categoricals with different categories raise a type error on equality.
         c1 = Categorical([], categories=["a", "b"])
         c2 = Categorical([], categories=["a"])
 
@@ -343,6 +391,8 @@ class TestCategoricalOps:
             c1 == c2
 
     def test_compare_unordered_different_order(self):
+        # [FUNCTION DOC]
+        # The equals method is false for the same-valued unordered Categoricals with categories in different order.
         # https://github.com/pandas-dev/pandas/issues/16603#issuecomment-
         # 349290078
         a = Categorical(["a"], categories=["a", "b"])
@@ -350,6 +400,9 @@ class TestCategoricalOps:
         assert not a.equals(b)
 
     def test_numeric_like_ops(self):
+        # [FUNCTION DOC]
+        # Builds a frame with a binned categorical column. Arithmetic on the frame raises a type error, and numeric reductions
+        # on the categorical column raise a type error saying the operation is not supported.
         df = DataFrame({"value": np.random.default_rng(2).integers(0, 10000, 100)})
         labels = [f"{i} - {i + 499}" for i in range(0, 10000, 500)]
         cat_labels = Categorical(labels, labels)
@@ -379,6 +432,8 @@ class TestCategoricalOps:
                 getattr(s, op)(numeric_only=False)
 
     def test_numeric_like_ops_series(self):
+        # [FUNCTION DOC]
+        # numpy sum on a categorical Series raises a type error that the operation is unsupported.
         # numpy ops
         s = Series(Categorical([1, 2, 3, 4]))
         with pytest.raises(TypeError, match="does not support operation 'sum'"):
@@ -394,6 +449,8 @@ class TestCategoricalOps:
         ],
     )
     def test_numeric_like_ops_series_arith(self, op, str_rep):
+        # [FUNCTION DOC]
+        # Parametrized over add, subtract, multiply, divide. Arithmetic with a scalar on a categorical Series raises a type error.
         # numeric ops on a Series
         s = Series(Categorical([1, 2, 3, 4]))
         msg = f"Series cannot perform the operation {str_rep}|unsupported operand"
@@ -401,6 +458,8 @@ class TestCategoricalOps:
             getattr(s, op)(2)
 
     def test_numeric_like_ops_series_invalid(self):
+        # [FUNCTION DOC]
+        # A numpy log ufunc on a categorical Series raises a type error.
         # invalid ufunc
         s = Series(Categorical([1, 2, 3, 4]))
         msg = "Object with dtype category cannot perform the numpy op log"

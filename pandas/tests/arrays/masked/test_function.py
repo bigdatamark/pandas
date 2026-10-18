@@ -1,3 +1,7 @@
+# [MODULE DOC]
+# Tests for rounding, list conversion and numpy conversion on masked arrays of integer and float dtypes. Builds a module-level
+# list of arrays (one per integer and float extension dtype with a trailing missing value) used by the data fixture.
+
 import numpy as np
 import pytest
 
@@ -15,6 +19,8 @@ arrays += [
 
 @pytest.fixture(params=arrays, ids=[a.dtype.name for a in arrays])
 def data(request):
+    # [FUNCTION DOC]
+    # HELPER: fixture parametrized over the module-level integer and float masked arrays; ids are dtype names.
     """
     Fixture returning parametrized 'data' array with different integer and
     floating point types
@@ -24,6 +30,8 @@ def data(request):
 
 @pytest.fixture
 def numpy_dtype(data):
+    # [FUNCTION DOC]
+    # HELPER: fixture that derives, from the data array, the numpy scalar type to use for reference computations: float for integer arrays (since missing needs NaN), otherwise the array's own scalar type.
     """
     Fixture returning numpy dtype from 'data' input array.
     """
@@ -36,6 +44,8 @@ def numpy_dtype(data):
 
 
 def test_round(data, numpy_dtype):
+    # [FUNCTION DOC]
+    # Rounding with no argument and with two decimals equals numpy rounding of the converted data, with missing positions restored to NA in the same dtype.
     # No arguments
     result = data.round()
     np_result = np.round(data.to_numpy(dtype=numpy_dtype, na_value=None))
@@ -54,15 +64,21 @@ def test_round(data, numpy_dtype):
 
 
 def test_tolist(data):
+    # [FUNCTION DOC]
+    # List conversion equals the list obtained by iterating over the array.
     result = data.tolist()
     expected = list(data)
     tm.assert_equal(result, expected)
 
 
 def test_to_numpy():
+    # [FUNCTION DOC]
+    # A custom masked array subclass defined inside the test (string dtype, NA fill value) converts to numpy as an array where the masked position holds NA (regression for base-class conversion).
     # GH#56991
 
     class MyStringArray(BaseMaskedArray):
+        # [CLASS DOC]
+        # HELPER: minimal subclass of the masked array base used only by this test; sets the string dtype, its dtype class and NA as internal fill value, to check generic conversion in the base class.
         dtype = pd.StringDtype()
         _dtype_cls = pd.StringDtype
         _internal_fill_value = pd.NA

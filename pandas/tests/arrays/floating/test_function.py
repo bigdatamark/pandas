@@ -1,3 +1,8 @@
+# [MODULE DOC]
+# Tests for numpy ufuncs, statistical methods, value counts and reductions (sum, min, max, prod) on the
+# nullable floating array and Series built from it. Uses fixtures skipna, dtype, using_nan_is_na and
+# using_python_scalars. Some tests are skipped on 32-bit platforms. No import-time side effects.
+
 import numpy as np
 import pytest
 
@@ -11,6 +16,10 @@ import pandas._testing as tm
 # np.sign emits a warning with nans, <https://github.com/numpy/numpy/issues/15127>
 @pytest.mark.filterwarnings("ignore:invalid value encountered in sign:RuntimeWarning")
 def test_ufuncs_single(ufunc, using_nan_is_na):
+    # [FUNCTION DOC]
+    # Parametrized over absolute value and sign (sign warnings for NaN filtered). The ufunc applied to an array with a
+    # missing entry equals the numpy result on the float conversion with the missing position restored to NA, for
+    # the array and for a Series.
     a = pd.array([1, 2, -3, pd.NA], dtype="Float64")
     result = ufunc(a)
     np_res = ufunc(a.astype(float))
@@ -27,6 +36,8 @@ def test_ufuncs_single(ufunc, using_nan_is_na):
 
 @pytest.mark.parametrize("ufunc", [np.log, np.exp, np.sin, np.cos, np.sqrt])
 def test_ufuncs_single_float(ufunc, using_nan_is_na):
+    # [FUNCTION DOC]
+    # Parametrized over log, exp, sin, cos and sqrt with invalid-value errors suppressed. Same check as the single ufunc test for arrays and Series.
     a = pd.array([1.0, 0.2, 3.0, pd.NA], dtype="Float64")
     with np.errstate(invalid="ignore"):
         result = ufunc(a)
@@ -48,6 +59,9 @@ def test_ufuncs_single_float(ufunc, using_nan_is_na):
 
 @pytest.mark.parametrize("ufunc", [np.add, np.subtract])
 def test_ufuncs_binary_float(ufunc, using_nan_is_na):
+    # [FUNCTION DOC]
+    # Parametrized over add and subtract. Applied to two nullable arrays, to an array and a numpy array (both orders) and to an
+    # array and a scalar (both orders): the result equals the numpy computation with missing positions set to NA.
     # two FloatingArrays
     a = pd.array([1, 0.2, -3, pd.NA], dtype="Float64")
     result = ufunc(a, a)
@@ -91,6 +105,10 @@ def test_ufuncs_binary_float(ufunc, using_nan_is_na):
 
 @pytest.mark.parametrize("values", [[0, 1], [0, None]])
 def test_ufunc_reduce_raises(values):
+    # [FUNCTION DOC]
+    # Parametrized over a list without and with a missing value. Add-reduce on the array gives the same value as the sum with
+    # skipna disabled (so NA when a value is missing).
+    # KNOWN ISSUE: the name says reduce raises, but nothing is expected to raise; the test compares the reduction result with the sum.
     arr = pd.array(values, dtype="Float64")
 
     res = np.add.reduce(arr)
@@ -112,6 +130,9 @@ def test_ufunc_reduce_raises(values):
     ],
 )
 def test_stat_method(pandasmethname, kwargs):
+    # [FUNCTION DOC]
+    # Parametrized over variance and standard deviation (ddof zero and one), kurtosis, skew and standard error. A Series of floats with
+    # trailing NA gives exactly the same result as the same data in a plain 64-bit float Series without them. Skipped on 32-bit.
     s = pd.Series(data=[0.1, 0.2, 0.3, 0.4, 0.5, 0.6, pd.NA, pd.NA], dtype="Float64")
     pandasmeth = getattr(s, pandasmethname)
     result = pandasmeth(**kwargs)
@@ -122,6 +143,8 @@ def test_stat_method(pandasmethname, kwargs):
 
 
 def test_value_counts_na():
+    # [FUNCTION DOC]
+    # Value counts with dropna disabled includes a missing row counted once; with dropna enabled it excludes it. Result is a Series named count of nullable integers indexed by a Float64 index.
     arr = pd.array([0.1, 0.2, 0.1, pd.NA], dtype="Float64")
     result = arr.value_counts(dropna=False)
     idx = pd.Index([0.1, 0.2, pd.NA], dtype=arr.dtype)
@@ -135,6 +158,8 @@ def test_value_counts_na():
 
 
 def test_value_counts_empty():
+    # [FUNCTION DOC]
+    # Value counts of an empty Float64 Series is an empty Int64 Series named count with a Float64 index.
     ser = pd.Series([], dtype="Float64")
     result = ser.value_counts()
     idx = pd.Index([], dtype="Float64")
@@ -144,6 +169,8 @@ def test_value_counts_empty():
 
 
 def test_value_counts_with_normalize():
+    # [FUNCTION DOC]
+    # Normalized value counts divide the counts by the number of non-missing values; the result is named proportion and has Float64 index.
     ser = pd.Series([0.1, 0.2, 0.1, pd.NA], dtype="Float64")
     result = ser.value_counts(normalize=True)
     expected = pd.Series([2, 1], index=ser[:2], dtype="Float64", name="proportion") / 3
@@ -153,6 +180,8 @@ def test_value_counts_with_normalize():
 
 @pytest.mark.parametrize("min_count", [0, 4])
 def test_floating_array_sum(skipna, min_count, dtype):
+    # [FUNCTION DOC]
+    # Parametrized over min_count (zero and four) with the skipna fixture. Sum is six when skipping missing and min_count is zero, otherwise the NA singleton.
     arr = pd.array([1, 2, 3, None], dtype=dtype)
     result = arr.sum(skipna=skipna, min_count=min_count)
     if skipna and min_count == 0:
@@ -165,6 +194,8 @@ def test_floating_array_sum(skipna, min_count, dtype):
     "values, expected", [([1, 2, 3], 6.0), ([1, 2, 3, None], 6.0), ([None], 0.0)]
 )
 def test_floating_array_numpy_sum(values, expected):
+    # [FUNCTION DOC]
+    # The numpy sum function on nullable floats skips missing values (all-missing gives zero).
     arr = pd.array(values, dtype="Float64")
     result = np.sum(arr)
     assert result == expected
@@ -172,6 +203,9 @@ def test_floating_array_numpy_sum(values, expected):
 
 @pytest.mark.parametrize("op", ["sum", "min", "max", "prod"])
 def test_preserve_dtypes(op, using_python_scalars):
+    # [FUNCTION DOC]
+    # Parametrized over sum, min, max and prod. A column of nullable floats reduces to a numpy float scalar (or python float when
+    # python scalars are enabled); a groupby reduction keeps the nullable Float64 dtype for that column.
     df = pd.DataFrame(
         {
             "A": ["a", "b", "b"],
@@ -199,6 +233,8 @@ def test_preserve_dtypes(op, using_python_scalars):
 
 @pytest.mark.parametrize("method", ["min", "max"])
 def test_floating_array_min_max(skipna, method, dtype):
+    # [FUNCTION DOC]
+    # Parametrized over min and max with skipna and dtype fixtures. Skipping missing returns the extreme (zero or one); otherwise NA.
     arr = pd.array([0.0, 1.0, None], dtype=dtype)
     func = getattr(arr, method)
     result = func(skipna=skipna)
@@ -210,6 +246,8 @@ def test_floating_array_min_max(skipna, method, dtype):
 
 @pytest.mark.parametrize("min_count", [0, 9])
 def test_floating_array_prod(skipna, min_count, dtype):
+    # [FUNCTION DOC]
+    # Parametrized over min_count (zero and nine). Product skipping missing is two when min_count is zero, else NA.
     arr = pd.array([1.0, 2.0, None], dtype=dtype)
     result = arr.prod(skipna=skipna, min_count=min_count)
     if skipna and min_count == 0:

@@ -1,9 +1,16 @@
+# [MODULE DOC]
+# Tests for min and max reductions on PeriodArray. Uses the skipna fixture from the shared conftest. No import-time side effects.
+
 import pandas as pd
 from pandas.core.arrays import period_array
 
 
 class TestReductions:
+    # [CLASS DOC]
+    # Groups reduction tests for PeriodArray. Stateless.
     def test_min_max(self):
+        # [FUNCTION DOC]
+        # Min and max of an array with a NaT give the earliest and latest periods; with skipna disabled they give NaT.
         arr = period_array(
             [
                 "2000-01-03",
@@ -31,6 +38,8 @@ class TestReductions:
         assert result is pd.NaT
 
     def test_min_max_empty(self, skipna):
+        # [FUNCTION DOC]
+        # Using the skipna fixture. Min and max of an empty array are NaT.
         arr = period_array([], freq="D")
         result = arr.min(skipna=skipna)
         assert result is pd.NaT

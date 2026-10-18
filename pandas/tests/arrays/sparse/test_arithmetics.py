@@ -1,3 +1,9 @@
+# [MODULE DOC]
+# Tests for arithmetic, comparison and logical operations on SparseArray, comparing with the same operations on dense data: scalar,
+# array (same and different sparse index kinds), integer, float, mixed and boolean arrays, list, DataFrame and zero-dimensional operands, ufuncs,
+# in-place operators with numpy arrays, length mismatches and binary operators with varied fill values. Defines fixtures kind (sparse index kind) and mix
+# (sparse op dense instead of sparse op sparse), and uses all_arithmetic_functions from the shared conftest. No import-time side effects.
+
 import operator
 
 import numpy as np
@@ -11,12 +17,16 @@ from pandas.core.arrays.sparse import SparseArray
 
 @pytest.fixture(params=["integer", "block"])
 def kind(request):
+    # [FUNCTION DOC]
+    # HELPER: fixture parametrized over the sparse index kind passed to the array constructor: integer index or block index.
     """kind kwarg to pass to SparseArray"""
     return request.param
 
 
 @pytest.fixture(params=[True, False])
 def mix(request):
+    # [FUNCTION DOC]
+    # HELPER: fixture parametrized over true and false; true makes numeric-op checks use a dense right operand instead of a sparse one.
     """
     Fixture returning True or False, determining whether to operate
     op(sparse, dense) instead of op(sparse, sparse)
@@ -25,11 +35,19 @@ def mix(request):
 
 
 class TestSparseArrayArithmetics:
+    # [CLASS DOC]
+    # Groups arithmetic, comparison and logical operation tests for SparseArray, with HELPER check methods. Stateless.
     def _assert(self, a, b):
+        # [FUNCTION DOC]
+        # HELPER: compares two dense numpy arrays for equality.
+        # KNOWN ISSUE: the comment says the sparse-array equality assertion must be used (issue 45126) but the body calls the numpy array assertion.
         # We have to use tm.assert_sp_array_equal. See GH #45126
         tm.assert_numpy_array_equal(a, b)
 
     def _check_numeric_ops(self, a, b, a_dense, b_dense, mix: bool, op):
+        # [FUNCTION DOC]
+        # HELPER: checks that an arithmetic operator on sparse operands matches the same operator on dense data. Takes the sparse left operand, sparse right operand (or scalar), dense left, dense right, a flag selecting a dense
+        # right operand in place of the sparse one, and the operator. The expected value is computed with a Series on whichever dense side is an array (raises not-implemented if neither is); the result is densified and compared; floating warnings suppressed.
         # Check that arithmetic behavior matches non-Sparse Series arithmetic
 
         if isinstance(a_dense, np.ndarray):
@@ -48,12 +66,16 @@ class TestSparseArrayArithmetics:
         self._assert(result, expected)
 
     def _check_bool_result(self, res):
+        # [FUNCTION DOC]
+        # HELPER: asserts that a result is a SparseArray whose dtype is sparse with boolean subtype and whose fill value is a python boolean.
         assert isinstance(res, SparseArray)
         assert isinstance(res.dtype, SparseDtype)
         assert res.dtype.subtype == np.bool_
         assert isinstance(res.fill_value, bool)
 
     def _check_comparison_ops(self, a, b, a_dense, b_dense):
+        # [FUNCTION DOC]
+        # HELPER: for equality, inequality and the four orderings, checks that the sparse result (against sparse and against dense right operand) is a boolean sparse array equal after densifying to the dense comparison. Takes sparse left, sparse right, dense left, dense right; invalid-value warnings are suppressed.
         with np.errstate(invalid="ignore"):
             # Unfortunately, trying to wrap the computation of each expected
             # value is with np.errstate() is too tedious.
@@ -97,6 +119,8 @@ class TestSparseArrayArithmetics:
             self._assert((a < b_dense).to_dense(), a_dense < b_dense)
 
     def _check_logical_ops(self, a, b, a_dense, b_dense):
+        # [FUNCTION DOC]
+        # HELPER: same as the comparison helper but for logical and and or, for sparse and dense right operands.
         # sparse & sparse
         self._check_bool_result(a & b)
         self._assert((a & b).to_dense(), a_dense & b_dense)
@@ -115,12 +139,16 @@ class TestSparseArrayArithmetics:
     def test_float_scalar(
         self, kind, mix, all_arithmetic_functions, fill_value, scalar, request
     ):
+        # [FUNCTION DOC]
+        # Parametrized over scalar (0, 1, 3), fill value (none, 0, 2) and the kind, mix and operator fixtures. A sparse float array with NaNs operated with a scalar equals the dense computation.
         op = all_arithmetic_functions
         values = np.array([np.nan, 1, 2, 0, np.nan, 0, 1, 2, 1, np.nan])
         a = SparseArray(values, kind=kind, fill_value=fill_value)
         self._check_numeric_ops(a, scalar, values, scalar, mix, op)
 
     def test_float_scalar_comparison(self, kind):
+        # [FUNCTION DOC]
+        # Comparisons of a float sparse array with scalars 1, 0 and 3, for default, zero and two fill values.
         values = np.array([np.nan, 1, 2, 0, np.nan, 0, 1, 2, 1, np.nan])
 
         a = SparseArray(values, kind=kind)
@@ -139,6 +167,8 @@ class TestSparseArrayArithmetics:
         self._check_comparison_ops(a, 3, values, 3)
 
     def test_float_same_index_without_nans(self, kind, mix, all_arithmetic_functions):
+        # [FUNCTION DOC]
+        # Two sparse arrays with fill value zero and the same sparse index; numeric operators equal the dense computation.
         # when sp_index are the same
         op = all_arithmetic_functions
 
@@ -152,6 +182,8 @@ class TestSparseArrayArithmetics:
     def test_float_same_index_with_nans(
         self, kind, mix, all_arithmetic_functions, request
     ):
+        # [FUNCTION DOC]
+        # Same as above with NaN fill values (the request fixture is unused).
         # when sp_index are the same
         op = all_arithmetic_functions
         values = np.array([np.nan, 1, 2, 0, np.nan, 0, 1, 2, 1, np.nan])
@@ -162,6 +194,8 @@ class TestSparseArrayArithmetics:
         self._check_numeric_ops(a, b, values, rvalues, mix, op)
 
     def test_float_same_index_comparison(self, kind):
+        # [FUNCTION DOC]
+        # Comparison operators for same-index sparse arrays with NaN fill and zero fill.
         # when sp_index are the same
         values = np.array([np.nan, 1, 2, 0, np.nan, 0, 1, 2, 1, np.nan])
         rvalues = np.array([np.nan, 2, 3, 4, np.nan, 0, 1, 3, 2, np.nan])
@@ -178,6 +212,8 @@ class TestSparseArrayArithmetics:
         self._check_comparison_ops(a, b, values, rvalues)
 
     def test_float_array(self, kind, mix, all_arithmetic_functions):
+        # [FUNCTION DOC]
+        # Numeric operators between two float sparse arrays with different positions of NaN and different fill values (NaN, zero, one and two), also against an all-zero second operand.
         op = all_arithmetic_functions
 
         values = np.array([np.nan, 1, 2, 0, np.nan, 0, 1, 2, 1, np.nan])
@@ -201,6 +237,8 @@ class TestSparseArrayArithmetics:
         self._check_numeric_ops(a, b, values, rvalues, mix, op)
 
     def test_float_array_different_kind(self, mix, all_arithmetic_functions):
+        # [FUNCTION DOC]
+        # As above but the left array uses the integer index kind and the right one the block kind.
         op = all_arithmetic_functions
 
         values = np.array([np.nan, 1, 2, 0, np.nan, 0, 1, 2, 1, np.nan])
@@ -224,6 +262,8 @@ class TestSparseArrayArithmetics:
         self._check_numeric_ops(a, b, values, rvalues, mix, op)
 
     def test_float_array_comparison(self, kind):
+        # [FUNCTION DOC]
+        # Comparison operators for float sparse arrays with several fill value combinations.
         values = np.array([np.nan, 1, 2, 0, np.nan, 0, 1, 2, 1, np.nan])
         rvalues = np.array([2, np.nan, 2, 3, np.nan, 0, 1, 5, 2, np.nan])
 
@@ -245,6 +285,8 @@ class TestSparseArrayArithmetics:
         self._check_comparison_ops(a, b, values, rvalues)
 
     def test_int_array(self, kind, mix, all_arithmetic_functions):
+        # [FUNCTION DOC]
+        # Integer sparse arrays with explicit 64-bit dtype: dtype and fill value are asserted and numeric operators match dense results for varied fill values.
         op = all_arithmetic_functions
 
         # have to specify dtype explicitly until fixing GH 667
@@ -281,6 +323,8 @@ class TestSparseArrayArithmetics:
         self._check_numeric_ops(a, b, values, rvalues, mix, op)
 
     def test_int_array_comparison(self, kind):
+        # [FUNCTION DOC]
+        # Comparison operators for 64-bit integer sparse arrays with varied fill values.
         dtype = "int64"
         # int32 NI ATM
 
@@ -306,6 +350,8 @@ class TestSparseArrayArithmetics:
 
     @pytest.mark.parametrize("fill_value", [True, False, np.nan])
     def test_bool_same_index(self, kind, fill_value):
+        # [FUNCTION DOC]
+        # Parametrized over fill values true, false and NaN. Logical and/or of boolean sparse arrays with the same index matches dense.
         # GH 14000
         # when sp_index are the same
         values = np.array([True, False, True, True], dtype=np.bool_)
@@ -317,6 +363,8 @@ class TestSparseArrayArithmetics:
 
     @pytest.mark.parametrize("fill_value", [True, False, np.nan])
     def test_bool_array_logical(self, kind, fill_value):
+        # [FUNCTION DOC]
+        # Parametrized over fill values true, false and NaN. Logical and/or of boolean sparse arrays with different values matches dense.
         # GH 14000
         # when sp_index are the same
         values = np.array([True, False, True, False, True, True], dtype=np.bool_)
@@ -327,6 +375,8 @@ class TestSparseArrayArithmetics:
         self._check_logical_ops(a, b, values, rvalues)
 
     def test_mixed_array_float_int(self, kind, mix, all_arithmetic_functions, request):
+        # [FUNCTION DOC]
+        # Float sparse array combined with integer sparse array, with several fill values; asserts the integer array's sparse dtype and fill value and checks numeric operators (the request fixture is unused).
         op = all_arithmetic_functions
         rdtype = "int64"
         values = np.array([np.nan, 1, 2, 0, np.nan, 0, 1, 2, 1, np.nan])
@@ -355,6 +405,8 @@ class TestSparseArrayArithmetics:
         self._check_numeric_ops(a, b, values, rvalues, mix, op)
 
     def test_mixed_array_comparison(self, kind):
+        # [FUNCTION DOC]
+        # Comparison operators between float and integer sparse arrays with varied fill values.
         rdtype = "int64"
         # int32 NI ATM
 
@@ -384,6 +436,8 @@ class TestSparseArrayArithmetics:
         self._check_comparison_ops(a, b, values, rvalues)
 
     def test_xor(self):
+        # [FUNCTION DOC]
+        # Exclusive-or of two boolean sparse arrays gives a sparse array holding only the differing positions with the expected integer sparse index.
         s = SparseArray([True, True, False, False])
         t = SparseArray([True, False, True, False])
         result = s ^ t
@@ -394,6 +448,8 @@ class TestSparseArrayArithmetics:
 
 @pytest.mark.parametrize("op", [operator.eq, operator.add])
 def test_with_list(op):
+    # [FUNCTION DOC]
+    # Parametrized over equality and addition. Operating with a plain list equals operating with a sparse array of the list.
     arr = SparseArray([0, 1], fill_value=0)
     result = op(arr, [0, 1])
     expected = op(arr, SparseArray([0, 1]))
@@ -401,6 +457,8 @@ def test_with_list(op):
 
 
 def test_with_dataframe():
+    # [FUNCTION DOC]
+    # The addition method with a DataFrame operand returns the not-implemented marker.
     # GH#27910
     arr = SparseArray([0, 1], fill_value=0)
     df = pd.DataFrame([[1, 2], [3, 4]])
@@ -409,6 +467,8 @@ def test_with_dataframe():
 
 
 def test_with_zerodim_ndarray():
+    # [FUNCTION DOC]
+    # Multiplying by a zero-dimensional numpy array equals multiplying by the scalar.
     # GH#27910
     arr = SparseArray([0, 1], fill_value=0)
 
@@ -422,6 +482,8 @@ def test_with_zerodim_ndarray():
     "arr", [SparseArray([0, 0, -1, 1]), SparseArray([None, None, -1, 1])]
 )
 def test_ufuncs(ufunc, arr):
+    # [FUNCTION DOC]
+    # Parametrized over absolute value and exponential, and two arrays. The ufunc result is a sparse array whose fill value is the ufunc of the original fill value.
     result = ufunc(arr)
     fill_value = ufunc(arr.fill_value)
     expected = SparseArray(ufunc(np.asarray(arr)), fill_value=fill_value)
@@ -437,6 +499,8 @@ def test_ufuncs(ufunc, arr):
 )
 @pytest.mark.parametrize("ufunc", [np.add, np.greater])
 def test_binary_ufuncs(ufunc, a, b):
+    # [FUNCTION DOC]
+    # Parametrized over add and greater, with two sparse arrays and a dense numpy array. The result is a SparseArray whose dense content equals the numpy result.
     # can't say anything about fill value here.
     result = ufunc(a, b)
     expected = ufunc(np.asarray(a), np.asarray(b))
@@ -445,6 +509,8 @@ def test_binary_ufuncs(ufunc, a, b):
 
 
 def test_ndarray_inplace():
+    # [FUNCTION DOC]
+    # In-place addition of a sparse array into a numpy array updates the numpy array in place.
     sparray = SparseArray([0, 2, 0, 0])
     ndarray = np.array([0, 1, 2, 3])
     ndarray += sparray
@@ -453,6 +519,8 @@ def test_ndarray_inplace():
 
 
 def test_sparray_inplace():
+    # [FUNCTION DOC]
+    # In-place addition of a numpy array to a sparse array gives the expected sparse array with fill value zero.
     sparray = SparseArray([0, 2, 0, 0])
     ndarray = np.array([0, 1, 2, 3])
     sparray += ndarray
@@ -462,6 +530,8 @@ def test_sparray_inplace():
 
 @pytest.mark.parametrize("cons", [list, np.array, SparseArray])
 def test_mismatched_length_cmp_op(cons):
+    # [FUNCTION DOC]
+    # Parametrized over list, numpy and sparse right operands of length three. A logical and with a length-two sparse array raises a value error about mismatched length.
     left = SparseArray([True, True])
     right = cons([True, True, True])
     with pytest.raises(ValueError, match="operands have mismatched length"):
@@ -476,6 +546,8 @@ def test_mismatched_length_cmp_op(cons):
     ],
 )
 def test_mismatched_length_arith_op(a, b, all_arithmetic_functions):
+    # [FUNCTION DOC]
+    # Parametrized over length pairs (three and four in both orders). An arithmetic operator with a numpy array of different length raises an assertion error with a length mismatch message.
     op = all_arithmetic_functions
     with pytest.raises(AssertionError, match=f"length mismatch: {len(a)} vs. {len(b)}"):
         op(SparseArray(a, fill_value=0), np.array(b))
@@ -484,6 +556,9 @@ def test_mismatched_length_arith_op(a, b, all_arithmetic_functions):
 @pytest.mark.parametrize("op", ["add", "sub", "mul", "truediv", "floordiv", "pow"])
 @pytest.mark.parametrize("fill_value", [np.nan, 3])
 def test_binary_operators(op, fill_value):
+    # [FUNCTION DOC]
+    # Parametrized over add, subtract, multiply, true divide, floor divide, power and fill values (NaN, three). Sparse/sparse, sparse/dense, dense/sparse and sparse/scalar results are sparse arrays equal to the
+    # dense computation with fill value as the operator applied to the fill value; operators that raise a value error for the scalar case are skipped for that check.
     op = getattr(operator, op)
     data1 = np.random.default_rng(2).standard_normal(20)
     data2 = np.random.default_rng(2).standard_normal(20)

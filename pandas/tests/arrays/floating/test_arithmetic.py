@@ -1,3 +1,10 @@
+# [MODULE DOC]
+# Tests for arithmetic on the nullable floating array (FloatingArray): the basic binary operators, division
+# by zero, powers with scalars, arrays and missing values, zero-dimensional numpy operands, error messages
+# for invalid operands, cross-type arithmetic, unary operators and bitwise operators. Uses fixtures dtype,
+# data (from the local conftest) and using_nan_is_na, all_arithmetic_operators, float_ea_dtype (from the
+# shared conftest). No import-time side effects.
+
 import operator
 
 import numpy as np
@@ -24,6 +31,10 @@ from pandas.core.arrays import FloatingArray
     ids=["add", "mul", "sub", "div", "floordiv", "mod"],
 )
 def test_array_op(dtype, opname, exp):
+    # [FUNCTION DOC]
+    # Parametrized over operator names (add, mul, sub, truediv, floordiv, mod) and expected lists. Applies the operator to
+    # two five-element float arrays with missing values at different places; result has missing wherever either
+    # operand is missing and the expected values otherwise.
     a = pd.array([1.0, 2.0, None, 4.0, 5.0], dtype=dtype)
     b = pd.array([0.1, 0.2, 0.3, None, 0.5], dtype=dtype)
 
@@ -36,6 +47,10 @@ def test_array_op(dtype, opname, exp):
 
 @pytest.mark.parametrize("zero, negative", [(0, False), (0.0, False), (-0.0, True)])
 def test_divide_by_zero(dtype, zero, negative, using_nan_is_na):
+    # [FUNCTION DOC]
+    # Parametrized over zero values (integer zero, float zero, negative float zero). Dividing an array with zero,
+    # positive, negative and missing entries by zero gives not-a-number, positive infinity, negative infinity and
+    # missing, with signs flipped for negative zero; when NaN is treated as NA the zero-over-zero position is also masked.
     # TODO pending NA/NaN discussion
     # https://github.com/pandas-dev/pandas/issues/32265/
     a = pd.array([0, 1, -1, None], dtype=dtype)
@@ -53,6 +68,10 @@ def test_divide_by_zero(dtype, zero, negative, using_nan_is_na):
 
 
 def test_pow_scalar(dtype, using_nan_is_na):
+    # [FUNCTION DOC]
+    # Powers with scalars: exponent zero gives one everywhere (even missing), exponent one is identity, exponent NA
+    # or NaN gives missing except base one; reversed (scalar base, array exponent) cases for zero, one, NA and NaN
+    # bases. NaN-is-NA mode changes whether results are masked or real NaN.
     a = pd.array([-1, 0, 1, None, 2], dtype=dtype)
     result = a**0
     expected = pd.array([1, 1, 1, 1, 1], dtype=dtype)
@@ -102,6 +121,8 @@ def test_pow_scalar(dtype, using_nan_is_na):
 
 
 def test_pow_array(dtype):
+    # [FUNCTION DOC]
+    # Element-wise power between arrays with all combinations of zero, one and missing, following the rule that zero exponent and unit base give one.
     a = pd.array([0, 0, 0, 1, 1, 1, None, None, None], dtype=dtype)
     b = pd.array([0, 1, None, 0, 1, None, 0, 1, None], dtype=dtype)
     result = a**b
@@ -110,6 +131,8 @@ def test_pow_array(dtype):
 
 
 def test_rpow_one_to_na():
+    # [FUNCTION DOC]
+    # A numpy array raised to an all-missing nullable array gives one where the base is one and missing elsewhere.
     # https://github.com/pandas-dev/pandas/issues/22022
     # https://github.com/pandas-dev/pandas/issues/29997
     arr = pd.array([pd.NA, pd.NA], dtype="Float64")
@@ -120,6 +143,8 @@ def test_rpow_one_to_na():
 
 @pytest.mark.parametrize("other", [0, 0.5])
 def test_arith_zero_dim_ndarray(other):
+    # [FUNCTION DOC]
+    # Parametrized over two scalars. Adding a zero-dimensional numpy array equals adding the scalar itself.
     arr = pd.array([1, None, 2], dtype="Float64")
     result = arr + np.array(other)
     expected = arr + other
@@ -131,6 +156,10 @@ def test_arith_zero_dim_ndarray(other):
 
 
 def test_error_invalid_values(data, all_arithmetic_operators):
+    # [FUNCTION DOC]
+    # Uses the all_arithmetic_operators fixture. Applying the operator on a Series of floats with a string, a timestamp, a
+    # string Series or a datetime Series raises a type error matching one of many acceptable messages (they differ by
+    # operator and numpy version).
     op = all_arithmetic_operators
     s = pd.Series(data)
     ops = getattr(s, op)
@@ -193,6 +222,8 @@ def test_error_invalid_values(data, all_arithmetic_operators):
 
 
 def test_cross_type_arithmetic():
+    # [FUNCTION DOC]
+    # Adding nullable Float64, Float32 and plain numpy float columns gives nullable Float64 results with missing propagating; comparison of the result to a number gives a nullable boolean Series.
     df = pd.DataFrame(
         {
             "A": pd.array([1, 2, pd.NA], dtype="Float64"),
@@ -223,6 +254,9 @@ def test_cross_type_arithmetic():
     ],
 )
 def test_unary_float_operators(float_ea_dtype, source, neg_target, abs_target):
+    # [FUNCTION DOC]
+    # Parametrized over (source, negated target, absolute target) and the float_ea_dtype fixture. Negation and absolute
+    # value give the expected arrays (missing preserved); unary plus returns an equal array that does not share memory.
     # GH38794
     dtype = float_ea_dtype
     arr = pd.array(source, dtype=dtype)
@@ -237,6 +271,8 @@ def test_unary_float_operators(float_ea_dtype, source, neg_target, abs_target):
 
 
 def test_bitwise(dtype):
+    # [FUNCTION DOC]
+    # Or, and and exclusive-or between float arrays raise a type error for unsupported operands.
     left = pd.array([1, None, 3, 4], dtype=dtype)
     right = pd.array([None, 3, 5, 4], dtype=dtype)
 

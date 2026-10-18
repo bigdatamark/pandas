@@ -1,3 +1,8 @@
+# [MODULE DOC]
+# Tests for converting IntervalArray to and from pyarrow: the arrow interval extension type, array conversion, missing values,
+# table round trips with and without schema metadata, and conversion from a raw struct array. Every test skips if pyarrow is missing and
+# imports the arrow interval type lazily. Some tests filter a block-manager deprecation warning. No import-time side effects.
+
 import numpy as np
 import pytest
 
@@ -7,6 +12,8 @@ from pandas.core.arrays import IntervalArray
 
 
 def test_arrow_extension_type():
+    # [FUNCTION DOC]
+    # The arrow interval type stores the closed side, compares equal for equal subtype and closed, unequal when closed differs, and has consistent hashes.
     pa = pytest.importorskip("pyarrow")
 
     from pandas.core.arrays.arrow.extension_types import ArrowIntervalType
@@ -23,6 +30,9 @@ def test_arrow_extension_type():
 
 
 def test_arrow_array():
+    # [FUNCTION DOC]
+    # Converting an integer interval array to arrow gives the arrow interval type with matching closed and subtype and left/right storage fields; it equals the struct storage when asked for it;
+    # asking for unsupported float types raises a type error.
     pa = pytest.importorskip("pyarrow")
 
     from pandas.core.arrays.arrow.extension_types import ArrowIntervalType
@@ -52,6 +62,8 @@ def test_arrow_array():
 
 
 def test_arrow_array_missing(using_nan_is_na):
+    # [FUNCTION DOC]
+    # Converting an array with a missing interval gives float subtype storage with nulls (not NaN) in the fields and a null at struct level.
     pa = pytest.importorskip("pyarrow")
 
     from pandas.core.arrays.arrow.extension_types import ArrowIntervalType
@@ -89,6 +101,9 @@ def test_arrow_array_missing(using_nan_is_na):
     ids=["float", "datetime64[ns]"],
 )
 def test_arrow_table_roundtrip(breaks):
+    # [FUNCTION DOC]
+    # Parametrized over float and datetime breaks. A frame with an interval column with a missing value round-trips through an arrow table (keeping interval dtype), concatenated tables convert to the
+    # concatenated frame, and an empty chunked table converts to an empty frame (regression).
     pa = pytest.importorskip("pyarrow")
 
     from pandas.core.arrays.arrow.extension_types import ArrowIntervalType
@@ -125,6 +140,8 @@ def test_arrow_table_roundtrip(breaks):
     ids=["float", "datetime64[ns]"],
 )
 def test_arrow_table_roundtrip_without_metadata(breaks):
+    # [FUNCTION DOC]
+    # Same round trip with pandas schema metadata removed; the interval dtype is still restored from the extension type.
     pa = pytest.importorskip("pyarrow")
 
     arr = IntervalArray.from_breaks(breaks)
@@ -142,6 +159,8 @@ def test_arrow_table_roundtrip_without_metadata(breaks):
 
 
 def test_from_arrow_from_raw_struct_array():
+    # [FUNCTION DOC]
+    # A plain struct array with left and right fields converts through the interval dtype arrow hook (also chunked) into an interval array with the dtype's closed side, covering loss of the extension type.
     # in case pyarrow lost the Interval extension type (eg on parquet roundtrip
     # with datetime64[ns] subtype, see GH-45881), still allow conversion
     # from arrow to IntervalArray

@@ -1,3 +1,8 @@
+# [MODULE DOC]
+# Tests that setting invalid values on masked arrays raises (type errors with a formatted message) and that setting NaN
+# on float and integer masked arrays (also arrow-backed) follows the NaN-is-NA mode. Uses fixtures any_int_ea_dtype, float_ea_dtype and
+# using_nan_is_na from the shared conftest; arrow parametrizations are skipped if pyarrow is missing. No import-time side effects.
+
 import re
 
 import numpy as np
@@ -9,7 +14,13 @@ import pandas as pd
 
 
 class TestSetitemValidation:
+    # [CLASS DOC]
+    # Groups tests that assignment validates values for boolean, integer and float masked arrays. Holds a shared list of invalid scalars as a class attribute.
     def _check_setitem_invalid(self, arr, invalid):
+        # [FUNCTION DOC]
+        # HELPER: shared assertion for the validation tests. Takes an array and an invalid value; asserts that assigning the value by position, by full slice, by list index, and through a Series each raise a
+        # type error whose message names the invalid value and the dtype.
+        # KNOWN ISSUE: commented-out checks for list-valued assignment (marked with a note not to leave them commented) and a TODO about other variants remain in the body.
         msg = f"Invalid value '{invalid!s}' for dtype '{arr.dtype}'"
         msg = re.escape(msg)
         with pytest.raises(TypeError, match=msg):
@@ -48,16 +59,22 @@ class TestSetitemValidation:
         "invalid", [*_invalid_scalars, 1, 1.0, np.int64(1), np.float64(1)]
     )
     def test_setitem_validation_scalar_bool(self, invalid):
+        # [FUNCTION DOC]
+        # Parametrized over the invalid scalars plus integers and floats. A boolean array rejects each of them on assignment.
         arr = pd.array([True, False, None], dtype="boolean")
         self._check_setitem_invalid(arr, invalid)
 
     @pytest.mark.parametrize("invalid", [*_invalid_scalars, True, 1.5, np.float64(1.5)])
     def test_setitem_validation_scalar_int(self, invalid, any_int_ea_dtype):
+        # [FUNCTION DOC]
+        # Parametrized over invalid scalars plus True and non-integral floats; uses any_int_ea_dtype. An integer array rejects each of them.
         arr = pd.array([1, 2, None], dtype=any_int_ea_dtype)
         self._check_setitem_invalid(arr, invalid)
 
     @pytest.mark.parametrize("invalid", [*_invalid_scalars, True])
     def test_setitem_validation_scalar_float(self, invalid, float_ea_dtype):
+        # [FUNCTION DOC]
+        # Parametrized over invalid scalars plus True; uses float_ea_dtype. A float array rejects each of them.
         arr = pd.array([1, 2, None], dtype=float_ea_dtype)
         self._check_setitem_invalid(arr, invalid)
 
@@ -71,6 +88,8 @@ class TestSetitemValidation:
 )
 @pytest.mark.parametrize("indexer", [1, [1], [False, True, False]])
 def test_setitem_nan_in_float64_array(dtype, indexer, using_nan_is_na):
+    # [FUNCTION DOC]
+    # Parametrized over Float64 and the arrow-backed float64, and over scalar, list and boolean-mask indexers. Assigning NaN yields a real NaN, or NA when NaN-is-NA mode is on.
     arr = pd.array([0, pd.NA, 1], dtype=dtype)
 
     arr[indexer] = np.nan
@@ -89,6 +108,9 @@ def test_setitem_nan_in_float64_array(dtype, indexer, using_nan_is_na):
 )
 @pytest.mark.parametrize("indexer", [1, [1], [False, True, False]])
 def test_setitem_nan_in_int64_array(dtype, indexer, using_nan_is_na):
+    # [FUNCTION DOC]
+    # Parametrized over Int64 and the arrow-backed int64, and the same indexers. Without NaN-is-NA mode assigning NaN raises (type error for masked, arrow invalid-conversion error for arrow) and the
+    # array element is unchanged; with it, the element becomes NA.
     arr = pd.array([0, 1, 2], dtype=dtype)
     if not using_nan_is_na:
         err = TypeError
