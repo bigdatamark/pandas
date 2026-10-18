@@ -1,5 +1,26 @@
 """Common I/O API utilities"""
 
+# [MODULE DOC]
+# Shared plumbing for all pandas readers and writers: turning user supplied
+# paths, URLs, remote filesystem URLs and buffers into usable open handles,
+# with transparent compression and text/binary adaptation.
+# Public contents: the two small result dataclasses (resolved arguments and
+# managed handles, the latter a context manager that closes everything it
+# created); URL and path helpers (url check, remote-filesystem url check,
+# path stringification and user expansion, file existence, parent directory
+# check, path to file-URL conversion); compression helpers (extension map,
+# method extraction from a string or mapping, inference from a file name); the
+# main handle-opening function (with typed overloads) supporting gzip, bz2,
+# zip, tar, xz and zstd; private writer/reader wrapper classes for archives and
+# for adapting text buffers to binary and partial buffer interfaces; memory
+# mapping and binary-mode detection helpers; header argument validation; and
+# helpers to detect potential multi-index columns and to de-duplicate column
+# names.
+# Relationships: used by essentially every io module (csv/parsers, excel,
+# json, pickle, parquet, xml, html, stata, formats) and by frame writers.
+# Import-time side effects: builds the set of valid URL schemes and the
+# compiled remote-url regular expression; no I/O.
+
 from __future__ import annotations
 
 from abc import (
@@ -90,6 +111,15 @@ if TYPE_CHECKING:
 
 @dataclasses.dataclass
 class IOArgs:
+    # [CLASS DOC]
+    # Simple data container (dataclass) returned by the path/buffer resolution
+    # helper. Fields: filepath_or_buffer (a string path or a buffer, possibly
+    # an in-memory copy of a downloaded URL or an opened remote file), encoding
+    # (text encoding to use), mode (file mode, adjusted for remote files),
+    # compression (mapping with at least a method entry plus extra options),
+    # should_close (default false: whether the caller must close the buffer
+    # because it was created by the helper) and close_handles (default empty
+    # list of extra objects to close after the buffer).
     """
     Return value of io/common.py:_get_filepath_or_buffer.
     """
@@ -104,6 +134,17 @@ class IOArgs:
 
 @dataclasses.dataclass
 class IOHandles(Generic[AnyStr]):
+    # [CLASS DOC]
+    # Dataclass, generic over text or bytes content, returned by the handle
+    # opening function and usable as a context manager. Fields: handle (the
+    # object to read/write through), compression (mapping of the resolved
+    # method and options), created_handles (default empty list: every object
+    # the opener created, in the order they should be closed) and is_wrapped
+    # (default false: true when a text wrapper was put around a caller-owned
+    # buffer and must be detached instead of closed).
+    # Methods: close releases created handles; enter returns self; exit closes.
+    # Invariant: after close, the created list is empty and is_wrapped is
+    # false.
     """
     Return value of io/common.py:get_handle
 
@@ -124,6 +165,13 @@ class IOHandles(Generic[AnyStr]):
     is_wrapped: bool = False
 
     def close(self) -> None:
+        # [FUNCTION DOC]
+        # Closes every created handle. If a text wrapper was inserted around a
+        # caller-owned buffer, it is flushed and detached (so the underlying
+        # buffer stays open) and removed from the created list first. Then each
+        # remaining created handle is closed, the list is cleared and the
+        # wrapped flag reset. Returns nothing. Raises an assertion error if the
+        # wrapped flag is set but the handle is not a text wrapper.
         """
         Close all created buffers.
 
@@ -141,6 +189,8 @@ class IOHandles(Generic[AnyStr]):
         self.is_wrapped = False
 
     def __enter__(self) -> IOHandles[AnyStr]:
+        # [FUNCTION DOC]
+        # Context manager entry: returns this same object.
         return self
 
     def __exit__(
@@ -149,10 +199,18 @@ class IOHandles(Generic[AnyStr]):
         exc_value: BaseException | None,
         traceback: TracebackType | None,
     ) -> None:
+        # [FUNCTION DOC]
+        # Context manager exit: ignores exception details, closes all created
+        # handles, and does not suppress exceptions.
         self.close()
 
 
 def is_url(url: object) -> bool:
+    # [FUNCTION DOC]
+    # Returns true only if the input is a string whose parsed scheme is one of
+    # the recognised URL schemes (relative, network-location or parameter
+    # capable schemes known to the standard library, excluding the empty
+    # scheme). Non-strings give false. No exceptions for non-string input.
     """
     Check to see if a URL has a valid protocol.
 
@@ -172,13 +230,24 @@ def is_url(url: object) -> bool:
 
 @overload
 def _expand_user(filepath_or_buffer: str) -> str: ...
+# [FUNCTION DOC]
+# Overload stub (string input): see the implementation of the user expansion
+# helper below.
 
 
 @overload
 def _expand_user(filepath_or_buffer: BaseBufferT) -> BaseBufferT: ...
+# [FUNCTION DOC]
+# Overload stub (buffer input): see the implementation of the user expansion
+# helper below.
 
 
 def _expand_user(filepath_or_buffer: str | BaseBufferT) -> str | BaseBufferT:
+    # [FUNCTION DOC]
+    # HELPER: expands a leading tilde in a string path to the user's home
+    # directory (via the operating system path routine); any non-string input
+    # is returned unchanged. The two preceding overload stubs only describe
+    # the string-to-string and buffer-to-buffer typing.
     """
     Return the argument with an initial component of ~ or ~user
     replaced by that user's home directory.
@@ -198,6 +267,13 @@ def _expand_user(filepath_or_buffer: str | BaseBufferT) -> str | BaseBufferT:
 
 
 def validate_header_arg(header: object) -> None:
+    # [FUNCTION DOC]
+    # Validates the header argument of the readers; returns nothing.
+    # Accepted: none; a non-negative integer; a list-like (not a set) of
+    # non-negative integers. Raises a value error for a negative integer
+    # (suggesting none for no header), for a list containing non-integers or
+    # negative integers, and for any other non-boolean type; raises a type
+    # error for a boolean.
     if header is None:
         return
     if is_integer(header):
@@ -230,18 +306,34 @@ def validate_header_arg(header: object) -> None:
 def stringify_path(
     filepath_or_buffer: FilePath, convert_file_like: bool = ...
 ) -> str: ...
+# [FUNCTION DOC]
+# Overload stub (path input returns a string): see the implementation of the
+# path stringification function below.
 
 
 @overload
 def stringify_path(
     filepath_or_buffer: BaseBufferT, convert_file_like: bool = ...
 ) -> BaseBufferT: ...
+# [FUNCTION DOC]
+# Overload stub (buffer input returns a buffer): see the implementation of the
+# path stringification function below.
 
 
 def stringify_path(
     filepath_or_buffer: FilePath | BaseBufferT,
     convert_file_like: bool = False,
 ) -> str | BaseBufferT:
+    # [FUNCTION DOC]
+    # Converts a path-like object to a string with the user home expanded.
+    # Inputs: filepath_or_buffer (anything); convert_file_like (default false)
+    # controls whether file-like objects that also implement the path
+    # protocol are converted (otherwise they are returned untouched, so an
+    # already open fsspec file is not opened twice; compression inference
+    # passes true). Objects implementing the path protocol are replaced by
+    # their file-system path; the result then goes through user expansion, so
+    # everything else (bytes, buffers, non-path objects) passes through
+    # unchanged. No exceptions of its own.
     """
     Attempt to convert a path-like object to a string.
 
@@ -273,6 +365,11 @@ def stringify_path(
 
 
 def urlopen(*args: Any, **kwargs: Any) -> Any:
+    # [FUNCTION DOC]
+    # Thin wrapper that imports the standard url-request module on first use
+    # (to avoid its import cost at pandas import) and forwards all positional
+    # and keyword arguments to its open function, returning the response
+    # object (a context manager). Network errors propagate.
     """
     Lazy-import wrapper for stdlib urlopen, as that imports a big chunk of
     the stdlib.
@@ -283,6 +380,11 @@ def urlopen(*args: Any, **kwargs: Any) -> Any:
 
 
 def is_fsspec_url(url: FilePath | BaseBuffer) -> bool:
+    # [FUNCTION DOC]
+    # Returns true if the input is a string that starts with a protocol
+    # (letters, digits and some punctuation, optionally chained with a double
+    # colon) followed by a double slash, and is not an http or https url
+    # (those are handled directly). Non-strings give false.
     """
     Returns true if the given URL looks like
     something fsspec can handle
@@ -301,6 +403,36 @@ def _get_filepath_or_buffer(
     mode: str = "r",
     storage_options: StorageOptions | None = None,
 ) -> IOArgs:
+    # [FUNCTION DOC]
+    # HELPER: resolves a user supplied path, url or buffer into an argument
+    # container for the handle opener.
+    # Inputs: filepath_or_buffer (path, path-like, url, remote url or buffer);
+    # encoding (default utf-8); compression (string, mapping with a method key,
+    # or none meaning no compression; the string for inference is also
+    # accepted); mode (default read); storage_options (default none: headers
+    # for http urls, or keyword arguments for the remote filesystem opener).
+    # Behavior: stringifies the path; splits the compression argument into
+    # method and options and infers the method from the name when requested;
+    # warns (runtime warning) and drops compression when a non-binary writable
+    # buffer is given; warns (unicode warning) when writing utf-16/utf-32 with
+    # bz2 or xz since no byte order mark is written; warns (runtime warning)
+    # for zip or tar in append mode. The fsspec mode adds binary unless text or
+    # binary was requested. For http/other recognised urls: downloads the whole
+    # body into memory, switching compression to gzip if the response says its
+    # content is gzip encoded, and marks it to be closed. For remote filesystem
+    # urls: rewrites s3a/s3n schemes to s3, opens through the optional fsspec
+    # library, and if botocore is installed retries once anonymously (copying
+    # storage options, never mutating the caller's) on credential or
+    # permission errors; marks the opened file for closing. Plain strings,
+    # bytes and memory maps are returned with user expansion applied.
+    # Raises a value error if storage options are given for something that is
+    # not a url, and a value error if the object has neither read nor write.
+    # Returns the container with should_close true only for downloaded or
+    # remote-opened files.
+    # KNOWN ISSUE: the byte order mark warning interpolates the whole
+    # compression mapping into its message instead of the method name.
+    # KNOWN ISSUE: the docstring below claims compression defaults to the
+    # inference string, but the signature default is none.
     """
     If the filepath_or_buffer is a url, translate and return the buffer.
     Otherwise passthrough.
@@ -505,6 +637,11 @@ def _get_filepath_or_buffer(
 
 
 def file_path_to_url(path: str) -> str:
+    # [FUNCTION DOC]
+    # Converts an absolute native file system path to a file URL. Input: path
+    # string in the platform's format. Returns the URL string built by
+    # percent-encoding the path and joining it to the file scheme. The
+    # url-request import is deferred because it is slow.
     """
     converts an absolute native path to a FILE URL.
 
@@ -539,6 +676,13 @@ _supported_compressions = set(extension_to_compression.values())
 def get_compression_method(
     compression: CompressionOptions,
 ) -> tuple[str | None, CompressionDict]:
+    # [FUNCTION DOC]
+    # Splits a compression argument into (method, options). Input: a string
+    # or none (taken as the method, with empty options) or a mapping that must
+    # contain a method key (that entry is removed from a copy and becomes the
+    # method; remaining entries are the options). Returns the pair. Raises a
+    # value error if a mapping lacks the method key. The input mapping is not
+    # mutated.
     """
     Simplifies a compression argument to a compression method string and
     a mapping containing additional arguments.
@@ -574,6 +718,18 @@ def get_compression_method(
 def infer_compression(
     filepath_or_buffer: FilePath | BaseBuffer, compression: str | None
 ) -> str | None:
+    # [FUNCTION DOC]
+    # Determines the compression method to use. Inputs: filepath_or_buffer
+    # (path, url or buffer) and compression (a method name, the inference
+    # marker, or none). None gives none. For the inference marker: chained
+    # url suffixes after a double colon are cut off, the input is stringified
+    # (also converting file-like path objects); non-string inputs (buffers)
+    # give none; otherwise the lower-cased name is matched against the known
+    # extensions in table order and the first matching method is returned, or
+    # none if no match. An explicit method must be in the supported set and is
+    # returned unchanged. Raises a value error listing valid types otherwise.
+    # Note the extension table lists the multi-part tar suffixes first so they
+    # match before the single compression suffixes.
     """
     Get the compression method for filepath_or_buffer. If compression='infer',
     the inferred compression method is returned. Otherwise, the input
@@ -643,6 +799,10 @@ def infer_compression(
 
 
 def check_parent_directory(path: Path | str) -> None:
+    # [FUNCTION DOC]
+    # Verifies the parent directory of a file path exists. Input: path or
+    # string. Returns nothing; raises an operating-system error naming the
+    # missing directory if the parent is not an existing directory.
     """
     Check if parent directory of a file exists, raise OSError if it does not
 
@@ -668,6 +828,9 @@ def get_handle(
     errors: str | None = ...,
     storage_options: StorageOptions = ...,
 ) -> IOHandles[bytes]: ...
+# [FUNCTION DOC]
+# Overload stub (binary content, handles of bytes): see the handle opening
+# implementation below.
 
 
 @overload
@@ -682,6 +845,9 @@ def get_handle(
     errors: str | None = ...,
     storage_options: StorageOptions = ...,
 ) -> IOHandles[str]: ...
+# [FUNCTION DOC]
+# Overload stub (text content, handles of strings): see the handle opening
+# implementation below.
 
 
 @overload
@@ -696,6 +862,9 @@ def get_handle(
     errors: str | None = ...,
     storage_options: StorageOptions = ...,
 ) -> IOHandles[str] | IOHandles[bytes]: ...
+# [FUNCTION DOC]
+# Overload stub (content kind not known statically): see the handle opening
+# implementation below.
 
 
 def get_handle(
@@ -709,6 +878,41 @@ def get_handle(
     errors: str | None = None,
     storage_options: StorageOptions | None = None,
 ) -> IOHandles[str] | IOHandles[bytes]:
+    # [FUNCTION DOC]
+    # Opens a path, url or buffer for reading or writing and returns a managed
+    # handle container.
+    # Inputs: path_or_buf (path, url or buffer); mode (open mode string);
+    # keyword-only: encoding (default utf-8 when none), compression (string,
+    # mapping with a method key, inference marker, or none), memory_map
+    # (default false; only honoured for readers of delimited text and only if
+    # the object has a descriptor or is a path), is_text (default true: the
+    # consumer wants strings rather than bytes), errors (default strict;
+    # encoding error policy) and storage_options (default none; passed to the
+    # path resolver).
+    # Behavior: appends binary to the mode when the target is binary and the
+    # mode lacks it; validates the encoding and error policy names (lookup
+    # errors propagate); resolves the argument; optionally memory maps first;
+    # for write modes with a plain path checks the parent directory exists.
+    # With compression, removes text mode flags (except for zstd, which is
+    # forced to binary) and opens through the matching library: gzip (path or
+    # file object), bz2, zip (read mode requires exactly one member, whose
+    # stream is used), tar (same one-member rule when reading), xz and zstd
+    # (optional library; reader or writer context according to mode).
+    # Raises a value error for zero or several archive members or an unknown
+    # compression. Without compression, a string path is opened as a file,
+    # with the encoding, error policy and an empty newline setting unless in
+    # binary mode. Then, for binary consumers of a text stream in read mode, a
+    # bytes-producing wrapper is installed; for text consumers of binary
+    # sources (compressed, memory mapped or binary-mode), buffers lacking
+    # readable/writable/seekable methods are first wrapped, and a text wrapper
+    # is installed (flagged as wrapped only when the caller supplied the
+    # buffer so it will be detached rather than closed). In read mode raises a
+    # type error if the final handle cannot be read.
+    # The created handle list is reversed so the newest closes first, and for
+    # urls or remote files the resolved buffer and extra handles are appended.
+    # Side effects: opens files and archives, may download data.
+    # KNOWN ISSUE: the docstring below states a compression default of the
+    # inference string, but the actual default is none.
     """
     Get file handle for given path/buffer and mode.
 
@@ -996,6 +1200,15 @@ def get_handle(
 
 
 class _BufferedWriter(BytesIO, ABC):
+    # [CLASS DOC]
+    # HELPER: abstract in-memory byte buffer for archive formats that cannot
+    # accept several write calls. Everything written is held in memory and
+    # flushed into the real archive object (the buffer attribute, whose class
+    # attribute default is an empty in-memory buffer replaced by subclasses)
+    # in one step on close. Subclasses implement write_to_buffer. Inherits the
+    # in-memory byte stream and the abstract base class machinery.
+    # Invariant: after close, the archive is closed, whether or not anything
+    # was written.
     """
     Some objects do not support multiple .write() calls (TarFile and ZipFile).
     This wrapper writes to the underlying buffer on close.
@@ -1005,8 +1218,17 @@ class _BufferedWriter(BytesIO, ABC):
 
     @abstractmethod
     def write_to_buffer(self) -> None: ...
+    # [FUNCTION DOC]
+    # Abstract hook: subclasses add the accumulated bytes as a single member
+    # of the underlying archive. Takes no arguments and returns nothing.
 
     def close(self) -> None:
+        # [FUNCTION DOC]
+        # HELPER: closes the buffer exactly once. If already closed, does
+        # nothing. If any bytes were written, rewinds and, inside a context
+        # on the archive object, calls the subclass write hook (so the archive
+        # is closed afterwards). If nothing was written, simply closes the
+        # archive. Finally closes the in-memory stream itself.
         if self.closed:
             # already closed
             return
@@ -1021,6 +1243,12 @@ class _BufferedWriter(BytesIO, ABC):
 
 
 class _BytesTarFile(_BufferedWriter):
+    # [CLASS DOC]
+    # HELPER: tar archive adapter used by the handle opener. Wraps a tar file
+    # object (attribute buffer) opened from a name or a file object; written
+    # bytes accumulate in memory and are added on close as one member.
+    # Attributes: archive_name (member name given by the caller, may be none)
+    # and name (path of the archive, may be none).
     def __init__(
         self,
         name: str | None = None,
@@ -1029,6 +1257,13 @@ class _BytesTarFile(_BufferedWriter):
         archive_name: str | None = None,
         **kwargs: Any,
     ) -> None:
+        # [FUNCTION DOC]
+        # HELPER: opens the tar archive. name is the archive path (optional);
+        # mode (default read) is one of read, append, write, exclusive-create
+        # and is normalised by the mode extender; fileobj is an alternative
+        # underlying file object; archive_name optionally names the member
+        # written; extra keyword arguments are passed to the tar open routine.
+        # Side effect: opens the archive immediately.
         super().__init__()
         self.archive_name = archive_name
         self.name = name
@@ -1045,6 +1280,12 @@ class _BytesTarFile(_BufferedWriter):
         )
 
     def extend_mode(self, mode: str) -> str:
+        # [FUNCTION DOC]
+        # HELPER: normalises a mode for the tar open routine. Removes binary
+        # flags; read/append/other modes are returned as is; for write mode,
+        # if the archive name ends in a gzip, xz or bz2 suffix, the matching
+        # compressed-write mode (mode, colon, suffix without dot) is returned,
+        # otherwise plain write.
         mode = mode.replace("b", "")
         if mode != "w":
             return mode
@@ -1055,6 +1296,14 @@ class _BytesTarFile(_BufferedWriter):
         return mode
 
     def infer_filename(self) -> str | None:
+        # [FUNCTION DOC]
+        # HELPER: chooses a member name from the archive name when none was
+        # given. Returns none if the archive has no name; strips a trailing tar
+        # extension; otherwise returns the final path component.
+        # KNOWN ISSUE: the branch intended to strip double extensions (tar
+        # plus gzip, bz2 or xz) can never match because the path suffix is
+        # only the last extension, so such names keep their inner tar
+        # extension; the docstring also says zip instead of tar.
         """
         If an explicit archive_name is not given, we still want the file inside the zip
         file not to be named something.tar, because that causes confusion (GH39465).
@@ -1070,6 +1319,11 @@ class _BytesTarFile(_BufferedWriter):
         return filename.name
 
     def write_to_buffer(self) -> None:
+        # [FUNCTION DOC]
+        # HELPER: adds the accumulated bytes as one member of the tar archive,
+        # named by the explicit archive name, else the inferred name, else the
+        # literal tar (the archive needs a non-empty name). Member size is the
+        # number of accumulated bytes.
         # TarFile needs a non-empty string
         archive_name = self.archive_name or self.infer_filename() or "tar"
         tarinfo = tarfile.TarInfo(name=archive_name)
@@ -1078,6 +1332,11 @@ class _BytesTarFile(_BufferedWriter):
 
 
 class _BytesZipFile(_BufferedWriter):
+    # [CLASS DOC]
+    # HELPER: zip archive adapter used by the handle opener. Wraps a zip file
+    # object (attribute buffer); written bytes accumulate in memory and are
+    # stored on close as a single member. Attribute archive_name is the
+    # caller-chosen member name (may be none).
     def __init__(
         self,
         file: FilePath | ReadBuffer[bytes] | WriteBuffer[bytes],
@@ -1085,6 +1344,12 @@ class _BytesZipFile(_BufferedWriter):
         archive_name: str | None = None,
         **kwargs: Any,
     ) -> None:
+        # [FUNCTION DOC]
+        # HELPER: opens the zip archive. file is a path or buffer; mode is the
+        # open mode with binary flags removed; archive_name optionally names
+        # the member written; extra keyword arguments go to the zip file
+        # constructor, with deflate compression as the default method.
+        # Side effect: opens the archive immediately.
         super().__init__()
         mode = mode.replace("b", "")
         self.archive_name = archive_name
@@ -1100,6 +1365,11 @@ class _BytesZipFile(_BufferedWriter):
         )
 
     def infer_filename(self) -> str | None:
+        # [FUNCTION DOC]
+        # HELPER: chooses a member name from the archive's file name when none
+        # was given: strips a trailing zip extension, otherwise returns the
+        # final path component; returns none when the archive has no path-like
+        # or string file name (for example a buffer).
         """
         If an explicit archive_name is not given, we still want the file inside the zip
         file not to be named something.zip, because that causes confusion (GH39465).
@@ -1112,12 +1382,22 @@ class _BytesZipFile(_BufferedWriter):
         return None
 
     def write_to_buffer(self) -> None:
+        # [FUNCTION DOC]
+        # HELPER: stores the accumulated bytes as one member of the zip
+        # archive, named by the explicit archive name, else the inferred name,
+        # else the literal zip (the archive needs a non-empty name).
         # ZipFile needs a non-empty string
         archive_name = self.archive_name or self.infer_filename() or "zip"
         self.buffer.writestr(archive_name, self.getvalue())
 
 
 class _IOWrapper:
+    # [CLASS DOC]
+    # HELPER: adapter that gives a buffer the readable, writable and seekable
+    # query methods required by the standard text wrapper. Attribute buffer is
+    # the wrapped object; any other attribute access is forwarded to it. Each
+    # query method defers to the buffer's own method if present and otherwise
+    # answers true (assume capable). Not a subclass of any io base class.
     # TextIOWrapper is overly strict: it request that the buffer has seekable, readable,
     # and writable. If we have a read-only buffer, we shouldn't need writable and vice
     # versa. Some buffers, are seek/read/writ-able but they do not have the "-able"
@@ -1125,31 +1405,55 @@ class _IOWrapper:
     # If a buffer does not have the above "-able" methods, we simple assume they are
     # seek/read/writ-able.
     def __init__(self, buffer: BaseBuffer) -> None:
+        # [FUNCTION DOC]
+        # HELPER: stores the buffer to wrap; no validation.
         self.buffer = buffer
 
     def __getattr__(self, name: str) -> Any:
+        # [FUNCTION DOC]
+        # HELPER: forwards lookups of attributes not found on the wrapper to
+        # the wrapped buffer; raises an attribute error as the buffer does.
         return getattr(self.buffer, name)
 
     def readable(self) -> bool:
+        # [FUNCTION DOC]
+        # HELPER: returns the buffer's own readable answer if it has one,
+        # otherwise true.
         if hasattr(self.buffer, "readable"):
             return self.buffer.readable()
         return True
 
     def seekable(self) -> bool:
+        # [FUNCTION DOC]
+        # HELPER: returns the buffer's own seekable answer if it has one,
+        # otherwise true.
         if hasattr(self.buffer, "seekable"):
             return self.buffer.seekable()
         return True
 
     def writable(self) -> bool:
+        # [FUNCTION DOC]
+        # HELPER: returns the buffer's own writable answer if it has one,
+        # otherwise true.
         if hasattr(self.buffer, "writable"):
             return self.buffer.writable()
         return True
 
 
 class _BytesIOWrapper:
+    # [CLASS DOC]
+    # HELPER: read-only adapter presenting a text stream as a byte stream
+    # (needed by the arrow csv reader). Attributes: buffer (the wrapped text
+    # stream), encoding (default utf-8, used to encode what is read) and
+    # overflow (bytes produced by an earlier read that exceeded the requested
+    # size, returned first on the next read). Unknown attributes are forwarded
+    # to the wrapped stream. Not a subclass of any io base class.
     # Wrapper that wraps a StringIO buffer and reads bytes from it
     # Created for compat with pyarrow read_csv
     def __init__(self, buffer: StringIO | TextIOBase, encoding: str = "utf-8") -> None:
+        # [FUNCTION DOC]
+        # HELPER: stores the text stream and encoding and starts with an empty
+        # overflow.
         self.buffer = buffer
         self.encoding = encoding
         # Because a character can be represented by more than 1 byte,
@@ -1159,9 +1463,22 @@ class _BytesIOWrapper:
         self.overflow = b""
 
     def __getattr__(self, attr: str) -> Any:
+        # [FUNCTION DOC]
+        # HELPER: forwards lookups of attributes not defined on the wrapper to
+        # the wrapped text stream.
         return getattr(self.buffer, attr)
 
     def read(self, n: int | None = -1) -> bytes:
+        # [FUNCTION DOC]
+        # HELPER: reads up to n characters from the text stream (n of none or
+        # negative reads everything), encodes them, prepends the saved
+        # overflow, and returns at most n bytes (everything if n is none,
+        # negative, or not smaller than the available bytes). Excess bytes
+        # (because characters can encode to several bytes) are stored as the
+        # new overflow; otherwise overflow is cleared.
+        # KNOWN ISSUE: n counts characters when reading the underlying text
+        # stream but bytes when slicing the result, so the returned length
+        # semantic mixes the two units.
         assert self.buffer is not None
         bytestring = self.buffer.read(n).encode(self.encoding)
         # When n=-1/n greater than remaining bytes: Read entire file/rest of file
@@ -1178,6 +1495,16 @@ class _BytesIOWrapper:
 def _maybe_memory_map(
     handle: str | BaseBuffer, memory_map: bool
 ) -> tuple[str | BaseBuffer, bool, list[BaseBuffer]]:
+    # [FUNCTION DOC]
+    # HELPER: optionally memory maps a path or buffer for reading. Inputs:
+    # handle (path string or buffer) and memory_map (requested flag, which is
+    # turned off if the handle is neither a path nor has a file descriptor).
+    # Returns a triple of (handle to use, effective memory-map flag, list of
+    # handles the caller must close). When not mapping, returns the inputs with
+    # an empty list. When mapping: opens a path in binary read mode, maps the
+    # whole file read-only, wraps the map with the readable/writable/seekable
+    # adapter, and always closes the temporary file object it opened (the
+    # mapping survives); the returned close list holds only the wrapper.
     """Try to memory map file/buffer."""
     handles: list[BaseBuffer] = []
     memory_map &= hasattr(handle, "fileno") or isinstance(handle, str)
@@ -1212,6 +1539,11 @@ def _maybe_memory_map(
 
 
 def file_exists(filepath_or_buffer: FilePath | BaseBuffer) -> bool:
+    # [FUNCTION DOC]
+    # Returns whether the input names an existing path. The input is
+    # stringified first; non-string inputs (buffers) give false. Type or value
+    # errors from the file system check (for example over-long paths) are
+    # swallowed and give false.
     """Test whether file exists."""
     exists = False
     filepath_or_buffer = stringify_path(filepath_or_buffer)
@@ -1226,6 +1558,14 @@ def file_exists(filepath_or_buffer: FilePath | BaseBuffer) -> bool:
 
 
 def _is_binary_mode(handle: FilePath | BaseBuffer, mode: str) -> bool:
+    # [FUNCTION DOC]
+    # HELPER: decides whether a handle expects bytes. Inputs: handle and the
+    # requested mode string. If the mode explicitly contains text or binary
+    # flag, the answer is whether it contains the binary flag. Codec stream
+    # reader/writer classes are text even though their mode may say binary
+    # (answer false). Otherwise true if the handle is an instance of a known
+    # binary io class or its own mode attribute (falling back to the given
+    # mode) contains the binary flag.
     """Whether the handle is opened in binary mode"""
     # specified by user
     if "t" in mode or "b" in mode:
@@ -1248,6 +1588,12 @@ def _is_binary_mode(handle: FilePath | BaseBuffer, mode: str) -> bool:
 
 @functools.lru_cache
 def _get_binary_io_classes() -> tuple[type, ...]:
+    # [FUNCTION DOC]
+    # HELPER: returns (and caches for the process) the tuple of classes whose
+    # instances expect bytes: the buffered and raw io base classes, plus, if
+    # the optional zstandard package is installed, the class of its stream
+    # reader (obtained by creating a decompressor reader over empty input,
+    # because the class is not exported). Missing package is ignored.
     """IO classes that that expect bytes"""
     binary_classes: tuple[type, ...] = (BufferedIOBase, RawIOBase)
 
@@ -1268,6 +1614,16 @@ def is_potential_multi_index(
     columns: Sequence[Hashable] | MultiIndex,
     index_col: bool | Sequence[int] | None = None,
 ) -> bool:
+    # [FUNCTION DOC]
+    # Decides whether a list of column labels could form a multi-index.
+    # Inputs: columns (sequence of labels or an existing multi-index) and
+    # index_col (none, a boolean, or a sequence of positions/labels naming
+    # index columns, default none; booleans and none mean no index columns).
+    # Returns true only if the columns are non-empty, not already a
+    # multi-index, and every label not listed in index_col is a tuple.
+    # KNOWN ISSUE: the index_col entries are compared against the labels
+    # themselves, although the parameter is documented as column positions, so
+    # positional integers only work when labels are equal to those integers.
     """
     Check whether or not the `columns` parameter
     could be converted into a MultiIndex.
@@ -1298,6 +1654,15 @@ def is_potential_multi_index(
 def dedup_names(
     names: Sequence[Hashable], is_potential_multiindex: bool
 ) -> Sequence[Hashable]:
+    # [FUNCTION DOC]
+    # Makes column names unique. Inputs: names (sequence of hashable labels)
+    # and is_potential_multiindex (true when labels are tuples, so the suffix
+    # is appended to the last tuple element instead). Returns a new list in
+    # which the second and later occurrences of a name get a period and a
+    # running counter appended (counter starts at one); the suffixed name is
+    # itself checked for collisions with existing names and bumped until
+    # unique. The input is not modified. For tuple mode, labels must be tuples
+    # (assertion error otherwise).
     """
     Rename column names if duplicates exist.
 

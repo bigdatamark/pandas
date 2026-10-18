@@ -1,3 +1,15 @@
+# [MODULE DOC]
+# HELPER: internal utilities shared by the I/O readers for converting pyarrow
+# tables into data frames with the right dtypes. Contents: the main entry
+# point that converts a table honouring the dtype backend choice, a mapping
+# builder from arrow types to pandas nullable dtypes, a mapper for arrow string
+# types to the NaN-based string dtype, and post-processing helpers that apply
+# user dtypes, convert string dtypes back to object when the string-inference
+# option is off, and normalise pytz timezones to zoneinfo or fixed offsets.
+# Used by csv, parquet, orc, feather, json and similar readers.
+# Import-time side effects: looks up the optional pytz package (ignoring its
+# absence) and stores it in a module level variable.
+
 from __future__ import annotations
 
 import datetime as dt
@@ -43,6 +55,14 @@ pytz = import_optional_dependency("pytz", errors="ignore")
 
 
 def _arrow_dtype_mapping() -> dict:
+    # [FUNCTION DOC]
+    # HELPER: builds the arrow-type to pandas-nullable-dtype lookup used by the
+    # numpy-nullable backend. Returns a dict keyed by pyarrow type instances
+    # (signed and unsigned 8-64 bit integers, bool, string, large string,
+    # 32/64 bit floats) with the matching nullable pandas dtype instances as
+    # values. Requires pyarrow (import error otherwise).
+    # KNOWN ISSUE: the string type key appears twice in the literal; the second
+    # entry is redundant.
     pa = import_optional_dependency("pyarrow")
     return {
         pa.int8(): pd.Int8Dtype(),
@@ -63,6 +83,12 @@ def _arrow_dtype_mapping() -> dict:
 
 
 def _arrow_string_types_mapper() -> Callable:
+    # [FUNCTION DOC]
+    # HELPER: builds the types mapper used when string inference is on with
+    # older pyarrow. Returns the lookup method of a mapping from arrow string
+    # and large string types (plus string view when pyarrow is at least version
+    # 18) to the string dtype using NaN as missing value; unmapped types yield
+    # none. Requires pyarrow.
     pa = import_optional_dependency("pyarrow")
 
     mapping = {
@@ -83,6 +109,25 @@ def arrow_table_to_pandas(
     dtype: DtypeArg | None = None,
     names: Sequence[Hashable] | None = None,
 ) -> pd.DataFrame:
+    # [FUNCTION DOC]
+    # Convert a pyarrow table to a pandas data frame with the requested dtype
+    # backend.
+    # Inputs: table is the pyarrow table; dtype_backend is numpy-nullable,
+    # pyarrow, numpy or the no-default sentinel (default); null_to_int64
+    # (default false) additionally maps arrow null columns to the nullable
+    # 64-bit integer dtype under the nullable backend (to mimic the csv
+    # parser); to_pandas_kwargs (default none, treated as empty) are forwarded
+    # to the table conversion; dtype is an optional user dtype (single or
+    # mapping) to apply afterwards; names optionally gives column names used
+    # when a mapping dtype is applied.
+    # Behavior: picks a types mapper (nullable dtypes lookup; arrow dtype class;
+    # when the string-dtype option is on, the NaN string mapper for pyarrow
+    # older than 19, or integer-only nullable mapping when a dtype was
+    # supplied; for the default/numpy backends, an integer-only nullable
+    # mapping when a dtype was supplied so large ints are not lossily turned
+    # into floats, otherwise no mapper), converts, then post-converts dtypes and
+    # normalises timezones.
+    # Raises: not-implemented error for an unrecognised backend.
     pa = import_optional_dependency("pyarrow")
 
     to_pandas_kwargs = {} if to_pandas_kwargs is None else to_pandas_kwargs
@@ -138,6 +183,21 @@ def _post_convert_dtypes(
     dtype: DtypeArg | None,
     names: Sequence[Hashable] | None,
 ) -> pd.DataFrame:
+    # [FUNCTION DOC]
+    # HELPER: post-processing step of the table conversion.
+    # Inputs: df is the converted frame (mutated and returned); dtype_backend
+    # as above; dtype is the optional user dtype (a mapping is also mutated by
+    # adding entries); names optionally replaces the frame's columns before
+    # mapping lookups.
+    # Behavior: for the default/numpy backends with a user dtype, mapping keys
+    # absent from the frame are ignored, any column the user did not mention
+    # that was converted to a nullable integer dtype is converted back to its
+    # numpy dtype, then the frame is cast to the dtype. A type error from the
+    # cast is re-raised as a value error. Then, when the string-dtype option is
+    # off, the requested dtype is not the plain string alias and the backend is
+    # default/numpy, string-dtype columns, the index and the columns are
+    # converted back to object dtype.
+    # Returns the processed frame.
     if dtype is not None and (
         dtype_backend is lib.no_default or dtype_backend == "numpy"
     ):
@@ -200,6 +260,13 @@ def _post_convert_dtypes(
 def _maybe_convert_string_to_object(
     data: pd.Series | pd.Index,
 ) -> pd.Series | pd.Index | None:
+    # [FUNCTION DOC]
+    # HELPER: converts NaN-based string dtype data (or categorical data whose
+    # categories have that dtype) to object dtype. Input: a series or index.
+    # Returns the converted object, or none when no conversion is needed.
+    # String data is cast to object and then missing values are filled with
+    # the none sentinel; categoricals get object categories with ordering
+    # preserved.
     if isinstance(data.dtype, pd.StringDtype) and data.dtype.na_value is np.nan:
         return data.astype("object").fillna(None)
     elif isinstance(data.dtype, pd.CategoricalDtype):
@@ -216,6 +283,12 @@ def _maybe_convert_string_to_object(
 
 
 def _maybe_convert_string_index_to_object(index: pd.Index) -> pd.Index | None:
+    # [FUNCTION DOC]
+    # HELPER: index version of the string-to-object conversion. Input: an
+    # index or multi-index. For a multi-index, if any level has the NaN-based
+    # string dtype, returns a new multi-index with each level converted where
+    # needed; otherwise none. For a flat index returns the converted index or
+    # none if no conversion is needed.
     if isinstance(index, pd.MultiIndex):
         if any(
             isinstance(level.dtype, pd.StringDtype) and level.dtype.na_value is np.nan
@@ -236,6 +309,12 @@ def _maybe_convert_string_index_to_object(index: pd.Index) -> pd.Index | None:
 
 
 def _normalize_pytz_timezone(tz: dt.tzinfo) -> dt.tzinfo:
+    # [FUNCTION DOC]
+    # HELPER: maps a pytz timezone to a standard-library one. Input: a tzinfo.
+    # Returns the input unchanged if its class is not from pytz; the standard
+    # UTC timezone for UTC; a zoneinfo timezone for a named zone when available
+    # (lookup failures are swallowed); a fixed-offset timezone for pytz fixed
+    # offsets; otherwise the input.
     """
     If the input tz is a pytz timezone, attempt to convert it to "default"
     tzinfo object (zoneinfo or datetime.timezone).
@@ -268,6 +347,12 @@ def _normalize_pytz_timezone(tz: dt.tzinfo) -> dt.tzinfo:
 
 
 def _normalize_timezone_index(index: pd.Index) -> pd.Index:
+    # [FUNCTION DOC]
+    # HELPER: normalises pytz timezones on a datetime index. Input: an index or
+    # multi-index. For a multi-index, levels with timezone-aware dtype are
+    # normalised recursively and returned as a new multi-index; for a flat
+    # timezone-aware index, converts to the normalised timezone only if it
+    # differs. Otherwise returns the index unchanged.
     if isinstance(index, pd.MultiIndex):
         if any(isinstance(level.dtype, pd.DatetimeTZDtype) for level in index.levels):
             levels = [_normalize_timezone_index(level) for level in index.levels]
@@ -284,6 +369,12 @@ def _normalize_timezone_index(index: pd.Index) -> pd.Index:
 
 
 def _normalize_timezone_dtypes(df: pd.DataFrame) -> pd.DataFrame:
+    # [FUNCTION DOC]
+    # HELPER: when pytz is installed, replaces pytz timezones on timezone-aware
+    # columns, the index and the columns of the given frame with standard
+    # timezones. Input: the frame (mutated in place by column replacement and
+    # index/column assignment). Returns the same frame. Does nothing when pytz
+    # is unavailable.
     """
     PyArrow uses pytz by default for timezones, but pandas uses
     zoneinfo / datetime.timezone since pandas 3.0.

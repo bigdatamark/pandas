@@ -2,6 +2,22 @@
 Expose public exceptions & warnings
 """
 
+# [PACKAGE DOC]
+# The public home of pandas exception and warning classes. It is a single
+# module-style package (no submodules besides the private message-constants
+# module for Copy-on-Write) that defines the classes used across pandas for
+# signalling errors (value, key, name and generic exceptions), warnings
+# (performance, parsing, dtype, deprecation family) and I/O specific problems
+# (HDF store, SQL, Stata, clipboard, CSS).
+# Deprecation warning hierarchy: a change-warning base with a class-level
+# version accessor, pending/deprecation/future flavours, and concrete
+# warnings for the 4.0 and 5.0 enforcement versions; a private alias names the
+# currently used deprecation warning class.
+# Re-exports (also listed in the all list): the option error from the config
+# system, the frequency and out-of-bounds errors from the tslibs extension
+# package, and the invalid-version error from the version utilities.
+# Import-time side effects: none beyond importing those dependencies.
+
 from __future__ import annotations
 
 import abc
@@ -19,6 +35,9 @@ from pandas.util.version import InvalidVersion
 
 
 class IntCastingNaNError(ValueError):
+    # [CLASS DOC]
+    # Value error raised when casting an array containing missing or infinite
+    # values to an integer dtype. No added state; marker class.
     """
     Exception raised when converting (``astype``) an array with NaN to an integer type.
 
@@ -41,6 +60,9 @@ class IntCastingNaNError(ValueError):
 
 
 class NullFrequencyError(ValueError):
+    # [CLASS DOC]
+    # Value error raised by shift operations on datetime-like indexes whose
+    # frequency is not set. No added state; marker class.
     """
     Exception raised when a ``freq`` cannot be null.
 
@@ -62,6 +84,10 @@ class NullFrequencyError(ValueError):
 
 
 class PerformanceWarning(Warning):
+    # [CLASS DOC]
+    # Warning category for operations with a possible performance penalty
+    # (for example indexing a multi-index past its lexsort depth). Marker
+    # class with no added state.
     """
     Warning raised when there is a possible performance impact.
 
@@ -94,6 +120,10 @@ class PerformanceWarning(Warning):
 
 
 class PandasChangeWarning(Warning):
+    # [CLASS DOC]
+    # Base warning class for all upcoming-change warnings in pandas.
+    # Declares an abstract class-level accessor for the version in which the
+    # change will be enforced, to be provided by concrete subclasses.
     """
     Warning raised for any upcoming change.
 
@@ -114,10 +144,21 @@ class PandasChangeWarning(Warning):
     @classmethod
     @abc.abstractmethod
     def version(cls) -> str:
+        # [FUNCTION DOC]
+        # Abstract class-level accessor: subclasses return the version string
+        # in which the change will be enforced. This base body does nothing
+        # and returns nothing.
+        # KNOWN ISSUE: marked abstract, but warning classes do not use the
+        # abstract base class metaclass, so the marker is not enforced and
+        # the base version accessor can still be called and returns nothing.
         """Version where change will be enforced."""
 
 
 class PandasPendingDeprecationWarning(PandasChangeWarning, PendingDeprecationWarning):
+    # [CLASS DOC]
+    # Change warning that is also a pending-deprecation warning; base for
+    # changes that will be enforced in a distant future version. Marker class
+    # (version accessor still supplied by concrete subclasses).
     """
     Warning raised for an upcoming change that is a PendingDeprecationWarning.
 
@@ -136,6 +177,9 @@ class PandasPendingDeprecationWarning(PandasChangeWarning, PendingDeprecationWar
 
 
 class PandasDeprecationWarning(PandasChangeWarning, DeprecationWarning):
+    # [CLASS DOC]
+    # Change warning that is also a standard deprecation warning; base for
+    # deprecations scheduled for the next major release. Marker class.
     """
     Warning raised for an upcoming change that is a DeprecationWarning.
 
@@ -154,6 +198,9 @@ class PandasDeprecationWarning(PandasChangeWarning, DeprecationWarning):
 
 
 class PandasFutureWarning(PandasChangeWarning, FutureWarning):
+    # [CLASS DOC]
+    # Change warning that is also a standard future warning (shown to end
+    # users by default). Marker class.
     """
     Warning raised for an upcoming change that is a FutureWarning.
 
@@ -173,6 +220,9 @@ class PandasFutureWarning(PandasChangeWarning, FutureWarning):
 
 
 class Pandas4Warning(PandasDeprecationWarning):
+    # [CLASS DOC]
+    # Deprecation warning for changes to be enforced in pandas 4.0. Provides
+    # the concrete version accessor returning the string for that version.
     """
     Warning raised for an upcoming change that will be enforced in pandas 4.0.
 
@@ -193,11 +243,17 @@ class Pandas4Warning(PandasDeprecationWarning):
 
     @classmethod
     def version(cls) -> str:
+        # [FUNCTION DOC]
+        # Class-level accessor returning the version string in which the
+        # change is enforced: the string for major version four.
         """Version where change will be enforced."""
         return "4.0"
 
 
 class Pandas5Warning(PandasPendingDeprecationWarning):
+    # [CLASS DOC]
+    # Pending-deprecation warning for changes to be enforced in pandas 5.0.
+    # Provides the concrete version accessor for that version.
     """
     Warning raised for an upcoming change that will be enforced in pandas 5.0.
 
@@ -218,6 +274,9 @@ class Pandas5Warning(PandasPendingDeprecationWarning):
 
     @classmethod
     def version(cls) -> str:
+        # [FUNCTION DOC]
+        # Class-level accessor returning the version string in which the
+        # change is enforced: the string for major version five.
         """Version where change will be enforced."""
         return "5.0"
 
@@ -226,6 +285,9 @@ _CurrentDeprecationWarning = Pandas4Warning
 
 
 class UnsupportedFunctionCall(ValueError):
+    # [CLASS DOC]
+    # Value error raised when a numpy function is applied to a pandas
+    # groupby/window object in a way pandas does not support. Marker class.
     """
     Exception raised when attempting to call a unsupported numpy function.
 
@@ -250,6 +312,9 @@ class UnsupportedFunctionCall(ValueError):
 
 
 class UnsortedIndexError(KeyError):
+    # [CLASS DOC]
+    # Key error raised when slicing a multi-index that is not lexsorted deeply
+    # enough for the requested key. Marker class.
     """
     Error raised when slicing a MultiIndex which has not been lexsorted.
 
@@ -285,6 +350,9 @@ class UnsortedIndexError(KeyError):
 
 
 class ParserError(ValueError):
+    # [CLASS DOC]
+    # Generic value error for failures while parsing file contents (csv,
+    # html and similar readers). Marker class.
     """
     Exception that is raised by an error encountered in parsing file contents.
 
@@ -310,6 +378,9 @@ class ParserError(ValueError):
 
 
 class DtypeWarning(Warning):
+    # [CLASS DOC]
+    # Warning emitted by the csv/table readers when a column has mixed types
+    # across chunks (the column ends up with object dtype). Marker class.
     """
     Warning raised when reading different dtypes in a column from a file.
 
@@ -368,6 +439,9 @@ class DtypeWarning(Warning):
 
 
 class EmptyDataError(ValueError):
+    # [CLASS DOC]
+    # Value error raised by the csv reader when the input is empty or has no
+    # header/columns to parse. Marker class.
     """
     Exception raised in ``pd.read_csv`` when empty data or header is encountered.
 
@@ -393,6 +467,10 @@ class EmptyDataError(ValueError):
 
 
 class ParserWarning(Warning):
+    # [CLASS DOC]
+    # Warning emitted by the csv/table readers when they fall back from the
+    # default fast parser to the python parser because an option is
+    # unsupported. Marker class.
     """
     Warning raised when reading a file that doesn't use the default 'c' parser.
 
@@ -433,6 +511,9 @@ class ParserWarning(Warning):
 
 
 class MergeError(ValueError):
+    # [CLASS DOC]
+    # Value error raised by merge/join operations, for example when a
+    # validation of key uniqueness fails. Marker class.
     """
     Exception raised when merging data.
 
@@ -464,6 +545,15 @@ class MergeError(ValueError):
 
 
 class AbstractMethodError(NotImplementedError):
+    # [CLASS DOC]
+    # Not-implemented error to raise from abstract methods, with a message
+    # naming the kind of method and the concrete class that must implement it.
+    # State: methodtype (one of method, classmethod, staticmethod, property)
+    # and class_instance (the instance, or the class for a classmethod).
+    # KNOWN ISSUE: the docstring example for an instance method shows the
+    # message saying classmethod, but the code uses the stored method type,
+    # which is the default method for that call, so the message would say
+    # method.
     """
     Raise this error instead of NotImplementedError for abstract methods.
 
@@ -510,6 +600,11 @@ class AbstractMethodError(NotImplementedError):
     """
 
     def __init__(self, class_instance, methodtype: str = "method") -> None:
+        # [FUNCTION DOC]
+        # Stores the instance (or class) and method type. Raises a value error
+        # if methodtype (default method) is not one of method, classmethod,
+        # staticmethod or property. Does not call the base initializer, so no
+        # exception arguments are set.
         types = {"method", "classmethod", "staticmethod", "property"}
         if methodtype not in types:
             raise ValueError(
@@ -519,6 +614,10 @@ class AbstractMethodError(NotImplementedError):
         self.class_instance = class_instance
 
     def __str__(self) -> str:
+        # [FUNCTION DOC]
+        # Builds the message stating that the method of the stored type must
+        # be defined in the concrete class; the class name is taken from the
+        # stored object itself for class methods and from its type otherwise.
         if self.methodtype == "classmethod":
             name = self.class_instance.__name__
         else:
@@ -527,6 +626,9 @@ class AbstractMethodError(NotImplementedError):
 
 
 class NumbaUtilError(Exception):
+    # [CLASS DOC]
+    # Exception raised for unsupported usage of the numba engine (such as a
+    # user function with the wrong leading argument names). Marker class.
     """
     Error raised for unsupported Numba engine routines.
 
@@ -552,6 +654,9 @@ class NumbaUtilError(Exception):
 
 
 class DuplicateLabelError(ValueError):
+    # [CLASS DOC]
+    # Value error raised when an operation would create duplicate labels on an
+    # object whose flags disallow duplicate labels. Marker class.
     """
     Error raised when an operation would introduce duplicate labels.
 
@@ -584,6 +689,9 @@ class DuplicateLabelError(ValueError):
 
 
 class InvalidIndexError(Exception):
+    # [CLASS DOC]
+    # Exception raised when an invalid key (for example a malformed slice or
+    # unhashable key) is used for indexing. Marker class.
     """
     Exception raised when attempting to use an invalid index key.
 
@@ -613,6 +721,10 @@ class InvalidIndexError(Exception):
 
 
 class DataError(Exception):
+    # [CLASS DOC]
+    # Exception raised when an aggregation is attempted on data without
+    # suitable (numeric) types, e.g. in window and groupby operations.
+    # Marker class.
     """
     Exception raised when performing an operation on non-numerical data.
 
@@ -634,6 +746,10 @@ class DataError(Exception):
 
 
 class SpecificationError(Exception):
+    # [CLASS DOC]
+    # Exception raised by aggregate operations for an ill-specified function
+    # argument (nested renamers, or duplicated function names without column
+    # names). Marker class.
     """
     Exception raised by ``agg`` when the functions are ill-specified.
 
@@ -665,6 +781,13 @@ class SpecificationError(Exception):
 
 
 class ChainedAssignmentError(Warning):
+    # [CLASS DOC]
+    # Warning category emitted when assigning through a chain of indexing
+    # operations, which under Copy-on-Write never updates the original object.
+    # Messages come from the private copy-on-write message module. Marker
+    # class.
+    # KNOWN ISSUE: named like an error but derives from the warning base, not
+    # an exception base.
     """
     Warning raised when trying to set using chained assignment.
 
@@ -692,6 +815,9 @@ class ChainedAssignmentError(Warning):
 
 
 class NumExprClobberingError(NameError):
+    # [CLASS DOC]
+    # Name error raised by expression evaluation with the numexpr engine when
+    # a variable name collides with a numexpr built-in name. Marker class.
     """
     Exception raised when trying to use a built-in numexpr name as a variable name.
 
@@ -716,6 +842,11 @@ class NumExprClobberingError(NameError):
 
 
 class UndefinedVariableError(NameError):
+    # [CLASS DOC]
+    # Name error raised by query and eval when an expression refers to an
+    # undefined variable; the message distinguishes local variables from
+    # plain names. Built from the variable name and a locality flag; no extra
+    # state is stored.
     """
     Exception raised by ``query`` or ``eval`` when using an undefined variable name.
 
@@ -747,6 +878,11 @@ class UndefinedVariableError(NameError):
     """
 
     def __init__(self, name: str, is_local: bool | None = None) -> None:
+        # [FUNCTION DOC]
+        # Builds the message from the quoted name: "local variable ... is not
+        # defined" when is_local is truthy, otherwise "name ... is not
+        # defined", and passes it to the base initializer. name is the
+        # variable name; is_local (default none) marks local variables.
         base_msg = f"{name!r} is not defined"
         if is_local:
             msg = f"local variable {base_msg}"
@@ -756,6 +892,9 @@ class UndefinedVariableError(NameError):
 
 
 class IndexingError(Exception):
+    # [CLASS DOC]
+    # Exception raised on indexing dimension mismatches such as too many
+    # indexers or an unalignable boolean indexer. Marker class.
     """
     Exception is raised when trying to index and there is a mismatch in dimensions.
 
@@ -787,6 +926,10 @@ class IndexingError(Exception):
 
 
 class PyperclipException(RuntimeError):
+    # [CLASS DOC]
+    # Runtime error raised by the clipboard support when functionality is
+    # unavailable or arguments are unsupported. Base of the clipboard
+    # exceptions. Marker class.
     """
     Exception raised when clipboard functionality is unsupported.
 
@@ -795,6 +938,10 @@ class PyperclipException(RuntimeError):
 
 
 class PyperclipWindowsException(PyperclipException):
+    # [CLASS DOC]
+    # Clipboard exception for Windows-specific failures such as the clipboard
+    # being held by another process; appends the last Windows error text to
+    # the message.
     """
     Exception raised when clipboard functionality is unsupported by Windows.
 
@@ -803,12 +950,24 @@ class PyperclipWindowsException(PyperclipException):
     """
 
     def __init__(self, message: str) -> None:
+        # [FUNCTION DOC]
+        # Appends the parenthesised description of the most recent Windows
+        # error to message and passes the result to the base initializer.
+        # Only works on Windows, since the error-lookup call does not exist on
+        # other platforms (an attribute error would be raised there).
         # attr only exists on Windows, so typing fails on other platforms
         message += f" ({ctypes.WinError()})"  # type: ignore[attr-defined]
         super().__init__(message)
 
 
 class CSSWarning(UserWarning):
+    # [CLASS DOC]
+    # User warning emitted when converting CSS styling (for example for excel
+    # export) fails because a value has no equivalent or is malformed.
+    # Marker class.
+    # KNOWN ISSUE: the second docstring example shows a message about a color
+    # format although it demonstrates a malformed border declaration; the
+    # printed message is a copy of the first example.
     """
     Warning is raised when converting css styling fails.
 
@@ -838,6 +997,9 @@ class CSSWarning(UserWarning):
 
 
 class PossibleDataLossError(Exception):
+    # [CLASS DOC]
+    # Exception raised when opening an HDF store file that is already open,
+    # to prevent data loss. Marker class.
     """
     Exception raised when trying to open an HDFStore file when already opened.
 
@@ -858,6 +1020,9 @@ class PossibleDataLossError(Exception):
 
 
 class ClosedFileError(Exception):
+    # [CLASS DOC]
+    # Exception raised when an operation is attempted on a closed HDF store.
+    # Marker class.
     """
     Exception is raised when trying to perform an operation on a closed HDFStore file.
 
@@ -881,12 +1046,18 @@ class ClosedFileError(Exception):
 
 
 class IncompatibilityWarning(Warning):
+    # [CLASS DOC]
+    # Warning emitted when where-criteria are used on an HDF5 file in a
+    # format that does not support them. Marker class.
     """
     Warning raised when trying to use where criteria on an incompatible HDF5 file.
     """
 
 
 class AttributeConflictWarning(Warning):
+    # [CLASS DOC]
+    # Warning emitted when appending to an HDF store with an index whose name
+    # or frequency conflicts with the existing index. Marker class.
     """
     Warning raised when index attributes conflict when using HDFStore.
 
@@ -914,6 +1085,9 @@ class AttributeConflictWarning(Warning):
 
 
 class DatabaseError(OSError):
+    # [CLASS DOC]
+    # Operating-system-level error raised by the SQL reader for statements
+    # with bad syntax or that fail in the database. Marker class.
     """
     Error is raised when executing SQL with bad syntax or SQL that throws an error.
 
@@ -932,6 +1106,9 @@ class DatabaseError(OSError):
 
 
 class PossiblePrecisionLoss(Warning):
+    # [CLASS DOC]
+    # Warning from the Stata writer when an integer column has values outside
+    # the safe 64-bit range and is converted to floating point. Marker class.
     """
     Warning raised by to_stata on a column with a value outside or equal to int64.
 
@@ -950,6 +1127,9 @@ class PossiblePrecisionLoss(Warning):
 
 
 class ValueLabelTypeMismatch(Warning):
+    # [CLASS DOC]
+    # Warning from the Stata writer for categorical columns whose categories
+    # are not strings. Marker class.
     """
     Warning raised by to_stata on a category column that contains non-string values.
 
@@ -971,6 +1151,9 @@ class ValueLabelTypeMismatch(Warning):
 
 
 class InvalidColumnName(Warning):
+    # [CLASS DOC]
+    # Warning from the Stata writer when a column name is not a valid Stata
+    # variable name and must be converted. Marker class.
     """
     Warning raised by to_stata the column contains a non-valid stata name.
 
@@ -989,6 +1172,9 @@ class InvalidColumnName(Warning):
 
 
 class CategoricalConversionWarning(Warning):
+    # [CLASS DOC]
+    # Warning from the Stata reader when iterating over a partially labelled
+    # file in chunks. Marker class.
     """
     Warning is raised when reading a partial labeled Stata file using an iterator.
 
@@ -1012,6 +1198,10 @@ class CategoricalConversionWarning(Warning):
 
 
 class LossySetitemError(Exception):
+    # [CLASS DOC]
+    # HELPER: internal exception used by array setitem machinery to signal
+    # that assigning a value into a numpy array would not be lossless, so the
+    # caller should cast instead. Marker class.
     """
     Raised when trying to do a __setitem__ on an np.ndarray that is not lossless.
 
@@ -1022,12 +1212,19 @@ class LossySetitemError(Exception):
 
 
 class NoBufferPresent(Exception):
+    # [CLASS DOC]
+    # HELPER: internal exception used by the dataframe interchange protocol
+    # code to signal that a requested buffer does not exist. Marker class.
     """
     Exception is raised in _get_data_buffer to signal that there is no requested buffer.
     """
 
 
 class InvalidComparison(Exception):
+    # [CLASS DOC]
+    # HELPER: internal exception used by datetime-like array comparison
+    # validation to signal an invalid comparison value so that the caller can
+    # fall back to a default result. Marker class.
     """
     Exception is raised by _validate_comparison_value to indicate an invalid comparison.
 

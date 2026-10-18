@@ -2,6 +2,15 @@
 Data I/O API
 """
 
+# [MODULE DOC]
+# Aggregation module for the public I/O API: re-exports the reader functions,
+# writer helpers and classes from the individual io submodules (clipboard,
+# excel, feather, html, iceberg, json, orc, parquet, parsers, pickle, pytables,
+# sas, spss, sql, stata, xml) so the top-level pandas namespace can import them
+# from a single place. The all list names each re-exported object.
+# Import-time side effects: importing all those submodules (and thus their
+# own import-time effects); no logic of its own.
+
 from pandas.io.clipboards import read_clipboard
 from pandas.io.excel import (
     ExcelFile,

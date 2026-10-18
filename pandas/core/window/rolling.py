@@ -3,6 +3,27 @@ Provide a generic structure to support window functions,
 similar to how we have a Groupby object.
 """
 
+# [MODULE DOC]
+# Core implementation of fixed/variable window (rolling) computations and the
+# shared machinery reused by expanding and exponentially weighted windows.
+# Public contents (classes): the base window class (construction, validation,
+# column/table application of kernels, iteration over windows, selection
+# support, aggregation); its groupby variant (computes windows within each
+# group and rebuilds a hierarchical result index); the weighted-window class
+# (window types such as triangular or gaussian, computed with the compiled
+# window kernels); a mixin implementing the statistics shared by rolling and
+# expanding windows (count, apply, pipe, sum, max, min, mean, median, std,
+# var, skew, sem, kurt, first, last, quantile, rank, nunique, cov, corr); the
+# rolling class (fixed, offset-based or custom-indexer windows); and the
+# rolling groupby class.
+# Relationships: window bounds come from the indexer classes in the core
+# indexers objects module; numerical work is done by compiled kernels in the
+# window aggregations extension and optional numba kernels (window numba
+# module) through the executor; pairwise statistics use the flexible binary
+# moment helper in the window common module; expanding and ewm modules
+# subclass or reuse these classes.
+# Import-time side effects: none beyond imports.
+
 from __future__ import annotations
 
 import copy
@@ -114,6 +135,24 @@ from pandas.core.arrays.datetimelike import dtype_to_unit
 
 
 class BaseWindow(SelectionMixin):
+    # [CLASS DOC]
+    # Base class for all windowing objects (rolling, weighted window,
+    # expanding, exponentially weighted). Inherits column selection support
+    # from the selection mixin.
+    # State: obj (series or data frame being windowed), on (column label or
+    # index naming the axis windows are computed along, or none for the
+    # object's index), closed (which window edges are inclusive), step,
+    # window (size, offset, or custom indexer), min_periods, center, win_type,
+    # method (single or table), the resolved on-axis index, the cached window
+    # size in integer nanoseconds for offset windows (none otherwise) and the
+    # current column selection. The class-level attribute list names the
+    # constructor arguments copied when selecting sub-objects and printed by
+    # the representation; the exclusions set is empty.
+    # Key methods: validation, the apply family that turns a kernel into a
+    # result (series, column-wise, table-wise, pairwise, numba), aggregate,
+    # iteration over windows, attribute-style column access.
+    # Invariant: validation runs at the end of construction, so an existing
+    # object always has consistent arguments.
     """Provides utilities for performing windowing operations."""
 
     _attributes: list[str] = []
@@ -134,6 +173,20 @@ class BaseWindow(SelectionMixin):
         *,
         selection=None,
     ) -> None:
+        # [FUNCTION DOC]
+        # Stores all arguments as attributes, resolves the on-axis and then
+        # validates. Inputs: obj (series or data frame); window (integer,
+        # time offset, or indexer; default none); min_periods (default none,
+        # resolved later); center (default false); win_type (weighted window
+        # name, default none); on (column label of the frame, an index object,
+        # or none for the object's own index); closed (right, both, left,
+        # neither, or none); step (default none); method (single or table,
+        # default single); selection (keyword-only column selection, default
+        # none).
+        # The on-axis becomes the object's index, the given index, or the
+        # named column wrapped as an index. Raises a value error if on is
+        # something else (message: must be a column of a frame, an index or
+        # none). Then runs validation, which may raise further errors.
         self.obj = obj
         self.on = on
         self.closed = closed
@@ -160,6 +213,18 @@ class BaseWindow(SelectionMixin):
         self._validate()
 
     def _validate(self) -> None:
+        # [FUNCTION DOC]
+        # HELPER: argument validation hook (subclasses extend it). Returns
+        # nothing; raises a value error when: center is neither boolean nor
+        # none; min_periods is not an integer, is negative, or exceeds an
+        # integer window; closed is not one of right, both, left, neither;
+        # method is not table or single; step is not an integer or is
+        # negative. Raises a type error if obj is neither series nor frame.
+        # For a custom indexer window, checks that its bounds method has
+        # exactly the same parameter names as the base indexer's, else a value
+        # error.
+        # KNOWN ISSUE: the error message for an invalid method lacks the
+        # closing quote after the word single.
         if self.center is not None and not is_bool(self.center):
             raise ValueError("center must be a boolean")
         if self.min_periods is not None:
@@ -205,6 +270,12 @@ class BaseWindow(SelectionMixin):
     def _check_window_bounds(
         self, start: np.ndarray, end: np.ndarray, num_vals: int
     ) -> None:
+        # [FUNCTION DOC]
+        # HELPER: sanity check of window bounds. start and end are the bound
+        # arrays, num_vals the number of values windowed. Raises a value error
+        # if the arrays differ in length, or if their length is not the number
+        # of values divided by the step (step treated as one when unset or
+        # zero), rounded up. Returns nothing.
         if len(start) != len(end):
             raise ValueError(
                 f"start ({len(start)}) and end ({len(end)}) bounds must be the "
@@ -218,6 +289,11 @@ class BaseWindow(SelectionMixin):
             )
 
     def _slice_axis_for_step(self, index: Index, result: Sized | None = None) -> Index:
+        # [FUNCTION DOC]
+        # HELPER: returns the index entries matching a stepped result. If
+        # result is none or has the same length as the index, the index is
+        # returned unchanged; otherwise every step-th label starting at the
+        # first.
         """
         Slices the index for a given result and the preset step.
         """
@@ -228,6 +304,12 @@ class BaseWindow(SelectionMixin):
         )
 
     def _validate_numeric_only(self, name: str, numeric_only: bool) -> None:
+        # [FUNCTION DOC]
+        # HELPER: rejects the numeric-only option for one-dimensional
+        # non-numeric data. name is the operation name used in the message;
+        # numeric_only the user flag. Raises a not-implemented error if the
+        # selected object is one-dimensional, the flag is true and its dtype
+        # is not numeric. Returns nothing otherwise.
         """
         Validate numeric_only argument, raising if invalid for the input.
 
@@ -248,6 +330,9 @@ class BaseWindow(SelectionMixin):
             )
 
     def _make_numeric_only(self, obj: NDFrameT) -> NDFrameT:
+        # [FUNCTION DOC]
+        # HELPER: returns the frame restricted to numeric columns, excluding
+        # time-delta columns (booleans follow the numeric selection rules).
         """Subset DataFrame to numeric columns.
 
         Parameters
@@ -262,6 +347,13 @@ class BaseWindow(SelectionMixin):
         return result
 
     def _create_data(self, obj: NDFrameT, numeric_only: bool = False) -> NDFrameT:
+        # [FUNCTION DOC]
+        # HELPER: prepares the data to window. If a column was named as the
+        # on-axis (and the object is a frame), that column is removed from the
+        # result by reindexing the columns; if numeric_only (default false) and
+        # the object is a frame, keeps only numeric columns. Returns the
+        # prepared object (the input is not modified). The docstring below is
+        # outdated: no block splitting happens here.
         """
         Split data into blocks & return conformed data.
         """
@@ -273,6 +365,13 @@ class BaseWindow(SelectionMixin):
         return obj
 
     def _gotitem(self, key, ndim, subset=None):
+        # [FUNCTION DOC]
+        # HELPER: selection hook used by column indexing. key is the column
+        # label or list; ndim the requested dimensionality (unused here);
+        # subset (default the whole object) is the object to select from.
+        # Returns a new window object of the same class built from the subset,
+        # copying the constructor attributes named in the attribute list, with
+        # the inferred selection set. The original is not mutated.
         """
         Sub-classes to define. Return a sliced object.
 
@@ -297,6 +396,11 @@ class BaseWindow(SelectionMixin):
         return new_win
 
     def __getattr__(self, attr: str):
+        # [FUNCTION DOC]
+        # Fallback attribute lookup. Internal names are looked up normally;
+        # if attr is a column label of the wrapped object, returns that column
+        # selection (as item access would). Otherwise raises an attribute
+        # error naming the class and attribute.
         if attr in self._internal_names_set:
             return object.__getattribute__(self, attr)
         if attr in self.obj:
@@ -307,9 +411,17 @@ class BaseWindow(SelectionMixin):
         )
 
     def _dir_additions(self):
+        # [FUNCTION DOC]
+        # HELPER: names added to interactive attribute completion; delegates
+        # to the wrapped object (its column labels).
         return self.obj._dir_additions()
 
     def __repr__(self) -> str:
+        # [FUNCTION DOC]
+        # Returns the class name followed by comma-separated name=value pairs
+        # in square brackets, for each constructor attribute in the attribute
+        # list that is set (not none) and whose name does not start with an
+        # underscore.
         """
         Provide a nice str repr of our rolling object.
         """
@@ -322,6 +434,13 @@ class BaseWindow(SelectionMixin):
         return f"{type(self).__name__} [{attrs}]"
 
     def __iter__(self) -> Iterator:
+        # [FUNCTION DOC]
+        # Generator yielding, for each window, the slice of the (selected,
+        # on-axis indexed, prepared) object that falls into it. Window bounds
+        # come from the window indexer using the configured min periods,
+        # centering, closedness and step; they are validated, and slices are
+        # yielded by position pairing starts with ends. Raises a value error
+        # from bound validation if the indexer is inconsistent.
         obj = self._selected_obj.set_axis(self._on)
         obj = self._create_data(obj)
         indexer = self._get_window_indexer()
@@ -340,6 +459,13 @@ class BaseWindow(SelectionMixin):
             yield result
 
     def _prep_values(self, values: ArrayLike) -> np.ndarray:
+        # [FUNCTION DOC]
+        # HELPER: converts an array (numpy or extension) to a 64-bit float
+        # numpy array for the compiled kernels, replacing infinite values
+        # with missing. Raises a not-implemented error for datetime-like
+        # dtypes needing integer conversion, and a type error if conversion
+        # to float fails. Extension arrays are converted with missing mapped
+        # to NaN. Returns the new array (the input is not modified).
         """Convert input to numpy arrays for Cython routines"""
         if needs_i8_conversion(values.dtype):
             raise NotImplementedError(
@@ -364,6 +490,16 @@ class BaseWindow(SelectionMixin):
         return values
 
     def _insert_on_column(self, result: DataFrame, obj: DataFrame) -> None:
+        # [FUNCTION DOC]
+        # HELPER: puts the on-axis column back into a result frame (mutating
+        # it in place; returns nothing). Does nothing when no on option was
+        # given or the on-axis equals the object's index. Otherwise builds a
+        # series of the on values labelled like the original column and: if
+        # the result already has a column with that name, overwrites it; if
+        # the name is an index level name of the result, does nothing; if the
+        # column existed in the selected object, inserts it at the position
+        # that keeps its relative order among surviving columns; otherwise
+        # appends it at the end.
         # if we have an 'on' column we want to put it back into
         # the results in the same location
         from pandas import Series
@@ -390,6 +526,11 @@ class BaseWindow(SelectionMixin):
 
     @property
     def _index_array(self) -> npt.NDArray[np.int64] | None:
+        # [FUNCTION DOC]
+        # HELPER property: the on-axis as an array of 64-bit integers when it
+        # is a period, datetime or time-delta index (underlying integer
+        # representation), or an arrow-backed date/time-delta typed index
+        # (converted to integers); none for any other axis type.
         # TODO: why do we get here with e.g. MultiIndex?
         if isinstance(self._on, (PeriodIndex, DatetimeIndex, TimedeltaIndex)):
             return self._on.asi8
@@ -398,6 +539,12 @@ class BaseWindow(SelectionMixin):
         return None
 
     def _resolve_output(self, out: DataFrame, obj: DataFrame) -> DataFrame:
+        # [FUNCTION DOC]
+        # HELPER: finalises a frame result. out is the computed frame and obj
+        # the input frame. Raises a data error (no numeric types to
+        # aggregate) if the result has no columns while the input had some. If
+        # both are empty of columns, returns the input cast to 64-bit float.
+        # Otherwise restores the on-axis column and returns out.
         """Validate and finalize result."""
         if out.shape[1] == 0 and obj.shape[1] > 0:
             raise DataError("No numeric types to aggregate")
@@ -408,6 +555,12 @@ class BaseWindow(SelectionMixin):
         return out
 
     def _get_window_indexer(self) -> BaseIndexer:
+        # [FUNCTION DOC]
+        # HELPER: chooses the object that computes window bounds. A custom
+        # indexer given as the window is returned as is; if the window is a
+        # time offset (cached integer nanosecond size set), returns a variable
+        # indexer over the on-axis integers with that size and the centering
+        # flag; otherwise a fixed-size indexer using the window size.
         """
         Return an indexer class that will compute the window start and end bounds
         """
@@ -424,6 +577,14 @@ class BaseWindow(SelectionMixin):
     def _apply_series(
         self, homogeneous_func: Callable[..., ArrayLike], name: str | None = None
     ) -> Series:
+        # [FUNCTION DOC]
+        # HELPER: applies a per-array kernel wrapper to a one-dimensional
+        # selection. homogeneous_func maps a float array to the result array;
+        # name is the operation name (default none). For the count operation,
+        # the data is first replaced by integer not-missing indicators so
+        # date-like types are supported. Raises a data error (no numeric types
+        # to aggregate) if values cannot be prepared. Returns a series of the
+        # result with the index sliced for the step and the original name.
         """
         Series version of _apply_columnwise
         """
@@ -447,6 +608,17 @@ class BaseWindow(SelectionMixin):
         name: str,
         numeric_only: bool = False,
     ) -> DataFrame | Series:
+        # [FUNCTION DOC]
+        # HELPER: applies the kernel wrapper column by column. Inputs:
+        # homogeneous_func (maps a float array to the result array), name
+        # (operation name; count gets special not-missing handling) and
+        # numeric_only (default false). Validates the numeric-only flag first
+        # (not-implemented error for non-numeric series). A one-dimensional
+        # selection is delegated to the series version. For frames: prepares
+        # the data, converts each column to float (raising a data error naming
+        # the dtype if impossible), applies the function, and assembles a frame
+        # with the stepped index and the same column labels, then finalises it
+        # (which raises a data error if nothing numeric remained).
         """
         Apply the given function to the DataFrame broken down into homogeneous
         sub-frames.
@@ -494,6 +666,13 @@ class BaseWindow(SelectionMixin):
         name: str | None = None,
         numeric_only: bool = False,
     ) -> DataFrame | Series:
+        # [FUNCTION DOC]
+        # HELPER: applies the kernel wrapper to the whole frame as one 2D float
+        # array (method table). Inputs: homogeneous_func, name (default none,
+        # unused) and numeric_only (default false). Raises a value error for
+        # one-dimensional input. Builds the result frame with the stepped
+        # index and, if the result width differs from the input's, stepped
+        # columns; then finalises it.
         """
         Apply the given function to the DataFrame across the entire object
         """
@@ -520,6 +699,14 @@ class BaseWindow(SelectionMixin):
         func: Callable[[DataFrame | Series, DataFrame | Series], DataFrame | Series],
         numeric_only: bool,
     ) -> DataFrame | Series:
+        # [FUNCTION DOC]
+        # HELPER: applies a two-object statistic. target is the primary
+        # object; other the second object or none (use target itself, and
+        # default pairwise to true); pairwise the pairing mode; func the
+        # per-pair function; numeric_only restricts frames to numeric
+        # columns. Raises a value error if other is neither a series nor a
+        # frame. Delegates the combination to the flexible binary moment
+        # helper (pairwise coerced to a boolean) and returns its result.
         """
         Apply the given pairwise function given 2 pandas objects (DataFrame/Series)
         """
@@ -543,6 +730,21 @@ class BaseWindow(SelectionMixin):
         numba_args: tuple[Any, ...] = (),
         **kwargs,
     ):
+        # [FUNCTION DOC]
+        # HELPER: core driver for kernel based statistics. func is a compiled
+        # kernel taking the values, window start and end arrays, the minimum
+        # periods and any extra positional arguments; name is the operation
+        # name; numeric_only (default false) restricts frames; numba_args
+        # (default empty) are extra positional arguments appended for the
+        # kernel; extra keyword arguments are accepted but not used.
+        # Behavior: obtains the window indexer, and sets min periods to the
+        # given value or else the indexer's window size. Defines a wrapper that
+        # returns an empty copy for empty input, otherwise computes the bounds
+        # (with the configured centering, closedness, step), validates them,
+        # and calls the kernel with floating point warnings suppressed.
+        # Dispatch: method single goes column by column, otherwise the whole
+        # table at once. Returns an object like the input (series or frame).
+        # Errors come from the dispatch targets (data error, value error).
         """
         Rolling statistical measure using supplied function.
 
@@ -569,12 +771,22 @@ class BaseWindow(SelectionMixin):
         )
 
         def homogeneous_func(values: np.ndarray):
+            # [FUNCTION DOC]
+            # HELPER: nested wrapper handed to the dispatch methods. Takes a
+            # float array; returns a copy if it is empty, else the kernel
+            # result for it (see the nested calculation helper), computed with
+            # numpy floating point error reporting disabled.
             # calculation function
 
             if values.size == 0:
                 return values.copy()
 
             def calc(x):
+                # [FUNCTION DOC]
+                # HELPER: computes window bounds for the array x (length,
+                # min periods, centering, closedness, step), validates them,
+                # and returns the kernel applied to x with the bounds, the
+                # minimum periods and the extra numba arguments.
                 start, end = window_indexer.get_window_bounds(
                     num_values=len(x),
                     min_periods=min_periods,
@@ -602,6 +814,19 @@ class BaseWindow(SelectionMixin):
         engine_kwargs: dict[str, bool] | None = None,
         **func_kwargs,
     ):
+        # [FUNCTION DOC]
+        # HELPER: runs a numba kernel through the shared executor. func is the
+        # per-window kernel; engine_kwargs (default none) holds numba jit
+        # flags; extra keyword arguments are forwarded to the compiled
+        # aggregator. Min periods defaults to the indexer's window size.
+        # Prepares the data as a float array (reshaped to a column if
+        # one-dimensional), computes and validates window bounds, builds a
+        # shared aggregator with all dtypes mapped to float (to match the
+        # cython implementation, even though that is not strictly right) and
+        # applies it to the transposed values. The result is transposed back,
+        # indexed with the stepped index (and stepped columns for frames).
+        # Returns a series (squeezed, named like the input) for one-dimensional
+        # data, otherwise a finalised frame (data error if no numeric columns).
         window_indexer = self._get_window_indexer()
         min_periods = (
             self.min_periods
@@ -645,6 +870,16 @@ class BaseWindow(SelectionMixin):
             return self._resolve_output(out, obj)
 
     def aggregate(self, func=None, *args, **kwargs):
+        # [FUNCTION DOC]
+        # Aggregates with one or more functions. func is a function, name,
+        # list or mapping (default none); extra arguments and keyword
+        # arguments are passed along. Detects named-aggregation relabeling
+        # from the keyword arguments. Runs the generic window aggregation
+        # machinery; if the result is a frame and relabeling was requested,
+        # reorders columns and applies the new labels. If the machinery
+        # produced nothing (none), falls back to applying func as a custom
+        # function in non-raw mode. Returns the result. Also available under
+        # the shorter alias name.
         relabeling, func, columns, order = reconstruct_func(func, **kwargs)
         result = ResamplerWindowApply(self, func, args=args, kwargs=kwargs).agg()
         if isinstance(result, ABCDataFrame) and relabeling:
@@ -658,6 +893,16 @@ class BaseWindow(SelectionMixin):
 
 
 class BaseWindowGroupby(BaseWindow):
+    # [CLASS DOC]
+    # Mixin-style base for windowing within groups of a groupby object.
+    # Subclass of the base window class. Extra state: _grouper (the grouper
+    # providing group names, codes, levels and row positions per group) and
+    # _as_index (whether group keys stay in the result index). The attribute
+    # list adds the grouper. Overrides: construction (drops grouping columns,
+    # rejects step), applying kernels (rebuilds a hierarchical result index of
+    # group labels plus original index), pairwise application, data
+    # preparation (reorders rows so groups are contiguous) and selection.
+    # Invariant: computations run over data ordered group by group.
     """
     Provide the groupby windowing facilities.
     """
@@ -674,6 +919,14 @@ class BaseWindowGroupby(BaseWindow):
         _as_index: bool = True,
         **kwargs,
     ) -> None:
+        # [FUNCTION DOC]
+        # Builds the groupby window object. obj is the series or frame; extra
+        # positional and keyword arguments go to the base initializer;
+        # _grouper (required keyword) must be a grouper object, else a value
+        # error; _as_index (default true) controls keeping group keys in the
+        # result index. Removes the grouping columns from obj (ignoring ones
+        # that are absent), and raises a not-implemented error if a step was
+        # given.
         from pandas.core.groupby.ops import BaseGrouper
 
         if not isinstance(_grouper, BaseGrouper):
@@ -697,6 +950,16 @@ class BaseWindowGroupby(BaseWindow):
         numba_args: tuple[Any, ...] = (),
         **kwargs,
     ) -> DataFrame | Series:
+        # [FUNCTION DOC]
+        # HELPER: same arguments as the base driver (kernel, operation name,
+        # numeric-only flag, extra numba arguments, extra keywords). Runs the
+        # base computation on group-ordered data, then rebuilds the result
+        # index as a multi-index whose first levels are the group key levels
+        # (codes reordered to follow group order) and whose remaining levels
+        # are the original index levels. Group key columns that were kept as
+        # index levels of the object are dropped from the result columns when
+        # only part of the keys are index names. If _as_index is false, the
+        # group levels are moved back into columns. Returns the result.
         result = super()._apply(
             func,
             name,
@@ -758,6 +1021,19 @@ class BaseWindowGroupby(BaseWindow):
         func: Callable[[DataFrame | Series, DataFrame | Series], DataFrame | Series],
         numeric_only: bool,
     ) -> DataFrame | Series:
+        # [FUNCTION DOC]
+        # HELPER: pairwise statistic within groups; same arguments as the
+        # base pairwise method. Drops grouping columns from the target, runs
+        # the base computation, then prepends the group levels to the result's
+        # index. If other is given and its length differs from some group's
+        # length (the second object is not group-aligned), each group's result
+        # rows are reindexed against the full result and concatenated, with
+        # group labels repeated per original result row and factorised into
+        # codes and levels. Otherwise the group codes are reordered by group
+        # row positions and repeated per target column. The result's own index
+        # (flat or multi-level) supplies the trailing levels; names are group
+        # names followed by the result's index names. Returns the result with
+        # the combined multi-index.
         """
         Apply the given pairwise function given 2 pandas objects (DataFrame/Series)
         """
@@ -835,6 +1111,11 @@ class BaseWindowGroupby(BaseWindow):
         return result
 
     def _create_data(self, obj: NDFrameT, numeric_only: bool = False) -> NDFrameT:
+        # [FUNCTION DOC]
+        # HELPER: for non-empty data, reorders rows so each group's rows are
+        # contiguous (concatenated group positions), then defers to the base
+        # preparation with the numeric-only flag (default false). Returns the
+        # prepared object.
         """
         Split data into blocks & return conformed data.
         """
@@ -849,6 +1130,11 @@ class BaseWindowGroupby(BaseWindow):
         return super()._create_data(obj, numeric_only)
 
     def _gotitem(self, key, ndim, subset=None):
+        # [FUNCTION DOC]
+        # HELPER: selection hook. If an on option is set, replaces the subset
+        # with the object re-indexed by the on-axis so the axis survives
+        # selection; then defers to the base hook with key, ndim and that
+        # subset and returns the new groupby window object.
         # we are setting the index on the actual object
         # here so our index is carried through to the selected obj
         # when we do the splitting for the groupby
@@ -860,6 +1146,16 @@ class BaseWindowGroupby(BaseWindow):
 
 @set_module("pandas.api.typing")
 class Window(BaseWindow):
+    # [CLASS DOC]
+    # Rolling window with non-uniform weights from a named scipy window
+    # function (win_type). Subclass of the base window class; no new state
+    # beyond the cached weight generator function (looked up by name from the
+    # scipy window module at validation time). Supported statistics: sum,
+    # mean, var, std, plus aggregate. Restrictions enforced in validation:
+    # win_type must be a valid scipy window name, window must be a
+    # non-negative integer (no custom indexers, no time offsets), and only the
+    # single-column method is supported. Extra keyword arguments of the
+    # statistics methods are forwarded to the scipy window generator.
     """
     Provide rolling window calculations.
 
@@ -1123,6 +1419,13 @@ class Window(BaseWindow):
     ]
 
     def _validate(self) -> None:
+        # [FUNCTION DOC]
+        # HELPER: extends base validation. Raises a value error if win_type is
+        # not a string or is not a window function name in the optional scipy
+        # window module (import error with a hint if scipy is missing); stores
+        # the found weight generator. Raises a not-implemented error for custom
+        # indexer windows and for any method other than single; raises a value
+        # error if the window is not an integer of zero or more.
         super()._validate()
 
         if not isinstance(self.win_type, str):
@@ -1145,6 +1448,11 @@ class Window(BaseWindow):
             raise NotImplementedError("'single' is the only supported method type.")
 
     def _center_window(self, result: np.ndarray, offset: int) -> np.ndarray:
+        # [FUNCTION DOC]
+        # HELPER: shifts a weighted result so labels sit at window centres.
+        # result is the computed array; offset the number of leading entries
+        # to drop. When offset is positive returns a copy without the first
+        # offset entries; otherwise returns the input unchanged.
         """
         Center the result in the window for weighted rolling aggregations.
         """
@@ -1161,6 +1469,20 @@ class Window(BaseWindow):
         numba_args: tuple[Any, ...] = (),
         **kwargs,
     ):
+        # [FUNCTION DOC]
+        # HELPER: weighted-window driver. func is a compiled weighted kernel
+        # taking values, the weight array and min periods; name is the
+        # operation name; numeric_only (default false) restricts frames;
+        # numba_args is accepted but unused; extra keyword arguments are the
+        # parameters of the scipy window (for example a standard deviation).
+        # Builds the weights by calling the scipy generator with the window
+        # size and the keyword arguments. The centering offset is half the
+        # weights length (rounded down, after subtracting one) when centering,
+        # else zero. For each column, appends offset missing values, runs the
+        # kernel (with errors suppressed; min periods defaults to the number
+        # of weights), converts the memoryview result to an array and, if
+        # centering, drops the leading offset entries. Applies column-wise and
+        # finally takes every step-th row of the result. Returns series/frame.
         """
         Rolling with weights statistical measure using supplied function.
 
@@ -1188,12 +1510,21 @@ class Window(BaseWindow):
         offset = (len(window) - 1) // 2 if self.center else 0
 
         def homogeneous_func(values: np.ndarray):
+            # [FUNCTION DOC]
+            # HELPER: nested per-array wrapper: empty input gives a copy;
+            # otherwise runs the kernel with floating point error reporting
+            # off, converts the result to an array, and trims the centering
+            # offset if centering is on. Returns the array.
             # calculation function
 
             if values.size == 0:
                 return values.copy()
 
             def calc(x):
+                # [FUNCTION DOC]
+                # HELPER: pads the array with offset missing values at the end
+                # and returns the weighted kernel applied with the weights and
+                # the effective minimum periods.
                 additional_nans = np.full(offset, np.nan)
                 x = np.concatenate((x, additional_nans))
                 return func(
@@ -1216,6 +1547,14 @@ class Window(BaseWindow):
         ]
 
     def aggregate(self, func=None, *args, **kwargs):
+        # [FUNCTION DOC]
+        # Aggregates the weighted window with one or more functions. func is a
+        # function, name, list or mapping (default none); extra arguments and
+        # keyword arguments are forwarded. Uses the generic window aggregation
+        # machinery; if it yields nothing (func is a plain callable), calls
+        # func directly with this window object and returns that. Also
+        # available under the shorter alias name. Unlike the base class, no
+        # relabeling support and no apply fallback.
         """
         Aggregate using one or more operations over the specified axis.
 
@@ -1297,6 +1636,11 @@ class Window(BaseWindow):
     agg = aggregate
 
     def sum(self, numeric_only: bool = False, **kwargs):
+        # [FUNCTION DOC]
+        # Weighted rolling sum. numeric_only (default false) restricts frames
+        # to numeric columns; keyword arguments configure the scipy window
+        # (for example its standard deviation). Runs the weighted-sum kernel
+        # through the weighted driver and returns an object of the input type.
         """
         Calculate the rolling weighted window sum.
 
@@ -1355,6 +1699,9 @@ class Window(BaseWindow):
         )
 
     def mean(self, numeric_only: bool = False, **kwargs):
+        # [FUNCTION DOC]
+        # Weighted rolling mean; same parameters as the weighted sum, using the
+        # weighted-mean kernel.
         """
         Calculate the rolling weighted window mean.
 
@@ -1412,6 +1759,12 @@ class Window(BaseWindow):
         )
 
     def var(self, ddof: int = 1, numeric_only: bool = False, **kwargs):
+        # [FUNCTION DOC]
+        # Weighted rolling variance. ddof (default one) is the delta degrees
+        # of freedom bound into the weighted-variance kernel; numeric_only and
+        # scipy window keyword arguments as for the weighted sum. Any name
+        # keyword passed in (used internally by the standard deviation) is
+        # discarded before delegating.
         """
         Calculate the rolling weighted window variance.
 
@@ -1465,6 +1818,12 @@ class Window(BaseWindow):
         return self._apply(window_func, name="var", numeric_only=numeric_only, **kwargs)
 
     def std(self, ddof: int = 1, numeric_only: bool = False, **kwargs):
+        # [FUNCTION DOC]
+        # Weighted rolling standard deviation: computes the weighted variance
+        # with the same arguments (labelling the operation as the standard
+        # deviation) and returns its element-wise square root, with negative
+        # values (rounding noise) clamped to zero by the safe square root
+        # helper.
         """
         Calculate the rolling weighted window standard deviation.
 
@@ -1519,7 +1878,21 @@ class Window(BaseWindow):
 
 
 class RollingAndExpandingMixin(BaseWindow):
+    # [CLASS DOC]
+    # Mixin deriving from the base window class that implements the statistic
+    # methods shared by the rolling and expanding windows (it holds no state of
+    # its own). Each statistic selects a compiled window kernel (or a numba
+    # kernel when the numba engine is chosen) and runs it through the base
+    # class's apply machinery. Subclasses (rolling, expanding) override most
+    # methods only to attach their own documentation and call back into these
+    # implementations.
     def count(self, numeric_only: bool = False):
+        # [FUNCTION DOC]
+        # Number of non-missing observations in each window. numeric_only
+        # (default false) restricts frames to numeric columns. Implemented as
+        # a window sum of not-missing indicators (the base driver converts the
+        # data to indicators for the count operation, which also lets
+        # date-like data be counted). Returns float counts in the input's type.
         window_func = window_aggregations.roll_sum
         return self._apply(window_func, name="count", numeric_only=numeric_only)
 
@@ -1532,6 +1905,21 @@ class RollingAndExpandingMixin(BaseWindow):
         args: tuple[Any, ...] | None = None,
         kwargs: dict[str, Any] | None = None,
     ):
+        # [FUNCTION DOC]
+        # Applies a custom function to each window. func maps window values
+        # to a single value; raw (default false, must be a boolean) chooses
+        # between passing arrays (true) and series indexed by the on-axis
+        # (false); engine (default none) selects cython or numba (none follows
+        # the global numba option); engine_kwargs (default none) are numba jit
+        # flags and are rejected for cython; args (default empty) and kwargs
+        # (default empty) are extra arguments for func.
+        # Numba path: requires raw true; function arguments are prepared (the
+        # function must accept the window as its first argument), and either
+        # the single-column or the table-wise compiled kernel is generated
+        # according to the method. Cython path: builds a wrapper around the
+        # compiled apply kernel. Raises a value error for a non-boolean raw, a
+        # false raw with numba, engine_kwargs with cython, or an unknown
+        # engine. Returns a result in the input's type via the base driver.
         if args is None:
             args = ()
         if kwargs is None:
@@ -1575,6 +1963,14 @@ class RollingAndExpandingMixin(BaseWindow):
         raw: bool | np.bool_,
         function: Callable[..., Any],
     ) -> Callable[[np.ndarray, np.ndarray, np.ndarray, int], np.ndarray]:
+        # [FUNCTION DOC]
+        # HELPER: builds the kernel handed to the apply driver for the cython
+        # engine. args and kwargs are extra arguments for the user function,
+        # raw says whether to pass arrays, function is the user function.
+        # Returns a callable taking values, window starts, ends and min
+        # periods; when raw is false it first wraps the values in a series
+        # indexed by the on-axis (without copying) so the function sees
+        # labels, then invokes the compiled apply kernel.
         from pandas import Series
 
         window_func = partial(
@@ -1586,6 +1982,11 @@ class RollingAndExpandingMixin(BaseWindow):
         )
 
         def apply_func(values, begin, end, min_periods, raw=raw):
+            # [FUNCTION DOC]
+            # HELPER: the returned kernel: values (float array), begin and
+            # end window bounds, min_periods; raw defaults to the outer raw
+            # flag. Converts values to an on-axis-indexed series when raw is
+            # false, then returns the compiled apply kernel's result array.
             if not raw:
                 # GH 45912
                 values = Series(values, index=self._on, copy=False)
@@ -1600,6 +2001,8 @@ class RollingAndExpandingMixin(BaseWindow):
         *args: P.args,
         **kwargs: P.kwargs,
     ) -> T: ...
+    # [FUNCTION DOC]
+    # Overload stub (callable form): see the implementation below.
 
     @overload
     def pipe(
@@ -1608,6 +2011,9 @@ class RollingAndExpandingMixin(BaseWindow):
         *args: Any,
         **kwargs: Any,
     ) -> T: ...
+    # [FUNCTION DOC]
+    # Overload stub (callable plus data keyword form): see the implementation
+    # below.
 
     def pipe(
         self,
@@ -1615,6 +2021,13 @@ class RollingAndExpandingMixin(BaseWindow):
         *args: Any,
         **kwargs: Any,
     ) -> T:
+        # [FUNCTION DOC]
+        # Passes this window object through a function. func is a callable
+        # taking the window as its first argument, or a pair of (callable,
+        # keyword name) so the window is passed by keyword; extra arguments
+        # are forwarded. Delegates to the shared pipe helper (which raises a
+        # value error if the keyword name is also supplied in the keyword
+        # arguments) and returns whatever func returns.
         return com.pipe(self, func, *args, **kwargs)
 
     def sum(
@@ -1623,6 +2036,15 @@ class RollingAndExpandingMixin(BaseWindow):
         engine: Literal["cython", "numba"] | None = None,
         engine_kwargs: dict[str, bool] | None = None,
     ):
+        # [FUNCTION DOC]
+        # Window sum. numeric_only (default false) restricts frames to numeric
+        # columns; engine (default none) selects cython or numba (none follows
+        # the global numba option); engine_kwargs (default none) are numba jit
+        # flags. With numba: method table uses a column-wise nan-aware sum
+        # through the custom apply path, otherwise a sliding-sum numba kernel
+        # via the shared executor. Without numba: the compiled rolling sum
+        # kernel through the base driver (engine_kwargs are not checked on this
+        # path). Returns the input's type.
         if maybe_use_numba(engine):
             if self.method == "table":
                 func = generate_manual_numpy_nan_agg_with_axis(np.nansum)
@@ -1645,6 +2067,11 @@ class RollingAndExpandingMixin(BaseWindow):
         engine: Literal["cython", "numba"] | None = None,
         engine_kwargs: dict[str, bool] | None = None,
     ):
+        # [FUNCTION DOC]
+        # Window maximum; same parameters and structure as the window sum,
+        # using the nan-aware maximum for table mode, the sliding min/max numba
+        # kernel (maximum mode) for single mode, and the compiled maximum
+        # kernel without numba.
         if maybe_use_numba(engine):
             if self.method == "table":
                 func = generate_manual_numpy_nan_agg_with_axis(np.nanmax)
@@ -1667,6 +2094,11 @@ class RollingAndExpandingMixin(BaseWindow):
         engine: Literal["cython", "numba"] | None = None,
         engine_kwargs: dict[str, bool] | None = None,
     ):
+        # [FUNCTION DOC]
+        # Window minimum; same parameters and structure as the window sum,
+        # using the nan-aware minimum for table mode, the sliding min/max numba
+        # kernel (minimum mode) for single mode, and the compiled minimum
+        # kernel without numba.
         if maybe_use_numba(engine):
             if self.method == "table":
                 func = generate_manual_numpy_nan_agg_with_axis(np.nanmin)
@@ -1689,6 +2121,10 @@ class RollingAndExpandingMixin(BaseWindow):
         engine: Literal["cython", "numba"] | None = None,
         engine_kwargs: dict[str, bool] | None = None,
     ):
+        # [FUNCTION DOC]
+        # Window mean; same parameters and structure as the window sum, using
+        # the nan-aware mean for table mode, the sliding-mean numba kernel for
+        # single mode, and the compiled mean kernel without numba.
         if maybe_use_numba(engine):
             if self.method == "table":
                 func = generate_manual_numpy_nan_agg_with_axis(np.nanmean)
@@ -1711,6 +2147,12 @@ class RollingAndExpandingMixin(BaseWindow):
         engine: Literal["cython", "numba"] | None = None,
         engine_kwargs: dict[str, bool] | None = None,
     ):
+        # [FUNCTION DOC]
+        # Window median. Same parameters as the window sum. With numba, always
+        # goes through the custom apply path with raw arrays, using the
+        # nan-aware median (wrapped for column-wise reduction in table mode);
+        # without numba uses the compiled median kernel. Returns the input's
+        # type.
         if maybe_use_numba(engine):
             if self.method == "table":
                 func = generate_manual_numpy_nan_agg_with_axis(np.nanmedian)
@@ -1733,6 +2175,13 @@ class RollingAndExpandingMixin(BaseWindow):
         engine: Literal["cython", "numba"] | None = None,
         engine_kwargs: dict[str, bool] | None = None,
     ):
+        # [FUNCTION DOC]
+        # Window standard deviation. ddof (default one) is the delta degrees
+        # of freedom; numeric_only, engine, engine_kwargs as for the window
+        # sum. With numba: raises a not-implemented error for table mode,
+        # otherwise the square root (clamping negatives to zero) of the sliding
+        # variance kernel. Without numba: wraps the compiled variance kernel
+        # with the safe square root and runs it through the base driver.
         if maybe_use_numba(engine):
             if self.method == "table":
                 raise NotImplementedError("std not supported with method='table'")
@@ -1742,6 +2191,10 @@ class RollingAndExpandingMixin(BaseWindow):
         window_func = window_aggregations.roll_var
 
         def zsqrt_func(values, begin, end, min_periods):
+            # [FUNCTION DOC]
+            # HELPER: kernel wrapper for the cython standard deviation: computes
+            # the compiled windowed variance (with the captured delta degrees of
+            # freedom) and returns its safe element-wise square root.
             return zsqrt(window_func(values, begin, end, min_periods, ddof=ddof))
 
         return self._apply(
@@ -1757,6 +2210,11 @@ class RollingAndExpandingMixin(BaseWindow):
         engine: Literal["cython", "numba"] | None = None,
         engine_kwargs: dict[str, bool] | None = None,
     ):
+        # [FUNCTION DOC]
+        # Window variance; same parameters as the window standard deviation.
+        # With numba: not-implemented error for table mode, otherwise the
+        # sliding variance kernel with ddof. Without numba: the compiled
+        # variance kernel with ddof bound, through the base driver.
         if maybe_use_numba(engine):
             if self.method == "table":
                 raise NotImplementedError("var not supported with method='table'")
@@ -1771,6 +2229,10 @@ class RollingAndExpandingMixin(BaseWindow):
         )
 
     def skew(self, numeric_only: bool = False):
+        # [FUNCTION DOC]
+        # Window unbiased skewness using the compiled skew kernel through the
+        # base driver. numeric_only (default false) restricts frames to numeric
+        # columns. No numba engine option.
         window_func = window_aggregations.roll_skew
         return self._apply(
             window_func,
@@ -1779,6 +2241,12 @@ class RollingAndExpandingMixin(BaseWindow):
         )
 
     def sem(self, ddof: int = 1, numeric_only: bool = False):
+        # [FUNCTION DOC]
+        # Window standard error of the mean. ddof (default one) is the delta
+        # degrees of freedom; numeric_only (default false). First validates the
+        # numeric-only flag so errors name this operation, then returns the
+        # window standard deviation divided by the square root of the window
+        # count of non-missing values.
         # Raise here so error message says sem instead of std
         self._validate_numeric_only("sem", numeric_only)
         return self.std(numeric_only=numeric_only, ddof=ddof) / (
@@ -1786,6 +2254,10 @@ class RollingAndExpandingMixin(BaseWindow):
         ).pow(0.5)
 
     def kurt(self, numeric_only: bool = False):
+        # [FUNCTION DOC]
+        # Window unbiased excess kurtosis using the compiled kurtosis kernel
+        # through the base driver. numeric_only (default false). No numba
+        # engine option.
         window_func = window_aggregations.roll_kurt
         return self._apply(
             window_func,
@@ -1794,6 +2266,9 @@ class RollingAndExpandingMixin(BaseWindow):
         )
 
     def first(self, numeric_only: bool = False):
+        # [FUNCTION DOC]
+        # First (left-most) value in each window using the compiled first
+        # kernel through the base driver. numeric_only (default false).
         window_func = window_aggregations.roll_first
         return self._apply(
             window_func,
@@ -1802,6 +2277,9 @@ class RollingAndExpandingMixin(BaseWindow):
         )
 
     def last(self, numeric_only: bool = False):
+        # [FUNCTION DOC]
+        # Last (right-most) value in each window using the compiled last
+        # kernel through the base driver. numeric_only (default false).
         window_func = window_aggregations.roll_last
         return self._apply(
             window_func,
@@ -1815,6 +2293,14 @@ class RollingAndExpandingMixin(BaseWindow):
         interpolation: QuantileInterpolation = "linear",
         numeric_only: bool = False,
     ):
+        # [FUNCTION DOC]
+        # Window quantile. q is the quantile in zero to one; interpolation
+        # (default linear) is linear, lower, higher, midpoint or nearest;
+        # numeric_only (default false). A quantile of exactly one uses the
+        # window maximum kernel and exactly zero uses the minimum kernel
+        # (interpolation irrelevant); otherwise the compiled quantile kernel
+        # with q and the interpolation mode bound. No range validation of q is
+        # done here.
         if q == 1.0:
             window_func = window_aggregations.roll_max
         elif q == 0.0:
@@ -1835,6 +2321,12 @@ class RollingAndExpandingMixin(BaseWindow):
         pct: bool = False,
         numeric_only: bool = False,
     ):
+        # [FUNCTION DOC]
+        # Rank of the newest value within each window. method (default
+        # average) is average, min or max for ties; ascending (default true)
+        # sets ranking direction; pct (default false) returns percentile
+        # ranks; numeric_only (default false). Uses the compiled rank kernel
+        # with those options bound, through the base driver.
         window_func = partial(
             window_aggregations.roll_rank,
             method=method,
@@ -1848,6 +2340,9 @@ class RollingAndExpandingMixin(BaseWindow):
         self,
         numeric_only: bool = False,
     ):
+        # [FUNCTION DOC]
+        # Number of distinct values in each window using the compiled distinct
+        # count kernel through the base driver. numeric_only (default false).
         window_func = partial(
             window_aggregations.roll_nunique,
         )
@@ -1861,6 +2356,18 @@ class RollingAndExpandingMixin(BaseWindow):
         ddof: int = 1,
         numeric_only: bool = False,
     ):
+        # [FUNCTION DOC]
+        # Window sample covariance. other (default none: use this object) is
+        # the second series/frame; pairwise (default none) picks matching
+        # columns versus all pairs; ddof (default one) is the delta degrees of
+        # freedom; numeric_only (default false). Raises a not-implemented
+        # error if a step is set or the numeric-only flag is invalid for the
+        # data. The per-pair function computes window bounds, then the
+        # covariance as the mean of products minus product of means, scaled by
+        # count divided by count minus ddof, with floating point warnings
+        # suppressed; counts use pairs where both values are present. The pair
+        # function result is a series with the first object's index and name.
+        # The combination over columns is delegated to the pairwise driver.
         if self.step is not None:
             raise NotImplementedError("step not implemented for cov")
         self._validate_numeric_only("cov", numeric_only)
@@ -1868,6 +2375,10 @@ class RollingAndExpandingMixin(BaseWindow):
         from pandas import Series
 
         def cov_func(x, y):
+            # [FUNCTION DOC]
+            # HELPER: nested per-pair function for the covariance. x and y are
+            # two series; returns a series (index and name of x) of rolling
+            # covariances as described by the enclosing method.
             x_array = self._prep_values(x)
             y_array = self._prep_values(y)
             window_indexer = self._get_window_indexer()
@@ -1908,6 +2419,13 @@ class RollingAndExpandingMixin(BaseWindow):
         ddof: int = 1,
         numeric_only: bool = False,
     ):
+        # [FUNCTION DOC]
+        # Window Pearson correlation; same parameters, restrictions and
+        # structure as the covariance. The per-pair function divides the
+        # covariance numerator by the square root of the product of the
+        # windowed variances of both inputs (computed with the same ddof).
+        # Windows with zero variance give missing results from the zero by
+        # zero division.
         if self.step is not None:
             raise NotImplementedError("step not implemented for corr")
         self._validate_numeric_only("corr", numeric_only)
@@ -1915,6 +2433,10 @@ class RollingAndExpandingMixin(BaseWindow):
         from pandas import Series
 
         def corr_func(x, y):
+            # [FUNCTION DOC]
+            # HELPER: nested per-pair function for the correlation. x and y
+            # are two series; returns a series (index and name of x) of
+            # rolling correlations as described by the enclosing method.
             x_array = self._prep_values(x)
             y_array = self._prep_values(y)
             window_indexer = self._get_window_indexer()
@@ -1961,6 +2483,21 @@ class RollingAndExpandingMixin(BaseWindow):
 
 @set_module("pandas.api.typing")
 class Rolling(RollingAndExpandingMixin):
+    # [CLASS DOC]
+    # Rolling window over a series or data frame, with windows defined by a
+    # fixed number of observations, a time span (offset) on a datetime-like
+    # axis, or a custom indexer. Subclass of the rolling/expanding mixin; holds
+    # the base window state (see the base class) and adds validation specific
+    # to rolling windows. The class docstring is assigned at module level from
+    # the weighted window class, so it is shared with that class.
+    # Validation rules: a time-offset window requires a datetime-like (or
+    # empty/arrow time-typed) axis that is monotonic and free of missing
+    # timestamps, converts the window to an integer duration in the axis's
+    # unit (or period count units), defaults min periods to one, and forbids a
+    # step; a custom indexer is accepted as is; anything else must be a
+    # non-negative integer.
+    # Methods: aggregate, count, apply, pipe and all statistics; most are thin
+    # wrappers around the mixin that carry rolling-specific documentation.
     _attributes: list[str] = [
         "window",
         "min_periods",
@@ -1973,6 +2510,19 @@ class Rolling(RollingAndExpandingMixin):
     ]
 
     def _validate(self) -> None:
+        # [FUNCTION DOC]
+        # HELPER: extends the base validation for rolling windows; returns
+        # nothing. If the axis is datetime-like, period, time-delta, arrow
+        # time-typed or the object is empty, and the window is a string, offset
+        # or timedelta: checks the axis is monotonic without missing values
+        # (value error otherwise), converts the window to an offset (value
+        # error if it is not compatible with a datetime-like axis, e.g.
+        # non-fixed frequencies), caches the window as an integer duration in
+        # the axis's time unit (nanoseconds if undeterminable; for period axes,
+        # the window measured in multiples of the period frequency), sets min
+        # periods to one if unset, and raises a not-implemented error if a step
+        # is given. A custom indexer is accepted without checks. Anything else
+        # raises a value error unless it is an integer of zero or more.
         super()._validate()
 
         # we allow rolling on a datetimelike index
@@ -2022,6 +2572,11 @@ class Rolling(RollingAndExpandingMixin):
             raise ValueError("window must be an integer 0 or greater")
 
     def _validate_datetimelike_monotonic(self) -> None:
+        # [FUNCTION DOC]
+        # HELPER: for frequency windows, raises a value error if the on-axis
+        # contains missing timestamps, or is neither monotonic increasing nor
+        # monotonic decreasing. Returns nothing. Overridden in the groupby
+        # variant to check each group.
         """
         Validate self._on is monotonic (increasing or decreasing) and has
         no NaT values for frequency windows.
@@ -2032,12 +2587,21 @@ class Rolling(RollingAndExpandingMixin):
             self._raise_monotonic_error("values must be monotonic")
 
     def _raise_monotonic_error(self, msg: str):
+        # [FUNCTION DOC]
+        # HELPER: always raises a value error whose message is the on option
+        # (or the word index when unset) followed by msg.
         on = self.on
         if on is None:
             on = "index"
         raise ValueError(f"{on} {msg}")
 
     def aggregate(self, func=None, *args, **kwargs):
+        # [FUNCTION DOC]
+        # Aggregates the rolling windows with one or more functions (function,
+        # name, list, or mapping; default none) plus extra arguments and
+        # keyword arguments. Delegates entirely to the base implementation
+        # (which supports relabeling and falls back to a custom apply) and
+        # returns its result. Also exposed under the shorter alias name.
         """
         Aggregate using one or more operations over the specified axis.
 
@@ -2120,6 +2684,11 @@ class Rolling(RollingAndExpandingMixin):
     agg = aggregate
 
     def count(self, numeric_only: bool = False):
+        # [FUNCTION DOC]
+        # Rolling count of non-missing observations; numeric_only (default
+        # false) restricts frames to numeric columns. Delegates to the mixin
+        # (passing the flag positionally) and returns float counts in the
+        # input's type.
         """
         Calculate the rolling count of non NaN observations.
 
@@ -2173,6 +2742,11 @@ class Rolling(RollingAndExpandingMixin):
         args: tuple[Any, ...] | None = None,
         kwargs: dict[str, Any] | None = None,
     ):
+        # [FUNCTION DOC]
+        # Rolling custom aggregation. Parameters as in the mixin: func,
+        # raw (default false), engine (default none), engine_kwargs (default
+        # none), args and kwargs (default none, treated as empty). Delegates to
+        # the mixin, which validates them and returns the input's type.
         """
         Calculate the rolling custom aggregation function.
 
@@ -2253,6 +2827,8 @@ class Rolling(RollingAndExpandingMixin):
         *args: P.args,
         **kwargs: P.kwargs,
     ) -> T: ...
+    # [FUNCTION DOC]
+    # Overload stub (callable form): see the final implementation below.
 
     @overload
     def pipe(
@@ -2261,6 +2837,9 @@ class Rolling(RollingAndExpandingMixin):
         *args: Any,
         **kwargs: Any,
     ) -> T: ...
+    # [FUNCTION DOC]
+    # Overload stub (callable plus data keyword form): see the final
+    # implementation below.
 
     @final
     def pipe(
@@ -2269,6 +2848,11 @@ class Rolling(RollingAndExpandingMixin):
         *args: Any,
         **kwargs: Any,
     ) -> T:
+        # [FUNCTION DOC]
+        # Implementation of the overloaded pipe (final). func is a callable
+        # receiving this window object first, or a pair of (callable, keyword
+        # name) to pass it by keyword; extra arguments are forwarded. Delegates
+        # to the mixin and returns what func returns.
         """
         Apply a ``func`` with arguments to this Rolling object and return its result.
 
@@ -2355,6 +2939,10 @@ class Rolling(RollingAndExpandingMixin):
         engine: Literal["cython", "numba"] | None = None,
         engine_kwargs: dict[str, bool] | None = None,
     ):
+        # [FUNCTION DOC]
+        # Rolling sum; parameters numeric_only (default false), engine
+        # (default none) and engine_kwargs (default none) are forwarded to the
+        # mixin by keyword. Returns the input's type with float results.
         """
         Calculate the rolling sum.
 
@@ -2454,6 +3042,12 @@ class Rolling(RollingAndExpandingMixin):
         engine_kwargs: dict[str, bool] | None = None,
         **kwargs,
     ):
+        # [FUNCTION DOC]
+        # Rolling maximum; numeric_only (default false), engine (default
+        # none), engine_kwargs (default none) are forwarded to the mixin.
+        # KNOWN ISSUE: unlike its sibling methods, the signature also accepts
+        # extra positional and keyword arguments, which are silently ignored
+        # and never forwarded.
         """
         Calculate the rolling maximum.
 
@@ -2523,6 +3117,9 @@ class Rolling(RollingAndExpandingMixin):
         engine: Literal["cython", "numba"] | None = None,
         engine_kwargs: dict[str, bool] | None = None,
     ):
+        # [FUNCTION DOC]
+        # Rolling minimum; numeric_only (default false), engine (default
+        # none), engine_kwargs (default none) are forwarded to the mixin.
         """
         Calculate the rolling minimum.
 
@@ -2589,6 +3186,9 @@ class Rolling(RollingAndExpandingMixin):
         engine: Literal["cython", "numba"] | None = None,
         engine_kwargs: dict[str, bool] | None = None,
     ):
+        # [FUNCTION DOC]
+        # Rolling mean; numeric_only (default false), engine (default none),
+        # engine_kwargs (default none) are forwarded to the mixin.
         """
         Calculate the rolling mean.
 
@@ -2662,6 +3262,9 @@ class Rolling(RollingAndExpandingMixin):
         engine: Literal["cython", "numba"] | None = None,
         engine_kwargs: dict[str, bool] | None = None,
     ):
+        # [FUNCTION DOC]
+        # Rolling median; numeric_only (default false), engine (default none),
+        # engine_kwargs (default none) are forwarded to the mixin.
         """
         Calculate the rolling median.
 
@@ -2729,6 +3332,10 @@ class Rolling(RollingAndExpandingMixin):
         engine: Literal["cython", "numba"] | None = None,
         engine_kwargs: dict[str, bool] | None = None,
     ):
+        # [FUNCTION DOC]
+        # Rolling standard deviation; ddof (default one) delta degrees of
+        # freedom, numeric_only (default false), engine and engine_kwargs
+        # (default none) are forwarded to the mixin.
         """
         Calculate the rolling standard deviation.
 
@@ -2803,6 +3410,9 @@ class Rolling(RollingAndExpandingMixin):
         engine: Literal["cython", "numba"] | None = None,
         engine_kwargs: dict[str, bool] | None = None,
     ):
+        # [FUNCTION DOC]
+        # Rolling variance; same parameters as the rolling standard deviation,
+        # forwarded to the mixin.
         """
         Calculate the rolling variance.
 
@@ -2871,6 +3481,9 @@ class Rolling(RollingAndExpandingMixin):
         )
 
     def skew(self, numeric_only: bool = False):
+        # [FUNCTION DOC]
+        # Rolling unbiased skewness (needs at least three observations per
+        # window); numeric_only (default false). Delegates to the mixin.
         """
         Calculate the rolling unbiased skewness.
 
@@ -2912,6 +3525,12 @@ class Rolling(RollingAndExpandingMixin):
         return super().skew(numeric_only=numeric_only)
 
     def sem(self, ddof: int = 1, numeric_only: bool = False):
+        # [FUNCTION DOC]
+        # Rolling standard error of the mean; ddof (default one),
+        # numeric_only (default false). Validates the numeric-only flag first
+        # (so errors name this operation), then divides the rolling standard
+        # deviation by the square root of the rolling count. Does not call the
+        # mixin's version (it repeats the same logic here).
         """
         Calculate the rolling standard error of mean.
 
@@ -2957,6 +3576,9 @@ class Rolling(RollingAndExpandingMixin):
         ).pow(0.5)
 
     def kurt(self, numeric_only: bool = False):
+        # [FUNCTION DOC]
+        # Rolling unbiased excess kurtosis (needs at least four observations
+        # per window); numeric_only (default false). Delegates to the mixin.
         """
         Calculate the rolling Fisher's definition of kurtosis without bias.
 
@@ -3005,6 +3627,9 @@ class Rolling(RollingAndExpandingMixin):
         return super().kurt(numeric_only=numeric_only)
 
     def first(self, numeric_only: bool = False):
+        # [FUNCTION DOC]
+        # First (left-most) element of each rolling window; numeric_only
+        # (default false). Delegates to the mixin.
         """
         Calculate the rolling First (left-most) element of the window.
 
@@ -3040,6 +3665,9 @@ class Rolling(RollingAndExpandingMixin):
         return super().first(numeric_only=numeric_only)
 
     def last(self, numeric_only: bool = False):
+        # [FUNCTION DOC]
+        # Last (right-most) element of each rolling window; numeric_only
+        # (default false). Delegates to the mixin.
         """
         Calculate the rolling Last (right-most) element of the window.
 
@@ -3080,6 +3708,10 @@ class Rolling(RollingAndExpandingMixin):
         interpolation: QuantileInterpolation = "linear",
         numeric_only: bool = False,
     ):
+        # [FUNCTION DOC]
+        # Rolling quantile; q is the quantile in zero to one, interpolation
+        # (default linear) one of linear, lower, higher, midpoint, nearest,
+        # numeric_only (default false). Delegates to the mixin.
         """
         Calculate the rolling quantile.
 
@@ -3144,6 +3776,11 @@ class Rolling(RollingAndExpandingMixin):
         pct: bool = False,
         numeric_only: bool = False,
     ):
+        # [FUNCTION DOC]
+        # Rolling rank of the newest value in each window; method (default
+        # average) for ties, ascending (default true), pct (default false) for
+        # percentile ranks, numeric_only (default false). Delegates to the
+        # mixin.
         """
         Calculate the rolling rank.
 
@@ -3219,6 +3856,9 @@ class Rolling(RollingAndExpandingMixin):
         self,
         numeric_only: bool = False,
     ):
+        # [FUNCTION DOC]
+        # Rolling count of distinct values; numeric_only (default false).
+        # Delegates to the mixin.
         """
         Calculate the rolling nunique.
 
@@ -3266,6 +3906,11 @@ class Rolling(RollingAndExpandingMixin):
         ddof: int = 1,
         numeric_only: bool = False,
     ):
+        # [FUNCTION DOC]
+        # Rolling sample covariance; other (default none), pairwise (default
+        # none), ddof (default one), numeric_only (default false). Delegates
+        # to the mixin, which raises a not-implemented error when a step is
+        # set.
         """
         Calculate the rolling sample covariance.
 
@@ -3327,6 +3972,9 @@ class Rolling(RollingAndExpandingMixin):
         ddof: int = 1,
         numeric_only: bool = False,
     ):
+        # [FUNCTION DOC]
+        # Rolling Pearson correlation; same parameters as the rolling
+        # covariance. Delegates to the mixin.
         """
         Calculate the rolling correlation.
 
@@ -3456,6 +4104,12 @@ Rolling.__doc__ = Window.__doc__
 
 @set_module("pandas.api.typing")
 class RollingGroupby(BaseWindowGroupby, Rolling):
+    # [CLASS DOC]
+    # Rolling window computed independently within each group of a groupby
+    # object: combines the groupby window base (group-ordering and result index
+    # reconstruction) with the rolling class (statistics and validation). The
+    # attribute list concatenates both parents'. Overrides the window indexer
+    # hook and the monotonic validation so both operate per group.
     """
     Provide a rolling groupby implementation.
     """
@@ -3463,6 +4117,16 @@ class RollingGroupby(BaseWindowGroupby, Rolling):
     _attributes = Rolling._attributes + BaseWindowGroupby._attributes
 
     def _get_window_indexer(self) -> GroupbyIndexer:
+        # [FUNCTION DOC]
+        # HELPER: builds a groupby-aware indexer that applies a rolling
+        # indexer inside each group. Chooses the inner indexer class and window
+        # size: for a custom indexer window, its own class, with its attributes
+        # copied as constructor keyword arguments (minus any stored index
+        # array, since each group's own axis is used); for a cached time
+        # offset window, the variable indexer with that duration; otherwise
+        # the fixed indexer with the window size. Combines it with the on-axis
+        # integer array, the grouper's group-to-positions mapping and returns
+        # the groupby indexer.
         """
         Return an indexer class that will compute the window start and end bounds
 
@@ -3498,6 +4162,13 @@ class RollingGroupby(BaseWindowGroupby, Rolling):
         return window_indexer
 
     def _validate_datetimelike_monotonic(self) -> None:
+        # [FUNCTION DOC]
+        # HELPER: per-group version of the monotonic check. Raises a value
+        # error if the on-axis has missing timestamps; for each group, takes
+        # that group's axis values and raises a value error (naming the on
+        # option or index and asking to sort first) unless they are monotonic
+        # increasing or decreasing. Returns nothing. Overall order across
+        # groups is not required.
         """
         Validate that each group in self._on is monotonic
         """

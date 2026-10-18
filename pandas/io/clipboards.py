@@ -1,5 +1,14 @@
 """io on the clipboard"""
 
+# [MODULE DOC]
+# Clipboard input/output for pandas objects. Public contents: the read
+# function (exposed as the top-level clipboard reader) and the write helper
+# used by the frame/series clipboard methods. Both delegate to the vendored
+# clipboard backend package for raw text access and to the csv reader or the
+# object's csv writer for parsing/formatting. Only utf-8 text is supported.
+# Import-time side effects: none (the backend is imported lazily in the
+# functions).
+
 from __future__ import annotations
 
 from io import StringIO
@@ -28,6 +37,31 @@ def read_clipboard(
     dtype_backend: DtypeBackend | lib.NoDefault = lib.no_default,
     **kwargs,
 ):  # pragma: no cover
+    # [FUNCTION DOC]
+    # Read the system clipboard text and parse it into a data frame via the
+    # csv reader.
+    # Inputs: sep is the delimiter string or regex (default any whitespace run);
+    # dtype_backend selects numpy-nullable or pyarrow backed dtypes (validated,
+    # default means not specified); extra keyword arguments are forwarded to the
+    # csv reader. An encoding keyword is removed from the arguments first
+    # (default utf-8).
+    # Behavior: obtains text from the clipboard, decodes it if it is bytes,
+    # then inspects up to the first ten lines (from at most the first 10000
+    # characters, dropping the last fragment after the final newline). If more
+    # than one line and every line has the same non-zero count of tabs (after
+    # stripping leading spaces), it assumes an Excel copy: the separator becomes
+    # tab and, if the first line has leading whitespace, the index column
+    # keyword defaults to that many leading columns. Otherwise sep must be a
+    # string. A multi-character separator selects the python engine when no
+    # engine was given, and warns if the c engine was requested explicitly.
+    # Returns the parsed data frame.
+    # Raises: not-implemented error if the encoding is not utf-8 (case and
+    # hyphen insensitive); value error if sep is not a string (and not an Excel
+    # copy).
+    # Side effects: reads the clipboard; may emit a user warning.
+    # KNOWN ISSUE: the decode step reads the encoding from the keyword
+    # arguments after it has been removed from them, so it always falls back to
+    # the display encoding option rather than the validated encoding.
     r"""
     Read text from clipboard and pass to :func:`~pandas.read_csv`.
 
@@ -135,6 +169,23 @@ def read_clipboard(
 def to_clipboard(
     obj, excel: bool | None = True, sep: str | None = None, **kwargs
 ) -> None:  # pragma: no cover
+    # [FUNCTION DOC]
+    # Write an object's text representation to the system clipboard.
+    # Inputs: obj is the data frame or series (anything with a csv writer);
+    # excel (default true; none is treated as true) selects csv output with a
+    # separator suitable for pasting into spreadsheets; sep is the separator
+    # (default tab, only used in excel mode); other keywords go to the csv
+    # writer (or the string renderer in non-excel mode). An encoding keyword is
+    # removed first (default utf-8).
+    # Behavior: in excel mode writes csv text to a buffer using utf-8 and
+    # puts it on the clipboard; if the writer raises a type error (for example
+    # a multi-character separator) it warns and falls through to the plain
+    # path. With excel false and a sep given it warns that sep is ignored. The
+    # plain path renders a data frame as a string with unlimited column width
+    # (temporarily changing the display option) or any other object via string
+    # conversion, and copies that.
+    # Raises: value error if the encoding is not utf-8.
+    # Returns nothing; side effects: writes the clipboard, may warn.
     """
     Attempt to write text representation of object to the system clipboard
     The clipboard can be then pasted into Excel for example.

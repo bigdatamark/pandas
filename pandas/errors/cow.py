@@ -1,3 +1,12 @@
+# [MODULE DOC]
+# HELPER: internal constants module holding warning/error message texts for
+# chained assignment under Copy-on-Write. Contents: three private message
+# strings: one for chained setitem-style assignment, one for chained assignment
+# through an inplace method (generic method example), and one specialised for
+# the update method. Consumed by the indexing, generic and series/frame code
+# when raising or warning about chained assignment. No import-time side
+# effects.
+
 _chained_assignment_msg = (
     "A value is being set on a copy of a DataFrame or Series "
     "through chained assignment.\n"

@@ -1,3 +1,17 @@
+# [MODULE DOC]
+# HELPER: numba code generation for window operations. Contains cached
+# factory functions that, given a user function or exponentially-weighted
+# parameters plus the numba jit flags (nopython, nogil, parallel), build and
+# return jit-compiled kernels: a rolling apply kernel over each window, an
+# exponentially weighted mean/sum kernel (per series and per table), a
+# table-wise rolling apply kernel, and a helper wrapper that emulates a
+# reduction along an axis for nan-aware numpy aggregations.
+# Used by the rolling, expanding and ewm window classes when the numba engine
+# is selected. All factories are memoised (functools cache), so their
+# arguments must be hashable. Relies on the shared jit-user-function helper in
+# the core util numba module. Import-time side effects: none; numba is
+# imported lazily inside each factory.
+
 from __future__ import annotations
 
 import functools
@@ -25,6 +39,18 @@ def generate_numba_apply_func(
     nogil: bool,
     parallel: bool,
 ):
+    # [FUNCTION DOC]
+    # HELPER: cached factory for the rolling apply kernel.
+    # Inputs: func is the user function mapping a one-dimensional window of
+    # values (plus extra positional arguments) to a scalar and is compiled
+    # first; nopython, nogil and parallel are the numba jit flags applied to
+    # the kernel. Memoised, so func must be hashable.
+    # Returns: a compiled kernel taking the values array, window start and end
+    # bound arrays, a minimum periods count and extra arguments, and returning
+    # a float array with one entry per window: the user function result when
+    # the window has at least minimum periods non-missing values, otherwise
+    # missing.
+    # Raises an import error if numba is not installed.
     """
     Generate a numba jitted apply function specified by values from engine_kwargs.
 
@@ -63,6 +89,11 @@ def generate_numba_apply_func(
         minimum_periods: int,
         *args: Any,
     ) -> np.ndarray:
+        # [FUNCTION DOC]
+        # HELPER: the compiled kernel returned by the factory; see the
+        # factory's documentation for arguments and result. Iterates (in
+        # parallel when enabled) over the windows given by the begin and end
+        # bounds.
         result = np.empty(len(begin))
         for i in numba.prange(len(result)):
             start = begin[i]
@@ -89,6 +120,24 @@ def generate_numba_ewm_func(
     deltas: tuple,
     normalize: bool,
 ):
+    # [FUNCTION DOC]
+    # HELPER: cached factory for the exponentially weighted mean (normalize
+    # true) or sum (normalize false) kernel, computed per group window on a
+    # one-dimensional array.
+    # Inputs: nopython, nogil, parallel are numba jit flags; com is the
+    # centre-of-mass decay parameter (alpha is one over one plus com); adjust
+    # selects adjusted weighting; ignore_na controls whether missing values
+    # decay prior weight; deltas is a hashable tuple of time gaps between
+    # consecutive observations; normalize selects mean versus sum. All must be
+    # hashable because of memoisation.
+    # Returns: a compiled kernel taking values, window begin and end bound
+    # arrays and a minimum periods count and returning a float array the size
+    # of values, where each window is processed independently and entries with
+    # fewer than minimum periods observations are missing.
+    # KNOWN ISSUE: the new observation weight is a local variable that is
+    # reassigned for irregular time series (non-adjusted with com equal to
+    # one) and never reset between windows, so it leaks from one window to the
+    # next.
     """
     Generate a numba jitted ewm mean or sum function specified by values
     from engine_kwargs.
@@ -123,6 +172,15 @@ def generate_numba_ewm_func(
         end: np.ndarray,
         minimum_periods: int,
     ) -> np.ndarray:
+        # [FUNCTION DOC]
+        # HELPER: the compiled kernel returned by the factory; see the
+        # factory's documentation. For each window, seeds the weighted value
+        # with the first element, then updates sequentially: decays the prior
+        # weight (mean) or the running value (sum), blends in each observed
+        # value, and emits missing until minimum periods observations have
+        # been seen.
+        # KNOWN ISSUE: the inner check on the normalize flag is redundant
+        # because it is already inside a branch that requires normalize.
         result = np.empty(len(values))
         alpha = 1.0 / (1.0 + com)
         old_wt_factor = 1.0 - alpha
@@ -186,6 +244,17 @@ def generate_numba_table_func(
     nogil: bool,
     parallel: bool,
 ):
+    # [FUNCTION DOC]
+    # HELPER: cached factory for the table-wise rolling apply kernel.
+    # Inputs: func is the user function taking a two-dimensional window (rows
+    # by columns) plus extra arguments and returning one value per column; it
+    # is compiled first; nopython, nogil, parallel are numba jit flags.
+    # Returns: a compiled kernel taking the 2D values, window begin and end
+    # bounds, minimum periods and extra arguments, returning a 2D float array
+    # with one row per window; entries are missing for columns that have fewer
+    # than minimum periods non-missing values in the window (the function is
+    # only invoked when at least one column qualifies).
+    # Raises an import error if numba is not installed.
     """
     Generate a numba jitted function to apply window calculations table-wise.
 
@@ -224,6 +293,10 @@ def generate_numba_table_func(
         minimum_periods: int,
         *args: Any,
     ):
+        # [FUNCTION DOC]
+        # HELPER: the compiled kernel returned by the factory; see the
+        # factory's documentation. Builds a result row per window and masks
+        # entries lacking enough non-missing values.
         result = np.empty((len(begin), values.shape[1]))
         min_periods_mask = np.empty(result.shape)
         for i in numba.prange(len(result)):
@@ -246,6 +319,14 @@ def generate_numba_table_func(
 # https://github.com/numba/numba/issues/1269
 @functools.cache
 def generate_manual_numpy_nan_agg_with_axis(nan_func):
+    # [FUNCTION DOC]
+    # HELPER: cached factory emulating column-wise reduction for nan-aware
+    # numpy aggregations, because numba does not support the axis argument for
+    # them. Input: nan_func, a numba-compatible function reducing a
+    # one-dimensional array to a scalar. Returns a compiled function that
+    # takes a two-dimensional array and returns a one-dimensional array
+    # holding the reduction of each column. Always compiled in no-python,
+    # no-gil, parallel mode. Requires numba (import error otherwise).
     if TYPE_CHECKING:
         import numba
     else:
@@ -253,6 +334,10 @@ def generate_manual_numpy_nan_agg_with_axis(nan_func):
 
     @numba.jit(nopython=True, nogil=True, parallel=True)
     def nan_agg_with_axis(table):
+        # [FUNCTION DOC]
+        # HELPER: compiled function returned by the factory; applies the
+        # reduction to each column of the table and returns the per-column
+        # results as a float array.
         result = np.empty(table.shape[1])
         for i in numba.prange(table.shape[1]):
             partition = table[:, i]
@@ -273,6 +358,15 @@ def generate_numba_ewm_table_func(
     deltas: tuple,
     normalize: bool,
 ):
+    # [FUNCTION DOC]
+    # HELPER: cached factory for the table-wise exponentially weighted mean
+    # (normalize true) or sum (normalize false) kernel. Same parameters as the
+    # per-series factory: numba jit flags, com, adjust, ignore_na, a hashable
+    # tuple of deltas and normalize, all hashable for memoisation.
+    # Returns: a compiled kernel taking a 2D values array, begin and end
+    # arrays (accepted but unused: the whole table is one window) and a
+    # minimum periods count, returning a float array with the shape of values
+    # with missing entries until each column has minimum periods observations.
     """
     Generate a numba jitted ewm mean or sum function applied table wise specified
     by values from engine_kwargs.
@@ -307,6 +401,16 @@ def generate_numba_ewm_table_func(
         end: np.ndarray,
         minimum_periods: int,
     ) -> np.ndarray:
+        # [FUNCTION DOC]
+        # HELPER: the compiled kernel returned by the factory; processes rows
+        # sequentially, updating a weighted value and weight per column, with
+        # the same update rules as the per-series kernel. The first row seeds
+        # the weighted values.
+        # KNOWN ISSUE: the new observation weight is a single scalar that is
+        # overwritten with the weight of whichever column was last processed
+        # in the irregular time series case (non-adjusted, com equal to one),
+        # so it is shared across columns; also the inner check on the
+        # normalize flag is redundant.
         alpha = 1.0 / (1.0 + com)
         old_wt_factor = 1.0 - alpha
         new_wt = 1.0 if adjust else alpha

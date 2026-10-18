@@ -1,3 +1,16 @@
+# [MODULE DOC]
+# Expanding window calculations. Public contents: the expanding window class
+# (returned by the expanding method of series and data frames; presented in the
+# public typing namespace) and its groupby variant. Both derive from the shared
+# window machinery in the rolling module: the expanding class subclasses the
+# rolling/expanding mixin and supplies an indexer that makes every window start
+# at the first row; the groupby variant combines the window groupby base with
+# the expanding class and uses a groupby-aware indexer wrapping the expanding
+# indexer. Nearly all statistics methods here are thin wrappers that only exist
+# to carry expanding-specific documentation and forward their arguments
+# unchanged to the parent implementation.
+# Import-time side effects: none.
+
 from __future__ import annotations
 
 from typing import (
@@ -41,6 +54,16 @@ if TYPE_CHECKING:
 
 @set_module("pandas.api.typing")
 class Expanding(RollingAndExpandingMixin):
+    # [CLASS DOC]
+    # Expanding window over a series or data frame: each output position
+    # aggregates all observations from the start up to that position.
+    # State (via the parent): the wrapped object, min_periods (minimum
+    # observations needed, default one) and method (single or table execution,
+    # only meaningful with the numba engine). The attribute list used for
+    # copying/repr names min_periods and method.
+    # Inherits the computation machinery from the rolling/expanding mixin;
+    # methods below override only to attach documentation and forward to it.
+    # Invariant: the window indexer always yields windows starting at row zero.
     """
     Provide expanding window calculations.
 
@@ -116,6 +139,14 @@ class Expanding(RollingAndExpandingMixin):
         method: str = "single",
         selection=None,
     ) -> None:
+        # [FUNCTION DOC]
+        # Builds an expanding window object. obj is the series or data frame
+        # to compute over; min_periods (default one) is the minimum number of
+        # observations for a non-missing result; method (default single)
+        # chooses per-column or whole-table execution (table only valid with
+        # the numba engine, validated by the parent); selection optionally
+        # restricts to selected columns (used by groupby). All values are
+        # forwarded to the parent initializer, which validates them.
         super().__init__(
             obj=obj,
             min_periods=min_periods,
@@ -124,12 +155,24 @@ class Expanding(RollingAndExpandingMixin):
         )
 
     def _get_window_indexer(self) -> BaseIndexer:
+        # [FUNCTION DOC]
+        # HELPER: hook used by the window machinery. Returns a new expanding
+        # indexer instance, which computes window bounds with every start at
+        # zero and each end just past the current row.
         """
         Return an indexer class that will compute the window start and end bounds
         """
         return ExpandingIndexer()
 
     def aggregate(self, func=None, *args, **kwargs):
+        # [FUNCTION DOC]
+        # Aggregate the expanding windows with one or more functions. func is
+        # a function, function name, list of those, or mapping of column label
+        # to those (default none); extra positional and keyword arguments are
+        # passed through to the functions. Delegates entirely to the parent
+        # and returns its result: a scalar-like series, series or data frame
+        # depending on input and number of functions. Also exposed under the
+        # shorter alias name.
         """
         Aggregate using one or more operations over the specified axis.
 
@@ -212,6 +255,11 @@ class Expanding(RollingAndExpandingMixin):
     agg = aggregate
 
     def count(self, numeric_only: bool = False):
+        # [FUNCTION DOC]
+        # Expanding count of non-missing observations. numeric_only (default
+        # false) restricts the computation to float, integer and boolean
+        # columns. Forwards to the parent; returns an object of the input's
+        # type with float results.
         """
         Calculate the expanding count of non NaN observations.
 
@@ -253,6 +301,17 @@ class Expanding(RollingAndExpandingMixin):
         args: tuple[Any, ...] | None = None,
         kwargs: dict[str, Any] | None = None,
     ):
+        # [FUNCTION DOC]
+        # Apply a custom function over each expanding window. func maps the
+        # window values (an array when raw is true, otherwise a series) to a
+        # single value (or a compiled function for the numba engine); raw
+        # (default false) selects array input; engine (default none, meaning
+        # the cython engine unless the global numba option is set) selects
+        # cython or numba; engine_kwargs (default none) holds the numba jit
+        # flags for nopython, nogil and parallel; args and kwargs (default
+        # none) are extra positional and keyword arguments for func. Forwards
+        # all to the parent and returns a float-valued object of the input's
+        # type. The parent validates the engine combination.
         """
         Calculate the expanding custom aggregation function.
 
@@ -330,6 +389,9 @@ class Expanding(RollingAndExpandingMixin):
         *args: P.args,
         **kwargs: P.kwargs,
     ) -> T: ...
+    # [FUNCTION DOC]
+    # Overload stub (callable form): see the final implementation of the
+    # pipe method below.
 
     @overload
     def pipe(
@@ -338,6 +400,9 @@ class Expanding(RollingAndExpandingMixin):
         *args: Any,
         **kwargs: Any,
     ) -> T: ...
+    # [FUNCTION DOC]
+    # Overload stub (callable plus data keyword form): see the final
+    # implementation of the pipe method below.
 
     @final
     def pipe(
@@ -346,6 +411,13 @@ class Expanding(RollingAndExpandingMixin):
         *args: Any,
         **kwargs: Any,
     ) -> T:
+        # [FUNCTION DOC]
+        # Implementation of the overloaded pipe method (marked final).
+        # func is either a callable that receives this expanding object as its
+        # first argument, or a pair of (callable, keyword name) where the
+        # object is passed under that keyword. Extra positional and keyword
+        # arguments are forwarded. Delegates to the parent and returns
+        # whatever func returns (not necessarily an expanding object).
         """
         Apply a ``func`` with arguments to this Expanding object and return its result.
 
@@ -431,6 +503,13 @@ class Expanding(RollingAndExpandingMixin):
         engine: Literal["cython", "numba"] | None = None,
         engine_kwargs: dict[str, bool] | None = None,
     ):
+        # [FUNCTION DOC]
+        # Expanding sum. numeric_only (default false) limits to float,
+        # integer and boolean columns; engine (default none: cython unless the
+        # global numba option is set) selects cython or numba; engine_kwargs
+        # (default none) are numba jit flags (nopython, nogil, parallel), not
+        # accepted by cython. Forwards to the parent, which validates them.
+        # Returns a float-valued object of the input's type.
         """
         Calculate the expanding sum.
 
@@ -491,6 +570,9 @@ class Expanding(RollingAndExpandingMixin):
         engine: Literal["cython", "numba"] | None = None,
         engine_kwargs: dict[str, bool] | None = None,
     ):
+        # [FUNCTION DOC]
+        # Expanding maximum; same parameters (numeric_only, engine,
+        # engine_kwargs) and delegation behavior as the expanding sum.
         """
         Calculate the expanding maximum.
 
@@ -551,6 +633,9 @@ class Expanding(RollingAndExpandingMixin):
         engine: Literal["cython", "numba"] | None = None,
         engine_kwargs: dict[str, bool] | None = None,
     ):
+        # [FUNCTION DOC]
+        # Expanding minimum; same parameters (numeric_only, engine,
+        # engine_kwargs) and delegation behavior as the expanding sum.
         """
         Calculate the expanding minimum.
 
@@ -611,6 +696,9 @@ class Expanding(RollingAndExpandingMixin):
         engine: Literal["cython", "numba"] | None = None,
         engine_kwargs: dict[str, bool] | None = None,
     ):
+        # [FUNCTION DOC]
+        # Expanding mean; same parameters (numeric_only, engine,
+        # engine_kwargs) and delegation behavior as the expanding sum.
         """
         Calculate the expanding mean.
 
@@ -671,6 +759,9 @@ class Expanding(RollingAndExpandingMixin):
         engine: Literal["cython", "numba"] | None = None,
         engine_kwargs: dict[str, bool] | None = None,
     ):
+        # [FUNCTION DOC]
+        # Expanding median; same parameters (numeric_only, engine,
+        # engine_kwargs) and delegation behavior as the expanding sum.
         """
         Calculate the expanding median.
 
@@ -732,6 +823,12 @@ class Expanding(RollingAndExpandingMixin):
         engine: Literal["cython", "numba"] | None = None,
         engine_kwargs: dict[str, bool] | None = None,
     ):
+        # [FUNCTION DOC]
+        # Expanding standard deviation. ddof (default one) is the delta
+        # degrees of freedom: the divisor is the observation count minus ddof.
+        # numeric_only, engine and engine_kwargs behave as for the expanding
+        # sum. Delegates to the parent; windows with too few observations give
+        # missing results.
         """
         Calculate the expanding standard deviation.
 
@@ -805,6 +902,10 @@ class Expanding(RollingAndExpandingMixin):
         engine: Literal["cython", "numba"] | None = None,
         engine_kwargs: dict[str, bool] | None = None,
     ):
+        # [FUNCTION DOC]
+        # Expanding variance; same parameters (ddof default one, numeric_only,
+        # engine, engine_kwargs) and delegation as the expanding standard
+        # deviation.
         """
         Calculate the expanding variance.
 
@@ -872,6 +973,10 @@ class Expanding(RollingAndExpandingMixin):
         )
 
     def sem(self, ddof: int = 1, numeric_only: bool = False):
+        # [FUNCTION DOC]
+        # Expanding standard error of the mean. ddof (default one) is the
+        # delta degrees of freedom; numeric_only (default false) limits to
+        # numeric/boolean columns. Delegates to the parent; no engine choice.
         """
         Calculate the expanding standard error of mean.
 
@@ -914,6 +1019,10 @@ class Expanding(RollingAndExpandingMixin):
         return super().sem(ddof=ddof, numeric_only=numeric_only)
 
     def skew(self, numeric_only: bool = False):
+        # [FUNCTION DOC]
+        # Expanding unbiased skewness; needs at least three observations per
+        # window for a value. numeric_only (default false) limits to numeric
+        # columns. Delegates to the parent.
         """
         Calculate the expanding unbiased skewness.
 
@@ -953,6 +1062,10 @@ class Expanding(RollingAndExpandingMixin):
         return super().skew(numeric_only=numeric_only)
 
     def kurt(self, numeric_only: bool = False):
+        # [FUNCTION DOC]
+        # Expanding unbiased excess kurtosis (Fisher definition); needs at
+        # least four observations per window. numeric_only (default false)
+        # limits to numeric columns. Delegates to the parent.
         """
         Calculate the expanding Fisher's definition of kurtosis without bias.
 
@@ -1001,6 +1114,10 @@ class Expanding(RollingAndExpandingMixin):
         return super().kurt(numeric_only=numeric_only)
 
     def first(self, numeric_only: bool = False):
+        # [FUNCTION DOC]
+        # Expanding first (left-most) element of each window; subject to the
+        # minimum periods setting. numeric_only (default false) limits to
+        # numeric columns. Delegates to the parent.
         """
         Calculate the expanding First (left-most) element of the window.
 
@@ -1036,6 +1153,10 @@ class Expanding(RollingAndExpandingMixin):
         return super().first(numeric_only=numeric_only)
 
     def last(self, numeric_only: bool = False):
+        # [FUNCTION DOC]
+        # Expanding last (right-most) element of each window; subject to the
+        # minimum periods setting. numeric_only (default false) limits to
+        # numeric columns. Delegates to the parent.
         """
         Calculate the expanding Last (right-most) element of the window.
 
@@ -1076,6 +1197,12 @@ class Expanding(RollingAndExpandingMixin):
         interpolation: QuantileInterpolation = "linear",
         numeric_only: bool = False,
     ):
+        # [FUNCTION DOC]
+        # Expanding quantile. q is the quantile between zero and one;
+        # interpolation (default linear) is one of linear, lower, higher,
+        # midpoint or nearest and applies when the quantile falls between two
+        # data points; numeric_only (default false) limits to numeric columns.
+        # Delegates to the parent.
         """
         Calculate the expanding quantile.
 
@@ -1135,6 +1262,12 @@ class Expanding(RollingAndExpandingMixin):
         pct: bool = False,
         numeric_only: bool = False,
     ):
+        # [FUNCTION DOC]
+        # Expanding rank of the latest value within each window. method
+        # (default average) resolves ties: average, min or max; ascending
+        # (default true) sets the ranking direction; pct (default false)
+        # returns percentile ranks; numeric_only (default false) limits to
+        # numeric columns. Delegates to the parent.
         """
         Calculate the expanding rank.
 
@@ -1208,6 +1341,10 @@ class Expanding(RollingAndExpandingMixin):
         self,
         numeric_only: bool = False,
     ):
+        # [FUNCTION DOC]
+        # Expanding count of distinct values in each window. numeric_only
+        # (default false) limits to numeric columns. Delegates to the parent;
+        # returns float-valued results.
         """
         Calculate the expanding nunique.
 
@@ -1253,6 +1390,14 @@ class Expanding(RollingAndExpandingMixin):
         ddof: int = 1,
         numeric_only: bool = False,
     ):
+        # [FUNCTION DOC]
+        # Expanding sample covariance. other (default none) is the series or
+        # frame to compare with; when absent, pairwise output with itself is
+        # produced. pairwise (default none) selects between matching columns
+        # only (false) and all column pair combinations as a multi-indexed
+        # result (true), using only complete observations. ddof (default one)
+        # is the delta degrees of freedom; numeric_only (default false) limits
+        # to numeric columns. Delegates to the parent.
         """
         Calculate the expanding sample covariance.
 
@@ -1311,6 +1456,11 @@ class Expanding(RollingAndExpandingMixin):
         ddof: int = 1,
         numeric_only: bool = False,
     ):
+        # [FUNCTION DOC]
+        # Expanding Pearson correlation; same parameters (other, pairwise,
+        # ddof, numeric_only) and delegation as the expanding covariance.
+        # Equal-valued sequences give missing results because of a zero by
+        # zero division.
         """
         Calculate the expanding correlation.
 
@@ -1391,6 +1541,12 @@ class Expanding(RollingAndExpandingMixin):
 
 @set_module("pandas.api.typing")
 class ExpandingGroupby(BaseWindowGroupby, Expanding):
+    # [CLASS DOC]
+    # Expanding window computed independently within each group of a groupby
+    # object. Inherits group handling from the window groupby base and the
+    # statistics from the expanding class (base order matters: group base
+    # first). The attribute list is the concatenation of both parents' lists.
+    # No new methods other than the indexer hook.
     """
     Provide an expanding groupby implementation.
     """
@@ -1398,6 +1554,11 @@ class ExpandingGroupby(BaseWindowGroupby, Expanding):
     _attributes = Expanding._attributes + BaseWindowGroupby._attributes
 
     def _get_window_indexer(self) -> GroupbyIndexer:
+        # [FUNCTION DOC]
+        # HELPER: hook for the window machinery. Returns a groupby indexer
+        # built from the grouper's group-to-row-positions mapping and the
+        # expanding indexer class, so the expanding bounds are computed per
+        # group.
         """
         Return an indexer class that will compute the window start and end bounds
 

@@ -1,3 +1,12 @@
+# [PACKAGE DOC]
+# Excel reading and writing package. Submodules: the base module (reader and
+# writer base classes and the public read function), engine specific reader and
+# writer modules (openpyxl, xlsxwriter, odf spreadsheet, xlrd, pyxlsb, calamine)
+# and a utilities module with the writer registry.
+# Exports (public all): ExcelFile, ExcelWriter and read_excel.
+# Import-time side effects: registers the openpyxl, xlsxwriter and ODS writer
+# classes in the writer registry so they can be selected by engine name or file
+# extension. Readers are registered lazily elsewhere.
 from pandas.io.excel._base import (
     ExcelFile,
     ExcelWriter,
