@@ -8,6 +8,23 @@ Other items:
 * platform checker
 """
 
+# [PACKAGE DOC]
+# Compatibility package: version/platform feature flags and small platform
+# helper functions used across pandas. Submodules: _constants (interpreter and
+# platform constants, including reference counts used by the chained
+# assignment checks), _optional (optional dependency importing and minimum
+# versions), numpy (numpy version flags and the numpy long type aliases),
+# pyarrow (pyarrow version flags and a safe null-filling wrapper), and
+# pickle_compat (unpickling of objects from older pandas versions).
+# Re-exports (listed in __all__): the constants for 64-bit, musl, python 3.12,
+# 3.14 and 3.15 or later, PyPy, WebAssembly, and the chained-warning-disabled
+# flag; the numpy development flag; and the pyarrow installed/usable flags,
+# minimum version and the many "version under X" booleans (note one of the
+# private-to-pyarrow flags, for version 15, is not re-exported here).
+# Defines: set_function_name and the platform predicates (little endian,
+# windows, linux, mac, ARM, Power, riscv64) and the CI-environment check.
+# Import-time side effects: importing the numpy and pyarrow submodules, which
+# import pyarrow if available and raise an import error if numpy is too old.
 from __future__ import annotations
 
 import os
@@ -49,6 +66,12 @@ if TYPE_CHECKING:
 
 
 def set_function_name(f: F, name: str, cls: type) -> F:
+    # [FUNCTION DOC]
+    # Renames a function in place so it looks like a method of a class.
+    # Parameters: f (function), name (new short name) and cls (the class it
+    # will belong to). Sets the function's name to name, its qualified name to
+    # the class name, a dot and name, and its module to the class's module.
+    # Mutates and returns the same function object.
     """
     Bind the name/qualname attributes of the function.
     """
@@ -59,6 +82,8 @@ def set_function_name(f: F, name: str, cls: type) -> F:
 
 
 def is_platform_little_endian() -> bool:
+    # [FUNCTION DOC]
+    # Returns true if the interpreter's native byte order is little endian.
     """
     Checking if the running platform is little endian.
 
@@ -71,6 +96,9 @@ def is_platform_little_endian() -> bool:
 
 
 def is_platform_windows() -> bool:
+    # [FUNCTION DOC]
+    # Returns true if the platform identifier is windows or cygwin (so Cygwin
+    # counts as windows, which the docstring does not mention).
     """
     Checking if the running platform is windows.
 
@@ -83,6 +111,8 @@ def is_platform_windows() -> bool:
 
 
 def is_platform_linux() -> bool:
+    # [FUNCTION DOC]
+    # Returns true if the platform identifier is exactly linux.
     """
     Checking if the running platform is linux.
 
@@ -95,6 +125,8 @@ def is_platform_linux() -> bool:
 
 
 def is_platform_mac() -> bool:
+    # [FUNCTION DOC]
+    # Returns true if the platform identifier is darwin (macOS).
     """
     Checking if the running platform is mac.
 
@@ -107,6 +139,9 @@ def is_platform_mac() -> bool:
 
 
 def is_platform_arm() -> bool:
+    # [FUNCTION DOC]
+    # Returns true if the machine type reported by the platform module is arm64
+    # or aarch64, or starts with armv.
     """
     Checking if the running platform use ARM architecture.
 
@@ -121,6 +156,11 @@ def is_platform_arm() -> bool:
 
 
 def is_platform_power() -> bool:
+    # [FUNCTION DOC]
+    # Returns true if the machine type is ppc64 or ppc64le (Power architecture).
+    # KNOWN ISSUE: the existing docstring's Returns section says it returns true
+    # if the platform uses ARM architecture (copy and paste error); the code
+    # tests for Power.
     """
     Checking if the running platform use Power architecture.
 
@@ -133,6 +173,8 @@ def is_platform_power() -> bool:
 
 
 def is_platform_riscv64() -> bool:
+    # [FUNCTION DOC]
+    # Returns true if the machine type is exactly riscv64.
     """
     Checking if the running platform use riscv64 architecture.
 
@@ -145,6 +187,9 @@ def is_platform_riscv64() -> bool:
 
 
 def is_ci_environment() -> bool:
+    # [FUNCTION DOC]
+    # Returns true if the environment variable named PANDAS_CI is set to the
+    # exact text 1 (default when unset is 0).
     """
     Checking if running in a continuous integration environment by checking
     the PANDAS_CI environment variable.

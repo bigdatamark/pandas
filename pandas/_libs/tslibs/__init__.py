@@ -1,3 +1,26 @@
+# [PACKAGE DOC]
+# Low-level time series library: compiled extension modules implementing
+# datetime, timedelta, timestamp, period and offset scalars and the vectorized
+# conversion, parsing and time zone routines behind them. This python file only
+# gathers and re-exports names from those extension modules and lists them in
+# __all__.
+# Submodules used: conversion, dtypes (also re-exported as a module), nattype,
+# np_datetime, offsets, parsing, period, timedeltas, timestamps, timezones,
+# tzconversion and vectorized.
+# Re-exports: the pydatetime localization helper; the Resolution enumeration
+# and the periods-per-day and periods-per-second constants; the missing time
+# singleton, its type, its integer sentinel and the set of strings treated as
+# missing; the out-of-bounds exceptions and numpy datetime helpers (overflow-safe
+# add and astype, supported-dtype helpers, unit-from-dtype lookup, which is
+# the private-named python-facing function renamed on import); the base offset,
+# day and tick offset classes and the offset-from-string function; the datetime
+# format guesser; the period class and its incompatible-frequency exception;
+# the Timedelta class with the nanosecond conversion and integers-to-timedelta
+# helpers; Timestamp; the time zone comparison; the single-value UTC conversion;
+# and the vectorized helpers (datetime-to-period conversion, resolution,
+# integers-to-datetime objects, normalization check and normalization,
+# conversion from UTC).
+# Import-time side effects: imports all the compiled submodules.
 __all__ = [
     "BaseOffset",
     "Day",

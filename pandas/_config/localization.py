@@ -4,6 +4,13 @@ Helpers for configuring locale settings.
 Name `localization` is chosen to avoid overlap with builtin `locale` module.
 """
 
+# [MODULE DOC]
+# Helpers for working with operating system locales (used mainly by tests and
+# formatting code). Public contents: set_locale (context manager that changes a
+# locale temporarily), can_set_locale (probe), get_locales (list available
+# locales) and the private helper _valid_locales. Relationships: reads the
+# display encoding option from the config package to decode the system's
+# locale list. Import-time side effects: none beyond imports.
 from __future__ import annotations
 
 from contextlib import contextmanager
@@ -26,6 +33,18 @@ if TYPE_CHECKING:
 def set_locale(
     new_locale: str | tuple[str, str], lc_var: int = locale.LC_ALL
 ) -> Generator[str | tuple[str, str]]:
+    # [FUNCTION DOC]
+    # Context manager (generator based) that sets a locale for the duration of
+    # the with block and restores the previous one afterwards, even if the block
+    # raises. Parameters: new_locale (locale name string or a pair of language
+    # and encoding) and lc_var (locale category integer, default all
+    # categories). The previous locale is read with the set function (the get
+    # function can disagree with it, issue 46595).
+    # Yields the normalized locale as language code, a dot and the encoding when
+    # the locale query returns both parts, otherwise the originally given value.
+    # Raises the locale error (or a value error) from the standard library if
+    # the locale cannot be set; in that case the restore step still runs.
+    # Side effect: changes process-global locale state (not thread-safe).
     """
     Context manager for temporarily setting a locale.
 
@@ -59,6 +78,12 @@ def set_locale(
 
 
 def can_set_locale(lc: str, lc_var: int = locale.LC_ALL) -> bool:
+    # [FUNCTION DOC]
+    # Probes whether a locale can be set. Parameters: lc (locale name) and
+    # lc_var (category, default all). Enters and immediately leaves the
+    # temporary-locale context manager. Returns true if no error occurred, false
+    # if a value error or locale error was raised. Side effect: briefly changes
+    # and then restores the process locale.
     """
     Check to see if we can set a locale, and subsequently get the locale,
     without raising an Exception.
@@ -86,6 +111,16 @@ def can_set_locale(lc: str, lc_var: int = locale.LC_ALL) -> bool:
 
 
 def _valid_locales(locales: list[str] | str, normalize: bool) -> list[str]:
+    # [FUNCTION DOC]
+    # HELPER: for get_locales. Filters candidate locale names down to those the
+    # system accepts. Parameters: locales (an iterable of locale name strings;
+    # the annotation also allows a single string but a string would be iterated
+    # character by character) and normalize (if true each name is stripped and
+    # then normalized by the standard library; otherwise only stripped).
+    # Returns the list, preserving order, of names for which the probe function
+    # succeeds. Side effect: temporarily sets each locale.
+    # KNOWN ISSUE: the existing docstring says the input is a newline separated
+    # string, but the code iterates over it as a sequence of names.
     """
     Return a list of normalized locales that do not throw an ``Exception``
     when set.
@@ -116,6 +151,23 @@ def get_locales(
     prefix: str | None = None,
     normalize: bool = True,
 ) -> list[str]:
+    # [FUNCTION DOC]
+    # Lists locales available on the machine that can actually be set.
+    # Parameters: prefix (optional string; keep only locales matching the
+    # prefix as a regular expression start, default none) and normalize (apply
+    # the standard library's normalization to each name, default true).
+    # On platforms other than Linux and macOS returns an empty list. Otherwise
+    # runs the external locale-listing command, splits its byte output on
+    # newlines and decodes each entry with the configured display encoding,
+    # falling back to the windows-1252 codec for entries that fail to decode.
+    # With no prefix, returns the valid ones among all entries. With a prefix,
+    # joins the entries with newlines, extracts the matches of the pattern
+    # prefix followed by any characters (per line), and returns the valid ones.
+    # Raises the called-process error if the external command fails.
+    # KNOWN ISSUE: the prefix is interpolated into a regular expression without
+    # escaping.
+    # KNOWN ISSUE: the existing docstring says that the normalize flag filters
+    # to settable locales, but filtering by settability always happens.
     """
     Get all the locales that are available on the system.
 

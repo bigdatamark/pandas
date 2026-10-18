@@ -1,3 +1,32 @@
+# [MODULE DOC]
+# HELPER: central module of type aliases, type variables and structural
+# protocols used for annotations throughout pandas. It is for static type
+# checking; nothing here changes runtime behavior.
+# Contents (grouped as in the file): parameter-spec and type variables (P,
+# HashableT, MutableMappingT, ArrayLikeT, IntStrT, NDFrameT, IndexT, FreqIndexT,
+# NumpyIndexT, T, F, TypeT, SequenceT and the covariant/contravariant string
+# variables); aliases for array-likes, list-likes, scalars, timestamp and
+# timedelta convertible inputs, timezones, axes, labels, shapes, dtypes and
+# dtype arguments, converters and date-parsing arguments, renamers, function
+# types and aggregation function types, file path and storage and compression
+# options, formatter types, fill and interpolate options, indexers, merge and
+# join options, interval closed types, sorting and quantile options, engines
+# and parsers for readers, and many other string-literal option types; and
+# structural protocols for sequences that exclude strings (SequenceNotStr),
+# file-like buffers (BaseBuffer, ReadBuffer, WriteBuffer, ReadPickleBuffer,
+# WriteExcelBuffer, ReadCsvBuffer) and objects exporting data through the Arrow
+# PyCapsule interface (ArrowArrayExportable, ArrowStreamExportable).
+# The module's __all__ contains only the alias for the builtin type function
+# (type_t), which exists so annotations can name the builtin type even where a
+# local name shadows it.
+# Import cycles are avoided: pandas internal types are imported only under the
+# type-checking flag and referenced by string forward references (a union
+# containing a pandas type must use the Union form for this reason). A few
+# protocol classes set their reported module to the public typing aliases
+# module so documentation shows a public path.
+# Import-time side effects: none beyond importing numpy typing helpers.
+# KNOWN ISSUE: the timestamp-nonexistent alias and the time-nonexistent alias
+# are defined identically, duplicating the same literal choices.
 from __future__ import annotations
 
 from builtins import type as type_t  # pyright: ignore[reportUnusedImport]
@@ -107,25 +136,62 @@ _T_co = TypeVar("_T_co", covariant=True)
 
 
 class SequenceNotStr(Protocol[_T_co]):
+    # [CLASS DOC]
+    # Structural protocol (generic over a covariant element type) describing a
+    # read-only sequence that is deliberately not satisfied by text or bytes
+    # (idea from the useful_types project). Required members: indexing by
+    # integer-like or by slice, membership test, length, iteration, index lookup
+    # with optional start and stop, count, and reversed iteration. Because str
+    # has a differing signature for index, it is excluded by checkers. Reported
+    # module is the public typing aliases module. Only for static checking.
     __module__: str = "pandas.api.typing.aliases"
 
     @overload
-    def __getitem__(self, index: SupportsIndex, /) -> _T_co: ...
+    def __getitem__(self, index: SupportsIndex, /) -> _T_co:
+        # [FUNCTION DOC]
+        # Protocol stub (overload for an integer-like index): returns one element.
+        # No implementation exists; the combined signature is declared by both
+        # overloads.
+        ...
 
     @overload
-    def __getitem__(self, index: slice, /) -> Sequence[_T_co]: ...
+    def __getitem__(self, index: slice, /) -> Sequence[_T_co]:
+        # [FUNCTION DOC]
+        # Protocol stub (overload for a slice): returns a sequence of elements.
+        # No implementation exists in the protocol.
+        ...
 
-    def __contains__(self, value: object, /) -> bool: ...
+    def __contains__(self, value: object, /) -> bool:
+        # [FUNCTION DOC]
+        # Protocol stub: membership test for any object; returns a boolean.
+        ...
 
-    def __len__(self) -> int: ...
+    def __len__(self) -> int:
+        # [FUNCTION DOC]
+        # Protocol stub: number of elements, as an integer.
+        ...
 
-    def __iter__(self) -> Iterator[_T_co]: ...
+    def __iter__(self) -> Iterator[_T_co]:
+        # [FUNCTION DOC]
+        # Protocol stub: returns an iterator over the elements in order.
+        ...
 
-    def index(self, value: Any, start: int = ..., stop: int = ..., /) -> int: ...
+    def index(self, value: Any, start: int = ..., stop: int = ..., /) -> int:
+        # [FUNCTION DOC]
+        # Protocol stub: position of the first occurrence of value, optionally
+        # restricted to the range from start to stop (both positional-only,
+        # optional). Returns an integer.
+        ...
 
-    def count(self, value: Any, /) -> int: ...
+    def count(self, value: Any, /) -> int:
+        # [FUNCTION DOC]
+        # Protocol stub: number of occurrences of value, as an integer.
+        ...
 
-    def __reversed__(self) -> Iterator[_T_co]: ...
+    def __reversed__(self) -> Iterator[_T_co]:
+        # [FUNCTION DOC]
+        # Protocol stub: returns an iterator over the elements in reverse order.
+        ...
 
 
 ListLike: TypeAlias = AnyArrayLike | SequenceNotStr | range
@@ -260,74 +326,142 @@ AnyStr_contra = TypeVar("AnyStr_contra", str, bytes, contravariant=True)
 
 
 class BaseBuffer(Protocol):
+    # [CLASS DOC]
+    # Structural protocol for the minimal file-like object accepted by the
+    # reading and writing machinery: a mode property and the methods seek,
+    # seekable and tell. The comments in the source note which standard file
+    # classes motivated each member. Base of the read and write buffer
+    # protocols. Only for static checking.
     @property
     def mode(self) -> str:
+        # [FUNCTION DOC]
+        # Protocol stub (property): the mode string of the open buffer. Needed by
+        # the internal file-path-or-buffer resolution.
         # for _get_filepath_or_buffer
         ...
 
     def seek(self, offset: int, whence: int = ..., /) -> int:
+        # [FUNCTION DOC]
+        # Protocol stub: moves to a position. Parameters: offset (integer) and an
+        # optional whence reference point (positional only). Returns the new
+        # absolute position. The source comment notes some file classes accept
+        # one argument and others two.
         # with one argument: gzip.GzipFile, bz2.BZ2File
         # with two arguments: zip.ZipFile, read_sas
         ...
 
     def seekable(self) -> bool:
+        # [FUNCTION DOC]
+        # Protocol stub: returns whether the buffer supports seeking (required
+        # for compressed file classes).
         # for bz2.BZ2File
         ...
 
     def tell(self) -> int:
+        # [FUNCTION DOC]
+        # Protocol stub: returns the current absolute position as an integer.
         # for zip.ZipFile, read_stata, to_stata
         ...
 
 
 class ReadBuffer(BaseBuffer, Protocol[AnyStr_co]):
+    # [CLASS DOC]
+    # Protocol for a readable buffer, generic over text or bytes (covariant).
+    # Extends the base buffer protocol with a read method. Reported module is the
+    # public typing aliases module.
     __module__: str = "pandas.api.typing.aliases"
 
     def read(self, n: int = ..., /) -> AnyStr_co:
+        # [FUNCTION DOC]
+        # Protocol stub: reads up to n units (optional, positional only) and
+        # returns text or bytes according to the type parameter.
         # for BytesIOWrapper, gzip.GzipFile, bz2.BZ2File
         ...
 
 
 class WriteBuffer(BaseBuffer, Protocol[AnyStr_contra]):
+    # [CLASS DOC]
+    # Protocol for a writable buffer, generic over text or bytes
+    # (contravariant). Extends the base buffer protocol with write and flush.
+    # Reported module is the public typing aliases module.
     __module__: str = "pandas.api.typing.aliases"
 
     def write(self, b: AnyStr_contra, /) -> Any:
+        # [FUNCTION DOC]
+        # Protocol stub: writes the given text or bytes (positional only); the
+        # return value is unconstrained.
         # for gzip.GzipFile, bz2.BZ2File
         ...
 
     def flush(self) -> Any:
+        # [FUNCTION DOC]
+        # Protocol stub: flushes buffered output; the return value is
+        # unconstrained.
         # for gzip.GzipFile, bz2.BZ2File
         ...
 
 
 class ReadPickleBuffer(ReadBuffer[bytes], Protocol):
+    # [CLASS DOC]
+    # Protocol for a binary readable buffer that also supports reading a line,
+    # as required by the unpickler. Reported module is the public typing aliases
+    # module.
     __module__: str = "pandas.api.typing.aliases"
 
-    def readline(self) -> bytes: ...
+    def readline(self) -> bytes:
+        # [FUNCTION DOC]
+        # Protocol stub: reads and returns one line of bytes.
+        ...
 
 
 class WriteExcelBuffer(WriteBuffer[bytes], Protocol):
+    # [CLASS DOC]
+    # Protocol for a binary writable buffer that also supports truncation, as
+    # required when writing spreadsheet files. Reported module is the public
+    # typing aliases module.
     __module__: str = "pandas.api.typing.aliases"
 
-    def truncate(self, size: int | None = ..., /) -> int: ...
+    def truncate(self, size: int | None = ..., /) -> int:
+        # [FUNCTION DOC]
+        # Protocol stub: resizes the buffer to the given size (optional,
+        # positional only; default the current position) and returns the new
+        # size.
+        ...
 
 
 class ReadCsvBuffer(ReadBuffer[AnyStr_co], Protocol):
+    # [CLASS DOC]
+    # Protocol for a readable buffer sufficient for the delimited-text reader:
+    # iteration by line, a file descriptor, line reading and a closed property.
+    # Reported module is the public typing aliases module.
     __module__: str = "pandas.api.typing.aliases"
 
     def __iter__(self) -> Iterator[AnyStr_co]:
+        # [FUNCTION DOC]
+        # Protocol stub: iterator over lines; used by the pure-python parser
+        # engine.
         # for engine=python
         ...
 
     def fileno(self) -> int:
+        # [FUNCTION DOC]
+        # Protocol stub: returns the integer file descriptor; used by the
+        # memory-mapped wrapper.
         # for _MMapWrapper
         ...
 
     def readline(self) -> AnyStr_co:
+        # [FUNCTION DOC]
+        # Protocol stub: reads and returns one line; used by the pure-python
+        # parser engine.
         # for engine=python
         ...
 
     @property
     def closed(self) -> bool:
+        # [FUNCTION DOC]
+        # Protocol stub (property): whether the buffer has been closed; used by
+        # the arrow parser engine.
         # for engine=pyarrow
         ...
 
@@ -541,6 +675,10 @@ SliceType: TypeAlias = Hashable | None
 
 
 class ArrowArrayExportable(Protocol):
+    # [CLASS DOC]
+    # Protocol for objects that can export their data as an Arrow array through
+    # the PyCapsule interface, i.e. that have the array export special method.
+    # Taken from the Arrow documentation's type hints. Only for static checking.
     """
     An object with an ``__arrow_c_array__`` method.
 
@@ -555,10 +693,22 @@ class ArrowArrayExportable(Protocol):
 
     def __arrow_c_array__(
         self, requested_schema: object | None = None
-    ) -> tuple[object, object]: ...
+    ) -> tuple[object, object]:
+        # [FUNCTION DOC]
+        # Protocol stub: exports the data. Parameter requested_schema is an
+        # optional schema capsule suggesting the desired type (default none).
+        # Returns a pair of capsule objects: the schema and the array.
+        ...
 
 
 class ArrowStreamExportable(Protocol):
+    # [CLASS DOC]
+    # Protocol for objects that can export their data as an Arrow stream through
+    # the PyCapsule interface, i.e. that have the stream export special method.
+    # Only for static checking.
+    # KNOWN ISSUE: the existing docstring refers to a link target named the Arrow
+    # C Data Interface, but the only target defined in that docstring is named
+    # the Arrow C Stream Interface, so the reference is unresolved in the docs.
     """
     An object with an ``__arrow_c_stream__`` method.
 
@@ -572,7 +722,12 @@ class ArrowStreamExportable(Protocol):
 
     """
 
-    def __arrow_c_stream__(self, requested_schema: object | None = None) -> object: ...
+    def __arrow_c_stream__(self, requested_schema: object | None = None) -> object:
+        # [FUNCTION DOC]
+        # Protocol stub: exports the data as a stream. Parameter requested_schema
+        # is an optional schema capsule suggesting the desired type (default
+        # none). Returns a stream capsule object.
+        ...
 
 
 __all__ = ["type_t"]

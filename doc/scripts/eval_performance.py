@@ -1,3 +1,14 @@
+# [MODULE DOC]
+# Standalone script that benchmarks the expression evaluation and query methods
+# of a data frame with the python and numexpr engines over a range of row
+# counts, and plots the timings (log-log) to image files used by the
+# documentation.
+# Public contents: string templates setup_common, setup_with and setup_subset
+# (setup code for timed snippets); functions bench_with, bench_subset, bench and
+# plot_perf. Requires numpy, seaborn and matplotlib.
+# Import-time side effects: imports seaborn (hard dependency) and pandas.
+# Run as a script it benchmarks, then writes two png files into the static
+# folder of the documentation source tree.
 from timeit import repeat as timeit
 
 import numpy as np
@@ -14,6 +25,14 @@ setup_with = "s = 'a + b * (c ** 2 + b ** 2 - a) / (a * c) ** 3'"
 
 
 def bench_with(n, times=10, repeat=3, engine="numexpr"):
+    # [FUNCTION DOC]
+    # Times evaluating an arithmetic expression string over three columns of a
+    # frame of n rows of standard normal random numbers (columns a, b, c).
+    # Parameters: n (row count), times (executions per repetition, default 10),
+    # repeat (number of repetitions, default 3), engine (name of the evaluation
+    # engine, default numexpr). The setup (frame creation) is not timed.
+    # Returns a numpy array with one entry per repetition: the average seconds
+    # per execution (total time divided by times).
     return (
         np.array(
             timeit(
@@ -31,6 +50,12 @@ setup_subset = "s = 'a <= b <= c ** 2 + b ** 2 - a and b > c'"
 
 
 def bench_subset(n, times=20, repeat=3, engine="numexpr"):
+    # [FUNCTION DOC]
+    # Same as the evaluation benchmark but for the row-filtering query method
+    # with a chained comparison and boolean condition. Parameters: n (row
+    # count), times (executions per repetition, default 20), repeat
+    # (repetitions, default 3), engine (default numexpr). Returns an array of
+    # average seconds per execution, one per repetition.
     return (
         np.array(
             timeit(
@@ -45,6 +70,20 @@ def bench_subset(n, times=20, repeat=3, engine="numexpr"):
 
 
 def bench(mn=3, mx=7, num=100, engines=("python", "numexpr"), verbose=False):
+    # [FUNCTION DOC]
+    # Runs both benchmarks across a logarithmic range of row counts.
+    # Parameters: mn and mx (base-ten exponents of the smallest and largest row
+    # counts, defaults 3 and 7), num (number of sizes, default 100), engines
+    # (sequence of engine names, default python and numexpr), verbose (print a
+    # progress line every tenth size when true).
+    # Row counts are num log-spaced values rounded to integers. For each engine
+    # and size one repetition of one execution is timed and the mean stored.
+    # Returns two frames (evaluation timings, query timings), each with one
+    # column per engine and a size column of row counts. Side effect: prints
+    # progress when verbose.
+    # KNOWN ISSUE: the verbose check combines a boolean and a comparison with
+    # the bitwise and operator rather than the logical operator; it works for
+    # booleans but is unidiomatic.
     r = np.logspace(mn, mx, num=num).round().astype(int)
 
     ev = DataFrame(np.empty((num, len(engines))), columns=engines)
@@ -65,6 +104,15 @@ def bench(mn=3, mx=7, num=100, engines=("python", "numexpr"), verbose=False):
 
 
 def plot_perf(df, engines, title, filename=None) -> None:
+    # [FUNCTION DOC]
+    # Plots timing curves, one line per engine, on log-log axes of row count
+    # versus seconds. Parameters: df (frame with a size column and one column
+    # per engine), engines (names of the columns to draw), title (plot title),
+    # filename (optional path; the figure is saved there if given).
+    # Side effects: applies the seaborn default style and the Set2 palette
+    # globally; creates a matplotlib figure of 4 by 3 inches at 120 dpi (not
+    # closed afterwards) and writes the image file when filename is given.
+    # Returns nothing.
     from matplotlib.pyplot import figure
 
     sns.set()

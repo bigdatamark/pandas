@@ -1,3 +1,36 @@
+# [PACKAGE DOC]
+# Top-level pandas package: the public entry point of the library. It checks
+# hard dependencies, verifies the compiled extensions are built, and re-exports
+# the public API from the internal subpackages.
+# Subpackages and submodules (public): api (public type/extension helpers),
+# arrays (public extension array classes), errors, io, plotting, testing and
+# tseries (including offsets). Internal subpackages: core (data structures and
+# algorithms), _config (options system), _libs (compiled extensions), compat,
+# _testing, util and others.
+# Re-exports: option functions and the options object (from the config
+# package); dtype classes, the missing-value helpers, index classes, scalar
+# types (Period, Timedelta, Timestamp, Interval, DateOffset, the missing-time
+# singleton), range builders, conversion functions, Series, DataFrame,
+# Categorical, Grouper, NamedAgg and other helpers (from the core api); the
+# column-expression helper col; the sparse dtype; the frequency inference
+# function; the top-level eval function; the reshaping functions (concat, merge
+# family, pivot family, melt, get_dummies, cut, qcut and others); all reader and
+# writer functions of the io api (read_csv and so on, ExcelFile, ExcelWriter,
+# HDFStore); json_normalize; show_versions; and the test runner function.
+# Version attributes: __version__ and __git_version__ come from the generated
+# meson version module when present, otherwise from the versioneer-style
+# module (closest tag, falling back to the version string). A private flag
+# records whether the package was built with meson.
+# The module attribute __all__ lists the public API for type checkers, and the
+# module documentation text is assigned to __doc__ (as a plain string
+# assignment, not a literal docstring); __docformat__ is restructuredtext.
+# Import-time side effects: raises an import error if numpy or dateutil are
+# missing (the timezone data package is deliberately not checked); raises an
+# import error with build instructions if the compiled extensions are not
+# built (detected while importing the compat module); imports the core
+# configuration-initialization module, which registers all options; and imports
+# essentially the whole library, including the io readers (with lazily
+# imported optional dependencies).
 from __future__ import annotations
 
 __docformat__ = "restructuredtext"

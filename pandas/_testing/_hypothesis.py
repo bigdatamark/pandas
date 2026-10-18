@@ -2,6 +2,25 @@
 Hypothesis data generator helpers.
 """
 
+# [MODULE DOC]
+# HELPER: test support module (internal testing package) that defines reusable
+# Hypothesis strategies for property-based tests; it contains only module-level
+# constants and no functions or classes. Requires the hypothesis library.
+# Public contents: OPTIONAL_INTS, OPTIONAL_FLOATS, OPTIONAL_TEXT,
+# OPTIONAL_DICTS and OPTIONAL_LISTS (each a strategy for a list of between 3
+# and 10 items that may be none: integers, floats, text, dictionaries mapping
+# text to integers, and lists of text respectively); OPTIONAL_ONE_OF_ALL (one
+# of those five); DATETIME_NO_TZ (naive datetimes; on Windows limited to start
+# at 1900-01-01); DATETIME_JAN_1_1900_OPTIONAL_TZ (datetimes whose minimum and
+# maximum are both 1900-01-01, with no timezone or a dateutil or zoneinfo
+# timezone); DATETIME_IN_PD_TIMESTAMP_RANGE_NO_TZ (naive datetimes within the
+# range of the pandas timestamp, converted without warnings); INT_NEG_999_TO_POS_999
+# (integers from minus 999 to 999); and YQM_OFFSET (one of the month, quarter and
+# year begin or end offsets, plain and business variants).
+# Relationships: the strategies for the offset types are registered in the
+# test configuration module, because the types do not carry enough information
+# to infer how to build them; this module only requests them by type.
+# Import-time side effects: builds the strategy objects.
 from datetime import datetime
 
 from hypothesis import strategies as st

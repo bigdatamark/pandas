@@ -2,6 +2,15 @@
 Unopinionated display configuration.
 """
 
+# [MODULE DOC]
+# Display-related configuration that does not depend on the rest of pandas.
+# Public contents: the function detect_console_encoding, the private module
+# global _initial_defencoding (the interpreter's default encoding recorded the
+# first time detection runs, kept for debugging) and the description string
+# pc_encoding_doc.
+# Import-time side effects: calls the detector once and registers the option
+# display.encoding with that default and a validator accepting text or bytes
+# values (global option registry mutation).
 from __future__ import annotations
 
 import locale
@@ -15,6 +24,16 @@ _initial_defencoding: str | None = None
 
 
 def detect_console_encoding() -> str:
+    # [FUNCTION DOC]
+    # Finds the best available text encoding name for the console. Takes no
+    # arguments and returns a string.
+    # Order of attempts: the standard output encoding, else the standard input
+    # encoding (attribute and operating system errors are swallowed); if that is
+    # empty or contains ascii (case-insensitive), the locale's preferred
+    # encoding (locale errors swallowed); if still empty or ascii-like, the
+    # interpreter's default encoding.
+    # Side effect: the first call records the interpreter default encoding in the
+    # module global (not used by the function's result).
     """
     Try to find the most capable encoding supported by the console.
     slightly modified from the way IPython handles the same issue.

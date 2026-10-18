@@ -9,6 +9,42 @@
 #
 # All configuration values have a default; values that are commented out
 # serve to show the default.
+
+# [MODULE DOC]
+# Sphinx configuration module for the pandas documentation. Sphinx executes it
+# as a script with its directory as working directory and reads the module-level
+# names as settings; it is not meant to be imported.
+# Main settings defined: the extension list; exclude patterns; the
+# autosummary/numpydoc/plot-directive/notebook options; project name,
+# copyright (current year), version and release; theme and its options
+# (including a computed version-switcher label); static paths; the list of
+# moved API pages and moved classes used to build redirect pages; the header
+# text used to prefix pages; the html context; latex documents; the
+# cross-reference mapping to other projects (only when the API is included);
+# the issue link alias; interpreter execution lines for the ipython directive;
+# the warning suppression list; and the link-check ignore list.
+# Classes: AccessorDocumenter, AccessorLevelDocumenter,
+# AccessorAttributeDocumenter, AccessorMethodDocumenter,
+# AccessorCallableDocumenter and PandasAutosummary (custom Sphinx documenters
+# and autosummary). Functions: linkcode_resolve (maps a documented object to its
+# source URL on GitHub), remove_flags_docstring, process_class_docstrings,
+# process_business_alias_docstrings and rstjinja (event handlers), and setup
+# (registers handlers, documenters and the directive with Sphinx).
+# Environment input: SPHINX_PATTERN selects which pages are built (minus api,
+# only whatsnew, or a single document or object name) and PANDAS_VERSION can
+# override the version string.
+# Import-time side effects (many): raises the interpreter recursion limit to
+# 5000; prepends the extension folder to the module search path; logs warnings
+# if the notebook converter or pandoc is missing and then excludes notebooks;
+# walks the source tree to extend the exclude patterns according to the
+# pattern; READS the index template and OVERWRITES the generated index.rst
+# source file in the source folder; imports the pandas package and the modules
+# of the moved classes (to list their public methods); and imports Sphinx
+# internals.
+# KNOWN ISSUE: several settings are obsolete or have no effect in current
+# Sphinx (for example the excluded-trees list and the module-index flag).
+# KNOWN ISSUE: the private list of business-offset alias names is spelled with a
+# typo in its identifier (missing letter), harmless but misleading.
 from datetime import datetime
 import importlib
 import inspect
@@ -503,6 +539,12 @@ from sphinx.ext.autosummary import Autosummary  # isort:skip
 
 
 class AccessorDocumenter(MethodDocumenter):
+    # [CLASS DOC]
+    # Sphinx documenter for accessor objects (such as the string or datetime
+    # accessor attributes of a series). Subclass of the method documenter.
+    # Class attributes: objtype is accessor, directivetype is method, and
+    # priority 0.6 which is lower than the regular method documenter so normal
+    # methods are not claimed. Only overrides signature formatting.
     """
     Specialized Documenter subclass for accessors.
     """
@@ -514,12 +556,23 @@ class AccessorDocumenter(MethodDocumenter):
     priority = 0.6
 
     def format_signature(self) -> str:
+        # [FUNCTION DOC]
+        # Returns an empty string always, so no signature is rendered for the
+        # accessor (the accessor takes no arguments and the default signature
+        # generation produces warnings).
         # this method gives an error/warning for the accessors, therefore
         # overriding it (accessor has no arguments)
         return ""
 
 
 class AccessorLevelDocumenter(Documenter):
+    # [CLASS DOC]
+    # Mixin-style base documenter for members that live on an accessor (for
+    # example methods or attributes of the string accessor). Derived from the
+    # general Sphinx documenter and meant to be combined with the attribute or
+    # method documenter in the subclasses below. Overrides only name resolution,
+    # which differs from the class-level documenter by having an extra nesting
+    # level (class, then accessor, then member).
     """
     Specialized Documenter subclass for objects on accessor level (methods,
     attributes).
@@ -535,6 +588,29 @@ class AccessorLevelDocumenter(Documenter):
     #
     #     return modname, mod_cls + [base]
     def resolve_name(self, modname, parents, path, base):
+        # [FUNCTION DOC]
+        # Resolves the documented name into a module name and a list of nested
+        # names, as the Sphinx documenter protocol requires. Parameters: modname
+        # (module name or none), parents (existing list of enclosing names), path
+        # (the dotted part before the base name, e.g. class plus accessor, with a
+        # trailing dot) and base (the member name).
+        # If modname is none: the class-and-accessor text comes from the path
+        # without its trailing dot; when no path is given, it is taken from the
+        # current class recorded by an enclosing automatic directive or, failing
+        # that, by a class directive, and if neither exists the function returns
+        # none and an empty list (invalid). The text is then split at its last
+        # dots into module, class and accessor parts; the parents become the
+        # class and accessor names. A missing module name is taken from the
+        # current automatic module, or else from the reference context's module
+        # (using a different store for very old Sphinx versions).
+        # If modname is given it is returned as is with the existing parents.
+        # Returns the module name (possibly none) and the parents plus the base
+        # name.
+        # KNOWN ISSUE: the assignment of none to the class text in the no-path
+        # branch is dead code because it is immediately overwritten.
+        # KNOWN ISSUE: the Sphinx version check compares version strings
+        # lexicographically, which is incorrect for versions such as 10.x
+        # compared with 1.3.
         if modname is None:
             if path:
                 mod_cls = path.rstrip(".")
@@ -569,6 +645,12 @@ class AccessorLevelDocumenter(Documenter):
 
 
 class AccessorAttributeDocumenter(AccessorLevelDocumenter, AttributeDocumenter):
+    # [CLASS DOC]
+    # Documenter for attributes of an accessor. Combines the accessor-level name
+    # resolution with the standard attribute documenter. Class attributes:
+    # objtype accessorattribute, directivetype attribute, priority 0.6 (lower
+    # than the normal attribute documenter so it is not chosen for ordinary
+    # attributes). No methods of its own.
     objtype = "accessorattribute"
     directivetype = "attribute"
 
@@ -578,6 +660,11 @@ class AccessorAttributeDocumenter(AccessorLevelDocumenter, AttributeDocumenter):
 
 
 class AccessorMethodDocumenter(AccessorLevelDocumenter, MethodDocumenter):
+    # [CLASS DOC]
+    # Documenter for methods of an accessor. Combines accessor-level name
+    # resolution with the standard method documenter. Class attributes: objtype
+    # accessormethod, directivetype method, priority 0.6 (lower than the normal
+    # method documenter). No methods of its own.
     objtype = "accessormethod"
     directivetype = "method"
 
@@ -586,6 +673,12 @@ class AccessorMethodDocumenter(AccessorLevelDocumenter, MethodDocumenter):
 
 
 class AccessorCallableDocumenter(AccessorLevelDocumenter, MethodDocumenter):
+    # [CLASS DOC]
+    # Documenter for callable accessors (such as the plotting accessor of a
+    # series), documented as a method without the call suffix in its name.
+    # Class attributes: objtype accessorcallable, directivetype method,
+    # priority 0.5 (lower than the other accessor documenters, otherwise the
+    # build prints warnings). Overrides only name formatting.
     """
     This documenter lets us removes .__call__ from the method signature for
     callable accessors like Series.plot
@@ -598,16 +691,35 @@ class AccessorCallableDocumenter(AccessorLevelDocumenter, MethodDocumenter):
     priority = 0.5
 
     def format_name(self):
+        # [FUNCTION DOC]
+        # Returns the method documenter's formatted name with a trailing
+        # special call-method suffix removed if present, so a callable accessor
+        # is displayed under its own name.
         return MethodDocumenter.format_name(self).removesuffix(".__call__")
 
 
 class PandasAutosummary(Autosummary):
+    # [CLASS DOC]
+    # Replacement for the Sphinx autosummary directive (registered under the
+    # same name in setup). Subclass of the standard Autosummary. Customizes the
+    # summary table rows: overrides the plotting accessor rows of frames and
+    # series with fixed text, and prefixes the summary of deprecated objects
+    # with a deprecation marker. Key methods: get_items (public hook) and
+    # private helpers for each customization.
     """
     This alternative autosummary class lets us override the table summary for
     Series.plot and DataFrame.plot in the API docs.
     """
 
     def _replace_pandas_items(self, display_name, sig, summary, real_name):
+        # [FUNCTION DOC]
+        # HELPER: for get_items; adjusts one summary table row (display name,
+        # signature text, summary text, real dotted name). For the frame
+        # plotting entry it returns a hard coded signature showing x, y, kind,
+        # ax and an ellipsis, and the summary "DataFrame plotting accessor and
+        # method"; for the series plotting entry a hard coded signature showing
+        # kind, ax, figsize and an ellipsis, and a similar summary. All other
+        # rows are returned unchanged. Always returns the four-item row.
         # this a hack: ideally we should extract the signature from the
         # .__call__ method instead of hard coding this
         if display_name == "DataFrame.plot":
@@ -620,6 +732,14 @@ class PandasAutosummary(Autosummary):
 
     @staticmethod
     def _is_deprecated(real_name):
+        # [FUNCTION DOC]
+        # HELPER: for the deprecation prefixing. Static method. Parameter
+        # real_name is the dotted name of the object. Imports the object using
+        # Sphinx's name importer; returns false if the import fails. Otherwise
+        # parses the object's docstring (empty if absent) with the numpydoc
+        # parser, joins its summary and extended summary sections into a single
+        # string, and returns true if that text contains the deprecated
+        # directive marker.
         try:
             obj, parent, modname = _import_by_name(real_name)
         except ImportError:
@@ -629,6 +749,11 @@ class PandasAutosummary(Autosummary):
         return ".. deprecated::" in summary
 
     def _add_deprecation_prefixes(self, items):
+        # [FUNCTION DOC]
+        # HELPER: generator for get_items. Takes an iterable of four-item rows
+        # (display name, signature, summary, real name) and yields each row,
+        # with the summary prefixed by the deprecation marker text when the
+        # object is deprecated according to the private check.
         for item in items:
             display_name, sig, summary, real_name = item
             if self._is_deprecated(real_name):
@@ -636,6 +761,11 @@ class PandasAutosummary(Autosummary):
             yield display_name, sig, summary, real_name
 
     def get_items(self, names):
+        # [FUNCTION DOC]
+        # Overrides the base hook that builds the rows of the summary table for
+        # the given object names. Gets the standard rows from the base class,
+        # applies the plotting-row replacement to each, then the deprecation
+        # prefixing, and returns the resulting list of rows.
         items = Autosummary.get_items(self, names)
         items = [self._replace_pandas_items(*item) for item in items]
         items = list(self._add_deprecation_prefixes(items))
@@ -644,6 +774,28 @@ class PandasAutosummary(Autosummary):
 
 # based on numpy doc/source/conf.py
 def linkcode_resolve(domain, info) -> str | None:
+    # [FUNCTION DOC]
+    # Hook for the Sphinx source-link extension: maps a documented object to a
+    # URL of its source on GitHub. Parameters: domain (only the Python domain,
+    # otherwise returns none) and info (mapping with the module name and the
+    # dotted full name of the object).
+    # Steps: finds the module in the loaded modules (none if absent), then walks
+    # the dotted name by attribute lookup, ignoring future warnings from
+    # deprecated objects (none if any attribute is missing). For classes that
+    # define a recorded original-module attribute, the module name and that
+    # attribute are temporarily swapped (and swapped back before building the
+    # URL) so the source file is found. Gets the source file via the inspect
+    # module after unwrapping decorators, falling back to a property's getter;
+    # returns none if no file. Gets the starting line and number of lines of the
+    # source similarly (falling back to a property getter; no line info if the
+    # source cannot be read), producing a line-range anchor of the form hash,
+    # L, start, dash, L, end, or an empty anchor. The file path is made relative
+    # to the directory of the pandas package.
+    # Returns a URL: the main branch if the version string contains a plus
+    # sign (development version), otherwise the tag for the current version.
+    # KNOWN ISSUE: if an exception other than those caught occurs between the
+    # two swaps of the module attributes, the swap is not restored (no
+    # try/finally).
     """
     Determine the URL corresponding to Python object
     """
@@ -713,11 +865,25 @@ def linkcode_resolve(domain, info) -> str | None:
 # remove the docstring of the flags attribute (inherited from numpy ndarray)
 # because these give doc build errors (see GH issue 5331)
 def remove_flags_docstring(app, what, name, obj, options, lines) -> None:
+    # [FUNCTION DOC]
+    # Handler for the docstring processing event. Parameters follow the Sphinx
+    # event signature (application, kind of object, dotted name, object,
+    # options, list of docstring lines). When the object is an attribute whose
+    # name ends with flags, empties the line list in place, discarding the
+    # inherited array docstring which would cause build errors (issue 5331).
+    # Returns nothing.
     if what == "attribute" and name.endswith(".flags"):
         del lines[:]
 
 
 def process_class_docstrings(app, what, name, obj, options, lines) -> None:
+    # [FUNCTION DOC]
+    # Handler for the docstring processing event (standard parameters). For
+    # class docstrings only: joins the lines with newlines and removes the two
+    # exact template blocks that would list the single entry None under the
+    # attributes heading and under the methods heading (generated when a
+    # class has empty lists), then replaces the line list contents in place
+    # with the result split at newlines. Returns nothing.
     """
     For those classes for which we use ::
 
@@ -770,6 +936,12 @@ _BUSINED_ALIASES = [
 
 
 def process_business_alias_docstrings(app, what, name, obj, options, lines) -> None:
+    # [FUNCTION DOC]
+    # Handler for the docstring processing event (standard parameters). If the
+    # dotted name is one of the alias names for the business day and custom
+    # business offsets in the private alias list, empties the line list in
+    # place so numpydoc does not add member listings to the alias docstring.
+    # Returns nothing.
     """
     Starting with sphinx 3.4, the "autodoc-process-docstring" event also
     gets called for alias classes. This results in numpydoc adding the
@@ -793,6 +965,13 @@ if pattern:
 
 
 def rstjinja(app, docname, source) -> None:
+    # [FUNCTION DOC]
+    # Handler for the source-read event. Parameters: application, document
+    # name, and source (a one-element list holding the page text). Does nothing
+    # unless the builder output format is html. Otherwise renders the page text
+    # as a template using the builder's template renderer with the configured
+    # html context, and replaces the list element with the rendered text.
+    # Returns nothing.
     """
     Render our pages as a jinja template for fancy templating goodness.
     """
@@ -806,6 +985,13 @@ def rstjinja(app, docname, source) -> None:
 
 
 def setup(app) -> None:
+    # [FUNCTION DOC]
+    # Sphinx extension entry point for this configuration file. Parameter app
+    # is the Sphinx application. Connects the template rendering handler to the
+    # source-read event; connects the three docstring handlers (flags removal,
+    # class listing cleanup, business alias cleanup) to the docstring
+    # processing event; registers the four accessor documenters; and replaces
+    # the autosummary directive with the custom subclass. Returns nothing.
     app.connect("source-read", rstjinja)
     app.connect("autodoc-process-docstring", remove_flags_docstring)
     app.connect("autodoc-process-docstring", process_class_docstrings)

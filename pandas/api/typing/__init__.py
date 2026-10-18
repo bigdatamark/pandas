@@ -2,6 +2,18 @@
 Public API classes that store intermediate results useful for type-hinting.
 """
 
+# [PACKAGE DOC]
+# Public package of classes that appear as intermediate results of pandas
+# operations (so users can reference them in type hints). Re-exports (all in
+# __all__): the NaT type, the no-default sentinel type, the missing-value
+# marker type, the column Expression class, group-by classes for series and
+# frames, the frozen list class, the resampler classes (generic, per-index-type
+# group-by variants, and the time grouper), the window classes (rolling,
+# expanding, exponentially weighted, fixed-window and their group-by variants),
+# and the reader classes for JSON (line-based reading), SAS and Stata files.
+# The Styler class is intentionally not included, per a TODO comment: importing
+# it would require importing the templating library. Submodule aliases holds
+# type aliases. No import-time side effects beyond the imports.
 from pandas._libs import NaTType
 from pandas._libs.lib import NoDefault
 from pandas._libs.missing import NAType

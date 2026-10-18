@@ -1,3 +1,11 @@
+# [MODULE DOC]
+# Public module re-exporting, under a stable public path, the type aliases and
+# protocols from the private typing module that appear in public function
+# signatures (aggregation function types, option literal types, buffer
+# protocols, dtype and scalar aliases, indexer aliases, and many more). Every
+# imported name is listed in __all__, in sorted order. Defines nothing itself;
+# no import-time side effects beyond the imports. Relationship: the protocol
+# classes among them set their reported module to this module's path.
 from pandas._typing import (
     AggFuncType,
     AlignJoin,

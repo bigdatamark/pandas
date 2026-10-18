@@ -1,3 +1,12 @@
+# [MODULE DOC]
+# HELPER: support for optional third-party dependencies. Public contents:
+# VERSIONS (mapping from import name to the minimum supported version string;
+# the file's comment says several other files must be updated in step),
+# INSTALL_MAPPING (import name to installation package name where they differ),
+# get_version and import_optional_dependency (the main entry point, with two
+# typing overloads). Relationships: uses the library's own version parser and
+# the helper that finds the right warning stack level. Import-time side
+# effects: none beyond imports.
 from __future__ import annotations
 
 import importlib
@@ -74,6 +83,11 @@ INSTALL_MAPPING = {
 
 
 def get_version(module: types.ModuleType) -> str:
+    # [FUNCTION DOC]
+    # HELPER: reads the version string of an imported module. Parameter module is
+    # the module object. Returns its version attribute; for the psycopg2 module
+    # only the first whitespace-separated word is kept (it appends extra build
+    # info). Raises an import error if the module has no version attribute.
     version = getattr(module, "__version__", None)
 
     if version is None:
@@ -91,7 +105,11 @@ def import_optional_dependency(
     min_version: str | None = ...,
     *,
     errors: Literal["raise"] = ...,
-) -> types.ModuleType: ...
+) -> types.ModuleType:
+    # [FUNCTION DOC]
+    # Typing overload stub: when errors is raise (the default) the result is
+    # always a module. See the implementation below for behavior.
+    ...
 
 
 @overload
@@ -101,7 +119,11 @@ def import_optional_dependency(
     min_version: str | None = ...,
     *,
     errors: Literal["warn", "ignore"],
-) -> types.ModuleType | None: ...
+) -> types.ModuleType | None:
+    # [FUNCTION DOC]
+    # Typing overload stub: when errors is warn or ignore (required keyword) the
+    # result may be none. See the implementation below for behavior.
+    ...
 
 
 def import_optional_dependency(
@@ -111,6 +133,30 @@ def import_optional_dependency(
     *,
     errors: Literal["raise", "warn", "ignore"] = "raise",
 ) -> types.ModuleType | None:
+    # [FUNCTION DOC]
+    # Imports an optional dependency and checks its minimum version.
+    # Parameters: name (dotted module name; for a submodule the version is taken
+    # from the top-level package), extra (text added to the failure message,
+    # default empty), min_version (overrides the table's minimum; default none
+    # means use the table entry, if any) and the keyword-only errors (raise, warn
+    # or ignore; default raise; any other value fails an assertion).
+    # Flow: look up the installation name for messages; try the import; if it
+    # fails, raise an import error with an install hint (chained to the original)
+    # when errors is raise, otherwise return none. If the minimum version is
+    # known, read the installed version (import error if it cannot be
+    # determined) and compare; if too old: errors raise -> raises an import
+    # error with a message giving the required and installed versions; errors warn
+    # -> emits a user warning at the caller's stack level and returns none;
+    # errors ignore -> returns none. Otherwise returns the module.
+    # KNOWN ISSUE: the existing docstring says that with errors set to ignore a
+    # module that is too old is still returned, but the code returns none in that
+    # case.
+    # KNOWN ISSUE: the existing docstring's Returns section says none is
+    # returned "when errors is False", but errors takes string values.
+    # KNOWN ISSUE: the version table entry is looked up by the parent package
+    # name, so the table key lxml.etree is never matched for the submodule name
+    # (the lookup uses the part before the first dot), meaning that entry is
+    # effectively keyed by a name that is not used for the lookup.
     """
     Import an optional dependency.
 

@@ -1,3 +1,23 @@
+# [MODULE DOC]
+# HELPER: test support module containing the equality assertion functions of
+# pandas' testing utilities. All raise assertion errors with a detailed
+# message on mismatch. Public contents (re-exported by the testing package;
+# the index, series, frame and extension array ones are also exposed publicly
+# with a patched module name): assert_almost_equal, assert_dict_equal,
+# assert_index_equal, assert_class_equal, assert_attr_equal, assert_is_sorted,
+# assert_categorical_equal, assert_interval_array_equal,
+# assert_period_array_equal, assert_datetime_array_equal,
+# assert_timedelta_array_equal, raise_assert_detail,
+# assert_numpy_array_equal, assert_extension_array_equal, assert_series_equal,
+# assert_frame_equal, assert_equal (dispatcher), assert_sp_array_equal,
+# assert_contains_all, assert_copy, assert_indexing_slices_equivalent and
+# assert_metadata_equivalent. Private helpers: _check_isinstance and
+# is_extension_array_dtype_and_needs_i8_conversion.
+# Relationships: low-level value comparison is delegated to the compiled
+# testing extension (aliased here as _testing); frame comparison is built on the
+# series comparison, which is built on the index and array comparisons.
+# Several functions hide their frames from tracebacks. Import-time side
+# effects: none beyond importing pandas.
 from __future__ import annotations
 
 import operator
@@ -77,6 +97,20 @@ def assert_almost_equal(
     atol: float = 1.0e-8,
     **kwargs,
 ) -> None:
+    # [FUNCTION DOC]
+    # HELPER: test assertion. Compares two objects for approximate equality and
+    # raises an assertion error if they differ. Parameters: left and right (any
+    # objects); check_dtype (true, false or the word equiv, default equiv);
+    # rtol (relative tolerance, default 1e-5); atol (absolute tolerance, default
+    # 1e-8); extra keyword arguments are passed to the underlying comparison.
+    # Dispatch on the type of left: for an index, the index assertion is called
+    # with exactness disabled, the dtype setting used as the exactness level; for
+    # a series or a frame, the respective assertion with exactness disabled;
+    # otherwise (scalars, arrays, sequences): if the dtype check is on, first
+    # asserts the classes match (the object label is numpy array when either is
+    # an array, else input), except that two numbers, or two booleans, of any
+    # classes are not compared by class; then calls the compiled low-level
+    # comparison with the dtype flag converted to a boolean.
     """
     Check that the left and right objects are approximately equal.
 
@@ -152,6 +186,11 @@ def assert_almost_equal(
 
 
 def _check_isinstance(left, right, cls) -> None:
+    # [FUNCTION DOC]
+    # HELPER: for the assert functions. Parameters: left and right (objects to
+    # check) and cls (the required class). Raises an assertion error naming the
+    # class and the actual type if left, checked first, and then right, is not
+    # an instance of cls (subclasses are accepted). Returns nothing.
     """
     Helper method for our assert_* methods that ensures that
     the two objects being compared have the right type before
@@ -180,6 +219,12 @@ def _check_isinstance(left, right, cls) -> None:
 
 
 def assert_dict_equal(left, right, compare_keys: bool = True) -> None:
+    # [FUNCTION DOC]
+    # HELPER: test assertion. Parameters: left and right (must both be
+    # dictionaries, otherwise an assertion error about the type is raised) and
+    # compare_keys (default true; whether the key sets must match). Delegates the
+    # comparison to the compiled testing helper. No docstring exists for this
+    # function.
     _check_isinstance(left, right, dict)
     _testing.assert_dict_equal(left, right, compare_keys=compare_keys)
 
@@ -197,6 +242,29 @@ def assert_index_equal(
     atol: float = 1.0e-8,
     obj: str | None = None,
 ) -> None:
+    # [FUNCTION DOC]
+    # HELPER: test assertion (public as a testing function). Compares two
+    # indexes. Parameters: left and right (indexes); exact (true, false or
+    # equiv; default equiv: whether classes, dtypes and inferred types must be
+    # identical, with a range index equivalent to a 64-bit integer index under
+    # equiv); check_names (compare the names attribute, default true);
+    # check_exact (compare numbers exactly, default true); check_categorical
+    # (compare categorical content, default true); check_order (default true;
+    # if false both are first sorted with a safe sort); rtol and atol
+    # (tolerances used only when not exact); obj (label used in messages;
+    # defaults to the multi-index or index label by type of left).
+    # Steps: verify both are indexes; check types (class equality, inferred type,
+    # and dtype, with special handling of categorical dtypes whose categories are
+    # compared recursively unless check_categorical is false; skipped entirely
+    # when exact is false); compare number of levels, then lengths; for a
+    # multi-index compare each level (the levels and codes first, falling back to
+    # level values on failure) and then the level types; otherwise, when both
+    # exact and categorical checks are on, require equality and on mismatch
+    # build an error giving the percentage of differing values (an error is
+    # raised if the values are not comparable); otherwise compare approximately
+    # by values. Finally compare names if requested; the dtype for period
+    # indexes; interval content for interval indexes; and categorical content
+    # when requested. Raises assertion errors via the shared detail raiser.
     """
     Check that left and right Index are equal.
 
@@ -246,6 +314,14 @@ def assert_index_equal(
         obj = "MultiIndex" if isinstance(left, MultiIndex) else "Index"
 
     def _check_types(left, right, obj: str = "Index") -> None:
+        # [FUNCTION DOC]
+        # HELPER: for the index assertion. Parameters: left, right (indexes) and
+        # obj (label, default Index). Does nothing when exactness is disabled in
+        # the enclosing call. Otherwise asserts class equality (honoring the
+        # equiv mode) and equal inferred type; if both have categorical dtype,
+        # when categorical checking is on asserts the dtypes equal and the
+        # categories are equal (recursive call), then returns without a further
+        # dtype check; in all other cases asserts the dtypes are equal.
         if not exact:
             return
 
@@ -379,12 +455,24 @@ def assert_index_equal(
 def assert_class_equal(
     left, right, exact: bool | str = True, obj: str = "Input"
 ) -> None:
+    # [FUNCTION DOC]
+    # HELPER: test assertion. Parameters: left and right (objects), exact (true or
+    # the word equiv; default true) and obj (label, default Input). Returns
+    # normally if the exact types are identical. In equiv mode, a plain index
+    # class and a range index (or subclass) are also treated as equal to each
+    # other. Otherwise raises an assertion error via the detail raiser, showing
+    # the index itself (for indexes, to include values) or the class name.
+    # Any value of exact other than the equiv word behaves like true.
     """
     Checks classes are equal.
     """
     __tracebackhide__ = True
 
     def repr_class(x):
+        # [FUNCTION DOC]
+        # HELPER: for the class assertion. Returns the object itself if it is an
+        # index (so its values appear in the message), otherwise the name of its
+        # class.
         if isinstance(x, Index):
             # return Index as it is to include values in the error message
             return x
@@ -392,6 +480,11 @@ def assert_class_equal(
         return type(x).__name__
 
     def is_class_equiv(idx: Index) -> bool:
+        # [FUNCTION DOC]
+        # HELPER: for the class assertion in equiv mode. Returns true if idx is
+        # exactly the plain index class or is an instance of the range index
+        # class (including subclasses). Class equivalence only; the integer
+        # dtype is checked elsewhere.
         """Classes that are a RangeIndex (sub-)instance or exactly an `Index` .
 
         This only checks class equivalence. There is a separate check that the
@@ -411,6 +504,16 @@ def assert_class_equal(
 
 
 def assert_attr_equal(attr: str, left, right, obj: str = "Attributes") -> None:
+    # [FUNCTION DOC]
+    # HELPER: test assertion. Parameters: attr (attribute name), left and right
+    # (objects that must both have the attribute; a missing one raises an
+    # attribute error) and obj (label, default Attributes). Passes if the two
+    # attribute values are the same object or are matching missing values (both
+    # NaN, both not-a-time, both the missing marker, and so on). Otherwise
+    # compares with equality; a type error during comparison counts as unequal; if
+    # exactly one side is the missing marker the result is unequal; a
+    # non-boolean comparison result (array-like) is reduced with an all test.
+    # Raises an assertion error stating the attribute differs, with both values.
     """
     Check attributes are equal. Both objects must have attribute.
 
@@ -450,6 +553,13 @@ def assert_attr_equal(attr: str, left, right, obj: str = "Attributes") -> None:
 
 
 def assert_is_sorted(seq) -> None:
+    # [FUNCTION DOC]
+    # HELPER: test assertion. Parameter seq is an index, series, numpy array or
+    # extension array. Index and series are reduced to their values. A numpy
+    # array is compared to a sorted copy using the numpy array assertion; any
+    # other array is compared to itself reordered by its sort order using the
+    # extension array assertion. Raises an assertion error if not sorted
+    # ascending.
     """Assert that the sequence is sorted."""
     if isinstance(seq, (Index, Series)):
         seq = seq.values
@@ -467,6 +577,16 @@ def assert_categorical_equal(
     check_category_order: bool = True,
     obj: str = "Categorical",
 ) -> None:
+    # [FUNCTION DOC]
+    # HELPER: test assertion. Parameters: left and right (must be categoricals,
+    # else an assertion error), check_dtype (compare the integer dtype of the
+    # codes, default true), check_category_order (default true) and obj (label).
+    # The categories comparison mode is equiv if either categories is a range
+    # index, else exact. With category order checked: the categories must be
+    # equal in order and the codes arrays must be equal. Otherwise: categories
+    # are compared after sorting (unsorted if sorting fails with a type error)
+    # and the materialized values (categories taken by codes) are compared. In
+    # both cases the ordered flag is compared at the end.
     """
     Test that Categoricals are equivalent.
 
@@ -524,6 +644,14 @@ def assert_categorical_equal(
 def assert_interval_array_equal(
     left, right, exact: bool | Literal["equiv"] = "equiv", obj: str = "IntervalArray"
 ) -> None:
+    # [FUNCTION DOC]
+    # HELPER: test assertion. Parameters: left and right (must be interval
+    # arrays, else an assertion error), exact (documented as an index exactness
+    # level; default equiv) and obj (label). Compares the left endpoint arrays,
+    # then the right endpoint arrays, using the generic dispatcher (with
+    # frequency checking turned off when the endpoints are datetimes or
+    # timedeltas), then the closed-side attribute.
+    # KNOWN ISSUE: the parameter exact is accepted and documented but never used.
     """
     Test that two IntervalArrays are equivalent.
 
@@ -553,6 +681,11 @@ def assert_interval_array_equal(
 
 
 def assert_period_array_equal(left, right, obj: str = "PeriodArray") -> None:
+    # [FUNCTION DOC]
+    # HELPER: test assertion. Parameters: left and right (must be period
+    # arrays) and obj (label). Compares the underlying integer ordinals using the
+    # numpy array assertion, then the dtype attribute (which carries the
+    # frequency). No docstring exists for this function.
     _check_isinstance(left, right, PeriodArray)
 
     assert_numpy_array_equal(left._ndarray, right._ndarray, obj=f"{obj}._ndarray")
@@ -562,6 +695,11 @@ def assert_period_array_equal(left, right, obj: str = "PeriodArray") -> None:
 def assert_datetime_array_equal(
     left, right, obj: str = "DatetimeArray", check_freq: bool = True
 ) -> None:
+    # [FUNCTION DOC]
+    # HELPER: test assertion. Parameters: left and right (must be datetime
+    # arrays), obj (label) and check_freq (default true). Compares the
+    # underlying datetime64 data arrays, the frequency if requested, and the
+    # timezone attribute. No docstring exists for this function.
     __tracebackhide__ = True
     _check_isinstance(left, right, DatetimeArray)
 
@@ -574,6 +712,11 @@ def assert_datetime_array_equal(
 def assert_timedelta_array_equal(
     left, right, obj: str = "TimedeltaArray", check_freq: bool = True
 ) -> None:
+    # [FUNCTION DOC]
+    # HELPER: test assertion. Parameters: left and right (must be timedelta
+    # arrays), obj (label) and check_freq (default true). Compares the
+    # underlying timedelta64 data arrays and, if requested, the frequency.
+    # No docstring exists for this function.
     __tracebackhide__ = True
     _check_isinstance(left, right, TimedeltaArray)
     assert_numpy_array_equal(left._ndarray, right._ndarray, obj=f"{obj}._ndarray")
@@ -584,6 +727,16 @@ def assert_timedelta_array_equal(
 def raise_assert_detail(
     obj, message, left, right, diff=None, first_diff=None, index_values=None
 ) -> NoReturn:
+    # [FUNCTION DOC]
+    # HELPER: shared failure raiser for the assert functions; never returns.
+    # Parameters: obj (label), message (explanation), left and right (the
+    # differing values), diff (optional extra diff text), first_diff (optional
+    # extra line) and index_values (optional index or array of labels).
+    # Builds the message: first line is the label followed by the words are
+    # different, blank line, the message; then, if index_values is given, a line
+    # listing it; a left line and a right line (arrays pretty-printed; categorical,
+    # string and numpy-backed dtypes shown by their repr); then optional diff and
+    # first-diff lines. Always raises an assertion error with that text.
     __tracebackhide__ = True
 
     msg = f"""{obj} are different
@@ -629,6 +782,24 @@ def assert_numpy_array_equal(
     obj: str = "numpy array",
     index_values=None,
 ) -> None:
+    # [FUNCTION DOC]
+    # HELPER: test assertion. Parameters: left and right (numpy arrays);
+    # strict_nan (treat NaN and none as different, default false); check_dtype
+    # (default true; compare dtypes when both are arrays); err_msg (custom
+    # failure message); check_same (none, the word same or the word copy: require
+    # that the two share, or do not share, the same underlying base object);
+    # obj (label); index_values (optional labels shown in messages).
+    # Steps: assert class equality, then that both are numpy arrays; apply the
+    # identity check on bases if requested (assertion error stating they are or
+    # are not the same); test equivalence with the library's array equivalence
+    # function, and if different, raise: the custom message if given, otherwise a
+    # shape-difference error or an error with the percentage of differing rows
+    # (counted along the first axis); finally compare dtypes if requested.
+    # KNOWN ISSUE: the parameter check_dtype is annotated to allow the word equiv
+    # but only truthiness is used.
+    # KNOWN ISSUE: the percentage divides the number of differing first-axis
+    # entries by the total element count rather than by the number of entries, so
+    # it is understated for multi-dimensional arrays.
     """
     Check that 'np.ndarray' is equivalent.
 
@@ -659,6 +830,9 @@ def assert_numpy_array_equal(
     _check_isinstance(left, right, np.ndarray)
 
     def _get_base(obj):
+        # [FUNCTION DOC]
+        # HELPER: for the same-memory check. Returns the base object that owns the
+        # array's memory if it has one, otherwise the object itself.
         return obj.base if getattr(obj, "base", None) is not None else obj
 
     left_base = _get_base(left)
@@ -672,6 +846,13 @@ def assert_numpy_array_equal(
             raise AssertionError(f"{left_base!r} is {right_base!r}")
 
     def _raise(left, right, err_msg) -> NoReturn:
+        # [FUNCTION DOC]
+        # HELPER: for the numpy array assertion; never returns. If no custom
+        # message is given: raises a shape-mismatch error if shapes differ;
+        # otherwise counts first-axis entries that are not equivalent, converts to
+        # a percentage of the total element count, and raises a values-differ error
+        # including the optional index labels. If a custom message is given, raises
+        # an assertion error with exactly that text.
         if err_msg is None:
             if left.shape != right.shape:
                 raise_assert_detail(
@@ -710,6 +891,26 @@ def assert_extension_array_equal(
     atol: float | lib.NoDefault = lib.no_default,
     obj: str = "ExtensionArray",
 ) -> None:
+    # [FUNCTION DOC]
+    # HELPER: test assertion (public as a testing function). Parameters: left and
+    # right (extension arrays; an assertion error is raised if either is not
+    # one); check_dtype (default true; may be the word equiv); index_values
+    # (optional labels for messages); check_exact, rtol, atol (default: not
+    # given); obj (label).
+    # Tolerance resolution: if none of check_exact, rtol, atol is given,
+    # check_exact becomes true when either array has a numeric non-float dtype
+    # (so integers compare exactly); if only check_exact is missing it becomes
+    # false; rtol and atol default to 1e-5 and 1e-8.
+    # Steps: optionally compare dtypes; for two arrays of the same datetime-like
+    # class, if dtype checking is off and the units differ, return success when
+    # all values are equal across resolutions, otherwise compare the underlying
+    # int64 views and return; otherwise compare the missing-value masks; for the
+    # python-storage string dtype with a NaN missing marker, assert that missing
+    # slots really hold NaN (separately for left and right); then convert the
+    # non-missing values to object arrays and compare them exactly or
+    # approximately depending on check_exact.
+    # KNOWN ISSUE: the existing docstring states check_exact defaults to False,
+    # but the code chooses it from dtypes when no tolerance arguments are given.
     """
     Check that left and right ExtensionArrays are equal.
 
@@ -877,6 +1078,38 @@ def assert_series_equal(
     check_index: bool = True,
     check_like: bool = False,
 ) -> None:
+    # [FUNCTION DOC]
+    # HELPER: test assertion (public as a testing function; one deprecated
+    # keyword is accepted and ignored by a decorator that warns). Compares two
+    # series. Parameters are as in the existing docstring: check_dtype,
+    # check_index_type, check_series_type, check_names, check_exact (default:
+    # not given), check_datetimelike_compat (deprecated, default false),
+    # check_categorical, check_category_order, check_freq, check_flags, rtol,
+    # atol (default: not given), obj, and the keyword-only check_index (default
+    # true) and check_like (default false).
+    # Tolerance resolution: when none of check_exact, rtol and atol is given,
+    # exact comparison is used for values if either series has a numeric
+    # non-float dtype, and exact comparison is used for the indexes if all
+    # levels of either index have integer dtypes; when only check_exact is
+    # missing, both are false; when check_exact is given, it applies to the index
+    # too. rtol and atol default to 1e-5 and 1e-8.
+    # Raises a value error if check_like is true while check_index is false.
+    # Flow: instance and class checks, length check, flags check, index
+    # comparison (order-insensitive when check_like) and then reindexing of left
+    # like right when check_like; frequency check for datetime-like indexes;
+    # dtype check (skipped when both are categorical and categorical checking
+    # is off); then the values comparison chosen by the first matching case in
+    # order: exact comparison (extension arrays with each other, else numpy
+    # conversion); deprecated datetime-like compatibility comparison via indexes;
+    # interval arrays; categorical on either side (approximate comparison);
+    # both extension dtypes; an extension dtype versus a datetime-like dtype;
+    # both datetime-like; and finally approximate comparison. Then names
+    # (if requested) and categorical content (if requested) are compared.
+    # KNOWN ISSUE: the existing docstring says check_exact defaults to False,
+    # but the code derives it from dtypes when tolerances are not supplied.
+    # KNOWN ISSUE: the frequency check uses an assert statement, so it is
+    # skipped when python runs with assertions disabled, and the flags check
+    # likewise.
     """
     Check that left and right Series are equal.
 
@@ -1166,6 +1399,32 @@ def assert_frame_equal(
     atol: float | lib.NoDefault = lib.no_default,
     obj: str = "DataFrame",
 ) -> None:
+    # [FUNCTION DOC]
+    # HELPER: test assertion (public as a testing function; the deprecated
+    # keyword is handled by a decorator). Compares two frames. Parameters as in
+    # the existing docstring (check_dtype, check_index_type, check_column_type,
+    # check_frame_type, check_names, by_blocks, check_exact, the deprecated
+    # check_datetimelike_compat, check_categorical, check_like, check_freq,
+    # check_flags, rtol, atol, obj).
+    # Tolerance handling: for the index and column comparisons, check_exact
+    # defaults to false and rtol and atol to 1e-5 and 1e-8 when not given; the
+    # original (possibly unspecified) values are passed on to the per-column
+    # series comparison so integer columns are still compared exactly there.
+    # Flow: both must be frames; if check_frame_type the left must be an instance
+    # of the type of right; shapes compared; flags compared if requested; index
+    # and columns compared (order-insensitive when check_like; then left is
+    # reindexed like right); then either by blocks (frames of each dtype group
+    # compared recursively; asserting both have the same dtype groups) or by
+    # column position, comparing each column pair with the series assertion
+    # (index comparison disabled and flags unchecked since already done, with the
+    # deprecation warning of the compat keyword suppressed). The object label of
+    # each column includes its position and name.
+    # KNOWN ISSUE: the frame class check uses an assert statement without
+    # message and the commented-out call to the class assertion is dead code, and
+    # asserts are skipped under optimized execution.
+    # KNOWN ISSUE: the existing docstring says check_exact defaults to False and
+    # to True for integer dtypes; the index and column comparisons always use
+    # false when it is not given.
     """
     Check that left and right DataFrame are equal.
 
@@ -1363,6 +1622,15 @@ def assert_frame_equal(
 
 
 def assert_equal(left, right, **kwargs) -> None:
+    # [FUNCTION DOC]
+    # HELPER: test assertion dispatcher. Parameters: left and right (objects to
+    # compare) and keyword arguments forwarded to the specific assertion.
+    # Dispatch on the type of left, in this order: index (also asserts equal
+    # frequency for datetime and timedelta indexes); series; frame; interval,
+    # period, datetime, timedelta array assertions; other extension arrays; numpy
+    # arrays; strings (no keywords allowed; plain equality); everything else (no
+    # keywords allowed; approximate equality). Raises assertion errors on
+    # mismatch or when unexpected keywords are given for the last two cases.
     """
     Wrapper for tm.assert_*_equal to dispatch to the appropriate test function.
 
@@ -1404,6 +1672,13 @@ def assert_equal(left, right, **kwargs) -> None:
 
 
 def assert_sp_array_equal(left, right) -> None:
+    # [FUNCTION DOC]
+    # HELPER: test assertion. Parameters: left and right (must be sparse
+    # arrays). Compares the stored values, verifies the sparse index objects
+    # are of the sparse index class and equal (raising a detail error naming the
+    # index otherwise), then the fill value, dtype, and the densified arrays.
+    # KNOWN ISSUE: the else branch after the index equality check contains only
+    # a no-op statement and an incomplete comment, i.e. dead code.
     """
     Check that the left and right SparseArray are equal.
 
@@ -1437,11 +1712,22 @@ def assert_sp_array_equal(left, right) -> None:
 
 
 def assert_contains_all(iterable, dic) -> None:
+    # [FUNCTION DOC]
+    # HELPER: test assertion. Parameters: iterable (items to look for) and dic
+    # (a container supporting membership tests, e.g. a dictionary). Raises an
+    # assertion error naming the first item not contained. No docstring exists
+    # for this function.
     for k in iterable:
         assert k in dic, f"Did not contain item: {k!r}"
 
 
 def assert_copy(iter1, iter2, **eql_kwargs) -> None:
+    # [FUNCTION DOC]
+    # HELPER: test assertion. Parameters: iter1 and iter2 (iterables of the same
+    # length; a length mismatch raises a value error) and keyword arguments passed
+    # to the approximate comparison. For each pair of elements asserts they are
+    # approximately equal and that they are not the same object, raising an
+    # assertion error naming the types otherwise.
     """
     iter1, iter2: iterables that produce elements
     comparable with assert_almost_equal
@@ -1462,6 +1748,12 @@ def assert_copy(iter1, iter2, **eql_kwargs) -> None:
 def is_extension_array_dtype_and_needs_i8_conversion(
     left_dtype: DtypeObj, right_dtype: DtypeObj
 ) -> bool:
+    # [FUNCTION DOC]
+    # HELPER: for the series assertion. Parameters: left_dtype and right_dtype.
+    # Returns true when the left dtype is an extension dtype and the right dtype
+    # is a kind that needs conversion to 64-bit integers (datetime-like). The
+    # test is not symmetric; callers call it in both orders (related to issue
+    # 37609).
     """
     Checks that we have the combination of an ExtensionArraydtype and
     a dtype that should be converted to int64
@@ -1476,6 +1768,12 @@ def is_extension_array_dtype_and_needs_i8_conversion(
 
 
 def assert_indexing_slices_equivalent(ser: Series, l_slc: slice, i_slc: slice) -> None:
+    # [FUNCTION DOC]
+    # HELPER: test assertion. Parameters: ser (series), l_slc (label slice) and
+    # i_slc (positional slice). Takes the positional slice as the expected
+    # result and asserts the label-based slice gives an equal series; also asserts
+    # plain bracket slicing with the label slice does, but only when the index is
+    # not of integer dtype (where bracket slicing is positional).
     """
     Check that ser.iloc[i_slc] matches ser.loc[l_slc] and, if applicable,
     ser[l_slc].
@@ -1492,6 +1790,12 @@ def assert_indexing_slices_equivalent(ser: Series, l_slc: slice, i_slc: slice) -
 def assert_metadata_equivalent(
     left: DataFrame | Series, right: DataFrame | Series | None = None
 ) -> None:
+    # [FUNCTION DOC]
+    # HELPER: test assertion. Parameters: left (frame or series) and right
+    # (frame, series or none). For each name in the metadata list of left, reads
+    # the attribute from left (missing treated as none). If right is none,
+    # asserts the value is none; otherwise asserts it equals the same attribute of
+    # right (missing treated as none). Raises assertion errors without messages.
     """
     Check that ._metadata attributes are equivalent.
     """

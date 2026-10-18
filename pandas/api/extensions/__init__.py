@@ -2,6 +2,14 @@
 Public API for extending pandas objects.
 """
 
+# [PACKAGE DOC]
+# Public package of the tools needed to extend pandas with custom objects.
+# Re-exports (all listed in __all__): the no-default sentinel (from the compiled
+# lib module), the ExtensionDtype base class and the decorator registering a
+# dtype, the three accessor registration decorators (for frames, indexes and
+# series), the take algorithm, the ExtensionArray base class and the mixin that
+# adds scalar operators. Defines nothing itself; no import-time side effects
+# beyond the imports.
 from pandas._libs.lib import no_default
 
 from pandas.core.dtypes.base import (

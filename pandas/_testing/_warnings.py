@@ -1,3 +1,11 @@
+# [MODULE DOC]
+# HELPER: test support module providing context managers and checks for
+# asserting which warnings code emits. Public contents: assert_produces_warning
+# (the main context manager) and maybe_produces_warning (conditional wrapper),
+# both re-exported by the testing package. Private helpers:
+# _assert_caught_expected_warnings, _assert_caught_no_extra_warnings,
+# _is_unexpected_warning and _assert_raised_with_correct_stacklevel. All
+# failures are reported by raising assertion errors. No import-time side effects.
 from __future__ import annotations
 
 from contextlib import (
@@ -34,6 +42,33 @@ def assert_produces_warning(
     match: str | tuple[str | None, ...] | None = None,
     must_find_all_warnings: bool = True,
 ) -> Generator[list[warnings.WarningMessage]]:
+    # [FUNCTION DOC]
+    # HELPER: test helper (context manager, generator based). Records all
+    # warnings raised inside the with block and, on exit, checks them.
+    # Parameters: expected_warning (a warning class, a tuple of classes, or a
+    # false value meaning no warning is expected; default is the base warning
+    # class); filter_level (warning filter action applied inside the block,
+    # default always); check_stacklevel (default true: each matching warning
+    # must be attributed to the file of the calling test, otherwise an assertion
+    # fails); raise_on_extra_warnings (default true: any warning that is not an
+    # instance of the expected class fails the check); match (regular
+    # expression text, or a tuple of them, that warning messages must match;
+    # default none); must_find_all_warnings (default true: with a tuple of
+    # expected classes each class must be seen, matched against the
+    # corresponding entry of match, or the same pattern for all when match is
+    # not a tuple; when false the tuple is treated as alternatives and a tuple
+    # match is joined into one alternation pattern, ignoring empty entries).
+    # Yields the list of recorded warning messages.
+    # Raises an assertion error when an expected warning is missing, no message
+    # matches, or unexpected warnings exist; the checks run in a final step, so
+    # they also run when the body raised (and an assertion failure there can
+    # replace the original exception).
+    # Raises a value error if a tuple match has a different length than the
+    # tuple of expected classes. Not thread safe, since it changes global
+    # warning filters.
+    # KNOWN ISSUE: the existing docstring describes the expected_warning as the
+    # type of exception raised and refers to a nonexistent module, and its
+    # trailing note uses an invalid directive spelling.
     """
     Context manager for running code expected to either raise a specific warning,
     multiple specific warnings, or not raise any warnings. Verifies that the code
@@ -145,6 +180,11 @@ def assert_produces_warning(
 def maybe_produces_warning(
     warning: type[Warning], condition: bool, **kwargs
 ) -> AbstractContextManager:
+    # [FUNCTION DOC]
+    # HELPER: test helper. Parameters: warning (warning class expected),
+    # condition (boolean) and extra keyword arguments passed through. Returns the
+    # warning-assertion context manager configured with the class and keyword
+    # arguments when condition is true; otherwise a do-nothing context manager.
     """
     Return a context manager that possibly checks a warning based on the condition
     """
@@ -161,6 +201,16 @@ def _assert_caught_expected_warnings(
     match: str | None,
     check_stacklevel: bool,
 ) -> None:
+    # [FUNCTION DOC]
+    # HELPER: for assert_produces_warning. Keyword-only parameters:
+    # caught_warnings (recorded warning messages), expected_warning (a class or
+    # tuple of classes), match (regular expression text or none) and
+    # check_stacklevel (bool). Scans the recorded warnings for instances of the
+    # expected class(es); for each it optionally verifies the stack level and, if
+    # a pattern is given, searches the message text with the pattern.
+    # Raises an assertion error if no warning of the class was seen, or if a
+    # non-empty pattern was given and no seen warning's message matched (the
+    # error lists the messages that did not match). Returns nothing.
     """Assert that there was the expected warning among the caught warnings."""
     saw_warning = False
     matched_message = False
@@ -200,6 +250,16 @@ def _assert_caught_no_extra_warnings(
     caught_warnings: Sequence[warnings.WarningMessage],
     expected_warning: type[Warning] | bool | tuple[type[Warning], ...] | None,
 ) -> None:
+    # [FUNCTION DOC]
+    # HELPER: for assert_produces_warning. Keyword-only parameters:
+    # caught_warnings (recorded warnings) and expected_warning (as given to the
+    # context manager). Collects every warning judged unexpected by the private
+    # predicate, except these deliberately ignored: resource warnings about
+    # unclosed secure sockets (issue 44732), resource warnings whenever the
+    # matplotlib module is loaded (it leaves font files open, issue 44844), and
+    # encoding warnings (checked elsewhere in continuous integration). Raises an
+    # assertion error listing the category name, message, file and line of the
+    # remaining ones. Returns nothing.
     """Assert that no extra warnings apart from the expected ones are caught."""
     extra_warnings = []
 
@@ -238,6 +298,12 @@ def _is_unexpected_warning(
     actual_warning: warnings.WarningMessage,
     expected_warning: type[Warning] | bool | tuple[type[Warning], ...] | None,
 ) -> bool:
+    # [FUNCTION DOC]
+    # HELPER: for the extra-warning check. Parameters: actual_warning (a recorded
+    # warning message) and expected_warning (class, tuple of classes, or a
+    # false value). Returns true if no warning was expected at all (false value
+    # given) or if the warning's category is not a subclass of the expected
+    # class(es). Returns false otherwise.
     """Check if the actual warning issued is unexpected."""
     if actual_warning and not expected_warning:
         return True
@@ -248,6 +314,17 @@ def _is_unexpected_warning(
 def _assert_raised_with_correct_stacklevel(
     actual_warning: warnings.WarningMessage,
 ) -> None:
+    # [FUNCTION DOC]
+    # HELPER: for the expected-warning check. Parameter actual_warning is a
+    # recorded warning message. Finds the file of the code that called into the
+    # context manager by going up exactly four frames from the current one
+    # (a fixed depth that depends on the call chain inside the context manager
+    # and the generator machinery), then asserts the warning's recorded file
+    # name equals that caller's file, with a message naming both files and the
+    # warning text. The frame reference is deleted afterwards to avoid cycles.
+    # Raises an assertion error if the files differ. Returns nothing.
+    # KNOWN ISSUE: the fixed frame depth makes the check fragile if the call
+    # chain changes.
     # https://stackoverflow.com/questions/17407119/python-inspect-stack-is-slow
     frame = inspect.currentframe()
     for _ in range(4):

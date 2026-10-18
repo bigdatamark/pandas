@@ -10,6 +10,23 @@
 
 """Git implementation of _version.py."""
 
+# [MODULE DOC]
+# HELPER: generated version-computation module (produced by the versioneer
+# tool, version 0.28, public domain) used when the package is imported from a
+# source tree or archive instead of a meson-built install. It works out the
+# package version from, in order: expanded git archive keywords; the output of
+# git commands in the source tree; or the name of the parent directory.
+# Public contents: get_versions (entry point, returns a mapping with the keys
+# version, full-revisionid, dirty, error and date), get_keywords, get_config,
+# the VersioneerConfig container, the NotThisMethod exception (signals that a
+# strategy does not apply), the handler registry (HANDLERS) and its
+# registration decorator, the command runner, the two version discovery
+# helpers for archives and directories, git helpers, and the family of render
+# functions that format the discovered pieces in a given style (pep440 and
+# variants, git-describe forms). LONG_VERSION_PY is an empty registry used by
+# the versioneer tool itself.
+# Import-time side effects: none beyond imports; the placeholders in the keywords
+# function are substituted by git when an archive is exported.
 from collections.abc import Callable
 import errno
 import functools
@@ -20,6 +37,13 @@ import sys
 
 
 def get_keywords():
+    # [FUNCTION DOC]
+    # Returns a mapping with three entries: refnames (git reference names),
+    # full (full commit hash) and date (commit date). In a source checkout the
+    # values are the unexpanded placeholder texts; git replaces them when an
+    # archive is exported, which is how version information survives archives.
+    # The three assignments must each stay on their own line because the
+    # versioneer tool greps for them.
     """Get the keywords needed to look up the version information."""
     # these strings will be replaced by git during git-archive.
     # setup.py/versioneer.py will grep for the variable names, so they must
@@ -33,10 +57,19 @@ def get_keywords():
 
 
 class VersioneerConfig:
+    # [CLASS DOC]
+    # HELPER: empty attribute container for the version tool settings. Instances
+    # get their attributes assigned by the configuration function (VCS, style,
+    # tag_prefix, parentdir_prefix, versionfile_source, verbose).
     """Container for Versioneer configuration parameters."""
 
 
 def get_config():
+    # [FUNCTION DOC]
+    # Builds and returns a configuration container with: version control system
+    # git, rendering style pep440, tag prefix v, parent directory prefix
+    # pandas- (with a hyphen), the relative path of this file from the project
+    # root, and verbose off. The values are filled in by the versioneer tool.
     """Create, populate and return the VersioneerConfig() object."""
     # these strings are filled in when 'setup.py versioneer' creates
     # _version.py
@@ -51,6 +84,10 @@ def get_config():
 
 
 class NotThisMethod(Exception):
+    # [CLASS DOC]
+    # HELPER: control-flow exception, subclass of the base exception, raised by a
+    # version discovery strategy to say it does not apply in the current
+    # situation so the caller should try the next strategy. No extra state.
     """Exception raised if a method is not valid for the current scenario."""
 
 
@@ -59,9 +96,17 @@ HANDLERS: dict[str, dict[str, Callable]] = {}
 
 
 def register_vcs_handler(vcs, method):  # decorator
+    # [FUNCTION DOC]
+    # HELPER: decorator factory. Parameters: vcs (version control system name)
+    # and method (handler role name). Returns a decorator that records the
+    # decorated function in the global handler registry under those two keys
+    # (creating the system entry if needed) and returns the function unchanged.
     """Create decorator to mark a method as the handler of a VCS."""
 
     def decorate(f):
+        # [FUNCTION DOC]
+        # HELPER: the decorator returned by the registration factory. Stores the
+        # function f in the registry and returns it. Mutates global state.
         """Store f in HANDLERS[vcs][method]."""
         if vcs not in HANDLERS:
             HANDLERS[vcs] = {}
@@ -72,6 +117,18 @@ def register_vcs_handler(vcs, method):  # decorator
 
 
 def run_command(commands, args, cwd=None, verbose=False, hide_stderr=False, env=None):
+    # [FUNCTION DOC]
+    # HELPER: runs an external program. Parameters: commands (a list of
+    # alternative executable names, tried in order; an assertion error if not a
+    # list), args (list of arguments), cwd (working directory), verbose
+    # (print diagnostics), hide_stderr (capture the error stream instead of
+    # showing it) and env (environment mapping). On Windows hides the console
+    # window. Skips an executable that is not found; any other operating system
+    # error stops the search.
+    # Returns a pair (output text stripped, return code): (None, None) if no
+    # executable could be started; (None, code) if the process exited nonzero;
+    # otherwise the decoded standard output and zero. Prints diagnostics only
+    # when verbose.
     """Call the given command(s)."""
     assert isinstance(commands, list)
     process = None
@@ -118,6 +175,14 @@ def run_command(commands, args, cwd=None, verbose=False, hide_stderr=False, env=
 
 
 def versions_from_parentdir(parentdir_prefix, root, verbose):
+    # [FUNCTION DOC]
+    # HELPER: determines the version from directory names. Parameters:
+    # parentdir_prefix (project name prefix, e.g. with a hyphen), root (a
+    # directory path) and verbose. Examines the directory name of root and then
+    # of up to two parents; if one starts with the prefix, returns a version
+    # mapping with the remainder of the name as the version, no revision id, not
+    # dirty, no error and no date. Otherwise (optionally printing the tried
+    # directories) raises the not-this-method exception.
     """Try to determine the version from the parent directory name.
 
     Source tarballs conventionally unpack into a directory that includes both
@@ -149,6 +214,15 @@ def versions_from_parentdir(parentdir_prefix, root, verbose):
 
 @register_vcs_handler("git", "get_keywords")
 def git_get_keywords(versionfile_abs):
+    # [FUNCTION DOC]
+    # HELPER: registered as the git keywords reader. Parameter versionfile_abs
+    # is the absolute path of a version file. Scans it line by line (UTF-8) with
+    # regular expressions for the assignments of the refnames, full hash and date
+    # variables and returns a mapping with whichever of the keys refnames, full
+    # and date were found (as the text between the quotes). Operating system
+    # errors (e.g. missing file) are ignored, yielding an empty mapping. Used by
+    # the setup tooling; not used from this module (the comment in the source
+    # says so).
     """Extract version information from the given file."""
     # the code embedded in _version.py can just fetch the value of these
     # keywords. When used from setup.py, we don't want to import _version.py,
@@ -177,6 +251,21 @@ def git_get_keywords(versionfile_abs):
 
 @register_vcs_handler("git", "keywords")
 def git_versions_from_keywords(keywords, tag_prefix, verbose):
+    # [FUNCTION DOC]
+    # HELPER: registered as the keywords strategy. Parameters: keywords (mapping
+    # as returned by the keywords function), tag_prefix (e.g. v) and verbose.
+    # Raises the not-this-method exception if the refnames key is missing or its
+    # value is still the unexpanded placeholder (a source checkout rather than an
+    # archive). The date, if present, is reduced to its last line and converted to
+    # an ISO 8601 compliant form (a space becomes T and the next space is
+    # removed). The reference names are split into a set; those labelled as tags
+    # are preferred (names after the "tag: " marker), otherwise any name
+    # containing a digit is used as a heuristic for older git. Tags are examined
+    # in sorted order and the first that starts with the prefix and whose
+    # remainder starts with a digit wins: returns a mapping with that remainder as
+    # version, the full hash, not dirty, no error and the date. If none qualifies,
+    # returns the version 0+unknown with the full hash, error text no suitable
+    # tags and no date.
     """Get version information from git keywords."""
     if "refnames" not in keywords:
         raise NotThisMethod("Short version file found")
@@ -248,6 +337,25 @@ def git_versions_from_keywords(keywords, tag_prefix, verbose):
 
 @register_vcs_handler("git", "pieces_from_vcs")
 def git_pieces_from_vcs(tag_prefix, root, verbose, runner=run_command):
+    # [FUNCTION DOC]
+    # HELPER: registered as the pieces strategy. Parameters: tag_prefix, root
+    # (the source tree root), verbose and runner (command runner function,
+    # default the module's runner; its environment is pre-bound to a copy of the
+    # environment without the git directory variable, so an outer repository
+    # setting cannot interfere). Uses the Windows executable names on Windows.
+    # Runs git commands in root: a repository check, a describe with tags, dirty
+    # flag, long form and a tag-prefix match, the full HEAD hash, the abbreviated
+    # branch name (for a detached HEAD, picks a branch containing the commit,
+    # preferring master, or none) and, when there is no tag, the revision count;
+    # then the HEAD commit date (reduced to its last line and made ISO 8601
+    # compliant). Raises the not-this-method exception if the directory is not
+    # under git control or a needed command fails.
+    # Returns a mapping (pieces) with: long (full hash), short (abbreviated hash),
+    # error (none or a text when the describe output cannot be parsed or the tag
+    # does not start with the prefix, in which case the function returns early
+    # without the later entries), branch, dirty (bool), closest-tag (text without
+    # prefix, or none), distance (commits since the tag, or the total commit count
+    # when no tag) and date.
     """Get version from 'git describe' in the root of the source tree.
 
     This only gets called if the git-archive 'subst' keywords were *not*
@@ -387,6 +495,12 @@ def git_pieces_from_vcs(tag_prefix, root, verbose, runner=run_command):
 
 
 def plus_or_dot(pieces) -> str:
+    # [FUNCTION DOC]
+    # HELPER: for the render functions. Parameter pieces is the pieces mapping.
+    # Returns a dot if the closest tag text already contains a plus sign
+    # (so a second local-version separator is not added), otherwise a plus sign.
+    # Raises a type error if the closest tag is explicitly none (callers only use
+    # it when a tag exists).
     """Return a + if we don't already have one, else return a ."""
     if "+" in pieces.get("closest-tag", ""):
         return "."
@@ -394,6 +508,13 @@ def plus_or_dot(pieces) -> str:
 
 
 def render_pep440(pieces):
+    # [FUNCTION DOC]
+    # HELPER: renderer for the pep440 style. Parameter pieces is the pieces
+    # mapping (closest-tag, distance, dirty, short). With a tag: the tag, followed
+    # (only if there are commits since the tag or the tree is dirty) by a plus or
+    # dot separator, the distance, the letter g and the short hash, and a dirty
+    # suffix when dirty. Without a tag: the text 0+untagged, distance, g and the
+    # short hash, with the dirty suffix when dirty. Returns the string.
     """Build up version string, with post-release "local version identifier".
 
     Our goal: TAG[+DISTANCE.gHEX[.dirty]] . Note that if you
@@ -418,6 +539,13 @@ def render_pep440(pieces):
 
 
 def render_pep440_branch(pieces):
+    # [FUNCTION DOC]
+    # HELPER: renderer for the pep440-branch style. Parameter pieces is the
+    # pieces mapping (also uses the branch name). Like the pep440 renderer but
+    # inserts a development-release marker (dev0) before the local version part
+    # when the branch is not master (only when there are commits or the tree is
+    # dirty if a tag exists; always when untagged). Untagged form is 0, optional
+    # marker, then untagged distance and hash. Returns the string.
     """TAG[[.dev0]+DISTANCE.gHEX[.dirty]] .
 
     The ".dev0" means not master branch. Note that .dev0 sorts backwards
@@ -447,6 +575,13 @@ def render_pep440_branch(pieces):
 
 
 def pep440_split_post(ver):
+    # [FUNCTION DOC]
+    # HELPER: for the pre renderer. Parameter ver is a version string. Splits it
+    # at the post-release marker text. Returns a pair: the part before the
+    # marker, and the post-release number as an integer (zero if the number text
+    # is empty) when exactly one marker is present, otherwise none.
+    # KNOWN ISSUE: the existing docstring says the post-release number is -1 when
+    # no post-release segment is present, but the code returns none in that case.
     """Split pep440 version string at the post-release segment.
 
     Returns the release segments before the post-release and the
@@ -457,6 +592,13 @@ def pep440_split_post(ver):
 
 
 def render_pep440_pre(pieces):
+    # [FUNCTION DOC]
+    # HELPER: renderer for the pep440-pre style (the dirty flag is ignored).
+    # With a tag and commits since it: the tag's release part followed by a
+    # post-release marker and a development marker with the distance; the
+    # post-release number is incremented if the tag already has one, otherwise it
+    # is zero. With a tag and no commits: the tag itself. Without a tag: zero,
+    # post zero and the development marker with the distance. Returns the string.
     """TAG[.postN.devDISTANCE] -- No -dirty.
 
     Exceptions:
@@ -481,6 +623,12 @@ def render_pep440_pre(pieces):
 
 
 def render_pep440_post(pieces):
+    # [FUNCTION DOC]
+    # HELPER: renderer for the pep440-post style. With a tag and (commits or
+    # dirty): the tag, post and the distance, a dev0 marker if dirty, then the
+    # separator and g with the short hash. With a tag and nothing else: the tag.
+    # Without a tag: 0.post, distance, an optional dev0 marker, plus g and the
+    # short hash. Returns the string.
     """TAG[.postDISTANCE[.dev0]+gHEX] .
 
     The ".dev0" means dirty. Note that .dev0 sorts backwards
@@ -508,6 +656,13 @@ def render_pep440_post(pieces):
 
 
 def render_pep440_post_branch(pieces):
+    # [FUNCTION DOC]
+    # HELPER: renderer for the pep440-post-branch style. Like the post renderer
+    # but the dev0 marker means not on the master branch, and a dirty suffix is
+    # appended separately when dirty. With a tag and (commits or dirty): tag, post
+    # and distance, optional dev0, separator, g and short hash, optional dirty
+    # suffix. With only a tag: the tag. Without a tag: 0.post, distance, optional
+    # dev0, plus g and short hash, optional dirty suffix. Returns the string.
     """TAG[.postDISTANCE[.dev0]+gHEX[.dirty]] .
 
     The ".dev0" means not master branch.
@@ -537,6 +692,15 @@ def render_pep440_post_branch(pieces):
 
 
 def render_pep440_old(pieces):
+    # [FUNCTION DOC]
+    # HELPER: renderer for the pep440-old style. With a tag and (commits or
+    # dirty): the tag followed by the text 0.post and the distance, plus a dev0
+    # marker if dirty. With only a tag: the tag. Without a tag: 0.post and the
+    # distance plus an optional dev0 marker. Returns the string.
+    # KNOWN ISSUE: the existing docstring shows the tagged form as the tag
+    # followed by a dot and post, but the code appends a zero before the post
+    # marker with no separator (tag directly followed by 0.post), producing
+    # strings like the tag with the digit zero glued on.
     """TAG[.postDISTANCE[.dev0]] .
 
     The ".dev0" means dirty.
@@ -559,6 +723,11 @@ def render_pep440_old(pieces):
 
 
 def render_git_describe(pieces):
+    # [FUNCTION DOC]
+    # HELPER: renderer for the git-describe style. With a tag: the tag, followed
+    # by a hyphen, the distance, a hyphen and g plus the short hash only when
+    # there are commits since the tag. Without a tag: just the short hash. A
+    # hyphen-dirty suffix is appended when dirty. Returns the string.
     """TAG[-DISTANCE-gHEX][-dirty].
 
     Like 'git describe --tags --dirty --always'.
@@ -579,6 +748,11 @@ def render_git_describe(pieces):
 
 
 def render_git_describe_long(pieces):
+    # [FUNCTION DOC]
+    # HELPER: renderer for the git-describe-long style. With a tag: the tag, the
+    # distance and g plus the short hash always (even for distance zero).
+    # Without a tag: the short hash. A hyphen-dirty suffix is appended when dirty.
+    # Returns the string.
     """TAG-DISTANCE-gHEX[-dirty].
 
     Like 'git describe --tags --dirty --always --long'.
@@ -599,6 +773,16 @@ def render_git_describe_long(pieces):
 
 
 def render(pieces, style):
+    # [FUNCTION DOC]
+    # HELPER: turns the pieces mapping into the final version mapping.
+    # Parameters: pieces and style (a style name; empty or the word default means
+    # pep440). If the pieces carry an error, returns a mapping with version
+    # unknown, the long hash if any, dirty none, that error and no date.
+    # Otherwise dispatches on style to one of the render functions: pep440,
+    # pep440-branch, pep440-pre, pep440-post, pep440-post-branch, pep440-old,
+    # git-describe, git-describe-long; any other style raises a value error.
+    # Returns a mapping with the rendered version, the long hash, the dirty flag,
+    # no error and the date (if present).
     """Render the given version pieces into the requested style."""
     if pieces["error"]:
         return {
@@ -641,6 +825,17 @@ def render(pieces, style):
 
 
 def get_versions() -> dict:
+    # [FUNCTION DOC]
+    # Entry point of the module. Takes no arguments and returns the version
+    # mapping with keys version, full-revisionid, dirty, error and date.
+    # Strategies in order, each falling through on the not-this-method
+    # exception: (1) the keywords expanded by git archive; (2) finding the
+    # project root by walking up from this file one directory per component of
+    # the configured relative path, then asking git (returns a mapping saying the
+    # root could not be found, version 0+unknown, if the file location is not
+    # available); (3) the project-prefixed parent directory name; and finally a
+    # default mapping with version 0+unknown and error text unable to compute
+    # version. Runs git subprocesses in strategy 2.
     """Get version information or return default if unable to do so."""
     # I am in _version.py, which lives at ROOT/VERSIONFILE_SOURCE. If we have
     # __file__, we can work backwards from there to the root. Some

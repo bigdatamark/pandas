@@ -1,3 +1,27 @@
+# [PACKAGE DOC]
+# HELPER: internal testing support package used by pandas' own test suite (the
+# public testing module re-exports only the assertion functions).
+# Submodules: _hypothesis (property-test strategies), _io (file round-trip
+# helpers), _warnings (warning assertions), asserters (equality assertion
+# functions for arrays, indexes, series and frames), compat (small dtype/object
+# accessors) and contexts (temporary environment context managers).
+# This file defines and re-exports: lists of dtype names or objects grouped by
+# kind (unsigned, signed and all integers in numpy and nullable extension
+# flavors; floats; complex; strings; datetimes and timedeltas at nanosecond
+# resolution; booleans; bytes; objects; combinations; and, when the arrow
+# library is available, lists of arrow data types and their string forms with
+# empty lists as fallbacks otherwise); narrow numpy types; builtin Python data
+# types; the native byte order marker; lists of missing-value objects and numpy
+# not-a-time scalars in every unit; lists of arithmetic and comparison special
+# method names; helper functions (box_expected, to_array, the CSV string
+# converter, error context helper, parametrization helper, operator lookup,
+# indexer helpers, unit helper, memory sharing check, multithreaded runner);
+# test subclasses of series and frame; and re-exports of the locale helpers,
+# warning assertions, asserters, compat helpers and context managers. The names
+# in __all__ are the intended public surface of this package.
+# Import-time side effects: imports the pandas package and most of core;
+# reads the string-dtype future option to choose the string dtype list; imports
+# pyarrow if available (flag from the compat module) to build arrow dtype lists.
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
@@ -272,6 +296,24 @@ comparison_dunder_methods = ["__eq__", "__ne__", "__le__", "__lt__", "__ge__", "
 
 
 def box_expected(expected, box_cls, transpose: bool = True):
+    # [FUNCTION DOC]
+    # HELPER: test helper that wraps an expected result in a requested
+    # container kind. Parameters: expected (array-like result), box_cls (the
+    # target kind: the array constructor function, Index, Series, DataFrame,
+    # the numpy array type or constructor, or the to_array helper) and transpose
+    # (default true; only for DataFrame).
+    # Behavior per kind: for the array constructor, a range index is wrapped in a
+    # numpy-backed extension array (to avoid becoming an integer array), anything
+    # else goes through the array constructor without copying; Index is built
+    # without copying; Series is built directly; DataFrame is built as a single
+    # column frame and, when transpose is true, transposed to one row and then
+    # stacked twice with a fresh index so that it has two rows (avoids
+    # single-row special cases in datetime arithmetic); numpy array kinds produce
+    # a numpy array; the to_array helper is applied for that kind.
+    # Raises a not-implemented error for any other box class.
+    # KNOWN ISSUE: the existing docstring lists only Index, Series and DataFrame
+    # as box classes, but the code also supports the array constructor, numpy
+    # array kinds and the to_array helper.
     """
     Helper function to wrap the expected output of a test in a given box_class.
 
@@ -313,6 +355,13 @@ def box_expected(expected, box_cls, transpose: bool = True):
 
 
 def to_array(obj):
+    # [FUNCTION DOC]
+    # HELPER: test helper. Parameter obj is any array-like. If it has no dtype
+    # attribute, converts it to a numpy array; otherwise returns the underlying
+    # array (numpy arrays kept as plain numpy arrays rather than wrapped) with
+    # the library's array extraction helper. Unlike the array constructor, does
+    # not convert numpy dtypes to nullable extension dtypes. Marked in the
+    # source as a temporary implementation.
     """
     Similar to pd.array, but does not cast numpy dtypes to nullable dtypes.
     """
@@ -326,10 +375,22 @@ def to_array(obj):
 
 
 class SubclassedSeries(Series):
+    # [CLASS DOC]
+    # HELPER: test subclass of the series type used to check that operations
+    # preserve subclass behavior. Class attribute _metadata lists the names of
+    # extra attributes propagated to results (testattr and name). Overrides the
+    # constructor hooks so that results of operations are built through generic
+    # callables (rather than returning the class itself), to ensure the library
+    # does not depend on those properties returning a class. Expanding to
+    # two dimensions yields the matching frame subclass.
     _metadata = ["testattr", "name"]
 
     @property
     def _constructor(self):
+        # [FUNCTION DOC]
+        # HELPER: property returning a callable that builds a new instance of
+        # this subclass from any positional and keyword arguments. Deliberately a
+        # lambda rather than the class (see the linked issues in the source).
         # For testing, those properties return a generic callable, and not
         # the actual class. In this case that is equivalent, but it is to
         # ensure we don't rely on the property returning a class
@@ -339,23 +400,42 @@ class SubclassedSeries(Series):
 
     @property
     def _constructor_expanddim(self):
+        # [FUNCTION DOC]
+        # HELPER: property returning a callable that builds the frame subclass,
+        # used when the series is expanded to two dimensions.
         return lambda *args, **kwargs: SubclassedDataFrame(*args, **kwargs)
 
 
 class SubclassedDataFrame(DataFrame):
+    # [CLASS DOC]
+    # HELPER: test subclass of the frame type, counterpart of the series
+    # subclass. Class attribute _metadata lists propagated extra attribute names
+    # (testattr). Overrides the constructor hooks to return generic callables
+    # building this subclass, and the sliced hook to build the series subclass
+    # (one-dimensional results).
     _metadata = ["testattr"]
 
     @property
     def _constructor(self):
+        # [FUNCTION DOC]
+        # HELPER: property returning a callable that builds a new instance of this
+        # frame subclass from any arguments.
         return lambda *args, **kwargs: SubclassedDataFrame(*args, **kwargs)
 
     # error: Cannot override writeable attribute with read-only property
     @property
     def _constructor_sliced(self):  # type: ignore[override]
+        # [FUNCTION DOC]
+        # HELPER: property returning a callable that builds the series subclass,
+        # used for one-dimensional results such as a column or row.
         return lambda *args, **kwargs: SubclassedSeries(*args, **kwargs)
 
 
 def convert_rows_list_to_csv_str(rows_list: list[str]) -> str:
+    # [FUNCTION DOC]
+    # HELPER: test helper. Parameter rows_list is a list of row strings. Returns
+    # a single string with the rows joined by the operating system's line
+    # separator, plus a trailing separator. Used to build expected CSV output.
     """
     Convert list of CSV rows to single CSV-formatted string for current OS.
 
@@ -376,6 +456,13 @@ def convert_rows_list_to_csv_str(rows_list: list[str]) -> str:
 
 
 def external_error_raised(expected_exception: type[Exception]) -> ContextManager:
+    # [FUNCTION DOC]
+    # HELPER: test helper. Parameter expected_exception is an exception class.
+    # Returns the test framework's raises context manager for that class with
+    # message matching explicitly disabled, to mark errors whose message comes
+    # from an external library. Imports the test framework lazily.
+    # KNOWN ISSUE: the existing docstring says it returns a callable, but a
+    # context manager object is returned.
     """
     Helper function to mark pytest.raises that have an external error message.
 
@@ -395,6 +482,14 @@ def external_error_raised(expected_exception: type[Exception]) -> ContextManager
 
 
 def get_cython_table_params(ndframe, func_names_and_expected):
+    # [FUNCTION DOC]
+    # HELPER: test helper for parametrization. Parameters: ndframe (a frame or
+    # series) and func_names_and_expected (a sequence of pairs of method name
+    # and expected result). Returns a list of triples, one per pair, each holding
+    # the given object, the method name and the expected result, in order.
+    # KNOWN ISSUE: the existing docstring says each triple holds a function and
+    # refers to a cython table of the common module, but the code just repeats
+    # the name string and uses no table.
     """
     Combine frame, functions from com._cython_table
     keys and expected result.
@@ -418,6 +513,15 @@ def get_cython_table_params(ndframe, func_names_and_expected):
 
 
 def get_op_from_name(op_name: str) -> Callable:
+    # [FUNCTION DOC]
+    # HELPER: test helper. Parameter op_name is an operator name with or without
+    # surrounding underscores (add or the special add method name). Strips the
+    # underscores and looks the name up in the standard operator module.
+    # If absent, assumes it is a reflected name (leading letter r, e.g. radd),
+    # looks up the name without its first character and returns a function that
+    # calls the operator with its two arguments swapped. Returns a callable of two
+    # arguments. Raises an attribute error if neither lookup succeeds.
+    # (The reflected function is built by an assigned anonymous function.)
     """
     The operator function for a given op name.
 
@@ -447,26 +551,45 @@ def get_op_from_name(op_name: str) -> Callable:
 
 
 def getitem(x):
+    # [FUNCTION DOC]
+    # HELPER: indexer selector for parametrized tests. Returns its argument
+    # unchanged, so indexing the result uses plain bracket indexing for reading.
     return x
 
 
 def setitem(x):
+    # [FUNCTION DOC]
+    # HELPER: indexer selector for parametrized tests. Returns its argument
+    # unchanged, so indexing the result uses plain bracket indexing for writing
+    # (identical to the get variant; the name is what distinguishes the test cases).
     return x
 
 
 def loc(x):
+    # [FUNCTION DOC]
+    # HELPER: indexer selector. Returns the label-based indexer attribute of the
+    # object.
     return x.loc
 
 
 def iloc(x):
+    # [FUNCTION DOC]
+    # HELPER: indexer selector. Returns the position-based indexer attribute of
+    # the object.
     return x.iloc
 
 
 def at(x):
+    # [FUNCTION DOC]
+    # HELPER: indexer selector. Returns the scalar label-based indexer attribute
+    # of the object.
     return x.at
 
 
 def iat(x):
+    # [FUNCTION DOC]
+    # HELPER: indexer selector. Returns the scalar position-based indexer
+    # attribute of the object.
     return x.iat
 
 
@@ -476,6 +599,11 @@ _UNITS = ["s", "ms", "us", "ns"]
 
 
 def get_finest_unit(left: str, right: str) -> str:
+    # [FUNCTION DOC]
+    # HELPER: test helper. Parameters left and right are datetime unit names
+    # from seconds, milliseconds, microseconds and nanoseconds. Returns the one
+    # with the finer resolution (later in that order); on a tie returns left.
+    # Raises a value error for any other unit name.
     """
     Find the higher of two datetime64 units.
     """
@@ -485,6 +613,20 @@ def get_finest_unit(left: str, right: str) -> str:
 
 
 def shares_memory(left, right) -> bool:
+    # [FUNCTION DOC]
+    # HELPER: test helper that reports whether two array-like objects share
+    # memory, extending numpy's check to pandas containers. Parameters left and
+    # right can be numpy arrays, indexes, series, frames, extension arrays.
+    # Dispatch on left (after swapping when only right is a numpy array): both
+    # numpy -> numpy's check; range index -> false; multi index -> check its
+    # codes; index or series -> compare the underlying values; numpy-backed
+    # extension arrays -> the backing array; sparse arrays -> the stored values;
+    # interval arrays -> true if either endpoint array shares; arrow arrays ->
+    # if both arrow, compare the address of the first buffer of the first chunk
+    # (only chunk 0 is examined), otherwise numpy's check; masked arrays -> true if
+    # either the data or the mask arrays share; frames with a single block ->
+    # check that block's values. Raises a not-implemented error for any other
+    # combination.
     """
     Pandas-compat for np.shares_memory.
     """
@@ -538,6 +680,17 @@ def shares_memory(left, right) -> bool:
 
 
 def run_multithreaded(closure, max_workers, arguments=None, pass_barrier=False):
+    # [FUNCTION DOC]
+    # HELPER: test helper that runs one callable concurrently in several threads.
+    # Parameters: closure (callable), max_workers (number of threads and of
+    # submitted calls), arguments (optional iterable of positional arguments,
+    # copied to a list) and pass_barrier (if true, a barrier for max_workers
+    # parties is appended as the last argument so threads can synchronize).
+    # Submits max_workers identical calls, then waits for all and re-raises the
+    # first exception encountered from any result. If the system cannot start the
+    # threads (runtime error), the barrier (if any) is aborted so started threads
+    # do not hang, and the test is skipped through the test framework.
+    # Returns nothing.
     with ThreadPoolExecutor(max_workers=max_workers) as tpe:
         if arguments is None:
             arguments = []

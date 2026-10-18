@@ -1,3 +1,7 @@
+# [MODULE DOC]
+# HELPER: test support module with file-input/output helpers. Public contents:
+# round_trip_pickle, round_trip_pathlib and write_to_compressed (re-exported by
+# the testing package). No import-time side effects beyond imports.
 from __future__ import annotations
 
 import gzip
@@ -27,6 +31,15 @@ if TYPE_CHECKING:
 
 
 def round_trip_pickle(obj: Any, tmp_path: Path) -> DataFrame | Series:
+    # [FUNCTION DOC]
+    # HELPER: test helper. Writes the object to the given path with the
+    # library's pickle writer and reads it back with the pickle reader.
+    # Parameters: obj (object to write) and tmp_path (file path to use,
+    # typically a temporary path from the test framework). Returns the object
+    # read back. Side effect: creates or overwrites the file.
+    # KNOWN ISSUE: the existing docstring documents a parameter named path
+    # with a default of none, but the actual parameter is named tmp_path and is
+    # required.
     """
     Pickle an object and then read it again.
 
@@ -47,6 +60,15 @@ def round_trip_pickle(obj: Any, tmp_path: Path) -> DataFrame | Series:
 
 
 def round_trip_pathlib(writer, reader, tmp_path: Path):
+    # [FUNCTION DOC]
+    # HELPER: test helper. Calls the writer callable with the path, then calls
+    # the reader callable with the same path and returns what the reader
+    # returns. Parameters: writer (callable taking the path, usually a bound
+    # writing method), reader (callable taking the path) and tmp_path (file
+    # path object). Side effect: whatever files the writer creates.
+    # KNOWN ISSUE: the existing docstring documents a parameter named path of
+    # string type with a default of none, but the actual parameter is tmp_path
+    # and is required.
     """
     Write an object to file specified by a pathlib.Path and read it back
 
@@ -70,6 +92,23 @@ def round_trip_pathlib(writer, reader, tmp_path: Path):
 
 
 def write_to_compressed(compression, path: str, data, dest: str = "test") -> None:
+    # [FUNCTION DOC]
+    # HELPER: test helper that writes data into a compressed file.
+    # Parameters: compression (one of gzip, bz2, zip, xz, zstd or tar), path
+    # (output file path), data (bytes for most formats; text or bytes for zip;
+    # bytes for tar) and dest (name of the single member inside a zip or tar
+    # archive, default test; unused for the stream formats).
+    # Behavior: picks the writer class for the format (the zstd one comes from
+    # the optional zstandard dependency), opens the path in binary write mode
+    # (plain write mode for zip and tar), and for zip stores the data under the
+    # member name, for tar adds a member of the data length read from an
+    # in-memory buffer, and for the others writes the data directly.
+    # Raises a value error for an unrecognized compression name; raises the
+    # optional-dependency import error if the zstandard package is missing.
+    # KNOWN ISSUE: the existing docstring omits the tar option that the code
+    # supports, and says data is text although most formats require bytes.
+    # KNOWN ISSUE: the local variable holding the in-memory buffer in the tar
+    # branch is named like the builtin bytes type, shadowing it.
     """
     Write data to a compressed file.
 

@@ -33,6 +33,23 @@ From the bash command line with $GITHUB token.
 
 """
 
+# [MODULE DOC]
+# Library and command line script producing the contributor list for a release
+# announcement, from the git history of the repository that contains this file
+# (two directory levels above it).
+# Public contents: constants CONTRIBUTOR_MAPPING (old to new contributor
+# names, stored rot13-encoded), UTF8Writer, this_repo (the repository object),
+# author_msg and pull_request_msg (message templates); functions get_authors,
+# get_pull_requests, build_components, build_string and main.
+# The sibling contributors extension imports build_components from here.
+# Import-time side effects: opens the git repository (fails if not in one).
+# Run as a script it takes one argument, a revision range of the form old
+# revision, two dots, new revision, and prints the rst text to standard output.
+# KNOWN ISSUE: the module docstring describes a script taking an access token
+# and mentions the GitHub library as a dependency, but the code never uses a
+# token or that library and the command line accepts only the revision range;
+# the pull request helper is unused by the main path.
+
 import codecs
 import os
 import re
@@ -57,6 +74,28 @@ A total of %d pull requests were merged for this release.
 
 
 def get_authors(revision_range):
+    # [FUNCTION DOC]
+    # Returns the sorted list of author names for a revision range, with a
+    # plus marker appended (preceded by a space) to authors who are new in the
+    # range, i.e. did not appear in history up to the range start.
+    # Input: a string of the form start revision, two dots, end revision
+    # (whitespace around parts is stripped). The end part may be written as a
+    # tag name, a vertical bar and the word for head: in that case, if the tag
+    # exists in the repository it is used as the end, otherwise the head is
+    # used (an assertion error is raised if the part after the bar is not
+    # exactly the word for head; a value error if there is more than one bar).
+    # Sources of names, collected for both the range and for all history up to
+    # the start: commit message trailers naming co-authors (from backport
+    # commits), plus the names listed by the short log summary. Names from
+    # the first pass are matched by a pattern on the trailer; names from the
+    # second by a pattern matching a tab then the name at line end.
+    # The automated merge user is removed from both sets, then contributors
+    # in the rename mapping (decoded from rot13) are replaced by their new name
+    # when present. Runs git subprocesses through the repository object and may
+    # raise the git command error for invalid revisions.
+    # KNOWN ISSUE: the range start is used alone for the history of previous
+    # releases, so authors who contributed only on other branches may be
+    # reported as new; this is inherent to the approach, not an error.
     pat = "^.*\\t(.*)$"
     lst_release, cur_release = (r.strip() for r in revision_range.split(".."))
 
@@ -109,6 +148,19 @@ def get_authors(revision_range):
 
 
 def get_pull_requests(repo, revision_range):
+    # [FUNCTION DOC]
+    # Returns the list of GitHub pull request objects merged in a revision
+    # range, sorted by pull request number. Parameters: repo (a GitHub
+    # repository client object providing a method to fetch a pull request by
+    # number) and revision_range (string passed to git).
+    # Numbers are found from the local repository history (not the client) in
+    # three ways: merge commit subjects of the regular form; subjects of the
+    # form used by the old automated merge bot; and trailing parenthesized
+    # numbers in one-line subjects of first-parent non-merge commits (squash
+    # merges). One network request per number is made through repo.
+    # KNOWN ISSUE: duplicates are not removed, so a pull request matched by
+    # more than one pattern would be fetched twice. This function is not called
+    # anywhere in this module.
     prnums = []
 
     # From regular merges
@@ -134,6 +186,14 @@ def get_pull_requests(repo, revision_range):
 
 
 def build_components(revision_range, heading="Contributors"):
+    # [FUNCTION DOC]
+    # Builds the pieces of the contributors section for a revision range.
+    # Parameters: revision_range (string, see the authors function) and heading
+    # (section title, default Contributors). Returns a mapping with three
+    # entries: heading (the given title), author_message (the template text
+    # with the number of authors filled in) and authors (the sorted list of
+    # names from the authors function). Propagates errors from git.
+    # KNOWN ISSUE: the unpacked start and end revision values are unused.
     lst_release, cur_release = (r.strip() for r in revision_range.split(".."))
     authors = get_authors(revision_range)
 
@@ -145,6 +205,15 @@ def build_components(revision_range, heading="Contributors"):
 
 
 def build_string(revision_range, heading="Contributors"):
+    # [FUNCTION DOC]
+    # Renders the contributors section as reStructuredText text. Parameters as
+    # in the components builder. Returns a string made of the heading, an
+    # underline of equals signs as long as the heading, a blank line, the
+    # author message, and a bullet list with one asterisk item per author on
+    # its own line. Note the components mapping is modified: an underline entry
+    # is added and the authors entry becomes the joined text. The template
+    # must remain a format-method template (per the source comment, converting
+    # it to an f-string breaks the formatting).
     components = build_components(revision_range, heading=heading)
     components["uline"] = "=" * len(components["heading"])
     components["authors"] = "* " + "\n* ".join(components["authors"])
@@ -162,6 +231,10 @@ def build_string(revision_range, heading="Contributors"):
 
 
 def main(revision_range):
+    # [FUNCTION DOC]
+    # Prints the contributors section text for the revision range to standard
+    # output. Parameter revision_range is the string for the range. Returns
+    # nothing.
     # document authors
     text = build_string(revision_range)
     print(text)

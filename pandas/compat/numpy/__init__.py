@@ -1,5 +1,21 @@
 """support numpy compatibility across versions"""
 
+# [PACKAGE DOC]
+# Package for numpy version compatibility. Submodule function holds the
+# machinery validating numpy-style keyword arguments of the library's reduction
+# and other methods. This file defines: _np_version (numpy version text),
+# boolean flags for numpy at least 2.0, 2.3, 2.5 and 2.6 (dev) named
+# np_version_gt2, np_version_gt2_3, np_version_gt2_5 and np_version_gt2_6,
+# is_numpy_dev (whether the installed numpy version has a development
+# component), and np_long and np_ulong (the C long scalar types: numpy's long
+# types on numpy 2 if available, else the integer and unsigned integer types,
+# silencing a possible future warning).
+# Import-time side effects: raises an import error if numpy is older than the
+# minimum supported version (1.26.0). __all__ lists only _np_version and
+# is_numpy_dev.
+# KNOWN ISSUE: the numpy 2.5 and 2.6 flags and the long type aliases are
+# defined but not listed in __all__.
+
 import warnings
 
 import numpy as np
