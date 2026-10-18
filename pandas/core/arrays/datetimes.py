@@ -1,3 +1,17 @@
+# [MODULE DOC]
+# Extension array for datetime data, both timezone-naive and timezone-aware.
+# Public contents: the datetime array class (exposed publicly via the arrays
+# namespace), a function that builds the matching dtype for a timezone and unit,
+# and a family of private helpers for parsing sequences into 64-bit datetime
+# storage, validating dtypes/timezones, inferring a timezone from endpoints,
+# generating ranges of timestamps, and normalizing/localizing endpoints.
+# Relationships: the array class derives from the timelike and datelike mixins of
+# the datetimelike module (imported here under a short alias) and is the backing
+# store of the datetime index and of datetime-valued series. Low-level work is
+# delegated to the compiled time-series library (field extraction, timezone
+# conversion, string formatting, parsing).
+# Import-time side effects: none beyond defining names; a module constant sets
+# the chunk size (10,000 elements) used when iterating over boxed values.
 from __future__ import annotations
 
 from datetime import (
@@ -107,16 +121,30 @@ _ITER_CHUNKSIZE = 10_000
 
 
 @overload
-def tz_to_dtype(tz: tzinfo, unit: TimeUnit = ...) -> DatetimeTZDtype: ...
+def tz_to_dtype(tz: tzinfo, unit: TimeUnit = ...) -> DatetimeTZDtype:
+    # [FUNCTION DOC]
+    # Typing overload for a timezone-aware input; returns the timezone-aware
+    # dtype. See the implementation below for behavior.
+    ...
 
 
 @overload
-def tz_to_dtype(tz: None, unit: TimeUnit = ...) -> np.dtype[np.datetime64]: ...
+def tz_to_dtype(tz: None, unit: TimeUnit = ...) -> np.dtype[np.datetime64]:
+    # [FUNCTION DOC]
+    # Typing overload for a missing timezone; returns the plain numpy datetime
+    # dtype. See the implementation below for behavior.
+    ...
 
 
 def tz_to_dtype(
     tz: tzinfo | None, unit: TimeUnit = "ns"
 ) -> np.dtype[np.datetime64] | DatetimeTZDtype:
+    # [FUNCTION DOC]
+    # Builds the dtype that describes datetime storage for a timezone and
+    # resolution. Parameters: tz is a timezone object or none; unit is the time
+    # resolution string, default nanoseconds. Returns a numpy datetime64 dtype of
+    # the given unit when tz is none, otherwise a timezone-aware datetime dtype
+    # carrying that timezone and unit. No validation of unit is done here.
     """
     Return a datetime64[ns] dtype appropriate for the given timezone.
 
@@ -136,7 +164,26 @@ def tz_to_dtype(
 
 
 def _field_accessor(name: str, field: str, docstring: str | None = None):
+    # [FUNCTION DOC]
+    # HELPER: factory used while defining the datetime array class to create
+    # read-only properties that expose calendar fields. Parameters: name is the
+    # function name given to the generated getter; field is the name of the
+    # field to extract (such as year or is_month_start); docstring is the
+    # documentation text attached to the property, default none. Returns a
+    # property object wrapping a getter. No side effects.
     def f(self):
+        # [FUNCTION DOC]
+        # HELPER: getter created by the field accessor factory. Takes the array
+        # instance. First converts the stored UTC instants to local wall time.
+        # For boolean-valued fields (listed in the boolean operations list): the
+        # start/end fields look up the array frequency, derive the fiscal month
+        # (default December, overridden by the frequency's starting-month or
+        # month keyword) and call the start/end field extractor with the
+        # frequency name; other boolean fields use the plain date field
+        # extractor. Boolean results are returned as is, with no missing-value
+        # masking. For all other fields, extracts integers and then masks
+        # missing entries, returning a float array with not-a-number at missing
+        # positions (or integers when nothing is missing).
         values = self._local_timestamps()
 
         if field in self._bool_ops:
@@ -174,6 +221,21 @@ def _field_accessor(name: str, field: str, docstring: str | None = None):
 
 @set_module("pandas.arrays")
 class DatetimeArray(dtl.TimelikeOps, dtl.DatelikeOps):
+    # [CLASS DOC]
+    # Extension array holding datetime values, tz-naive or tz-aware. State: the
+    # backing numpy datetime64 buffer (always stored as UTC instants for aware
+    # data), a dtype (a numpy datetime dtype when naive, a timezone-aware dtype
+    # otherwise) and an optional frequency offset. Inherits from the timelike
+    # operations mixin (unit handling, rounding, frequency) and the datelike
+    # mixin (string formatting). Class attributes declare the lists of field,
+    # boolean, other and method names delegated by the index and series
+    # accessors, a high array priority so numpy defers to this class, and a
+    # lambda (recognized-dtype predicate) accepting numpy datetime dtypes or the
+    # timezone-aware dtype. Key methods: constructors (sequence parsing and
+    # range generation), timezone conversion/localization, normalization,
+    # conversion to period, and astype. The calendar field properties and many
+    # methods are attached after the class body.
+    # Invariant: stored values' resolution always matches the dtype unit.
     """
     Pandas ExtensionArray for tz-naive or tz-aware datetime data.
 
@@ -234,10 +296,16 @@ class DatetimeArray(dtl.TimelikeOps, dtl.DatelikeOps):
 
     @property
     def _internal_fill_value(self) -> np.datetime64:
+        # [FUNCTION DOC]
+        # HELPER: property giving the sentinel used internally for missing
+        # slots. Returns a numpy not-a-time value in this array's unit.
         return np.datetime64("NaT", self.unit)
 
     @property
     def _scalar_type(self) -> type[Timestamp]:
+        # [FUNCTION DOC]
+        # HELPER: property naming the scalar class boxed values use; always the
+        # timestamp class.
         return Timestamp
 
     # define my properties & methods for delegation
@@ -300,6 +368,14 @@ class DatetimeArray(dtl.TimelikeOps, dtl.DatelikeOps):
 
     @classmethod
     def _validate_dtype(cls, values, dtype):
+        # [FUNCTION DOC]
+        # HELPER: validation hook called by the timelike base constructor.
+        # Parameters: values is the numpy datetime64 buffer; dtype is the
+        # requested dtype (numpy or timezone-aware). Validates both the dtype and
+        # the buffer's dtype as acceptable datetime dtypes, then checks that the
+        # buffer unit equals the dtype unit. Returns the validated dtype. Raises
+        # a value error when the resolutions do not match (and whatever the
+        # dtype validator raises for unsupported dtypes).
         # used in TimeLikeOps.__init__
         dtype = _validate_dt64_dtype(dtype)
         _validate_dt64_dtype(values.dtype)
@@ -320,6 +396,15 @@ class DatetimeArray(dtl.TimelikeOps, dtl.DatelikeOps):
         freq: BaseOffset | None = None,
         dtype: np.dtype[np.datetime64] | DatetimeTZDtype = DT64NS_DTYPE,
     ) -> Self:
+        # [FUNCTION DOC]
+        # HELPER: fast internal constructor that wraps an existing buffer without
+        # copying or parsing. Parameters: values is a numpy datetime64 array;
+        # freq is an optional frequency offset, default none; dtype is the numpy
+        # or timezone-aware dtype, default nanosecond naive. Asserts (not
+        # exceptions) that values is an array, the dtype is datetime kind, the
+        # numpy dtype equals the buffer dtype and is not unitless, or for aware
+        # dtypes that the resolution matches the buffer. Returns a new array
+        # sharing the buffer, with the frequency set on it.
         assert isinstance(values, np.ndarray)
         assert dtype.kind == "M"
         if isinstance(dtype, np.dtype):
@@ -336,6 +421,12 @@ class DatetimeArray(dtl.TimelikeOps, dtl.DatelikeOps):
 
     @classmethod
     def _from_sequence(cls, scalars, *, dtype=None, copy: bool = False) -> Self:
+        # [FUNCTION DOC]
+        # Extension-array constructor from a sequence of scalars. Parameters:
+        # scalars is any array-like of datetimes/strings/etc.; dtype is an
+        # optional target dtype; copy says whether to force a copy, default
+        # false. Simply delegates to the non-strict constructor with default
+        # parsing options and returns its result (a new array).
         return cls._from_sequence_not_strict(scalars, dtype=dtype, copy=copy)
 
     @classmethod
@@ -351,6 +442,24 @@ class DatetimeArray(dtl.TimelikeOps, dtl.DatelikeOps):
         yearfirst: bool = False,
         ambiguous: TimeAmbiguous = "raise",
     ) -> Self:
+        # [FUNCTION DOC]
+        # Main constructor used by the index class; more permissive than the
+        # strict one. Parameters: data is array-like input; dtype is an optional
+        # datetime dtype (may embed a timezone and a unit); copy forces a copy,
+        # default false; tz is a timezone, with a sentinel meaning "not given"
+        # (passing none explicitly means "must be naive"); freq is a frequency
+        # string/offset, none, or the not-given sentinel, which is pinned onto
+        # the result after validation; dayfirst and yearfirst (default false)
+        # steer string parsing; ambiguous (default raise) controls ambiguous
+        # daylight-saving times when localizing.
+        # Steps: resolve the timezone and validate it against the dtype; take the
+        # unit from the dtype if given; coerce data to an array-like; remember
+        # the frequency if the input is already a datetime array; parse to
+        # 64-bit datetimes (possibly inferring a timezone); re-validate; build
+        # the result and cast to the requested unit if it differs.
+        # Raises a value error if the data turned out timezone-aware but tz was
+        # explicitly none; other errors come from the validators and parser.
+        # Returns a new array (possibly sharing memory when copy is false).
         """
         A non-strict version of _from_sequence, called from DatetimeIndex.__new__.
         """
@@ -425,6 +534,28 @@ class DatetimeArray(dtl.TimelikeOps, dtl.DatelikeOps):
         *,
         unit: TimeUnit = "ns",
     ) -> Self:
+        # [FUNCTION DOC]
+        # HELPER: backs the public range-construction functions. Parameters:
+        # start and end are optional endpoints (anything convertible to a
+        # timestamp); periods is an optional count; freq is an offset or
+        # string; tz is an optional timezone; normalize (default false) snaps
+        # endpoints to midnight; ambiguous and nonexistent (default raise)
+        # control daylight-saving handling when localizing; inclusive
+        # (default both) says which endpoints are kept; unit (keyword, default
+        # nanoseconds) is the resolution of the result.
+        # Behavior: exactly three of start, end, periods, freq must be given.
+        # Endpoints are converted to the target unit without rounding, optionally
+        # normalized, the timezone is inferred from endpoints/tz and endpoints
+        # are localized. With a frequency: fixed-duration offsets and day offsets
+        # use a regular-range integer generator in absolute time; other offsets
+        # are generated in naive wall time and localized to UTC once at the end.
+        # Without a frequency: evenly spaced integer timestamps between the
+        # endpoints. Finally endpoint values are dropped according to inclusive.
+        # Raises a value error when no frequency is given with a missing
+        # endpoint or period count, when the count of supplied parameters is not
+        # three, when an endpoint is not-a-time, or when unit is not one of
+        # seconds, milliseconds, microseconds, nanoseconds.
+        # Returns a new array with the frequency attached.
         periods = dtl.validate_periods(periods)
         if freq is None and any(x is None for x in [periods, start, end]):
             raise ValueError("Must provide freq argument if no data is supplied")
@@ -540,6 +671,14 @@ class DatetimeArray(dtl.TimelikeOps, dtl.DatelikeOps):
     # DatetimeLike Interface
 
     def _unbox_scalar(self, value) -> np.datetime64:
+        # [FUNCTION DOC]
+        # HELPER: converts a boxed scalar into the raw numpy value stored in the
+        # buffer. Parameter: value must be a timestamp or the missing marker.
+        # Raises a value error otherwise, and a type error if timezone
+        # awareness is incompatible with the array. A missing marker yields a
+        # numpy not-a-time in this array's unit; a timestamp is cast to this
+        # unit without allowing rounding (raising if that would lose precision)
+        # and returned as a numpy datetime.
         if not isinstance(value, self._scalar_type) and value is not NaT:
             raise ValueError("'value' should be a Timestamp.")
         self._check_compatible_with(value)
@@ -549,9 +688,19 @@ class DatetimeArray(dtl.TimelikeOps, dtl.DatelikeOps):
             return value.as_unit(self.unit, round_ok=False).asm8
 
     def _scalar_from_string(self, value) -> Timestamp | NaTType:
+        # [FUNCTION DOC]
+        # HELPER: parses a single string into a scalar compatible with this
+        # array. Returns a timestamp localized to the array's timezone (or the
+        # missing marker for missing-like strings, via the timestamp
+        # constructor). Raises whatever the timestamp parser raises.
         return Timestamp(value, tz=self.tz)
 
     def _check_compatible_with(self, other) -> None:
+        # [FUNCTION DOC]
+        # HELPER: validates that a scalar can be combined with this array.
+        # Returns nothing. The missing marker is always accepted; otherwise
+        # defers to the timezone-awareness check, which raises a type error when
+        # naive and aware are mixed.
         if other is NaT:
             return
         self._assert_tzawareness_compat(other)
@@ -560,6 +709,12 @@ class DatetimeArray(dtl.TimelikeOps, dtl.DatelikeOps):
     # Descriptive Properties
 
     def _box_func(self, x: np.datetime64) -> Timestamp | NaTType:
+        # [FUNCTION DOC]
+        # HELPER: converts one raw numpy datetime into a boxed scalar.
+        # Parameter: x is a numpy datetime value in this array's unit. Returns a
+        # timestamp built from its integer representation, with this array's
+        # resolution and timezone attached (the missing marker is returned for
+        # not-a-time by the timestamp constructor).
         # GH#42228
         value = x.view("i8")
         ts = Timestamp._from_value_and_reso(value, reso=self._creso, tz=self.tz)
@@ -570,6 +725,9 @@ class DatetimeArray(dtl.TimelikeOps, dtl.DatelikeOps):
     # incompatible with return type "ExtensionDtype" in supertype
     # "ExtensionArray"
     def dtype(self) -> np.dtype[np.datetime64] | DatetimeTZDtype:  # type: ignore[override]
+        # [FUNCTION DOC]
+        # Property returning the stored dtype object unchanged: a numpy datetime
+        # dtype for naive data, a timezone-aware dtype for aware data.
         """
         The dtype for the DatetimeArray.
 
@@ -592,6 +750,9 @@ class DatetimeArray(dtl.TimelikeOps, dtl.DatelikeOps):
 
     @property
     def tz(self) -> tzinfo | None:
+        # [FUNCTION DOC]
+        # Property returning the timezone from the dtype, or none when the dtype
+        # has no timezone (naive data).
         """
         Return the timezone.
 
@@ -633,6 +794,10 @@ class DatetimeArray(dtl.TimelikeOps, dtl.DatelikeOps):
 
     @tz.setter
     def tz(self, value):
+        # [FUNCTION DOC]
+        # Setter that deliberately forbids assignment. Parameter value is
+        # ignored. Always raises an attribute error telling the caller to use the
+        # localize or convert methods instead.
         # GH 3746: Prevent localizing or converting the index by setting tz
         raise AttributeError(
             "Cannot directly set timezone. Use tz_localize() "
@@ -641,6 +806,8 @@ class DatetimeArray(dtl.TimelikeOps, dtl.DatelikeOps):
 
     @property
     def tzinfo(self) -> tzinfo | None:
+        # [FUNCTION DOC]
+        # Property alias for the timezone property; returns the same value.
         """
         Alias for tz attribute
         """
@@ -648,6 +815,11 @@ class DatetimeArray(dtl.TimelikeOps, dtl.DatelikeOps):
 
     @property  # NB: override with cache_readonly in immutable subclasses
     def is_normalized(self) -> bool:
+        # [FUNCTION DOC]
+        # Property. Returns true when every value, in local wall time of the
+        # array's timezone, is exactly at midnight; computed by the compiled
+        # helper on the integer values at the array's resolution. Subclasses
+        # that are immutable override the decorator with a caching one.
         """
         Returns True if all of the dates are at midnight ("no time")
         """
@@ -655,12 +827,23 @@ class DatetimeArray(dtl.TimelikeOps, dtl.DatelikeOps):
 
     @property  # NB: override with cache_readonly in immutable subclasses
     def _resolution_obj(self) -> Resolution:
+        # [FUNCTION DOC]
+        # HELPER: property returning the coarsest resolution (day, hour, ...,
+        # nanosecond) needed to represent all values in local time, computed by
+        # the compiled helper from the integer values, timezone and unit.
         return get_resolution(self.asi8, self.tz, reso=self._creso)
 
     # ----------------------------------------------------------------
     # Array-Like / EA-Interface Methods
 
     def __array__(self, dtype=None, copy=None) -> np.ndarray:
+        # [FUNCTION DOC]
+        # Numpy array-conversion protocol. Parameters: dtype is the requested
+        # numpy dtype; copy is the numpy copy flag. When no dtype is requested
+        # and the data is timezone-aware, the dtype defaults to object so the
+        # timezone information is preserved in boxed values. Otherwise (and
+        # after that adjustment) defers to the parent implementation and returns
+        # its numpy array.
         if dtype is None and self.tz:
             # The default for tz-aware is object, to preserve tz info
             dtype = object
@@ -668,6 +851,12 @@ class DatetimeArray(dtl.TimelikeOps, dtl.DatelikeOps):
         return super().__array__(dtype=dtype, copy=copy)
 
     def __iter__(self) -> Iterator:
+        # [FUNCTION DOC]
+        # Generator over boxed timestamps (missing values appear as the missing
+        # marker). For multi-dimensional arrays it yields each row by position.
+        # For one-dimensional arrays it converts the integer values to boxed
+        # timestamps lazily in chunks of 10,000 for efficiency, carrying the
+        # array's timezone and resolution. No mutation.
         """
         Return an iterator over the boxed values
 
@@ -697,6 +886,22 @@ class DatetimeArray(dtl.TimelikeOps, dtl.DatelikeOps):
                 yield from converted
 
     def astype(self, dtype, copy: bool = True):
+        # [FUNCTION DOC]
+        # Converts to another dtype. Parameters: dtype is anything resolvable to
+        # a dtype; copy (default true) controls copying. Cases in order: same
+        # dtype returns a copy or self; other extension dtypes: a non-timezone
+        # one defers to the parent, a timezone-aware target from naive data
+        # raises a type error (use localize instead), and an aware-to-aware
+        # unit conversion casts the buffer with overflow checking and keeps the
+        # frequency; a supported numpy datetime dtype with a unit from naive
+        # data converts the unit (always copying, frequency dropped); aware data
+        # to any numpy datetime dtype raises a type error; naive data to a
+        # unitless datetime dtype raises a type error; a period dtype converts
+        # via the period conversion using the dtype's frequency; anything else
+        # goes to the generic datetimelike implementation.
+        # KNOWN ISSUE: in the naive unit-conversion branch the frequency is
+        # silently dropped; a trailing note in the code says preserving it is an
+        # open to-do.
         # We handle
         #   --> datetime
         #   --> period
@@ -769,6 +974,14 @@ class DatetimeArray(dtl.TimelikeOps, dtl.DatelikeOps):
     def _format_native_types(
         self, *, na_rep: str | float = "NaT", date_format=None, **kwargs
     ) -> npt.NDArray[np.object_]:
+        # [FUNCTION DOC]
+        # HELPER: renders values to strings for display/export. Parameters
+        # (keyword only): na_rep is the text for missing values, default the
+        # not-a-time text; date_format is an optional strftime-style pattern;
+        # extra keyword arguments are accepted and ignored. If no format is
+        # given and every value is a pure date (no time component, naive),
+        # the year-month-day pattern is used. Returns an object array of strings
+        # produced by the compiled formatter, honoring timezone and unit.
         if date_format is None and self._is_dates_only:
             # Only dates and no timezone: provide a default format
             date_format = "%Y-%m-%d"
@@ -781,6 +994,13 @@ class DatetimeArray(dtl.TimelikeOps, dtl.DatelikeOps):
     # Comparison Methods
 
     def _assert_tzawareness_compat(self, other) -> None:
+        # [FUNCTION DOC]
+        # HELPER: validates that comparing with other does not mix naive and
+        # aware datetimes. Parameter other is any object; its timezone is taken
+        # from a timezone attribute or from an aware dtype. The missing marker
+        # passes. A naive array with an aware other, or an aware array with a
+        # naive other, raises a type error saying naive and aware cannot be
+        # compared. Returns nothing.
         # adapted from _Timestamp._assert_tzawareness_compat
         other_tz = getattr(other, "tzinfo", None)
         other_dtype = getattr(other, "dtype", None)
@@ -805,6 +1025,17 @@ class DatetimeArray(dtl.TimelikeOps, dtl.DatelikeOps):
     # Arithmetic Methods
 
     def _add_offset(self, offset: BaseOffset) -> Self:
+        # [FUNCTION DOC]
+        # HELPER: adds a non-fixed-duration (calendar) offset to every element.
+        # Parameter offset must not be a fixed-duration (tick) offset (asserted).
+        # Aware data is first converted to naive local wall time, the offset is
+        # applied vectorized to the integer values, and the result is localized
+        # back to the original timezone; if the offset requests normalization the
+        # result is snapped to midnight and its frequency cleared. If the offset
+        # lacks a vectorized implementation, a performance warning is emitted
+        # (when that option is enabled) and the work falls back to element-wise
+        # addition on boxed objects, rebuilding an array of the same dtype.
+        # Returns a new array.
         assert not isinstance(offset, Tick)
 
         if self.tz is not None:
@@ -846,6 +1077,13 @@ class DatetimeArray(dtl.TimelikeOps, dtl.DatelikeOps):
     # Timezone Conversion and Localization Methods
 
     def _local_timestamps(self) -> npt.NDArray[np.int64]:
+        # [FUNCTION DOC]
+        # HELPER: returns the integer values shifted to local wall time of the
+        # array's timezone, in the array's own resolution.
+        # KNOWN ISSUE: the docstring says the result is in nanoseconds, but the
+        # code keeps the array's own resolution. For naive or
+        # UTC data returns the stored integers without copying; otherwise returns
+        # a new converted array.
         """
         Convert to an i8 (unix-like nanosecond timestamp) representation
         while keeping the local timezone and not using UTC.
@@ -858,6 +1096,13 @@ class DatetimeArray(dtl.TimelikeOps, dtl.DatelikeOps):
         return tz_convert_from_utc(self.asi8, self.tz, reso=self._creso)
 
     def tz_convert(self, tz) -> Self:
+        # [FUNCTION DOC]
+        # Re-labels timezone-aware data with another timezone. Parameter tz is a
+        # timezone specification or none (meaning UTC and drop the timezone).
+        # Raises a type error if the array is naive. The underlying instants are
+        # unchanged (shared buffer, no copy); only the dtype changes. The
+        # frequency is kept only if it is a fixed-duration offset, otherwise
+        # cleared. Returns a new array.
         """
         Convert tz-aware Datetime Array/Index from one time zone to another.
 
@@ -946,6 +1191,21 @@ class DatetimeArray(dtl.TimelikeOps, dtl.DatelikeOps):
         ambiguous: TimeAmbiguous = "raise",
         nonexistent: TimeNonexistent = "raise",
     ) -> Self:
+        # [FUNCTION DOC]
+        # Attaches a timezone to naive data, or removes it from aware data while
+        # keeping local wall time. Decorated so multi-dimensional arrays are
+        # flattened and restored. Parameters: tz is a timezone spec or none;
+        # ambiguous (default raise) handles repeated daylight-saving times and
+        # may be a mode string or a boolean array; nonexistent (default raise)
+        # handles skipped times and may be a mode string or a time delta.
+        # Raises a value error if nonexistent is not one of the four allowed
+        # strings or a time delta; raises a type error if the array is already
+        # aware and tz is not none; ambiguity/nonexistence errors come from the
+        # compiled localizer. Aware to naive converts to local wall time; naive
+        # to aware converts wall time to UTC instants using the rules above.
+        # The frequency is preserved when the target is UTC, when there is a
+        # single non-missing element, or when naive stays naive; otherwise it is
+        # cleared. Returns a new array.
         """
         Localize tz-naive Datetime Array/Index to tz-aware Datetime Array/Index.
 
@@ -1128,6 +1388,10 @@ default 'raise'
     # Conversion Methods - Vectorized analogues of Timestamp methods
 
     def to_pydatetime(self) -> npt.NDArray[np.object_]:
+        # [FUNCTION DOC]
+        # Converts every element to a standard-library datetime. Takes no
+        # arguments. Returns an object array of datetimes carrying the array's
+        # timezone; missing values become the missing marker.
         """
         Return an ndarray of ``datetime.datetime`` objects.
 
@@ -1152,6 +1416,12 @@ default 'raise'
         return ints_to_pydatetime(self.asi8, tz=self.tz, reso=self._creso)
 
     def normalize(self) -> Self:
+        # [FUNCTION DOC]
+        # Sets the time of day of each value to midnight in the array's local
+        # time, keeping timezone and length. Takes no arguments. The integer
+        # values are normalized in local time by the compiled helper, wrapped in
+        # a naive array whose frequency is re-inferred, then re-localized if the
+        # original was aware. Returns a new array; unit is preserved.
         """
         Convert times to midnight.
 
@@ -1200,6 +1470,17 @@ default 'raise'
         return dta
 
     def to_period(self, freq=None) -> PeriodArray:
+        # [FUNCTION DOC]
+        # Converts to a period array. Parameter freq is a period alias string or
+        # offset; default none means infer. Emits a user warning when the data is
+        # timezone-aware because the timezone is dropped. When freq is not given
+        # it is taken from the array's frequency string, else the inferred
+        # frequency; offsets that have a period code are mapped through the
+        # period dtype's frequency string; the result is translated through the
+        # period alias table (falling back to the raw string). Raises a value
+        # error if no frequency can be determined. Returns a period array built
+        # from the naive datetime buffer, with the timezone used for local-time
+        # conversion.
         """
         Cast to PeriodArray/PeriodIndex at a particular frequency.
 
@@ -1285,6 +1566,14 @@ default 'raise'
     # Properties - Vectorized Timestamp Properties/Methods
 
     def month_name(self, locale=None) -> npt.NDArray[np.object_]:
+        # [FUNCTION DOC]
+        # Returns month names of local-time values. Parameter locale is an
+        # optional locale name (default english). Missing entries stay missing.
+        # Returns an object array of strings, or, when the global string-dtype
+        # option is enabled, an array with the string extension dtype using
+        # not-a-number as the missing value. KNOWN ISSUE: the annotation says
+        # the return is always an object ndarray, but with the string option the
+        # result is a string extension array (hidden by an ignore comment).
         """
         Return the month names with specified locale.
 
@@ -1353,6 +1642,15 @@ default 'raise'
         return result
 
     def day_name(self, locale=None) -> npt.NDArray[np.object_]:
+        # [FUNCTION DOC]
+        # Returns weekday names of local-time values. Same contract as the month
+        # name method: optional locale (default english), missing entries stay
+        # missing, returns an object array of strings or, with the global
+        # string-dtype option, a string extension array.
+        # KNOWN ISSUE: the annotation claims an object ndarray even though a
+        # string extension array may be returned (suppressed with an ignore
+        # comment), and the code carries a note that no test checks the result
+        # dtype.
         """
         Return the day names with specified locale.
 
@@ -1423,6 +1721,10 @@ default 'raise'
 
     @property
     def time(self) -> npt.NDArray[np.object_]:
+        # [FUNCTION DOC]
+        # Property. Returns an object array of naive time-of-day objects for each
+        # element, computed from local wall time (timezone applied but not
+        # attached to the results). Missing values become the missing marker.
         """
         Returns numpy array of :class:`datetime.time` objects.
 
@@ -1468,6 +1770,10 @@ default 'raise'
 
     @property
     def timetz(self) -> npt.NDArray[np.object_]:
+        # [FUNCTION DOC]
+        # Property. Returns an object array of time-of-day objects that carry the
+        # array's timezone, computed from the stored instants with the timezone
+        # passed to the compiled converter.
         """
         Returns numpy array of :class:`datetime.time` objects with timezones.
 
@@ -1507,6 +1813,10 @@ default 'raise'
 
     @property
     def date(self) -> npt.NDArray[np.object_]:
+        # [FUNCTION DOC]
+        # Property. Returns an object array of date objects (no time, no
+        # timezone) derived from local wall time; missing values become the
+        # missing marker.
         """
         Returns numpy array of python :class:`datetime.date` objects.
 
@@ -1552,6 +1862,11 @@ default 'raise'
         return ints_to_pydatetime(timestamps, box="date", reso=self._creso)
 
     def isocalendar(self) -> DataFrame:
+        # [FUNCTION DOC]
+        # Computes the ISO calendar year, week and weekday of local-time values.
+        # Takes no arguments. Returns a table with three columns (year, week,
+        # day) of the nullable unsigned 32-bit integer type, with a default
+        # integer index; rows for missing entries are set to missing.
         """
         Calculate year, week, and day according to the ISO 8601 standard.
 
@@ -2259,6 +2574,16 @@ default 'raise'
     )
 
     def to_julian_date(self) -> npt.NDArray[np.float64]:
+        # [FUNCTION DOC]
+        # Converts each value to a floating-point Julian date (days since noon on
+        # the first of January, 4713 BC). Takes no arguments. Uses the calendar
+        # fields of local time: for January and February the year is decremented
+        # and 12 added to the month, then the standard integer-day formula with
+        # leap-year corrections is applied, an offset constant is added, and the
+        # time-of-day (hours through nanoseconds) is added as a fraction of a
+        # day. Returns a float array; missing entries propagate as not-a-number
+        # because the underlying field arrays are floating when data is missing.
+        # The field arrays used are fresh, so in-place edits do not touch self.
         """
         Convert TimeStamp to a Julian Date.
 
@@ -2313,6 +2638,14 @@ default 'raise'
     def _reduce(
         self, name: str, *, skipna: bool = True, keepdims: bool = False, **kwargs
     ):
+        # [FUNCTION DOC]
+        # HELPER: reduction dispatch override. Parameters: name is the reduction
+        # name; skipna (keyword, default true) excludes missing values; keepdims
+        # (keyword, default false) keeps a length-one axis; extra keyword
+        # arguments are forwarded. Calls the parent reduction. When keepdims is
+        # requested and the result is a numpy array, the result is re-wrapped:
+        # into a time delta array for the standard deviation, otherwise into an
+        # array of this same dtype. Scalar results are returned unchanged.
         result = super()._reduce(name, skipna=skipna, keepdims=keepdims, **kwargs)
         if keepdims and isinstance(result, np.ndarray):
             if name == "std":
@@ -2332,6 +2665,17 @@ default 'raise'
         keepdims: bool = False,
         skipna: bool = True,
     ) -> Timedelta:
+        # [FUNCTION DOC]
+        # Sample standard deviation of the datetimes, as a time delta.
+        # Parameters: axis (default none), dtype, out (both forwarded; dtype is
+        # overwritten internally and therefore ignored), ddof (default 1, divisor
+        # is count minus ddof), keepdims (default false), skipna (default true).
+        # Implementation relies on translation invariance: it views the integer
+        # buffer as a time-delta buffer of the same resolution without copying
+        # and delegates to the time delta array's standard deviation.
+        # KNOWN ISSUE: the dtype parameter is accepted but immediately
+        # overwritten by the derived time-delta dtype, so a caller-supplied
+        # dtype has no effect.
         """
         Return sample standard deviation over requested axis.
 
@@ -2415,6 +2759,28 @@ def _sequence_to_dt64(
     ambiguous: TimeAmbiguous = "raise",
     out_unit: str | None = None,
 ) -> tuple[np.ndarray, tzinfo | None]:
+    # [FUNCTION DOC]
+    # HELPER: core parser behind the array constructor. Parameters: data is a
+    # numpy array or extension array already coerced by the array-like helper;
+    # copy (keyword, default false) forces a copy; tz is the requested timezone
+    # or none; dayfirst/yearfirst (default false) steer string parsing;
+    # ambiguous (default raise) handles ambiguous local times; out_unit is the
+    # desired resolution string or none (nanoseconds is the fallback for the
+    # integer path).
+    # Returns a pair: a numpy datetime array in UTC (or naive wall time) and the
+    # final timezone (given or inferred). Branches: object or string input is
+    # first converted (integer-looking objects become 64-bit integers; with a
+    # timezone and strict ambiguity the timezone-aware parser is used; otherwise
+    # the generic object parser is used and its inferred timezone combined with
+    # the given one, where parsed values are already UTC); timezone-aware array
+    # input has its timezone reconciled and its buffer reused; naive datetime
+    # input is passed through the naive constructor helper (cast to a supported
+    # unit and localized if a timezone is given); anything else is treated as
+    # integer epoch values viewed at the output unit.
+    # Raises a type error for period input or other invalid dtypes (via the
+    # dtype-conversion helper) and for conflicting timezones. The final array
+    # is asserted to be a supported datetime64 array.
+    # A copy is made at the end only if still needed.
     """
     Parameters
     ----------
@@ -2534,6 +2900,17 @@ def _sequence_to_dt64(
 def _construct_from_dt64_naive(
     data: np.ndarray, *, tz: tzinfo | None, copy: bool, ambiguous: TimeAmbiguous
 ) -> tuple[np.ndarray, bool]:
+    # [FUNCTION DOC]
+    # HELPER: normalizes numpy datetime data for the array constructor.
+    # Parameters (keyword only): data is a numpy datetime array (caller
+    # guarantees the dtype kind); tz is a timezone or none; copy says whether the
+    # caller still wants a copy; ambiguous controls localization of ambiguous
+    # times. Steps: cast unsupported units to the nearest supported unit with
+    # overflow checking; convert big-endian data to little-endian; if tz is
+    # given, flatten multi-dimensional input, localize wall times to UTC
+    # instants at the data's resolution, and restore the shape. Returns the
+    # data and an updated copy flag (false once any step already made a new
+    # array). Errors come from the cast and localization helpers.
     """
     Convert datetime64 data to a supported dtype, localizing if necessary.
     """
@@ -2584,6 +2961,20 @@ def objects_to_datetime64(
     allow_object: bool = False,
     out_unit: str | None = None,
 ) -> tuple[np.ndarray, tzinfo | None]:
+    # [FUNCTION DOC]
+    # Public-in-module (shared with the top-level conversion function) parser
+    # that converts an object array to datetime64 values. Parameters: data is an
+    # array of objects (strings, datetimes, etc.; it is first converted to an
+    # object array); dayfirst and yearfirst steer ambiguous string formats;
+    # utc (default false) converts everything to UTC; errors is raise or coerce
+    # (anything else fails an assertion); allow_object (default false) permits
+    # returning an object array when the data mix timezones; out_unit is the
+    # desired resolution or none to infer it.
+    # Returns the parsed array plus the timezone found in the data (if not none,
+    # the returned values are UTC instants). If the parser yields an object
+    # array: with allow_object it is returned, otherwise a type error about
+    # mixed timezones is raised. Any other unexpected result type raises a type
+    # error (marked as unreachable).
     """
     Convert data to array of timestamps.
 
@@ -2651,6 +3042,19 @@ def objects_to_datetime64(
 
 
 def maybe_convert_dtype(data, copy: bool, tz: tzinfo | None = None):
+    # [FUNCTION DOC]
+    # Pre-processes input data according to dtype conventions before datetime
+    # parsing. Parameters: data is an array or index (inputs lacking a dtype
+    # attribute pass through unchanged); copy is the caller's copy flag; tz is
+    # accepted but unused.
+    # KNOWN ISSUE: the tz parameter is never read in the body.
+    # Behavior: floating data is cast to nanosecond datetimes and viewed as
+    # 64-bit integers (treated as epoch values), copy flag cleared; time delta
+    # and boolean dtypes raise a type error; period dtype raises a type error
+    # telling the caller to convert to timestamps; extension dtypes other than
+    # the timezone-aware datetime dtype are converted to an object array with
+    # the copy flag cleared. Returns the possibly-converted data and the
+    # updated copy flag.
     """
     Convert data based on dtype conventions, issuing
     errors where appropriate.
@@ -2707,6 +3111,12 @@ def maybe_convert_dtype(data, copy: bool, tz: tzinfo | None = None):
 
 
 def _maybe_infer_tz(tz: tzinfo | None, inferred_tz: tzinfo | None) -> tzinfo | None:
+    # [FUNCTION DOC]
+    # HELPER: reconciles a user-given timezone with one found in the data.
+    # Parameters: tz is the user timezone or none; inferred_tz is the data's
+    # timezone or none. Returns the user timezone if only it exists, the
+    # inferred one if tz is none, or the user one when both agree. Raises a type
+    # error when both are present but differ.
     """
     If a timezone is inferred from data, check that it is compatible with
     the user-provided timezone, if any.
@@ -2736,6 +3146,16 @@ def _maybe_infer_tz(tz: tzinfo | None, inferred_tz: tzinfo | None) -> tzinfo | N
 
 
 def _validate_dt64_dtype(dtype):
+    # [FUNCTION DOC]
+    # HELPER: validates and normalizes a user-given dtype. Parameter dtype may be
+    # none (returned as is) or anything resolvable to a dtype. Raises a value
+    # error for a unitless datetime dtype and for any dtype that is neither a
+    # supported-unit numpy datetime dtype nor the timezone-aware datetime dtype.
+    # For timezone-aware dtypes the timezone is standardized (so equivalent zone
+    # objects compare equal) and a new dtype object is built. Returns the
+    # resolved dtype.
+    # KNOWN ISSUE: the docstring says only the nanosecond numpy dtype is allowed,
+    # but the code accepts any supported unit (seconds through nanoseconds).
     """
     Check that a dtype, if passed, represents either a numpy datetime64[ns]
     dtype or a pandas DatetimeTZDtype.
@@ -2794,6 +3214,16 @@ def _validate_dt64_dtype(dtype):
 def _validate_tz_from_dtype(
     dtype, tz: tzinfo | None, explicit_tz_none: bool = False
 ) -> tzinfo | None:
+    # [FUNCTION DOC]
+    # HELPER: cross-checks the timezone implied by a dtype against a given one.
+    # Parameters: dtype may be none, a string (tried as a timezone-aware dtype
+    # name; strings that are not such names are ignored here), or a dtype object;
+    # tz is the user timezone or none; explicit_tz_none (default false) records
+    # that the caller explicitly passed "no timezone". Returns the consensus
+    # timezone (the dtype's if it has one). Raises a value error when both a
+    # timezone and a timezone-bearing dtype differ, when a timezone-aware dtype
+    # is combined with an explicit none timezone, or when a timezone is combined
+    # with a naive numpy datetime dtype.
     """
     If the given dtype is a DatetimeTZDtype, extract the implied
     tzinfo object from it and check that it does not conflict with the given
@@ -2847,6 +3277,13 @@ def _validate_tz_from_dtype(
 def _infer_tz_from_endpoints(
     start: Timestamp, end: Timestamp, tz: tzinfo | None
 ) -> tzinfo | None:
+    # [FUNCTION DOC]
+    # HELPER: determines the timezone for range generation. Parameters: start
+    # and end are endpoint timestamps (either may be none); tz is the requested
+    # timezone or none. Infers a timezone from the endpoints and standardizes
+    # both. Raises a type error if the endpoints carry different timezones, and
+    # an assertion error if an inferred timezone differs from the requested one.
+    # Returns the requested timezone if given, else the inferred one, else none.
     """
     If a timezone is not explicitly given via `tz`, see if one can
     be inferred from the `start` and `end` endpoints.  If more than one
@@ -2890,6 +3327,11 @@ def _infer_tz_from_endpoints(
 def _maybe_normalize_endpoints(
     start: _TimestampNoneT1, end: _TimestampNoneT2, normalize: bool
 ) -> tuple[_TimestampNoneT1, _TimestampNoneT2]:
+    # [FUNCTION DOC]
+    # HELPER: optionally snaps range endpoints to midnight. Parameters: start and
+    # end are timestamps or none; normalize says whether to act. If true, each
+    # non-none endpoint is replaced by its midnight version (timezone kept).
+    # Returns the pair of endpoints; none stays none.
     if normalize:
         if start is not None:
             start = start.normalize()
@@ -2903,6 +3345,16 @@ def _maybe_normalize_endpoints(
 def _maybe_localize_point(
     ts: Timestamp | None, freq, tz, ambiguous, nonexistent
 ) -> Timestamp | None:
+    # [FUNCTION DOC]
+    # HELPER: localizes one naive range endpoint. Parameters: ts is a timestamp
+    # or none; freq is the range offset or none; tz is the target timezone;
+    # ambiguous and nonexistent are the localization modes. Only naive,
+    # non-none endpoints are touched. A request to infer ambiguity is replaced
+    # by the "not daylight saving" flag because a single time cannot be inferred.
+    # The timezone is attached only when the offset is fixed-duration or absent;
+    # for calendar offsets the call passes no timezone (so it effectively does
+    # nothing but validate the modes). Returns the (possibly localized)
+    # endpoint.
     """
     Localize a start or end Timestamp to the timezone of the corresponding
     start or end Timestamp
@@ -2941,6 +3393,22 @@ def _generate_range(
     *,
     unit: TimeUnit,
 ) -> Generator[Timestamp]:
+    # [FUNCTION DOC]
+    # HELPER: generator producing timestamps spaced by a calendar offset, used
+    # when no vectorized path exists. Parameters (keyword unit required): start
+    # and end are timestamps or none (a missing-time value is treated as none);
+    # periods is a count or none; offset is converted to an offset object; unit
+    # is the resolution to which yielded timestamps are cast. At least two of
+    # start, end, periods are expected (not validated here).
+    # Behavior: if end is given along with periods and is off the offset grid,
+    # it is rolled back (positive step) or forward (negative step) onto the
+    # grid; an off-grid start is rolled forward (positive step) or back
+    # (negative step); with no period count and an end before the start for a
+    # positive step, the range is made empty; a missing end or start is derived
+    # from the other and the count. It then yields timestamps from start,
+    # stepping by the offset until the end is passed (reaching end exactly stops
+    # without computing the next step to avoid overflow). Raises a value error
+    # if applying the offset fails to move the date in the expected direction.
     """
     Generates a sequence of dates corresponding to the specified time
     offset. Similar to dateutil.rrule except uses pandas DateOffset

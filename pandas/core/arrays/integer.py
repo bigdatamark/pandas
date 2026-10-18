@@ -1,3 +1,13 @@
+# [MODULE DOC]
+# Nullable integer extension array and dtypes.
+# Public contents: the abstract integer dtype base, the array class for nullable
+# integers, eight concrete dtypes (signed and unsigned, 8 to 64 bits), and a
+# module level mapping from numpy integer dtypes to the matching nullable dtype
+# instances. Builds on the shared numeric array and dtype base classes from the
+# numeric array module; the array is exposed publicly through the arrays
+# namespace and the dtypes through the top-level namespace.
+# Import-time side effects: each concrete dtype class is registered with the
+# extension dtype registry, so its string alias becomes resolvable.
 from __future__ import annotations
 
 from typing import (
@@ -23,6 +33,14 @@ if TYPE_CHECKING:
 
 
 class IntegerDtype(NumericDtype):
+    # [CLASS DOC]
+    # Base extension dtype for nullable integer data of a single width and
+    # signedness; subclasses supply name and scalar type. Class state: the
+    # internal fill value is one (placed in masked slots of the data buffer to
+    # avoid upcasting), the default numpy dtype is 64-bit signed integer, and
+    # the checker is the generic integer dtype predicate. Inherits shared numeric
+    # dtype behavior; methods here wire up the array type, the dtype mapping and
+    # lossless casting.
     """
     An ExtensionDtype to hold a single size & kind of integer dtype.
 
@@ -38,6 +56,9 @@ class IntegerDtype(NumericDtype):
     _checker: Callable[[Any], bool] = is_integer_dtype
 
     def construct_array_type(self) -> type[IntegerArray]:
+        # [FUNCTION DOC]
+        # Takes no arguments. Returns the array class (not an instance) that
+        # stores data of this dtype, always the nullable integer array class.
         """
         Return the array type associated with this dtype.
 
@@ -49,10 +70,24 @@ class IntegerDtype(NumericDtype):
 
     @classmethod
     def _get_dtype_mapping(cls) -> dict[np.dtype, IntegerDtype]:
+        # [FUNCTION DOC]
+        # HELPER: hook used by the numeric dtype base class to translate numpy
+        # dtypes to nullable dtypes. Takes no arguments and returns the
+        # module-level mapping from numpy integer dtypes to dtype instances (the
+        # shared object, not a copy).
         return NUMPY_INT_TO_DTYPE
 
     @classmethod
     def _safe_cast(cls, values: np.ndarray, dtype: np.dtype, copy: bool) -> np.ndarray:
+        # [FUNCTION DOC]
+        # HELPER: hook used by the numeric dtype base class when converting raw
+        # data. Parameters: values is a numpy array, dtype is the target numpy
+        # dtype, copy says whether a copy is forced. First tries a cast that
+        # numpy considers safe and returns it. If numpy refuses, it performs an
+        # unrestricted cast and returns that only if every element compares equal
+        # to the original (for example floats that are all whole numbers);
+        # otherwise raises a type error stating the values cannot be safely cast
+        # to the target dtype. No mutation of the input.
         """
         Safely cast the values to the given dtype.
 
@@ -73,6 +108,12 @@ class IntegerDtype(NumericDtype):
 
 @set_module("pandas.arrays")
 class IntegerArray(NumericArray):
+    # [CLASS DOC]
+    # Public nullable integer array. State is inherited: a one-dimensional numpy
+    # integer data buffer plus a boolean mask where true marks a missing value.
+    # All behavior comes from the numeric array base class; this subclass only
+    # binds the dtype class attribute to the integer dtype base, which is used to
+    # pick the concrete dtype from the data.
     """
     Array of integer (optional missing) values.
 
@@ -223,6 +264,10 @@ UInt64Dtype()
 @register_extension_dtype
 @set_module("pandas")
 class Int8Dtype(IntegerDtype):
+    # [CLASS DOC]
+    # Concrete nullable dtype for signed 8-bit integers (name "Int8"). Registered
+    # with the extension dtype registry; documentation text comes from a shared
+    # template. No methods beyond those inherited.
     type = np.int8
     name: ClassVar[str] = "Int8"
     __doc__ = _dtype_docstring.format(dtype="int8")
@@ -231,6 +276,10 @@ class Int8Dtype(IntegerDtype):
 @register_extension_dtype
 @set_module("pandas")
 class Int16Dtype(IntegerDtype):
+    # [CLASS DOC]
+    # Concrete nullable dtype for signed 16-bit integers (name "Int16").
+    # Registered with the extension dtype registry; documentation text comes from
+    # a shared template. No methods beyond those inherited.
     type = np.int16
     name: ClassVar[str] = "Int16"
     __doc__ = _dtype_docstring.format(dtype="int16")
@@ -239,6 +288,10 @@ class Int16Dtype(IntegerDtype):
 @register_extension_dtype
 @set_module("pandas")
 class Int32Dtype(IntegerDtype):
+    # [CLASS DOC]
+    # Concrete nullable dtype for signed 32-bit integers (name "Int32").
+    # Registered with the extension dtype registry; documentation text comes from
+    # a shared template. No methods beyond those inherited.
     type = np.int32
     name: ClassVar[str] = "Int32"
     __doc__ = _dtype_docstring.format(dtype="int32")
@@ -247,6 +300,10 @@ class Int32Dtype(IntegerDtype):
 @register_extension_dtype
 @set_module("pandas")
 class Int64Dtype(IntegerDtype):
+    # [CLASS DOC]
+    # Concrete nullable dtype for signed 64-bit integers (name "Int64").
+    # Registered with the extension dtype registry; documentation text comes from
+    # a shared template. No methods beyond those inherited.
     type = np.int64
     name: ClassVar[str] = "Int64"
     __doc__ = _dtype_docstring.format(dtype="int64")
@@ -255,6 +312,10 @@ class Int64Dtype(IntegerDtype):
 @register_extension_dtype
 @set_module("pandas")
 class UInt8Dtype(IntegerDtype):
+    # [CLASS DOC]
+    # Concrete nullable dtype for unsigned 8-bit integers (name "UInt8").
+    # Registered with the extension dtype registry; documentation text comes from
+    # a shared template. No methods beyond those inherited.
     type = np.uint8
     name: ClassVar[str] = "UInt8"
     __doc__ = _dtype_docstring.format(dtype="uint8")
@@ -263,6 +324,10 @@ class UInt8Dtype(IntegerDtype):
 @register_extension_dtype
 @set_module("pandas")
 class UInt16Dtype(IntegerDtype):
+    # [CLASS DOC]
+    # Concrete nullable dtype for unsigned 16-bit integers (name "UInt16").
+    # Registered with the extension dtype registry; documentation text comes from
+    # a shared template. No methods beyond those inherited.
     type = np.uint16
     name: ClassVar[str] = "UInt16"
     __doc__ = _dtype_docstring.format(dtype="uint16")
@@ -271,6 +336,10 @@ class UInt16Dtype(IntegerDtype):
 @register_extension_dtype
 @set_module("pandas")
 class UInt32Dtype(IntegerDtype):
+    # [CLASS DOC]
+    # Concrete nullable dtype for unsigned 32-bit integers (name "UInt32").
+    # Registered with the extension dtype registry; documentation text comes from
+    # a shared template. No methods beyond those inherited.
     type = np.uint32
     name: ClassVar[str] = "UInt32"
     __doc__ = _dtype_docstring.format(dtype="uint32")
@@ -279,6 +348,10 @@ class UInt32Dtype(IntegerDtype):
 @register_extension_dtype
 @set_module("pandas")
 class UInt64Dtype(IntegerDtype):
+    # [CLASS DOC]
+    # Concrete nullable dtype for unsigned 64-bit integers (name "UInt64").
+    # Registered with the extension dtype registry; documentation text comes from
+    # a shared template. No methods beyond those inherited.
     type = np.uint64
     name: ClassVar[str] = "UInt64"
     __doc__ = _dtype_docstring.format(dtype="uint64")

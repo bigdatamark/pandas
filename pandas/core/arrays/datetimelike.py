@@ -1,3 +1,22 @@
+# [MODULE DOC]
+# Shared base classes for the three date/time-like extension arrays (datetime,
+# time delta and period). Public contents: the mixin that supplies behavior
+# common to all three (boxing/unboxing of scalars, indexing that tracks the
+# frequency, validation of scalars and list-likes, comparison and arithmetic
+# operators, null handling, reductions, shifting, repetition, unique/factorize
+# style helpers), the datelike mixin (string formatting and strftime), the
+# timelike mixin (frequency validation, resolution units, rounding/flooring/
+# ceiling, conversion between units), and module-level helpers: a frequency
+# validator/pinning hook, a unit-from-dtype resolver, a period-count validator,
+# array-like coercion for constructors, a decorator that flattens
+# multi-dimensional arrays, plus a few helpers for invalid operations and
+# period dispatch.
+# Relationships: concrete arrays live in the datetime, timedelta and period
+# modules and derive from these mixins; this module builds on the
+# numpy-backed extension array base and the operator mixin; it relies on the
+# compiled time-series library for scalar types, offsets and overflow-safe
+# arithmetic.
+# Import-time side effects: none beyond defining names.
 from __future__ import annotations
 
 from datetime import (
@@ -168,11 +187,24 @@ DTScalarOrNaT: TypeAlias = DatetimeLikeScalar | NaTType
 
 
 def _make_unpacked_invalid_op(op_name: str):
+    # [FUNCTION DOC]
+    # HELPER: builds an operator implementation that always fails. Parameter
+    # op_name is the operator's name used in the error message. Creates the
+    # invalid-operation function (which raises a type error saying the
+    # operation is not supported for the type) and wraps it so that zero-
+    # dimensional arrays are unpacked and unsupported right-hand sides defer to
+    # the other operand. Returns the wrapped function, meant to be assigned as
+    # a method on the mixin classes.
     op = make_invalid_op(op_name)
     return unpack_zerodim_and_defer(op_name)(op)
 
 
 def _period_dispatch(meth: F) -> F:
+    # [FUNCTION DOC]
+    # HELPER: decorator factory-style wrapper used on mixin methods so that
+    # period arrays can reuse datetime implementations. Parameter meth is the
+    # method to wrap. Returns a wrapper with the same signature (function
+    # metadata copied). No side effects at decoration time.
     """
     For PeriodArray methods, dispatch to DatetimeArray and re-wrap the results
     in PeriodArray.  We cannot use ._ndarray directly for the affected
@@ -181,6 +213,15 @@ def _period_dispatch(meth: F) -> F:
 
     @wraps(meth)
     def new_meth(self, *args, **kwargs):
+        # [FUNCTION DOC]
+        # HELPER: wrapper produced by the period dispatch decorator. Arguments
+        # are forwarded unchanged. For non-period arrays it just calls the
+        # wrapped method. For period arrays it views the data as
+        # nanosecond datetimes, calls the wrapped method on that view, and maps
+        # the result back: a missing marker stays missing, a single timestamp
+        # is re-boxed as a period scalar from its integer value, and any array
+        # result is viewed as integers and rebuilt as an array of the original
+        # period type. Returns that converted result.
         if not isinstance(self.dtype, PeriodDtype):
             return meth(self, *args, **kwargs)
 
@@ -198,6 +239,22 @@ def _period_dispatch(meth: F) -> F:
 
 
 class DatetimeLikeArrayMixin(OpsMixin, NDArrayBackedExtensionArray):
+    # [CLASS DOC]
+    # Common base of the datetime, time delta and period arrays. Combines the
+    # operator-dispatch mixin with the numpy-backed extension array base.
+    # State: the backing numpy array (holding 64-bit-integer-like values where
+    # the minimum integer encodes missing), and a frequency attribute that
+    # subclasses must provide (an offset or none). Class-level declarations that
+    # subclasses fill in: which type-inference labels count as compatible, a
+    # predicate for recognized dtypes, the tuple of recognized scalar types.
+    # Many methods here are abstract hooks that raise an abstract-method error
+    # (constructor, scalar type, scalar parsing, unboxing, compatibility
+    # check, boxing function, native-type formatting). Concrete behavior:
+    # indexing with frequency propagation, setitem with frequency
+    # invalidation, astype, validation helpers, comparison and arithmetic
+    # operators, reductions, shifting, repeating, and conversion helpers.
+    # Invariant: the stored integer view equals the minimum 64-bit integer
+    # exactly where a value is missing.
     """
     Shared Base/Mixin class for DatetimeArray, TimedeltaArray, PeriodArray
 
@@ -217,15 +274,25 @@ class DatetimeLikeArrayMixin(OpsMixin, NDArrayBackedExtensionArray):
 
     @cache_readonly
     def _can_hold_na(self) -> bool:
+        # [FUNCTION DOC]
+        # HELPER: cached property; always true because these arrays have a
+        # missing-value marker.
         return True
 
     def __init__(
         self, data, dtype: Dtype | None = None, freq=None, copy: bool = False
     ) -> None:
+        # [FUNCTION DOC]
+        # Abstract constructor. Parameters data, dtype, freq, copy are accepted
+        # for signature documentation only. Always raises the abstract-method
+        # error; subclasses define the real constructors.
         raise AbstractMethodError(self)
 
     @property
     def _scalar_type(self) -> type[DatetimeLikeScalar]:
+        # [FUNCTION DOC]
+        # HELPER: abstract property naming the scalar class boxed values use.
+        # Always raises the abstract-method error in this base class.
         """
         The scalar associated with this datelike
 
@@ -236,6 +303,10 @@ class DatetimeLikeArrayMixin(OpsMixin, NDArrayBackedExtensionArray):
         raise AbstractMethodError(self)
 
     def _scalar_from_string(self, value: str) -> DTScalarOrNaT:
+        # [FUNCTION DOC]
+        # HELPER: abstract hook to parse one string into this array's scalar type
+        # (or the missing marker). Parameter value is the string. Always raises
+        # the abstract-method error here.
         """
         Construct a scalar type from a string.
 
@@ -258,6 +329,10 @@ class DatetimeLikeArrayMixin(OpsMixin, NDArrayBackedExtensionArray):
     def _unbox_scalar(
         self, value: DTScalarOrNaT
     ) -> np.int64 | np.datetime64 | np.timedelta64:
+        # [FUNCTION DOC]
+        # HELPER: abstract hook converting a boxed scalar (or the missing
+        # marker) to the raw stored value. Parameter value is the scalar. Always
+        # raises the abstract-method error here.
         """
         Unbox the integer value of a scalar `value`.
 
@@ -279,6 +354,11 @@ class DatetimeLikeArrayMixin(OpsMixin, NDArrayBackedExtensionArray):
         raise AbstractMethodError(self)
 
     def _check_compatible_with(self, other: DTScalarOrNaT) -> None:
+        # [FUNCTION DOC]
+        # HELPER: abstract hook verifying that a scalar can be combined with this
+        # array (timezone match, frequency match, or no check, depending on the
+        # subclass). Parameter other is the scalar. Always raises the
+        # abstract-method error here.
         """
         Verify that `self` and `other` are compatible.
 
@@ -301,18 +381,31 @@ class DatetimeLikeArrayMixin(OpsMixin, NDArrayBackedExtensionArray):
     # ------------------------------------------------------------------
 
     def _box_func(self, x):
+        # [FUNCTION DOC]
+        # HELPER: abstract hook converting one raw stored value to a boxed
+        # scalar. Parameter x is the raw value. Always raises the abstract-method
+        # error here.
         """
         box function to get object from internal representation
         """
         raise AbstractMethodError(self)
 
     def _box_values(self, values) -> np.ndarray:
+        # [FUNCTION DOC]
+        # HELPER: boxes a whole array of raw values. Parameter values is an
+        # array of raw stored values. Applies the boxing function element-wise
+        # and returns an object array (no type conversion of the result).
         """
         apply box func to passed values
         """
         return lib.map_infer(values, self._box_func, convert=False)
 
     def __iter__(self) -> Iterator:
+        # [FUNCTION DOC]
+        # Iterates lazily over boxed scalars. For multi-dimensional arrays yields
+        # sub-arrays by position along the first axis; for one-dimensional
+        # arrays yields each raw integer value boxed through the boxing function.
+        # Returns a generator expression.
         if self.ndim > 1:
             return (self[n] for n in range(len(self)))
         else:
@@ -320,6 +413,10 @@ class DatetimeLikeArrayMixin(OpsMixin, NDArrayBackedExtensionArray):
 
     @property
     def asi8(self) -> npt.NDArray[np.int64]:
+        # [FUNCTION DOC]
+        # Property returning a 64-bit integer view of the stored values (shares
+        # memory, never cached to avoid a memory leak). Missing entries are the
+        # minimum 64-bit integer.
         """
         Integer representation of the values.
 
@@ -337,6 +434,11 @@ class DatetimeLikeArrayMixin(OpsMixin, NDArrayBackedExtensionArray):
     def _format_native_types(
         self, *, na_rep: str | float = "NaT", date_format=None
     ) -> npt.NDArray[np.object_]:
+        # [FUNCTION DOC]
+        # HELPER: abstract hook that renders values as strings for conversion to
+        # text dtypes. Parameters (keyword only): na_rep is the text for missing
+        # values, default the not-a-time text; date_format is an optional
+        # format pattern. Always raises the abstract-method error here.
         """
         Helper method for astype when converting to strings.
 
@@ -347,6 +449,10 @@ class DatetimeLikeArrayMixin(OpsMixin, NDArrayBackedExtensionArray):
         raise AbstractMethodError(self)
 
     def _formatter(self, boxed: bool = False) -> Callable[[object], str]:
+        # [FUNCTION DOC]
+        # HELPER: formatter used when printing the array's elements. Parameter
+        # boxed is ignored. Returns a callable that wraps any value's text in
+        # single quotes.
         # TODO: Remove Datetime & DatetimeTZ formatters.
         return "'{}'".format
 
@@ -356,6 +462,16 @@ class DatetimeLikeArrayMixin(OpsMixin, NDArrayBackedExtensionArray):
     def __array__(
         self, dtype: NpDtype | None = None, copy: bool | None = None
     ) -> np.ndarray:
+        # [FUNCTION DOC]
+        # Numpy array-conversion protocol (time delta and datetime arrays; the
+        # period array overrides it). Parameters: dtype is the requested numpy
+        # dtype; copy is the numpy copy flag (true forces a copy, false forbids
+        # one, none allows either). For an object dtype request, builds an object
+        # array of boxed scalars and raises a value error if copy is false
+        # (a copy is unavoidable). If copy is true, returns a fresh array cast to
+        # dtype. Otherwise returns the backing array itself, as a read-only view
+        # when this array is read-only. Note the requested dtype is ignored
+        # (apart from the object case and forced copies) when copy is not true.
         # used for Timedelta/DatetimeArray, overwritten by PeriodArray
         if is_object_dtype(dtype):
             if copy is False:
@@ -374,15 +490,29 @@ class DatetimeLikeArrayMixin(OpsMixin, NDArrayBackedExtensionArray):
         return result
 
     @overload
-    def __getitem__(self, key: ScalarIndexer) -> DTScalarOrNaT: ...
+    def __getitem__(self, key: ScalarIndexer) -> DTScalarOrNaT:
+        # [FUNCTION DOC]
+        # Typing overload: a scalar position returns one boxed scalar. See the
+        # implementation below.
+        ...
 
     @overload
     def __getitem__(
         self,
         key: SequenceIndexer | PositionalIndexerTuple,
-    ) -> Self: ...
+    ) -> Self:
+        # [FUNCTION DOC]
+        # Typing overload: a sequence, slice or tuple position returns a new
+        # array. See the implementation below.
+        ...
 
     def __getitem__(self, key: PositionalIndexer2D) -> Self | DTScalarOrNaT:
+        # [FUNCTION DOC]
+        # Positional lookup. Parameter key is a scalar integer, slice,
+        # sequence, boolean mask or (for two-dimensional data) tuple. Defers to
+        # the numpy-backed parent; scalar results come back boxed. Array
+        # results get their frequency attribute assigned from the frequency-
+        # lookup helper (so slices can keep or scale the frequency).
         """
         This getitem defers to the underlying array, which by-definition can
         only handle list-likes, slices, and integer scalars
@@ -402,6 +532,15 @@ class DatetimeLikeArrayMixin(OpsMixin, NDArrayBackedExtensionArray):
         return result
 
     def _get_getitem_freq(self, key) -> BaseOffset | None:
+        # [FUNCTION DOC]
+        # HELPER: decides the frequency of the result of an indexing operation.
+        # Parameter key is the indexer used. Period arrays always keep their
+        # frequency. For other arrays: multi-dimensional input yields none;
+        # otherwise the key is normalized as an array indexer; a slice keeps the
+        # frequency (multiplied by the slice step when a step is given and a
+        # frequency exists); an ellipsis keeps it; a boolean mask that is
+        # equivalent to a slice is re-evaluated as that slice; anything else
+        # yields none. Returns an offset or none.
         """
         Find the `freq` attribute to assign to the result of a __getitem__ lookup.
         """
@@ -436,6 +575,14 @@ class DatetimeLikeArrayMixin(OpsMixin, NDArrayBackedExtensionArray):
         key: int | Sequence[int] | Sequence[bool] | slice,
         value: NaTType | Any | Sequence[Any],
     ) -> None:
+        # [FUNCTION DOC]
+        # In-place assignment. Parameters: key is an integer, sequence of
+        # integers or booleans, or slice; value is a scalar, the missing marker,
+        # or a sequence of them. Checks that lengths line up (raising on
+        # mismatch) and calls the parent assignment first, so invalid values
+        # raise even when the assignment would be a no-op (for example an empty
+        # selection). If something was actually assigned, the frequency
+        # invalidation hook runs. Mutates self; returns nothing.
         # I'm fudging the types a bit here. "Any" above really depends
         # on type(self). For PeriodArray, it's Period (or stuff coercible
         # to a period in from_sequence). For DatetimeArray, it's Timestamp...
@@ -454,11 +601,31 @@ class DatetimeLikeArrayMixin(OpsMixin, NDArrayBackedExtensionArray):
         self._maybe_clear_freq()
 
     def _maybe_clear_freq(self) -> None:
+        # [FUNCTION DOC]
+        # HELPER: hook called after in-place mutation. Does nothing in this base
+        # class; datetime and time delta arrays override it to drop their
+        # frequency, which may no longer hold.
         # inplace operations like __setitem__ may invalidate the freq of
         # DatetimeArray and TimedeltaArray
         pass
 
     def astype(self, dtype, copy: bool = True):
+        # [FUNCTION DOC]
+        # Generic conversion for datetime-like arrays (subclasses handle
+        # same-kind cases first). Parameters: dtype is anything resolvable to a
+        # dtype; copy (default true) matters for integer and extension targets.
+        # Object target: datetimes become an object array of timestamps built
+        # quickly from the integers with timezone; time deltas become an object
+        # array of time delta scalars; other kinds are boxed element-wise with
+        # the shape preserved. String target: with an extension string dtype,
+        # formats values using that dtype's missing value and builds its array
+        # type; with a plain numpy string dtype returns the formatted object
+        # array. Other extension targets defer to the parent. Integer targets
+        # must be exactly 64-bit signed (otherwise a type error telling the
+        # caller to go through int64) and return the integer view, copied when
+        # copy is true. Raises a type error for datetime/time delta targets that
+        # differ from the current dtype and for any float target. Everything
+        # else is converted by numpy from the array representation.
         # Some notes on cases we don't have to handle here in the base class:
         #   1. PeriodArray.astype handles period -> period
         #   2. DatetimeArray.astype handles conversion between tz.
@@ -516,23 +683,50 @@ class DatetimeLikeArrayMixin(OpsMixin, NDArrayBackedExtensionArray):
             return np.asarray(self, dtype=dtype)
 
     @overload  # type: ignore[override]
-    def view(self) -> Self: ...
+    def view(self) -> Self:
+        # [FUNCTION DOC]
+        # Typing overload: no argument returns the same array type. See the
+        # implementation below.
+        ...
 
     @overload
-    def view(self, dtype: Literal["M8[ns]"]) -> DatetimeArray: ...
+    def view(self, dtype: Literal["M8[ns]"]) -> DatetimeArray:
+        # [FUNCTION DOC]
+        # Typing overload: viewing as nanosecond datetimes returns a datetime
+        # array. See the implementation below.
+        ...
 
     @overload
-    def view(self, dtype: Literal["m8[ns]"]) -> TimedeltaArray: ...
+    def view(self, dtype: Literal["m8[ns]"]) -> TimedeltaArray:
+        # [FUNCTION DOC]
+        # Typing overload: viewing as nanosecond time deltas returns a time
+        # delta array. See the implementation below.
+        ...
 
     @overload
-    def view(self, dtype: Dtype | None = ...) -> ArrayLike: ...
+    def view(self, dtype: Dtype | None = ...) -> ArrayLike:
+        # [FUNCTION DOC]
+        # Typing overload: any other dtype returns a generic array. See the
+        # implementation below.
+        ...
 
     def view(self, dtype: Dtype | None = None) -> ArrayLike:
+        # [FUNCTION DOC]
+        # Reinterprets the same memory as another dtype. Parameter dtype is the
+        # target dtype, default none (same dtype). Simply delegates to the
+        # numpy-backed parent; this definition exists only so the typing
+        # overloads above have an implementation. Returns an array sharing
+        # memory.
         # we need to explicitly call super() method as long as the `@overload`s
         #  are present in this file.
         return super().view(dtype)
 
     def _putmask(self, mask: npt.NDArray[np.bool_], value) -> None:
+        # [FUNCTION DOC]
+        # HELPER: in-place masked assignment. Parameters: mask is a boolean array
+        # of the same length; value is the replacement (scalar or array-like).
+        # Delegates to the parent implementation, then unconditionally clears
+        # the stored frequency (even if the mask selects nothing). Mutates self.
         super()._putmask(mask, value)
         self._freq = None  # GH#24555
 
@@ -541,6 +735,19 @@ class DatetimeLikeArrayMixin(OpsMixin, NDArrayBackedExtensionArray):
     # TODO: try to de-duplicate these, ensure identical behavior
 
     def _validate_comparison_value(self, other):
+        # [FUNCTION DOC]
+        # HELPER: prepares the right-hand side of a comparison. Parameter other
+        # is a string, scalar, list-like or anything else. Strings are parsed
+        # into this array's scalar (failure becomes an invalid-comparison
+        # error, and string parsing is exempt from timezone-awareness checks).
+        # Recognized scalars and the missing marker are converted to the scalar
+        # type and checked for compatibility (a type error becomes an
+        # invalid-comparison error). Non-list-likes raise invalid-comparison;
+        # list-likes of the wrong length raise a value error saying lengths
+        # must match; otherwise the list-like is validated allowing object
+        # dtype, and compatibility is checked, where a type error is tolerated
+        # only for object-dtype input (compared element-wise later) and
+        # otherwise becomes invalid-comparison. Returns the converted operand.
         if isinstance(other, str):
             try:
                 # GH#18435 strings get a pass from tzawareness compat
@@ -583,6 +790,18 @@ class DatetimeLikeArrayMixin(OpsMixin, NDArrayBackedExtensionArray):
         allow_listlike: bool = False,
         unbox: bool = True,
     ):
+        # [FUNCTION DOC]
+        # HELPER: validates and converts one scalar. Parameters: value is the
+        # candidate; allow_listlike (keyword, default false) only changes the
+        # wording of the error message; unbox (keyword, default true) controls
+        # whether the scalar is converted to the raw stored value. Accepts
+        # instances of the scalar type, strings (parsed; parse failure becomes a
+        # type error), values that count as a valid missing marker for the dtype
+        # (converted to the missing marker), recognized scalar types (converted).
+        # Any other missing-like value, or anything unrecognized, raises a type
+        # error with a descriptive message. When unbox is false the boxed scalar
+        # is returned without the unboxing/compatibility check. Returns the raw
+        # value or the boxed scalar.
         """
         Validate that the input value can be cast to our scalar_type.
 
@@ -638,6 +857,13 @@ class DatetimeLikeArrayMixin(OpsMixin, NDArrayBackedExtensionArray):
         return self._unbox_scalar(value)
 
     def _validation_error_message(self, value, allow_listlike: bool = False) -> str:
+        # [FUNCTION DOC]
+        # HELPER: builds the text for validation failures. Parameters: value is
+        # the offending input; allow_listlike (default false) selects wording
+        # that also permits arrays. Describes the input as "<dtype> array" for
+        # array-like values with a dimension, otherwise by its type name, and
+        # states which scalar type or missing marker was expected. Returns the
+        # message string; does not raise.
         """
         Construct an exception message on validation error.
 
@@ -669,6 +895,22 @@ class DatetimeLikeArrayMixin(OpsMixin, NDArrayBackedExtensionArray):
         return msg
 
     def _validate_listlike(self, value, allow_object: bool = False):
+        # [FUNCTION DOC]
+        # HELPER: coerces a list-like into an array of this class's type.
+        # Parameters: value is any list-like; allow_object (default false) lets
+        # object-dtype results through unconverted. Steps: an instance of the
+        # same class is returned (cast to this unit for datetime/time delta kinds
+        # unless allow_object, without rounding); an empty list becomes an empty
+        # array of this dtype; object arrays whose inferred type is compatible
+        # are parsed (failures return the input when allow_object, otherwise
+        # raise a type error); lists become object arrays; object arrays are
+        # converted by the generic object converter with all-missing results
+        # given this dtype; then general array construction runs. An all-string
+        # result is parsed to this dtype (errors ignored). A categorical whose
+        # categories have this dtype is replaced by its values. Raises a type
+        # error when the resulting dtype is not recognized (unless object is
+        # allowed). Finally non-allow_object datetime/time delta values are cast
+        # to this unit without rounding. Returns the converted array.
         if isinstance(value, type(self)):
             if self.dtype.kind in "mM" and not allow_object and self.unit != value.unit:  # type: ignore[attr-defined]
                 # error: "DatetimeLikeArrayMixin" has no attribute "as_unit"
@@ -735,6 +977,13 @@ class DatetimeLikeArrayMixin(OpsMixin, NDArrayBackedExtensionArray):
         return value
 
     def _validate_setitem_value(self, value):
+        # [FUNCTION DOC]
+        # HELPER: validates a value being assigned. Parameter value is a scalar
+        # or list-like. Scalars go through the scalar validator (returning the
+        # raw stored value, with error wording that mentions array inputs);
+        # list-likes are validated into an array of this class and then
+        # unboxed to the backing numpy array. Raises type errors from the
+        # validators.
         if is_list_like(value):
             value = self._validate_listlike(value)
         else:
@@ -744,6 +993,11 @@ class DatetimeLikeArrayMixin(OpsMixin, NDArrayBackedExtensionArray):
 
     @final
     def _unbox(self, other) -> np.int64 | np.datetime64 | np.timedelta64 | np.ndarray:
+        # [FUNCTION DOC]
+        # HELPER (final, not overridable): unboxes an operand. Parameter other is
+        # either a scalar or an instance of this array type. A scalar is
+        # converted with the scalar unboxing hook; an array is checked for
+        # compatibility (may raise) and its backing numpy array is returned.
         """
         Unbox either a scalar with _unbox_scalar or an instance of our own type.
         """
@@ -762,6 +1016,14 @@ class DatetimeLikeArrayMixin(OpsMixin, NDArrayBackedExtensionArray):
 
     @ravel_compat
     def map(self, mapper, na_action: Literal["ignore"] | None = None):
+        # [FUNCTION DOC]
+        # Applies a mapping to every element (decorated so multi-dimensional
+        # arrays are flattened and restored). Parameters: mapper is a function,
+        # dict or series; na_action is none or "ignore" (skip missing values).
+        # The result of the generic array mapper is wrapped in an index so types
+        # are inferred. Returns a numpy array of tuples-as-objects if the index
+        # is a multi-level index, otherwise the index's underlying array (which
+        # may be a datetime-like or other array).
         from pandas import Index
 
         result = map_array(self, mapper, na_action=na_action)
@@ -773,6 +1035,16 @@ class DatetimeLikeArrayMixin(OpsMixin, NDArrayBackedExtensionArray):
             return result.array
 
     def isin(self, values: ArrayLike) -> npt.NDArray[np.bool_]:
+        # [FUNCTION DOC]
+        # Membership test. Parameter values is an array or extension array.
+        # Returns a boolean array shaped like self. Numeric kinds (float,
+        # integer, unsigned, complex) never match, giving all false. Other
+        # inputs are wrapped as datetime-like if possible; non-matching types
+        # give all false except object arrays, which are first converted to a
+        # datetime-like array if possible (then retried) or else compared
+        # element-wise as objects. For same-type values, the unit is aligned for
+        # datetime/time delta; incompatible timezones/frequencies give all
+        # false; otherwise the integer representations are compared.
         """
         Compute boolean array of whether each value is found in the
         passed set of values.
@@ -828,10 +1100,17 @@ class DatetimeLikeArrayMixin(OpsMixin, NDArrayBackedExtensionArray):
     # Null Handling
 
     def isna(self) -> npt.NDArray[np.bool_]:
+        # [FUNCTION DOC]
+        # Returns the boolean missing-value mask (true where missing), the same
+        # object as the internal missing-mask property.
         return self._isnan
 
     @property  # NB: override with cache_readonly in immutable subclasses
     def _isnan(self) -> npt.NDArray[np.bool_]:
+        # [FUNCTION DOC]
+        # HELPER: property computing the missing mask by comparing the integer
+        # view to the missing sentinel (the minimum 64-bit integer). Returns a
+        # new boolean array each access unless overridden with a cache.
         """
         return if each value is nan
         """
@@ -839,6 +1118,9 @@ class DatetimeLikeArrayMixin(OpsMixin, NDArrayBackedExtensionArray):
 
     @property  # NB: override with cache_readonly in immutable subclasses
     def _hasna(self) -> bool:
+        # [FUNCTION DOC]
+        # HELPER: property that is true if any element is missing; lets callers
+        # skip masking work when there are none.
         """
         return if I have any nans; enables various perf speedups
         """
@@ -847,6 +1129,19 @@ class DatetimeLikeArrayMixin(OpsMixin, NDArrayBackedExtensionArray):
     def _maybe_mask_results(
         self, result: np.ndarray, fill_value=iNaT, convert=None
     ) -> np.ndarray:
+        # [FUNCTION DOC]
+        # HELPER: overwrites entries of a computed result at positions where this
+        # array is missing. Parameters: result is a numpy array of the same
+        # length; fill_value is the value written, default the integer missing
+        # sentinel (none means not-a-number); convert is an optional dtype the
+        # result is cast to before masking (only when there is any missing
+        # value). If nothing is missing the result is returned untouched
+        # (note: then convert is not applied either). Otherwise the (possibly
+        # cast) result is modified in place and returned.
+        # KNOWN ISSUE: the docstring's summary lines about masking appear after
+        # the Returns section and the described return type is loose; behavior
+        # differs from the "convert if not None" description when there are no
+        # missing values, because conversion is skipped.
         """
         Parameters
         ----------
@@ -876,6 +1171,9 @@ class DatetimeLikeArrayMixin(OpsMixin, NDArrayBackedExtensionArray):
 
     @property
     def freqstr(self) -> str | None:
+        # [FUNCTION DOC]
+        # Property returning the frequency's string alias, or none when no
+        # frequency is set.
         """
         Return the frequency object as a string if it's set, otherwise None.
 
@@ -912,6 +1210,11 @@ class DatetimeLikeArrayMixin(OpsMixin, NDArrayBackedExtensionArray):
 
     @property  # NB: override with cache_readonly in immutable subclasses
     def inferred_freq(self) -> str | None:
+        # [FUNCTION DOC]
+        # Property that tries to infer a frequency from the values. Returns none
+        # for non one-dimensional data or when the inference helper raises a
+        # value error (too few points, irregular spacing); otherwise returns the
+        # frequency alias string. Immutable subclasses cache the result.
         """
         Tries to return a string representing a frequency generated by infer_freq.
 
@@ -948,6 +1251,11 @@ class DatetimeLikeArrayMixin(OpsMixin, NDArrayBackedExtensionArray):
 
     @property  # NB: override with cache_readonly in immutable subclasses
     def _resolution_obj(self) -> Resolution | None:
+        # [FUNCTION DOC]
+        # HELPER: property deriving the resolution enum from the frequency
+        # string. Returns none when there is no frequency or the frequency alias
+        # is unknown (lookup failure is swallowed); otherwise the resolution
+        # object. Subclasses may override with a value-based computation.
         freqstr = self.freqstr
         if freqstr is None:
             return None
@@ -958,6 +1266,15 @@ class DatetimeLikeArrayMixin(OpsMixin, NDArrayBackedExtensionArray):
 
     @property  # NB: override with cache_readonly in immutable subclasses
     def resolution(self) -> str:
+        # [FUNCTION DOC]
+        # Property returning the name of the finest resolution needed to
+        # represent the values (as a lowercase word such as day or minute),
+        # taken from the resolution object's name attribute.
+        # KNOWN ISSUE: the docstring lists only down to microsecond, but
+        # nanosecond is also possible; and when the resolution object is none
+        # (for example no frequency in the base implementation) accessing the
+        # name attribute fails with an attribute error (suppressed for the type
+        # checker only).
         """
         Returns day, hour, minute, second, millisecond or microsecond
         """
@@ -969,20 +1286,48 @@ class DatetimeLikeArrayMixin(OpsMixin, NDArrayBackedExtensionArray):
 
     @property
     def _is_monotonic_increasing(self) -> bool:
+        # [FUNCTION DOC]
+        # HELPER: property; true when the values are non-decreasing, using the
+        # compiled monotonicity check on the integer view in time-like mode
+        # (missing values handled by that routine). Used by frequency inference.
         return algos.is_monotonic(self.asi8, timelike=True)[0]
 
     @property
     def _is_monotonic_decreasing(self) -> bool:
+        # [FUNCTION DOC]
+        # HELPER: property; true when the values are non-increasing, using the
+        # compiled monotonicity check on the integer view in time-like mode.
         return algos.is_monotonic(self.asi8, timelike=True)[1]
 
     @property
     def _is_unique(self) -> bool:
+        # [FUNCTION DOC]
+        # HELPER: property; true when no value repeats. Flattens the integer view
+        # in memory order, counts distinct entries and compares the count to the
+        # array size (all missing values count as one value).
         return len(unique1d(self.asi8.ravel("K"))) == self.size
 
     # ------------------------------------------------------------------
     # Arithmetic Methods
 
     def _cmp_method(self, other, op):
+        # [FUNCTION DOC]
+        # HELPER: implements all six comparison operators for the operator mixin.
+        # Parameters: other is the right-hand operand; op is the binary
+        # comparison function. Same-shaped multi-dimensional operands are
+        # flattened, compared, and reshaped. The operand is validated; an
+        # invalid comparison yields the "not implemented" signal for arrow-
+        # backed dtypes, else the generic invalid-comparison result (false for
+        # equality, true for inequality, or a type error for ordering).
+        # Object-dtype operands are compared element-wise via the object
+        # comparison helper. Comparing with the missing marker gives all true for
+        # not-equal and all false otherwise. Differing resolutions (non-period):
+        # a scalar is cast losslessly to this unit if possible, else both sides
+        # are compared with the mismatched-resolution routine; arrays of
+        # different resolution use that routine directly. Same resolution: the
+        # integer views are compared (faster), and positions where either side
+        # is missing are overwritten with true only for not-equal. Returns a
+        # boolean array shaped like self.
         if self.ndim > 1 and getattr(other, "shape", None) == self.shape:
             # TODO: handle 2D-like listlikes
             return op(self.ravel(), other.ravel()).reshape(self.shape)
@@ -1058,6 +1403,13 @@ class DatetimeLikeArrayMixin(OpsMixin, NDArrayBackedExtensionArray):
     def _get_i8_values_and_mask(
         self, other
     ) -> tuple[int | npt.NDArray[np.int64], None | npt.NDArray[np.bool_]]:
+        # [FUNCTION DOC]
+        # HELPER (final): extracts integer data for overflow-safe arithmetic.
+        # Parameter other is a period, timestamp, time delta, or a datetime-like
+        # array. Returns a pair: the integer value(s) (ordinal for a period,
+        # stored integer for a timestamp/time delta, the integer view for
+        # arrays) and a boolean missing mask (none for scalars, the array's mask
+        # for arrays).
         """
         Get the int64 values and b_mask to pass to add_overflowsafe.
         """
@@ -1075,6 +1427,15 @@ class DatetimeLikeArrayMixin(OpsMixin, NDArrayBackedExtensionArray):
 
     @final
     def _get_arithmetic_result_freq(self, other) -> BaseOffset | None:
+        # [FUNCTION DOC]
+        # HELPER (final): decides whether the frequency survives an addition or
+        # subtraction. Parameter other is the operand. Period arrays always keep
+        # their frequency. Non-scalar operands drop it (none). For scalars it is
+        # kept when: the frequency is a fixed-duration offset; the array is time
+        # deltas and the operand is a time delta; the array is time deltas and
+        # the operand is a timestamp that is naive or UTC; the array is
+        # datetimes with a day frequency and the operand is a time delta or a
+        # timestamp. Otherwise none.
         """
         Check if we can preserve self.freq in addition or subtraction.
         """
@@ -1117,6 +1478,19 @@ class DatetimeLikeArrayMixin(OpsMixin, NDArrayBackedExtensionArray):
 
     @final
     def _add_datetimelike_scalar(self, other) -> DatetimeArray:
+        # [FUNCTION DOC]
+        # HELPER (final): time delta array plus a datetime scalar. Parameter
+        # other is a datetime, timestamp or numpy datetime. Raises a type error
+        # if self is not a time delta array. A numpy not-a-time is treated as a
+        # datetime (not as a time delta) and yields an all-missing datetime
+        # array at self's unit. Otherwise the scalar is converted to a
+        # timestamp, units are matched, an overflow-safe integer addition is
+        # done, and the result is a datetime array with the scalar's timezone
+        # and a frequency decided by the arithmetic frequency helper.
+        # KNOWN ISSUE: the code asserts the operand is not the missing marker
+        # yet handles missing values just before; and it computes the
+        # reinterpreted result values twice (redundant), and the mask returned
+        # by the integer extraction helper is unused.
         if not lib.is_np_dtype(self.dtype, "m"):
             raise TypeError(
                 f"cannot add {type(self).__name__} and {type(other).__name__}"
@@ -1151,6 +1525,11 @@ class DatetimeLikeArrayMixin(OpsMixin, NDArrayBackedExtensionArray):
 
     @final
     def _add_datetime_arraylike(self, other: DatetimeArray) -> DatetimeArray:
+        # [FUNCTION DOC]
+        # HELPER (final): time delta array plus a datetime array. Raises a type
+        # error if self is not a time delta array; otherwise defers to the
+        # datetime array's own addition (operands swapped) and returns its
+        # result.
         if not lib.is_np_dtype(self.dtype, "m"):
             raise TypeError(
                 f"cannot add {type(self).__name__} and {type(other).__name__}"
@@ -1163,6 +1542,13 @@ class DatetimeLikeArrayMixin(OpsMixin, NDArrayBackedExtensionArray):
     def _sub_datetimelike_scalar(
         self, other: datetime | np.datetime64
     ) -> TimedeltaArray:
+        # [FUNCTION DOC]
+        # HELPER (final): datetime array minus a datetime scalar. Parameter other
+        # is a datetime or numpy datetime. Raises a type error if self is not a
+        # datetime array. A missing-like scalar is handled by subtracting the
+        # missing marker (all-missing time deltas). Otherwise the scalar becomes
+        # a timestamp, resolutions are matched, and the shared datetime
+        # subtraction runs. Returns a time delta array.
         if self.dtype.kind != "M":
             raise TypeError(f"cannot subtract a datelike from a {type(self).__name__}")
 
@@ -1180,6 +1566,13 @@ class DatetimeLikeArrayMixin(OpsMixin, NDArrayBackedExtensionArray):
 
     @final
     def _sub_datetime_arraylike(self, other: DatetimeArray) -> TimedeltaArray:
+        # [FUNCTION DOC]
+        # HELPER (final): datetime array minus a datetime array. Raises a type
+        # error if self is not a datetime array and a value error if the lengths
+        # differ (the message wrongly says "add"). Matches resolutions and runs
+        # the shared datetime subtraction. Returns a time delta array.
+        # KNOWN ISSUE: the length-mismatch error message says "cannot add
+        # indices of unequal length" although this is a subtraction.
         if self.dtype.kind != "M":
             raise TypeError(f"cannot subtract a datelike from a {type(self).__name__}")
 
@@ -1193,6 +1586,14 @@ class DatetimeLikeArrayMixin(OpsMixin, NDArrayBackedExtensionArray):
 
     @final
     def _sub_datetimelike(self, other: Timestamp | DatetimeArray) -> TimedeltaArray:
+        # [FUNCTION DOC]
+        # HELPER (final): shared core of datetime subtraction; resolutions must
+        # already match. Parameter other is a timestamp or datetime array. A
+        # naive/aware mismatch is re-raised with the word "compare" replaced by
+        # "subtract" in the message. Computes an overflow-safe integer
+        # difference and wraps it as a time delta array of self's unit, with a
+        # frequency chosen by the arithmetic frequency helper. The returned
+        # mask from the integer extraction helper is unused.
         self = cast("DatetimeArray", self)
 
         from pandas.core.arrays import TimedeltaArray
@@ -1213,6 +1614,12 @@ class DatetimeLikeArrayMixin(OpsMixin, NDArrayBackedExtensionArray):
 
     @final
     def _add_period(self, other: Period) -> PeriodArray:
+        # [FUNCTION DOC]
+        # HELPER (final): time delta array plus a period scalar. Raises a type
+        # error if self is not a time delta array. Builds a period array of the
+        # same shape filled with the scalar's ordinal and frequency and returns
+        # the result of adding self to it (the period array's addition does the
+        # work).
         if not lib.is_np_dtype(self.dtype, "m"):
             raise TypeError(f"cannot add Period to a {type(self).__name__}")
 
@@ -1225,9 +1632,20 @@ class DatetimeLikeArrayMixin(OpsMixin, NDArrayBackedExtensionArray):
         return parr + self
 
     def _add_offset(self, offset):
+        # [FUNCTION DOC]
+        # HELPER: abstract hook for adding a calendar offset. Parameter offset is
+        # the offset. Always raises the abstract-method error; datetime and
+        # period arrays override it.
         raise AbstractMethodError(self)
 
     def _add_timedeltalike_scalar(self, other):
+        # [FUNCTION DOC]
+        # HELPER: adds a time-delta-like scalar (time delta, numpy time delta or
+        # fixed-duration offset). Parameter other is the scalar. A missing-like
+        # scalar produces an all-missing array of self's dtype. Otherwise the
+        # scalar is converted to a time delta, units are matched, and the
+        # shared time-delta addition runs. Period arrays override this.
+        # Returns an array of the same type as self.
         """
         Add a delta of a timedeltalike
 
@@ -1248,6 +1666,11 @@ class DatetimeLikeArrayMixin(OpsMixin, NDArrayBackedExtensionArray):
         return self._add_timedeltalike(other)
 
     def _add_timedelta_arraylike(self, other: TimedeltaArray) -> Self:
+        # [FUNCTION DOC]
+        # HELPER: adds a time delta array element-wise. Parameter other is a
+        # time delta array. Raises a value error if lengths differ (period
+        # arrays override this method). Matches resolutions and runs the shared
+        # time-delta addition. Returns an array of the same type as self.
         """
         Add a delta of a TimedeltaIndex
 
@@ -1267,6 +1690,13 @@ class DatetimeLikeArrayMixin(OpsMixin, NDArrayBackedExtensionArray):
 
     @final
     def _add_timedeltalike(self, other: Timedelta | TimedeltaArray) -> Self:
+        # [FUNCTION DOC]
+        # HELPER (final): shared integer addition of a time delta or time delta
+        # array whose resolution already matches self. Uses overflow-safe
+        # addition on the integer views (raising on overflow), reinterprets as
+        # self's backing dtype, and builds a new array of self's type and dtype
+        # with the frequency from the arithmetic frequency helper. The returned
+        # mask from the integer extraction helper is unused.
         other_i8, o_mask = self._get_i8_values_and_mask(other)
         new_values = add_overflowsafe(self.asi8, np.asarray(other_i8, dtype="i8"))
         res_values = new_values.view(self._ndarray.dtype)
@@ -1282,6 +1712,11 @@ class DatetimeLikeArrayMixin(OpsMixin, NDArrayBackedExtensionArray):
 
     @final
     def _add_nat(self) -> Self:
+        # [FUNCTION DOC]
+        # HELPER (final): adds the missing marker. Raises a type error for period
+        # arrays. For datetime and time delta arrays (where the marker acts like
+        # a time delta) returns a new array of the same dtype, all missing, with
+        # no frequency.
         """
         Add pd.NaT to self
         """
@@ -1304,6 +1739,10 @@ class DatetimeLikeArrayMixin(OpsMixin, NDArrayBackedExtensionArray):
 
     @final
     def _sub_nat(self) -> np.ndarray:
+        # [FUNCTION DOC]
+        # HELPER (final): subtracts the missing marker. Returns a plain numpy
+        # time delta array, all missing, shaped like self: with self's unit for
+        # datetime and time delta arrays, nanoseconds for periods.
         """
         Subtract pd.NaT from self
         """
@@ -1324,6 +1763,14 @@ class DatetimeLikeArrayMixin(OpsMixin, NDArrayBackedExtensionArray):
 
     @final
     def _sub_periodlike(self, other: Period | PeriodArray) -> npt.NDArray[np.object_]:
+        # [FUNCTION DOC]
+        # HELPER (final): period array minus a period or period array. Raises a
+        # type error if self is not a period array, and whatever the
+        # compatibility check raises for a frequency mismatch. Computes
+        # overflow-safe ordinal differences and turns each into a multiple of
+        # the base offset of the frequency. Positions where either side is
+        # missing are set to the missing marker. Returns an object array of
+        # offsets.
         # If the operation is well-defined, we return an object-dtype ndarray
         # of DateOffsets.  Null entries are filled with pd.NaT
         if not isinstance(self.dtype, PeriodDtype):
@@ -1349,6 +1796,16 @@ class DatetimeLikeArrayMixin(OpsMixin, NDArrayBackedExtensionArray):
 
     @final
     def _addsub_object_array(self, other: npt.NDArray[np.object_], op) -> np.ndarray:
+        # [FUNCTION DOC]
+        # HELPER (final): add or subtract an object array (typically offsets).
+        # Parameters: other is an object array; op is the addition or
+        # subtraction function (asserted). If other has one element and self is
+        # one-dimensional, applies op against that single element (so the result
+        # may be an array of the array type rather than an object array).
+        # Otherwise optionally emits a performance warning (when enabled),
+        # asserts the shapes are equal (caller must broadcast), and applies op
+        # between self converted to objects and other, returning the object
+        # array.
         """
         Add or subtract array-like of DateOffset objects
 
@@ -1385,6 +1842,12 @@ class DatetimeLikeArrayMixin(OpsMixin, NDArrayBackedExtensionArray):
         return res_values
 
     def _accumulate(self, name: str, *, skipna: bool = True, **kwargs) -> Self:
+        # [FUNCTION DOC]
+        # HELPER: running minimum/maximum. Parameters: name must be the
+        # cumulative-minimum or cumulative-maximum name, otherwise a type error
+        # is raised; skipna (keyword, default true) skips missing values; extra
+        # keyword arguments are forwarded. Applies the matching accumulation
+        # routine to a copy and returns a new array of the same type and dtype.
         if name not in {"cummin", "cummax"}:
             raise TypeError(f"Accumulation {name} not supported for {type(self)}")
 
@@ -1395,6 +1858,19 @@ class DatetimeLikeArrayMixin(OpsMixin, NDArrayBackedExtensionArray):
 
     @unpack_zerodim_and_defer("__add__")
     def __add__(self, other):
+        # [FUNCTION DOC]
+        # Addition operator (decorated: zero-dimensional operands unpacked, and
+        # unsupported operands defer). Parameter other is the right operand.
+        # Dispatch order for scalars: missing marker, fixed-duration offsets /
+        # time deltas, day offsets (treated as fixed 24 hours for datetime and
+        # time delta arrays), other calendar offsets, datetimes, periods (time
+        # delta arrays only), integers (period arrays only, scaled by the
+        # frequency multiple; otherwise raises the integer-operation error). For
+        # arrays: time delta dtype, object dtype (offsets), datetime dtypes
+        # (returned directly), integer dtype (period only). Anything else
+        # returns the "not implemented" signal. A numpy time delta result is
+        # wrapped into a time delta array. Returns an array of the appropriate
+        # type; may raise type errors from the helpers.
         other_dtype = getattr(other, "dtype", None)
         other = ensure_wrapped_if_datetimelike(other)
 
@@ -1454,11 +1930,24 @@ class DatetimeLikeArrayMixin(OpsMixin, NDArrayBackedExtensionArray):
         return result
 
     def __radd__(self, other):
+        # [FUNCTION DOC]
+        # Reflected addition; addition is treated as commutative, so this simply
+        # calls the forward addition and returns its result.
         # alias for __add__
         return self.__add__(other)
 
     @unpack_zerodim_and_defer("__sub__")
     def __sub__(self, other):
+        # [FUNCTION DOC]
+        # Subtraction operator (decorated like addition). Parameter other is the
+        # right operand. Scalars: missing marker; fixed-duration offsets / time
+        # deltas (added negated); day offsets (as 24 hours, negated); calendar
+        # offsets (negated); datetimes; integers (period arrays only);
+        # periods. Arrays: time delta dtype (added negated), object dtype
+        # (offsets), datetime dtypes, period dtype, integer dtype (period only).
+        # Anything else returns the "not implemented" signal. A numpy time
+        # delta result is wrapped into a time delta array. Raises type errors
+        # from helpers for unsupported combinations.
         other_dtype = getattr(other, "dtype", None)
         other = ensure_wrapped_if_datetimelike(other)
 
@@ -1518,6 +2007,17 @@ class DatetimeLikeArrayMixin(OpsMixin, NDArrayBackedExtensionArray):
         return result
 
     def __rsub__(self, other):
+        # [FUNCTION DOC]
+        # Reflected subtraction (other minus self). Parameter other is the left
+        # operand. If other is datetime data and self is time deltas, other is
+        # wrapped as a datetime array (unless it already is a datetime-like
+        # array) and the subtraction is flipped; a scalar numpy datetime is
+        # converted to a timestamp first. If self is datetimes and other has a
+        # non-datetime dtype, raises a type error. If self is periods and other
+        # is time-delta typed, raises a type error. If self is time deltas, the
+        # result is the negation of self plus other. Otherwise computes self
+        # minus other and negates it, raising a type error if that forward
+        # result is datetime-typed (unsupported reversed subtraction).
         other_dtype = getattr(other, "dtype", None)
         other_is_dt64 = lib.is_np_dtype(other_dtype, "M") or isinstance(
             other_dtype, DatetimeTZDtype
@@ -1559,6 +2059,11 @@ class DatetimeLikeArrayMixin(OpsMixin, NDArrayBackedExtensionArray):
         return -flipped
 
     def __iadd__(self, other) -> Self:
+        # [FUNCTION DOC]
+        # In-place addition. Parameter other is the right operand. Computes the
+        # sum, writes it into self's storage (which clears the frequency), then
+        # restores the frequency from the sum for non-period arrays. Mutates and
+        # returns self.
         result = self + other
         self[:] = result[:]
 
@@ -1568,6 +2073,11 @@ class DatetimeLikeArrayMixin(OpsMixin, NDArrayBackedExtensionArray):
         return self
 
     def __isub__(self, other) -> Self:
+        # [FUNCTION DOC]
+        # In-place subtraction. Parameter other is the right operand. Computes
+        # the difference, writes it into self's storage (clearing the
+        # frequency), then restores the frequency from the difference for
+        # non-period arrays. Mutates and returns self.
         result = self - other
         self[:] = result[:]
 
@@ -1585,10 +2095,25 @@ class DatetimeLikeArrayMixin(OpsMixin, NDArrayBackedExtensionArray):
         qs: npt.NDArray[np.float64],
         interpolation: str,
     ) -> Self:
+        # [FUNCTION DOC]
+        # HELPER: quantile computation (for period arrays this runs via the
+        # datetime-view dispatch decorator). Parameters: qs is a float array of
+        # quantiles in zero-to-one; interpolation is the interpolation method
+        # name. Delegates to the numpy-backed parent and returns an array of the
+        # same type.
         return super()._quantile(qs=qs, interpolation=interpolation)
 
     @_period_dispatch
     def min(self, *, axis: AxisInt | None = None, skipna: bool = True, **kwargs):
+        # [FUNCTION DOC]
+        # Minimum (period arrays go through the datetime-view dispatch
+        # decorator). Parameters (keyword only): axis is none or an axis number
+        # validated against the dimension count; skipna (default true) ignores
+        # missing values; other keyword arguments are validated against numpy's
+        # accepted ones and otherwise rejected. Uses the nan-aware minimum on the
+        # backing array and wraps the result as a scalar (or array for an axis
+        # reduction). Returns the missing marker if empty or all-missing with
+        # skipna.
         """
         Return the minimum value of the Array or minimum along
         an axis.
@@ -1607,6 +2132,10 @@ class DatetimeLikeArrayMixin(OpsMixin, NDArrayBackedExtensionArray):
 
     @_period_dispatch
     def max(self, *, axis: AxisInt | None = None, skipna: bool = True, **kwargs):
+        # [FUNCTION DOC]
+        # Maximum; mirrors the minimum method (same parameters and validation)
+        # but uses the nan-aware maximum on the backing array. Returns a scalar,
+        # or the missing marker when empty or all-missing with skipna.
         """
         Return the maximum value of the Array or maximum along
         an axis.
@@ -1624,6 +2153,13 @@ class DatetimeLikeArrayMixin(OpsMixin, NDArrayBackedExtensionArray):
         return self._wrap_reduction_result(axis, result)
 
     def mean(self, *, skipna: bool = True, axis: AxisInt | None = 0):
+        # [FUNCTION DOC]
+        # Arithmetic mean of datetimes or time deltas. Parameters (keyword only):
+        # skipna (default true) ignores missing values; axis (default 0) is the
+        # axis to reduce. Raises a type error for period arrays (ambiguous
+        # meaning, suggesting conversion to timestamps). Uses the nan-aware mean
+        # on the backing array with the missing mask and wraps the result as a
+        # scalar (or array).
         """
         Return the mean value of the Array.
 
@@ -1683,6 +2219,13 @@ class DatetimeLikeArrayMixin(OpsMixin, NDArrayBackedExtensionArray):
 
     @_period_dispatch
     def median(self, *, axis: AxisInt | None = None, skipna: bool = True, **kwargs):
+        # [FUNCTION DOC]
+        # Median (period arrays via the datetime-view dispatch decorator).
+        # Parameters (keyword only): axis is none or an axis number; skipna
+        # (default true) ignores missing values; other keyword arguments are
+        # validated against numpy's accepted set. Raises a value error when the
+        # absolute axis is not smaller than the dimension count. Returns the
+        # wrapped scalar/array result of the nan-aware median.
         nv.validate_median((), kwargs)
 
         if axis is not None and abs(axis) >= self.ndim:
@@ -1692,6 +2235,12 @@ class DatetimeLikeArrayMixin(OpsMixin, NDArrayBackedExtensionArray):
         return self._wrap_reduction_result(axis, result)
 
     def _mode(self, dropna: bool = True):
+        # [FUNCTION DOC]
+        # HELPER: most frequent value(s). Parameter dropna (default true) excludes
+        # missing values. Computes the mode of the integer view (using the
+        # missing mask when dropping) and rebuilds an array of the same type
+        # from the result. Returns that array (possibly several modes, sorted by
+        # the mode routine).
         mask = None
         if dropna:
             mask = self.isna()
@@ -1714,6 +2263,22 @@ class DatetimeLikeArrayMixin(OpsMixin, NDArrayBackedExtensionArray):
         ids: npt.NDArray[np.intp],
         **kwargs,
     ):
+        # [FUNCTION DOC]
+        # HELPER: group-wise aggregation entry point used by the groupby engine.
+        # Parameters (keyword only): how is the operation name; has_dropped_na
+        # says whether missing group keys were dropped; min_count is the minimum
+        # non-missing count; ngroups is the number of groups; ids is the integer
+        # group label for each row; extra keyword arguments are forwarded to the
+        # compiled operation. Rejects unsupported operations with type errors:
+        # for datetimes and periods, sum/product/cumulative sum and product/
+        # variance/skew/kurtosis plus any/all; for time deltas, product,
+        # cumulative product, skew, kurtosis, variance. All supported
+        # operations are order-based, so the data is viewed as naive nanosecond
+        # datetimes, run through the compiled groupby operator, and the result
+        # is mapped back: operations on the no-cast list (rank) return the raw
+        # result; standard deviation / standard error give a time delta array
+        # (a type error for periods); everything else is reinterpreted as the
+        # original dtype and rebuilt as an array of the same type.
         dtype = self.dtype
         if dtype.kind == "M":
             # Adding/multiplying datetimes is not valid
@@ -1780,11 +2345,22 @@ class DatetimeLikeArrayMixin(OpsMixin, NDArrayBackedExtensionArray):
 
 
 class DatelikeOps(DatetimeLikeArrayMixin):
+    # [CLASS DOC]
+    # Mixin for arrays holding calendar dates (datetime and period arrays, not
+    # time deltas). Subclass of the datetime-like mixin; adds the string
+    # formatting method (strftime). No extra state.
     """
     Common ops for DatetimeIndex/PeriodIndex, but not TimedeltaIndex.
     """
 
     def strftime(self, date_format: str) -> npt.NDArray[np.object_]:
+        # [FUNCTION DOC]
+        # Formats each value as text. Parameter date_format is a standard-library
+        # strftime pattern (period arrays also accept their extra directives).
+        # Calls the native-type formatter with that pattern and not-a-number as
+        # the missing-value text. Returns an object array of strings, or, when
+        # the global string-dtype option is on, an array of the string extension
+        # dtype using not-a-number as its missing value.
         """
         Convert to Index using specified date_format.
 
@@ -1838,16 +2414,34 @@ class DatelikeOps(DatetimeLikeArrayMixin):
 
 
 class TimelikeOps(DatetimeLikeArrayMixin):
+    # [CLASS DOC]
+    # Mixin for arrays with a numpy datetime/time-delta backing and an optional
+    # fixed frequency (datetime and time delta arrays, not periods). Subclass of
+    # the datetime-like mixin. State: the stored frequency offset (or none),
+    # accessed through a validating property; the unit and the compiled
+    # resolution code, both derived from the dtype and cached. Key methods:
+    # frequency property, pinning/validating frequencies in constructors, unit
+    # conversion, rounding (round, floor, ceil), any/all, factorize, take,
+    # concatenation, copy, and interpolation. Subclasses must implement the
+    # dtype validation and range generation hooks.
+    # Invariant: when a frequency is set, the values lie exactly on it (checked
+    # at assignment); mutation clears it.
     """
     Common ops for TimedeltaIndex/DatetimeIndex, but not PeriodIndex.
     """
 
     @classmethod
     def _validate_dtype(cls, values, dtype):
+        # [FUNCTION DOC]
+        # HELPER: abstract hook that validates a dtype against a data buffer
+        # during construction. Parameters values and dtype. Always raises the
+        # abstract-method error here.
         raise AbstractMethodError(cls)
 
     @property
     def freq(self):
+        # [FUNCTION DOC]
+        # Property returning the stored frequency offset, or none.
         """
         Return the frequency object if it is set, otherwise None.
 
@@ -1878,6 +2472,13 @@ class TimelikeOps(DatetimeLikeArrayMixin):
 
     @freq.setter
     def freq(self, value) -> None:
+        # [FUNCTION DOC]
+        # Frequency setter with validation. Parameter value is an offset, a
+        # frequency string, or none (clears). Non-none values are converted to an
+        # offset and validated against the data (a value error if the values do
+        # not conform). For time deltas the offset must be a fixed-duration or
+        # day offset (otherwise a type error). Multi-dimensional arrays cannot
+        # have a frequency (value error). On success stores the offset.
         if value is not None:
             value = to_offset(value)
             self._validate_frequency(self, value)
@@ -1891,6 +2492,16 @@ class TimelikeOps(DatetimeLikeArrayMixin):
 
     @final
     def _maybe_pin_freq(self, freq, validate_kwds: dict) -> None:
+        # [FUNCTION DOC]
+        # HELPER (final): constructor helper that decides the stored frequency.
+        # Parameters: freq is what the caller asked for: none (force no
+        # frequency), the string "infer" (infer if not already known), the
+        # not-given sentinel (keep whatever was inferred from the input), or an
+        # offset/string; validate_kwds are extra keyword arguments passed to the
+        # validator (such as the ambiguity mode). With an explicit frequency:
+        # if none is currently stored it is validated against the values and
+        # stored; otherwise it is only checked for conflict with the stored one
+        # (value error on mismatch). Mutates self; returns nothing.
         """
         Constructor helper to pin the appropriate `freq` attribute.  Assumes
         that self._freq is currently set to any freq inferred in
@@ -1925,6 +2536,17 @@ class TimelikeOps(DatetimeLikeArrayMixin):
     @final
     @classmethod
     def _validate_frequency(cls, index, freq: BaseOffset, **kwargs) -> None:
+        # [FUNCTION DOC]
+        # HELPER (final class method): checks that a frequency matches the data.
+        # Parameters: index is the array/index of values; freq is the offset to
+        # validate; extra keyword arguments are forwarded to the range
+        # generator. Returns nothing. Succeeds immediately for empty data or
+        # when the inferred frequency string equals the offset's string.
+        # Otherwise generates a range from the first value with the same length
+        # and offset and requires it to equal the data; any mismatch (or a
+        # failure such as a missing first value) raises a value error saying the
+        # inferred frequency does not conform to the passed one, except an error
+        # mentioning non-fixed frequencies is re-raised unchanged.
         """
         Validate that a frequency is compatible with the values of a given
         Datetime Array/Index or Timedelta Array/Index
@@ -1970,16 +2592,27 @@ class TimelikeOps(DatetimeLikeArrayMixin):
     def _generate_range(
         cls, start, end, periods: int | None, freq, *args, **kwargs
     ) -> Self:
+        # [FUNCTION DOC]
+        # HELPER: abstract hook that generates a regular range. Parameters: start,
+        # end, periods, freq, plus extra arguments. Always raises the
+        # abstract-method error here; datetime and time delta arrays implement it.
         raise AbstractMethodError(cls)
 
     # --------------------------------------------------------------
 
     @cache_readonly
     def _creso(self) -> int:
+        # [FUNCTION DOC]
+        # HELPER: cached property giving the compiled library's integer code of
+        # the backing dtype's time unit.
         return get_unit_from_dtype(self._ndarray.dtype)
 
     @cache_readonly
     def unit(self) -> TimeUnit:
+        # [FUNCTION DOC]
+        # Cached property returning the resolution of the data as one of the
+        # strings for seconds, milliseconds, microseconds or nanoseconds,
+        # derived from the dtype by the module-level unit helper.
         """
         The precision unit of the datetime data.
 
@@ -2008,6 +2641,15 @@ class TimelikeOps(DatetimeLikeArrayMixin):
         return dtype_to_unit(self.dtype)  # type: ignore[return-value,arg-type]
 
     def as_unit(self, unit: TimeUnit, round_ok: bool = True) -> Self:
+        # [FUNCTION DOC]
+        # Converts to a different resolution. Parameters: unit must be one of the
+        # seconds, milliseconds, microseconds, nanoseconds strings (otherwise a
+        # value error); round_ok (default true) allows lossy conversion, and if
+        # false a conversion needing rounding raises a value error. Overflow
+        # during the cast raises an out-of-bounds error from the compiled cast.
+        # The new dtype keeps the kind and, for timezone-aware data, the
+        # timezone. Returns a new array of the same type with the same
+        # frequency.
         """
         Convert to a dtype with the given unit resolution.
 
@@ -2072,6 +2714,12 @@ class TimelikeOps(DatetimeLikeArrayMixin):
     # TODO: annotate other as DatetimeArray | TimedeltaArray | Timestamp | Timedelta
     #  with the return type matching input type.  TypeVar?
     def _ensure_matching_resos(self, other):
+        # [FUNCTION DOC]
+        # HELPER: brings two operands to the finer of their two resolutions.
+        # Parameter other is a datetime-like array or scalar with a resolution
+        # attribute. Whichever operand has the coarser unit is converted to the
+        # other's unit (round-trip lossless since finer). Returns a pair
+        # (possibly new self, possibly new other).
         if self._creso != other._creso:
             # Just as with Timestamp/Timedelta, we cast to the higher resolution
             if self._creso < other._creso:
@@ -2083,6 +2731,13 @@ class TimelikeOps(DatetimeLikeArrayMixin):
     # --------------------------------------------------------------
 
     def __array_ufunc__(self, ufunc: np.ufunc, method: str, *inputs, **kwargs):
+        # [FUNCTION DOC]
+        # Numpy universal-function protocol. Parameters: ufunc is the numpy
+        # function; method is how it was invoked; inputs are the operands; extra
+        # keyword arguments are forwarded. The single-operand missing/infinite/
+        # finite checks applied to self run directly on the backing array
+        # (newer numpy no longer raises for these on datetime kinds). Everything
+        # else defers to the parent protocol. Returns the ufunc result.
         if (
             ufunc in [np.isnan, np.isinf, np.isfinite]
             and len(inputs) == 1
@@ -2094,6 +2749,18 @@ class TimelikeOps(DatetimeLikeArrayMixin):
         return super().__array_ufunc__(ufunc, method, *inputs, **kwargs)
 
     def _round(self, freq, mode, ambiguous, nonexistent):
+        # [FUNCTION DOC]
+        # HELPER: shared implementation of rounding, flooring and ceiling.
+        # Parameters: freq is a fixed frequency (string or offset); mode is the
+        # rounding mode enum (nearest-even, toward minus infinity, toward plus
+        # infinity); ambiguous and nonexistent are the localization modes used
+        # for timezone-aware data. Aware data is rounded in local wall time
+        # (convert to naive, round, localize back with the given modes). Naive
+        # data: the frequency is converted to a count of the array's units; a
+        # zero count returns a copy; otherwise the integer values are rounded to
+        # a multiple of that count, positions that were missing are restored,
+        # and a new array is built (no frequency kept). Errors for non-fixed
+        # frequencies come from the unit conversion. Returns a new array.
         # round the local times
         if isinstance(self.dtype, DatetimeTZDtype):
             # operate on naive timestamps, then convert back to aware
@@ -2121,6 +2788,13 @@ class TimelikeOps(DatetimeLikeArrayMixin):
         ambiguous: TimeAmbiguous = "raise",
         nonexistent: TimeNonexistent = "raise",
     ) -> Self:
+        # [FUNCTION DOC]
+        # Rounds to the nearest multiple of a fixed frequency, ties to even.
+        # Parameters: freq is a fixed frequency string/offset; ambiguous and
+        # nonexistent (default raise) only matter for timezone-aware data and
+        # control re-localization after rounding in local time. Delegates to the
+        # shared rounding helper. Raises a value error for non-fixed
+        # frequencies. Returns a new array.
         """
         Perform round operation on the data to the specified `freq`.
 
@@ -2225,6 +2899,10 @@ class TimelikeOps(DatetimeLikeArrayMixin):
         ambiguous: TimeAmbiguous = "raise",
         nonexistent: TimeNonexistent = "raise",
     ) -> Self:
+        # [FUNCTION DOC]
+        # Rounds down (toward minus infinity) to a multiple of a fixed
+        # frequency. Same parameters, errors and result as the round method, but
+        # with the floor rounding mode.
         """
         Perform floor operation on the data to the specified `freq`.
 
@@ -2329,6 +3007,10 @@ class TimelikeOps(DatetimeLikeArrayMixin):
         ambiguous: TimeAmbiguous = "raise",
         nonexistent: TimeNonexistent = "raise",
     ) -> Self:
+        # [FUNCTION DOC]
+        # Rounds up (toward plus infinity) to a multiple of a fixed frequency.
+        # Same parameters, errors and result as the round method, but with the
+        # ceiling rounding mode.
         """
         Perform ceil operation on the data to the specified `freq`.
 
@@ -2431,10 +3113,19 @@ class TimelikeOps(DatetimeLikeArrayMixin):
     # Reductions
 
     def any(self, *, axis: AxisInt | None = None, skipna: bool = True) -> bool:
+        # [FUNCTION DOC]
+        # Reduction: true if any element is truthy (nonzero). Parameters
+        # (keyword only): axis (default none); skipna (default true) uses the
+        # missing mask to skip missing entries. Delegates to the nan-aware any
+        # on the backing array, which raises a type error for non time-delta
+        # dtypes. Returns a boolean.
         # GH#34479 the nanops call will raise a TypeError for non-td64 dtype
         return nanops.nanany(self._ndarray, axis=axis, skipna=skipna, mask=self.isna())
 
     def all(self, *, axis: AxisInt | None = None, skipna: bool = True) -> bool:
+        # [FUNCTION DOC]
+        # Reduction: true if all elements are truthy (nonzero). Same parameters
+        # and error behavior as the any method, using the nan-aware all.
         # GH#34479 the nanops call will raise a TypeError for non-td64 dtype
 
         return nanops.nanall(self._ndarray, axis=axis, skipna=skipna, mask=self.isna())
@@ -2443,9 +3134,22 @@ class TimelikeOps(DatetimeLikeArrayMixin):
     # Frequency Methods
 
     def _maybe_clear_freq(self) -> None:
+        # [FUNCTION DOC]
+        # HELPER: override of the mutation hook; unconditionally sets the stored
+        # frequency to none.
         self._freq = None
 
     def _with_freq(self, freq) -> Self:
+        # [FUNCTION DOC]
+        # HELPER: returns a view of the same data carrying a different frequency.
+        # Parameter freq is none (always allowed), the string "infer" (frequency
+        # inferred from the values, possibly none), or an offset when the array
+        # is empty (time delta arrays then require a fixed-duration or day
+        # offset, else a type error). The frequency is not validated against
+        # the data.
+        # KNOWN ISSUE: the docstring says an offset is accepted, but for a
+        # non-empty array an offset reaches an assertion that requires the
+        # string "infer", so an offset raises an assertion error there.
         """
         Helper to get a view on the same data, with a new freq.
 
@@ -2478,6 +3182,10 @@ class TimelikeOps(DatetimeLikeArrayMixin):
     # ExtensionArray Interface
 
     def _values_for_json(self) -> np.ndarray:
+        # [FUNCTION DOC]
+        # HELPER: values handed to the JSON writer. For numpy-dtype data returns
+        # the backing array directly (avoids a conversion); otherwise (aware
+        # datetimes) defers to the parent. Returns a numpy array.
         # Small performance bump vs the base class which calls np.asarray(self)
         if isinstance(self.dtype, np.dtype):
             return self._ndarray
@@ -2488,6 +3196,16 @@ class TimelikeOps(DatetimeLikeArrayMixin):
         use_na_sentinel: bool = True,
         sort: bool = False,
     ):
+        # [FUNCTION DOC]
+        # Encodes values as integer codes plus unique values. Parameters:
+        # use_na_sentinel (default true) encodes missing as the sentinel;
+        # sort (default false) sorts the uniques. With a frequency set, values
+        # are necessarily unique, so it short-circuits: codes are a simple range
+        # (reversed, with reversed uniques, when sorting a decreasing frequency),
+        # uniques are a copy (or a reversed slice, keeping the frequency).
+        # Without a frequency, sort=true raises a not-implemented error
+        # (callers are expected to use the top-level function), else defers to
+        # the parent. Returns the pair (codes, uniques).
         if self.freq is not None:
             # We must be unique, so can short-circuit (and retain freq)
             if sort and self.freq.n < 0:
@@ -2514,6 +3232,12 @@ class TimelikeOps(DatetimeLikeArrayMixin):
         to_concat: Sequence[Self],
         axis: AxisInt = 0,
     ) -> Self:
+        # [FUNCTION DOC]
+        # Class method concatenating same-typed arrays. Parameters: to_concat is
+        # a sequence of arrays (non-empty); axis (default 0). Delegates to the
+        # parent. Along axis 0, the first array's frequency is kept on the
+        # result if all non-empty inputs share it and each input starts exactly
+        # one frequency step after the previous input ends. Returns a new array.
         new_obj = super()._concat_same_type(to_concat, axis)
 
         obj = to_concat[0]
@@ -2531,6 +3255,9 @@ class TimelikeOps(DatetimeLikeArrayMixin):
         return new_obj
 
     def copy(self, order: str = "C") -> Self:
+        # [FUNCTION DOC]
+        # Returns a copy. Parameter order is the memory layout code, default C
+        # order. Delegates to the parent and carries over the frequency.
         new_obj = super().copy(order=order)
         new_obj._freq = self.freq
         return new_obj
@@ -2547,6 +3274,16 @@ class TimelikeOps(DatetimeLikeArrayMixin):
         copy: bool,
         **kwargs,
     ) -> Self:
+        # [FUNCTION DOC]
+        # Fills missing values by interpolation. Parameters (keyword only):
+        # method must be the linear method (any other raises a not-implemented
+        # error); axis is the axis to interpolate along; index is the index
+        # providing coordinates; limit, limit_direction, limit_area restrict
+        # how many/where gaps are filled; copy chooses between working on a copy
+        # and in place; extra keyword arguments are forwarded. Uses the 2-D
+        # in-place interpolation routine on the backing numpy array. With
+        # copy false the array itself is modified and returned; with copy true a
+        # new array of the same dtype is returned (no frequency carried).
         """
         See NDFrame.interpolate.__doc__.
         """
@@ -2581,6 +3318,13 @@ class TimelikeOps(DatetimeLikeArrayMixin):
         fill_value: Any = None,
         axis: AxisInt = 0,
     ) -> Self:
+        # [FUNCTION DOC]
+        # Selects elements by position. Parameters: indices is a sequence of
+        # integer positions; allow_fill (keyword, default false) treats negative
+        # indices as missing when true; fill_value (default none) is the
+        # replacement for filled slots; axis (default 0). Delegates to the
+        # parent, then, if the indices form a slice-equivalent sequence, assigns
+        # the frequency that the equivalent slice would have. Returns the result.
         result = super().take(
             indices=indices, allow_fill=allow_fill, fill_value=fill_value, axis=axis
         )
@@ -2599,6 +3343,12 @@ class TimelikeOps(DatetimeLikeArrayMixin):
 
     @property
     def _is_dates_only(self) -> bool:
+        # [FUNCTION DOC]
+        # HELPER: property; true if every non-missing value is a whole multiple of
+        # a day (midnight for datetimes, whole days for time deltas) and the
+        # data has no timezone (aware data returns false). Used to choose
+        # a compact display. Computed with integer arithmetic on the integer view
+        # using the number of periods per day for the unit.
         """
         Check if we are round times at midnight (and no timezone), which will
         be given a more compact __repr__ than other cases. For TimedeltaArray
@@ -2626,6 +3376,18 @@ class TimelikeOps(DatetimeLikeArrayMixin):
 def ensure_arraylike_for_datetimelike(
     data, copy: bool, cls_name: str
 ) -> tuple[ArrayLike, bool]:
+    # [FUNCTION DOC]
+    # Coerces constructor input into a numpy or extension array. Parameters: data
+    # is any input; copy is the caller's copy flag; cls_name names the target
+    # class for error messages. Inputs without a dtype (lists, tuples,
+    # generators) become one-dimensional object arrays (copy flag cleared;
+    # zero-dimensional non-list inputs such as generators are listed first).
+    # Multi-level indexes raise a type error. Otherwise the underlying array is
+    # extracted. Nullable integer arrays and integer arrow arrays become 64-bit
+    # integers with the missing sentinel; other arrow arrays are converted to
+    # numpy after datelike conversion; foreign array types are converted with
+    # numpy; categoricals are expanded to their category values (keeping
+    # timezone). Returns the array and the possibly updated copy flag.
     if not hasattr(data, "dtype"):
         # e.g. list, tuple
         if not isinstance(data, (list, tuple)) and np.ndim(data) == 0:
@@ -2663,14 +3425,28 @@ def ensure_arraylike_for_datetimelike(
 
 
 @overload
-def validate_periods(periods: None) -> None: ...
+def validate_periods(periods: None) -> None:
+    # [FUNCTION DOC]
+    # Typing overload: none in, none out. See the implementation below.
+    ...
 
 
 @overload
-def validate_periods(periods: int) -> int: ...
+def validate_periods(periods: int) -> int:
+    # [FUNCTION DOC]
+    # Typing overload: an integer in, an integer out. See the implementation
+    # below.
+    ...
 
 
 def validate_periods(periods: int | None) -> int | None:
+    # [FUNCTION DOC]
+    # Validates the period count passed to range constructors. Parameter periods
+    # is none or an integer (numpy integers count). Raises a type error if it is
+    # anything else. Returns the input unchanged (despite the docstring saying
+    # it casts to an integer, no cast is performed).
+    # KNOWN ISSUE: the docstring says the value is cast to an integer, but the
+    # function only validates and returns it as given.
     """
     If a `periods` argument is passed to the Datetime/Timedelta Array/Index
     constructor, cast it to an integer.
@@ -2698,6 +3474,13 @@ def validate_periods(periods: int | None) -> int | None:
 def _validate_inferred_freq(
     freq: BaseOffset | None, inferred_freq: BaseOffset | None
 ) -> BaseOffset | None:
+    # [FUNCTION DOC]
+    # HELPER: reconciles a user frequency with an inferred one. Parameters: freq
+    # is the user's offset or none; inferred_freq is the inferred offset or none.
+    # If an inferred frequency exists and the user gave a different one, raises
+    # a value error saying the inferred frequency does not conform. If the user
+    # gave none, the inferred one is returned; otherwise the user's frequency
+    # is returned (also when there is no inferred one).
     """
     If the user passes a freq and another freq is inferred from passed data,
     require that they match.
@@ -2725,6 +3508,13 @@ def _validate_inferred_freq(
 
 
 def dtype_to_unit(dtype: DatetimeTZDtype | np.dtype | ArrowDtype) -> str:
+    # [FUNCTION DOC]
+    # Returns the time-unit string of a datetime-like dtype. Parameter dtype is
+    # a timezone-aware datetime dtype (its unit attribute is returned), an
+    # arrow-backed dtype (must be of datetime or time-delta kind, otherwise a
+    # value error saying it has no resolution; the pyarrow unit is returned), or
+    # a numpy datetime/time-delta dtype (unit extracted from the dtype data).
+    # Used by the unit property and constructors.
     """
     Return the unit str corresponding to the dtype's resolution.
 

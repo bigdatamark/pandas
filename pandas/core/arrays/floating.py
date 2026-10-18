@@ -1,3 +1,13 @@
+# [MODULE DOC]
+# Nullable floating-point extension array and dtypes.
+# Public contents: the abstract floating dtype base, the array class for
+# nullable floats, the concrete 32-bit and 64-bit float dtypes, and a module
+# level mapping from numpy float dtypes to the matching nullable dtype
+# instances. Builds on the shared numeric array and dtype base classes from the
+# numeric array module; the array is exposed publicly through the arrays
+# namespace and the dtypes through the top-level namespace.
+# Import-time side effects: the two concrete dtype classes are registered with
+# the extension dtype registry, so their string aliases become resolvable.
 from __future__ import annotations
 
 from typing import (
@@ -23,6 +33,13 @@ if TYPE_CHECKING:
 
 
 class FloatingDtype(NumericDtype):
+    # [CLASS DOC]
+    # Base extension dtype for nullable floating-point data of a single width.
+    # Subclasses supply the name and scalar type. Class state: the internal fill
+    # value is not-a-number (used to fill masked slots in the data buffer without
+    # upcasting), the default numpy dtype is 64-bit float, and the checker is the
+    # generic float dtype predicate. Inherits the shared numeric dtype behavior;
+    # the methods here only wire up the array type and the dtype mapping.
     """
     An ExtensionDtype to hold a single size of floating dtype.
 
@@ -38,6 +55,9 @@ class FloatingDtype(NumericDtype):
     _checker: Callable[[Any], bool] = is_float_dtype
 
     def construct_array_type(self) -> type[FloatingArray]:
+        # [FUNCTION DOC]
+        # Takes no arguments. Returns the array class (not an instance) that
+        # stores data of this dtype, always the nullable floating array class.
         """
         Return the array type associated with this dtype.
 
@@ -49,10 +69,23 @@ class FloatingDtype(NumericDtype):
 
     @classmethod
     def _get_dtype_mapping(cls) -> dict[np.dtype, FloatingDtype]:
+        # [FUNCTION DOC]
+        # HELPER: hook used by the numeric dtype base class to translate numpy
+        # dtypes to nullable dtypes. Takes no arguments and returns the
+        # module-level mapping from numpy float dtypes to dtype instances (the
+        # shared object, not a copy).
         return NUMPY_FLOAT_TO_DTYPE
 
     @classmethod
     def _safe_cast(cls, values: np.ndarray, dtype: np.dtype, copy: bool) -> np.ndarray:
+        # [FUNCTION DOC]
+        # HELPER: hook used by the numeric dtype base class when converting raw
+        # data. Parameters: values is a numpy array, dtype is the target numpy
+        # dtype, copy says whether a copy is forced. Returns the values converted
+        # to the target dtype with the plain cast (float casts are treated as
+        # always safe, so no checking is done and no exception is raised here).
+        # Exists only for interface parity with the integer dtype, which does
+        # real lossless checking.
         """
         Safely cast the values to the given dtype.
 
@@ -65,6 +98,12 @@ class FloatingDtype(NumericDtype):
 
 @set_module("pandas.arrays")
 class FloatingArray(NumericArray):
+    # [CLASS DOC]
+    # Public nullable float array. State is inherited: a one-dimensional numpy
+    # float data buffer plus a boolean mask where true marks a missing value.
+    # All behavior comes from the numeric array base class; this subclass only
+    # binds the dtype class attribute to the floating dtype base, which is used
+    # to pick the concrete 32-bit or 64-bit dtype from the data.
     """
     Array of floating (optional missing) values.
 
@@ -173,6 +212,10 @@ Float64Dtype()
 @register_extension_dtype
 @set_module("pandas")
 class Float32Dtype(FloatingDtype):
+    # [CLASS DOC]
+    # Concrete nullable dtype for 32-bit floats (name "Float32"). Registered with
+    # the extension dtype registry; documentation text is generated from a
+    # shared template. No methods beyond those inherited.
     type = np.float32
     name: ClassVar[str] = "Float32"
     __doc__ = _dtype_docstring.format(dtype="float32")
@@ -181,6 +224,10 @@ class Float32Dtype(FloatingDtype):
 @register_extension_dtype
 @set_module("pandas")
 class Float64Dtype(FloatingDtype):
+    # [CLASS DOC]
+    # Concrete nullable dtype for 64-bit floats (name "Float64"). Registered with
+    # the extension dtype registry; documentation text is generated from a
+    # shared template. No methods beyond those inherited.
     type = np.float64
     name: ClassVar[str] = "Float64"
     __doc__ = _dtype_docstring.format(dtype="float64")
