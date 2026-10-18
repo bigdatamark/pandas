@@ -1,3 +1,24 @@
+# [MODULE DOC]
+# Tempita template generating the typed containers and hash table classes of
+# pandas._libs.hashtable (included by hashtable.pyx; .pxi output is generated).
+# Contents:
+# - to_khcomplex64_t/to_khcomplex128_t: convert numpy complex scalars to khash
+#   complex key structs.
+# - is_nan_<c_type> / are_equivalent_<c_type>: NaN test and key equality per key
+#   C type (floats/complex use NaN-aware equality cimported from khash.pxd).
+# - <Name>VectorData structs, append_data_<dtype> and needs_resize: raw growable
+#   buffers (pointer, size, capacity) usable without the GIL.
+# - Vector classes (<Name>Vector per numeric dtype, StringVector, ObjectVector):
+#   amortised-growth arrays that can hand their buffer out as an ndarray once
+#   (external_view_exists), after which further growth raises ValueError.
+# - <Name>HashTable per numeric dtype: khash map key -> position, with optional
+#   mask-based NA handling (single na_position slot); unique/factorize/lookup/
+#   map_locations/hash_inner_join algorithms.
+# - <Name>Factorizer: stateful factorizers built on the tables.
+# - StringHashTable (str keys via UTF-8 pointers) and PyObjectHashTable
+#   (arbitrary hashable objects, NaN-aware).
+# Substituted types: numeric dtypes complex128, complex64, float64, float32,
+# int64/32/16/8, uint64/32/16/8 (and 'string'/char pointer for VectorData).
 """
 Template for each `dtype` helper function for hashtable
 
@@ -14,6 +35,11 @@ complex_types = ['complex64',
 
 {{for name in complex_types}}
 cdef kh{{name}}_t to_kh{{name}}_t({{name}}_t val) noexcept nogil:
+    # [FUNCTION DOC]
+    # HELPER: Template (name = complex64 or complex128). Copy the real and imaginary
+    # parts of a numpy complex value into a khash complex key struct of matching
+    # precision. Inputs: val - complex scalar. Outputs: the struct. No exceptions;
+    # nogil; no side effects.
     cdef kh{{name}}_t res
     res.real = val.real
     res.imag = val.imag
@@ -43,6 +69,11 @@ c_types = ['khcomplex128_t',
 {{for c_type in c_types}}
 
 cdef bint is_nan_{{c_type}}({{c_type}} val) noexcept nogil:
+    # [FUNCTION DOC]
+    # HELPER: Template over key C types (khcomplex128/64, float64/32, int and uint
+    # 8..64). Return true if val is NaN: for complex, if either component is NaN; for
+    # floats, if val differs from itself; for integer types always false.
+    # nogil; no side effects.
     {{if c_type in {'khcomplex128_t', 'khcomplex64_t'} }}
     return val.real != val.real or val.imag != val.imag
     {{elif c_type in {'float64_t', 'float32_t'} }}
@@ -56,6 +87,10 @@ cdef bint is_nan_{{c_type}}({{c_type}} val) noexcept nogil:
 # are_equivalent_{{c_type}} is cimported via khash.pxd
 {{else}}
 cdef bint are_equivalent_{{c_type}}({{c_type}} val1, {{c_type}} val2) noexcept nogil:
+    # [FUNCTION DOC]
+    # HELPER: Template, generated only for integer key types (the float/complex
+    # versions come from khash.pxd). Return true if the two values are equal.
+    # nogil; no side effects.
     return val1 == val2
 {{endif}}
 
@@ -131,6 +166,10 @@ dtypes = [('Complex128', 'complex128', 'khcomplex128_t'),
 #  by IntervalTree
 
 ctypedef struct {{name}}VectorData:
+    # [CLASS DOC]
+    # Template (every dtype except int64, whose struct is in hashtable.pxd). Raw
+    # storage of a growable typed buffer: data - pointer to elements of the
+    # substituted C type; size - used element count; capacity - allocated count.
     {{c_type}} *data
     Py_ssize_t size, capacity
 
@@ -141,6 +180,11 @@ ctypedef struct {{name}}VectorData:
 @cython.boundscheck(False)
 cdef void append_data_{{dtype}}({{name}}VectorData *data,
                                        {{c_type}} x) noexcept nogil:
+    # [FUNCTION DOC]
+    # HELPER: Template per dtype (including 'string' with char pointers). Store x at
+    # position size of data and increment size. Inputs: data - pointer to the
+    # VectorData struct; x - element. Outputs: none. No bounds check: the caller must
+    # ensure size < capacity beforehand (see needs_resize). nogil; mutates *data.
 
     data.data[data.size] = x
     data.size += 1
@@ -164,6 +208,9 @@ ctypedef fused vector_data:
 
 
 cdef bint needs_resize(Py_ssize_t nelems, Py_ssize_t capacity) noexcept nogil:
+    # [FUNCTION DOC]
+    # HELPER: Return true when a buffer holding nelems elements is full, i.e.
+    # nelems >= capacity. nogil; no side effects.
     return nelems >= capacity
 
 # ----------------------------------------------------------------------
@@ -171,10 +218,16 @@ cdef bint needs_resize(Py_ssize_t nelems, Py_ssize_t capacity) noexcept nogil:
 # ----------------------------------------------------------------------
 
 cdef class Vector:
+    # [CLASS DOC]
+    # Base of all Vector classes. external_view_exists (declared in hashtable.pxd)
+    # becomes true once to_array has returned the internal buffer; growth afterwards
+    # would invalidate that array, so it is refused with ValueError.
     # cdef readonly:
     #    bint external_view_exists
 
     def __cinit__(self):
+        # [FUNCTION DOC]
+        # Initialise external_view_exists to False. No inputs/outputs.
         self.external_view_exists = False
 
 
@@ -199,6 +252,11 @@ dtypes = [('Complex128', 'complex128', 'khcomplex128_t'),
 {{for name, dtype, c_type in dtypes}}
 
 cdef class {{name}}Vector(Vector):
+    # [CLASS DOC]
+    # Template, one class per numeric dtype (Complex128 ... Int8): growable array of
+    # the substituted C type, backed by a numpy array ao of that dtype; data holds
+    # the raw pointer into ao plus size and capacity. Int64Vector's fields are
+    # declared in hashtable.pxd so other modules can use it.
 
     # For int64 we have to put this declaration in the .pxd file;
     # Int64Vector is the only one we need exposed for other cython files.
@@ -209,20 +267,36 @@ cdef class {{name}}Vector(Vector):
     {{endif}}
 
     def __cinit__(self):
+        # [FUNCTION DOC]
+        # Allocate the backing ndarray with the initial capacity (128) and point
+        # data.data at it; size = 0. Side effects: allocates memory.
         self.data.size = 0
         self.data.capacity = _INIT_VEC_CAP
         self.ao = np.empty(self.data.capacity, dtype=np.{{dtype}})
         self.data.data = <{{c_type}}*>self.ao.data
 
     cdef resize(self, Py_ssize_t new_size):
+        # [FUNCTION DOC]
+        # HELPER: Set capacity to max(new_size, 128), resize the backing ndarray in
+        # place (refcheck disabled, so existing views are NOT detected here) and refresh
+        # the raw pointer. Inputs: new_size - requested element count. Side effects:
+        # reallocation; callers must check external_view_exists first.
         self.data.capacity = max(new_size, _INIT_VEC_CAP)
         self.ao.resize(self.data.capacity, refcheck=False)
         self.data.data = <{{c_type}}*>self.ao.data
 
     def __len__(self) -> int:
+        # [FUNCTION DOC]
+        # Return the number of stored elements (data.size).
         return self.data.size
 
     cpdef ndarray to_array(self):
+        # [FUNCTION DOC]
+        # Return the stored elements as a 1-D ndarray of the vector's dtype without
+        # copying: if capacity exceeds size the backing array is first shrunk to size.
+        # Marks external_view_exists = True, so later growth raises.
+        # Outputs: the internal ndarray (shares memory with the vector).
+        # Exceptions: ValueError if shrinking is needed while a view already exists.
         if self.data.capacity != self.data.size:
             if self.external_view_exists:
                 # should never happen
@@ -233,6 +307,13 @@ cdef class {{name}}Vector(Vector):
         return self.ao
 
     cdef void append(self, {{c_type}} x) noexcept:
+        # [FUNCTION DOC]
+        # Append one element, growing capacity 4x when the buffer is full.
+        # Inputs: x - element of the substituted C type.
+        # Exceptions: ValueError if growth is needed while an external view exists.
+        # KNOWN ISSUE: the method is declared noexcept, so that ValueError cannot
+        # propagate; Cython prints it as unraisable and the element is silently dropped.
+        # Side effects: mutates the buffer; may reallocate.
 
         if needs_resize(self.data.size, self.data.capacity):
             if self.external_view_exists:
@@ -243,6 +324,13 @@ cdef class {{name}}Vector(Vector):
         append_data_{{dtype}}(&self.data, x)
 
     cdef extend(self, const {{c_type}}[:] x):
+        # [FUNCTION DOC]
+        # Append all elements of the 1-D memoryview x via a single memory copy; if the
+        # result would not fit, grow to exactly size + len(x) (min 128).
+        # Inputs: x - read-only 1-D memoryview of the substituted C type (contiguous
+        # data assumed by the copy). Outputs: None.
+        # Exceptions: ValueError if growth is needed while an external view exists.
+        # Side effects: mutates the buffer.
         cdef Py_ssize_t x_size = len(x)
         if x_size == 0:
             return
@@ -260,11 +348,18 @@ cdef class {{name}}Vector(Vector):
 {{endfor}}
 
 cdef class StringVector(Vector):
+    # [CLASS DOC]
+    # Growable array of C string (char pointer) values in a malloc'ed buffer. It is
+    # generated for completeness; ObjectVector is what the hash tables use. Pointers
+    # are borrowed: the strings they point to must outlive the vector.
 
     cdef:
         StringVectorData data
 
     def __cinit__(self):
+        # [FUNCTION DOC]
+        # Allocate a pointer buffer of initial capacity 128; size = 0.
+        # Exceptions: MemoryError if malloc fails. Side effects: heap allocation.
         self.data.size = 0
         self.data.capacity = _INIT_VEC_CAP
         self.data.data = <char **>malloc(self.data.capacity * sizeof(char *))
@@ -272,6 +367,13 @@ cdef class StringVector(Vector):
             raise MemoryError()
 
     cdef resize(self, Py_ssize_t new_size):
+        # [FUNCTION DOC]
+        # HELPER: Grow the pointer buffer: new capacity is max(4 * old capacity, 128)
+        # (new_size is ignored); allocate a new buffer and copy the old pointers.
+        # Exceptions: MemoryError if malloc fails.
+        # KNOWN ISSUE: the old buffer (orig_data) is never freed, leaking memory on
+        # every
+        # resize; also new_size is ignored and external_view_exists is not checked.
         cdef:
             char **orig_data
             Py_ssize_t i, orig_capacity
@@ -287,12 +389,23 @@ cdef class StringVector(Vector):
             self.data.data[i] = orig_data[i]
 
     def __dealloc__(self):
+        # [FUNCTION DOC]
+        # Free the pointer buffer (not the strings it points to).
         free(self.data.data)
 
     def __len__(self) -> int:
+        # [FUNCTION DOC]
+        # Return the number of stored strings (data.size).
         return self.data.size
 
     cpdef ndarray[object, ndim=1] to_array(self):
+        # [FUNCTION DOC]
+        # Build a new 1-D object ndarray of length size where each element is a bytes
+        # object created from the corresponding C string (copy, not a view). Marks
+        # external_view_exists and sets capacity = size (the buffer itself is not
+        # shrunk,
+        # so capacity then understates the allocation).
+        # Outputs: object ndarray of bytes.
         cdef:
             ndarray ao
             Py_ssize_t n
@@ -307,6 +420,10 @@ cdef class StringVector(Vector):
         return ao
 
     cdef void append(self, char *x) noexcept:
+        # [FUNCTION DOC]
+        # Append a C string pointer, growing the buffer (resize) when full. Does not
+        # check external_view_exists. Inputs: x - char pointer (borrowed).
+        # Side effects: mutates the buffer; may reallocate (leaking, see resize).
 
         if needs_resize(self.data.size, self.data.capacity):
             self.resize(self.data.capacity * 4)
@@ -314,11 +431,20 @@ cdef class StringVector(Vector):
         append_data_string(&self.data, x)
 
     cdef extend(self, ndarray[object] x):
+        # [FUNCTION DOC]
+        # Append every element of the object array x, each converted to a char pointer
+        # (elements must be bytes-like; conversion errors are raised by the cast).
+        # Side effects: mutates the buffer.
         for i in range(len(x)):
             self.append(x[i])
 
 
 cdef class ObjectVector(Vector):
+    # [CLASS DOC]
+    # Growable array of Python object references backed by an object ndarray ao.
+    # Fields: data - raw pointer into ao's buffer; size, capacity - element counts.
+    # Holds a strong reference to every appended object (via the ndarray). Used to
+    # collect uniques by PyObjectHashTable, StringHashTable and ObjectFactorizer.
 
     cdef:
         PyObject **data
@@ -326,15 +452,26 @@ cdef class ObjectVector(Vector):
         ndarray ao
 
     def __cinit__(self):
+        # [FUNCTION DOC]
+        # Allocate an object ndarray of capacity 128 (filled with None) and point data
+        # at its buffer; size = 0.
         self.size = 0
         self.capacity = _INIT_VEC_CAP
         self.ao = np.empty(_INIT_VEC_CAP, dtype=object)
         self.data = <PyObject**>self.ao.data
 
     def __len__(self) -> int:
+        # [FUNCTION DOC]
+        # Return the number of stored objects (size).
         return self.size
 
     cdef append(self, object obj):
+        # [FUNCTION DOC]
+        # Append obj. When full, capacity becomes max(2 * capacity, 128) and the
+        # ndarray is resized in place (refcheck disabled). The reference count of obj is
+        # incremented and the pointer stored in the next slot.
+        # Exceptions: ValueError if growth is needed while an external view exists.
+        # Side effects: mutates the buffer; new reference to obj owned by the array.
         if self.size == self.capacity:
             if self.external_view_exists:
                 raise ValueError("external reference but "
@@ -348,6 +485,10 @@ cdef class ObjectVector(Vector):
         self.size += 1
 
     cpdef ndarray[object, ndim=1] to_array(self):
+        # [FUNCTION DOC]
+        # Return the internal object ndarray (no copy), shrinking it to size first if
+        # needed; marks external_view_exists = True.
+        # Exceptions: ValueError if shrinking is needed while a view already exists.
         if self.capacity != self.size:
             if self.external_view_exists:
                 raise ValueError("should have raised on append()")
@@ -357,6 +498,9 @@ cdef class ObjectVector(Vector):
         return self.ao
 
     cdef extend(self, ndarray[object] x):
+        # [FUNCTION DOC]
+        # Append every element of the object array x in order (via append).
+        # Exceptions: as append. Side effects: mutates the buffer.
         for i in range(len(x)):
             self.append(x[i])
 
@@ -366,6 +510,8 @@ cdef class ObjectVector(Vector):
 
 
 cdef class HashTable:
+    # [CLASS DOC]
+    # Empty base class of every hash table (for isinstance and typing).
 
     pass
 
@@ -391,8 +537,22 @@ dtypes = [('Complex128', 'complex128', 'khcomplex128_t', 'to_khcomplex128_t'),
 {{for name, dtype, c_type, to_c_type in dtypes}}
 
 cdef class {{name}}HashTable(HashTable):
+    # [CLASS DOC]
+    # Template, one class per numeric dtype (Complex128, Float64, UInt64, Int64,
+    # Complex64, Float32, UInt32, Int32, UInt16, Int16, UInt8, Int8). Maps keys of
+    # that dtype to Py_ssize_t positions using the khash table of that dtype (NaN
+    # keys compare equal to each other). For complex dtypes keys are first converted
+    # to the khash complex struct (to_c_type substitution). If uses_mask is set,
+    # missing values are not stored in the table: a single na_position slot holds the
+    # position of the missing value (-1 = none) and callers pass boolean masks.
+    # Fields are declared in hashtable.pxd.
 
     def __cinit__(self, int64_t size_hint=1, bint uses_mask=False):
+        # [FUNCTION DOC]
+        # Create the khash table and preallocate buckets for size_hint elements (bucket
+        # count from kh_needed_n_buckets, capped at SIZE_HINT_LIMIT). Inputs:
+        # size_hint - expected number of keys (default 1); uses_mask - enable the
+        # mask-based NA slot. Side effects: allocates memory; na_position = -1.
         self.table = kh_init_{{dtype}}()
         size_hint = min(kh_needed_n_buckets(size_hint), SIZE_HINT_LIMIT)
         kh_resize_{{dtype}}(self.table, size_hint)
@@ -401,14 +561,23 @@ cdef class {{name}}HashTable(HashTable):
         self.na_position = -1
 
     def __len__(self) -> int:
+        # [FUNCTION DOC]
+        # Return the number of keys stored, plus 1 if an NA position is recorded.
         return self.table.size + (0 if self.na_position == -1 else 1)
 
     def __dealloc__(self):
+        # [FUNCTION DOC]
+        # Destroy the khash table (if allocated) and null the pointer.
         if self.table is not NULL:
             kh_destroy_{{dtype}}(self.table)
             self.table = NULL
 
     def __contains__(self, object key) -> bool:
+        # [FUNCTION DOC]
+        # Membership test. If uses_mask and key is a null (checknull), return whether an
+        # NA position is recorded; otherwise convert key to the table's C type and
+        # look it up. Inputs: key - Python scalar. Outputs: bool.
+        # Exceptions: TypeError/OverflowError if key cannot be converted to the C type.
         # The caller is responsible to check for compatible NA values in case
         # of masked arrays.
         cdef:
@@ -423,6 +592,10 @@ cdef class {{name}}HashTable(HashTable):
         return k != self.table.n_buckets
 
     def sizeof(self, deep: bool = False) -> int:
+        # [FUNCTION DOC]
+        # Estimate the memory used by the table in bytes: struct overhead (4 integers +
+        # 3 pointers) + flag words (one 32-bit word per 32 buckets, min 1) + n_buckets
+        # times (key size + value size). deep is ignored. Outputs: int.
         """ return the size of my table in bytes """
         overhead = 4 * sizeof(uint32_t) + 3 * sizeof(uint32_t*)
         for_flags = max(1, self.table.n_buckets >> 5) * sizeof(uint32_t)
@@ -431,6 +604,8 @@ cdef class {{name}}HashTable(HashTable):
         return overhead + for_flags + for_pairs
 
     def get_state(self) -> dict[str, int]:
+        # [FUNCTION DOC]
+        # Return a dict with the khash fields n_buckets, size, n_occupied, upper_bound.
         """ returns infos about the state of the hashtable"""
         return {
             'n_buckets' : self.table.n_buckets,
@@ -440,6 +615,10 @@ cdef class {{name}}HashTable(HashTable):
         }
 
     cpdef get_item(self, {{dtype}}_t val):
+        # [FUNCTION DOC]
+        # Return the position stored for key val (converted to the khash key type).
+        # Does not handle NA when uses_mask (caller must use get_na).
+        # Outputs: int. Exceptions: KeyError(val) if not present.
         """Extracts the position of val from the hashtable.
 
         Parameters
@@ -466,6 +645,10 @@ cdef class {{name}}HashTable(HashTable):
             raise KeyError(val)
 
     cpdef get_na(self):
+        # [FUNCTION DOC]
+        # Return the recorded NA position.
+        # Exceptions: NotImplementedError if uses_mask is False; KeyError('NA') if no NA
+        # position has been recorded.
         """Extracts the position of na_value from the hashtable.
 
         Returns
@@ -481,6 +664,10 @@ cdef class {{name}}HashTable(HashTable):
         return self.na_position
 
     cpdef set_item(self, {{dtype}}_t key, Py_ssize_t val):
+        # [FUNCTION DOC]
+        # Insert key (or find it) and set its stored position to val.
+        # Exceptions: KeyError(key) in the else-branch, which is unreachable because a
+        # key always exists after insertion. Side effects: may grow the table.
         # Used in libjoin
         # Caller is responsible for checking for pd.NA
         cdef:
@@ -496,6 +683,10 @@ cdef class {{name}}HashTable(HashTable):
             raise KeyError(key)
 
     cpdef set_na(self, Py_ssize_t val):
+        # [FUNCTION DOC]
+        # Record val as the NA position (overwrites any previous one).
+        # Exceptions: NotImplementedError if uses_mask is False.
+        # Side effects: sets na_position.
         # Caller is responsible for checking for pd.NA
         cdef:
             khiter_t k
@@ -514,6 +705,13 @@ cdef class {{name}}HashTable(HashTable):
     def map_keys_to_values(
         self, const {{dtype}}_t[:] keys, const int64_t[:] values
     ) -> None:
+        # [FUNCTION DOC]
+        # Generated only for Int64HashTable. For each i, insert keys[i] and set its
+        # stored value to values[i] (later duplicates overwrite earlier ones).
+        # Inputs: keys - 1-D int64 memoryview; values - 1-D int64 memoryview, at least
+        # as long as keys is iterated (loop length is len(values); bounds checks are
+        # disabled, so keys shorter than values reads out of bounds).
+        # Outputs: None. Side effects: mutates the table; releases the GIL.
         cdef:
             Py_ssize_t i, n = len(values)
             int ret = 0
@@ -529,6 +727,15 @@ cdef class {{name}}HashTable(HashTable):
 
     @cython.boundscheck(False)
     def map_locations(self, const {{dtype}}_t[:] values, const uint8_t[:] mask = None) -> None:
+        # [FUNCTION DOC]
+        # Store the position of each value: for i in order, insert values[i] with value
+        # i, so for duplicates the LAST position wins. With uses_mask, entries where
+        # mask[i] is true are not inserted; instead na_position becomes the last masked
+        # index. Inputs: values - 1-D memoryview of the dtype; mask - optional 1-D uint8
+        # memoryview (required when uses_mask). Outputs: None.
+        # Exceptions: NotImplementedError if uses_mask and mask is None.
+        # Side effects: mutates the table and na_position; releases the GIL for the
+        # loop.
         # Used in libindex, safe_sort
         cdef:
             Py_ssize_t i, n = len(values)
@@ -559,6 +766,20 @@ cdef class {{name}}HashTable(HashTable):
     @cython.wraparound(False)
     @cython.boundscheck(False)
     def hash_inner_join(self, const {{dtype}}_t[:] values, const uint8_t[:] mask = None) -> tuple[ndarray, ndarray]:
+        # [FUNCTION DOC]
+        # Inner-join probe: for each i, if values[i] is found in the table (or, with
+        # uses_mask and mask[i], if an NA position is recorded) append i to locs and the
+        # stored table position (or na_position) to self_locs. Vectors grow 4x as
+        # needed,
+        # reacquiring the GIL. Inputs: values - 1-D memoryview of the dtype; mask -
+        # optional uint8 memoryview (required if uses_mask).
+        # Outputs: tuple (self_locs, locs) of int64 ndarrays of equal length: positions
+        # in the table's original data and positions in values, respectively.
+        # Exceptions: NotImplementedError if uses_mask and mask is None.
+        # Side effects: releases the GIL for the main loop.
+        # KNOWN ISSUE: self_locs is resized using locs' capacity after locs has already
+        # been grown, so self_locs is over-allocated (4x larger than needed); harmless
+        # apart from memory use since to_array shrinks it.
         cdef:
             Py_ssize_t i, n = len(values)
             {{c_type}} val
@@ -601,6 +822,12 @@ cdef class {{name}}HashTable(HashTable):
 
     @cython.boundscheck(False)
     def lookup(self, const {{dtype}}_t[:] values, const uint8_t[:] mask = None) -> ndarray:
+        # [FUNCTION DOC]
+        # Look up each value: result[i] is the stored position of values[i], -1 if not
+        # found; with uses_mask, masked entries get na_position (which is -1 if none).
+        # Inputs: values - 1-D memoryview; mask - optional uint8 memoryview.
+        # Outputs: 1-D intp ndarray. Exceptions: NotImplementedError if uses_mask and
+        # mask is None. Side effects: releases the GIL for the loop.
         # -> np.ndarray[np.intp]
         # Used in safe_sort, IndexEngine.get_indexer
         cdef:
@@ -634,6 +861,32 @@ cdef class {{name}}HashTable(HashTable):
                 Py_ssize_t count_prior=0, Py_ssize_t na_sentinel=-1,
                 object na_value=None, bint ignore_na=False,
                 object mask=None, bint return_inverse=False, bint use_result_mask=False):
+        # [FUNCTION DOC]
+        # Core uniques/factorize routine. Iterate values in order; values seen for the
+        # first time are inserted in the table and appended to uniques; labels (if
+        # return_inverse) give each element the index of its unique, starting at
+        # count_prior. Missing-value handling per element:
+        # - ignore_na and mask given: masked elements get label na_sentinel, skipped.
+        # - ignore_na without mask: NaN elements, or elements equal to na_value (if
+        #   given, compared after conversion to the C type), get na_sentinel, skipped.
+        # - not ignore_na and use_result_mask: the first masked element appends a
+        #   placeholder (its raw value) to uniques with result-mask 1; later masked
+        #   elements are skipped (no label). Non-masked uniques get result-mask 0.
+        # - otherwise NaNs are ordinary keys (all NaNs equal).
+        # Table values are only set when return_inverse is true.
+        # Inputs: values - 1-D memoryview of the dtype; uniques - Vector of the dtype to
+        # append into; count_prior - number of uniques already present; na_sentinel -
+        # label for missing; na_value - optional extra missing marker; ignore_na;
+        # mask - optional boolean ndarray (viewed as uint8); return_inverse;
+        # use_result_mask.
+        # Outputs: uniques ndarray; or (uniques, labels intp ndarray) if return_inverse;
+        # or (uniques, result_mask uint8 ndarray) if use_result_mask.
+        # Exceptions: NotImplementedError if use_result_mask without mask, or with
+        # return_inverse; ValueError if uniques/result_mask must grow while an external
+        # view exists; TypeError/OverflowError if na_value cannot be converted.
+        # Side effects: mutates the table and uniques; releases the GIL (reacquired to
+        # resize). Labels must be allocated: ignore_na with return_inverse False would
+        # write to an unallocated labels buffer (callers never do this).
         """
         Calculate unique values and labels (no sorting!)
 
@@ -794,6 +1047,14 @@ cdef class {{name}}HashTable(HashTable):
         return uniques.to_array()
 
     def unique(self, const {{dtype}}_t[:] values, *, bint return_inverse=False, object mask=None):
+        # [FUNCTION DOC]
+        # Return the unique values (first-appearance order, NaNs kept as one value),
+        # using a fresh Vector, ignore_na False. If mask is given, missing values are
+        # collapsed into one entry and a result mask is also returned.
+        # Inputs: values - 1-D memoryview; return_inverse (keyword); mask (keyword).
+        # Outputs: uniques, or (uniques, labels), or (uniques, result_mask).
+        # Exceptions: NotImplementedError if both mask and return_inverse are given.
+        # Side effects: mutates the table.
         """
         Calculate unique values and labels (no sorting!)
 
@@ -824,6 +1085,12 @@ cdef class {{name}}HashTable(HashTable):
 
     def factorize(self, const {{dtype}}_t[:] values, Py_ssize_t na_sentinel=-1,
                   object na_value=None, object mask=None, ignore_na=True):
+        # [FUNCTION DOC]
+        # Factorize values with a fresh uniques Vector: returns (uniques, labels) where
+        # missing values (NaN, na_value, or masked) get na_sentinel when ignore_na is
+        # true (default). Inputs: values; na_sentinel; na_value; mask; ignore_na.
+        # Outputs: tuple (uniques ndarray, labels intp ndarray). Side effects: mutates
+        # the table.
         """
         Calculate unique values and labels (no sorting!)
 
@@ -861,6 +1128,12 @@ cdef class {{name}}HashTable(HashTable):
     def get_labels(self, const {{dtype}}_t[:] values, {{name}}Vector uniques,
                    Py_ssize_t count_prior=0, Py_ssize_t na_sentinel=-1,
                    object na_value=None, object mask=None):
+        # [FUNCTION DOC]
+        # Factorize values into the provided uniques Vector, continuing numbering from
+        # count_prior, with missing values labelled na_sentinel (ignore_na=True).
+        # Inputs: values; uniques - Vector of the dtype (mutated); count_prior;
+        # na_sentinel; na_value; mask. Outputs: labels intp ndarray.
+        # Side effects: mutates the table and uniques.
         # -> np.ndarray[np.intp]
         _, labels = self._unique(values, uniques, count_prior=count_prior,
                                  na_sentinel=na_sentinel, na_value=na_value,
@@ -872,6 +1145,14 @@ cdef class {{name}}HashTable(HashTable):
     def get_labels_groupby(
         self, const {{dtype}}_t[:] values
     ) -> tuple[ndarray, ndarray]:
+        # [FUNCTION DOC]
+        # Generated only for Int64HashTable. Factorize groupby codes: negative values
+        # get
+        # label -1 and are not stored; other values are labelled by order of first
+        # appearance (starting at 0) and appended to a new Int64Vector of uniques.
+        # Inputs: values - 1-D int64 memoryview. Outputs: tuple (labels intp ndarray,
+        # uniques int64 ndarray). Side effects: mutates the table; releases the GIL
+        # (reacquired to resize uniques).
         # tuple[np.ndarray[np.intp], np.ndarray[{{dtype}}]]
         cdef:
             Py_ssize_t i, n = len(values)
@@ -917,16 +1198,30 @@ cdef class {{name}}HashTable(HashTable):
 
 
 cdef class {{name}}Factorizer(Factorizer):
+    # [CLASS DOC]
+    # Template, one Factorizer per numeric dtype: public table (<Name>HashTable) and
+    # uniques (<Name>Vector); count (inherited) is the number of uniques so far.
     cdef public:
         {{name}}HashTable table
         {{name}}Vector uniques
 
     def __cinit__(self, size_hint: int, uses_mask: bool = False):
+        # [FUNCTION DOC]
+        # Create the hash table (presized for size_hint, with uses_mask) and an empty
+        # uniques Vector. Side effects: allocates memory.
         self.table = {{name}}HashTable(size_hint, uses_mask=uses_mask)
         self.uniques = {{name}}Vector()
 
     def factorize(self, const {{c_type}}[:] values,
                   na_sentinel=-1, na_value=None, object mask=None) -> np.ndarray:
+        # [FUNCTION DOC]
+        # Assign codes to values, continuing numbering across calls. If uniques was
+        # already exposed via to_array, it is copied into a fresh Vector first. Calls
+        # table.get_labels with count_prior = count; missing values (NaN, na_value, or
+        # masked) get na_sentinel. Updates count to the number of uniques.
+        # Inputs: values - 1-D memoryview of the C type; na_sentinel; na_value; mask -
+        # optional boolean ndarray. Outputs: intp ndarray of codes.
+        # Side effects: mutates table, uniques and count.
         """
         Returns
         -------
@@ -954,30 +1249,49 @@ cdef class {{name}}Factorizer(Factorizer):
         return labels
 
     def hash_inner_join(self, const {{c_type}}[:] values, const uint8_t[:] mask = None) -> tuple[np.ndarray, np.ndarray]:
+        # [FUNCTION DOC]
+        # Delegate to table.hash_inner_join(values, mask); see that method.
+        # Outputs: tuple (self_locs, locs) int64 ndarrays.
         return self.table.hash_inner_join(values, mask)
 
 {{endfor}}
 
 
 cdef class StringHashTable(HashTable):
+    # [CLASS DOC]
+    # Hash table from Python str keys to positions. Keys are the UTF-8 buffers
+    # cached inside the str objects (PyUnicode_AsUTF8); only the pointers are stored,
+    # so the str objects must stay alive while the table is used. Non-str values are
+    # replaced by the class attribute na_string_sentinel ('__nan__') in lookup and
+    # map_locations.
     # these by-definition *must* be strings
     # or a sentinel np.nan / None missing value
     na_string_sentinel = '__nan__'
 
     def __init__(self, int64_t size_hint=1):
+        # [FUNCTION DOC]
+        # Create the khash str table presized for size_hint (capped at SIZE_HINT_LIMIT).
+        # Side effects: allocates memory. Note: __init__, not __cinit__.
         self.table = kh_init_str()
         size_hint = min(kh_needed_n_buckets(size_hint), SIZE_HINT_LIMIT)
         kh_resize_str(self.table, size_hint)
 
     def __dealloc__(self):
+        # [FUNCTION DOC]
+        # Destroy the khash table (if allocated) and null the pointer.
         if self.table is not NULL:
             kh_destroy_str(self.table)
             self.table = NULL
 
     def __len__(self) -> int:
+        # [FUNCTION DOC]
+        # Return the number of keys stored.
         return self.table.size
 
     def sizeof(self, deep: bool = False) -> int:
+        # [FUNCTION DOC]
+        # Estimate memory use in bytes: overhead + flag words + n_buckets times
+        # (pointer size + value size). deep is ignored.
         overhead = 4 * sizeof(uint32_t) + 3 * sizeof(uint32_t*)
         for_flags = max(1, self.table.n_buckets >> 5) * sizeof(uint32_t)
         for_pairs =  self.table.n_buckets * (sizeof(char *) +      # keys
@@ -985,6 +1299,8 @@ cdef class StringHashTable(HashTable):
         return overhead + for_flags + for_pairs
 
     def get_state(self) -> dict[str, int]:
+        # [FUNCTION DOC]
+        # Return a dict with the khash fields n_buckets, size, n_occupied, upper_bound.
         """ returns infos about the state of the hashtable"""
         return {
             'n_buckets' : self.table.n_buckets,
@@ -994,6 +1310,10 @@ cdef class StringHashTable(HashTable):
         }
 
     cpdef get_item(self, str val):
+        # [FUNCTION DOC]
+        # Return the position stored for the string val.
+        # Exceptions: KeyError(val) if absent; UnicodeEncodeError if val cannot be
+        # encoded as UTF-8 (e.g. lone surrogates).
         cdef:
             khiter_t k
             const char *v
@@ -1006,6 +1326,11 @@ cdef class StringHashTable(HashTable):
             raise KeyError(val)
 
     cpdef set_item(self, str key, Py_ssize_t val):
+        # [FUNCTION DOC]
+        # Insert key (by its UTF-8 pointer) and set its position to val. The else-branch
+        # KeyError is unreachable.
+        # KNOWN ISSUE: only the borrowed UTF-8 pointer is stored; if key is a temporary
+        # str that is later freed, the table holds a dangling pointer.
         cdef:
             khiter_t k
             int ret = 0
@@ -1021,6 +1346,13 @@ cdef class StringHashTable(HashTable):
 
     @cython.boundscheck(False)
     def get_indexer(self, ndarray[object] values) -> ndarray:
+        # [FUNCTION DOC]
+        # Return an intp array with, for each element of values, its stored position or
+        # -1. All elements must be str (converted to UTF-8 pointers while holding the
+        # GIL; the probing loop releases it).
+        # Exceptions: MemoryError if the pointer buffer cannot be allocated; TypeError
+        # for non-str elements (the temporary pointer buffer then leaks).
+        # Side effects: temporary malloc/free.
         # -> np.ndarray[np.intp]
         cdef:
             Py_ssize_t i, n = len(values)
@@ -1052,6 +1384,11 @@ cdef class StringHashTable(HashTable):
 
     @cython.boundscheck(False)
     def lookup(self, ndarray[object] values, object mask = None) -> ndarray:
+        # [FUNCTION DOC]
+        # Like get_indexer, but non-str elements are looked up as na_string_sentinel.
+        # mask is ignored. Outputs: intp ndarray of positions (-1 if absent).
+        # Exceptions: MemoryError on allocation failure. Side effects: releases the GIL
+        # for the probing loop; temporary malloc/free.
         # -> np.ndarray[np.intp]
         # mask not yet implemented
         cdef:
@@ -1091,6 +1428,11 @@ cdef class StringHashTable(HashTable):
 
     @cython.boundscheck(False)
     def map_locations(self, ndarray[object] values, object mask = None) -> None:
+        # [FUNCTION DOC]
+        # Insert each element of values (non-str elements as na_string_sentinel) with
+        # its index as value; duplicates keep the last index. mask is ignored.
+        # Exceptions: MemoryError. Side effects: mutates the table; keys borrow the
+        # values' UTF-8 buffers (values must outlive the table); releases the GIL.
         # mask not yet implemented
         cdef:
             Py_ssize_t i, n = len(values)
@@ -1128,6 +1470,27 @@ cdef class StringHashTable(HashTable):
                 Py_ssize_t count_prior=0, Py_ssize_t na_sentinel=-1,
                 object na_value=None, bint ignore_na=False,
                 bint return_inverse=False):
+        # [FUNCTION DOC]
+        # Core uniques/factorize routine for strings. First pass (with the GIL): if
+        # ignore_na, elements that are not str, or that match na_value (== for non-null
+        # na_value, is_matching_na for null-like na_value), get label na_sentinel;
+        # others are converted to UTF-8 pointers (repr is used on UnicodeEncodeError).
+        # Second pass (nogil): elements whose label equals na_sentinel are skipped when
+        # ignore_na; new keys are inserted, their index recorded, and labels assigned
+        # from count_prior on. Finally uniques receives the original objects at the
+        # first-occurrence indices.
+        # Inputs: values - object ndarray; uniques - ObjectVector (mutated);
+        # count_prior; na_sentinel; na_value; ignore_na; return_inverse.
+        # Outputs: uniques ndarray, plus labels intp ndarray if return_inverse.
+        # Exceptions: MemoryError; TypeError for non-str elements when ignore_na is
+        # false.
+        # KNOWN ISSUE: the comment says NaN/None are stringified when ignore_na is
+        # false, but the unchecked str cast makes PyUnicode_AsUTF8 raise TypeError for
+        # non-str values (and the malloc'ed pointer buffer leaks).
+        # KNOWN ISSUE: labels starts as zeros and the skip test is "label equals
+        # na_sentinel", so with na_sentinel == 0 every element is skipped and uniques
+        # come back empty with all labels 0 (verified). Also, ignore_na with
+        # return_inverse false would write to an unallocated labels buffer.
         """
         Calculate unique values and labels (no sorting!)
 
@@ -1240,6 +1603,10 @@ cdef class StringHashTable(HashTable):
         return uniques.to_array()
 
     def unique(self, ndarray[object] values, *, bint return_inverse=False, object mask=None):
+        # [FUNCTION DOC]
+        # Return unique strings in first-appearance order (ignore_na False), optionally
+        # with labels. mask is accepted but ignored. Exceptions: TypeError if any value
+        # is not a str (see _unique).
         """
         Calculate unique values and labels (no sorting!)
 
@@ -1266,6 +1633,10 @@ cdef class StringHashTable(HashTable):
 
     def factorize(self, ndarray[object] values, Py_ssize_t na_sentinel=-1,
                   object na_value=None, object mask=None, ignore_na=True):
+        # [FUNCTION DOC]
+        # Factorize with a fresh ObjectVector; non-str values and na_value matches get
+        # na_sentinel when ignore_na (default). mask ignored.
+        # Outputs: tuple (uniques object ndarray, labels intp ndarray).
         """
         Calculate unique values and labels (no sorting!)
 
@@ -1302,6 +1673,10 @@ cdef class StringHashTable(HashTable):
     def get_labels(self, ndarray[object] values, ObjectVector uniques,
                    Py_ssize_t count_prior=0, Py_ssize_t na_sentinel=-1,
                    object na_value=None, object mask=None):
+        # [FUNCTION DOC]
+        # Factorize into the given uniques vector, numbering from count_prior, with
+        # missing values labelled na_sentinel. mask is ignored (signature compat).
+        # Outputs: labels intp ndarray. Side effects: mutates the table and uniques.
         # -> np.ndarray[np.intp]
         _, labels = self._unique(values, uniques, count_prior=count_prior,
                                  na_sentinel=na_sentinel, na_value=na_value,
@@ -1310,21 +1685,36 @@ cdef class StringHashTable(HashTable):
 
 
 cdef class PyObjectHashTable(HashTable):
+    # [CLASS DOC]
+    # Hash table from arbitrary hashable Python objects to positions, using pandas
+    # NaN-aware hashing/equality (kh_python_hash_func / kh_python_hash_equal). Keys
+    # are stored as borrowed pointers (no reference counting), so the objects must
+    # be kept alive elsewhere (e.g. by the values array or uniques vector).
 
     def __init__(self, int64_t size_hint=1):
+        # [FUNCTION DOC]
+        # Create the khash pymap presized for size_hint (capped at SIZE_HINT_LIMIT).
+        # Side effects: allocates memory.
         self.table = kh_init_pymap()
         size_hint = min(kh_needed_n_buckets(size_hint), SIZE_HINT_LIMIT)
         kh_resize_pymap(self.table, size_hint)
 
     def __dealloc__(self):
+        # [FUNCTION DOC]
+        # Destroy the khash table (if allocated) and null the pointer.
         if self.table is not NULL:
             kh_destroy_pymap(self.table)
             self.table = NULL
 
     def __len__(self) -> int:
+        # [FUNCTION DOC]
+        # Return the number of keys stored.
         return self.table.size
 
     def __contains__(self, object key) -> bool:
+        # [FUNCTION DOC]
+        # Membership test. Calls hash(key) first so unhashable keys raise TypeError
+        # (the khash hash function itself swallows errors). Outputs: bool.
         cdef:
             khiter_t k
         hash(key)
@@ -1333,6 +1723,9 @@ cdef class PyObjectHashTable(HashTable):
         return k != self.table.n_buckets
 
     def sizeof(self, deep: bool = False) -> int:
+        # [FUNCTION DOC]
+        # Estimate memory use in bytes: overhead + flag words + n_buckets times
+        # (pointer size + value size). deep is ignored.
         """ return the size of my table in bytes """
         overhead = 4 * sizeof(uint32_t) + 3 * sizeof(uint32_t*)
         for_flags = max(1, self.table.n_buckets >> 5) * sizeof(uint32_t)
@@ -1341,6 +1734,8 @@ cdef class PyObjectHashTable(HashTable):
         return overhead + for_flags + for_pairs
 
     def get_state(self) -> dict[str, int]:
+        # [FUNCTION DOC]
+        # Return a dict with the khash fields n_buckets, size, n_occupied, upper_bound.
         """
         returns infos about the current state of the hashtable like size,
         number of buckets and so on.
@@ -1353,6 +1748,9 @@ cdef class PyObjectHashTable(HashTable):
         }
 
     cpdef get_item(self, object val):
+        # [FUNCTION DOC]
+        # Return the position stored for val. Exceptions: KeyError(val) if absent
+        # (unhashable val silently hashes to 0 and is normally reported as KeyError).
         cdef:
             khiter_t k
 
@@ -1363,6 +1761,10 @@ cdef class PyObjectHashTable(HashTable):
             raise KeyError(val)
 
     cpdef set_item(self, object key, Py_ssize_t val):
+        # [FUNCTION DOC]
+        # Insert key and set its position to val. hash(key) is called first so
+        # unhashable keys raise TypeError. The else-branch KeyError is unreachable.
+        # Side effects: mutates the table; key is borrowed (no reference kept).
         cdef:
             khiter_t k
             int ret = 0
@@ -1377,6 +1779,10 @@ cdef class PyObjectHashTable(HashTable):
             raise KeyError(key)
 
     def map_locations(self, ndarray[object] values, object mask = None) -> None:
+        # [FUNCTION DOC]
+        # Insert each element of values with its index as value (last duplicate wins).
+        # mask is ignored. Exceptions: TypeError for unhashable elements.
+        # Side effects: mutates the table; keys borrowed from values.
         # mask not yet implemented
         cdef:
             Py_ssize_t i, n = len(values)
@@ -1392,6 +1798,9 @@ cdef class PyObjectHashTable(HashTable):
             self.table.vals[k] = i
 
     def lookup(self, ndarray[object] values, object mask = None) -> ndarray:
+        # [FUNCTION DOC]
+        # Return an intp array with each element's stored position or -1 if absent.
+        # mask is ignored. Exceptions: TypeError for unhashable elements.
         # -> np.ndarray[np.intp]
         # mask not yet implemented
         cdef:
@@ -1419,6 +1828,18 @@ cdef class PyObjectHashTable(HashTable):
                 Py_ssize_t count_prior=0, Py_ssize_t na_sentinel=-1,
                 object na_value=None, bint ignore_na=False,
                 bint return_inverse=False):
+        # [FUNCTION DOC]
+        # Core uniques/factorize routine for objects (holds the GIL throughout). For
+        # each element: hash() it (TypeError if unhashable); if ignore_na and the value
+        # is null (checknull: None, NaN, NaT, NA, ...) or matches na_value (== for a
+        # non-null na_value, is_matching_na otherwise), label it na_sentinel and skip.
+        # Otherwise new values are inserted and appended to uniques (which keeps them
+        # alive), and labels are assigned from count_prior on.
+        # Inputs: values - object ndarray; uniques - ObjectVector (mutated);
+        # count_prior; na_sentinel; na_value; ignore_na; return_inverse.
+        # Outputs: uniques ndarray, plus labels intp ndarray if return_inverse.
+        # Exceptions: TypeError for unhashable values; errors from na_value ==.
+        # Side effects: mutates the table and uniques.
         """
         Calculate unique values and labels (no sorting!)
 
@@ -1503,6 +1924,9 @@ cdef class PyObjectHashTable(HashTable):
         return uniques.to_array()
 
     def unique(self, ndarray[object] values, *, bint return_inverse=False, object mask=None):
+        # [FUNCTION DOC]
+        # Return unique objects in first-appearance order (nulls kept, NaN-aware
+        # equality), optionally with labels. mask is ignored.
         """
         Calculate unique values and labels (no sorting!)
 
@@ -1529,6 +1953,10 @@ cdef class PyObjectHashTable(HashTable):
 
     def factorize(self, ndarray[object] values, Py_ssize_t na_sentinel=-1,
                   object na_value=None, object mask=None, ignore_na=True):
+        # [FUNCTION DOC]
+        # Factorize with a fresh ObjectVector; nulls and na_value matches get
+        # na_sentinel when ignore_na (default). mask ignored.
+        # Outputs: tuple (uniques object ndarray, labels intp ndarray).
         """
         Calculate unique values and labels (no sorting!)
 
@@ -1565,6 +1993,10 @@ cdef class PyObjectHashTable(HashTable):
     def get_labels(self, ndarray[object] values, ObjectVector uniques,
                    Py_ssize_t count_prior=0, Py_ssize_t na_sentinel=-1,
                    object na_value=None, object mask=None):
+        # [FUNCTION DOC]
+        # Factorize into the given uniques vector, numbering from count_prior, with
+        # missing values labelled na_sentinel. mask is ignored (signature compat).
+        # Outputs: labels intp ndarray. Side effects: mutates the table and uniques.
         # -> np.ndarray[np.intp]
         _, labels = self._unique(values, uniques, count_prior=count_prior,
                                  na_sentinel=na_sentinel, na_value=na_value,

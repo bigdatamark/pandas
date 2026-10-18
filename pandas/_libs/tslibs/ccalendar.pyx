@@ -1,3 +1,14 @@
+# [MODULE DOC]
+# Pure-C calendar arithmetic for the proleptic Gregorian calendar, used throughout
+# tslibs (field accessors, offsets, Timestamp properties). Holds static lookup
+# tables (days per month for non-leap/leap years, cumulative month offsets, a
+# Gauss-algorithm month table "em") and Python-visible name constants: MONTHS
+# ("JAN".."DEC"), MONTHS_FULL (index 0 is "" so index = month number), DAYS
+# ("MON".."SUN"), DAYS_FULL, MONTH_NUMBERS/c_MONTH_NUMBERS (abbrev -> 0..11),
+# MONTH_ALIASES (1..12 -> abbrev), MONTH_TO_CAL_NUM (abbrev -> 1..12),
+# int_to_weekday / weekday_to_int (0=Monday). All functions are nogil and noexcept,
+# operate on plain ints, do no input validation, and have no side effects.
+# Weekdays are 0=Monday..6=Sunday unless stated otherwise.
 # cython: boundscheck=False
 """
 Cython implementations of functions resembling the stdlib calendar module
@@ -53,6 +64,13 @@ weekday_to_int = {int_to_weekday[key]: key for key in int_to_weekday}
 @cython.wraparound(False)
 @cython.boundscheck(False)
 cpdef int32_t get_days_in_month(int year, Py_ssize_t month) noexcept nogil:
+    # [FUNCTION DOC]
+    # Return days in month by indexing the 24-entry days-per-month table at
+    # 12 * (1 if leap year else 0) + month - 1.
+    # Inputs: year - int; month - int in 1..12.
+    # Outputs: int32 day count 28..31.
+    # Exceptions: none; bounds checking is disabled, so an invalid month reads
+    # out-of-bounds memory (undefined behavior). Side effects: none.
     """
     Return the number of days in the given month of the given year.
 
@@ -77,6 +95,11 @@ cpdef int32_t get_days_in_month(int year, Py_ssize_t month) noexcept nogil:
 @cython.boundscheck(False)
 @cython.cdivision(True)
 cdef long quot(long a , long b) noexcept nogil:
+    # [FUNCTION DOC]
+    # HELPER: Floor division of a by b (rounds toward negative infinity), using C
+    # truncating division and subtracting 1 when a is negative and not divisible.
+    # Inputs: a, b - C longs, b assumed > 0 (b == 0 is undefined behavior).
+    # Outputs: floor(a / b) as long. Side effects: none.
     cdef long x
     x = a/b
     if (a < 0):
@@ -88,6 +111,16 @@ cdef long quot(long a , long b) noexcept nogil:
 @cython.boundscheck(False)
 @cython.cdivision(True)
 cdef int dayofweek(int y, int m, int d) noexcept nogil:
+    # [FUNCTION DOC]
+    # Day of week via Gauss's algorithm. If m < 3 the year is decremented (Jan/Feb are
+    # treated as months of the prior year); c = floor(y/100), g = y - 100*c,
+    # f = 5 * (c mod 4), e = em[m] (cumulative days before month m in a non-leap
+    # year), minus 1 when m > 2. Result is (d - 1 + e + f + g + g/4) mod 7 with C
+    # integer division.
+    # Inputs: y, m (1..12), d - ints describing a valid date.
+    # Outputs: int 0=Monday..6=Sunday.
+    # Exceptions: none (no validation; invalid m reads out of bounds). Side effects:
+    # none.
     """
     Find the day of week for the date described by the Y/M/D triple y, m, d
     using Gauss' method, from wikipedia.
@@ -136,6 +169,11 @@ cdef int dayofweek(int y, int m, int d) noexcept nogil:
     return (-1 + d + e + f + g + g/4) % 7
 
 cdef bint is_leapyear(int64_t year) noexcept nogil:
+    # [FUNCTION DOC]
+    # Gregorian leap year test: year divisible by 4 (checked via low two bits) and
+    # either not divisible by 100 or divisible by 400.
+    # Inputs: year - 64-bit int (may be negative). Outputs: boolean.
+    # Side effects: none.
     """
     Returns 1 if the given year is a leap year, 0 otherwise.
 
@@ -154,6 +192,10 @@ cdef bint is_leapyear(int64_t year) noexcept nogil:
 @cython.wraparound(False)
 @cython.boundscheck(False)
 cpdef int32_t get_week_of_year(int year, int month, int day) noexcept nogil:
+    # [FUNCTION DOC]
+    # Return the ISO 8601 week number by taking element 1 of get_iso_calendar.
+    # Inputs: year, month, day - ints of a valid date. Outputs: int32 week 1..53.
+    # Side effects: none.
     """
     Return the ordinal week-of-year for the given day.
 
@@ -177,6 +219,19 @@ cpdef int32_t get_week_of_year(int year, int month, int day) noexcept nogil:
 @cython.wraparound(False)
 @cython.boundscheck(False)
 cpdef iso_calendar_t get_iso_calendar(int year, int month, int day) noexcept nogil:
+    # [FUNCTION DOC]
+    # Compute the ISO 8601 calendar triple. doy = day of year, dow = weekday
+    # (0=Mon). Estimate week = (doy - 1) - dow + 3, then if >= 0, week = week // 7 + 1.
+    # If the estimate is negative the date belongs to the last week of the previous
+    # ISO year: week 53 if estimate is -1, or -2 and the previous year is a leap year;
+    # otherwise 52. If the estimate is 53 but fewer than 3 days of that week fall in
+    # this year (31 - day + dow < 3), it is week 1 of next year. ISO year is year + 1
+    # when week is 1 in December, year - 1 when week >= 52 in January.
+    # Inputs: year, month, day - ints of a valid date.
+    # Outputs: tuple (iso_year, iso_week, iso_weekday) with weekday 1=Mon..7=Sun.
+    # Side effects: none.
+    # KNOWN ISSUE: the docstring says it returns "year, week, and day of year", but
+    # the third element is the ISO weekday (1-7), not the day of year.
     """
     Return the year, week, and day of year corresponding to ISO 8601
 
@@ -231,6 +286,11 @@ cpdef iso_calendar_t get_iso_calendar(int year, int month, int day) noexcept nog
 @cython.wraparound(False)
 @cython.boundscheck(False)
 cpdef int32_t get_day_of_year(int year, int month, int day) noexcept nogil:
+    # [FUNCTION DOC]
+    # Return the ordinal day of year: month_offset[13 * is_leap + month - 1] + day.
+    # Inputs: year, month (1..12), day - ints of a valid date.
+    # Outputs: int32 in 1..366. Exceptions: none (no validation; bounds checking is
+    # off). Side effects: none.
     """
     Return the ordinal day-of-year for the given day.
 
@@ -265,6 +325,12 @@ cpdef int32_t get_day_of_year(int year, int month, int day) noexcept nogil:
 # Business Helpers
 
 cpdef int get_lastbday(int year, int month) noexcept nogil:
+    # [FUNCTION DOC]
+    # Return the day-of-month of the last business day (Mon-Fri) of the month. Finds
+    # the weekday of the last day as (weekday_of_1st + days_in_month - 1) mod 7 and
+    # steps back 1 day for Saturday (5) or 2 for Sunday (6).
+    # Inputs: year, month (1..12). Outputs: int day number 26..31.
+    # Side effects: none.
     """
     Find the last day of the month that is a business day.
 
@@ -286,6 +352,10 @@ cpdef int get_lastbday(int year, int month) noexcept nogil:
 
 
 cpdef int get_firstbday(int year, int month) noexcept nogil:
+    # [FUNCTION DOC]
+    # Return the day-of-month of the first business day (Mon-Fri): 1, or 3 if the
+    # 1st is a Saturday, or 2 if it is a Sunday.
+    # Inputs: year, month (1..12). Outputs: int 1..3. Side effects: none.
     """
     Find the first day of the month that is a business day.
 

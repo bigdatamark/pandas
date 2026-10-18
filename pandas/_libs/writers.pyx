@@ -1,3 +1,8 @@
+# [MODULE DOC]
+# Fast helpers for writers in pandas.io: chunked CSV row emission, JSON-records to
+# JSON-lines conversion, maximum string length computation (Stata, PyTables) and nan_rep
+# replacement for PyTables string columns. Defines the fused type pandas_string (str or
+# bytes).
 cimport cython
 from cython cimport Py_ssize_t
 import numpy as np
@@ -25,6 +30,22 @@ def write_csv_rows(
     ndarray cols,
     object writer
 ) -> None:
+    # [FUNCTION DOC]
+    # Write rows to a csv.writer in batches of N=100 rows. A pool of N row lists of
+    # length nlevels + len(cols) is preallocated and reused cyclically. For each row j
+    # in range(len(data_index)): if nlevels == 1 the first cell is data_index[j]; if
+    # nlevels > 1 the first nlevels cells are list(data_index[j]) (a tuple of MultiIndex
+    # values); if nlevels == 0 no index cells. Then cell for column i is data[i][j].
+    # Every time the pool fills, writer.writerows(pool) is called; at the end the
+    # remaining partial batch (rows[:(j+1) % N]) is written.
+    # Inputs: data - list of per-column array-likes (each indexable by row); data_index
+    # - ndarray of index values (or tuples); nlevels - number of index levels to write;
+    # cols - ndarray of column labels (only its length is used); writer - object with a
+    # writerows method.
+    # Outputs: None. Exceptions: propagates writer errors; IndexError if data is shorter
+    # than cols. Side effects: calls writer.writerows (I/O).
+    # KNOWN ISSUE: when data_index is empty, j stays 0 so the final flush writes one
+    # stale/blank row (rows[:1], all None); callers must avoid passing empty chunks.
     """
     Write the given data to the writer object, pre-allocating where possible
     for performance improvements.
@@ -79,6 +100,18 @@ def write_csv_rows(
 @cython.boundscheck(False)
 @cython.wraparound(False)
 def convert_json_to_lines(arr: str) -> str:
+    # [FUNCTION DOC]
+    # Convert a JSON array of records (as produced by to_json(orient= "records")) into
+    # JSON-lines by replacing top-level separator commas with newlines. Works on the
+    # UTF-8 bytes: tracks whether inside a string (toggled by unescaped double quotes at
+    # index > 0, with backslash escape tracking) and the curly-brace depth outside
+    # strings; a comma at depth 0 outside quotes becomes a newline. A trailing newline
+    # is appended. The caller strips the outer square brackets beforehand.
+    # Inputs: arr - str. Outputs: str. Exceptions: UnicodeError is not expected since
+    # only ASCII bytes are replaced. Side effects: none.
+    # KNOWN ISSUE: square brackets are not tracked, so a top-level comma inside a nested
+    # array that is not within curly braces would be split (not reachable for records
+    # output, where every element is an object).
     """
     replace comma separated json with line feeds, paying special attention
     to quotes & brackets
@@ -122,6 +155,12 @@ def convert_json_to_lines(arr: str) -> str:
 @cython.boundscheck(False)
 @cython.wraparound(False)
 def max_len_string_array(pandas_string[:] arr) -> Py_ssize_t:
+    # [FUNCTION DOC]
+    # Return the maximum length among elements of a 1-D str or bytes array (characters
+    # for str, bytes for bytes), using word_len. Returns 0 for an empty array.
+    # Inputs: arr - 1-D memoryview of str or bytes objects (fused).
+    # Outputs: Py_ssize_t maximum length. Exceptions: none beyond buffer acquisition.
+    # Side effects: none.
     """
     Return the maximum size of elements in a 1-dim string array.
     """
@@ -140,6 +179,12 @@ def max_len_string_array(pandas_string[:] arr) -> Py_ssize_t:
 
 
 cpdef inline Py_ssize_t word_len(object val):
+    # [FUNCTION DOC]
+    # Return the length of a single value: number of code points for str, number of
+    # bytes for bytes, 0 for anything else.
+    # Inputs: val - any object. Outputs: Py_ssize_t. Side effects: none.
+    # KNOWN ISSUE: the docstring says "maximum length" but this is just the length of
+    # one value.
     """
     Return the maximum length of a string or bytes value.
     """
@@ -163,6 +208,13 @@ def string_array_replace_from_nan_rep(
     ndarray[object, ndim=1] arr,
     object nan_rep,
 ) -> None:
+    # [FUNCTION DOC]
+    # Replace, in place, every element of an object array equal (==) to nan_rep with
+    # np.nan. Used when reading PyTables string columns.
+    # Inputs: arr - 1-D object ndarray; nan_rep - sentinel value.
+    # Outputs: None. Exceptions: propagates errors from element __eq__ (e.g. an element
+    # whose == returns an array would raise ValueError on truth testing).
+    # Side effects: mutates arr.
     """
     Replace the values in the array with np.nan if they are nan_rep.
     """

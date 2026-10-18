@@ -1,3 +1,9 @@
+# [MODULE DOC]
+# Shared C-level utilities for pandas/_libs modules. Cimports numpy, the fixed-width
+# integer min/max limit constants from the C standard library, and re-exports every
+# declaration of pandas/_libs/tslibs/util.pxd (type checks such as is_integer_object,
+# is_float_object, is_nan, is_array, get_nat, etc.). Declares no functions itself.
+
 cimport numpy as cnp
 from libc.stdint cimport (
     INT8_MAX,

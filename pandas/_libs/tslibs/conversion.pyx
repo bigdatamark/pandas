@@ -1,3 +1,15 @@
+# [MODULE DOC]
+# Conversion of scalar inputs (strings, numbers with a unit, numpy datetime64, Python
+#   date/datetime, Timestamp) into the internal (int64 value, calendar struct, tzinfo,
+#   fold, resolution) representation held by _TSObject, which Timestamp construction and
+#   array conversion build on. Also numeric epoch casting with a unit (scalar and
+#   vectorized, splitting integer and fractional parts to limit float error), extraction
+#   of datetime64 scalar values in a target resolution, timezone localization of
+#   _TSObjects and Python datetimes, and overflow checks near the implementation bounds.
+#   Conventions: _TSObject.value is UTC-based int64 in creso units (NPY_NAT for NaT);
+#   _TSObject.dts holds the wall-clock fields in tzinfo. Module constants DT64NS_DTYPE /
+#   TD64NS_DTYPE are the M8[ns] / m8[ns] dtypes.
+# Module import side effects: initialises numpy, datetime and pandas datetime C-APIs.
 cimport cython
 
 import numpy as np
@@ -100,6 +112,22 @@ def cast_from_unit_vectorized(
     str unit,
     str out_unit="ns",
 ):
+    # [FUNCTION DOC]
+    # Vectorized cast_from_unit for float arrays: convert epoch offsets in unit to
+    #   int64 in out_unit.
+    # Inputs: values - float ndarray (indexed as 1-D); unit - unit abbreviation of the
+    #   input; out_unit - output unit abbreviation (default "ns").
+    # Behavior: for "Y"/"M" units, require integral values (or NaN), cast through
+    #   numpy M8[unit] and an overflow-safe cast to out_unit. Otherwise get multiplier m
+    #   and rounding precision p from precision_from_unit; split each value into integer
+    #   base and fractional part (NaN -> NaT), round fractions to p decimals, and
+    #   compute base*m plus the truncated frac*m with overflow checking.
+    # Outputs: int64 ndarray (NaT as the minimum int64).
+    # Exceptions: AssertionError if not float dtype; ValueError for non-integral Y/M;
+    #   OutOfBoundsDatetime on overflow. Side effects: allocates arrays.
+    # KNOWN ISSUE: the loops run over len(values) with scalar indexing, so only 1-D
+    #   input is handled correctly even though outputs are allocated with the full
+    #   shape.
     """
     Vectorized analogue to cast_from_unit.
     """
@@ -170,6 +198,16 @@ cdef int64_t cast_from_unit(
     str unit,
     NPY_DATETIMEUNIT out_reso=NPY_FR_ns
 ) except? -1:
+    # [FUNCTION DOC]
+    # Convert one numeric epoch offset (int or float) in unit to int64 in out_reso.
+    # Inputs: ts - int or float; unit - unit abbreviation (None/GENERIC treated as
+    #   ns); out_reso - target unit (default ns).
+    # Behavior: "Y"/"M": reject non-integral floats, go through numpy datetime64 and
+    #   get_datetime64_nanos. If out_reso is coarser than unit: truncate ts to int64 and
+    #   floor-divide by the factor. Otherwise multiply integer part and (rounded to p
+    #   decimals) fractional part separately by the factor and add.
+    # Outputs: int64. Exceptions: ValueError for ambiguous Y/M floats;
+    #   OutOfBoundsDatetime on overflow. Side effects: none.
     """
     Return a casting of the unit represented to nanoseconds
     round the fractional part of a float to our precision, p.
@@ -238,6 +276,16 @@ cdef (int64_t, int) precision_from_unit(
     NPY_DATETIMEUNIT in_reso,
     NPY_DATETIMEUNIT out_reso=NPY_DATETIMEUNIT.NPY_FR_ns,
 ):
+    # [FUNCTION DOC]
+    # HELPER: Return (m, p) where m is the number of out_reso units per in_reso unit
+    #   and p = floor(log10(m)) is the number of decimals to which fractional input
+    #   should be rounded. GENERIC input is treated as ns. Y uses the mean Gregorian
+    #   year (31556952 s) and M one twelfth of it; other units use
+    #   get_conversion_factor.
+    # Inputs: in_reso, out_reso (default ns). Outputs: tuple (int64 m, int p).
+    # Exceptions: errors from get_conversion_factor (e.g. when in_reso is finer than
+    #   out_reso); the code comment notes these may historically have been swallowed.
+    # Side effects: none.
     """
     Return a casting of the unit represented to nanoseconds + the precision
     to round the fractional part.
@@ -275,6 +323,12 @@ cdef (int64_t, int) precision_from_unit(
 
 
 cdef int64_t get_datetime64_nanos(object val, NPY_DATETIMEUNIT reso) except? -1:
+    # [FUNCTION DOC]
+    # Return a numpy datetime64 scalar's value converted to resolution reso (despite
+    #   the name, not necessarily nanoseconds), preserving NaT. Conversion goes through
+    #   a calendar struct when units differ.
+    # Inputs: val - numpy datetime64 scalar; reso - target unit.
+    # Outputs: int64. Exceptions: OutOfBoundsDatetime on overflow. Side effects: none.
     """
     Extract the value and unit from an np.datetime64 object, then convert the
     value to nanoseconds if necessary.
@@ -308,6 +362,11 @@ cdef int64_t get_datetime64_nanos(object val, NPY_DATETIMEUNIT reso) except? -1:
 
 # lightweight C object to hold datetime & int64 pair
 cdef class _TSObject:
+    # [CLASS DOC]
+    # Lightweight holder for a converted timestamp: dts (wall-clock struct in tzinfo),
+    #   value (UTC-based int64 in creso units, or NaT), tzinfo (or None), fold (PEP 495
+    #   disambiguation flag, default 0), creso (resolution, default ns).
+    # Attributes are declared readonly in conversion.pxd.
     # cdef:
     #    npy_datetimestruct dts      # npy_datetimestruct
     #    int64_t value               # numpy dt64
@@ -316,6 +375,10 @@ cdef class _TSObject:
     #    NPY_DATETIMEUNIT creso
 
     def __cinit__(self):
+        # [FUNCTION DOC]
+        # Set fold to 0 and creso to ns. Inputs: none. Outputs: none. Exceptions:
+        #   none.
+        # Side effects: initialises attributes.
         # GH 25057. As per PEP 495, set fold to 0 by default
         self.fold = 0
         self.creso = NPY_FR_ns  # default value
@@ -323,6 +386,14 @@ cdef class _TSObject:
     cdef int64_t ensure_reso(
         self, NPY_DATETIMEUNIT creso, val=None, bint round_ok=False
     ) except? -1:
+        # [FUNCTION DOC]
+        # Convert value to resolution creso in place (if different) and return it.
+        # Inputs: creso - target unit; val - original input used in the error message
+        #   (or None); round_ok - allow lossy truncation to a coarser unit.
+        # Outputs: int64 value in creso.
+        # Exceptions: OutOfBoundsDatetime on overflow; ValueError if lossy and not
+        #   round_ok.
+        # Side effects: mutates self.value and self.creso.
         if self.creso != creso:
             try:
                 self.value = convert_reso(
@@ -342,6 +413,25 @@ cdef class _TSObject:
 
 cdef _TSObject convert_to_tsobject(object ts, tzinfo tz, str unit,
                                    bint dayfirst, bint yearfirst, int32_t nanos=0):
+    # [FUNCTION DOC]
+    # Convert any supported scalar to a _TSObject (main entry for Timestamp
+    #   construction).
+    # Inputs: ts - str, None/NaN/NaT/NA, numpy datetime64, int/integral float, float,
+    #   datetime/Timestamp, or date; tz - target timezone or None; unit - unit for
+    #   numeric input (None -> ns); dayfirst, yearfirst - string parsing hints; nanos -
+    #   extra nanoseconds for datetime input.
+    # Behavior: strings -> convert_str_to_tsobject. Nulls -> NaT. datetime64 (no
+    #   multiplier allowed) -> value in nearest supported unit, treated as wall time in
+    #   tz. Integers (and integral floats) -> cast_from_unit into the nearest supported
+    #   unit of unit. Other floats -> cast_from_unit in ns (NaN -> NaT). datetime ->
+    #   convert_datetime_to_ tsobject at us (or the Timestamp's own unit; ns if nanos
+    #   given). date -> midnight at s. For the non-delegated paths, maybe_localize_tso
+    #   then computes wall fields in tz and checks bounds.
+    # Outputs: _TSObject.
+    # Exceptions: ValueError for datetime64 with a multiplier or Period input;
+    #   TypeError for unsupported types; OutOfBoundsDatetime; errors from string
+    #   parsing.
+    # Side effects: none beyond allocation.
     """
     Extract datetime and int64 from any of:
         - np.int64 (with unit providing a possible modifier)
@@ -440,6 +530,14 @@ cdef _TSObject convert_to_tsobject(object ts, tzinfo tz, str unit,
 
 
 cdef maybe_localize_tso(_TSObject obj, tzinfo tz, NPY_DATETIMEUNIT reso):
+    # [FUNCTION DOC]
+    # If tz is given, localize obj (UTC value -> wall fields in tz); then, for non-NaT
+    #   values, check that obj.dts is within bounds for reso and that no silent overflow
+    #   occurred.
+    # Inputs: obj - _TSObject with tzinfo None; tz - tzinfo or None; reso - unit.
+    # Outputs: None. Exceptions: OutOfBoundsDatetime; AssertionError if obj already
+    #   has a tzinfo and tz is given. Side effects: mutates obj.dts, obj.tzinfo,
+    #   obj.fold.
     if tz is not None:
         _localize_tso(obj, tz, reso)
 
@@ -455,6 +553,17 @@ cdef _TSObject convert_datetime_to_tsobject(
     int32_t nanos=0,
     NPY_DATETIMEUNIT reso=NPY_FR_ns,
 ):
+    # [FUNCTION DOC]
+    # Convert a datetime/Timestamp to a _TSObject in resolution reso.
+    # Inputs: ts - datetime or Timestamp; tz - target tz or None; nanos - extra
+    #   nanoseconds (overrides a Timestamp's own nanosecond); reso - unit (default ns).
+    # Behavior: copy fold. With tz: aware ts is converted via astimezone(tz); naive ts
+    #   is localized as wall time in tz (pytz localize or replace tzinfo); UTC just
+    #   attaches tz. Without tz keep ts.tzinfo. Fill dts from the (converted) wall
+    #   fields plus nanos, encode to int64, and subtract the UTC offset (for non-UTC tz)
+    #   to get the UTC value.
+    # Outputs: _TSObject. Exceptions: OutOfBoundsDatetime on overflow; ValueError for
+    #   ambiguous/nonexistent times with pytz. Side effects: none beyond allocation.
     """
     Convert a datetime (or Timestamp) input `ts`, along with optional timezone
     object `tz` to a _TSObject.
@@ -523,6 +632,14 @@ cdef _TSObject convert_datetime_to_tsobject(
 
 
 cdef _adjust_tsobject_tz_using_offset(_TSObject obj, tzinfo tz):
+    # [FUNCTION DOC]
+    # HELPER: Convert a _TSObject that has a fixed-offset tzinfo (from an ISO string)
+    #   to a user-provided tz without recomputing value: infer fold for tzlocal/dateutil
+    #   zones, rebuild a datetime from dts with the old tzinfo, astimezone(tz), and
+    #   refill dts (keeping the original picoseconds) and tzinfo.
+    # Inputs: obj - _TSObject with value, dts and tzinfo set; tz - target tz.
+    # Outputs: None. Exceptions: OutOfBoundsDatetime from bound checks.
+    # Side effects: mutates obj.dts, obj.tzinfo, obj.fold.
     """
     Convert a datetimestruct `obj.dts`, with an attached tzinfo to a new
     user-provided tz.
@@ -567,6 +684,20 @@ cdef _adjust_tsobject_tz_using_offset(_TSObject obj, tzinfo tz):
 cdef _TSObject convert_str_to_tsobject(str ts, tzinfo tz,
                                        bint dayfirst=False,
                                        bint yearfirst=False):
+    # [FUNCTION DOC]
+    # Convert a string to a _TSObject.
+    # Inputs: ts - exact str; tz - target tz or None; dayfirst, yearfirst - parse
+    #   hints.
+    # Behavior: "" or NaT strings -> NaT (tzinfo tz). "now"/"today" -> current time in
+    #   tz at us resolution (both give the current time, not midnight). If not dayfirst,
+    #   try the ISO C parser: resolution is the nearest supported unit but at least us;
+    #   with an offset in the string, value is the UTC instant with a fixed-offset tz,
+    #   converted to tz if given; without offset, the wall time is localized to tz if
+    #   given. Otherwise fall back to parse_datetime_string (resolution at least us,
+    #   extra nanoseconds kept) and convert_datetime_to_tsobject.
+    # Outputs: _TSObject. Exceptions: ValueError/DateParseError on unparsable strings;
+    #   OutOfBoundsDatetime; ambiguous/nonexistent errors from localization.
+    # Side effects: reads the clock for now/today.
     """
     Convert a string input `ts`, along with optional timezone object`tz`
     to a _TSObject.
@@ -669,6 +800,14 @@ cdef _TSObject convert_str_to_tsobject(str ts, tzinfo tz,
 
 
 cdef check_overflows(_TSObject obj, NPY_DATETIMEUNIT reso=NPY_FR_ns):
+    # [FUNCTION DOC]
+    # HELPER: Detect silent overflow from timezone shifting: if the wall year equals
+    #   the lower bound year but value is not negative, or equals the upper bound year
+    #   but value is not positive, the value wrapped around.
+    # Inputs: obj - _TSObject; reso - unit (default ns). Outputs: None.
+    # Exceptions: OutOfBoundsDatetime describing underflow/overflow past Timestamp
+    #   min/max.
+    # Side effects: may import Timestamp lazily.
     """
     Check that we haven't silently overflowed in timezone conversion
 
@@ -712,6 +851,13 @@ cdef check_overflows(_TSObject obj, NPY_DATETIMEUNIT reso=NPY_FR_ns):
 # Localization
 
 cdef int _localize_tso(_TSObject obj, tzinfo tz, NPY_DATETIMEUNIT reso) except -1:
+    # [FUNCTION DOC]
+    # HELPER: Given obj.value as UTC, compute the wall-clock struct in tz (unless UTC
+    #   or NaT), set fold, and set obj.tzinfo to tz (for pytz, the specific fixed-offset
+    #   tzinfo of the matching transition).
+    # Inputs: obj - _TSObject with tzinfo None; tz - tzinfo; reso - unit.
+    # Outputs: 1. Exceptions: AssertionError if obj.tzinfo is already set.
+    # Side effects: mutates obj.dts, obj.fold, obj.tzinfo.
     """
     Given the UTC nanosecond timestamp in obj.value, find the wall-clock
     representation of that timestamp in the given timezone.
@@ -756,6 +902,14 @@ cdef int _localize_tso(_TSObject obj, tzinfo tz, NPY_DATETIMEUNIT reso) except -
 
 
 cdef datetime _localize_pydatetime(datetime dt, tzinfo tz):
+    # [FUNCTION DOC]
+    # HELPER: Attach tz to a naive datetime treating its fields as wall time in tz:
+    #   pytz zones use tz.localize(is_dst=None), others replace tzinfo.
+    # Inputs: dt - naive datetime; tz - non-None tzinfo. Outputs: aware datetime.
+    # Exceptions: ValueError for ambiguous/nonexistent times with pytz.
+    # Side effects: may import pytz.
+    # KNOWN ISSUE: the docstring says it takes a datetime "in UTC", but the fields are
+    #   interpreted as local wall time in tz, not as UTC.
     """
     Take a datetime/Timestamp in UTC and localizes to timezone tz.
 
@@ -778,6 +932,16 @@ cdef datetime _localize_pydatetime(datetime dt, tzinfo tz):
 
 
 cpdef inline datetime localize_pydatetime(datetime dt, tzinfo tz):
+    # [FUNCTION DOC]
+    # Public variant of _localize_pydatetime: returns dt unchanged if tz is None, uses
+    #   Timestamp.tz_localize for Timestamps (keeping nanoseconds), else
+    #   _localize_pydatetime.
+    # Inputs: dt - naive datetime/Timestamp; tz - tzinfo or None.
+    # Outputs: datetime or Timestamp. Exceptions: as tz_localize /
+    #   _localize_pydatetime.
+    # Side effects: none.
+    # KNOWN ISSUE: like _localize_pydatetime, the docstring says the input is in UTC,
+    #   but it is treated as wall time in tz.
     """
     Take a datetime/Timestamp in UTC and localizes to timezone tz.
 
@@ -802,6 +966,14 @@ cdef int64_t parse_pydatetime(
     npy_datetimestruct *dts,
     NPY_DATETIMEUNIT creso,
 ) except? -1:
+    # [FUNCTION DOC]
+    # Convert a datetime to int64 in creso (used by array parsers). Aware inputs are
+    #   converted to their UTC value via convert_datetime_to_tsobject; naive Timestamps
+    #   are re-based to creso (truncating if needed); other naive datetimes are encoded
+    #   directly.
+    # Inputs: val - datetime; dts - scratch struct; creso - unit.
+    # Outputs: int64. Exceptions: OutOfBoundsDatetime on overflow.
+    # Side effects: may write *dts.
     """
     Convert pydatetime to datetime64.
 

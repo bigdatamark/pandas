@@ -1,3 +1,22 @@
+# [MODULE DOC]
+# Parsing of free-form datetime strings (not format-driven; see strptime.pyx for
+#   that). Layered strategy used by parse_datetime_string /
+#   parse_datetime_string_with_reso: (1) cheap rejection of strings that look like plain
+#   numbers or single letters, (2) ISO-8601 fast path via the C parser (string_to_dts),
+#   (3) fast C-level parsing of delimited numeric dates (MM/DD/YYYY, DD/MM/YYYY,
+#   MM/YYYY), (4) quarter / month abbreviation strings ("2Q2005", "2005Q1", "2005-01",
+#   "Jan 2005"), (5) fallback to dateutil's private parser, with pandas-specific
+#   resolution detection and timezone handling. Every parse also reports the resolution
+#   (finest unit present) through an NPY_DATETIMEUNIT out-pointer or a string name. Also
+#   provides guess_datetime_format (infer a strftime format from one sample string,
+#   validated with array_strptime), quarter/fiscal-year helpers (quarter_to_myear,
+#   get_rule_month), try_parse_dates for object arrays, and a vendored dateutil
+#   tokenizer (_timelex). Module-level state: the DateParseError exception, a default
+#   datetime of 0001-01-01 used to fill missing fields, a set of single letters never
+#   treated as dates, the set of sub-microsecond units that are reported as nanoseconds,
+#   the delimiter set " /-.", and a compiled regex for fractional seconds.
+# Module import side effects: initialises the datetime, numpy and pandas datetime
+#   C-APIs.
 """
 Parsing functions for datetime and datetime-like strings.
 """
@@ -79,6 +98,10 @@ cdef extern from "pandas/parser/tokenizer.h":
 
 
 class DateParseError(ValueError):
+    # [CLASS DOC]
+    # Exception (subclass of ValueError) raised when a string is recognised as date-
+    #   like but cannot be parsed, e.g. invalid day/month values, bad quarter, or
+    #   dateutil failure. No extra state.
     pass
 
 
@@ -103,16 +126,31 @@ cdef:
 
 
 cdef bint _is_delimiter(const char ch):
+    # [FUNCTION DOC]
+    # HELPER: Return true if the byte is one of the date delimiters space, '/', '-',
+    #   '.'.
+    # Inputs: ch - single char. Outputs: bool. Exceptions: none. Side effects: none.
     return strchr(delimiters, ch) != NULL
 
 
 cdef int _parse_1digit(const char* s):
+    # [FUNCTION DOC]
+    # HELPER: Parse one ASCII digit at s[0]. Non-digits yield -10 so that the result
+    #   is negative and callers can detect invalid input.
+    # Inputs: s - pointer to at least 1 byte. Outputs: int 0..9 or negative.
+    # Exceptions: none. Side effects: none.
     cdef int result = 0
     result += getdigit_ascii(s[0], -10) * 1
     return result
 
 
 cdef int _parse_2digit(const char* s):
+    # [FUNCTION DOC]
+    # HELPER: Parse two ASCII digits at s[0..1] as a decimal number. Any non-digit
+    #   contributes a large negative value (-100), so invalid input gives a negative
+    #   result.
+    # Inputs: s - pointer to at least 2 bytes. Outputs: int 0..99 or negative.
+    # Exceptions: none. Side effects: none.
     cdef int result = 0
     result += getdigit_ascii(s[0], -10) * 10
     result += getdigit_ascii(s[1], -100) * 1
@@ -120,6 +158,12 @@ cdef int _parse_2digit(const char* s):
 
 
 cdef int _parse_4digit(const char* s):
+    # [FUNCTION DOC]
+    # HELPER: Parse four ASCII digits at s[0..3] as a decimal number; non-digits
+    #   contribute large negative values (-10000 for any position) so invalid input
+    #   gives a negative result. Inputs: s - pointer to at least 4 bytes. Outputs: int
+    #   0..9999 or negative.
+    # Exceptions: none. Side effects: none.
     cdef int result = 0
     result += getdigit_ascii(s[0], -10) * 1000
     result += getdigit_ascii(s[1], -100) * 100
@@ -131,6 +175,29 @@ cdef int _parse_4digit(const char* s):
 cdef datetime _parse_delimited_date(
     str date_string, bint dayfirst, NPY_DATETIMEUNIT* out_bestunit
 ):
+    # [FUNCTION DOC]
+    # HELPER: Fast parse of purely numeric delimited dates without dateutil. Accepted
+    #   shapes (d = digit, ? = delimiter from " /-."): length 10 "dd?dd?dddd", length 9
+    #   "d?dd?dddd" or "dd?d?dddd", length 8 "d?d?dddd" (first field month, second day,
+    #   unless swapped), and length 7 "dd?dddd" meaning MM/YYYY (rejected if the
+    #   delimiter is '.', since it could be a float).
+    # Inputs: date_string - str (UTF-8 encoded); dayfirst - prefer day/month order;
+    #   out_bestunit - receives NPY_FR_D for full dates or NPY_FR_M for MM/YYYY.
+    # Behavior: returns None if no shape matches, or if any part is non-numeric or
+    #   year < 1000. If both fields are in 1..31 and at least one is <= 12, swaps day
+    #   and month when (first > 12, or both <= 12 and dayfirst) and the shape has a day
+    #   field, then builds a naive datetime at midnight.
+    # Outputs: datetime or None.
+    # Exceptions: DateParseError("Invalid date specified (m/d)") if the fields are out
+    #   of range; ValueError from the datetime constructor for invalid combinations
+    #   (e.g. Feb 30). Side effects: writes *out_bestunit when a shape matches (even if
+    #   later None).
+    # KNOWN ISSUE: the docstring says it returns "None, None" (it returns a single
+    #   None) and describes the dayfirst fallback as DD/MM/YYYY twice (it falls back to
+    #   MM/DD).
+    # KNOWN ISSUE: for MM/YYYY with month 13..31 (e.g. "13/2010") the range check
+    #   passes because day defaults to 1, no swap is allowed, and the datetime
+    #   constructor raises a plain ValueError rather than DateParseError.
     """
     Parse special cases of dates: MM/DD/YYYY, DD/MM/YYYY, MM/YYYY.
 
@@ -219,6 +286,11 @@ cdef datetime _parse_delimited_date(
 
 
 cdef bint _does_string_look_like_time(str parse_string):
+    # [FUNCTION DOC]
+    # HELPER: Check whether a string starts with a clock time "H:MM" or "HH:MM" with
+    #   hour 0..23 and minute 0..59 (only the first 4-5 bytes are inspected).
+    # Inputs: parse_string - str. Outputs: bool (false if length < 4).
+    # Exceptions: none. Side effects: none.
     """
     Checks whether given string is a time: it has to start either from
     H:MM or from HH:MM, and hour and minute values must be valid.
@@ -254,6 +326,11 @@ cdef bint _does_string_look_like_time(str parse_string):
 def py_parse_datetime_string(
     str date_string, bint dayfirst=False, bint yearfirst=False
 ):
+    # [FUNCTION DOC]
+    # Python-visible wrapper of parse_datetime_string for tests; the resolution and
+    #   nanos outputs are discarded.
+    # Inputs: date_string - exact str; dayfirst, yearfirst - bools.
+    # Outputs: datetime. Exceptions: as parse_datetime_string. Side effects: none.
     # Python-accessible version for testing (we can't just make
     #  parse_datetime_string cpdef bc it has a pointer argument)
     cdef:
@@ -275,6 +352,25 @@ cdef datetime parse_datetime_string(
     NPY_DATETIMEUNIT* out_bestunit,
     int64_t* nanos,
 ):
+    # [FUNCTION DOC]
+    # Parse an arbitrary date string into a datetime (used e.g. by Timestamp
+    #   construction from strings that failed the ISO fast path).
+    # Inputs: date_string - must be exactly str (not a str subclass such as numpy
+    #   str_); dayfirst, yearfirst - ambiguity hints passed to dateutil and the
+    #   delimited parser; out_bestunit - receives the detected resolution; nanos -
+    #   receives extra nanoseconds (digits 7-9 of a fractional second) when detected,
+    #   else left untouched.
+    # Behavior: raise if the string does not look like a datetime. If it starts like a
+    #   clock time, parse with dateutil using today's date at midnight as the default
+    #   for missing fields. Else try _parse_delimited_date, then _parse_dateabbr_string
+    #   (no freq; its ValueError is ignored, DateParseError propagates), then dateutil
+    #   with default 0001-01-01. "today"/"now" are not handled here.
+    # Outputs: datetime (possibly tz-aware, or NaT for NaT strings via the abbr path).
+    # Exceptions: ValueError if not datetime-like; DateParseError;
+    #   OutOfBoundsDatetime; ValueError for unsupported timezone names/weekday-only
+    #   strings.
+    # Side effects: writes *out_bestunit and possibly *nanos; reads current local date
+    #   for time-only strings.
     """
     Parse datetime string, only returns datetime.
     Also cares special handling matching time patterns.
@@ -327,6 +423,25 @@ cdef datetime parse_datetime_string(
 def parse_datetime_string_with_reso(
     str date_string, str freq=None, dayfirst=None, yearfirst=None
 ):
+    # [FUNCTION DOC]
+    # Parse a date string and also return its resolution name; used by Period/
+    #   DatetimeIndex partial string indexing.
+    # Inputs: date_string - exact str; freq - optional frequency string (affects
+    #   quarter interpretation and the "YYYYMM" monthly case "ME"); dayfirst, yearfirst
+    #   - bools or None (None reads the display.date_dayfirst / display.date_yearfirst
+    #   options).
+    # Behavior: raise if not datetime-like. If not dayfirst, try the ISO C parser
+    #   first: on success, sub-ns units are clamped to ns; ns results are built as a
+    #   Timestamp (to keep nanoseconds), others as a datetime with a fixed-offset
+    #   timezone if an offset was present. Otherwise try _parse_delimited_date, then
+    #   _parse_dateabbr_string (reso "quarter" if a quarter string), then dateutil with
+    #   default 0001-01-01.
+    # Outputs: tuple (datetime, reso) where reso is a unit attribute name such as
+    #   "year", "month", "day", "hour", "minute", "second", "millisecond",
+    #   "microsecond", "nanosecond", or "quarter".
+    # Exceptions: ValueError if not datetime-like; DateParseError;
+    #   OutOfBoundsDatetime; other ValueErrors from dateutil_parse. Side effects: may
+    #   import pandas.Timestamp lazily; reads global options.
     # NB: This will break with np.str_ (GH#45580) even though
     #  isinstance(npstrobj, str) evaluates to True, so caller must ensure
     #  the argument is *exactly* 'str'
@@ -433,6 +548,12 @@ def parse_datetime_string_with_reso(
 
 
 cpdef bint _does_string_look_like_datetime(str py_string):
+    # [FUNCTION DOC]
+    # Cheap pre-check that a string could be a date: true if it starts with '0'; false
+    #   if it is one of the single letters a/A/m/M/p/P/t/T; if the whole string
+    #   (allowing surrounding whitespace) parses as a float, true only when the number
+    #   is >= 1000; otherwise (including empty string) true.
+    # Inputs: py_string - str. Outputs: bool. Exceptions: none. Side effects: none.
     """
     Checks whether given string is a datetime: it has to start with '0' or
     be greater than 1000.
@@ -482,6 +603,23 @@ cpdef bint _does_string_look_like_datetime(str py_string):
 cdef datetime _parse_dateabbr_string(str date_string, datetime default,
                                      str freq, NPY_DATETIMEUNIT* out_bestunit,
                                      bint* is_quarter):
+    # [FUNCTION DOC]
+    # HELPER: Parse NaT strings, bare years, quarter strings and month strings.
+    # Inputs: date_string - str; default - datetime supplying unspecified fields; freq
+    #   - optional frequency string for fiscal quarters; out_bestunit - receives
+    #   resolution; is_quarter - set to 1 if a quarter string was parsed.
+    # Behavior: NaT strings return NaT with ns resolution. The string is upper-cased.
+    #   A 4-char string that is an integer gives that year (NPY_FR_Y). For length 4..7
+    #   look for 'Q' at index 1..5: forms "nQyy", "nQ-yy", "nQyyyy", "nQ-yyyy" (quarter
+    #   first, 2-digit years mean 2000+yy), "yyQn", "yy-Qn", "yyyyQn", "yyyy-Qn"; then
+    #   map to calendar (year, month) via quarter_to_myear and return default with that
+    #   year/month (NPY_FR_M). For length 6 with freq "ME" treat as YYYYMM. Finally try
+    #   the formats "%Y-%m", "%b %Y", "%b-%Y" (NPY_FR_M).
+    # Outputs: datetime (or NaT).
+    # Exceptions: DateParseError if quarter not in 1..4 or freq has no usable month;
+    #   ValueError("Unable to parse ...") if nothing matches (callers treat as "try
+    #   next").
+    # Side effects: writes *out_bestunit and *is_quarter.
     # special handling for possibilities eg, 2Q2005, 2Q05, 2005Q1, 05Q1
     cdef:
         datetime ret
@@ -590,6 +728,16 @@ cdef datetime _parse_dateabbr_string(str date_string, datetime default,
 
 
 cpdef quarter_to_myear(int year, int quarter, str freq):
+    # [FUNCTION DOC]
+    # Convert a fiscal (year, quarter) under a quarterly frequency to the calendar
+    #   (year, month) at which the quarter starts. With freq, the fiscal year ends in
+    #   the month given by get_rule_month(freq) (mnum); month = (mnum + 3*(quarter-1))
+    #   mod 12 + 1, and the year is decremented when that month is after mnum. Without
+    #   freq, month = 3*(quarter-1)+1 in the same year.
+    # Inputs: year, quarter - ints; freq - str or None.
+    # Outputs: tuple (year, month).
+    # Exceptions: ValueError if quarter not in 1..4; KeyError if the rule month is not
+    #   a valid month abbreviation. Side effects: none.
     """
     A quarterly frequency defines a "year" which may not coincide with
     the calendar-year.  Find the calendar-year and calendar-month associated
@@ -633,6 +781,24 @@ cdef datetime dateutil_parse(
     NPY_DATETIMEUNIT* out_bestunit,
     int64_t* nanos,
 ):
+    # [FUNCTION DOC]
+    # Parse a string with dateutil's private DEFAULTPARSER._parse and build the
+    #   datetime ourselves so the resolution can be determined.
+    # Inputs: timestr - str; default - datetime providing missing fields; ignoretz -
+    #   skip timezone handling; dayfirst, yearfirst - ambiguity hints; out_bestunit -
+    #   receives resolution; nanos - optional pointer for extra nanoseconds (may be
+    #   NULL).
+    # Behavior: the resolution is the last non-null of year, month, day, hour, minute,
+    #   second, microsecond; if microsecond and divisible by 1000, refine via
+    #   _find_subsecond_reso. Fields replace those of default. Timezone (unless
+    #   ignoretz): a name in the local time.tzname list is accepted only if "UTC" (gives
+    #   UTC); zero offset gives dateutil tzutc; nonzero offset gives dateutil tzoffset
+    #   (validated to be within 24h); an unknown name raises.
+    # Outputs: datetime, naive or aware.
+    # Exceptions: DateParseError if unparsable or no fields found or replace fails
+    #   (e.g. day out of range); OutOfBoundsDatetime if replace overflows; ValueError
+    #   for weekday without day, local tz names, invalid offsets, unrecognised tz names.
+    # Side effects: writes *out_bestunit and possibly *nanos.
     """ lifted from dateutil to get resolution"""
 
     cdef:
@@ -727,6 +893,15 @@ cdef datetime dateutil_parse(
 cdef object _reso_pattern = re.compile(r"\d:\d{2}:\d{2}\.(?P<frac>\d+)")
 
 cdef _find_subsecond_reso(str timestr, int64_t* nanos):
+    # [FUNCTION DOC]
+    # HELPER: Determine sub-second resolution name from the fractional-second digits
+    #   of the first "H:MM:SS.fff..." pattern in the string.
+    # Inputs: timestr - str; nanos - optional out pointer (may be NULL).
+    # Behavior: no match -> "second"; <= 3 digits -> "millisecond"; 4..6 ->
+    #   "microsecond"; more than 6 -> "nanosecond", and if digits beyond the 6th are not
+    #   all zero, *nanos receives digits 7..9 (right-padded with zeros) as an integer;
+    #   digits beyond 9 are truncated.
+    # Outputs: str resolution name. Exceptions: none. Side effects: may write *nanos.
     # GH#55737
     # Check for trailing zeros in an H:M:S.f pattern
     match = _reso_pattern.search(timestr)
@@ -761,6 +936,13 @@ cdef _find_subsecond_reso(str timestr, int64_t* nanos):
 
 
 def try_parse_dates(object[:] values, parser) -> np.ndarray:
+    # [FUNCTION DOC]
+    # Apply a user parser callable to each element of a 1-D object array, mapping
+    #   empty strings to NaN.
+    # Inputs: values - 1-D object array/memoryview; parser - callable taking one
+    #   element.
+    # Outputs: new 1-D object ndarray of results.
+    # Exceptions: anything raised by parser. Side effects: none beyond parser's.
     cdef:
         Py_ssize_t i, n
         object[::1] result
@@ -790,7 +972,17 @@ def try_parse_dates(object[:] values, parser) -> np.ndarray:
 #
 # Licence at LICENSES/DATEUTIL_LICENSE
 class _timelex:
+    # [CLASS DOC]
+    # Tokenizer for date strings, vendored from dateutil (private there). Holds the
+    #   full input string in the attribute stream; get_tokens splits it into runs of
+    #   whitespace, decimal numbers, digits, letters, ". / :" punctuation, or other
+    #   symbols.
     def __init__(self, instream):
+        # [FUNCTION DOC]
+        # Store the input text. Inputs: instream - str, bytes-like (decoded), or a
+        #   file-like object with read(). Outputs: none.
+        # Exceptions: TypeError if not a string and has no read method.
+        # Side effects: sets self.stream.
         if getattr(instream, "decode", None) is not None:
             instream = instream.decode()
 
@@ -804,6 +996,17 @@ class _timelex:
             self.stream = instream.read()
 
     def get_tokens(self):
+        # [FUNCTION DOC]
+        # Split self.stream (with NUL characters removed) into tokens with a regex:
+        #   single whitespace chars, standalone decimals "d+.d+", digit runs, letter
+        #   runs, runs of '.', '/', ':', or runs of other non-alphanumeric characters.
+        #   Then merge digit, ",", digit triples into one "d.d" token (comma as decimal
+        #   separator).
+        # Inputs: none. Outputs: list of str tokens; concatenation equals the input
+        #   except for merged commas. Exceptions: none. Side effects: none.
+        # KNOWN ISSUE: the None check meant to skip already-merged tokens examines a
+        #   copy of the list, so overlapping triples merge twice, e.g. "1,2,3" gives
+        #   ["1.2", "2.3"].
         """
         This function breaks the time string into lexical units (tokens), which
         can be parsed by the parser. Lexical units are demarcated by changes in
@@ -850,6 +1053,10 @@ class _timelex:
 
     @classmethod
     def split(cls, s):
+        # [FUNCTION DOC]
+        # Class-level convenience: tokenize s via a new instance. Inputs: s - str.
+        #   Outputs: list of tokens. Exceptions: TypeError as in __init__. Side effects:
+        #   none.
         return cls(s).get_tokens()
 
 
@@ -857,6 +1064,24 @@ _DATEUTIL_LEXER_SPLIT = _timelex.split
 
 
 def guess_datetime_format(dt_str: str, bint dayfirst=False) -> str | None:
+    # [FUNCTION DOC]
+    # Infer a strftime/strptime format string from a single sample datetime string.
+    # Inputs: dt_str - str; dayfirst - prefer day-before-month ambiguity resolution.
+    # Algorithm: parse with dateutil_parse (default 1970-01-01); on failure return
+    #   None. Tokenize with _timelex; if tz-aware, normalise a trailing offset ("Z", "+
+    #   hhmm", or "+ hh : mm") into one %z-style token. Walk an ordered list of
+    #   (attributes, directive, padding) candidates (compound directives like
+    #   %Y%m%d%H%M%S first, then single directives; day moved first if dayfirst); for
+    #   each candidate whose attributes are not yet found, render the parsed datetime
+    #   with that directive and assign it to the first unassigned token that equals it
+    #   (after zero-padding / fraction normalisation via _fill_token). Require year,
+    #   month and day (except exact "%Y" or "%Y-%m"); unassigned tokens become literals
+    #   but numeric leftovers reject the guess. Replace %H by %I if %p is present.
+    #   Validate by running array_strptime with the guess and by checking that re-
+    #   rendering the parsed datetime reproduces the (padded) tokens.
+    # Outputs: format string or None.
+    # Exceptions: none expected (parse errors give None).
+    # Side effects: may emit UserWarning via _maybe_warn_about_dayfirst.
     """
     Guess the datetime format of a given datetime string.
 
@@ -1056,6 +1281,14 @@ def guess_datetime_format(dt_str: str, bint dayfirst=False) -> str | None:
 
 
 cdef str _fill_token(token: str, padding: int):
+    # [FUNCTION DOC]
+    # HELPER: Normalise a token for comparison with strftime output. Tokens with no
+    #   "digits.digits" pattern are left-zero-padded to padding width; otherwise the
+    #   token is split on '.' into seconds (formatted as 2 digits) and fraction (right-
+    #   padded to 9 digits then truncated to 6).
+    # Inputs: token - str; padding - int width. Outputs: str.
+    # Exceptions: ValueError if the seconds part is not an integer or the token has
+    #   more than one '.'. Side effects: none.
     cdef str token_filled
     if re.search(r"\d+\.\d+", token) is None:
         # For example: 98
@@ -1073,6 +1306,14 @@ cdef str _fill_token(token: str, padding: int):
 
 
 cdef void _maybe_warn_about_dayfirst(format: str, bint dayfirst) noexcept:
+    # [FUNCTION DOC]
+    # HELPER: Warn when a guessed format containing both %d and %m disagrees with
+    #   dayfirst: %m before %d while dayfirst is true, or %d before %m while dayfirst is
+    #   false.
+    # Inputs: format - str; dayfirst - bool. Outputs: none.
+    # Exceptions: none (noexcept). Side effects: emits UserWarning.
+    # KNOWN ISSUE: declared noexcept, so if warnings are configured as errors the
+    #   raised exception cannot propagate and is reported as unraisable instead.
     """Warn if guessed datetime format doesn't respect dayfirst argument."""
     cdef:
         int day_index = format.find("%d")
@@ -1097,6 +1338,12 @@ cdef void _maybe_warn_about_dayfirst(format: str, bint dayfirst) noexcept:
 
 
 cpdef str get_rule_month(str source):
+    # [FUNCTION DOC]
+    # Return the anchor month abbreviation of a frequency string: the part after the
+    #   first '-' (upper-cased), e.g. "Q-JAN" -> "JAN"; "DEC" if there is no '-'.
+    # Inputs: source - str. Outputs: str (only the second '-'-separated field is
+    #   returned).
+    # Exceptions: none. Side effects: none.
     """
     Return starting month of given freq, default is December.
 

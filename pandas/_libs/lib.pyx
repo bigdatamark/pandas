@@ -1,3 +1,24 @@
+# [MODULE DOC]
+# General-purpose low-level helpers backing pandas' public type-checking API and
+# internal dtype inference/conversion. Main areas:
+# - Scalar type predicates exposed in pandas.api.types (is_scalar, is_list_like,
+#   is_integer, is_float, is_bool, is_complex, is_iterator) and infer_dtype.
+# - Object-array inference: a family of Validator classes that check whether every
+#   element of an object array is of one kind (bool, int, float, str, datetime...),
+#   optionally ignoring nulls (skipna); used by infer_dtype.
+# - Object-array conversion: maybe_convert_numeric (parse to numbers, used by
+#   to_numeric/parsers) and maybe_convert_objects (soft conversion of object arrays to
+#   the narrowest numpy/extension dtype), both tracking element kinds in a Seen
+#   record; ensure_string_array, map_infer(_mask) (elementwise apply + inference).
+# - Indexing/grouping helpers: indexer reversal, slice detection, range checks,
+#   bin generation for resampling, group slices, level sorting.
+# - Misc: no_default sentinel (_NoDefault enum), memory usage, zipping, row
+#   conversion of lists/tuples to 2-D object arrays.
+# "Null" here follows pandas/_libs/missing.pyx (None, NaN, NaT, NA, ...). Module
+# constants: Python-int copies of INT64_MIN/MAX and UINT64_MAX for comparisons with
+# arbitrary-size ints, a float NaN, i8max/u8max (Python visible), and an optional
+# pyarrow module reference (pa is None when pyarrow is not installed).
+
 from collections import abc
 from decimal import Decimal
 from enum import Enum
@@ -73,6 +94,11 @@ from pandas._libs.interval import Interval
 
 
 cdef extern from "pandas/parser/pd_parser.h":
+    # [FUNCTION DOC]
+    # External C parser routine: parse a str/bytes number into a double.
+    # Inputs: object to parse; result - out pointer for the double; maybe_int - out flag
+    # set to 1 if the text looked like an integer (no decimal point/exponent).
+    # Outputs: 0 on success. Exceptions: ValueError/TypeError for unparsable input.
     int floatify(object, float64_t *result, int *maybe_int) except -1
     void PandasParser_IMPORT()
 
@@ -135,6 +161,11 @@ else:
 @cython.wraparound(False)
 @cython.boundscheck(False)
 def memory_usage_of_objects(ndarray[object, ndim=1] arr) -> int64_t:
+    # [FUNCTION DOC]
+    # Inputs: arr - 1-D object array.
+    # Outputs: sum of sys.getsizeof over every element (bytes), as an integer; does not
+    # include the array's own pointer buffer.
+    # Exceptions: propagates errors from getsizeof. Side effects: none.
     """
     Return the memory usage of an object array in bytes.
 
@@ -156,6 +187,16 @@ def memory_usage_of_objects(ndarray[object, ndim=1] arr) -> int64_t:
 
 @set_module("pandas.api.types")
 def is_scalar(val: object) -> bool:
+    # [FUNCTION DOC]
+    # Public scalar test (pandas.api.types.is_scalar).
+    # Inputs: val - any object.
+    # Outputs: True if val is a numpy scalar or 0-d-like numpy scalar type, a Python
+    # builtin scalar (int, float, complex, bool, str, bytes), date/datetime, timedelta,
+    # time, None, or NA. Otherwise False for any sequence (list, tuple, ndarray, Series,
+    # str-like already handled); then True for objects supporting the number protocol
+    # (Decimal, Fraction, numbers.Number), Period, Interval and DateOffset objects;
+    # False for everything else (dicts, sets, arbitrary objects).
+    # Exceptions: none. Side effects: none.
     """
     Return True if given object is scalar.
 
@@ -239,6 +280,13 @@ def is_scalar(val: object) -> bool:
 
 
 cdef int64_t get_itemsize(object val):
+    # [FUNCTION DOC]
+    # HELPER: Inputs: val - any object.
+    # Outputs: the byte size of the numpy dtype of val if val is a numpy scalar
+    # (np.int32 -> 4, etc.); -1 for anything else (including Python scalars).
+    # Exceptions: none. Side effects: none.
+    # KNOWN ISSUE: docstring says it returns "is_ndarray : bool"; it returns an int64
+    # itemsize or -1.
     """
     Get the itemsize of a NumPy scalar, -1 if not a NumPy scalar.
 
@@ -258,6 +306,11 @@ cdef int64_t get_itemsize(object val):
 
 @set_module("pandas.api.types")
 def is_iterator(obj: object) -> bool:
+    # [FUNCTION DOC]
+    # Inputs: obj - any object.
+    # Outputs: True if obj implements the iterator protocol (has a working __next__),
+    # e.g. generators; False for iterables like lists/str that are not iterators.
+    # Exceptions: none. Side effects: none.
     """
     Check if the object is an iterator.
 
@@ -299,6 +352,12 @@ def is_iterator(obj: object) -> bool:
 
 
 def item_from_zerodim(val: object) -> object:
+    # [FUNCTION DOC]
+    # Inputs: val - any object.
+    # Outputs: if val is exactly an ndarray (not a subclass) with 0 dimensions, the
+    # numpy
+    # scalar it holds; otherwise val unchanged.
+    # Exceptions: none. Side effects: none.
     """
     If the value is a zerodim array, return the item it contains.
 
@@ -329,6 +388,14 @@ def item_from_zerodim(val: object) -> object:
 @cython.wraparound(False)
 @cython.boundscheck(False)
 def fast_unique_multiple_list_gen(object gen, bint sort=True) -> list:
+    # [FUNCTION DOC]
+    # Inputs: gen - iterable yielding Python lists; sort - whether to sort the result.
+    # Outputs: list of distinct values (hash-based, in first-seen order) across all
+    # lists;
+    # sorted ascending if sort is True and the values are mutually orderable (TypeError
+    # from sorting is swallowed, leaving first-seen order).
+    # Exceptions: TypeError if a yielded item is not a list or a value is unhashable.
+    # Side effects: consumes gen.
     """
     Generate a list of unique values from a generator of lists.
 
@@ -369,6 +436,11 @@ def fast_unique_multiple_list_gen(object gen, bint sort=True) -> list:
 @cython.wraparound(False)
 @cython.boundscheck(False)
 def dicts_to_array(dicts: list, columns: list):
+    # [FUNCTION DOC]
+    # Inputs: dicts - list of dicts (rows); columns - list of keys (columns).
+    # Outputs: 2-D object array of shape (len(dicts), len(columns)) where cell (i, j) is
+    # dicts[i][columns[j]] if present, else float NaN.
+    # Exceptions: TypeError if an element of dicts is not a dict. Side effects: none.
     cdef:
         Py_ssize_t i, j, k, n
         ndarray[object, ndim=2] result
@@ -393,6 +465,18 @@ def dicts_to_array(dicts: list, columns: list):
 
 
 def fast_zip(list ndarrays) -> ndarray[object]:
+    # [FUNCTION DOC]
+    # Zip arrays into an object array of tuples.
+    # Inputs: ndarrays - non-empty list of k arrays of equal length n (any dtype;
+    # elements
+    # are boxed via the array's getitem in flat order).
+    # Outputs: 1-D object array of length n whose i-th element is the k-tuple of the
+    # i-th
+    # elements of each array. Tuples are built in place (allocated on the first pass,
+    # filled on later passes).
+    # Exceptions: ValueError "all arrays must be same length" if a later array's length
+    # differs; IndexError if ndarrays is empty.
+    # Side effects: allocates the result.
     """
     For zipping multiple ndarrays into an ndarray of tuples.
     """
@@ -435,6 +519,18 @@ def fast_zip(list ndarrays) -> ndarray[object]:
 
 
 def get_reverse_indexer(const intp_t[:] indexer, Py_ssize_t length) -> ndarray:
+    # [FUNCTION DOC]
+    # Invert an indexer.
+    # Inputs: indexer - 1-D intp array of positions into a target of size length, with
+    # -1
+    # meaning missing; length - size of the output.
+    # Outputs: intp array of size length, initialized to -1, where out[indexer[i]] = i
+    # for
+    # every i with indexer[i] != -1. If a position repeats, the LAST i wins.
+    # Exceptions: IndexError if an indexer value is >= length.
+    # Side effects: none.
+    # KNOWN ISSUE: docstring Notes says "only first occurrence is accounted" for
+    # non-unique indexers, but the loop overwrites so the last occurrence is kept.
     """
     Reverse indexing operation.
 
@@ -473,6 +569,10 @@ def get_reverse_indexer(const intp_t[:] indexer, Py_ssize_t length) -> ndarray:
 @cython.wraparound(False)
 @cython.boundscheck(False)
 def has_infs(const floating[:] arr) -> bool:
+    # [FUNCTION DOC]
+    # Inputs: arr - 1-D float32/float64 memoryview.
+    # Outputs: True if any element is +inf or -inf, else False.
+    # Exceptions: none. Side effects: releases the GIL during the scan.
     cdef:
         Py_ssize_t i, n = len(arr)
         floating inf, neginf, val
@@ -492,6 +592,14 @@ def has_infs(const floating[:] arr) -> bool:
 @cython.boundscheck(False)
 @cython.wraparound(False)
 def has_only_ints_or_nan(const floating[:] arr) -> bool:
+    # [FUNCTION DOC]
+    # Inputs: arr - 1-D float32/float64 memoryview.
+    # Outputs: True if every element is NaN or equals itself truncated to a 64-bit
+    # integer (i.e. is a whole number); False on the first fractional value.
+    # Exceptions: none. Side effects: none.
+    # KNOWN ISSUE: the truncation to int64 is undefined behavior in C for +/-inf and
+    # values outside the int64 range; in practice such values return False even when
+    # they are whole numbers (e.g. 1e20).
     cdef:
         floating val
         intp_t i
@@ -506,6 +614,15 @@ def has_only_ints_or_nan(const floating[:] arr) -> bool:
 
 
 def maybe_indices_to_slice(ndarray[intp_t, ndim=1] indices, intp_t max_len):
+    # [FUNCTION DOC]
+    # Try to express an integer position array as an equivalent slice.
+    # Inputs: indices - 1-D intp array; max_len - length of the axis being indexed.
+    # Outputs: slice(0, 0) if empty; the original indices if the first or last value is
+    # negative or >= max_len, if the step between first two values is 0, or if steps are
+    # not constant; otherwise a slice with that constant step: one element ->
+    # slice(v, v+1); positive step -> slice(first, last+1, step); negative step ->
+    # slice(first, last-1, step), or slice(first, None, step) when last is 0.
+    # Exceptions: none. Side effects: none.
     cdef:
         Py_ssize_t i, n = len(indices)
         intp_t k, vstart, vlast, v
@@ -545,6 +662,13 @@ def maybe_indices_to_slice(ndarray[intp_t, ndim=1] indices, intp_t max_len):
 @cython.wraparound(False)
 @cython.boundscheck(False)
 def maybe_booleans_to_slice(ndarray[uint8_t, ndim=1] mask):
+    # [FUNCTION DOC]
+    # Try to express a boolean mask as a slice.
+    # Inputs: mask - 1-D uint8 array (boolean mask).
+    # Outputs: slice(0, 0) if no True values; slice(start, None) if the True values form
+    # one run reaching the end; slice(start, end) for a single contiguous run; otherwise
+    # (more than one run) the mask viewed as a bool array.
+    # Exceptions: none. Side effects: none.
     cdef:
         Py_ssize_t i, n = len(mask)
         Py_ssize_t start = 0, end = 0
@@ -576,6 +700,19 @@ def maybe_booleans_to_slice(ndarray[uint8_t, ndim=1] mask):
 @cython.wraparound(False)
 @cython.boundscheck(False)
 def array_equivalent_object(ndarray left, ndarray right) -> bool:
+    # [FUNCTION DOC]
+    # NaN-aware equality of two object arrays of identical shape (caller checks shape).
+    # Inputs: left, right - object ndarrays of any (same) ndim, iterated together.
+    # Outputs: True if every pair is equivalent: nested ndarrays must have equal shape
+    # and be recursively equivalent (object dtype via this function, others via
+    # pandas.core.dtypes.missing.array_equivalent); an array vs non-array is unequal; NA
+    # on exactly one side is unequal; otherwise elements are equal if == is true or they
+    # are matching missing markers (with NaN treated as matching None).
+    # Exceptions: if comparison raises ValueError/TypeError the pair is reported unequal
+    # when one is a numpy scalar and the other is not, when neither is a Python scalar
+    # and their types are unrelated, or when they are tuples with NA on one side only;
+    # otherwise the exception is re-raised.
+    # Side effects: lazy circular import of pandas.core.dtypes.missing.
     """
     Perform an element by element comparison on N-d object arrays
     taking into account nan positions.
@@ -648,6 +785,11 @@ ctypedef fused int6432_t:
 @cython.wraparound(False)
 @cython.boundscheck(False)
 def is_range_indexer(const int6432_t[:] left, Py_ssize_t n) -> bool:
+    # [FUNCTION DOC]
+    # Inputs: left - 1-D int32/int64 memoryview; n - expected length.
+    # Outputs: True if left has exactly n elements and left[i] == i for all i (i.e. it
+    # equals range(n)); False otherwise.
+    # Exceptions: none. Side effects: releases the GIL during the scan.
     """
     Perform an element by element comparison on 1-d integer arrays, meant for indexer
     comparisons
@@ -670,6 +812,11 @@ def is_range_indexer(const int6432_t[:] left, Py_ssize_t n) -> bool:
 @cython.wraparound(False)
 @cython.boundscheck(False)
 def is_sequence_range(const int6432_t[:] sequence, int64_t step) -> bool:
+    # [FUNCTION DOC]
+    # Inputs: sequence - 1-D int32/int64 memoryview; step - expected step.
+    # Outputs: False if step is 0; True if sequence is empty; otherwise True iff
+    # sequence[i] == sequence[0] + i * step for all i.
+    # Exceptions: none. Side effects: releases the GIL during the scan.
     """
     Check if sequence is equivalent to a range with the specified step.
     """
@@ -703,6 +850,14 @@ ctypedef fused ndarr_object:
 @cython.wraparound(False)
 @cython.boundscheck(False)
 def convert_nans_to_NA(ndarr_object arr) -> ndarray:
+    # [FUNCTION DOC]
+    # HELPER: Used by StringArray: replace every non-str element with NA.
+    # Inputs: arr - 1-D or 2-D object array whose non-str elements are assumed to
+    # already
+    # be validated as nulls.
+    # Outputs: object array where every element that is not a str is NA.
+    # Exceptions: none. Side effects: because the asarray conversion of an object array
+    # does not copy, the input array itself is mutated and returned.
     """
     Helper for StringArray that converts null values that
     are not pd.NA(e.g. np.nan, None) to pd.NA. Assumes elements
@@ -738,6 +893,24 @@ cpdef ndarray[object] ensure_string_array(
         bint copy=True,
         bint skipna=True,
 ):
+    # [FUNCTION DOC]
+    # Convert array-like values to an object array of str and NA-like values.
+    # Inputs: arr - ndarray, list-like, or pandas object with to_numpy; na_value - value
+    # for nulls (default NaN); convert_na_value - replace nulls with na_value (else keep
+    # the original null); copy - always return a new array if True, otherwise copy only
+    # before the first mutation; skipna - if True nulls stay null, if False they are
+    # stringified (e.g. "nan").
+    # Behavior: pandas datetime/timedelta (non-Arrow) arrays are formatted via
+    # astype(str) with na_value at isna positions and returned immediately. Other
+    # pandas objects are converted with to_numpy(object); non-array inputs become a 1-D
+    # object array (GH#61155, lists of lists stay 1-D). numpy unicode arrays are
+    # returned as object without per-element work. For each non-str element: nulls are
+    # handled as above; bytes are decoded (UTF-8); floats use str() (not f-string);
+    # everything else uses f-string formatting.
+    # Outputs: 1-D object ndarray.
+    # Exceptions: UnicodeDecodeError for undecodable bytes; errors from to_numpy/astype.
+    # Side effects: never mutates the input array (copies when the result would alias
+    # it).
     """
     Returns a new numpy array with object dtype and only strings and na values.
 
@@ -862,6 +1035,12 @@ cpdef ndarray[object] ensure_string_array(
 
 
 def is_all_arraylike(obj: list) -> bool:
+    # [FUNCTION DOC]
+    # Inputs: obj - list.
+    # Outputs: True if every element is a list, Series, Index (not MultiIndex) or
+    # ndarray, i.e. the list should be treated as MultiIndex levels; False otherwise
+    # (True for an empty list).
+    # Exceptions: none. Side effects: lazy import of pandas ABC classes.
     """
     Should we treat these as levels of a MultiIndex, as opposed to Index items?
     """
@@ -898,6 +1077,19 @@ def is_all_arraylike(obj: list) -> bool:
 @cython.wraparound(False)
 def generate_bins_dt64(ndarray[int64_t, ndim=1] values, const int64_t[:] binner,
                        object closed="left", bint hasnans=False):
+    # [FUNCTION DOC]
+    # Compute bin edges (as end positions) of sorted int64/datetime64 values.
+    # Inputs: values - sorted 1-D int64 array; binner - sorted 1-D int64 bin edges;
+    # closed - "right" makes bins (a, b], anything else [a, b); hasnans - if True, NaT
+    # (INT64_MIN) entries are removed first.
+    # Outputs: int64 array of length len(binner)-1 where element i is the number of
+    # values
+    # falling at or before the right edge of bin i (cumulative end index). If NaTs were
+    # removed, every count is shifted by the NaT count and that count is prepended (so
+    # the result then has len(binner) entries).
+    # Exceptions: ValueError if values or binner is empty, if the first value is before
+    # binner[0], or if the last value is after binner[-1].
+    # Side effects: none (values is re-bound locally when NaTs are removed).
     """
     Int64 (datetime64) version of generic python version in ``groupby.py``.
     """
@@ -962,6 +1154,13 @@ def generate_bins_dt64(ndarray[int64_t, ndim=1] values, const int64_t[:] binner,
 def get_level_sorter(
     ndarray[int64_t, ndim=1] codes, const intp_t[:] starts
 ) -> ndarray:
+    # [FUNCTION DOC]
+    # Inputs: codes - 1-D int64 codes of one MultiIndex level; starts - intp boundaries
+    # of groups of equal higher-level keys (consecutive pairs delimit a group).
+    # Outputs: intp array the size of codes where each segment [starts[i], starts[i+1])
+    # holds that segment's stable argsort of codes offset by starts[i]. Positions not
+    # covered by any segment are left uninitialized.
+    # Exceptions: none. Side effects: none.
     """
     Argsort for a single level of a multi-index, keeping the order of higher
     levels unchanged. `starts` points to starts of same-key indices w.r.t
@@ -995,6 +1194,14 @@ def count_level_2d(const uint8_t[:, :] mask,
                    const intp_t[:] labels,
                    Py_ssize_t max_bin,
                    ):
+    # [FUNCTION DOC]
+    # Inputs: mask - 2-D uint8 (n rows x k columns); labels - intp group label for each
+    # column; max_bin - number of groups.
+    # Outputs: int64 array (n, max_bin) where counts[i, g] is the number of True mask
+    # values in row i over columns labelled g.
+    # Exceptions: none; labels must be in [0, max_bin) since bounds checking is off
+    # (negative or too-large labels corrupt memory).
+    # Side effects: releases the GIL during counting.
     cdef:
         Py_ssize_t i, j, k = mask.shape[1], n = mask.shape[0]
         ndarray[int64_t, ndim=2] counts
@@ -1012,6 +1219,16 @@ def count_level_2d(const uint8_t[:, :] mask,
 @cython.wraparound(False)
 @cython.boundscheck(False)
 def generate_slices(const intp_t[:] labels, Py_ssize_t ngroups):
+    # [FUNCTION DOC]
+    # Inputs: labels - 1-D intp group labels sorted so equal labels are contiguous, -1
+    # for null rows; ngroups - number of groups.
+    # Outputs: tuple (starts, ends) of int64 arrays of length ngroups giving each
+    # group's
+    # [start, end) positions in labels; groups never seen keep 0, 0. Null rows advance
+    # the
+    # position but belong to no group.
+    # Exceptions: none (labels must be < ngroups; no bounds checks).
+    # Side effects: releases the GIL during the scan.
     cdef:
         Py_ssize_t i, group_size, n, start
         intp_t lab
@@ -1042,6 +1259,18 @@ def generate_slices(const intp_t[:] labels, Py_ssize_t ngroups):
 
 def indices_fast(ndarray[intp_t, ndim=1] index, const int64_t[:] labels, list keys,
                  list sorted_labels) -> dict:
+    # [FUNCTION DOC]
+    # Build the groupby indices dict from sorted labels.
+    # Inputs: index - intp array of original positions in sorted order; labels - int64
+    # group ids in sorted order (-1 for null); keys - list of k level value arrays;
+    # sorted_labels - list of k code arrays (sorted order) indexing into keys.
+    # Outputs: dict mapping group key (scalar when k == 1, else a k-tuple of level
+    # values) to the slice of index for that group. Leading -1 labels are skipped;
+    # returns {} if all labels are -1.
+    # Exceptions: IndexError on inconsistent inputs. Side effects: none.
+    # KNOWN ISSUE: only leading -1 labels are excluded; a -1 run after the first valid
+    # label is absorbed into the preceding group's slice (callers rely on nulls sorting
+    # first).
     """
     Parameters
     ----------
@@ -1103,6 +1332,10 @@ def indices_fast(ndarray[intp_t, ndim=1] index, const int64_t[:] labels, list ke
 
 @set_module("pandas.api.types")
 def is_float(obj: object) -> bool:
+    # [FUNCTION DOC]
+    # Inputs: obj - any object.
+    # Outputs: True if obj is a Python float or numpy floating scalar (not int/bool).
+    # Exceptions: none. Side effects: none.
     """
     Return True if given object is float.
 
@@ -1137,6 +1370,11 @@ def is_float(obj: object) -> bool:
 
 @set_module("pandas.api.types")
 def is_integer(obj: object) -> bool:
+    # [FUNCTION DOC]
+    # Inputs: obj - any object.
+    # Outputs: True if obj is a Python int or numpy integer scalar, excluding bool,
+    # np.bool_ and timedelta64.
+    # Exceptions: none. Side effects: none.
     """
     Return True if given object is integer.
 
@@ -1170,6 +1408,10 @@ def is_integer(obj: object) -> bool:
 
 
 def is_int_or_none(obj) -> bool:
+    # [FUNCTION DOC]
+    # Inputs: obj - any object.
+    # Outputs: True if obj is None or an integer per is_integer.
+    # Exceptions: none. Side effects: none.
     """
     Return True if given object is integer or None.
 
@@ -1182,6 +1424,10 @@ def is_int_or_none(obj) -> bool:
 
 @set_module("pandas.api.types")
 def is_bool(obj: object) -> bool:
+    # [FUNCTION DOC]
+    # Inputs: obj - any object.
+    # Outputs: True if obj is a Python bool or np.bool_.
+    # Exceptions: none. Side effects: none.
     """
     Return True if given object is boolean.
 
@@ -1213,6 +1459,10 @@ def is_bool(obj: object) -> bool:
 
 @set_module("pandas.api.types")
 def is_complex(obj: object) -> bool:
+    # [FUNCTION DOC]
+    # Inputs: obj - any object.
+    # Outputs: True if obj is a Python complex or numpy complexfloating scalar.
+    # Exceptions: none. Side effects: none.
     """
     Return True if given object is complex.
 
@@ -1244,11 +1494,18 @@ def is_complex(obj: object) -> bool:
 
 
 cpdef bint is_decimal(object obj):
+    # [FUNCTION DOC]
+    # Inputs: obj - any object. Outputs: True if obj is a decimal.Decimal instance.
+    # Exceptions: none. Side effects: none.
     return isinstance(obj, Decimal)
 
 
 @set_module("pandas.api.types")
 def is_list_like(obj: object, allow_sets: bool = True) -> bool:
+    # [FUNCTION DOC]
+    # Public list-like test; delegates to c_is_list_like.
+    # Inputs: obj - any object; allow_sets - if False, sets are not list-like.
+    # Outputs: bool (see c_is_list_like). Exceptions: none. Side effects: none.
     """
     Check if the object is list-like.
 
@@ -1298,6 +1555,15 @@ def is_list_like(obj: object, allow_sets: bool = True) -> bool:
 
 
 cdef bint c_is_list_like(object obj, bint allow_sets) except -1:
+    # [FUNCTION DOC]
+    # HELPER: C implementation of is_list_like.
+    # Inputs: obj - any object; allow_sets - whether abc.Set instances count.
+    # Outputs: ndarrays -> True unless 0-dimensional; lists -> True; otherwise True iff
+    # obj has a non-None __iter__, is not a class, is not str/bytes or a typing generic
+    # alias, is not a 0-dim duck array (ndim == 0), and is not a set when allow_sets is
+    # False.
+    # Exceptions: propagates errors from attribute access (returns -1 at C level).
+    # Side effects: none.
     # first, performance short-cuts for the most common cases
     if util.is_array(obj):
         # exclude zero-dimensional numpy arrays, effectively scalars
@@ -1319,6 +1585,10 @@ cdef bint c_is_list_like(object obj, bint allow_sets) except -1:
 
 
 def is_pyarrow_array(obj):
+    # [FUNCTION DOC]
+    # Inputs: obj - any object.
+    # Outputs: True if pyarrow is installed and obj is a pyarrow Array or ChunkedArray.
+    # Exceptions: none. Side effects: none.
     """
     Return True if given object is a pyarrow Array or ChunkedArray.
 
@@ -1376,6 +1646,14 @@ _TYPE_MAP = {
 
 @cython.internal
 cdef class Seen:
+    # [CLASS DOC]
+    # HELPER: Internal mutable record of which element kinds were seen while scanning
+    # an object array in maybe_convert_numeric / maybe_convert_objects. Boolean flags:
+    # int_, nat_, bool_, null_ (None/NA/na_values), nan_ (float NaN), uint_ (value needs
+    # uint64: > INT64_MAX or numpy unsigned), sint_ (negative or numpy signed),
+    # overflow_ (int outside int64/uint64 range), float_, object_ (must stay object),
+    # complex_, datetime_, timedelta_, datetimetz_, period_, interval_, str_, plus the
+    # coerce_numeric option.
     """
     Class for keeping track of the types of elements
     encountered when trying to perform type conversions.
@@ -1402,6 +1680,9 @@ cdef class Seen:
         bint str_             # seen_str
 
     def __cinit__(self, bint coerce_numeric=False):
+        # [FUNCTION DOC]
+        # Inputs: coerce_numeric - option stored on the instance.
+        # Outputs: none. Side effects: sets every seen flag to False.
         """
         Initialize a Seen instance.
 
@@ -1431,6 +1712,16 @@ cdef class Seen:
         self.coerce_numeric = coerce_numeric
 
     cdef bint check_uint64_conflict(self) except -1:
+        # [FUNCTION DOC]
+        # HELPER: Outputs: True when a uint64-range value was seen together with a null
+        # or a
+        # negative int and coerce_numeric is off, meaning no numeric dtype can hold the
+        # data
+        # and the caller should return the original object array.
+        # Exceptions: none. Side effects: none.
+        # KNOWN ISSUE: docstring claims a ValueError is raised when coercion is forced;
+        # the
+        # method never raises.
         """
         Check whether we can safely convert a uint64 array to a numeric dtype.
 
@@ -1465,6 +1756,9 @@ cdef class Seen:
                 and not self.coerce_numeric)
 
     cdef saw_null(self):
+        # [FUNCTION DOC]
+        # HELPER: Record a null: sets null_ and float_ (nulls force float unless
+        # masked).
         """
         Set flags indicating that a null value was encountered.
         """
@@ -1472,6 +1766,13 @@ cdef class Seen:
         self.float_ = True
 
     cdef saw_int(self, object val):
+        # [FUNCTION DOC]
+        # HELPER: Record an integer.
+        # Inputs: val - Python or numpy integer.
+        # Side effects: sets int_; sets sint_ if val is in [INT64_MIN, 0) or a numpy
+        # signed
+        # integer; sets uint_ if val is in (INT64_MAX, UINT64_MAX] or a numpy unsigned
+        # integer. Flags are sticky (never cleared).
         """
         Set flags indicating that an integer value was encountered.
 
@@ -1502,15 +1803,24 @@ cdef class Seen:
 
     @property
     def numeric_(self):
+        # [FUNCTION DOC]
+        # Property. Outputs: True if any complex, float or int value was seen.
         return self.complex_ or self.float_ or self.int_
 
     @property
     def is_bool(self):
+        # [FUNCTION DOC]
+        # Property. Outputs: True if only bools were seen (is_bool_or_na and no
+        # NaN/null).
         # i.e. not (anything but bool)
         return self.is_bool_or_na and not (self.nan_ or self.null_)
 
     @property
     def is_bool_or_na(self):
+        # [FUNCTION DOC]
+        # Property. Outputs: True if bools were seen and nothing else except missing
+        # values
+        # (no datetime, tz-datetime, NaT, timedelta, period, interval, numeric, object).
         # i.e. not (anything but bool or missing values)
         return self.bool_ and not (
             self.datetime_ or self.datetimetz_ or self.nat_ or self.timedelta_
@@ -1519,6 +1829,13 @@ cdef class Seen:
 
 
 cdef object _try_infer_map(object dtype):
+    # [FUNCTION DOC]
+    # HELPER: Map a dtype to an infer_dtype label via the module _TYPE_MAP.
+    # Inputs: dtype - numpy dtype or ExtensionDtype (any object).
+    # Outputs: the label for the first of dtype.type, .kind, .name, .base found in the
+    # map (type checked first, which matters for ArrowDtype); None if none match.
+    # Exceptions: TypeError if one of those attributes is unhashable.
+    # Side effects: none.
     """
     If its in our map, just return the dtype.
     """
@@ -1535,6 +1852,30 @@ cdef object _try_infer_map(object dtype):
 
 @set_module("pandas.api.types")
 def infer_dtype(value: object, skipna: bool = True) -> str:
+    # [FUNCTION DOC]
+    # Infer a string label describing the element type of a list-like.
+    # Inputs: value - ndarray, pandas object, or any iterable; skipna - ignore
+    # NaN/None/NA
+    # when deciding.
+    # Steps: Index with skipna False returns its cached inferred_type. Objects with a
+    # dtype: return the _TYPE_MAP label if found, "unknown-array" for non-numpy dtypes,
+    # else unwrap via asarray. Other iterables become a 1-D object array ("empty" if
+    # empty). Non-object numpy arrays return their mapped label. For object arrays:
+    # "empty" if size 0; scan to the first value that is not None/NaN/NA/NaT; if only
+    # NaT-likes were seen -> "datetime"; if nothing was seen and skipna -> "empty".
+    # Then the first value's type selects one validator: datetime64 -> "datetime64";
+    # timedelta/timedelta64 -> "timedelta"; integer -> "integer", "integer-na" (ints
+    # plus NaN), "mixed-integer-float" or "mixed-integer"; datetime -> "datetime" or
+    # "date"; date -> "date"; time -> "time"; Decimal -> "decimal"; complex ->
+    # "complex"; float -> "floating", "integer-na" or "mixed-integer-float"; bool ->
+    # "boolean"; str -> "string"; bytes -> "bytes"; Period -> "period" (single freq);
+    # Interval -> "interval" (same closed and subtype). If the matching validator
+    # fails: "mixed-integer" if any element is an integer, else "mixed".
+    # Outputs: str label. Exceptions: none expected (errors from list() / asarray
+    # propagate). Side effects: may populate an Index's inferred_type cache.
+    # KNOWN ISSUE: docstring's list of results omits "empty", "integer-na" and
+    # "interval"; also the complex branch calls is_complex_array without skipna (always
+    # uses its default True).
     """
     Return a string label of the type of the elements in a list-like input.
 
@@ -1806,11 +2147,20 @@ def infer_dtype(value: object, skipna: bool = True) -> str:
 
 
 cdef bint is_timedelta(object o):
+    # [FUNCTION DOC]
+    # HELPER: Outputs: True if o is a datetime.timedelta (incl. pd.Timedelta) or a numpy
+    # timedelta64 scalar.
     return PyDelta_Check(o) or cnp.is_timedelta64_object(o)
 
 
 @cython.internal
 cdef class Validator:
+    # [CLASS DOC]
+    # HELPER: Base class for "is every element of this array of kind X" checks.
+    # Attributes: n - array size; dtype - the array's dtype; skipna - whether nulls are
+    # allowed. Subclasses override is_value_typed (per-element kind test) and optionally
+    # is_array_typed (dtype-level shortcut) and is_valid_null. Instances are single-use
+    # and constructed per call by the is_*_array functions.
 
     cdef:
         Py_ssize_t n
@@ -1819,11 +2169,20 @@ cdef class Validator:
 
     def __cinit__(self, Py_ssize_t n, cnp.dtype dtype=np.dtype(np.object_),
                   bint skipna=False):
+        # [FUNCTION DOC]
+        # Inputs: n - number of elements; dtype - array dtype (default object); skipna.
+        # Side effects: stores the three attributes.
         self.n = n
         self.dtype = dtype
         self.skipna = skipna
 
     cdef bint validate(self, ndarray values) except -1:
+        # [FUNCTION DOC]
+        # Inputs: values - the array to check (any ndim).
+        # Outputs: False if n is 0; True if the dtype alone proves the kind
+        # (is_array_typed); for object dtype the result of the per-element scan (with or
+        # without skipna); False for any other dtype.
+        # Exceptions: propagates NotImplementedError from an abstract subclass.
         if not self.n:
             return False
 
@@ -1841,6 +2200,10 @@ cdef class Validator:
     @cython.wraparound(False)
     @cython.boundscheck(False)
     cdef bint _validate(self, ndarray values) except -1:
+        # [FUNCTION DOC]
+        # HELPER: Outputs: True iff is_valid holds for every element (flat iteration
+        # over
+        # values of any ndim); stops at the first failure.
         cdef:
             Py_ssize_t i
             Py_ssize_t n = values.size
@@ -1859,6 +2222,9 @@ cdef class Validator:
     @cython.wraparound(False)
     @cython.boundscheck(False)
     cdef bint _validate_skipna(self, ndarray values) except -1:
+        # [FUNCTION DOC]
+        # HELPER: Same as _validate but uses is_valid_skipna, so nulls are also
+        # accepted.
         cdef:
             Py_ssize_t i
             Py_ssize_t n = values.size
@@ -1875,33 +2241,57 @@ cdef class Validator:
         return True
 
     cdef bint is_valid(self, object value) except -1:
+        # [FUNCTION DOC]
+        # HELPER: Outputs: is_value_typed(value) (nulls not accepted).
         return self.is_value_typed(value)
 
     cdef bint is_valid_skipna(self, object value) except -1:
+        # [FUNCTION DOC]
+        # HELPER: Outputs: True if value is of the kind or is a valid null.
         return self.is_valid(value) or self.is_valid_null(value)
 
     cdef bint is_value_typed(self, object value) except -1:
+        # [FUNCTION DOC]
+        # HELPER: Abstract per-element kind test.
+        # Exceptions: always NotImplementedError; subclasses must override.
         raise NotImplementedError(f"{type(self).__name__} child class "
                                   "must define is_value_typed")
 
     cdef bint is_valid_null(self, object value) except -1:
+        # [FUNCTION DOC]
+        # HELPER: Outputs: True if value is None, NA, or a float/complex NaN (Decimal
+        # NaN is
+        # not included).
         return value is None or value is C_NA or util.is_nan(value)
         # TODO: include decimal NA?
 
     cdef bint is_array_typed(self) except -1:
+        # [FUNCTION DOC]
+        # HELPER: Outputs: False (no dtype-level shortcut by default).
         return False
 
 
 @cython.internal
 cdef class BoolValidator(Validator):
+    # [CLASS DOC]
+    # HELPER: Validator accepting Python bool / np.bool_ elements; bool dtype passes
+    # without scanning.
     cdef bint is_value_typed(self, object value) except -1:
+        # [FUNCTION DOC]
+        # HELPER: Outputs: True if value is a Python bool or np.bool_.
         return util.is_bool_object(value)
 
     cdef bint is_array_typed(self) except -1:
+        # [FUNCTION DOC]
+        # HELPER: Outputs: True if the dtype is numpy bool.
         return cnp.PyDataType_ISBOOL(self.dtype)
 
 
 cpdef bint is_bool_array(ndarray values, bint skipna=False):
+    # [FUNCTION DOC]
+    # Inputs: values - ndarray; skipna - allow nulls (default False).
+    # Outputs: True if values is bool dtype or an object array of only bools (and, with
+    # skipna, nulls). False for empty arrays.
     cdef:
         BoolValidator validator = BoolValidator(values.size,
                                                 values.dtype,
@@ -1911,15 +2301,26 @@ cpdef bint is_bool_array(ndarray values, bint skipna=False):
 
 @cython.internal
 cdef class IntegerValidator(Validator):
+    # [CLASS DOC]
+    # HELPER: Validator accepting integer elements; integer dtypes pass without
+    # scanning.
     cdef bint is_value_typed(self, object value) except -1:
+        # [FUNCTION DOC]
+        # HELPER: Outputs: True if value is a Python/numpy integer (not bool).
         return util.is_integer_object(value)
 
     cdef bint is_array_typed(self) except -1:
+        # [FUNCTION DOC]
+        # HELPER: Outputs: True if the dtype is a signed or unsigned integer dtype.
         return cnp.PyDataType_ISINTEGER(self.dtype)
 
 
 # Note: only python-exposed for tests
 cpdef bint is_integer_array(ndarray values, bint skipna=True):
+    # [FUNCTION DOC]
+    # Inputs: values - ndarray; skipna - allow nulls (default True).
+    # Outputs: True if values is an integer dtype or an object array of only integers
+    # (and nulls when skipna). False for empty arrays.
     cdef:
         IntegerValidator validator = IntegerValidator(values.size,
                                                       values.dtype,
@@ -1929,12 +2330,20 @@ cpdef bint is_integer_array(ndarray values, bint skipna=True):
 
 @cython.internal
 cdef class IntegerNaValidator(Validator):
+    # [CLASS DOC]
+    # HELPER: Validator accepting integers or float NaN (no dtype shortcut).
     cdef bint is_value_typed(self, object value) except -1:
+        # [FUNCTION DOC]
+        # HELPER: Outputs: True if value is an integer or a float that is NaN.
         return (util.is_integer_object(value)
                 or (util.is_nan(value) and util.is_float_object(value)))
 
 
 cdef bint is_integer_na_array(ndarray values, bint skipna=True):
+    # [FUNCTION DOC]
+    # HELPER: Inputs: values - ndarray; skipna.
+    # Outputs: True if values is an object array of only integers and float NaN (plus
+    # nulls when skipna). Non-object dtypes return False.
     cdef:
         IntegerNaValidator validator = IntegerNaValidator(values.size,
                                                           values.dtype, skipna=skipna)
@@ -1943,14 +2352,24 @@ cdef bint is_integer_na_array(ndarray values, bint skipna=True):
 
 @cython.internal
 cdef class IntegerFloatValidator(Validator):
+    # [CLASS DOC]
+    # HELPER: Validator accepting integers or floats; integer dtypes pass directly.
     cdef bint is_value_typed(self, object value) except -1:
+        # [FUNCTION DOC]
+        # HELPER: Outputs: True if value is an integer or a float object.
         return util.is_integer_object(value) or util.is_float_object(value)
 
     cdef bint is_array_typed(self) except -1:
+        # [FUNCTION DOC]
+        # HELPER: Outputs: True if the dtype is an integer dtype.
         return cnp.PyDataType_ISINTEGER(self.dtype)
 
 
 cdef bint is_integer_float_array(ndarray values, bint skipna=True):
+    # [FUNCTION DOC]
+    # HELPER: Inputs: values - ndarray; skipna.
+    # Outputs: True if values is integer dtype or an object array of only ints/floats
+    # (plus nulls when skipna).
     cdef:
         IntegerFloatValidator validator = IntegerFloatValidator(values.size,
                                                                 values.dtype,
@@ -1960,15 +2379,25 @@ cdef bint is_integer_float_array(ndarray values, bint skipna=True):
 
 @cython.internal
 cdef class FloatValidator(Validator):
+    # [CLASS DOC]
+    # HELPER: Validator accepting float elements; float dtypes pass directly.
     cdef bint is_value_typed(self, object value) except -1:
+        # [FUNCTION DOC]
+        # HELPER: Outputs: True if value is a Python float or numpy floating scalar.
         return util.is_float_object(value)
 
     cdef bint is_array_typed(self) except -1:
+        # [FUNCTION DOC]
+        # HELPER: Outputs: True if the dtype is a floating dtype.
         return cnp.PyDataType_ISFLOAT(self.dtype)
 
 
 # Note: only python-exposed for tests
 cpdef bint is_float_array(ndarray values, bint skipna=True):
+    # [FUNCTION DOC]
+    # Inputs: values - ndarray; skipna (default True).
+    # Outputs: True if values is float dtype or an object array of only floats (plus
+    # nulls when skipna).
     cdef:
         FloatValidator validator = FloatValidator(values.size,
                                                   values.dtype,
@@ -1978,17 +2407,27 @@ cpdef bint is_float_array(ndarray values, bint skipna=True):
 
 @cython.internal
 cdef class ComplexValidator(Validator):
+    # [CLASS DOC]
+    # HELPER: Validator accepting complex elements or float NaN; complex dtypes pass.
     cdef bint is_value_typed(self, object value) except -1:
+        # [FUNCTION DOC]
+        # HELPER: Outputs: True if value is complex, or a float that is NaN.
         return (
             util.is_complex_object(value)
             or (util.is_float_object(value) and is_nan(value))
         )
 
     cdef bint is_array_typed(self) except -1:
+        # [FUNCTION DOC]
+        # HELPER: Outputs: True if the dtype is a complex dtype.
         return cnp.PyDataType_ISCOMPLEX(self.dtype)
 
 
 cdef bint is_complex_array(ndarray values, bint skipna=True):
+    # [FUNCTION DOC]
+    # HELPER: Inputs: values - ndarray; skipna (default True).
+    # Outputs: True if values is complex dtype or an object array of complex values and
+    # float NaN (plus nulls when skipna).
     cdef:
         ComplexValidator validator = ComplexValidator(values.size,
                                                       values.dtype,
@@ -1998,11 +2437,19 @@ cdef bint is_complex_array(ndarray values, bint skipna=True):
 
 @cython.internal
 cdef class DecimalValidator(Validator):
+    # [CLASS DOC]
+    # HELPER: Validator accepting decimal.Decimal elements (no dtype shortcut).
     cdef bint is_value_typed(self, object value) except -1:
+        # [FUNCTION DOC]
+        # HELPER: Outputs: True if value is a Decimal.
         return is_decimal(value)
 
 
 cdef bint is_decimal_array(ndarray values, bint skipna=False):
+    # [FUNCTION DOC]
+    # HELPER: Inputs: values - ndarray; skipna (default False).
+    # Outputs: True if values is an object array of only Decimals (plus None/NA/NaN
+    # when skipna).
     cdef:
         DecimalValidator validator = DecimalValidator(
             values.size, values.dtype, skipna=skipna
@@ -2012,14 +2459,25 @@ cdef bint is_decimal_array(ndarray values, bint skipna=False):
 
 @cython.internal
 cdef class StringValidator(Validator):
+    # [CLASS DOC]
+    # HELPER: Validator accepting str elements; numpy unicode (U) dtype passes directly.
     cdef bint is_value_typed(self, object value) except -1:
+        # [FUNCTION DOC]
+        # HELPER: Outputs: True if value is a str (including subclasses such as
+        # np.str_).
         return isinstance(value, str)
 
     cdef bint is_array_typed(self) except -1:
+        # [FUNCTION DOC]
+        # HELPER: Outputs: True if the dtype is numpy unicode.
         return self.dtype.type_num == cnp.NPY_UNICODE
 
 
 cpdef bint is_string_array(ndarray values, bint skipna=False):
+    # [FUNCTION DOC]
+    # Inputs: values - ndarray; skipna (default False).
+    # Outputs: True if values is U dtype or an object array of only str (plus nulls when
+    # skipna). False for empty arrays.
     cdef:
         StringValidator validator = StringValidator(values.size,
                                                     values.dtype,
@@ -2029,14 +2487,25 @@ cpdef bint is_string_array(ndarray values, bint skipna=False):
 
 @cython.internal
 cdef class BytesValidator(Validator):
+    # [CLASS DOC]
+    # HELPER: Validator accepting bytes elements; numpy bytes (S) dtype passes directly.
     cdef bint is_value_typed(self, object value) except -1:
+        # [FUNCTION DOC]
+        # HELPER: Outputs: True if value is a bytes instance.
         return isinstance(value, bytes)
 
     cdef bint is_array_typed(self) except -1:
+        # [FUNCTION DOC]
+        # HELPER: Outputs: True if the dtype is numpy bytes (S).
         return self.dtype.type_num == cnp.NPY_STRING
 
 
 cdef bint is_bytes_array(ndarray values, bint skipna=False):
+    # [FUNCTION DOC]
+    # HELPER: Inputs: values - ndarray; skipna (default False).
+    # Outputs: True if values is S dtype or an object array of only bytes (plus nulls
+    # when
+    # skipna).
     cdef:
         BytesValidator validator = BytesValidator(values.size, values.dtype,
                                                   skipna=skipna)
@@ -2045,24 +2514,42 @@ cdef bint is_bytes_array(ndarray values, bint skipna=False):
 
 @cython.internal
 cdef class TemporalValidator(Validator):
+    # [CLASS DOC]
+    # HELPER: Base validator for datetime-like kinds. Accepts kind-specific nulls (e.g.
+    # NaT) even without skipna. With skipna, also tracks all_generic_na: if every
+    # element
+    # was a generic null (None/NaN) the array is NOT considered of this kind.
     cdef:
         bint all_generic_na
 
     def __cinit__(self, Py_ssize_t n, cnp.dtype dtype=np.dtype(np.object_),
                   bint skipna=False):
+        # [FUNCTION DOC]
+        # Inputs: n, dtype (default object), skipna as in Validator.
+        # Side effects: stores them and sets all_generic_na to True.
         self.n = n
         self.dtype = dtype
         self.skipna = skipna
         self.all_generic_na = True
 
     cdef bint is_valid(self, object value) except -1:
+        # [FUNCTION DOC]
+        # HELPER: Outputs: True if value is of the kind or is a kind-specific null.
         return self.is_value_typed(value) or self.is_valid_null(value)
 
     cdef bint is_valid_null(self, object value) except -1:
+        # [FUNCTION DOC]
+        # HELPER: Abstract kind-specific null test.
+        # Exceptions: always NotImplementedError; subclasses must override.
         raise NotImplementedError(f"{type(self).__name__} child class "
                                   "must define is_valid_null")
 
     cdef bint is_valid_skipna(self, object value) except -1:
+        # [FUNCTION DOC]
+        # HELPER: Outputs: True if value is of the kind, a kind-specific null, or a
+        # generic
+        # null (None or NaN). Side effects: clears all_generic_na when value is not a
+        # generic null.
         cdef:
             bint is_typed_null = self.is_valid_null(value)
             bint is_generic_null = value is None or util.is_nan(value)
@@ -2071,6 +2558,10 @@ cdef class TemporalValidator(Validator):
         return self.is_value_typed(value) or is_typed_null or is_generic_null
 
     cdef bint _validate_skipna(self, ndarray values) except -1:
+        # [FUNCTION DOC]
+        # HELPER: Outputs: base skipna scan result AND at least one element was not a
+        # generic
+        # null.
         """
         If we _only_ saw non-dtype-specific NA values, even if they are valid
         for this dtype, we do not infer this dtype.
@@ -2080,14 +2571,25 @@ cdef class TemporalValidator(Validator):
 
 @cython.internal
 cdef class DatetimeValidator(TemporalValidator):
+    # [CLASS DOC]
+    # HELPER: Temporal validator for datetime.datetime (incl. Timestamp) elements; nulls
+    # are None/NaN/NaT/datetime64 NaT.
     cdef bint is_value_typed(self, object value) except -1:
+        # [FUNCTION DOC]
+        # HELPER: Outputs: True if value is a datetime.datetime instance.
         return PyDateTime_Check(value)
 
     cdef bint is_valid_null(self, object value) except -1:
+        # [FUNCTION DOC]
+        # HELPER: Outputs: True if value is None, NaN, NaT or datetime64 NaT.
         return is_null_datetime64(value)
 
 
 cpdef bint is_datetime_array(ndarray values, bint skipna=True):
+    # [FUNCTION DOC]
+    # Inputs: values - ndarray (dtype treated as object); skipna (default True).
+    # Outputs: True if every element is a datetime or datetime-null (with skipna, also
+    # None/NaN as long as not all elements are generic nulls).
     cdef:
         DatetimeValidator validator = DatetimeValidator(values.size,
                                                         skipna=skipna)
@@ -2096,12 +2598,20 @@ cpdef bint is_datetime_array(ndarray values, bint skipna=True):
 
 @cython.internal
 cdef class Datetime64Validator(DatetimeValidator):
+    # [CLASS DOC]
+    # HELPER: Datetime validator whose elements must be numpy datetime64 scalars.
     cdef bint is_value_typed(self, object value) except -1:
+        # [FUNCTION DOC]
+        # HELPER: Outputs: True if value is a numpy datetime64 scalar.
         return cnp.is_datetime64_object(value)
 
 
 # Note: only python-exposed for tests
 cpdef bint is_datetime64_array(ndarray values, bint skipna=True):
+    # [FUNCTION DOC]
+    # Inputs: values - ndarray; skipna (default True).
+    # Outputs: True if every element is a datetime64 scalar or datetime null (see
+    # DatetimeValidator).
     cdef:
         Datetime64Validator validator = Datetime64Validator(values.size,
                                                             skipna=skipna)
@@ -2110,13 +2620,22 @@ cpdef bint is_datetime64_array(ndarray values, bint skipna=True):
 
 @cython.internal
 cdef class AnyDatetimeValidator(DatetimeValidator):
+    # [CLASS DOC]
+    # HELPER: Datetime validator accepting datetime64 scalars or tz-naive datetimes.
     cdef bint is_value_typed(self, object value) except -1:
+        # [FUNCTION DOC]
+        # HELPER: Outputs: True if value is datetime64, or a datetime whose tzinfo is
+        # None.
         return cnp.is_datetime64_object(value) or (
             PyDateTime_Check(value) and value.tzinfo is None
         )
 
 
 cdef bint is_datetime_or_datetime64_array(ndarray values, bint skipna=True):
+    # [FUNCTION DOC]
+    # HELPER: Inputs: values - ndarray; skipna (default True).
+    # Outputs: True if every element is datetime64, a naive datetime, or a datetime
+    # null.
     cdef:
         AnyDatetimeValidator validator = AnyDatetimeValidator(values.size,
                                                               skipna=skipna)
@@ -2125,6 +2644,12 @@ cdef bint is_datetime_or_datetime64_array(ndarray values, bint skipna=True):
 
 # Note: only python-exposed for tests
 def is_datetime_with_singletz_array(values: ndarray) -> bool:
+    # [FUNCTION DOC]
+    # Inputs: values - 1-D array (indexed positionally).
+    # Outputs: False if empty; otherwise True iff all non-null elements (ignoring NaT,
+    # None, NaN) have tzinfo attributes that compare equal (tz_compare) to the first
+    # non-null element's tzinfo. Element types are not checked.
+    # Exceptions: none expected. Side effects: none.
     """
     Check values have the same tzinfo attribute.
     Doesn't check values are datetime-like types.
@@ -2159,21 +2684,36 @@ def is_datetime_with_singletz_array(values: ndarray) -> bool:
 
 @cython.internal
 cdef class TimedeltaValidator(TemporalValidator):
+    # [CLASS DOC]
+    # HELPER: Temporal validator for datetime.timedelta elements; nulls are
+    # None/NaN/NaT/timedelta64 NaT.
     cdef bint is_value_typed(self, object value) except -1:
+        # [FUNCTION DOC]
+        # HELPER: Outputs: True if value is a datetime.timedelta (incl. pd.Timedelta).
         return PyDelta_Check(value)
 
     cdef bint is_valid_null(self, object value) except -1:
+        # [FUNCTION DOC]
+        # HELPER: Outputs: True if value is None, NaN, NaT, or timedelta64 NaT.
         return is_null_timedelta64(value)
 
 
 @cython.internal
 cdef class AnyTimedeltaValidator(TimedeltaValidator):
+    # [CLASS DOC]
+    # HELPER: Timedelta validator also accepting numpy timedelta64 scalars.
     cdef bint is_value_typed(self, object value) except -1:
+        # [FUNCTION DOC]
+        # HELPER: Outputs: True if value is a timedelta or timedelta64.
         return is_timedelta(value)
 
 
 # Note: only python-exposed for tests
 cpdef bint is_timedelta_or_timedelta64_array(ndarray values, bint skipna=True):
+    # [FUNCTION DOC]
+    # Inputs: values - ndarray; skipna (default True).
+    # Outputs: True if every element is a timedelta, timedelta64 or timedelta null (and
+    # not all generic nulls when skipna).
     """
     Infer with timedeltas and/or nat/none.
     """
@@ -2185,12 +2725,19 @@ cpdef bint is_timedelta_or_timedelta64_array(ndarray values, bint skipna=True):
 
 @cython.internal
 cdef class DateValidator(Validator):
+    # [CLASS DOC]
+    # HELPER: Validator accepting datetime.date elements (datetimes are dates too).
     cdef bint is_value_typed(self, object value) except -1:
+        # [FUNCTION DOC]
+        # HELPER: Outputs: True if value is a datetime.date (or datetime subclass).
         return PyDate_Check(value)
 
 
 # Note: only python-exposed for tests
 cpdef bint is_date_array(ndarray values, bint skipna=False):
+    # [FUNCTION DOC]
+    # Inputs: values - ndarray; skipna (default False).
+    # Outputs: True if every element is a date/datetime (plus None/NA/NaN when skipna).
     cdef:
         DateValidator validator = DateValidator(values.size, skipna=skipna)
     return validator.validate(values)
@@ -2198,12 +2745,19 @@ cpdef bint is_date_array(ndarray values, bint skipna=False):
 
 @cython.internal
 cdef class TimeValidator(Validator):
+    # [CLASS DOC]
+    # HELPER: Validator accepting datetime.time elements.
     cdef bint is_value_typed(self, object value) except -1:
+        # [FUNCTION DOC]
+        # HELPER: Outputs: True if value is a datetime.time.
         return PyTime_Check(value)
 
 
 # Note: only python-exposed for tests
 cpdef bint is_time_array(ndarray values, bint skipna=False):
+    # [FUNCTION DOC]
+    # Inputs: values - ndarray; skipna (default False).
+    # Outputs: True if every element is a datetime.time (plus None/NA/NaN when skipna).
     cdef:
         TimeValidator validator = TimeValidator(values.size, skipna=skipna)
     return validator.validate(values)
@@ -2211,6 +2765,13 @@ cpdef bint is_time_array(ndarray values, bint skipna=False):
 
 # FIXME: actually use skipna
 cdef bint is_period_array(ndarray values, bint skipna=True):
+    # [FUNCTION DOC]
+    # HELPER: Inputs: values - object array of any ndim; skipna - unused.
+    # Outputs: True if every element is a Period or a NaT-like null (None/NaN/NaT), all
+    # Periods share the same frequency code, and at least one Period exists; else False
+    # (including empty arrays).
+    # Exceptions: none. Side effects: none.
+    # KNOWN ISSUE: skipna is ignored (see FIXME); nulls are always accepted.
     """
     Is this an ndarray of Period objects (or NaT) with a single `freq`?
     """
@@ -2252,6 +2813,16 @@ cdef bint is_period_array(ndarray values, bint skipna=True):
 
 # Note: only python-exposed for tests
 cpdef bint is_interval_array(ndarray values):
+    # [FUNCTION DOC]
+    # Inputs: values - 1-D object array.
+    # Outputs: True if every element is exactly an Interval (subclasses rejected) or
+    # NaN/None, all Intervals share the same closed side and the same kind of left
+    # endpoint (numeric int/float, timedelta-like, or datetime), and at least one
+    # Interval exists; otherwise False (including empty arrays).
+    # Exceptions: ValueError(val) if the first Interval's left endpoint is none of
+    # numeric, timedelta or datetime. Side effects: none.
+    # KNOWN ISSUE: uses values.size as the count but indexes values[i] positionally, so
+    # it only works correctly for 1-D arrays.
     """
     Is this an ndarray of Interval (or np.nan) with a single dtype?
     """
@@ -2317,6 +2888,35 @@ def maybe_convert_numeric(
     bint coerce_numeric=False,
     bint convert_to_masked_nullable=False,
 ) -> tuple[np.ndarray, np.ndarray | None]:
+    # [FUNCTION DOC]
+    # Parse a 1-D object array into a numeric array (backs pd.to_numeric and parsers).
+    # Inputs: values - 1-D object array; na_values - set of values treated as missing;
+    # convert_empty - treat empty sized objects (e.g. "") as NaN, else raise;
+    # coerce_numeric - turn unparsable values into NaN instead of raising and allow
+    # overflowing ints to become float; convert_to_masked_nullable - return a missing
+    # mask and keep ints with nulls as ints.
+    # Fast path: empty input -> (empty int64 array, None); if the first element is an
+    # integer and the whole array casts losslessly to int64, return that.
+    # Otherwise scans every element, filling parallel float64, complex128, int64,
+    # uint64,
+    # Python-int object and uint8 bool buffers plus a mask, recording kinds in a Seen:
+    # na_values members / None / NA -> null (NaN); floats (NaN -> null); ints (range
+    # checks set uint/sint/overflow, overflow -> float when coercing); bools; empty
+    # sized objects -> null or ValueError; complex; Decimal -> float; anything else
+    # (strings) is parsed with the C floatify routine, honoring na_values for both the
+    # float and integer interpretation.
+    # Outputs: tuple (array, mask or None). Priority: the original values if a
+    # uint64/negative/null conflict exists and not coercing; complex128; float64
+    # (with mask if nulls and masked mode); ints as Python-int object array if
+    # overflowing, else uint64 if any value needs it, else int64 (with mask if nulls in
+    # masked mode); bool (with mask in masked mode when nulls were allowed as ints);
+    # else uint64/int64.
+    # Exceptions: ValueError("Empty string encountered") per convert_empty; TypeError /
+    # ValueError from parsing re-raised as "<msg> at position i" when not coercing.
+    # Side effects: allocates working buffers; bounds checks disabled.
+    # KNOWN ISSUE: docstring says that with coerce_numeric=True a ValueError is raised
+    # when no suitable numeric dtype exists; in code coercion simply skips the
+    # uint64-conflict return and falls through to a float/int result.
     """
     Convert object array to a numeric array if possible.
 
@@ -2575,6 +3175,38 @@ def maybe_convert_objects(ndarray[object] objects,
                           bint convert_to_nullable_dtype=False,
                           bint convert_non_numeric=False,
                           object dtype_if_all_nat=None) -> "ArrayLike":
+    # [FUNCTION DOC]
+    # Soft-convert a 1-D object array to the most specific dtype.
+    # Inputs: objects - 1-D object array; try_float - convert other non-str objects via
+    # float() (e.g. Decimal); safe - never upcast ints to float (mixed int/float or
+    # int/null stays object); convert_numeric - allow numeric/bool results (if False and
+    # data is numeric, the input is returned); convert_to_nullable_dtype - return
+    # BooleanArray / IntegerArray / FloatingArray / StringArray where masks are needed
+    # and accept NA; convert_non_numeric - allow datetime, tz-aware datetime,
+    # timedelta, period, interval and string results; dtype_if_all_nat - dtype for
+    # all-NaT input (requires convert_non_numeric).
+    # Scan: per element records kinds in a Seen and fills float/complex/int/uint/bool
+    # buffers and a null mask; tracks the max numpy-scalar itemsize (or -1 once any
+    # non-numpy value appears). Stops early (break) on the first non-numeric kind,
+    # anything forcing object, or when a numeric value is seen and convert_numeric is
+    # False. NaT and None/NaN continue scanning.
+    # Non-numeric resolution: tz-aware datetimes -> DatetimeArray if single tz;
+    # datetimes/datetime64 (naive) -> datetime64 ndarray; timedeltas -> timedelta64
+    # ndarray; Periods -> PeriodArray (single freq); strings -> StringArray if
+    # convert_to_nullable_dtype or the future string option is on and all str/null;
+    # Intervals -> IntervalArray; all-NaT/null -> empty array of dtype_if_all_nat
+    # filled with NaT (numpy m/M dtype) or an extension array of all-missing via take.
+    # Failures (mixed, out-of-bounds) fall back to returning objects.
+    # Numeric resolution: bools -> BooleanArray (nullable) or bool ndarray if pure;
+    # otherwise complex > float > uint64 > int64, with nulls forcing float unless
+    # nullable ints are requested; in safe mode ints never mix with floats/nulls. Ints
+    # and floats are wrapped in IntegerArray / FloatingArray (masked positions set to
+    # 1) when convert_to_nullable_dtype. A plain numpy result is downcast/upcast to the
+    # common itemsize when every element was a numpy scalar.
+    # Outputs: ndarray or ExtensionArray, or the original objects if nothing applies.
+    # Exceptions: ValueError if dtype_if_all_nat is given without convert_non_numeric,
+    # or if it is a numpy dtype whose kind is not m/M.
+    # Side effects: lazy imports of pandas array/index classes; allocates buffers.
     """
     Type inference function-- convert object array to proper dtype
 
@@ -2954,12 +3586,18 @@ def maybe_convert_objects(ndarray[object] objects,
 
 
 class _NoDefault(Enum):
+    # [CLASS DOC]
+    # Enum holding the single no_default sentinel, used as a default argument value to
+    # detect "argument not passed". An Enum so it survives pickling as the same object
+    # (GH#40397) and so type checkers treat it as a singleton literal type.
     # We make this an Enum
     # 1) because it round-trips through pickle correctly (see GH#40397)
     # 2) because mypy does not understand singletons
     no_default = "NO_DEFAULT"
 
     def __repr__(self) -> str:
+        # [FUNCTION DOC]
+        # Outputs: the string "<no_default>".
         return "<no_default>"
 
 
@@ -2981,6 +3619,16 @@ def map_infer_mask(
     object na_value=no_default,
     cnp.dtype dtype=np.dtype(object)
 ) -> "ArrayLike":
+    # [FUNCTION DOC]
+    # Apply a function elementwise, skipping masked positions, then infer the dtype.
+    # Inputs: arr - 1-D array (any dtype, boxed via getitem); f - callable; mask - uint8
+    # array, nonzero where f must NOT be applied; convert - run maybe_convert_objects on
+    # the result; na_value - value placed at masked positions (default: keep the
+    # original element); dtype - numpy dtype of the result buffer (default object).
+    # Outputs: array where unmasked positions hold f(element) (0-dim array results are
+    # unboxed to scalars), converted by maybe_convert_objects when convert is True.
+    # Exceptions: propagates errors raised by f or by storing into dtype.
+    # Side effects: calls f for each unmasked element.
     """
     Substitute for np.vectorize with pandas-friendly dtype inference.
 
@@ -3042,6 +3690,14 @@ def map_infer_mask(
 def map_infer(
     ndarray arr, object f, *, bint convert=True, bint ignore_na=False
 ) -> "ArrayLike":
+    # [FUNCTION DOC]
+    # Apply a function elementwise and infer the dtype.
+    # Inputs: arr - 1-D array; f - callable; convert - run maybe_convert_objects on the
+    # result; ignore_na - if True, null elements (checknull) are copied through
+    # without calling f.
+    # Outputs: object array of f results (0-dim arrays unboxed), or the converted array
+    # when convert is True.
+    # Exceptions: propagates errors from f. Side effects: calls f per element.
     """
     Substitute for np.vectorize with pandas-friendly dtype inference.
 
@@ -3083,6 +3739,13 @@ def map_infer(
 
 
 def to_object_array(rows: object, min_width: int = 0) -> ndarray:
+    # [FUNCTION DOC]
+    # Inputs: rows - iterable of list-like rows; min_width - minimum number of columns.
+    # Outputs: 2-D object array (n_rows, max(min_width, longest row)) with each row's
+    # values left-aligned; unfilled cells are None.
+    # Exceptions: TypeError if a row has no len. Side effects: none.
+    # KNOWN ISSUE: docstring says short rows are padded with NaN, but np.empty with
+    # object dtype pads with None.
     """
     Convert a list of lists into an object array.
 
@@ -3126,6 +3789,13 @@ def to_object_array(rows: object, min_width: int = 0) -> ndarray:
 
 
 def tuples_to_object_array(ndarray[object] tuples):
+    # [FUNCTION DOC]
+    # Inputs: tuples - 1-D object array of tuples, all of the length of the first one.
+    # Outputs: 2-D object array (n, k) with result[i, j] = tuples[i][j], k = len of
+    # first.
+    # Exceptions: IndexError if empty or a tuple is shorter than the first; TypeError if
+    # an element is not a tuple. Longer tuples are silently truncated.
+    # Side effects: none.
     cdef:
         Py_ssize_t i, j, n, k
         ndarray[object, ndim=2] result
@@ -3143,6 +3813,14 @@ def tuples_to_object_array(ndarray[object] tuples):
 
 
 def to_object_array_tuples(rows: object) -> np.ndarray:
+    # [FUNCTION DOC]
+    # Inputs: rows - iterable of tuples (or tuple subclasses / list-likes / null
+    # scalars).
+    # Outputs: 2-D object array (n, max row length) with rows left-aligned and missing
+    # cells None. A null row (checknull) counts as width 1 and is stored as itself in
+    # column 0. First tries exact tuples; on TypeError (e.g. a list or null row) redoes
+    # the fill converting each row with tuple() or wrapping a null in a 1-tuple.
+    # Exceptions: TypeError if a row is neither null nor iterable. Side effects: none.
     """
     Convert a list of tuples into an object array. Any subclass of
     tuple in `rows` will be casted to tuple.
@@ -3193,6 +3871,12 @@ def to_object_array_tuples(rows: object) -> np.ndarray:
 def fast_multiget(
     dict mapping, ndarray[object, ndim=1] keys, default=np.nan
 ) -> "ArrayLike":
+    # [FUNCTION DOC]
+    # Inputs: mapping - dict; keys - 1-D object array; default - value for missing keys.
+    # Outputs: maybe_convert_objects of [mapping.get(key, default) ...]; for empty keys
+    # an
+    # empty float64 array.
+    # Exceptions: TypeError for unhashable keys. Side effects: none.
     cdef:
         Py_ssize_t i, n = len(keys)
         object val
@@ -3213,6 +3897,10 @@ def fast_multiget(
 
 
 def is_bool_list(obj: list) -> bool:
+    # [FUNCTION DOC]
+    # Inputs: obj - list.
+    # Outputs: True if every item is a Python bool or np.bool_ (True for an empty list).
+    # Exceptions: none. Side effects: none.
     """
     Check if this list contains only bool or np.bool_ objects.
 
@@ -3251,6 +3939,12 @@ def is_bool_list(obj: list) -> bool:
 
 
 cpdef ndarray eq_NA_compat(ndarray[object] arr, object key):
+    # [FUNCTION DOC]
+    # Elementwise equality against a key, treating NA as not equal.
+    # Inputs: arr - 1-D object array; key - non-null scalar.
+    # Outputs: bool array of arr's shape: False where the element is NA, otherwise the
+    # truth value of element == key.
+    # Exceptions: propagates errors from == or its truth value. Side effects: none.
     """
     Check for `arr == key`, treating all values as not-equal to pd.NA.
 
@@ -3274,6 +3968,11 @@ cpdef ndarray eq_NA_compat(ndarray[object] arr, object key):
 
 
 def dtypes_all_equal(list types not None) -> bool:
+    # [FUNCTION DOC]
+    # Inputs: types - non-empty list of numpy dtypes / ExtensionDtypes (not None).
+    # Outputs: True if every dtype is identical or == to the first; False on the first
+    # mismatch or if == raises TypeError/AttributeError.
+    # Exceptions: IndexError if the list is empty. Side effects: none.
     """
     Faster version for:
 
@@ -3299,6 +3998,11 @@ def dtypes_all_equal(list types not None) -> bool:
 
 
 def is_np_dtype(object dtype, str kinds=None) -> bool:
+    # [FUNCTION DOC]
+    # Inputs: dtype - any object; kinds - optional string of numpy kind characters.
+    # Outputs: True if dtype is a numpy dtype instance and (kinds is None or
+    # dtype.kind is in kinds); False otherwise.
+    # Exceptions: none. Side effects: none.
     """
     Optimized check for `isinstance(dtype, np.dtype)` with
     optional `and dtype.kind in kinds`.

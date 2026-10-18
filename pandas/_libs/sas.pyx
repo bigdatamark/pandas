@@ -1,3 +1,12 @@
+# [MODULE DOC]
+# Cython core of the SAS7BDAT reader (pandas.io.sas.sas7bdat). Provides a bounds-checked
+# byte Buffer struct, the two SAS decompression codecs (RLE and RDC), fast
+# subheader-signature lookup, and the Parser extension type which walks pages of a
+# SAS7BDAT file and scatters each row's column bytes into the Python-level reader's
+# preallocated chunks (raw 8-byte slots for numeric columns, bytes objects or NaN for
+# string columns). Module-level C globals cache constants from
+# pandas.io.sas.sas_constants (page types, subheader pointer offset, signature tables)
+# which are filled at import time by _init_subheader_signatures.
 # cython: language_level=3, initializedcheck=False
 # cython: warn.maybe_uninitialized=True, warn.unused=True
 from cython cimport Py_ssize_t
@@ -23,6 +32,10 @@ cdef object np_nan = np.nan
 
 
 cdef struct Buffer:
+    # [CLASS DOC]
+    # Plain C struct: pointer to uint8 bytes plus their length. Does not own memory
+    # unless created via buf_new (then must be released with buf_free). Passed by value.
+    # All accesses go through buf_get/buf_set/buf_as_bytes which assert bounds.
     # Convenience wrapper for uint8_t data to allow fast and safe reads and writes.
     # We use this as a replacement for np.array(..., dtype=np.uint8) because it's
     # much slower to create NumPy arrays and we create Buffer instances many times
@@ -32,22 +45,42 @@ cdef struct Buffer:
 
 
 cdef uint8_t buf_get(Buffer buf, size_t offset) except? 255:
+    # [FUNCTION DOC]
+    # HELPER: Read the byte at offset from buf.
+    # Inputs: buf - Buffer; offset - byte index. Outputs: uint8 value.
+    # Exceptions: AssertionError("Out of bounds read") if offset >= buf.length (255 is
+    # used as the ambiguous error return value). Side effects: none.
     assert offset < buf.length, "Out of bounds read"
     return buf.data[offset]
 
 
 cdef bint buf_set(Buffer buf, size_t offset, uint8_t value) except 0:
+    # [FUNCTION DOC]
+    # HELPER: Write value to buf at offset.
+    # Inputs: buf - Buffer; offset - byte index; value - uint8. Outputs: True.
+    # Exceptions: AssertionError("Out of bounds write") if offset >= buf.length.
+    # Side effects: mutates the memory buf points to.
     assert offset < buf.length, "Out of bounds write"
     buf.data[offset] = value
     return True
 
 
 cdef bytes buf_as_bytes(Buffer buf, size_t offset, size_t length):
+    # [FUNCTION DOC]
+    # HELPER: Copy length bytes starting at offset into a new bytes object.
+    # Inputs: buf - Buffer; offset, length - byte range. Outputs: bytes.
+    # Exceptions: AssertionError if offset + length > buf.length.
+    # Side effects: allocates a Python bytes object.
     assert offset + length <= buf.length, "Out of bounds read"
     return buf.data[offset:offset+length]
 
 
 cdef Buffer buf_new(size_t length) except *:
+    # [FUNCTION DOC]
+    # HELPER: Allocate a zero-initialized Buffer of length bytes (calloc).
+    # Inputs: length - size in bytes. Outputs: Buffer owning the memory.
+    # Exceptions: MemoryError if allocation fails. Side effects: heap allocation that
+    # the caller must free with buf_free.
     cdef uint8_t *data = <uint8_t *>calloc(length, sizeof(uint8_t))
     if data is NULL:
         raise MemoryError(f"Failed to allocate {length} bytes")
@@ -55,6 +88,10 @@ cdef Buffer buf_new(size_t length) except *:
 
 
 cdef buf_free(Buffer buf):
+    # [FUNCTION DOC]
+    # HELPER: Free the memory of a Buffer created by buf_new (no-op if data is NULL).
+    # Inputs: buf - Buffer. Outputs: None. Side effects: frees heap memory; the Buffer
+    # must not be used afterwards.
     if buf.data != NULL:
         free(buf.data)
 
@@ -65,6 +102,19 @@ cdef buf_free(Buffer buf):
 # Licence at LICENSES/SAS7BDAT_LICENSE
 cdef int rle_decompress(Buffer inbuff, Buffer outbuff) except? 0:
 
+    # [FUNCTION DOC]
+    # HELPER: Decompress one SAS RLE-compressed row from inbuff into outbuff. Repeatedly
+    # reads a control byte: the high nibble selects the command, the low nibble (e) is a
+    # length component. Commands: 0x00 copy (next byte + 64 + e*256) literal bytes; 0x40
+    # repeat the next byte (next byte + 18 + e*256) times; 0x60 write (e*256 + next byte
+    # + 17) spaces; 0x70 same count of zero bytes; 0x80/0x90/ 0xA0/0xB0 copy e+1 / e+17
+    # / e+33 / e+49 literal bytes; 0xC0 repeat next byte e+3 times; 0xD0 write e+2 '@'
+    # (0x40) bytes; 0xE0 e+2 spaces; 0xF0 e+2 zero bytes. Continues until inbuff is
+    # exhausted.
+    # Inputs: inbuff - compressed Buffer; outbuff - destination Buffer (row length).
+    # Outputs: number of bytes written (0 is an ambiguous error value).
+    # Exceptions: ValueError for an unknown control byte; AssertionError on any out of
+    # bounds read/write. Side effects: writes into outbuff.
     cdef:
         uint8_t control_byte, x
         int rpos = 0
@@ -161,6 +211,19 @@ cdef int rle_decompress(Buffer inbuff, Buffer outbuff) except? 0:
 # http://collaboration.cmc.ec.gc.ca/science/rpn/biblio/ddj/Website/articles/CUJ/1992/9210/ross/ross.htm
 cdef int rdc_decompress(Buffer inbuff, Buffer outbuff) except? 0:
 
+    # [FUNCTION DOC]
+    # HELPER: Decompress one Ross Data Compression (RDC) row. Input is a stream of
+    # 16-bit big-endian control words, each governing the next 16 items: a 0 bit means
+    # copy one literal byte; a 1 bit means a command byte whose high nibble is cmd and
+    # low nibble cnt: cmd 0 short RLE (repeat next byte cnt+3 times); cmd 1 long RLE
+    # (repeat a byte cnt + (next byte << 4) + 19 times); cmd 2 long pattern (copy
+    # (next-next byte + 16) bytes from earlier output at distance cnt + 3 + (next byte
+    # << 4)); cmd >= 3 short pattern (copy cmd bytes from earlier output at that
+    # distance).
+    # Inputs: inbuff - compressed Buffer; outbuff - destination Buffer.
+    # Outputs: number of bytes written.
+    # Exceptions: AssertionError on out of bounds reads/writes (e.g. back-reference
+    # before the start of output). Side effects: writes into outbuff.
     cdef:
         uint8_t cmd
         uint16_t ctrl_bits = 0, ctrl_mask = 0, ofs, cnt
@@ -255,6 +318,13 @@ cdef:
 
 
 def _init_subheader_signatures():
+    # [FUNCTION DOC]
+    # HELPER: Populate the module-level C arrays of 4-byte and 8-byte subheader
+    # signatures (reinterpreted as native-endian uint32/uint64) and their SASIndex
+    # values from const.subheader_signature_to_index. Called once at import.
+    # Inputs: none. Outputs: None.
+    # Exceptions: AssertionError if the constants do not contain exactly 13 4-byte and
+    # 17 8-byte signatures. Side effects: mutates module-level C globals.
     subheaders_32bit = [
         (sig, idx)
         for sig, idx in const.subheader_signature_to_index.items()
@@ -280,6 +350,12 @@ _init_subheader_signatures()
 
 
 def get_subheader_index(bytes signature):
+    # [FUNCTION DOC]
+    # Map a 4- or 8-byte subheader signature to its SASIndex value by linear search over
+    # the C signature tables (compares as native integers). Unknown signatures map to
+    # data_subheader_index.
+    # Inputs: signature - bytes of length 4 or 8. Outputs: int index.
+    # Exceptions: AssertionError for other lengths. Side effects: none.
     """Fast version of 'subheader_signature_to_index.get(signature)'."""
     cdef:
         uint32_t sig32
@@ -302,6 +378,13 @@ def get_subheader_index(bytes signature):
 
 cdef class Parser:
 
+    # [CLASS DOC]
+    # Row reader bound to a Python SAS7BDATReader (self.parser). Caches the reader's
+    # column metadata (lengths, offsets, types as decimal/string), output chunk arrays
+    # (byte_chunk: uint8 2-D, 8 bytes per numeric value per row; string_chunk: object
+    # 2-D), current page bytes and page metadata, and row counters. read() parses rows
+    # into the chunks and writes counters back to the reader. Page fetching is delegated
+    # to the Python reader's _read_next_page.
     cdef:
         int column_count
         int64_t[:] lengths
@@ -328,6 +411,15 @@ cdef class Parser:
         object parser
 
     def __init__(self, object parser):
+        # [FUNCTION DOC]
+        # Initialize from a SAS7BDATReader: copy column metadata, chunk arrays, row
+        # length, page bit offset, subheader pointer length and byte order; load the
+        # current page state; map column type codes b"d"/b"s" to decimal/string; choose
+        # the decompressor (RLE, RDC or none) from parser.compression; copy row
+        # counters.
+        # Inputs: parser - SAS7BDATReader with header already parsed.
+        # Outputs: None. Exceptions: ValueError for an unknown column type.
+        # Side effects: mutates self; keeps a reference to parser's cached page bytes.
         cdef:
             int j
             char[:] column_types
@@ -374,6 +466,12 @@ cdef class Parser:
         self.current_row_on_page_index = parser._current_row_on_page_index
 
     def read(self, int nrows):
+        # [FUNCTION DOC]
+        # Read up to nrows rows (stopping at end of file) into the chunk arrays, then
+        # copy the page/chunk/file row counters back onto the Python parser.
+        # Inputs: nrows - number of rows. Outputs: None.
+        # Exceptions: propagates parsing errors. Side effects: mutates parser state,
+        # chunk arrays and file position.
         cdef:
             bint done
             Py_ssize_t _
@@ -389,6 +487,11 @@ cdef class Parser:
         self.parser._current_row_in_file_index = self.current_row_in_file_index
 
     cdef bint read_next_page(self) except? True:
+        # [FUNCTION DOC]
+        # HELPER: Ask the Python parser to read the next page. If at EOF, clears
+        # cached_page; otherwise refreshes the cached page state.
+        # Outputs: True if no more pages. Exceptions: propagates reader errors.
+        # Side effects: file I/O, mutates self.
         cdef bint done
 
         done = self.parser._read_next_page()
@@ -399,6 +502,12 @@ cdef class Parser:
         return done
 
     cdef update_next_page(self):
+        # [FUNCTION DOC]
+        # HELPER: Copy the Python parser's current page info into C fields: page bytes
+        # pointer and length, page type, block count, number of data subheader pointers
+        # and subheader count; reset row-on-page index to 0.
+        # Outputs: None. Side effects: mutates self; the raw pointer borrows the
+        # parser's bytes object (valid only while the parser keeps it).
         # update data for the current page
 
         self.cached_page = <uint8_t *>self.parser._cached_page
@@ -413,6 +522,18 @@ cdef class Parser:
 
     cdef bint readline(self) except? True:
 
+        # [FUNCTION DOC]
+        # HELPER: Read a single data row. If no page is cached, seeks to the end of the
+        # header and reads a page. Then by page type: meta pages - rows come from the
+        # data subheader pointer list (offset, length); when exhausted read the next
+        # page and retry; mix pages - rows follow the subheader pointers, aligned to 8
+        # bytes, at current_row_on_page_index * row_length; reads the next page once the
+        # row index reaches min(row_count, mix_page_row_count); data pages - rows follow
+        # the pointer area at fixed stride; next page when the index reaches the block
+        # count.
+        # Outputs: True if end of file reached (no row read), else False.
+        # Exceptions: ValueError for an unknown page type; errors from row processing.
+        # Side effects: mutates self, chunk arrays, file position.
         cdef:
             int offset, length, bit_offset, align_correction
             int subheader_pointer_length, mn
@@ -479,6 +600,25 @@ cdef class Parser:
 
     cdef void process_byte_array_with_data(self, int offset, int length) except *:
 
+        # [FUNCTION DOC]
+        # HELPER: Decode one row located at offset/length in the cached page. If a
+        # decompressor is set and length < row_length, the row is decompressed into a
+        # temporary row_length buffer (must decompress to exactly row_length). For each
+        # column (stopping at the first zero-length column): numeric columns copy their
+        # lngt bytes into byte_chunk[numeric col index, 8*row ..] right-aligned for
+        # little endian (left-aligned for big endian), leaving the rest of the 8-byte
+        # slot as is; string columns strip trailing NUL/space bytes and store bytes, or
+        # NaN when empty and blank_missing is set, into string_chunk[string col index,
+        # row]. Increments the page, chunk and file row counters.
+        # Inputs: offset, length - byte range within the cached page.
+        # Outputs: None. Exceptions: AssertionError for out of bounds; ValueError if the
+        # decompressed length is wrong. Side effects: mutates chunk arrays and counters;
+        # allocates and frees a temporary buffer.
+        # KNOWN ISSUE: the temporary decompression buffer is not freed if an exception
+        # is raised after buf_new (length mismatch or out of bounds assertion), leaking
+        # memory.
+        # KNOWN ISSUE: a zero-length column causes a break, skipping all later columns
+        # rather than just that column.
         cdef:
             Py_ssize_t j
             int s, k, m, jb, js, current_row, rpos

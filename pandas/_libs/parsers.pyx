@@ -1,3 +1,23 @@
+# [MODULE DOC]
+# Cython front end of the C CSV parser used by read_csv(engine="c"). The heavy lifting
+# (reading bytes from a Python file-like source, splitting into lines and fields) is
+# done by the C tokenizer (pandas/parser/tokenizer.h, pd_parser.h), which fills a
+# parser_t struct: a flat array of NUL-terminated words, plus per-line start offsets
+# (line_start) and field counts (line_fields), with lines = number of tokenized rows.
+# This module wraps that state in the TextReader class, which: configures tokenizer
+# options, parses header rows into column names (mangling duplicates as "x.1", "x.2"),
+# tokenizes rows on demand, and converts each column's words into typed arrays.
+# Type inference tries, in order, int64 (falling back to uint64 / Python ints on
+# overflow), float64, bool, then object (str), unless a dtype or converter is given.
+# NA detection uses khash string-prefix sets (kh_str_starts_t) of NA tokens and a
+# float64 hash set of numeric NA values. Missing values in non-float results are
+# written as sentinel values from the module-level na_values dict (int min for
+# signed ints, uint max for unsigned ints and bools, NaN for floats/objects) and later
+# replaced by _maybe_upcast (float with NaN, object with NaN, or nullable arrays).
+# Module globals: na_values (dtype -> sentinel), STR_NA_VALUES / _NA_VALUES (default
+# NA tokens as str / UTF-8 bytes), _true_values/_false_values (default boolean tokens),
+# DEFAULT_CHUNKSIZE (tokenizer chunk size, 256 KiB), DEFAULT_BUFFER_HEURISTIC (2**20,
+# budget of cells per low-memory chunk).
 # Copyright (c) 2012, Lambda Foundry, Inc.
 # See LICENSE for the license
 from collections import defaultdict
@@ -300,31 +320,76 @@ PandasParser_IMPORT
 cdef double xstrtod_wrapper(const char *p, char **q, char decimal,
                             char sci, char tsep, int skip_trailing,
                             int *error, int *maybe_int) noexcept nogil:
+# [FUNCTION DOC]
+# Thin wrapper so the C function xstrtod (legacy float parser) can be stored as a
+# function pointer in parser.double_converter.
+# Inputs: p - NUL-terminated string; q - out pointer set to the end of the parsed text;
+# decimal, sci, tsep - decimal, exponent and thousands-separator characters;
+# skip_trailing - nonzero to skip trailing spaces; error - out error code;
+# maybe_int - out flag set if the text looks like an integer (may be NULL).
+# Outputs: the parsed double. Exceptions: none. Side effects: writes *q and *error;
+# callable without the GIL.
     return xstrtod(p, q, decimal, sci, tsep, skip_trailing, error, maybe_int)
 
 
 cdef double precise_xstrtod_wrapper(const char *p, char **q, char decimal,
                                     char sci, char tsep, int skip_trailing,
                                     int *error, int *maybe_int) noexcept nogil:
+# [FUNCTION DOC]
+# Same as xstrtod_wrapper but forwards to precise_xstrtod (the default "high" float
+# precision parser). Same inputs, outputs and side effects.
     return precise_xstrtod(p, q, decimal, sci, tsep, skip_trailing, error, maybe_int)
 
 
 cdef double round_trip_wrapper(const char *p, char **q, char decimal,
                                char sci, char tsep, int skip_trailing,
                                int *error, int *maybe_int) noexcept nogil:
+# [FUNCTION DOC]
+# Same as xstrtod_wrapper but forwards to round_trip (float_precision="round_trip",
+# which round-trips through Python float parsing). Same inputs and outputs. Note the
+# underlying C function acquires the GIL internally.
     return round_trip(p, q, decimal, sci, tsep, skip_trailing, error, maybe_int)
 
 
 cdef char* buffer_rd_bytes_wrapper(void *source, size_t nbytes,
                                    size_t *bytes_read, int *status,
                                    const char *encoding_errors) noexcept:
+# [FUNCTION DOC]
+# Wrapper around the C buffer_rd_bytes so it can be stored as parser.cb_io. Reads up to
+# nbytes from the Python source object wrapped in source (via its read method), keeps a
+# reference to the returned bytes, and returns a pointer to its buffer.
+# Inputs: source - rd_source pointer from new_rd_source; nbytes - requested size;
+# bytes_read - out count; status - out status (0 ok, REACHED_EOF, or error);
+# encoding_errors - error handler name for decoding str chunks.
+# Outputs: pointer to the bytes, or NULL on error. Side effects: calls into Python.
     return buffer_rd_bytes(source, nbytes, bytes_read, status, encoding_errors)
 
 cdef void del_rd_source_wrapper(void *src) noexcept:
+# [FUNCTION DOC]
+# Wrapper around the C del_rd_source so it can be stored as parser.cb_cleanup; releases
+# the Python object reference held by the rd_source and frees it.
+# Inputs: src - rd_source pointer. Outputs: none. Side effects: frees memory, decrefs.
     del_rd_source(src)
 
 
 cdef class TextReader:
+    # [CLASS DOC]
+    # Stateful CSV reader around a C parser_t. Created once per read_csv call by the
+    # c_parser_wrapper. Construction validates/sets tokenizer options and reads the
+    #   header
+    # rows; read() / read_low_memory() then tokenize data rows and return a dict mapping
+    # column position -> converted array.
+    # Key private state: parser (owned parser_t, freed in __dealloc__); parser_start
+    # (index in the tokenized buffer of the first not-yet-returned data row);
+    # true_set/false_set (owned prefix hash sets of boolean tokens); dtype_cast_order
+    # (dtypes tried during inference); noconvert (column positions to leave as strings);
+    # buffer_lines (rows per chunk in low-memory mode); encoding_errors (C string, the
+    # backing bytes object is intentionally leaked via an extra reference).
+    # Public attributes: leading_cols (number of unnamed index columns detected before
+    #   the
+    # named ones), table_width (number of columns), header (list of header rows as lists
+    # of names, or None), plus the user options delimiter, converters, na_values,
+    # index_col, skiprows, dtype, usecols, unnamed_cols, dtype_backend.
     """
 
     # source: StringIO or file object
@@ -396,6 +461,54 @@ cdef class TextReader:
                   bint skip_blank_lines=True,
                   encoding_errors=b"strict",
                   dtype_backend="numpy"):
+        # [FUNCTION DOC]
+        # Initialize the reader: allocate and configure the C parser and read the
+        #   header.
+        # Inputs: source - Python file-like object with read(); delimiter - 1-char
+        #   str/bytes;
+        # header - None, int row, or list of ints (multi-row header);
+        #   header_start/header_end
+        # are accepted but ignored; index_col; names - list of column names or None;
+        # tokenize_chunksize - bytes per read; delim_whitespace; converters - dict keyed
+        #   by
+        # name or position; skipinitialspace; escapechar; doublequote; quotechar;
+        #   quoting
+        # (csv QUOTE_* int); lineterminator; comment; decimal; thousands (1-char each);
+        # dtype - None, a dtype, or dict of dtypes; usecols - cleaned set/list or
+        #   callable;
+        # on_bad_lines - ERROR/WARN/SKIP enum; na_filter; na_values / na_fvalues - set
+        #   or dict
+        # of sets of str / float NA markers; keep_default_na; true_values / false_values
+        #   -
+        # extra boolean tokens; allow_leading_cols; skiprows - int, iterable or
+        #   callable;
+        # skipfooter; float_precision - None/"high"/"legacy"/"round_trip";
+        #   skip_blank_lines;
+        # encoding_errors; dtype_backend - "numpy", "numpy_nullable" or "pyarrow".
+        # Behavior: sets every parser option; numeric inference order is int64, float64,
+        #   bool,
+        # object (int64 dropped when quoting is QUOTE_NONNUMERIC); skipfooter > 0 forces
+        #   bad
+        # lines to be skipped; true/false token lists are user tokens plus defaults and
+        #   are
+        # loaded into hash sets; for a list header of length > 1 an extra row is
+        #   appended to
+        # header and has_mi_columns is set; parser_start becomes the row after the
+        #   header.
+        # Calls _get_header, stores header/table_width/unnamed_cols, then sets
+        #   buffer_lines to
+        # the largest power of two whose double is below 2**20 // table_width.
+        # Outputs: none. Exceptions: ValueError for multi-character delimiter,
+        #   terminator,
+        # decimal, thousands, escape or comment, or unknown float_precision; TypeError
+        #   from
+        # _set_quoting; ParserError/ValueError from _get_header; EmptyDataError if no
+        #   columns.
+        # Side effects: allocates the C parser and hash sets, tokenizes the first rows,
+        #   keeps
+        # an extra reference to encoding_errors (never released), may mutate a dict
+        #   dtype in
+        # _get_header.
 
         # set encoding for native Python and C library
         if isinstance(encoding_errors, str):
@@ -581,16 +694,39 @@ cdef class TextReader:
             self.buffer_lines *= 2
 
     def __init__(self, *args, **kwargs):
+        # [FUNCTION DOC]
+        # No-op; all initialization happens in __cinit__. Accepts and ignores any
+        #   arguments.
         pass
 
     def __dealloc__(self):
+        # [FUNCTION DOC]
+        # Destructor: frees parser buffers and boolean hash sets via _close, then frees
+        #   the
+        # parser_t itself (which also runs the source cleanup callback).
+        # Inputs/outputs: none. Side effects: releases C memory.
         _close(self)
         parser_del(self.parser)
 
     def close(self):
+        # [FUNCTION DOC]
+        # Release parser buffers and the boolean hash sets early (see _close). The
+        #   parser_t
+        # itself stays allocated until deallocation. Inputs/outputs: none.
         _close(self)
 
     def _set_quoting(self, quote_char: str | bytes | None, quoting: int):
+        # [FUNCTION DOC]
+        # HELPER: Validate and set quoting options on the parser.
+        # Inputs: quote_char - str/bytes of length 1, or None/"" for no quote char;
+        # quoting - int between QUOTE_MINIMAL and QUOTE_NONE inclusive.
+        # Outputs: none. Exceptions: TypeError if quoting is not an int or out of range,
+        #   if
+        # quote_char has the wrong type or length, or if quote_char is empty/None while
+        #   quoting
+        # is not QUOTE_NONE. Side effects: sets parser.quoting and parser.quotechar (-1
+        #   when
+        # there is no quote character).
         if not isinstance(quoting, int):
             raise TypeError('"quoting" must be an integer')
 
@@ -613,6 +749,15 @@ cdef class TextReader:
             self.parser.quotechar = <char>ord(quote_char)
 
     cdef _make_skiprow_set(self):
+        # [FUNCTION DOC]
+        # HELPER: Register self.skiprows with the C parser: an integer means skip the
+        #   first N
+        # rows; a non-callable iterable adds each row number to the parser's skip set; a
+        # callable is stored as parser.skipfunc (borrowed pointer, kept alive by
+        #   self.skiprows)
+        # and called per row by the tokenizer.
+        # Inputs: none (uses self.skiprows). Outputs: none. Side effects: mutates
+        #   parser.
         if util.is_integer_object(self.skiprows):
             parser_set_skipfirstnrows(self.parser, self.skiprows)
         elif not callable(self.skiprows):
@@ -622,6 +767,13 @@ cdef class TextReader:
             self.parser.skipfunc = <PyObject *>self.skiprows
 
     cdef _setup_parser_source(self, source):
+        # [FUNCTION DOC]
+        # HELPER: Wrap the Python source object in a C rd_source and install the read
+        #   and
+        # cleanup callbacks (buffer_rd_bytes_wrapper, del_rd_source_wrapper) on the
+        #   parser.
+        # Inputs: source - object with a read(n) method. Outputs: none.
+        # Side effects: allocates the rd_source, increments the source refcount.
         cdef:
             void *ptr
 
@@ -631,6 +783,42 @@ cdef class TextReader:
         self.parser.cb_cleanup = del_rd_source_wrapper
 
     cdef _get_header(self, list prelim_header):
+        # [FUNCTION DOC]
+        # HELPER: Determine column names, number of columns and unnamed columns.
+        # Inputs: prelim_header - list of header row indices (empty if header is None).
+        # Behavior: If a header is in the file, tokenizes enough rows, decodes each
+        #   field of
+        # each header row as UTF-8; empty names become "Unnamed: i" (or "Unnamed:
+        #   i_level_L"
+        # for multi-row headers). For single-row headers, duplicate names are
+        #   de-duplicated by
+        # appending ".1", ".2", ... (named columns are processed before unnamed ones,
+        #   and the
+        # suffix is incremented until it does not collide); if dtype is a dict keyed by
+        #   the
+        # original name, the same dtype is copied to the mangled name. For multi-row
+        #   headers,
+        # the extra trailing row is kept only if it looks like an index-name row (all
+        #   blanks
+        # except index columns, and index_col set); otherwise parser_start is
+        #   decremented and
+        # a row of None is used. If names is given, it replaces the header. If no header
+        #   but
+        # names are given, tokenizes one row and sets parser.expected_fields (unless
+        #   usecols).
+        # If neither, returns (None, field count of first row, empty set) directly.
+        # Finally field_count is the number of fields in the first data row (at least
+        # len(names)); leading_cols is set when the data has more fields than names
+        #   (taking
+        # usecols into account).
+        # Outputs: tuple (header as list of lists of names or None, field_count int,
+        # unnamed_cols set of str).
+        # Exceptions: ParserError if the file has fewer lines than the requested header
+        #   row;
+        # ValueError if usecols/names length does not match the header field count.
+        # Side effects: tokenizes rows, mutates parser.expected_fields,
+        #   self.parser_start,
+        # self.leading_cols and possibly self.dtype (dict).
         # header is now a list of lists, so field_count should use header[0]
         #
         # modifies:
@@ -807,6 +995,13 @@ cdef class TextReader:
         return header, field_count, unnamed_cols
 
     def read(self, rows: int | None = None) -> dict[int, "ArrayLike"]:
+        # [FUNCTION DOC]
+        # Read rows and return all columns in one pass.
+        # Inputs: rows - number of rows to read, or None for all remaining rows.
+        # Outputs: dict mapping column position to converted array (numpy or extension
+        #   array).
+        # Exceptions: StopIteration if no rows remain; any error from _read_rows.
+        # Side effects: consumes rows from the parser buffer and trims its memory.
         """
         rows=None --> read all rows
         """
@@ -816,6 +1011,15 @@ cdef class TextReader:
         return columns
 
     def read_low_memory(self, rows: int | None)-> list[dict[int, "ArrayLike"]]:
+        # [FUNCTION DOC]
+        # Read rows in chunks of at most buffer_lines rows to limit peak memory; the
+        #   caller
+        # concatenates the chunks.
+        # Inputs: rows - total number of rows to read, or None for all remaining rows.
+        # Outputs: list of dicts (column position -> array), one per chunk.
+        # Exceptions: StopIteration if no chunk was read.
+        # Side effects: consumes rows from the parser buffer; trims parser buffers at
+        #   the end.
         """
         rows=None --> read all rows
         """
@@ -859,6 +1063,11 @@ cdef class TextReader:
         return chunks
 
     cdef _tokenize_rows(self, size_t nrows):
+        # [FUNCTION DOC]
+        # HELPER: Tokenize up to nrows additional rows into the parser buffer.
+        # Inputs: nrows - number of rows. Outputs: none. Exceptions: as
+        #   _check_tokenize_status.
+        # Side effects: releases the GIL while tokenizing; mutates parser state.
         cdef:
             int status
 
@@ -868,6 +1077,14 @@ cdef class TextReader:
         self._check_tokenize_status(status)
 
     cdef _check_tokenize_status(self, int status):
+        # [FUNCTION DOC]
+        # HELPER: Emit any pending tokenizer warning and raise on error.
+        # Inputs: status - return code of the tokenizer (negative means error).
+        # Outputs: none. Exceptions: ParserError (or the pending Python exception) via
+        # raise_parser_error when status < 0.
+        # Side effects: emits ParserWarning with the decoded parser.warn_msg, frees it
+        #   and
+        # resets it to NULL.
         if self.parser.warn_msg != NULL:
             warnings.warn(
                 PyUnicode_DecodeUTF8(
@@ -886,6 +1103,23 @@ cdef class TextReader:
 
     #  -> dict[int, "ArrayLike"]
     cdef _read_rows(self, rows, bint trim):
+        # [FUNCTION DOC]
+        # HELPER: Make sure enough rows are tokenized, convert them and drop them from
+        #   the
+        # buffer.
+        # Inputs: rows - number of rows or None for the whole remaining file; trim -
+        #   whether to
+        # shrink parser buffers afterwards.
+        # Behavior: with rows, tokenizes only the missing rows; with None, tokenizes all
+        #   rows
+        # (GIL released). Converts columns via _convert_column_data, then removes the
+        #   rows
+        # read from the parser buffer and decreases parser_start accordingly.
+        # Outputs: dict column position -> array.
+        # Exceptions: ValueError if rows is given and skipfooter > 0; StopIteration if
+        #   no data
+        # rows are buffered; tokenizer/conversion errors.
+        # Side effects: mutates parser buffer and self.parser_start.
         cdef:
             int64_t buffered_lines
             int64_t irows
@@ -920,12 +1154,44 @@ cdef class TextReader:
         return columns
 
     def set_noconvert(self, i: int) -> None:
+        # [FUNCTION DOC]
+        # Mark column position i to be kept as strings (no type inference).
+        # Inputs: i - column position. Outputs: none. Side effects: adds to
+        #   self.noconvert.
         self.noconvert.add(i)
 
     def remove_noconvert(self, i: int) -> None:
+        # [FUNCTION DOC]
+        # Undo set_noconvert for column position i.
+        # Inputs: i - column position. Outputs: none. Exceptions: KeyError if i not
+        #   present.
+        # Side effects: removes from self.noconvert.
         self.noconvert.remove(i)
 
     def _convert_column_data(self, rows: int | None) -> dict[int, "ArrayLike"]:
+        # [FUNCTION DOC]
+        # HELPER: Convert the buffered rows [parser_start, end) of every selected
+        #   column.
+        # Inputs: rows - max number of rows, or None for all buffered rows.
+        # Behavior: computes num_cols as the maximum field count over all buffered lines
+        #   and
+        # validates usecols/names against it. Iterates column positions
+        #   0..table_width-1:
+        # leading columns are always kept (named by position); otherwise the column name
+        #   is
+        # looked up and the column skipped if not selected by usecols (stopping once all
+        # list-like usecols are found). A converter, if present, is applied and wins
+        #   over dtype
+        # (warning if both). Otherwise builds the NA token set (if na_filter), calls
+        # _convert_tokens, frees the NA set, and if NAs were found (non-extension dtype)
+        #   or a
+        # non-numpy dtype_backend is used, passes the result through _maybe_upcast.
+        # Outputs: dict column position -> array.
+        # Exceptions: ParserError if a column could not be parsed or too many columns /
+        # out-of-bounds usecols; errors from conversion.
+        # Side effects: advances self.parser_start by the number of rows converted; may
+        #   emit
+        # ParserWarning; allocates and frees hash sets.
         cdef:
             int64_t i
             int nused
@@ -1043,6 +1309,32 @@ cdef class TextReader:
                          int64_t end, object name, bint na_filter,
                          kh_str_starts_t *na_hashset,
                          set na_fset, object col_dtype):
+        # [FUNCTION DOC]
+        # HELPER: Convert one column's tokens to an array, honoring a requested dtype.
+        # Inputs: i - column position; start, end - row range in the buffer; name -
+        #   column
+        # name; na_filter - whether to detect NA tokens; na_hashset - NA token prefix
+        #   set;
+        # na_fset - set of float NA values; col_dtype - requested dtype or None.
+        # Behavior: if col_dtype is given, tries to parse directly as that dtype; if
+        #   that
+        # returns None (unparseable), falls back to inference. Columns in noconvert are
+        #   boxed
+        # as strings. Inference walks dtype_cast_order: int parsing that hits non-digits
+        # ("Number is not int") skips further int dtypes; other ValueErrors from uint64
+        # conflict yield object; OverflowError retries as Python ints, then object. When
+        #   a
+        # fallback result exists and col_dtype was requested: bool data with float
+        #   target
+        # casts and restores NaN from sentinel; bool data with int target raises if NAs
+        #   exist;
+        # otherwise casts with casting="safe", or unsafe cast checked for value
+        #   equality.
+        # Outputs: tuple (array, na_count).
+        # Exceptions: ValueError if the parsed data cannot be safely cast to col_dtype;
+        #   errors
+        # from _convert_with_dtype.
+        # Side effects: none beyond reading the parser buffer.
 
         if col_dtype is not None:
             col_res, na_count = self._convert_with_dtype(
@@ -1134,6 +1426,35 @@ cdef class TextReader:
                              bint user_dtype,
                              kh_str_starts_t *na_hashset,
                              set na_fset, bint raise_on_invalid):
+        # [FUNCTION DOC]
+        # HELPER: Parse a column as a specific dtype.
+        # Inputs: dtype - numpy dtype or ExtensionDtype; i, start, end - column and row
+        #   range;
+        # na_filter, na_hashset, na_fset - NA detection; user_dtype - true if the dtype
+        #   was
+        # requested by the user (NAs then are an error for int/bool); raise_on_invalid -
+        # whether invalid int characters raise ValueError("Number is not int") rather
+        #   than
+        # returning None.
+        # Behavior by dtype: Categorical - factorize words into codes/categories and
+        #   build the
+        # categorical via _from_inferred_categories; other ExtensionDtype - box as
+        #   strings and
+        # call _from_sequence_of_strings (with true/false values for BooleanDtype);
+        #   int/uint -
+        # _try_int64, on OverflowError _try_uint64 (na_count forced to 0), then astype
+        #   if not
+        # int64; float - _try_double then astype if not float64; bool - _try_bool_flex;
+        # fixed-width bytes "S<n>" - copy into a fixed-width array (no NA handling),
+        #   "S0"
+        # boxes as strings; "U0" and object - box as strings.
+        # Outputs: tuple (array or None, na_count or None).
+        # Exceptions: ValueError for NAs in user-requested int/bool columns;
+        # NotImplementedError if the extension array lacks _from_sequence_of_strings;
+        # TypeError for fixed-width unicode, datetime64 ("use parse_dates") and other
+        #   dtypes;
+        # OverflowError/ValueError propagated from integer parsing.
+        # Side effects: none.
         if isinstance(dtype, CategoricalDtype):
             # TODO: I suspect that _categorical_convert could be
             # optimized when dtype is an instance of CategoricalDtype
@@ -1236,11 +1557,29 @@ cdef class TextReader:
     # -> tuple[ndarray[object], int]
     cdef _string_convert(self, Py_ssize_t i, int64_t start, int64_t end,
                          bint na_filter, kh_str_starts_t *na_hashset):
+        # [FUNCTION DOC]
+        # HELPER: Box a column's tokens as Python str objects (see _string_box_utf8)
+        #   using the
+        # reader's encoding_errors.
+        # Inputs: i - column; start, end - row range; na_filter, na_hashset - NA
+        #   detection.
+        # Outputs: tuple (object ndarray, na_count). Exceptions: UnicodeDecodeError
+        #   possible.
 
         return _string_box_utf8(self.parser, i, start, end, na_filter,
                                 na_hashset, self.encoding_errors)
 
     cdef void _validate_usecols_and_names(self, int num_cols):
+        # [FUNCTION DOC]
+        # HELPER: Validate usecols and names against the observed number of columns.
+        # Inputs: num_cols - maximum number of fields over buffered lines.
+        # Behavior: if the expected width (table_width - leading_cols) exceeds num_cols
+        #   and
+        # either the list-like usecols is longer than the expected width or names (minus
+        # leading columns) is longer than num_cols, raises. If usecols is all integers,
+        #   any
+        # index >= num_cols raises.
+        # Outputs: none. Exceptions: ParserError. Side effects: none.
         usecols_not_callable_and_exists = not callable(self.usecols) and self.usecols
         names_larger_num_cols = (self.names and
                                  len(self.names) - self.leading_cols > num_cols)
@@ -1264,6 +1603,17 @@ cdef class TextReader:
 
     # -> DtypeObj
     cdef object _get_col_dtype(self, int64_t i, bint is_default_dict_dtype, name):
+        # [FUNCTION DOC]
+        # HELPER: Determine the requested dtype for column i.
+        # Inputs: i - column position; is_default_dict_dtype - true if self.dtype is a
+        # defaultdict; name - column name.
+        # Behavior: for a dict dtype looks up by name, then by position, then
+        #   (defaultdict)
+        # via the default factory; for a structured numpy dtype takes the i-th field
+        #   dtype;
+        # otherwise the single dtype applies to all columns.
+        # Outputs: dtype or None. Exceptions: none normally.
+        # Side effects: a defaultdict lookup inserts the missing key.
         col_dtype = None
         if self.dtype is not None:
             if isinstance(self.dtype, dict):
@@ -1282,6 +1632,12 @@ cdef class TextReader:
         return col_dtype
 
     def _get_converter(self, i: int, name):
+        # [FUNCTION DOC]
+        # HELPER: Return the converter function for column i, looked up first by name
+        #   then by
+        # position in self.converters, or None if there are no converters / none
+        #   matches.
+        # Inputs: i - column position; name - column name. Outputs: callable or None.
         if self.converters is None:
             return None
 
@@ -1292,6 +1648,18 @@ cdef class TextReader:
         return self.converters.get(i)
 
     cdef _get_na_list(self, Py_ssize_t i, name):
+        # [FUNCTION DOC]
+        # HELPER: Return the NA markers for column i.
+        # Inputs: i - column position; name - column name.
+        # Behavior: if na_values is a dict, looks up by name then position; if not
+        #   found,
+        # returns the default NA tokens (keep_default_na) or empty lists. Found values
+        #   are
+        # converted to a list and UTF-8 encoded, float values to a set. If na_values is
+        #   a
+        # list, it applies to all columns, together with the global na_fvalues.
+        # Outputs: tuple (list of bytes NA tokens, set of float NA values).
+        # Exceptions: KeyError if na_fvalues lacks the key found in na_values.
         if isinstance(self.na_values, dict):
             key = None
             values = None
@@ -1319,9 +1687,25 @@ cdef class TextReader:
             return _ensure_encoded(self.na_values), self.na_fvalues
 
     cdef _free_na_set(self, kh_str_starts_t *table):
+        # [FUNCTION DOC]
+        # HELPER: Free an NA token prefix hash set created by kset_from_list.
+        # Inputs: table - hash set pointer. Outputs: none. Side effects: frees memory.
         kh_destroy_str_starts(table)
 
     cdef _get_column_name(self, Py_ssize_t i, Py_ssize_t nused):
+        # [FUNCTION DOC]
+        # HELPER: Compute the name of column position i.
+        # Inputs: i - column position; nused - number of usecols columns already
+        #   accepted.
+        # Behavior: with usecols and names: if names matches a list-like usecols in
+        #   length,
+        # names[nused], else names[i - leading_cols]. Otherwise, with a header: the
+        #   header
+        # name at i - leading_cols, a tuple of names across levels for multi-row
+        #   headers, or
+        # str(j) when there are more columns than header names. Without header: None.
+        # Outputs: name (str, tuple, or None). Exceptions: IndexError if names is too
+        #   short.
         cdef int64_t j
         if self.has_usecols and self.names is not None:
             if (not callable(self.usecols) and
@@ -1349,6 +1733,11 @@ cdef class TextReader:
 # which causes a class attribute lookup and violates best practices
 # https://cython.readthedocs.io/en/latest/src/userguide/special_methods.html#finalization-method-dealloc
 cdef _close(TextReader reader):
+# [FUNCTION DOC]
+# HELPER: Shared cleanup for TextReader.close and __dealloc__: frees the parser's
+# internal buffers and destroys the true/false hash sets, setting them to NULL so a
+# second call is safe.
+# Inputs: reader - the TextReader. Outputs: none. Side effects: frees C memory.
     # also preemptively free all allocated memory
     parser_free(reader.parser)
     if reader.true_set:
@@ -1365,6 +1754,11 @@ cdef:
 
 
 def _ensure_encoded(list lst):
+    # [FUNCTION DOC]
+    # HELPER: Encode a list of NA markers to UTF-8 bytes.
+    # Inputs: lst - list of str, bytes or other objects. Behavior: str is UTF-8 encoded,
+    # bytes kept, anything else converted with str() and encoded.
+    # Outputs: new list of bytes. Exceptions: TypeError if lst is not a list.
     cdef:
         list result = []
     for x in lst:
@@ -1407,6 +1801,25 @@ _NA_VALUES = _ensure_encoded(list(STR_NA_VALUES))
 def _maybe_upcast(
     arr, use_dtype_backend: bool = False, dtype_backend: str = "numpy"
 ):
+    # [FUNCTION DOC]
+    # Convert a parsed column that may contain NA sentinels to its final dtype.
+    # Inputs: arr - numpy ndarray (or extension array, returned unchanged);
+    # use_dtype_backend - if true, produce nullable arrays; dtype_backend - "numpy",
+    # "numpy_nullable" or "pyarrow".
+    # Behavior: integers - mask = values equal to the dtype's sentinel; nullable
+    # IntegerArray or float64 with NaN. bool - mask = byte value 255; BooleanArray or
+    # object array with NaN. float - FloatingArray with NaN mask if nullable, else as
+    #   is.
+    # object - StringDtype (or ArrowDtype(pa.string()) for pyarrow) if nullable. With
+    #   the
+    # pyarrow backend, wraps the result in ArrowExtensionArray (all-NA integer arrays
+    #   are
+    # converted to object None first so pyarrow infers the null type).
+    # Outputs: converted array. Exceptions: KeyError if arr's dtype has no sentinel
+    # (e.g. fixed-width bytes); ImportError if pyarrow missing.
+    # KNOWN ISSUE: docstring says arr is an ndarray, but extension arrays are also
+    #   passed
+    # and handled by the early return.
     """Sets nullable dtypes or upcasts if nans are present.
 
     Upcast, if use_dtype_backend is false and nans are present so that the
@@ -1486,6 +1899,18 @@ cdef _string_box_utf8(parser_t *parser, int64_t col,
                       int64_t line_start, int64_t line_end,
                       bint na_filter, kh_str_starts_t *na_hashset,
                       const char *encoding_errors):
+# [FUNCTION DOC]
+# HELPER: Box the words of one column as Python str objects.
+# Inputs: parser - tokenized parser; col - column index; line_start, line_end - row
+# range; na_filter - whether to check NA tokens; na_hashset - NA token prefix set;
+# encoding_errors - decode error handler name.
+# Behavior: iterates the words; NA tokens become NaN; other words are decoded as UTF-8
+# once per distinct byte string, using a temporary bytes->object hash table so equal
+# strings share one Python object.
+# Outputs: tuple (object ndarray of length line_end - line_start, na_count).
+# Exceptions: UnicodeDecodeError for invalid UTF-8 when encoding_errors is "strict".
+# Side effects: allocates/destroys the temporary hash table (stores borrowed
+# references kept alive by the result array).
     cdef:
         int na_count = 0
         Py_ssize_t i, lines
@@ -1543,6 +1968,18 @@ cdef _string_box_utf8(parser_t *parser, int64_t col,
 cdef _categorical_convert(parser_t *parser, int64_t col,
                           int64_t line_start, int64_t line_end,
                           bint na_filter, kh_str_starts_t *na_hashset):
+# [FUNCTION DOC]
+# HELPER: Factorize one column's words into integer codes and string categories.
+# Inputs: parser, col, line_start, line_end, na_filter, na_hashset - as
+# _string_box_utf8.
+# Behavior: with the GIL released, assigns increasing codes to distinct words in order
+# of first appearance (NA tokens get code -1), then decodes each distinct word as
+# strict UTF-8 into the categories array at its code position.
+# Outputs: tuple (int64 codes ndarray, object ndarray of categories, na_count).
+# Exceptions: UnicodeDecodeError for invalid UTF-8.
+# Side effects: releases the GIL during factorization; allocates/frees a hash table.
+# KNOWN ISSUE: categories are always decoded as strict UTF-8, ignoring the reader's
+# encoding_errors setting (unlike _string_box_utf8).
     "Convert column data into codes, categories"
     cdef:
         int na_count = 0
@@ -1602,6 +2039,11 @@ cdef _categorical_convert(parser_t *parser, int64_t col,
 # -> ndarray[f'|S{width}']
 cdef _to_fw_string(parser_t *parser, int64_t col, int64_t line_start,
                    int64_t line_end, int64_t width):
+# [FUNCTION DOC]
+# HELPER: Copy a column's words into a fixed-width bytes array of dtype "|S<width>"
+# (values longer than width are silently truncated; no NA handling).
+# Inputs: parser, col, line_start, line_end; width - item size in bytes.
+# Outputs: ndarray of fixed-width bytes. Side effects: releases the GIL for the copy.
     cdef:
         char *data
         ndarray result
@@ -1618,6 +2060,11 @@ cdef _to_fw_string(parser_t *parser, int64_t col, int64_t line_start,
 cdef void _to_fw_string_nogil(parser_t *parser, int64_t col,
                               int64_t line_start, int64_t line_end,
                               size_t width, char *data) noexcept nogil:
+# [FUNCTION DOC]
+# HELPER: GIL-free loop of _to_fw_string: copies each word with strncpy into
+# consecutive width-byte slots of data (zero-padded, not NUL-terminated if full).
+# Inputs: parser, col, line_start, line_end, width; data - output buffer of at least
+# (line_end - line_start) * width bytes. Outputs: none. Side effects: writes data.
     cdef:
         int64_t i
         coliter_t it
@@ -1645,6 +2092,14 @@ cdef:
 cdef _try_double(parser_t *parser, int64_t col,
                  int64_t line_start, int64_t line_end,
                  bint na_filter, kh_str_starts_t *na_hashset, set na_fset):
+# [FUNCTION DOC]
+# HELPER: Parse a column as float64.
+# Inputs: parser, col, line_start, line_end, na_filter, na_hashset - as above;
+# na_fset - set of numeric NA values (parsed numbers equal to one become NA).
+# Behavior: builds a float64 hash set from na_fset and runs _try_double_nogil without
+# the GIL using parser.double_converter.
+# Outputs: tuple (float64 ndarray, na_count), or (None, None) if any word is not a
+# valid float. Side effects: releases the GIL; allocates/frees the hash set.
     cdef:
         int error, na_count = 0
         Py_ssize_t lines
@@ -1680,6 +2135,19 @@ cdef int _try_double_nogil(parser_t *parser,
                            const kh_float64_t *na_fhashset,
                            float64_t NA, float64_t *data,
                            int *na_count) nogil:
+# [FUNCTION DOC]
+# HELPER: GIL-free loop parsing words to doubles into data.
+# Inputs: parser; double_converter - float parsing function pointer; col, line_start,
+# line_end; na_filter, na_hashset; use_na_flist - whether to check na_fhashset;
+# na_fhashset - float NA set; NA - value written for NAs (NaN); data - output buffer;
+# na_count - out counter.
+# Behavior: NA tokens -> NA. Otherwise parses with decimal/sci/thousands from the
+# parser, skipping trailing whitespace; if parsing fails or leaves characters,
+# accepts case-insensitive "inf", "+inf", "infinity", "+infinity" as +inf and "-inf",
+# "-infinity" as -inf. With use_na_flist, parsed values found in the float NA set
+# become NA and are counted (only when na_filter is set).
+# Outputs: 0 on success, 1 on the first invalid word. Side effects: writes data and
+# na_count.
     cdef:
         int error = 0,
         Py_ssize_t i, lines = line_end - line_start
@@ -1748,6 +2216,18 @@ cdef _try_uint64(parser_t *parser, int64_t col,
                  int64_t line_start, int64_t line_end,
                  bint na_filter, kh_str_starts_t *na_hashset,
                  bint raise_on_invalid):
+# [FUNCTION DOC]
+# HELPER: Parse a column as uint64 (used after int64 overflow).
+# Inputs: parser, col, line_start, line_end, na_filter, na_hashset; raise_on_invalid -
+# raise instead of returning None for invalid characters.
+# Behavior: parses all words without the GIL, tracking in a uint_state whether nulls,
+# negative ints and values above int64 max were seen; NA tokens write 0.
+# Outputs: uint64 ndarray (note: not a tuple), or None if invalid.
+# Exceptions: OverflowError on overflow or if negative values were seen; ValueError
+# ("Number is not int") on invalid characters with raise_on_invalid; ValueError
+# ("Cannot convert to numerical dtype") if values > int64 max coexist with negatives
+# or NAs.
+# Side effects: releases the GIL.
     cdef:
         int error
         Py_ssize_t lines
@@ -1787,6 +2267,12 @@ cdef int _try_uint64_nogil(parser_t *parser, int64_t col,
                            int64_t line_end, bint na_filter,
                            const kh_str_starts_t *na_hashset,
                            uint64_t *data, uint_state *state) nogil:
+# [FUNCTION DOC]
+# HELPER: GIL-free loop parsing words to uint64 into data, updating state flags.
+# Inputs: parser, col, line_start, line_end, na_filter, na_hashset; data - output;
+# state - uint_state flags. Behavior: NA tokens set state.seen_null and write 0; others
+# are parsed with the thousands separator. Outputs: 0, or the first error code
+# (ERROR_OVERFLOW / ERROR_INVALID_CHARS). Side effects: writes data and state.
     cdef:
         int error
         Py_ssize_t i, lines = line_end - line_start
@@ -1820,6 +2306,15 @@ cdef int _try_uint64_nogil(parser_t *parser, int64_t col,
 cdef _try_int64(parser_t *parser, int64_t col,
                 int64_t line_start, int64_t line_end,
                 bint na_filter, kh_str_starts_t *na_hashset, bint raise_on_invalid):
+# [FUNCTION DOC]
+# HELPER: Parse a column as int64.
+# Inputs: parser, col, line_start, line_end, na_filter, na_hashset, raise_on_invalid.
+# Behavior: parses without the GIL, NA tokens written as the int64 min sentinel.
+# Outputs: tuple (int64 ndarray, na_count), or (None, None) on invalid characters
+# without raise_on_invalid.
+# Exceptions: OverflowError if a value is out of int64 range; ValueError
+# ("Number is not int") on invalid characters with raise_on_invalid.
+# Side effects: releases the GIL.
     cdef:
         int error, na_count = 0
         Py_ssize_t lines
@@ -1851,6 +2346,12 @@ cdef int _try_int64_nogil(parser_t *parser, int64_t col,
                           int64_t line_end, bint na_filter,
                           const kh_str_starts_t *na_hashset, int64_t NA,
                           int64_t *data, int *na_count) nogil:
+# [FUNCTION DOC]
+# HELPER: GIL-free loop parsing words to int64 into data.
+# Inputs: parser, col, line_start, line_end, na_filter, na_hashset; NA - sentinel;
+# data - output; na_count - out counter.
+# Outputs: 0, or the first nonzero error code from str_to_int64.
+# Side effects: writes data and na_count.
     cdef:
         int error
         Py_ssize_t i, lines = line_end - line_start
@@ -1884,6 +2385,16 @@ cdef int _try_int64_nogil(parser_t *parser, int64_t col,
 cdef _try_pylong(parser_t *parser, Py_ssize_t col,
                  int64_t line_start, int64_t line_end,
                  bint na_filter, kh_str_starts_t *na_hashset):
+# [FUNCTION DOC]
+# HELPER: Parse a column as arbitrary-precision Python ints (after uint64 overflow).
+# Inputs: parser, col, line_start, line_end, na_filter, na_hashset.
+# Behavior: NA tokens become NaN; other words parsed base 10 into Python ints.
+# Outputs: tuple (object ndarray, na_count).
+# Exceptions: ValueError for words that are not valid integers (raised by the int
+# parser itself). Side effects: none.
+# KNOWN ISSUE: the "py_int is None" check is dead code since PyLong_FromString raises
+# on failure rather than returning None; also the thousands separator is not handled
+# here, unlike the int64/uint64 paths.
     cdef:
         int na_count = 0
         Py_ssize_t lines
@@ -1918,6 +2429,12 @@ cdef _try_bool_flex(parser_t *parser, int64_t col,
                     bint na_filter, const kh_str_starts_t *na_hashset,
                     const kh_str_starts_t *true_hashset,
                     const kh_str_starts_t *false_hashset):
+# [FUNCTION DOC]
+# HELPER: Parse a column as booleans.
+# Inputs: parser, col, line_start, line_end, na_filter, na_hashset; true_hashset /
+# false_hashset - token sets for True / False.
+# Outputs: tuple (bool ndarray, na_count) where NA entries hold byte 255 (viewed as
+# True), or (None, None) if a word is not boolean. Side effects: releases the GIL.
     cdef:
         int error, na_count = 0
         Py_ssize_t lines
@@ -1945,6 +2462,12 @@ cdef int _try_bool_flex_nogil(parser_t *parser, int64_t col,
                               const kh_str_starts_t *false_hashset,
                               uint8_t NA, uint8_t *data,
                               int *na_count) nogil:
+# [FUNCTION DOC]
+# HELPER: GIL-free loop converting words to bytes 0/1 (or NA) into data.
+# Inputs: as _try_bool_flex plus NA (sentinel 255), data (output) and na_count.
+# Behavior: NA tokens (if na_filter) -> NA; tokens in true set -> 1; in false set ->
+# 0; otherwise the tokenizer's to_boolean (case-insensitive "true"/"false").
+# Outputs: 0, or the nonzero error from to_boolean. Side effects: writes data/na_count.
     cdef:
         int error = 0
         Py_ssize_t i, lines = line_end - line_start
@@ -2001,6 +2524,15 @@ cdef int _try_bool_flex_nogil(parser_t *parser, int64_t col,
 
 
 cdef kh_str_starts_t* kset_from_list(list values) except NULL:
+# [FUNCTION DOC]
+# Build a khash string-prefix set from a list of bytes.
+# Inputs: values - list of bytes. Outputs: pointer to a new kh_str_starts_t; caller
+# must free it with kh_destroy_str_starts.
+# Behavior: inserts each value (pointer into the bytes object, so the bytes must stay
+# alive while the set is used); tables with <= 128 buckets are resized 8x larger to
+# speed up misses.
+# Exceptions: ValueError if any element is not bytes (table freed first).
+# Side effects: allocates memory.
     # caller takes responsibility for freeing the hash table
     cdef:
         Py_ssize_t i
@@ -2031,6 +2563,11 @@ cdef kh_str_starts_t* kset_from_list(list values) except NULL:
 
 
 cdef kh_float64_t* kset_float64_from_set(set values) except NULL:
+# [FUNCTION DOC]
+# HELPER: Build a khash float64 set from a Python set of numbers (each converted with
+# float()). Small tables are enlarged 8x as in kset_from_list.
+# Inputs: values - set. Outputs: new kh_float64_t pointer; caller frees it.
+# Exceptions: TypeError/ValueError if a value is not convertible to float.
     # caller takes responsibility for freeing the hash table
     cdef:
         kh_float64_t *table
@@ -2052,6 +2589,14 @@ cdef kh_float64_t* kset_float64_from_set(set values) except NULL:
 
 
 cdef raise_parser_error(object base, parser_t *parser):
+# [FUNCTION DOC]
+# HELPER: Raise the appropriate exception after a tokenizer failure.
+# Inputs: base - message prefix; parser - parser whose error_msg is used.
+# Behavior: if a Python exception is pending (e.g. raised by the source's read or the
+# skiprows callable), fetches it and re-raises it (if only a message string was set,
+# re-raises as its type, or ParserError); otherwise raises ParserError
+# "<base>. C error: <error_msg or 'no error message set'>".
+# Outputs: never returns normally. Exceptions: always raises.
     cdef:
         object old_exc
         object exc_type
@@ -2093,6 +2638,12 @@ cdef raise_parser_error(object base, parser_t *parser):
 # ----------------------------------------------------------------------
 # NA values
 def _compute_na_values():
+    # [FUNCTION DOC]
+    # HELPER: Build the dict of NA sentinel values keyed by numpy scalar type: NaN for
+    # float32/float64/object, the minimum for signed ints, the maximum for unsigned
+    #   ints,
+    # and 255 (uint8 max) for bool.
+    # Inputs: none. Outputs: dict. (The module then also adds np.dtype keys.)
     int64info = np.iinfo(np.int64)
     int32info = np.iinfo(np.int32)
     int16info = np.iinfo(np.int16)
@@ -2127,6 +2678,13 @@ for k in list(na_values):
 # -> ArrayLike
 cdef _apply_converter(object f, parser_t *parser, int64_t col,
                       int64_t line_start, int64_t line_end):
+# [FUNCTION DOC]
+# HELPER: Apply a user converter to each word of a column.
+# Inputs: f - callable taking a str; parser, col, line_start, line_end.
+# Behavior: decodes each word as strict UTF-8, calls f, then runs
+# lib.maybe_convert_objects on the object result to infer a better dtype.
+# Outputs: array. Exceptions: whatever f raises; UnicodeDecodeError on invalid UTF-8.
+# KNOWN ISSUE: decoding ignores the reader's encoding_errors setting.
     cdef:
         Py_ssize_t i, lines
         coliter_t it
@@ -2148,12 +2706,22 @@ cdef _apply_converter(object f, parser_t *parser, int64_t col,
 
 
 cdef list _maybe_encode(list values):
+# [FUNCTION DOC]
+# HELPER: UTF-8 encode the str items of a list (others unchanged); None gives [].
+# Inputs: values - list or None. Outputs: new list.
     if values is None:
         return []
     return [x.encode("utf-8") if isinstance(x, str) else x for x in values]
 
 
 def sanitize_objects(ndarray[object] values, set na_values) -> int:
+    # [FUNCTION DOC]
+    # Replace values found in na_values with NaN, in place, and count them.
+    # Inputs: values - 1-D object ndarray; na_values - set of NA objects.
+    # Behavior: also deduplicates equal non-NA values so equal entries share the first
+    # seen object (memo dict).
+    # Outputs: number of NA replacements.
+    # Exceptions: TypeError if a value is unhashable. Side effects: mutates values.
     """
     Convert specified values, including the given set na_values to np.nan.
 

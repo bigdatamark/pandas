@@ -1,3 +1,25 @@
+# [MODULE DOC]
+# Timezone (tzinfo) classification, normalization and DST-transition extraction for
+#   tslibs. Supports four tzinfo families: stdlib datetime.timezone (fixed offsets,
+#   including timezone.utc), zoneinfo.ZoneInfo, dateutil (tzutc, tzlocal, tzfile), and
+#   optional pytz (imported lazily; may be absent). Families are detected by isinstance
+#   checks or duck-typing on private attributes (pytz:
+#   _utc_transition_times/_transition_info; dateutil tzfile: _trans_list/_trans_idx).
+# Key services: is_utc (recognizes every UTC singleton), get_timezone / maybe_get_tz
+#   (round-trip a tzinfo to/from a serializable string key such as 'dateutil/<file>' or
+#   a zone name), tz_compare (zone equality that ignores pytz's per-offset instances),
+#   is_fixed_offset, and get_dst_info which returns (trans, deltas, typ, has_tz_rule): a
+#   sorted int64 array of UTC transition instants in nanoseconds (first entry is the
+#   sentinel NaT+1 meaning 'since the beginning of time'), a same-length int64 array of
+#   UTC offsets in nanoseconds valid from each transition, a type string ('pytz',
+#   'dateutil', 'zoneinfo', 'fixed', 'static', 'unknown'), and whether a recurring rule
+#   applies after the last transition. Results are memoized in the module-level dict
+#   dst_cache keyed by tz_cache_key. Consumed mainly by tzconversion, conversion and
+#   vectorized.
+# Module globals: NPY_NAT (int64 min, the NaT marker), utc_stdlib, utc_pytz (None if
+#   pytz missing), utc_dateutil_str (dateutil gettz('UTC'), distinct from tzutc()),
+#   utc_zoneinfo (lazily created ZoneInfo('UTC'), may stay None when tzdata is missing).
+
 from datetime import (
     timedelta,
     timezone,
@@ -49,6 +71,14 @@ cdef type ZoneInfo = zoneinfo.ZoneInfo
 # ----------------------------------------------------------------------
 
 cdef bint is_utc_zoneinfo(tzinfo tz):
+    # [FUNCTION DOC]
+    # HELPER: Return True iff tz is the cached ZoneInfo('UTC') singleton.
+    # Inputs: tz - tzinfo or None.
+    # Outputs: bool; False for None or when ZoneInfo('UTC') cannot be built (missing
+    #   tzdata, ZoneInfoNotFoundError swallowed).
+    # Exceptions: none.
+    # Side effects: on first successful call creates and stores ZoneInfo('UTC') in the
+    #   module global utc_zoneinfo. Identity comparison only.
     # Workaround for cases with missing tzdata
     #  https://github.com/pandas-dev/pandas/pull/46425#discussion_r830633025
     if tz is None:
@@ -65,6 +95,14 @@ cdef bint is_utc_zoneinfo(tzinfo tz):
 
 
 cpdef inline bint is_utc(tzinfo tz):
+    # [FUNCTION DOC]
+    # Return True iff tz represents UTC in any supported library: identical to stdlib
+    #   timezone.utc, an instance of dateutil tzutc, identical to dateutil gettz('UTC'),
+    #   the ZoneInfo('UTC') singleton, or identical to pytz.UTC (if pytz is installed).
+    # Inputs: tz - tzinfo or None.
+    # Outputs: bool (False for None and for non-UTC fixed offsets such as
+    #   timezone(timedelta(0)) built separately).
+    # Exceptions: none. Side effects: may initialize utc_zoneinfo.
     return (
         tz is utc_stdlib
         or isinstance(tz, _dateutil_tzutc)
@@ -75,24 +113,50 @@ cpdef inline bint is_utc(tzinfo tz):
 
 
 cdef bint is_zoneinfo(tzinfo tz):
+    # [FUNCTION DOC]
+    # Return True iff tz is an instance of zoneinfo.ZoneInfo.
+    # Inputs: tz - tzinfo or None. Outputs: bool. Exceptions/side effects: none.
     return isinstance(tz, ZoneInfo)
 
 
 cdef bint is_tzlocal(tzinfo tz):
+    # [FUNCTION DOC]
+    # Return True iff tz is an instance of dateutil tzlocal (the system local zone).
+    # Inputs: tz - tzinfo or None. Outputs: bool. Exceptions/side effects: none.
     return isinstance(tz, _dateutil_tzlocal)
 
 
 cdef bint treat_tz_as_pytz(tzinfo tz):
+    # [FUNCTION DOC]
+    # Duck-typing check for a pytz DST-aware zone: True iff tz has both
+    #   _utc_transition_times and _transition_info attributes. pytz static zones
+    #   (StaticTzInfo, UTC) do not qualify.
+    # Inputs: tz - tzinfo. Outputs: bool. Exceptions/side effects: none.
     return (hasattr(tz, "_utc_transition_times") and
             hasattr(tz, "_transition_info"))
 
 
 cdef bint treat_tz_as_dateutil(tzinfo tz):
+    # [FUNCTION DOC]
+    # HELPER: Duck-typing check for a dateutil tzfile-like zone: True iff tz has both
+    #   _trans_list and _trans_idx attributes (tzlocal/tzutc do not).
+    # Inputs: tz - tzinfo. Outputs: bool. Exceptions/side effects: none.
     return hasattr(tz, "_trans_list") and hasattr(tz, "_trans_idx")
 
 
 # Returns str or tzinfo object
 cpdef inline object get_timezone(tzinfo tz):
+    # [FUNCTION DOC]
+    # Map a tzinfo to a serializable, zone-identifying value (inverse of maybe_get_tz).
+    #   Order of checks: UTC (any flavor) -> returned unchanged as the tzinfo object;
+    #   ZoneInfo -> its key string; pytz DST zone -> its .zone string, or the tz itself
+    #   if .zone is None; dateutil tzfile -> 'dateutil/' + _filename; anything else ->
+    #   tz unchanged.
+    # Inputs: tz - tzinfo (must not be None).
+    # Outputs: str or the original tzinfo object.
+    # Exceptions: TypeError if tz is None; ValueError if a dateutil filename contains
+    #   '.tar.gz' (Windows dateutil bug where all zones share a filename).
+    # Side effects: none.
     """
     We need to do several things here:
     1) Distinguish between pytz and dateutil timezones
@@ -132,6 +196,23 @@ cpdef inline object get_timezone(tzinfo tz):
 
 
 cpdef inline tzinfo maybe_get_tz(object tz):
+    # [FUNCTION DOC]
+    # Build a tzinfo from a user-supplied spec; tzinfo/None pass through. String rules,
+    #   in order: 'tzlocal()' -> dateutil tzlocal(); 'dateutil/<name>' -> dateutil
+    #   gettz(name), and if the result is a tzfile whose _filename contains '.tar.gz'
+    #   its _filename is overwritten with name; leading '+' or '-' -> fixed offset
+    #   parsed as sign+HH at chars 0-2 and MM at chars 4-5 (format '+HH:MM');
+    #   'UTC+HH:MM'/'UTC-HH:MM' -> same parse shifted by 3 chars; 'UTC' or 'utc' ->
+    #   stdlib timezone.utc; any other string -> zoneinfo.ZoneInfo(str). Integer ->
+    #   fixed offset of that many seconds.
+    # Inputs: tz - str, int, tzinfo or None.
+    # Outputs: tzinfo or None.
+    # Exceptions: TypeError(type(tz)) for unsupported types; ImportError if tz is a pytz
+    #   zone object but pytz cannot be imported (re-raised via
+    #   import_optional_dependency); ValueError from int() on malformed offsets;
+    #   ZoneInfoNotFoundError for unknown names; ValueError from timezone() if the
+    #   offset is out of range.
+    # Side effects: may mutate the _filename of a dateutil tzfile object.
     """
     (Maybe) Construct a timezone object from a string. If tz is a string, use
     it to construct a timezone object. Otherwise, just return tz.
@@ -172,6 +253,9 @@ cpdef inline tzinfo maybe_get_tz(object tz):
 
 
 def _p_tz_cache_key(tz: tzinfo):
+    # [FUNCTION DOC]
+    # HELPER: Python-visible wrapper around tz_cache_key, for tests.
+    # Inputs: tz - tzinfo. Outputs/Exceptions: as tz_cache_key.
     """
     Python interface for cache function to facilitate testing.
     """
@@ -183,6 +267,14 @@ dst_cache = {}
 
 
 cdef object tz_cache_key(tzinfo tz):
+    # [FUNCTION DOC]
+    # HELPER: Compute the dst_cache key for tz. pytz BaseTzInfo (pytz installed) ->
+    #   tz.zone; dateutil tzfile -> 'dateutil' + _filename (no separator; _filename is
+    #   normally an absolute path); ZoneInfo -> 'zoneinfo/' + key; anything else (fixed
+    #   offsets, tzlocal, stdlib timezone) -> None meaning 'not cacheable'.
+    # Inputs: tz - tzinfo. Outputs: str or None.
+    # Exceptions: ValueError for a dateutil tzfile whose _filename contains '.tar.gz'.
+    #   Side effects: none.
     """
     Return the key in the cache for the timezone info object or None
     if unknown.
@@ -222,6 +314,13 @@ cdef object tz_cache_key(tzinfo tz):
 
 
 cdef timedelta get_utcoffset(tzinfo tz, datetime obj):
+    # [FUNCTION DOC]
+    # Return tz's UTC offset for obj, using the cached _utcoffset attribute when present
+    #   (pytz fast path), else tz.utcoffset(obj).
+    # Inputs: tz - tzinfo; obj - datetime or None.
+    # Outputs: timedelta, or None if the tzinfo returns None (e.g. ZoneInfo with
+    #   obj=None).
+    # Exceptions: whatever tz.utcoffset raises. Side effects: none.
     try:
         return tz._utcoffset
     except AttributeError:
@@ -229,6 +328,18 @@ cdef timedelta get_utcoffset(tzinfo tz, datetime obj):
 
 
 cpdef inline bint is_fixed_offset(tzinfo tz):
+    # [FUNCTION DOC]
+    # Return True if tz has no DST transitions. dateutil tzfile: True iff both
+    #   _trans_idx and _trans_list are empty. pytz DST zone (pytz installed): True iff
+    #   both _transition_info and _utc_transition_times are empty. ZoneInfo: builds the
+    #   pure-Python zoneinfo implementation for tz.key and returns its _fixed_offset
+    #   flag. Everything else (stdlib timezone, pytz static zones, tzutc, tzlocal,
+    #   unknown tzinfo) returns True.
+    # Inputs: tz - tzinfo. Outputs: bool (1/0).
+    # Exceptions: errors from constructing the Python ZoneInfo (e.g. missing data). Side
+    #   effects: allocates a Python ZoneInfo object per ZoneInfo call.
+    # KNOWN ISSUE: the fallthrough returns True for dateutil tzlocal(), which can
+    #   observe DST; callers must check is_tzlocal first.
     if treat_tz_as_dateutil(tz):
         if len(tz._trans_idx) == 0 and len(tz._trans_list) == 0:
             return 1
@@ -252,6 +363,15 @@ cpdef inline bint is_fixed_offset(tzinfo tz):
 
 
 cdef object _get_utc_trans_times_from_dateutil_tz(tzinfo tz):
+    # [FUNCTION DOC]
+    # HELPER: Convert a dateutil tzfile's transition list (stored in local standard
+    #   time, seconds) to UTC seconds. Walks _trans_list and _trans_idx in parallel;
+    #   tracks the most recent non-DST ttinfo offset (initially 0) and subtracts it from
+    #   each transition.
+    # Inputs: tz - dateutil tzfile. Outputs: new list of int seconds, same length as
+    #   _trans_list.
+    # Exceptions: ValueError if the two lists differ in length (strict zip). Side
+    #   effects: none (input not mutated).
     """
     Transition times in dateutil timezones are stored in local non-dst
     time.  This code converts them to UTC. It's the reverse of the code
@@ -267,6 +387,13 @@ cdef object _get_utc_trans_times_from_dateutil_tz(tzinfo tz):
 
 
 cdef int64_t[::1] unbox_utcoffsets(object transinfo):
+    # [FUNCTION DOC]
+    # HELPER: Convert pytz _transition_info (sequence of (utcoffset timedelta, dst,
+    #   tzname) tuples) to a contiguous int64 array of the utcoffsets in nanoseconds
+    #   (whole seconds * 1e9; sub-second parts truncated).
+    # Inputs: transinfo - sequence of tuples whose element 0 is a timedelta.
+    # Outputs: 1-D C-contiguous int64 memoryview of length len(transinfo).
+    # Exceptions: none expected. Side effects: allocates a new numpy array.
     cdef:
         Py_ssize_t i
         cnp.npy_intp sz
@@ -290,6 +417,29 @@ cdef int64_t _MIN_TRANS_SECONDS = -(-(NPY_NAT + 1) // 1_000_000_000)
 
 
 cdef tuple _get_zoneinfo_trans_and_deltas(tzinfo tz):
+    # [FUNCTION DOC]
+    # HELPER: Extract transitions and offsets for a ZoneInfo zone using the pure-Python
+    #   zoneinfo implementation (rebuilt from tz.key).
+    # Fixed-offset zones: return trans=[NaT+1], deltas=[offset ns], True, False.
+    # Otherwise start with historical _trans_utc (UTC seconds) and per-transition
+    #   utcoffsets from _ttinfos. If a POSIX rule (_tz_after with a transitions method)
+    #   exists, generate future transitions: take std and dst offsets, find the calendar
+    #   year of the last historical transition (computed via epoch + timedelta to avoid
+    #   32-bit time_t overflow; 1970 on error or if no history), then for each year from
+    #   that year to 2099 ask the rule for (dst start, dst end) in local
+    #   standard/daylight seconds, convert to UTC by subtracting std_offset and
+    #   dst_offset respectively, keep only those after the last historical transition,
+    #   stop early on an empty result or any exception, sort them and append. Then drop
+    #   a leading 'big bang' transition below the smallest int64-ns-representable
+    #   second. Finally scale to ns and prepend NaT+1 to trans and the _tti_before
+    #   offset to deltas.
+    # Inputs: tz - ZoneInfo.
+    # Outputs: tuple (trans int64 ndarray ns, deltas int64 ndarray ns, is_fixed bool,
+    #   has_tz_rule bool); trans and deltas have equal length.
+    # Exceptions: from building the Python ZoneInfo. Side effects: none.
+    # KNOWN ISSUE: the docstring names the last output 'has_tz_tule' (typo). Transitions
+    #   after 2099 are not generated, so the rule flag is what callers must rely on for
+    #   later dates.
     """
     Get transition times and UTC offsets for a ZoneInfo timezone.
 
@@ -397,6 +547,26 @@ cdef tuple _get_zoneinfo_trans_and_deltas(tzinfo tz):
 
 
 cdef object get_dst_info(tzinfo tz):
+    # [FUNCTION DOC]
+    # Return (trans, deltas, typ, has_tz_rule) for tz (see module doc for the array
+    #   semantics), memoized in dst_cache.
+    # Uncacheable tz (tz_cache_key is None): not cached; returns ([NaT+1],
+    #   [utcoffset(None) in ns], 'unknown', False).
+    # pytz DST zone: trans = _utc_transition_times as ns (first entry replaced by NaT+1
+    #   if it is year 1), deltas from unbox_utcoffsets, typ 'pytz'.
+    # dateutil tzfile with transitions: trans = [NaT+1] + UTC transition times (via
+    #   _get_utc_trans_times_from_dateutil_tz, seconds -> ns); deltas = offsets of
+    #   _ttinfo_before followed by each _trans_idx entry, in ns; typ 'dateutil'. Without
+    #   transitions but fixed: ([NaT+1], [_ttinfo_std offset ns], 'fixed').
+    # ZoneInfo: from _get_zoneinfo_trans_and_deltas; typ 'fixed' or 'zoneinfo',
+    #   has_tz_rule passed through. Other cacheable tz (e.g. pytz StaticTzInfo):
+    #   ([NaT+1], [utcoffset(None) ns], 'static').
+    # Inputs: tz - tzinfo (not None).
+    # Outputs: 4-tuple as above; cached arrays are shared, callers must not mutate them.
+    # Exceptions: AttributeError if utcoffset(None) returns None on the uncacheable
+    #   path; AssertionError for a non-fixed dateutil zone with an empty _trans_list;
+    #   ValueError from tz_cache_key.
+    # Side effects: inserts into the global dst_cache.
     """
     Returns
     -------
@@ -482,6 +652,14 @@ cdef object get_dst_info(tzinfo tz):
 
 
 def infer_tzinfo(datetime start, datetime end):
+    # [FUNCTION DOC]
+    # Return the common tzinfo of two optional datetimes: start.tzinfo if both given
+    #   (after checking tz_compare equality), else the tzinfo of whichever is not None,
+    #   else None.
+    # Inputs: start, end - datetime or None.
+    # Outputs: tzinfo or None.
+    # Exceptions: AssertionError if both given with non-equal timezones.
+    # Side effects: none.
     if start is not None and end is not None:
         tz = start.tzinfo
         if not tz_compare(tz, end.tzinfo):
@@ -497,6 +675,15 @@ def infer_tzinfo(datetime start, datetime end):
 
 
 cpdef bint tz_compare(tzinfo start, tzinfo end):
+    # [FUNCTION DOC]
+    # Zone-level equality of two tzinfos. If start is UTC (any flavor) return
+    #   is_utc(end); else if end is UTC return False; else if either is None return
+    #   whether both are None; else compare get_timezone(start) == get_timezone(end)
+    #   (zone names/keys, so different pytz offset instances of one zone are equal).
+    # Inputs: start, end - tzinfo or None.
+    # Outputs: bool.
+    # Exceptions: ValueError from get_timezone for broken dateutil filenames.
+    # Side effects: none.
     """
     Compare string representations of timezones
 
@@ -533,6 +720,13 @@ cpdef bint tz_compare(tzinfo start, tzinfo end):
 
 
 def tz_standardize(tz: tzinfo) -> tzinfo:
+    # [FUNCTION DOC]
+    # Normalize a pytz DST zone (possibly a localized per-offset instance) to the
+    #   canonical pytz.timezone(str(tz)) object; any other tz is returned unchanged
+    #   (also when pytz is not installed).
+    # Inputs: tz - tzinfo. Outputs: tzinfo.
+    # Exceptions: pytz UnknownTimeZoneError if str(tz) is not a zone name. Side effects:
+    #   none.
     """
     If the passed tz is a pytz timezone object, "normalize" it to the a
     consistent version

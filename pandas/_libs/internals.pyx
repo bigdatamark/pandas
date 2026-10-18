@@ -1,3 +1,12 @@
+# [MODULE DOC]
+# Low-level building blocks of the pandas BlockManager. Provides BlockPlacement
+# (the set of manager column positions a Block occupies, stored as a bounded slice
+# and/or an intp array, converted lazily between the two), slice utilities that
+# canonicalize, measure and compose bounded slices, routines that group block
+# numbers into runs (used for take/concat), the Cython base classes Block and
+# BlockManager (fast construction, pickling, row slicing), and BlockValuesRefs, a
+# weak-reference list used by Copy-on-Write to detect shared array data. Under
+# free-threaded Python, several accessors use critical sections / per-object locks.
 from collections import defaultdict
 
 cimport cython
@@ -42,12 +51,31 @@ cdef extern from "Python.h":
 @cython.final
 @cython.freelist(32)
 cdef class BlockPlacement:
+    # [CLASS DOC]
+    # Immutable set of non-negative integer positions (the manager locations of a
+    # Block). Stored as a canonical bounded slice (_as_slice) and/or a 1-D intp array
+    # (_as_array); _has_slice/_has_array flag which representations are computed.
+    # A missing representation is derived lazily: array from slice via arange; slice
+    # from array if the values form an arithmetic progression of non-negative values
+    # (otherwise the slice is None, i.e. not slice-like). Uses a freelist of 32.
     cdef:
         slice _as_slice
         ndarray _as_array  # Note: this still allows `None`; will be intp_t
         bint _has_slice, _has_array, _is_known_slice_like
 
     def __cinit__(self, val):
+        # [FUNCTION DOC]
+        # Construct from an integer, slice or array-like.
+        # Inputs: val - integer i (becomes slice(i, i+1, 1)); a slice (canonicalized; an
+        # empty canonical slice is stored as an empty intp array instead); or any
+        # array-like (converted to a writeable intp array, copying unless it already is
+        #   a
+        # writeable intp ndarray).
+        # Outputs: none.
+        # Exceptions: ValueError for zero-step or unbounded slices (see slice_canonize);
+        # conversion errors from numpy for other inputs.
+        # Side effects: none on val beyond possibly aliasing it (no copy when already a
+        # writeable intp array; caller must ensure 1-D).
         cdef:
             slice slc
 
@@ -85,6 +113,10 @@ cdef class BlockPlacement:
             self._has_array = True
 
     def __str__(self) -> str:
+        # [FUNCTION DOC]
+        # String form "BlockPlacement(<slice or array>)", preferring the slice form when
+        # the placement is slice-like.
+        # Side effects: may compute and cache the slice representation.
         cdef:
             slice s = self._ensure_has_slice()
 
@@ -96,9 +128,16 @@ cdef class BlockPlacement:
         return f"{type(self).__name__}({v})"
 
     def __repr__(self) -> str:
+        # [FUNCTION DOC]
+        # Same as __str__.
         return str(self)
 
     def __len__(self) -> int:
+        # [FUNCTION DOC]
+        # Number of positions.
+        # Outputs: slice length (computed from the bounded slice) when slice-like, else
+        # the array length.
+        # Side effects: may cache the slice representation.
         cdef:
             slice s = self._ensure_has_slice()
 
@@ -108,6 +147,9 @@ cdef class BlockPlacement:
             return len(self._as_array)
 
     def __iter__(self):
+        # [FUNCTION DOC]
+        # Iterate over positions.
+        # Outputs: a range iterator when slice-like, else an iterator over the array.
         cdef:
             slice s = self._ensure_has_slice()
             Py_ssize_t start, stop, step, _
@@ -120,6 +162,11 @@ cdef class BlockPlacement:
 
     @property
     def as_slice(self) -> slice:
+        # [FUNCTION DOC]
+        # Property: the slice representation.
+        # Outputs: the canonical slice.
+        # Exceptions: TypeError("Not slice-like") if positions do not form a
+        #   progression.
         cdef:
             slice s = self._ensure_has_slice()
 
@@ -130,6 +177,9 @@ cdef class BlockPlacement:
 
     @property
     def indexer(self):
+        # [FUNCTION DOC]
+        # Property: the preferred indexer for numpy indexing.
+        # Outputs: the slice if slice-like, else the intp array.
         cdef:
             slice s = self._ensure_has_slice()
 
@@ -141,6 +191,10 @@ cdef class BlockPlacement:
     @property
     @cython.critical_section
     def as_array(self) -> np.ndarray:
+        # [FUNCTION DOC]
+        # Property: positions as a 1-D intp array.
+        # Outputs: cached array; if absent, created by arange over the slice bounds and
+        # cached (double-checked under a critical section for free-threading).
         cdef:
             Py_ssize_t start, stop, _
 
@@ -157,12 +211,21 @@ cdef class BlockPlacement:
 
     @property
     def is_slice_like(self) -> bool:
+        # [FUNCTION DOC]
+        # Property: whether the placement can be expressed as a slice.
+        # Outputs: bool. Side effects: may cache the slice representation.
         cdef:
             slice s = self._ensure_has_slice()
 
         return s is not None
 
     def __getitem__(self, loc):
+        # [FUNCTION DOC]
+        # Index into the placement.
+        # Inputs: loc - integer, slice, or array indexer.
+        # Outputs: a 0-d scalar position if the result is scalar, otherwise a new
+        # BlockPlacement. Slice-like placements compose the slices (slice_getitem).
+        # Exceptions: IndexError for out-of-bounds integer locations.
         cdef:
             slice s = self._ensure_has_slice()
 
@@ -177,9 +240,18 @@ cdef class BlockPlacement:
         return BlockPlacement(val)
 
     def delete(self, loc) -> BlockPlacement:
+        # [FUNCTION DOC]
+        # Remove positions by location.
+        # Inputs: loc - integer/slice/array of locations into the placement.
+        # Outputs: new BlockPlacement built from the array with those entries deleted.
         return BlockPlacement(np.delete(self.as_array, loc, axis=0))
 
     def append(self, others) -> BlockPlacement:
+        # [FUNCTION DOC]
+        # Concatenate placements.
+        # Inputs: others - sequence of BlockPlacement.
+        # Outputs: self if others is empty, else a new BlockPlacement from the
+        # concatenated arrays (self first).
         if not len(others):
             return self
 
@@ -188,6 +260,19 @@ cdef class BlockPlacement:
         )
 
     cdef BlockPlacement iadd(self, other):
+        # [FUNCTION DOC]
+        # HELPER: Add an offset to every position (the implementation of add).
+        # Inputs: other - integer or array broadcastable against the positions.
+        # Outputs: self if other is integer 0 and slice-like; for integer offsets on a
+        # slice-like placement, a new slice-based placement with shifted bounds (stop
+        #   None
+        # if it becomes negative); otherwise a new array-based placement of
+        #   as_array+other.
+        # Exceptions: ValueError("iadd causes length change") if any resulting position
+        #   is
+        # negative (for slices: positive step with negative start, or negative step with
+        # stop less than step).
+        # Side effects: none (despite the name, self is not mutated).
         cdef:
             slice s = self._ensure_has_slice()
             Py_ssize_t other_int, start, stop, step
@@ -221,11 +306,19 @@ cdef class BlockPlacement:
             return BlockPlacement(val)
 
     def add(self, other) -> BlockPlacement:
+        # [FUNCTION DOC]
+        # Public wrapper returning the result of iadd(other).
+        # Inputs: other - integer or ndarray offset.
+        # Outputs: new (or same) BlockPlacement. Exceptions: ValueError as in iadd.
         # We can get here with int or ndarray
         return self.iadd(other)
 
     @cython.critical_section
     cdef slice _ensure_has_slice(self):
+        # [FUNCTION DOC]
+        # HELPER: Return the slice representation, computing it on first use.
+        # Outputs: the canonical slice, or None if positions are not a progression.
+        # Side effects: caches the result (under a critical section).
         if not self._has_slice:
             as_slice = indexer_as_slice(self._as_array)
             # check again after indexer_as_slice call
@@ -235,6 +328,14 @@ cdef class BlockPlacement:
         return self._as_slice
 
     cpdef BlockPlacement increment_above(self, Py_ssize_t loc):
+        # [FUNCTION DOC]
+        # Shift positions >= loc up by one (used when inserting a column at loc).
+        # Inputs: loc - insertion location.
+        # Outputs: self if slice-like and entirely below loc; a shifted slice placement
+        #   if
+        # slice-like and entirely at/above loc; otherwise a new array placement with
+        # positions >= loc incremented (all incremented when loc is 0).
+        # Side effects: allocates a new array when not on a fast path.
         """
         Increment any entries of 'loc' or above by one.
         """
@@ -268,6 +369,13 @@ cdef class BlockPlacement:
         return BlockPlacement(newarr)
 
     def tile_for_unstack(self, factor: int) -> np.ndarray:
+        # [FUNCTION DOC]
+        # Compute the manager locations of a block after unstacking.
+        # Inputs: factor - number of new columns each original column expands into.
+        # Outputs: intp array: for each position x (in iteration order) the run
+        # x*factor .. (x+1)*factor-1; computed directly as one arange when the placement
+        #   is
+        # a step-1 slice.
         """
         Find the new mgr_locs for the un-stacked version of a Block.
         """
@@ -291,6 +399,15 @@ cdef class BlockPlacement:
 
 
 cdef slice slice_canonize(slice s):
+    # [FUNCTION DOC]
+    # HELPER: Convert a slice to canonical bounded form.
+    # Inputs: s - slice with integer or None fields.
+    # Outputs: slice with explicit step; for positive step: start defaults to 0 and is
+    # clipped to stop; for negative step: stop defaults to None (represented by -1)
+    # and is clipped to start. A negative final stop is returned as None.
+    # Exceptions: ValueError if step is 0, if the slice is unbounded (missing stop for
+    # positive step, missing start for negative step), or if start (or, for positive
+    # step with explicit stop, stop) is negative.
     """
     Convert slice to canonical bounded form.
     """
@@ -337,6 +454,12 @@ cdef slice slice_canonize(slice s):
 
 
 cpdef Py_ssize_t slice_len(slice slc, Py_ssize_t objlen=PY_SSIZE_T_MAX) except -1:
+    # [FUNCTION DOC]
+    # Length of a bounded slice.
+    # Inputs: slc - slice; objlen - container length (default the maximum ssize_t,
+    # which treats the slice as bounded).
+    # Outputs: number of elements selected (ssize_t).
+    # Exceptions: TypeError if slc is None; errors from Python slice resolution.
     """
     Get length of a bounded slice.
 
@@ -361,6 +484,12 @@ cpdef Py_ssize_t slice_len(slice slc, Py_ssize_t objlen=PY_SSIZE_T_MAX) except -
 cdef (Py_ssize_t, Py_ssize_t, Py_ssize_t, Py_ssize_t) slice_get_indices_ex(
     slice slc, Py_ssize_t objlen=PY_SSIZE_T_MAX
 ):
+    # [FUNCTION DOC]
+    # HELPER: Resolve a slice against a length.
+    # Inputs: slc - slice; objlen - container length (default maximum ssize_t).
+    # Outputs: C tuple (start, stop, step, length) as computed by Python's slice
+    # index resolution.
+    # Exceptions: TypeError if slc is None.
     """
     Get (start, stop, step, length) tuple for a slice.
 
@@ -379,6 +508,16 @@ cdef (Py_ssize_t, Py_ssize_t, Py_ssize_t, Py_ssize_t) slice_get_indices_ex(
 
 
 cdef slice_getitem(slice slc, ind):
+    # [FUNCTION DOC]
+    # HELPER: Index a bounded slice with another indexer, without materializing.
+    # Inputs: slc - bounded slice; ind - slice or any numpy-style indexer.
+    # Outputs: if ind is a slice, a composed slice (slc itself for a full positive
+    # no-op slice); otherwise the result of indexing arange(start, stop, step) (intp)
+    # with ind (array or scalar).
+    # KNOWN ISSUE: composition with a negative-step ind is incorrect: start is moved to
+    # the last element but the composed step stays positive and the start/stop use
+    # ind's reversed indices, e.g. slice(0,5,1) indexed by [::-1] yields slice(8,3,1)
+    # (empty) instead of positions 4..0.
     cdef:
         Py_ssize_t s_start, s_stop, s_step, s_len
         Py_ssize_t ind_start, ind_stop, ind_step, ind_len
@@ -416,6 +555,14 @@ cdef slice_getitem(slice slc, ind):
 @cython.boundscheck(False)
 @cython.wraparound(False)
 cdef slice indexer_as_slice(intp_t[:] vals):
+    # [FUNCTION DOC]
+    # HELPER: Try to express an array of positions as a slice.
+    # Inputs: vals - 1-D intp memoryview.
+    # Outputs: slice(start, stop, d) if all values are non-negative and form an
+    # arithmetic progression with non-zero difference d (stop None if it would be
+    # negative); a length-1 array gives slice(v, v+1, 1); otherwise None (including
+    # empty input).
+    # Exceptions: TypeError if vals is None.
     cdef:
         Py_ssize_t i, n, start, stop
         int64_t d
@@ -455,6 +602,14 @@ cdef slice indexer_as_slice(intp_t[:] vals):
 @cython.boundscheck(False)
 @cython.wraparound(False)
 def get_concat_blkno_indexers(list blknos_list not None):
+    # [FUNCTION DOC]
+    # Split columns into runs where the block number is constant in every manager.
+    # Inputs: blknos_list - list of 1-D intp arrays (one per manager), equal lengths.
+    # Outputs: list of tuples (blknos_for_run, BlockPlacement(slice(start, stop))),
+    # where blknos_for_run is an intp array holding each manager's block number for
+    # the run. Empty list if there are no columns.
+    # Exceptions: AssertionError if the arrays have different lengths.
+    # Side effects: allocates arrays; bounds/wraparound checks disabled.
     """
     Given the mgr.blknos for a list of mgrs, break range(len(mgrs[0])) into
     slices such that within each slice blknos_list[i] is constant for each i.
@@ -515,6 +670,13 @@ def get_concat_blkno_indexers(list blknos_list not None):
 def get_blkno_indexers(
     const int64_t[:] blknos, bint group=True
 ) -> list[tuple[int, slice | np.ndarray]]:
+    # [FUNCTION DOC]
+    # Enumerate contiguous runs of equal block numbers.
+    # Inputs: blknos - 1-D int64 memoryview; group - whether to merge runs per value.
+    # Outputs: list of (blkno, indexer). With group False: one (blkno, slice) per run
+    # in order. With group True: one entry per distinct blkno in order of first
+    # appearance; the indexer is a slice if that value has a single run, else an int64
+    # array of all its positions.
     """
     Enumerate contiguous runs of integers in ndarray.
 
@@ -587,6 +749,10 @@ def get_blkno_indexers(
 
 
 def get_blkno_placements(blknos, group: bool = True):
+    # [FUNCTION DOC]
+    # Generator wrapping get_blkno_indexers.
+    # Inputs: blknos - array-like of block numbers (converted to int64); group - bool.
+    # Outputs: yields (blkno, BlockPlacement(indexer)) for each run/group.
     """
     Parameters
     ----------
@@ -612,6 +778,13 @@ cpdef update_blklocs_and_blknos(
     Py_ssize_t loc,
     intp_t nblocks,
 ):
+    # [FUNCTION DOC]
+    # Update blklocs/blknos for insertion of a new single-column block at loc.
+    # Inputs: blklocs, blknos - 1-D intp arrays (length n); loc - insertion position
+    # (0..n); nblocks - number assigned to the new block.
+    # Outputs: tuple (new_blklocs, new_blknos) of length n+1 with (0, nblocks) inserted
+    # at loc and the rest shifted.
+    # Side effects: allocates arrays; bounds/wraparound checks disabled.
     """
     Update blklocs and blknos when a new column is inserted at 'loc'.
     """
@@ -639,6 +812,11 @@ cpdef update_blklocs_and_blknos(
 
 
 def _unpickle_block(values, placement, ndim):
+    # [FUNCTION DOC]
+    # HELPER: Pickle reconstructor for Block.
+    # Inputs: values - array data; placement - BlockPlacement or indexer; ndim.
+    # Outputs: new Block made by pandas.core.internals.blocks.new_block after coercing
+    # values with maybe_coerce_values.
     # We have to do some gymnastics b/c "ndim" is keyword-only
 
     from pandas.core.internals.blocks import (
@@ -654,6 +832,10 @@ def _unpickle_block(values, placement, ndim):
 
 @cython.freelist(64)
 cdef class Block:
+    # [CLASS DOC]
+    # Base class for pandas Blocks: a homogeneous array (values) plus the manager
+    # locations it occupies (_mgr_locs), dimensionality (ndim, 1 or 2) and a
+    # BlockValuesRefs object shared by all blocks viewing the same data (refs).
     """
     Defining __init__ in a cython class significantly improves performance.
     """
@@ -674,6 +856,14 @@ cdef class Block:
         ndim: int,
         refs: BlockValuesRefs | None = None,
     ):
+        # [FUNCTION DOC]
+        # Allocate/initialize a Block.
+        # Inputs: values - ndarray or ExtensionArray (already coerced); placement -
+        # BlockPlacement; ndim - 1 or 2; refs - existing BlockValuesRefs or None.
+        # Outputs: none.
+        # Side effects: when refs is None, creates a new BlockValuesRefs referencing
+        #   only
+        # this block; otherwise registers a weak reference to this block in refs.
         """
         Parameters
         ----------
@@ -702,10 +892,20 @@ cdef class Block:
             self.refs = refs
 
     cpdef __reduce__(self):
+        # [FUNCTION DOC]
+        # Pickle support.
+        # Outputs: (_unpickle_block, (values, mgr_locs indexer, ndim)).
         args = (self.values, self.mgr_locs.indexer, self.ndim)
         return _unpickle_block, args
 
     cpdef __setstate__(self, state):
+        # [FUNCTION DOC]
+        # Restore state from a pickle.
+        # Inputs: state - tuple (placement indexer, values[, ndim]).
+        # Outputs: none.
+        # Side effects: sets mgr_locs and values (unwrapping pandas containers to
+        #   arrays);
+        # infers ndim for older pickles that lack it.
         from pandas.core.construction import extract_array
 
         self.mgr_locs = BlockPlacement(state[0])
@@ -721,6 +921,13 @@ cdef class Block:
             self.ndim = ndim
 
     cpdef Block slice_block_rows(self, slice slicer):
+        # [FUNCTION DOC]
+        # Slice the block along its last (row) axis.
+        # Inputs: slicer - slice. Assumes ndim == 2 for a frame block.
+        # Outputs: new block of the same type viewing values[..., slicer], same
+        #   placement,
+        # ndim and shared refs.
+        # Side effects: registers the new block in refs.
         """
         Perform __getitem__-like specialized to slicing along index.
 
@@ -732,6 +939,11 @@ cdef class Block:
 
 @cython.freelist(64)
 cdef class BlockManager:
+    # [CLASS DOC]
+    # Base class for BlockManager / SingleBlockManager. Fields: blocks - tuple of
+    # Blocks; axes - list of Index objects (axes[0] are the columns/items for 2-D);
+    # consolidation flags; private blknos (block number per item) and blklocs
+    # (position within its block per item), built lazily. Uses a freelist of 64.
     cdef:
         public tuple blocks
         public list axes
@@ -744,6 +956,13 @@ cdef class BlockManager:
         axes=None,
         verify_integrity=True,
     ):
+        # [FUNCTION DOC]
+        # Initialize the manager.
+        # Inputs: blocks - tuple or list of Blocks, or None (used for unpickling, then
+        # nothing is set); axes - list of Index; verify_integrity - ignored here.
+        # Outputs: none.
+        # Side effects: stores a tuple of blocks and a shallow copy of axes; resets
+        # consolidation flags and the blknos/blklocs caches to None.
         # None as defaults for unpickling GH#42345
         if blocks is None:
             # This adds 1-2 microseconds to DataFrame(np.array([]))
@@ -767,25 +986,45 @@ cdef class BlockManager:
     @property
     @cython.critical_section
     def _blknos(self):
+        # [FUNCTION DOC]
+        # Property getter for the cached blknos array (or None), read under a critical
+        # section.
         return self.__blknos
 
     @_blknos.setter
     @cython.critical_section
     def _blknos(self, ndarray val):
+        # [FUNCTION DOC]
+        # Property setter for the cached blknos array.
+        # Inputs: val - intp ndarray or None. Side effects: replaces the cache.
         self.__blknos = val
 
     @property
     @cython.critical_section
     def _blklocs(self):
+        # [FUNCTION DOC]
+        # Property getter for the cached blklocs array (or None).
         return self.__blklocs
 
     @_blklocs.setter
     @cython.critical_section
     def _blklocs(self, ndarray val):
+        # [FUNCTION DOC]
+        # Property setter for the cached blklocs array.
+        # Inputs: val - intp ndarray or None. Side effects: replaces the cache.
         self.__blklocs = val
 
     @cython.critical_section
     cpdef _rebuild_blknos_and_blklocs(self):
+        # [FUNCTION DOC]
+        # Recompute blknos and blklocs from the blocks' placements.
+        # Inputs: none (uses self.shape[0] as the number of items).
+        # Outputs: none.
+        # Exceptions: AssertionError("Gaps in blk ref_locs") if some item is not covered
+        # by any block.
+        # Side effects: allocates and stores new arrays (initialized to -1 then filled:
+        # item j of block b at position i gets blkno b, blkloc i); critical section
+        #   held.
         """
         Update mgr._blknos / mgr._blklocs.
         """
@@ -829,6 +1068,10 @@ cdef class BlockManager:
     # Pickle
 
     cpdef __reduce__(self):
+        # [FUNCTION DOC]
+        # Pickle support.
+        # Outputs: (type(self), args) where args is (block, axis) for a single-axis
+        # manager or (blocks, axes) otherwise.
         if len(self.axes) == 1:
             # SingleBlockManager, __init__ expects Block, axis
             args = (self.blocks[0], self.axes[0])
@@ -837,6 +1080,14 @@ cdef class BlockManager:
         return type(self), args
 
     cpdef __setstate__(self, state):
+        # [FUNCTION DOC]
+        # Restore from the legacy pickle format.
+        # Inputs: state - tuple whose 4th element is a dict with key "0.14.1" holding
+        # "axes" and "blocks" (each with "values" and "mgr_locs").
+        # Outputs: none.
+        # Exceptions: NotImplementedError for older formats.
+        # Side effects: rebuilds axes and blocks (coercing values/shapes), then resets
+        # consolidation flags and rebuilds blknos/blklocs; mutates the state dicts.
         from pandas.core.construction import extract_array
         from pandas.core.internals.blocks import (
             ensure_block_shape,
@@ -873,6 +1124,9 @@ cdef class BlockManager:
         self._post_setstate()
 
     def _post_setstate(self) -> None:
+        # [FUNCTION DOC]
+        # HELPER: Finalize unpickling: clear consolidation flags and rebuild
+        # blknos/blklocs.
         self._is_consolidated = False
         self._known_consolidated = False
         self._rebuild_blknos_and_blklocs()
@@ -881,6 +1135,12 @@ cdef class BlockManager:
     # Indexing
 
     cdef BlockManager _slice_mgr_rows(self, slice slobj):
+        # [FUNCTION DOC]
+        # HELPER: Slice all blocks along rows (axis 1 of the manager).
+        # Inputs: slobj - slice.
+        # Outputs: new manager of the same type with sliced blocks, a view of axes[0]
+        #   and
+        # axes[1] sliced; copies cached blknos/blklocs when available.
         cdef:
             Block blk, nb
             BlockManager mgr
@@ -904,6 +1164,12 @@ cdef class BlockManager:
         return mgr
 
     def get_slice(self, slobj: slice, axis: int = 0) -> BlockManager:
+        # [FUNCTION DOC]
+        # Slice the manager along an axis.
+        # Inputs: slobj - slice; axis - 0 (items, via the subclass method
+        # _slice_take_blocks_ax0) or 1 (rows).
+        # Outputs: new manager with sliced axis and a view of the other axis.
+        # Exceptions: IndexError for any other axis.
 
         if axis == 0:
             new_blocks = self._slice_take_blocks_ax0(slobj)
@@ -920,6 +1186,10 @@ cdef class BlockManager:
 
 
 cdef class BlockValuesRefs:
+    # [CLASS DOC]
+    # Tracks all objects (Blocks and Indexes) that share one underlying array, via a
+    # list of weak references, for Copy-on-Write. clear_counter is the list size at
+    # which dead references are purged (adaptive, minimum 500).
     """Tracks all references to a given array.
 
     Keeps track of all blocks (through weak references) that reference the same
@@ -930,6 +1200,12 @@ cdef class BlockValuesRefs:
         public int clear_counter
 
     def __cinit__(self, blk: Block | None = None) -> None:
+        # [FUNCTION DOC]
+        # Initialize the tracker.
+        # Inputs: blk - optional Block to reference first.
+        # Outputs: none.
+        # Side effects: creates the weakref list (with blk if given); clear_counter =
+        #   500.
         if blk is not None:
             self.referenced_blocks = [PyWeakref_NewRef(blk, None)]
         else:
@@ -937,6 +1213,14 @@ cdef class BlockValuesRefs:
         self.clear_counter = 500  # set reasonably high
 
     cdef _clear_dead_references(self, bint force=False):
+        # [FUNCTION DOC]
+        # HELPER: Purge weak references whose targets are dead.
+        # Inputs: force - purge regardless of size.
+        # Outputs: none.
+        # Side effects: when forced or the list exceeds clear_counter, filters the list;
+        # then halves clear_counter (min 500) if fewer than half remain, or grows it to
+        # max(double, current count) if still above it. Under free-threading, returns
+        # early without changing anything if a weakref lookup errors.
         # Use exponential backoff to decide when we want to clear references
         # if force=False. Clearing for every insertion causes slowdowns if
         # all these objects stay alive, e.g. df.items() for wide DataFrames
@@ -969,10 +1253,16 @@ cdef class BlockValuesRefs:
                 self.clear_counter = max(self.clear_counter * 2, nr_of_refs)
 
     cpdef _add_reference_maybe_locked(self, Block blk):
+        # [FUNCTION DOC]
+        # HELPER: Add a weak reference to a block without locking.
+        # Inputs: blk - Block. Side effects: may purge dead refs; appends to the list.
         self._clear_dead_references()
         self.referenced_blocks.append(PyWeakref_NewRef(blk, None))
 
     cpdef add_reference(self, Block blk):
+        # [FUNCTION DOC]
+        # Add a weak reference to a block (locked with a critical section when
+        # free-threading). Inputs: blk - Block. Side effects: mutates the list.
         """Adds a new reference to our reference collection.
 
         Parameters
@@ -987,10 +1277,16 @@ cdef class BlockValuesRefs:
             self._add_reference_maybe_locked(blk)
 
     def _add_index_reference_maybe_locked(self, index: object) -> None:
+        # [FUNCTION DOC]
+        # HELPER: Add a weak reference to an Index without locking.
+        # Inputs: index - Index object. Side effects: may purge; appends.
         self._clear_dead_references()
         self.referenced_blocks.append(PyWeakref_NewRef(index, None))
 
     def add_index_reference(self, index: object) -> None:
+        # [FUNCTION DOC]
+        # Add a weak reference to an Index (locked when free-threading).
+        # Inputs: index - Index object. Side effects: mutates the list.
         """Adds a new reference to our reference collection when creating an index.
 
         Parameters
@@ -1005,11 +1301,20 @@ cdef class BlockValuesRefs:
             self._add_index_reference_maybe_locked(index)
 
     def _has_reference_maybe_locked(self) -> bool:
+        # [FUNCTION DOC]
+        # HELPER: Unlocked implementation of has_reference.
+        # Outputs: True if more than one live reference remains after a forced purge.
+        # Side effects: purges dead references.
         self._clear_dead_references(force=True)
         # Checking for more references than block pointing to itself
         return len(self.referenced_blocks) > 1
 
     def has_reference(self) -> bool:
+        # [FUNCTION DOC]
+        # Whether the data is referenced by more than one live object (the owner's own
+        # reference does not count).
+        # Outputs: bool. Side effects: purges dead references; locks when free-
+        #   threading.
         """Checks if block has foreign references.
 
         A reference is only relevant if it is still alive. The reference to

@@ -1,3 +1,14 @@
+# [MODULE DOC]
+# Array-level conversion of heterogeneous date-like objects to datetime64 data and
+# formatting of datetime64 integer data to strings. Datetime values are represented
+# as 64-bit integers counting units (s/ms/us/ns, the "resolution" or creso) since the
+# Unix epoch, with INT64_MIN (NPY_NAT) as the missing marker. Parsing of individual
+# values is delegated to pandas/_libs/tslibs (conversion, strptime, np_datetime);
+# resolution inference across an array is tracked by a DatetimeParseState object,
+# which records the finest resolution seen, whether it ever changed, and which kinds
+# of inputs (aware/naive strings, datetimes, other) were seen so mixed tz-aware and
+# naive input can be rejected. Backs pd.to_datetime and DatetimeIndex construction.
+
 cimport cython
 
 from datetime import timezone
@@ -87,6 +98,15 @@ from pandas._libs.tslibs.tzconversion cimport tz_localize_to_utc_single
 
 
 def _test_parse_iso8601(ts: str):
+    # [FUNCTION DOC]
+    # TESTING ONLY: parse an ISO 8601 string with the C ISO parser into a Timestamp.
+    # Inputs: ts - ISO 8601 date/time string.
+    # Outputs: nanosecond Timestamp; if the string carried a UTC offset, the value is
+    # converted to UTC and the Timestamp has a fixed-offset timezone of that offset;
+    # otherwise a naive Timestamp.
+    # Exceptions: ValueError from the parser for invalid strings; OutOfBoundsDatetime if
+    # the parsed fields overflow nanosecond int64.
+    # Side effects: none.
     """
     TESTING ONLY: Parse string into Timestamp using iso8601 parser. Used
     only for testing, actual construction uses `convert_str_to_tsobject`
@@ -120,6 +140,23 @@ def format_array_from_datetime(
     na_rep: str | float = "NaT",
     NPY_DATETIMEUNIT reso=NPY_FR_ns,
 ) -> np.ndarray:
+    # [FUNCTION DOC]
+    # Format datetime64 integer data as strings.
+    # Inputs: values - int64 array of any ndim (epoch counts in unit reso, NaT =
+    # INT64_MIN); tz - tzinfo or None; format - strftime string or None; na_rep - value
+    # placed for NaT entries (default "NaT"); reso - unit of values (default ns).
+    # Outputs: object array of the same shape (C order) holding strings (or na_rep).
+    # Behavior when tz is None: with no format, picks the minimal precision needed for
+    # the
+    # whole array (via get_resolution) and writes "YYYY-MM-DD HH:MM:SS" plus ".fff",
+    # ".ffffff" or ".fffffffff" for ms/us/ns resolution; format "%Y-%m-%d %H:%M:%S"
+    # or "%Y-%m-%d %H:%M:%S.%f" uses that fast path with fixed seconds/microseconds
+    # precision; format "%Y-%m-%d" writes only the date. All other cases (tz given or
+    # other formats) box each value as a Timestamp and use str() (no format) or
+    # strftime(format), falling back to str() if strftime raises ValueError.
+    # Exceptions: errors from get_resolution / Timestamp construction propagate.
+    # Side effects: allocates result; bounds/wraparound checks disabled.
+    # KNOWN ISSUE: docstring says na_rep defaults to None; the actual default is "NaT".
     """
     return an np object array of the string formatted values
 
@@ -237,6 +274,13 @@ def format_array_from_datetime(
 @cython.wraparound(False)
 @cython.boundscheck(False)
 def first_non_null(values: ndarray) -> int:
+    # [FUNCTION DOC]
+    # Find the index of the first meaningful value in a 1-D (object) array.
+    # Inputs: values - 1-D array.
+    # Outputs: index of the first element that is not None/NaN/NaT/NA and is not a
+    # string that is empty, a NaT string ("NaT", "nat", "NAT", "nan", "NaN", "NAN"), or
+    # "now"/"today"; -1 if none.
+    # Exceptions: none. Side effects: none.
     """Find position of first non-null value, return -1 if there isn't one."""
     cdef:
         Py_ssize_t n = len(values)
@@ -267,6 +311,42 @@ cpdef array_to_datetime(
     NPY_DATETIMEUNIT creso=NPY_DATETIMEUNIT.NPY_FR_GENERIC,
     str unit_for_numerics=None,
 ):
+    # [FUNCTION DOC]
+    # Convert an object array of date-like values to datetime64 data.
+    # Inputs: values - object ndarray of any ndim (flattened in C order); errors -
+    # "raise"
+    # or "coerce" (asserted); dayfirst/yearfirst - string parsing hints; utc - convert
+    # aware values to UTC and allow mixed offsets; creso - target unit, or GENERIC to
+    # infer; unit_for_numerics - unit for ints/floats (defaults to the target unit
+    # abbreviation, "ns" when inferring).
+    # Per element: null (None/NaN/NaT/NA) -> NaT; datetime (Timestamp keeps its own
+    # resolution, else us) -> tz is validated/recorded by the parse state and the value
+    # converted; date -> s resolution; datetime64 -> its (supported) unit; integer ->
+    # NaT
+    # if equal to the sentinel else scaled from unit_for_numerics; float -> NaN/sentinel
+    # give NaT, integral floats behave like ints, other floats are scaled with ns
+    # resolution; str (np.str_ cast to str) -> "now"/"today" handled specially (us),
+    # else parsed by convert_str_to_tsobject, NaT strings give NaT without affecting
+    # inference, aware strings record their UTC offset in seconds, naive strings record
+    # "naive". Anything else raises TypeError. Inference keeps the finest resolution
+    # seen;
+    # if it changed mid-array the whole function is re-run recursively with that final
+    # resolution; if nothing non-NaT was seen the result unit is seconds.
+    # Outputs: tuple (datetime64 array of values' shape, tzinfo or None) where the
+    # tzinfo
+    # is a fixed offset/UTC derived by state.check_for_mixed_inputs (UTC when utc=True).
+    # Exceptions: TypeError/OverflowError/ValueError (incl. OutOfBoundsDatetime) are
+    # re-raised with args normalized to their string message when errors="raise";
+    # with "coerce" the element becomes NaT. Mixed aware/naive input raises from
+    # check_for_mixed_inputs.
+    # Side effects: allocates the result; may recurse once.
+    # KNOWN ISSUE: the docstring claims a fallback to datetime.datetime objects on
+    # errors
+    # and describes 1-D input; errors is restricted to raise/coerce so the trailing
+    # "return values, None" path is unreachable, and input may be any ndim.
+    # KNOWN ISSUE: docstring says unit_for_numerics defaults to "ns"; actual default
+    # None
+    # means "use the target unit abbreviation".
     """
     Converts a 1D array of date-like values to a numpy array of either:
         1) datetime64[ns] data
@@ -504,6 +584,21 @@ cpdef array_to_datetime(
 def array_to_datetime_with_tz(
     ndarray values, tzinfo tz, bint dayfirst, bint yearfirst, NPY_DATETIMEUNIT creso
 ):
+    # [FUNCTION DOC]
+    # Vectorized equivalent of constructing Timestamp(value, tz=tz) for each element.
+    # Inputs: values - object ndarray of any ndim; tz - target timezone (wall times
+    # localized to it); dayfirst/yearfirst - string parsing hints; creso - target unit
+    # or
+    # GENERIC to infer (numeric inputs are treated as ns when inferring).
+    # Each non-null element goes through convert_to_tsobject (naive datetimes and
+    # datetime64 are treated as wall times in tz), then is rounded to the target
+    # resolution (round_ok). Nulls (None/NaN/NaT/NA) become NaT.
+    # Outputs: datetime64 array of the same shape, in the inferred or given unit
+    # (seconds
+    # if inferring and all values were NaT). If inferred resolution changed mid-array,
+    # re-runs recursively with the final resolution.
+    # Exceptions: propagates parsing/out-of-bounds errors from convert_to_tsobject.
+    # Side effects: allocates the result.
     """
     Vectorized analogue to pd.Timestamp(value, tz=tz)
 

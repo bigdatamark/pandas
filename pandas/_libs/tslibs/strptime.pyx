@@ -1,3 +1,20 @@
+# [MODULE DOC]
+# Format-driven datetime parsing (the engine behind to_datetime(..., format=...)).
+#   array_strptime converts an object array of strings / datetimes / dates / datetime64
+#   / NaN-likes into int64 datetime64 values of a fixed or inferred resolution, plus an
+#   optional common timezone. Strings are parsed either with the C ISO-8601 parser (when
+#   format is "ISO8601" or an ISO-compatible format) or with a regex built from the
+#   format by a pandas subclass of the stdlib _strptime.TimeRE (supports up to 9
+#   fractional digits and any IANA zone name for %Z), followed by stdlib-style field
+#   resolution (%y century rule, %I/%p, weekday/week-number/julian/ISO-week
+#   calculations). DatetimeParseState tracks across elements: whether tz-aware/naive
+#   datetimes or strings were seen, the set of UTC offsets seen, and the current
+#   (possibly inferred and increasing) resolution; mixed timezones raise unless
+#   utc=True. Module-level state: a directive-to-integer code table, a lock-protected
+#   cache of one TimeRE instance (rebuilt when the locale language changes) and up to ~5
+#   compiled format regexes.
+# Module import side effects: initialises datetime, numpy and pandas datetime C-APIs
+#   and builds the initial TimeRE.
 """Strptime-related classes and functions.
 
 TimeRE, _calc_julian_from_U_or_W are vendored
@@ -90,6 +107,14 @@ cnp.import_array()
 
 
 cdef bint format_is_iso(f: str):
+    # [FUNCTION DOC]
+    # Return true if a strftime format is one the C ISO-8601 parser can handle: "%Y"
+    #   optionally followed by %m, %d (date separator one of "-", "/", " ", "." or none,
+    #   and the same separator before %d), then " " or "T" %H, ":%M", ":%S", then %z or
+    #   ".%f" optionally followed by %z, each part optional from the right. "%Y%m" is
+    #   excluded.
+    # Inputs: f - format str. Outputs: bool. Exceptions: none.
+    # Side effects: compiles a regex on every call.
     """
     Does format match the iso8601 set that can be handled by the C parser?
     Generally of form YYYY-MM-DDTHH:MM:SS - date separator can be different
@@ -115,6 +140,10 @@ cdef bint format_is_iso(f: str):
 
 
 def _test_format_is_iso(f: str) -> bool:
+    # [FUNCTION DOC]
+    # Python-visible wrapper of format_is_iso for tests. Inputs: f - str. Outputs:
+    #   bool.
+    # Exceptions: none. Side effects: none.
     """Only used in testing."""
     return format_is_iso(f)
 
@@ -122,6 +151,16 @@ def _test_format_is_iso(f: str) -> bool:
 cdef bint parse_today_now(
     str val, int64_t* iresult, bint utc, NPY_DATETIMEUNIT creso, bint infer_reso = False
 ):
+    # [FUNCTION DOC]
+    # Handle the special strings "now" and "today".
+    # Inputs: val - str; iresult - out pointer for the int64 value; utc - for "now",
+    #   use current UTC time instead of local wall time; creso - output resolution;
+    #   infer_reso - if true, use microseconds instead of creso.
+    # Behavior: "now" -> current time (UTC-aware converted, or local naive) as int64
+    #   in the resolution; "today" -> Timestamp.today() (local naive, utc ignored);
+    #   anything else returns false without writing.
+    # Outputs: true if handled. Exceptions: from Timestamp conversion (e.g. overflow).
+    # Side effects: writes *iresult; reads the system clock.
     # We delay this check for as long as possible
     # because it catches relatively rare cases
     cdef:
@@ -174,6 +213,17 @@ cdef dict _parse_code_table = {"y": 0,
 
 
 cdef _validate_fmt(str fmt):
+    # [FUNCTION DOC]
+    # HELPER: Reject incompatible directive combinations in a format string (checked
+    #   in order, first matching rule only): %W/%U require a year (%Y/%y) and weekday
+    #   (%A/%a/%w); %Z with %z; %j with %G; %G without %V and a weekday (%A/%a/%w/%u);
+    #   %V with %Y; %V without %G and a weekday.
+    # Inputs: fmt - str. Outputs: None. Exceptions: ValueError describing the
+    #   conflict.
+    # Side effects: none.
+    # KNOWN ISSUE: the checks form an if/elif chain, so a format triggering the %W/%U
+    #   rule skips the later checks (e.g. %W combined with both %Z and %z is not
+    #   rejected here).
     if "%W" in fmt or "%U" in fmt:
         if "%Y" not in fmt and "%y" not in fmt:
             raise ValueError("Cannot use '%W' or '%U' without day and year")
@@ -216,6 +266,14 @@ cdef _validate_fmt(str fmt):
 
 
 cdef _get_format_regex(str fmt):
+    # [FUNCTION DOC]
+    # HELPER: Return the compiled regex for fmt and the LocaleTime it was built with,
+    #   using a module-level cache under a lock. If the current locale language differs
+    #   from the cached TimeRE's, rebuild TimeRE and clear the cache; clear the cache if
+    #   it holds more than the max size; compile and cache on miss.
+    # Inputs: fmt - str. Outputs: tuple (compiled regex, LocaleTime).
+    # Exceptions: ValueError for a bad directive or a stray '%'.
+    # Side effects: mutates the global TimeRE/regex caches; acquires the lock.
     global _TimeRE_cache, _regex_cache
     with _cache_lock:
         if _getlang() != _TimeRE_cache.locale_time.lang:
@@ -245,7 +303,21 @@ cdef _get_format_regex(str fmt):
 
 
 cdef class DatetimeParseState:
+    # [CLASS DOC]
+    # Mutable state shared across the elements of one array parse (array_strptime and
+    #   array_to_datetime). Attributes: found_tz / found_naive - saw tz-aware / naive
+    #   datetime objects; found_naive_str / found_aware_str - saw strings parsed to
+    #   naive / offset-bearing values; found_other - saw naive non-string, non-datetime
+    #   values (date, datetime64; set by callers); out_tzoffset_vals - set of UTC
+    #   offsets in seconds plus the marker "naive" for naive strings; creso - current
+    #   resolution (GENERIC means not yet known); creso_ever_changed - resolution was
+    #   raised after being set, so a re-parse is needed.
     def __cinit__(self, NPY_DATETIMEUNIT creso):
+        # [FUNCTION DOC]
+        # Initialise all flags false, out_tzoffset_vals empty, creso to the given
+        #   unit.
+        # Inputs: creso - starting resolution (GENERIC to infer). Outputs: none.
+        # Exceptions: none. Side effects: sets attributes.
         # found_tz and found_naive are specifically about datetime/Timestamp
         #  objects with and without tzinfos attached.
         self.found_tz = False
@@ -262,6 +334,13 @@ cdef class DatetimeParseState:
         self.creso_ever_changed = False
 
     cdef bint update_creso(self, NPY_DATETIMEUNIT item_reso) noexcept:
+        # [FUNCTION DOC]
+        # Merge an element's resolution: if creso is GENERIC adopt item_reso (not
+        #   counted as a change); else if item_reso is finer, adopt it and set
+        #   creso_ever_changed.
+        # Inputs: item_reso - unit. Outputs: true only when an already-set creso was
+        #   raised.
+        # Exceptions: none. Side effects: mutates creso / creso_ever_changed.
         # Return a bool indicating whether we bumped to a higher resolution
         if self.creso == NPY_DATETIMEUNIT.NPY_FR_GENERIC:
             self.creso = item_reso
@@ -272,6 +351,18 @@ cdef class DatetimeParseState:
         return False
 
     cdef tzinfo process_datetime(self, datetime dt, tzinfo tz, bint utc_convert):
+        # [FUNCTION DOC]
+        # Record a datetime object's awareness and reconcile its tz with the running
+        #   tz.
+        # Inputs: dt - datetime; tz - timezone found so far (or None); utc_convert -
+        #   utc=True.
+        # Behavior: sets found_tz or found_naive. Aware dt: if utc_convert, keep tz;
+        #   else error if any naive datetime was seen or tz differs from dt.tzinfo;
+        #   otherwise return dt.tzinfo. Naive dt: error if an aware datetime was seen
+        #   and not utc_convert.
+        # Outputs: updated tz. Exceptions: ValueError on mixing aware/naive or
+        #   different zones.
+        # Side effects: mutates flags.
         if dt.tzinfo is not None:
             self.found_tz = True
         else:
@@ -301,6 +392,18 @@ cdef class DatetimeParseState:
         tzinfo tz_out,
         bint utc,
     ):
+        # [FUNCTION DOC]
+        # Final consistency check after parsing all elements, returning the result
+        #   timezone.
+        # Inputs: tz_out - timezone from datetime objects (or None); utc - utc=True.
+        # Behavior (only when not utc): if offset strings were found, require exactly
+        #   one distinct offset value and no naive or other values; if tz_out is set it
+        #   must equal a fixed offset of that value; else tz_out becomes that fixed-
+        #   offset timezone. Without aware strings, error if tz_out is set and naive
+        #   strings or other naive values exist.
+        # Outputs: tzinfo or None.
+        # Exceptions: ValueError("Mixed timezones detected ...").
+        # Side effects: pops from out_tzoffset_vals.
         cdef:
             bint is_same_offsets
             float tz_offset
@@ -357,6 +460,32 @@ def array_strptime(
     bint utc=False,
     NPY_DATETIMEUNIT creso=NPY_DATETIMEUNIT.NPY_FR_GENERIC,
 ):
+    # [FUNCTION DOC]
+    # Parse a 1-D object array with a strftime-style format into datetime64 values.
+    # Inputs: values - 1-D object ndarray; fmt - format string or "ISO8601"; exact -
+    #   full match required (else regex search / partial ISO match); errors - "raise" or
+    #   "coerce"; utc - convert aware values to UTC and allow mixing; creso - output
+    #   unit, or GENERIC to infer. Per element: empty strings, NaT strings and null-
+    #   likes (None, NaN, NaT, NA, NaN or NaT-valued numbers) -> NaT. datetime -> int64
+    #   via parse_pydatetime with tz checks (resolution: Timestamp's own, else us). date
+    #   -> s resolution. datetime64 -> nearest supported unit. Other objects are
+    #   stringified. Strings: try "now"/"today" after the ISO path; with "ISO8601" or an
+    #   ISO-compatible fmt use the C parser (resolution at least us; offsets localized
+    #   to UTC and recorded); "ISO8601" failures raise; otherwise use
+    #   _parse_with_format, convert the struct to int64 and localize any tz to UTC,
+    #   recording the offset in seconds. ValueErrors get advice about
+    #   format/ISO8601/mixed appended; in coerce mode they yield NaT. After the loop
+    #   check mixed timezones. When inferring: if the resolution rose mid-way, re-run
+    #   the whole parse with the final resolution; if nothing non-null was found, return
+    #   M8[s]; else view the buffer in the found unit.
+    # Outputs: tuple (datetime64 ndarray, tzinfo or None).
+    # Exceptions: AssertionError for other errors values; ValueError (format mismatch,
+    #   mixed timezones, bad directives); OutOfBoundsDatetime.
+    # Side effects: allocates result; may recurse once; reads the clock for now/today.
+    # KNOWN ISSUE: the datetime-object branch converts with state.creso, which can be
+    #   raised above a caller-supplied creso, while the result array keeps the supplied
+    #   unit; this only matters for explicit (non-inferred) creso, which current callers
+    #   do not pass.
     """
     Calculates the datetime structs represented by the passed array of strings
 
@@ -600,6 +729,25 @@ cdef tzinfo _parse_with_format(
     npy_datetimestruct* dts,
     NPY_DATETIMEUNIT* item_reso,
 ):
+    # [FUNCTION DOC]
+    # HELPER: Match one string against the format regex and fill a datetime struct
+    #   (stdlib _strptime algorithm extended to nanoseconds).
+    # Inputs: val - str; fmt - format (for messages); exact - regex match of the whole
+    #   string vs search; format_regex, locale_time - from _get_format_regex; dts -
+    #   output struct; item_reso - receives the resolution (s, or ms/us/ns from %f digit
+    #   count).
+    # Behavior: defaults year 1900, month/day 1, time 0. Reads each named group: %y
+    #   (00-68 -> 20xx, else 19xx), %Y, %m, %B/%b (locale month index), %d, %H, %I with
+    #   %p (12 AM -> 0, PM adds 12), %M, %S, %f (padded to 9 digits, split into us and
+    #   ns), %A/%a/%w/%u weekday (Monday=0), %j, %U/%W week numbers, %Z (ZoneInfo), %z /
+    #   %:z (fixed offset), %G, %V. Derives the date from week+weekday or ISO
+    #   year/week/weekday when no julian day; otherwise from julian; validates the date
+    #   via date().
+    # Outputs: tzinfo parsed from %Z/%z, or None.
+    # Exceptions: ValueError on no match, leftover characters (with a special message
+    #   for a missing colon in %:z), invalid dates, nonexistent ISO week 53; ZoneInfo
+    #   errors for unknown zone names.
+    # Side effects: writes *dts (us and ps fields) and *item_reso.
     # Based on https://github.com/python/cpython/blob/main/Lib/_strptime.py#L293
     cdef:
         int year, month, day, minute, hour, second, weekday, julian
@@ -842,6 +990,11 @@ cdef tzinfo _parse_with_format(
 
 
 class TimeRE(_TimeRE):
+    # [CLASS DOC]
+    # Subclass of the stdlib _strptime.TimeRE (a dict from directive letter to regex
+    #   fragment) that allows 1-9 fractional-second digits for %f and lazily builds the
+    #   %Z pattern from all IANA zone names (instead of only UTC/GMT/local names).
+    #   Attribute _Z caches the %Z fragment.
     """
     Handle conversion from format directives to regexes.
 
@@ -850,6 +1003,10 @@ class TimeRE(_TimeRE):
     """
 
     def __init__(self, locale_time=None):
+        # [FUNCTION DOC]
+        # Build the directive table via the stdlib constructor, then override %f.
+        # Inputs: locale_time - optional LocaleTime. Outputs: none. Exceptions: none.
+        # Side effects: populates the dict; sets _Z to None.
         """
         Create keys/values.
 
@@ -862,6 +1019,12 @@ class TimeRE(_TimeRE):
         self.update({"f": r"(?P<f>[0-9]{1,9})"}),
 
     def __getitem__(self, key):
+        # [FUNCTION DOC]
+        # Return the regex fragment for a directive; for "Z", build (once) an
+        #   alternation of all available IANA zone names via the stdlib sequence-to-
+        #   regex helper.
+        # Inputs: key - directive str. Outputs: regex fragment str.
+        # Exceptions: KeyError for unknown directives. Side effects: caches _Z.
         if key == "Z":
             # lazy computation
             if self._Z is None:
@@ -883,6 +1046,15 @@ _regex_cache = {}
 
 cdef int _calc_julian_from_U_or_W(int year, int week_of_year,
                                   int day_of_week, int week_starts_Mon):
+    # [FUNCTION DOC]
+    # HELPER: Day of year (1-based) from year, %U/%W week number and weekday
+    #   (Monday=0). For %U (week_starts_Mon false) weekdays are shifted so Sunday is 0.
+    #   Week 0 is the partial week before the first week-start day; week n starts at
+    #   week0_length + 7*(n-1).
+    # Inputs: year, week_of_year, day_of_week, week_starts_Mon - ints.
+    # Outputs: int day of year (may be < 1 or beyond year end; later date math rolls
+    #   it).
+    # Exceptions: ValueError from date() for invalid year. Side effects: none.
     """
     Calculate the Julian day based on the year, week of the year, and day of
     the week, with week_start_day representing whether the week of the year
@@ -926,6 +1098,14 @@ cdef int _calc_julian_from_U_or_W(int year, int week_of_year,
 
 
 cdef (int, int) _calc_julian_from_V(int iso_year, int iso_week, int iso_weekday):
+    # [FUNCTION DOC]
+    # HELPER: Convert ISO year, ISO week and ISO weekday (1=Mon..7=Sun) to (calendar
+    #   year, day of year). Uses the fact that week 1 contains January 4th; if the day
+    #   of year is <= 0 the date belongs to the previous calendar year and is re-based.
+    # Inputs: iso_year, iso_week, iso_weekday - ints. Outputs: tuple (year, julian
+    #   day).
+    # Exceptions: ValueError if week 53 does not exist in that ISO year.
+    # Side effects: none.
     """
     Calculate the Julian day based on the ISO 8601 year, week, and weekday.
 
@@ -969,6 +1149,15 @@ cdef (int, int) _calc_julian_from_V(int iso_year, int iso_week, int iso_weekday)
 
 
 cdef tzinfo parse_timezone_directive(str z):
+    # [FUNCTION DOC]
+    # HELPER: Convert a %z match ("Z", "+HHMM", "+HH:MM", optionally with seconds and
+    #   fractional seconds) to a fixed-offset datetime.timezone.
+    # Inputs: z - str. Outputs: timezone.
+    # Exceptions: ValueError for inconsistent colon usage or non-numeric parts.
+    # Side effects: none.
+    # KNOWN ISSUE: the offset is built in whole minutes; seconds and microseconds are
+    #   only added after integer division by 60 / 60,000,000, so they are effectively
+    #   dropped (e.g. "+01:30:45" gives +01:30), unlike the stdlib which keeps seconds.
     """
     Parse the '%z' directive and return a datetime.timezone object.
 

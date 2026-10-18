@@ -1,3 +1,11 @@
+# [MODULE DOC]
+# Scalar Interval type and helpers. Defines IntervalMixin (closed-side and
+# length/midpoint properties shared by Interval, IntervalArray and IntervalIndex),
+# the immutable Interval scalar (left/right bounds plus a "closed" side string from
+# VALID_CLOSED = left/right/both/neither), a converter from an object array of
+# Intervals to separate left/right bound arrays, and, via the trailing include of
+# the generated intervaltree.pxi, the IntervalTree family used by IntervalIndex for
+# point and overlap queries.
 import numbers
 from operator import (
     le,
@@ -45,9 +53,17 @@ VALID_CLOSED = frozenset(["left", "right", "both", "neither"])
 
 
 cdef class IntervalMixin:
+    # [CLASS DOC]
+    # Mixin providing derived properties based on the attributes left, right and
+    # closed, which the concrete class must supply (scalars for Interval, arrays for
+    # IntervalArray/IntervalIndex, so most operations work elementwise on arrays too).
 
     @property
     def closed_left(self):
+        # [FUNCTION DOC]
+        # Property: whether the left endpoint is included.
+        # Inputs: none (reads self.closed).
+        # Outputs: True if closed is "left" or "both", else False.
         """
         Check if the interval is closed on the left side.
 
@@ -77,6 +93,13 @@ cdef class IntervalMixin:
 
     @property
     def closed_right(self):
+        # [FUNCTION DOC]
+        # Property: whether the right endpoint is included.
+        # Inputs: none (reads self.closed).
+        # Outputs: True if closed is "right" or "both", else False.
+        # KNOWN ISSUE: the docstring's Returns section says "closed on the left-side";
+        #   the
+        # code (correctly) tests the right side.
         """
         Check if the interval is closed on the right side.
 
@@ -106,6 +129,10 @@ cdef class IntervalMixin:
 
     @property
     def open_left(self):
+        # [FUNCTION DOC]
+        # Property: whether the left endpoint is excluded.
+        # Inputs: none.
+        # Outputs: logical negation of closed_left.
         """
         Check if the interval is open on the left side.
 
@@ -135,6 +162,13 @@ cdef class IntervalMixin:
 
     @property
     def open_right(self):
+        # [FUNCTION DOC]
+        # Property: whether the right endpoint is excluded.
+        # Inputs: none.
+        # Outputs: logical negation of closed_right.
+        # KNOWN ISSUE: the docstring's Returns section says "not closed on the left-
+        #   side";
+        # the code tests the right side.
         """
         Check if the interval is open on the right side.
 
@@ -164,6 +198,12 @@ cdef class IntervalMixin:
 
     @property
     def mid(self):
+        # [FUNCTION DOC]
+        # Property: midpoint of the interval.
+        # Inputs: none.
+        # Outputs: 0.5 times (left + right); if adding the bounds raises TypeError (e.g.
+        # Timestamps cannot be added), returns left + 0.5 * length instead.
+        # Exceptions: TypeError from the fallback if bounds still do not support it.
         """
         Return the midpoint of the Interval.
 
@@ -187,6 +227,10 @@ cdef class IntervalMixin:
 
     @property
     def length(self):
+        # [FUNCTION DOC]
+        # Property: length of the interval.
+        # Inputs: none.
+        # Outputs: right minus left (number, Timedelta, or array thereof).
         """
         Return the length of the Interval.
 
@@ -206,6 +250,11 @@ cdef class IntervalMixin:
 
     @property
     def is_empty(self):
+        # [FUNCTION DOC]
+        # Property: whether the interval contains no points.
+        # Inputs: none.
+        # Outputs: (right equals left) AND (closed is not "both"), combined with bitwise
+        # and so it works elementwise for arrays (NaN bounds compare unequal -> False).
         """
         Indicates if an interval is empty, meaning it contains no points.
 
@@ -266,6 +315,12 @@ cdef class IntervalMixin:
         return (self.right == self.left) & (self.closed != "both")
 
     def _check_closed_matches(self, other, name="other"):
+        # [FUNCTION DOC]
+        # HELPER: Validate that another interval-like object uses the same closed side.
+        # Inputs: other - object with a closed attribute; name - label used in the
+        #   message.
+        # Outputs: none.
+        # Exceptions: ValueError if self.closed differs from other.closed.
         """
         Check if the closed attribute of `other` matches.
 
@@ -288,12 +343,22 @@ cdef class IntervalMixin:
 
 
 cdef bint _interval_like(other):
+    # [FUNCTION DOC]
+    # HELPER: Duck-type check for interval-like objects.
+    # Inputs: other - any object.
+    # Outputs: true if other has attributes left, right and closed, else false.
     return (hasattr(other, "left")
             and hasattr(other, "right")
             and hasattr(other, "closed"))
 
 
 cdef class Interval(IntervalMixin):
+    # [CLASS DOC]
+    # Immutable scalar interval. Fields (read-only): left, right - bounds (numeric,
+    # Timestamp or Timedelta, left <= right); closed - one of VALID_CLOSED.
+    # Supports membership tests for points and nested intervals, hashing, rich
+    # comparison by the tuple (left, right, closed), pickling, and arithmetic with
+    # scalars that shifts/scales both bounds.
     """
     Immutable object implementing an Interval, a bounded slice-like interval.
 
@@ -447,6 +512,18 @@ cdef class Interval(IntervalMixin):
     """
 
     def __init__(self, left, right, str closed="right"):
+        # [FUNCTION DOC]
+        # Construct an Interval.
+        # Inputs: left, right - endpoints; closed - string, default "right".
+        # Outputs: none.
+        # Exceptions: ValueError if an endpoint is not an integer, float, Timestamp or
+        # Timedelta; if closed is invalid; if not left <= right; or if left is a
+        #   Timestamp
+        # whose time zone differs from right's.
+        # Side effects: sets left, right, closed.
+        # KNOWN ISSUE: the time-zone error message contains a stray single quote after
+        #   the
+        # left tzinfo repr (unbalanced quoting).
         # note: it is faster to just do these checks than to use a special
         # constructor (__cinit__/__new__) to avoid them
 
@@ -467,6 +544,13 @@ cdef class Interval(IntervalMixin):
         self.closed = closed
 
     def _validate_endpoint(self, endpoint):
+        # [FUNCTION DOC]
+        # HELPER: Validate an endpoint type.
+        # Inputs: endpoint - scalar.
+        # Outputs: none.
+        # Exceptions: ValueError unless endpoint is an integer, float (bool excluded by
+        #   the
+        # integer check), Timestamp or Timedelta.
         # GH 23013
         if not (is_integer_object(endpoint) or is_float_object(endpoint) or
                 isinstance(endpoint, (_Timestamp, _Timedelta))):
@@ -474,9 +558,23 @@ cdef class Interval(IntervalMixin):
                              "are allowed when constructing an Interval.")
 
     def __hash__(self):
+        # [FUNCTION DOC]
+        # Hash of the tuple (left, right, closed).
+        # Inputs: none. Outputs: integer hash.
         return hash((self.left, self.right, self.closed))
 
     def __contains__(self, key) -> bool:
+        # [FUNCTION DOC]
+        # Membership test.
+        # Inputs: key - a point or an interval-like object (has left/right/closed).
+        # Outputs: for interval-like keys, True if key lies within self: each side of
+        #   key
+        # must be strictly inside when self is open on that side and key is closed on
+        #   it,
+        # otherwise non-strict comparison is used. For points, compares left < key (or
+        #   <=
+        # when closed on the left) and key < right (or <= when closed on the right).
+        # Exceptions: TypeError if the comparisons are unsupported for the key type.
         if _interval_like(key):
             key_closed_left = key.closed in ("left", "both")
             key_closed_right = key.closed in ("right", "both")
@@ -493,6 +591,13 @@ cdef class Interval(IntervalMixin):
                 (key < self.right if self.open_right else key <= self.right))
 
     def __richcmp__(self, other, op: int):
+        # [FUNCTION DOC]
+        # Rich comparison.
+        # Inputs: other - object; op - comparison opcode.
+        # Outputs: for another Interval, compares the tuples (left, right, closed)
+        # lexicographically with op; for a numpy array, returns a boolean array
+        #   comparing
+        # self against each element; otherwise NotImplemented.
         if isinstance(other, Interval):
             self_tuple = (self.left, self.right, self.closed)
             other_tuple = (other.left, other.right, other.closed)
@@ -506,21 +611,37 @@ cdef class Interval(IntervalMixin):
         return NotImplemented
 
     def __reduce__(self):
+        # [FUNCTION DOC]
+        # Pickle support.
+        # Outputs: tuple (Interval class, (left, right, closed)).
         args = (self.left, self.right, self.closed)
         return (type(self), args)
 
     def __repr__(self) -> str:
+        # [FUNCTION DOC]
+        # Representation "Interval(left, right, closed='...')". Bounds are rendered with
+        # str when left is a numpy scalar or Timestamp, otherwise with repr. Uses the
+        # actual subclass name.
         disp = str if isinstance(self.left, (np.generic, _Timestamp)) else repr
         name = type(self).__name__
         repr_str = f"{name}({disp(self.left)}, {disp(self.right)}, closed={repr(self.closed)})"  # noqa: E501
         return repr_str
 
     def __str__(self) -> str:
+        # [FUNCTION DOC]
+        # String form in mathematical notation, using "[" / "(" for a closed / open left
+        # side and "]" / ")" for the right side, e.g. "(0, 5]".
         start_symbol = "[" if self.closed_left else "("
         end_symbol = "]" if self.closed_right else ")"
         return f"{start_symbol}{self.left}, {self.right}{end_symbol}"
 
     def __add__(self, y):
+        # [FUNCTION DOC]
+        # Addition: shift both bounds.
+        # Inputs: y - number, datetime.timedelta or numpy timedelta64.
+        # Outputs: new Interval(left + y, right + y, same closed); NotImplemented
+        #   otherwise.
+        # Exceptions: ValueError from the constructor if results are invalid.
         if (
             isinstance(y, numbers.Number)
             or PyDelta_Check(y)
@@ -530,6 +651,10 @@ cdef class Interval(IntervalMixin):
         return NotImplemented
 
     def __radd__(self, other):
+        # [FUNCTION DOC]
+        # Reflected addition; same as __add__ with other on the left.
+        # Inputs: other - number, timedelta or timedelta64.
+        # Outputs: shifted Interval or NotImplemented.
         if (
                 isinstance(other, numbers.Number)
                 or PyDelta_Check(other)
@@ -539,6 +664,10 @@ cdef class Interval(IntervalMixin):
         return NotImplemented
 
     def __sub__(self, y):
+        # [FUNCTION DOC]
+        # Subtraction: shift both bounds down by y.
+        # Inputs: y - number, timedelta or timedelta64.
+        # Outputs: new Interval(left - y, right - y, closed) or NotImplemented.
         if (
             isinstance(y, numbers.Number)
             or PyDelta_Check(y)
@@ -548,27 +677,49 @@ cdef class Interval(IntervalMixin):
         return NotImplemented
 
     def __mul__(self, y):
+        # [FUNCTION DOC]
+        # Multiplication by a number: scales both bounds.
+        # Inputs: y - numbers.Number. Outputs: new Interval or NotImplemented.
+        # Exceptions: ValueError if y is negative (left would exceed right).
         if isinstance(y, numbers.Number):
             return Interval(self.left * y, self.right * y, closed=self.closed)
         return NotImplemented
 
     def __rmul__(self, other):
+        # [FUNCTION DOC]
+        # Reflected multiplication; same as __mul__.
+        # Inputs: other - number. Outputs: scaled Interval or NotImplemented.
         if isinstance(other, numbers.Number):
             return Interval(self.left * other, self.right * other, closed=self.closed)
         return NotImplemented
 
     def __truediv__(self, y):
+        # [FUNCTION DOC]
+        # True division of both bounds by a number.
+        # Inputs: y - number. Outputs: new Interval or NotImplemented.
+        # Exceptions: ZeroDivisionError for 0; ValueError if y negative.
         if isinstance(y, numbers.Number):
             return Interval(self.left / y, self.right / y, closed=self.closed)
         return NotImplemented
 
     def __floordiv__(self, y):
+        # [FUNCTION DOC]
+        # Floor division of both bounds by a number.
+        # Inputs: y - number. Outputs: new Interval or NotImplemented.
+        # Exceptions: ZeroDivisionError for 0; ValueError if y negative.
         if isinstance(y, numbers.Number):
             return Interval(
                 self.left // y, self.right // y, closed=self.closed)
         return NotImplemented
 
     def overlaps(self, other):
+        # [FUNCTION DOC]
+        # Test whether two Intervals share at least one point.
+        # Inputs: other - Interval.
+        # Outputs: True if self.left is before other.right and other.left is before
+        # self.right, where "before" is <= when both touching endpoints are closed and <
+        # otherwise.
+        # Exceptions: TypeError if other is not an Interval.
         """
         Check whether two Interval objects overlap.
 
@@ -631,6 +782,16 @@ cdef class Interval(IntervalMixin):
 @cython.wraparound(False)
 @cython.boundscheck(False)
 def intervals_to_interval_bounds(ndarray intervals, bint validate_closed=True):
+    # [FUNCTION DOC]
+    # Split an object array of Intervals into left and right bound arrays.
+    # Inputs: intervals - 1-D object ndarray of Interval / None / NaN; validate_closed -
+    # whether mismatched closed sides are an error.
+    # Outputs: tuple (left, right, closed): left/right are new arrays with the same
+    # dtype as intervals (NaN where the element is null); closed is the shared closed
+    # string, or None if all elements are null or (when not validating) sides differ.
+    # Exceptions: TypeError if a non-null element is not an Interval; ValueError on
+    # mismatched closed when validate_closed is true.
+    # Side effects: allocates two arrays; bounds/wraparound checks disabled.
     """
     Parameters
     ----------

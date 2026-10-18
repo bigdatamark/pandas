@@ -1,3 +1,12 @@
+# [MODULE DOC]
+# Join kernels used by pandas.core.reshape.merge and Index.join. Three families: (1)
+# factorized hash-free joins (inner_join, left_outer_join, full_outer_join) operating on
+# integer group codes in [-1, max_groups) where -1 is NA, producing pairs of row
+# indexers via counting sort; (2) merge-style joins of two sorted (monotonic increasing)
+# arrays (left_join_indexer_unique, left_join_indexer, inner_join_indexer,
+# outer_join_indexer) returning the joined values plus indexers; (3) asof joins
+# (backward, forward, nearest) optionally grouped by int64 "by" codes via an
+# Int64HashTable. Throughout, -1 in an output indexer means "no match".
 cimport cython
 from cython cimport Py_ssize_t
 import numpy as np
@@ -23,6 +32,22 @@ from pandas._libs.dtypes cimport (
 @cython.boundscheck(False)
 def inner_join(const intp_t[:] left, const intp_t[:] right,
                Py_ssize_t max_groups, bint sort=True):
+    # [FUNCTION DOC]
+    # Inner join of two arrays of group codes; returns all (left row, right row) pairs
+    # with equal non-NA codes. Algorithm: groupsort_indexer (counting sort) on both
+    # sides gives, per side, a sorter (positions ordered by group code) and counts per
+    # group, where slot 0 counts code -1 (NA) and slot g+1 counts code g. A first nogil
+    # pass computes the output size; a second nogil pass walks groups 1..max_groups
+    # emitting, in sorted space, the cartesian product of left and right members of each
+    # group (left-major), skipping the NA group; _get_result_indexer then maps sorted
+    # positions back to original positions. If sort is False the pairs are reordered to
+    # follow the original left order: when every left row appears exactly once, by
+    # inverting left_sorter; otherwise by a stable counting sort of left_indexer.
+    # Inputs: left, right - 1-D intp arrays of codes in [-1, max_groups); max_groups -
+    # number of distinct codes; sort - whether output is ordered by group code.
+    # Outputs: tuple (left_indexer, right_indexer), intp ndarrays of equal length.
+    # Exceptions: none checked (out of range codes are undefined behavior).
+    # Side effects: releases the GIL during the counting and filling loops.
     cdef:
         Py_ssize_t i, j, k, count = 0
         intp_t[::1] left_sorter, right_sorter
@@ -89,6 +114,21 @@ def inner_join(const intp_t[:] left, const intp_t[:] right,
 @cython.boundscheck(False)
 def left_outer_join(const intp_t[:] left, const intp_t[:] right,
                     Py_ssize_t max_groups, bint sort=True):
+    # [FUNCTION DOC]
+    # Left outer join of group codes: like inner_join, but every left row with a non-NA
+    # code that has no right match yields one pair (left row, -1). Left rows with NA
+    # code (-1) are dropped. Algorithm: groupsort_indexer (counting sort) on both sides
+    # gives, per side, a sorter (positions ordered by group code) and counts per group,
+    # where slot 0 counts code -1 (NA) and slot g+1 counts code g. A first nogil pass
+    # computes the output size; a second nogil pass walks groups 1..max_groups emitting,
+    # in sorted space, the cartesian product of left and right members of each group
+    # (left-major), skipping the NA group; _get_result_indexer then maps sorted
+    # positions back to original positions. If sort is False the pairs are reordered to
+    # follow the original left order: when every left row appears exactly once, by
+    # inverting left_sorter; otherwise by a stable counting sort of left_indexer.
+    # Inputs: left, right - 1-D intp codes in [-1, max_groups); max_groups - int; sort -
+    # bool. Outputs: tuple (left_indexer, right_indexer) intp ndarrays.
+    # Exceptions: none checked. Side effects: releases the GIL in the main loops.
     cdef:
         Py_ssize_t i, j, k, count = 0
         ndarray[intp_t] rev
@@ -162,6 +202,20 @@ def left_outer_join(const intp_t[:] left, const intp_t[:] right,
 @cython.boundscheck(False)
 def full_outer_join(const intp_t[:] left, const intp_t[:] right,
                     Py_ssize_t max_groups):
+    # [FUNCTION DOC]
+    # Full outer join of group codes: per group, the cartesian product when both sides
+    # have members, else (left row, -1) for left-only groups or (-1, right row) for
+    # right-only groups; NA codes are dropped. Output is ordered by group code (no sort
+    # option). Algorithm: groupsort_indexer (counting sort) on both sides gives, per
+    # side, a sorter (positions ordered by group code) and counts per group, where slot
+    # 0 counts code -1 (NA) and slot g+1 counts code g. A first nogil pass computes the
+    # output size; a second nogil pass walks groups 1..max_groups emitting, in sorted
+    # space, the cartesian product of left and right members of each group (left-major),
+    # skipping the NA group; _get_result_indexer then maps sorted positions back to
+    # original positions.
+    # Inputs: left, right - 1-D intp codes; max_groups - int.
+    # Outputs: tuple (left_indexer, right_indexer) intp ndarrays.
+    # Exceptions: none checked. Side effects: releases the GIL in the main loops.
     cdef:
         Py_ssize_t i, j, k, count = 0
         intp_t[::1] left_sorter, right_sorter
@@ -229,6 +283,12 @@ cdef void _get_result_indexer(
     const intp_t[::1] sorter,
     intp_t[::1] indexer,
 ) noexcept nogil:
+    # [FUNCTION DOC]
+    # HELPER: In place, replace each sorted-space position in indexer by
+    # sorter[position], keeping -1 as -1. If sorter is empty every entry becomes -1.
+    # Inputs: sorter - intp array mapping sorted position to original row; indexer -
+    # intp array to rewrite. Outputs: none. Exceptions: none (noexcept, nogil).
+    # Side effects: mutates indexer.
     """NOTE: overwrites indexer with the result to avoid allocating another array"""
     cdef:
         Py_ssize_t i, n, idx
@@ -251,6 +311,11 @@ cdef void _get_result_indexer(
 @cython.wraparound(False)
 @cython.boundscheck(False)
 def ffill_indexer(const intp_t[:] indexer) -> np.ndarray:
+    # [FUNCTION DOC]
+    # Forward-fill -1 entries of an indexer with the last non -1 value seen (leading -1s
+    # stay -1).
+    # Inputs: indexer - 1-D intp array. Outputs: new intp ndarray of same length.
+    # Side effects: none.
     cdef:
         Py_ssize_t i, n = len(indexer)
         ndarray[intp_t] result
@@ -284,6 +349,17 @@ def left_join_indexer_unique(
     ndarray[numeric_object_t] left,
     ndarray[numeric_object_t] right
 ):
+    # [FUNCTION DOC]
+    # For each element of sorted unique left, find the position of an equal element in
+    # sorted right (the first one when right has duplicates), or -1. Two-pointer merge:
+    # equal values record j (and consecutive equal left values reuse it, then j
+    # advances); left greater than right advances j; left smaller writes -1 and advances
+    # i; once right is exhausted remaining left get -1.
+    # Inputs: left, right - 1-D ndarrays (fused numeric or object) sorted ascending;
+    # left must be unique, right may contain duplicates (per the module comment; the
+    # docstring says both strictly increasing).
+    # Outputs: intp ndarray of length len(left).
+    # Exceptions: comparison errors for incomparable objects. Side effects: none.
     """
     Both left and right are strictly monotonic increasing.
     """
@@ -332,6 +408,20 @@ def left_join_indexer_unique(
 @cython.wraparound(False)
 @cython.boundscheck(False)
 def left_join_indexer(ndarray[numeric_object_t] left, ndarray[numeric_object_t] right):
+    # [FUNCTION DOC]
+    # Left join of two sorted arrays (many-to-one): every left element appears; matches
+    # pair with right positions, unmatched left elements get -1. The shared merge step
+    # on a match lval == rval: if not at the last left element, advance j when
+    # right[j+1] is the same value, otherwise advance i and also advance j if the new
+    # left[i] differs; if at the last left element advance j (and i if right[j] now
+    # differs); if both at their ends stop. Two passes are made: the first only counts
+    # the output size, the second fills result, lindexer, rindexer.
+    # Inputs: left, right - 1-D sorted ndarrays of the same fused numeric or object
+    # type.
+    # Outputs: tuple (result values ndarray with left's dtype, lindexer, rindexer intp).
+    # Exceptions: comparison errors for incomparable objects. Side effects: none.
+    # KNOWN ISSUE: many-to-many duplicates yield an incomplete product (see
+    # inner_join_indexer).
     """
     Two-pass algorithm for monotonic indexes. Handles many-to-one merges.
 
@@ -443,6 +533,22 @@ def left_join_indexer(ndarray[numeric_object_t] left, ndarray[numeric_object_t] 
 @cython.wraparound(False)
 @cython.boundscheck(False)
 def inner_join_indexer(ndarray[numeric_object_t] left, ndarray[numeric_object_t] right):
+    # [FUNCTION DOC]
+    # Inner join of two sorted arrays: only values present in both appear, with their
+    # left and right positions; non-matching values on either side are skipped. The
+    # shared merge step on a match lval == rval: if not at the last left element,
+    # advance j when right[j+1] is the same value, otherwise advance i and also advance
+    # j if the new left[i] differs; if at the last left element advance j (and i if
+    # right[j] now differs); if both at their ends stop. Two passes are made: the first
+    # only counts the output size, the second fills result, lindexer, rindexer.
+    # Inputs: left, right - 1-D sorted ndarrays of the same fused numeric or object
+    # type.
+    # Outputs: tuple (result values, lindexer, rindexer intp ndarrays).
+    # Exceptions: comparison errors for incomparable objects. Side effects: none.
+    # KNOWN ISSUE: with duplicates on both sides (many-to-many) the merge step does not
+    # produce the full cartesian product (e.g. [1, 1] with [1, 1] yields 3 pairs, not
+    # 4), although the docstring says inputs need not be unique; callers must ensure at
+    # most one side has duplicates of a given value.
     """
     Two-pass algorithm for monotonic indexes. Handles many-to-one merges.
 
@@ -543,6 +649,24 @@ def inner_join_indexer(ndarray[numeric_object_t] left, ndarray[numeric_object_t]
 @cython.wraparound(False)
 @cython.boundscheck(False)
 def outer_join_indexer(ndarray[numeric_object_t] left, ndarray[numeric_object_t] right):
+    # [FUNCTION DOC]
+    # Outer join of two sorted arrays: union of values in sorted order; matched values
+    # carry both positions, left-only values have rindexer -1, right-only values have
+    # lindexer -1. Empty-side shortcuts copy the other side. The shared merge step on a
+    # match lval == rval: if not at the last left element, advance j when right[j+1] is
+    # the same value, otherwise advance i and also advance j if the new left[i] differs;
+    # if at the last left element advance j (and i if right[j] now differs); if both at
+    # their ends stop. Two passes are made: the first only counts the output size, the
+    # second fills result, lindexer, rindexer.
+    # Inputs: left, right - 1-D sorted ndarrays of the same fused numeric or object
+    # type.
+    # Outputs: tuple (result values with left's dtype, lindexer, rindexer intp
+    # ndarrays).
+    # Exceptions: comparison errors for incomparable objects. Side effects: none.
+    # KNOWN ISSUE: with duplicates on both sides (many-to-many) the merge step does not
+    # produce the full cartesian product (e.g. [1, 1] with [1, 1] yields 3 pairs, not
+    # 4), although the docstring says inputs need not be unique; callers must ensure at
+    # most one side has duplicates of a given value.
     """
     Both left and right are monotonic increasing but not necessarily unique.
     """
@@ -692,6 +816,23 @@ def asof_join_backward_on_X_by_Y(const numeric_t[:] left_values,
                                  tolerance=None,
                                  bint use_hashtable=True):
 
+    # [FUNCTION DOC]
+    # Backward asof join: for each left row, the last right row whose key is <= (or < if
+    # not allow_exact_matches) the left key, restricted to rows with the same by-value
+    # when use_hashtable. Single forward sweep: right_pos advances while the right key
+    # qualifies, inserting by-value -> right_pos into a hash table (so the table holds
+    # the latest qualifying row per by-value); the match is the table lookup (or
+    # right_pos - 1 without hashtable, -1 if none). If tolerance is given and the left
+    # minus right key exceeds it, the match becomes -1.
+    # Inputs: left_values, right_values - 1-D sorted (ascending) numeric memoryviews
+    # (fused numeric_t, same type) of the "on" keys; left_by_values, right_by_values -
+    # int64 codes of the "by" keys; allow_exact_matches - whether equal keys count as
+    # matches; tolerance - optional scalar maximum distance; use_hashtable - if False,
+    # ignore the by-values (plain asof join).
+    # Outputs: tuple (left_indexer = arange(len(left)), right_indexer with -1 for no
+    # match), intp ndarrays.
+    # Exceptions: TypeError/OverflowError if tolerance cannot convert to numeric_t.
+    # Side effects: allocates a hash table.
     cdef:
         Py_ssize_t left_pos, right_pos, left_size, right_size, found_right_pos
         ndarray[intp_t] left_indexer, right_indexer
@@ -763,6 +904,18 @@ def asof_join_forward_on_X_by_Y(const numeric_t[:] left_values,
                                 tolerance=None,
                                 bint use_hashtable=True):
 
+    # [FUNCTION DOC]
+    # Forward asof join: mirror of the backward version, sweeping left rows from last to
+    # first and right_pos downward; the match is the first right row whose key is >= (or
+    # > if not allow_exact_matches) the left key, per by-value when use_hashtable.
+    # Tolerance rejects matches where right minus left exceeds it.
+    # Inputs: left_values, right_values - 1-D sorted (ascending) numeric memoryviews
+    # (fused numeric_t, same type) of the "on" keys; left_by_values, right_by_values -
+    # int64 codes of the "by" keys; allow_exact_matches - whether equal keys count as
+    # matches; tolerance - optional scalar maximum distance; use_hashtable - if False,
+    # ignore the by-values (plain asof join).
+    # Outputs: tuple (left_indexer, right_indexer) intp ndarrays, -1 for no match.
+    # Exceptions: as for the backward version. Side effects: allocates a hash table.
     cdef:
         Py_ssize_t left_pos, right_pos, left_size, right_size, found_right_pos
         ndarray[intp_t] left_indexer, right_indexer
@@ -835,6 +988,17 @@ def asof_join_nearest_on_X_by_Y(const numeric_t[:] left_values,
                                 tolerance=None,
                                 bint use_hashtable=True):
 
+    # [FUNCTION DOC]
+    # Nearest asof join: runs the backward and forward joins (with the same tolerance),
+    # then for each left row picks the candidate with the smaller key distance,
+    # preferring backward on ties; if only one exists it is used, else -1.
+    # Inputs: left_values, right_values - 1-D sorted (ascending) numeric memoryviews
+    # (fused numeric_t, same type) of the "on" keys; left_by_values, right_by_values -
+    # int64 codes of the "by" keys; allow_exact_matches - whether equal keys count as
+    # matches; tolerance - optional scalar maximum distance; use_hashtable - if False,
+    # ignore the by-values (plain asof join).
+    # Outputs: tuple (left_indexer, right_indexer) intp ndarrays.
+    # Exceptions: as for the backward version. Side effects: none beyond allocation.
     cdef:
         ndarray[intp_t] bli, bri, fli, fri
 

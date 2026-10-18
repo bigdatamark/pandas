@@ -1,3 +1,10 @@
+# [MODULE DOC]
+# Tempita template (rendered to algos_common_helper.pxi and included into algos.pyx)
+#   generating the ensure_<dtype> family: cheap conversions of arbitrary inputs to
+#   ndarrays of a specific dtype, returning the input unchanged when it already has that
+#   dtype. Generated for float64, int8, int16, int32, int64 and uint64 (float32, small
+#   unsigned and complex are disabled to reduce wheel size), plus the hand-written
+#   ensure_platform_int and ensure_object. Do not edit the generated .pxi.
 """
 Template for each `dtype` helper function using 1-d template
 
@@ -10,6 +17,15 @@ WARNING: DO NOT edit .pxi FILE directly, .pxi is generated from .pxi.in
 
 
 def ensure_platform_int(object arr):
+    # [FUNCTION DOC]
+    # Return arr as an ndarray of the platform pointer-sized integer (np.intp).
+    # Inputs: arr - any object; ndarrays are checked by numpy type number.
+    # Outputs: arr itself if it is already an intp ndarray; otherwise a newly cast intp
+    #   ndarray (C-level cast, may wrap/truncate like astype); non-arrays are converted
+    #   with np.array(arr, dtype=intp) (always copies).
+    # Exceptions: whatever numpy raises for unconvertible input (TypeError / ValueError
+    #   / OverflowError).
+    # Side effects: allocation when a conversion is needed.
     # GH3033, GH1392
     # platform int is the size of the int pointer, e.g. np.intp
     if util.is_array(arr):
@@ -23,6 +39,13 @@ def ensure_platform_int(object arr):
 
 
 def ensure_object(object arr):
+    # [FUNCTION DOC]
+    # Return arr as an object-dtype ndarray.
+    # Inputs: arr - any object.
+    # Outputs: arr itself if already an object ndarray; otherwise a cast copy for
+    #   ndarrays, or np.array(arr, dtype=object) for other inputs.
+    # Exceptions: those raised by numpy conversion.
+    # Side effects: allocation when converting.
     if util.is_array(arr):
         if (<ndarray>arr).descr.type_num == NPY_OBJECT:
             return arr
@@ -61,6 +84,16 @@ def get_dispatch(dtypes):
 
 
 def ensure_{{name}}(object arr):
+    # [FUNCTION DOC]
+    # Template ensure_<name> for name in float64, int8, int16, int32, int64, uint64
+    #   (c_type is the upper-case NPY type code, dtype the numpy dtype name). Return arr
+    #   as an ndarray of that dtype.
+    # Inputs: arr - any object.
+    # Outputs: arr itself if it is an ndarray whose numpy type number already matches;
+    #   otherwise a cast copy for ndarrays (unsafe C-level cast, like astype), or
+    #   np.asarray(arr, dtype) for non-arrays (no copy when possible).
+    # Exceptions: those raised by numpy conversion (e.g. ValueError for strings).
+    # Side effects: allocation when converting.
     if util.is_array(arr):
         if (<ndarray>arr).descr.type_num == NPY_{{c_type}}:
             return arr

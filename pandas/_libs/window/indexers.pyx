@@ -1,3 +1,10 @@
+# [MODULE DOC]
+# Cython kernel that computes per-row [start, end) slice bounds for variable
+#   (time-offset based) rolling windows over a monotonic int64 index. Used by
+#   pandas.core.indexers.objects.VariableWindowIndexer; the resulting start/end arrays
+#   are consumed by the aggregation kernels in aggregations.pyx.
+# Compiled with boundscheck/wraparound off and C division semantics, so callers must
+#   pass a valid, monotonic index of the stated length.
 # cython: boundscheck=False, wraparound=False, cdivision=True
 
 import numpy as np
@@ -18,6 +25,33 @@ def calculate_variable_window_bounds(
     str closed,
     const int64_t[:] index
 ):
+    # [FUNCTION DOC]
+    # Compute, for each row i, the half-open slice [start[i], end[i]) of positions whose
+    #   index values fall in the window ending (or centered) at index[i].
+    # Inputs: num_values - number of rows (length of index); window_size - window length
+    #   in index units (e.g. nanoseconds); min_periods - unused, kept for signature
+    #   compatibility; center - if true the window spans window_size/2 on each side of
+    #   index[i]; closed - 'right' (default when None), 'left', 'both' or 'neither',
+    #   selecting which window endpoints are inclusive; index - 1-D int64 array,
+    #   monotonically increasing or decreasing (direction detected by comparing first
+    #   and last element).
+    # Algorithm: closed flags are derived from 'closed'; if center and window_size is
+    #   odd both ends are forced closed (GH 43997). A growth sign of +1/-1 is used so
+    #   comparisons work for decreasing indexes. Row 0 starts at 0 and ends at 1 if
+    #   right closed (else 0); when centered end[0] is found by a linear scan. For each
+    #   later row, start_bound = index[i] - sign*window (or - sign*window/2 when
+    #   centered), shifted by one unit when left closed; start[i] is the first j in
+    #   [start[i-1], i) with (index[j]-start_bound)*sign > 0, else i. end[i] is found by
+    #   scanning forward from end[i-1] when centered, otherwise it is i+1 (or end[i-1]+1
+    #   / end[i-1] for duplicate index values); when not right closed and not centered,
+    #   end[i] is decremented by one.
+    # Outputs: tuple (start, end) of int64 ndarrays of length num_values; two empty
+    #   int64 arrays when num_values <= 0.
+    # Exceptions: none raised explicitly; out-of-bounds access is unchecked.
+    # Side effects: allocates two arrays; releases the GIL for the main loop.
+    # Note: window_size / 2 is computed in floating point and truncated back to
+    #   int64 on assignment, so odd window sizes give a half-width rounded toward
+    #   zero; this is why both ends are forced closed in that case.
     """
     Calculate window boundaries for rolling windows from a time offset.
 
