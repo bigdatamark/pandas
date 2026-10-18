@@ -1,3 +1,15 @@
+# [MODULE DOC]
+# Exponentially weighted (EW) window calculations for Series and DataFrame.
+# Public contents: ExponentialMovingWindow (the object returned by the ewm method,
+# with mean, sum, std, var, cov, corr and aggregate), ExponentialMovingWindowGroupby
+# (the groupby variant) and OnlineExponentialMovingWindow (stateful incremental mean
+# computation, numba only). Helper functions: get_center_of_mass (normalizes the four
+# decay specifications to a center of mass) and a private function computing scaled
+# time deltas.
+# Relationships: subclasses the base window classes in the rolling module; uses the
+# compiled window aggregation kernels, numba kernel generators from the window numba
+# module, the online state class, the EW window indexers and the numba utilities.
+# No import-time side effects.
 from __future__ import annotations
 
 import datetime
@@ -66,6 +78,17 @@ def get_center_of_mass(
     halflife: float | None,
     alpha: float | None,
 ) -> float:
+    # [FUNCTION DOC]
+    # Convert exactly one of the four EW decay specifications into a center of mass.
+    # Inputs: comass, span, halflife (numeric, in observations) and alpha, each
+    # optional (None means not given).
+    # Raises a value error if more than one is given, if none is given, or if the one
+    # given violates its domain (center of mass at least 0; span at least 1; halflife
+    # strictly positive; alpha strictly greater than 0 and at most 1).
+    # Conversions: from span, (span - 1) / 2; from halflife, the decay is one minus
+    # exp(ln(0.5) / halflife) and the center of mass is the reciprocal of the decay
+    # minus one; from alpha, (1 - alpha) / alpha; a given center of mass is returned
+    # unchanged. Returns a Python float.
     valid_count = common.count_not_none(comass, span, halflife, alpha)
     if valid_count > 1:
         raise ValueError("comass, span, halflife, and alpha are mutually exclusive")
@@ -97,8 +120,17 @@ def _calculate_deltas(
     times: np.ndarray | NDFrame,
     halflife: float | TimedeltaConvertibleTypes | None,
 ) -> npt.NDArray[np.float64]:
-    """
-    Return the diff of the times divided by the half-life. These values are used in
+    # [FUNCTION DOC]
+    # HELPER: ExponentialMovingWindow (time-based decay). Computes the spacing between
+    # consecutive observation times in units of the half-life.
+    # Inputs: times, a datetime-like array or Series (a Series is unwrapped to its
+    # underlying values); halflife, anything convertible to a Timedelta. The
+    # half-life is converted to the resolution of the times' dtype, and the integer
+    # representation of the times is cast to float.
+    # Returns a float64 array of length one less than times (the consecutive
+    # differences divided by the half-life as a number). No monotonicity validation
+    # is done here.
+    unit = dtype_to_unit(times.dtype) divided by the half-life. These values are used in
     the calculation of the ewm mean.
 
     Parameters
@@ -125,6 +157,17 @@ def _calculate_deltas(
 
 @set_module("pandas.api.typing")
 class ExponentialMovingWindow(BaseWindow):
+    # [CLASS DOC]
+    # Window object for exponentially weighted calculations, created by the ewm method
+    # of Series and DataFrame. Subclass of the base window class, with fixed settings:
+    # no centering, no closed-side choice and no step.
+    # State: the decay arguments as given (com, span, halflife, alpha), adjust,
+    # ignore_na, times, plus derived private state: the normalized center of mass and
+    # an array of scaled time deltas (all ones, one fewer than the number of rows, when
+    # no times are given). The minimum periods is stored as at least 1.
+    # Key methods: mean and sum (cython or numba engines), var, std, cov, corr,
+    # aggregate (alias agg) and online (create the stateful online variant).
+    # Invariants: validity of the decay arguments and times is checked at construction.
     r"""
     Provide exponentially weighted (EW) calculations.
 
@@ -336,6 +379,24 @@ class ExponentialMovingWindow(BaseWindow):
         *,
         selection=None,
     ) -> None:
+        # [FUNCTION DOC]
+        # Construct the EW window and validate its arguments.
+        # Inputs: obj (Series or DataFrame); com, span, halflife, alpha (decay
+        # specification, see the class docs and the center-of-mass helper); min_periods
+        # (default 0; None or any value below one is stored as one); adjust (default
+        # true); ignore_na (default false); times (optional datetime64 array or Series
+        # aligned with the rows); method ("single" or "table"); selection (keyword-only,
+        # the selected columns for groupby selections).
+        # With times given: raises a value error if the dtype is not datetime64 (naive
+        # or timezone-aware), if the length differs from obj, if halflife is not a
+        # string, timedelta or numpy timedelta, or if times contain missing values;
+        # computes the scaled deltas; if any of com, span or alpha is also given it
+        # raises a not-implemented error when adjust is false, otherwise normalizes them
+        # (ignoring halflife) to the center of mass; if none is given the center of mass
+        # is 1.
+        # Without times: raises a value error if halflife is a timedelta-like; the
+        # deltas are all ones; the center of mass is computed from exactly one of the
+        # four decay arguments (errors from that helper propagate).
         super().__init__(
             obj=obj,
             min_periods=1 if min_periods is None else max(int(min_periods), 1),
@@ -400,11 +461,19 @@ class ExponentialMovingWindow(BaseWindow):
     def _check_window_bounds(
         self, start: np.ndarray, end: np.ndarray, num_vals: int
     ) -> None:
+        # [FUNCTION DOC]
+        # Override of the base window-bounds validation that intentionally does nothing.
+        # Inputs (start, end, num_vals) are ignored. The EW algorithms iterate over
+        # every point and their indexer's bounds always cover the whole series, so no
+        # check applies. Returns nothing; no exceptions or side effects.
         # emw algorithms are iterative with each point
         # ExponentialMovingWindowIndexer "bounds" are the entire window
         pass
 
     def _get_window_indexer(self) -> BaseIndexer:
+        # [FUNCTION DOC]
+        # HELPER: window computation. Returns a new EW window indexer whose bounds
+        # cover the entire series for every point. Takes no inputs besides self.
         """
         Return an indexer class that will compute the window start and end bounds
         """
@@ -413,6 +482,14 @@ class ExponentialMovingWindow(BaseWindow):
     def online(
         self, engine: str = "numba", engine_kwargs=None
     ) -> OnlineExponentialMovingWindow:
+        # [FUNCTION DOC]
+        # Create a stateful online EW window from this object's settings.
+        # Inputs: engine (default "numba"; only numba is supported) and engine_kwargs
+        # (optional mapping of numba jit options). Returns a new online EW window
+        # constructed from the same object, decay arguments, min_periods, adjust,
+        # ignore_na, times and column selection. Errors (such as a not-implemented error
+        # when times is set, or a value error for an unsupported engine) come from the
+        # online class constructor.
         """
         Return an ``OnlineExponentialMovingWindow`` object to calculate
         exponentially moving window aggregations in an online method.
@@ -452,6 +529,12 @@ class ExponentialMovingWindow(BaseWindow):
         )
 
     def aggregate(self, func=None, *args, **kwargs):
+        # [FUNCTION DOC]
+        # Aggregate using one or more functions; a thin pass-through to the base
+        # window class. Inputs: func (function, name, list or mapping), plus extra
+        # positional and keyword arguments forwarded to it. Returns whatever the base
+        # implementation returns (scalar, Series or DataFrame). The agg alias is bound
+        # to this method.
         """
         Aggregate using one or more operations over the specified axis.
 
@@ -531,6 +614,18 @@ class ExponentialMovingWindow(BaseWindow):
         engine=None,
         engine_kwargs=None,
     ):
+        # [FUNCTION DOC]
+        # Compute the exponentially weighted mean (weights normalized).
+        # Inputs: numeric_only (default false); engine (None, "cython" or "numba";
+        # None uses numba only if the global numba option is on); engine_kwargs (numba
+        # jit options; must be None for cython).
+        # Numba path: uses the single-column or table kernel according to the method
+        # setting, passing the center of mass, adjust, ignore_na and the deltas as a
+        # tuple. Cython path: raises a value error if engine_kwargs is given, then uses
+        # the compiled kernel, passing deltas only when times were given. Any other
+        # engine raises a value error. Returns a Series or DataFrame of float64.
+        # KNOWN ISSUE: the numba path does not pass numeric_only on to the apply step,
+        # so that argument is silently ignored with the numba engine.
         """
         Calculate the ewm (exponential weighted moment) mean.
 
@@ -616,6 +711,13 @@ class ExponentialMovingWindow(BaseWindow):
         engine=None,
         engine_kwargs=None,
     ):
+        # [FUNCTION DOC]
+        # Compute the exponentially weighted sum (weights not normalized).
+        # Same inputs and engine handling as the mean method, except that it first
+        # raises a not-implemented error if adjust is false or if times were given.
+        # Returns a Series or DataFrame of float64.
+        # KNOWN ISSUE: as in the mean method, the numba path does not forward
+        # numeric_only, so it is ignored with that engine.
         """
         Calculate the ewm (exponential weighted moment) sum.
 
@@ -698,6 +800,13 @@ class ExponentialMovingWindow(BaseWindow):
             raise ValueError("engine must be either 'numba' or 'cython'")
 
     def std(self, bias: bool = False, numeric_only: bool = False):
+        # [FUNCTION DOC]
+        # Compute the EW standard deviation as the square root of the EW variance.
+        # Inputs: bias (default false; use the biased estimator when true);
+        # numeric_only (default false). Raises a not-implemented error when
+        # numeric_only is set and the selected object is a non-numeric Series (so the
+        # message names std rather than var), and when times were given. Negative
+        # variances are clipped to zero before the square root. Returns float64 data.
         """
         Calculate the ewm (exponential weighted moment) standard deviation.
 
@@ -744,6 +853,10 @@ class ExponentialMovingWindow(BaseWindow):
         return zsqrt(self.var(bias=bias, numeric_only=numeric_only))
 
     def var(self, bias: bool = False, numeric_only: bool = False):
+        # [FUNCTION DOC]
+        # Compute the EW variance as the EW covariance of each column with itself.
+        # Inputs: bias (default false); numeric_only (default false). Raises a
+        # not-implemented error when times were given. Returns float64 data.
         """
         Calculate the ewm (exponential weighted moment) variance.
 
@@ -788,6 +901,10 @@ class ExponentialMovingWindow(BaseWindow):
         )
 
         def var_func(values, begin, end, min_periods):
+            # [FUNCTION DOC]
+            # HELPER: var. Kernel adapter: calls the partially bound covariance kernel
+            # with the same array as both operands. Inputs: values, window start and
+            # end bound arrays, and the minimum periods; returns the kernel's output.
             return wfunc(values, begin, end, min_periods, values)
 
         return self._apply(var_func, name="var", numeric_only=numeric_only)
@@ -799,6 +916,18 @@ class ExponentialMovingWindow(BaseWindow):
         bias: bool = False,
         numeric_only: bool = False,
     ):
+        # [FUNCTION DOC]
+        # Compute the EW sample covariance with another object (or pairwise with itself).
+        # Inputs: other (Series or DataFrame; default none meaning itself); pairwise
+        # (default none; whether to compute all column pairs); bias (default false);
+        # numeric_only (default false). Raises a not-implemented error when times were
+        # given, and validates numeric_only. Computation is delegated to the base
+        # pairwise machinery with a per-pair function that converts both inputs to
+        # float arrays, obtains window bounds from the indexer and calls the compiled
+        # covariance kernel, returning a float Series. Returns a Series or DataFrame.
+        # KNOWN ISSUE: inside the per-pair function a local minimum-periods value is
+        # computed (falling back to the indexer window size) and used for the bounds,
+        # but the kernel is called with the stored minimum periods attribute instead.
         """
         Calculate the ewm (exponential weighted moment) sample covariance.
 
@@ -850,6 +979,10 @@ class ExponentialMovingWindow(BaseWindow):
         self._validate_numeric_only("cov", numeric_only)
 
         def cov_func(x, y):
+            # [FUNCTION DOC]
+            # HELPER: cov. Per-pair covariance. Inputs: x and y, two aligned Series.
+            # Returns a float Series with the EW covariance (bias setting from the
+            # enclosing call), indexed and named like x.
             x_array = self._prep_values(x)
             y_array = self._prep_values(y)
             window_indexer = self._get_window_indexer()
@@ -890,6 +1023,15 @@ class ExponentialMovingWindow(BaseWindow):
         pairwise: bool | None = None,
         numeric_only: bool = False,
     ):
+        # [FUNCTION DOC]
+        # Compute the EW sample correlation with another object (or pairwise with
+        # itself).
+        # Inputs: other (Series or DataFrame; default none meaning itself); pairwise
+        # (default none); numeric_only (default false). Raises a not-implemented error
+        # when times were given, and validates numeric_only. For each pair, the
+        # covariance of the pair divided by the square root of the product of the two
+        # variances is computed using the biased covariance kernel (errors suppressed,
+        # negative products clipped to zero). Returns a Series or DataFrame of float64.
         """
         Calculate the ewm (exponential weighted moment) sample correlation.
 
@@ -939,6 +1081,10 @@ class ExponentialMovingWindow(BaseWindow):
         self._validate_numeric_only("corr", numeric_only)
 
         def cov_func(x, y):
+            # [FUNCTION DOC]
+            # HELPER: corr. Per-pair correlation (despite the name, it returns a
+            # correlation). Inputs: x and y, two aligned Series. Returns a float Series
+            # indexed and named like x.
             x_array = self._prep_values(x)
             y_array = self._prep_values(y)
             window_indexer = self._get_window_indexer()
@@ -956,6 +1102,9 @@ class ExponentialMovingWindow(BaseWindow):
             )
 
             def _cov(X, Y):
+                # [FUNCTION DOC]
+                # HELPER: corr. Biased EW covariance of two float arrays over the
+                # precomputed window bounds; returns a float array.
                 return window_aggregations.ewmcov(
                     X,
                     start,
@@ -982,6 +1131,12 @@ class ExponentialMovingWindow(BaseWindow):
 
 @set_module("pandas.api.typing")
 class ExponentialMovingWindowGroupby(BaseWindowGroupby, ExponentialMovingWindow):
+    # [CLASS DOC]
+    # EW window applied within each group of a groupby. Inherits from the groupby base
+    # window class and the EW window class (groupby behavior first). Its attribute list
+    # is the union of both parents' lists. Adds no new public methods: the parents
+    # supply the calculations and this class supplies the grouped indexer and
+    # group-ordered deltas.
     """
     Provide an exponential moving window groupby implementation.
     """
@@ -989,6 +1144,13 @@ class ExponentialMovingWindowGroupby(BaseWindowGroupby, ExponentialMovingWindow)
     _attributes = ExponentialMovingWindow._attributes + BaseWindowGroupby._attributes
 
     def __init__(self, obj, *args, _grouper=None, **kwargs) -> None:
+        # [FUNCTION DOC]
+        # Construct the grouped EW window. Inputs: obj (the object to window), extra
+        # positional and keyword arguments passed through to the parents, and _grouper
+        # (keyword-only, the groupby grouper). If obj is not empty and times were given,
+        # the times are reordered into group order (all group row positions
+        # concatenated) and the scaled deltas are recomputed from the reordered times,
+        # replacing those set by the parent constructor.
         super().__init__(obj, *args, _grouper=_grouper, **kwargs)
 
         if not obj.empty and self.times is not None:
@@ -1000,6 +1162,10 @@ class ExponentialMovingWindowGroupby(BaseWindowGroupby, ExponentialMovingWindow)
             )
 
     def _get_window_indexer(self) -> GroupbyIndexer:
+        # [FUNCTION DOC]
+        # HELPER: window computation. Returns a new grouped indexer built from the
+        # group row positions of the grouper, wrapping the EW indexer class for use
+        # within each group.
         """
         Return an indexer class that will compute the window start and end bounds
 
@@ -1015,6 +1181,15 @@ class ExponentialMovingWindowGroupby(BaseWindowGroupby, ExponentialMovingWindow)
 
 
 class OnlineExponentialMovingWindow(ExponentialMovingWindow):
+    # [CLASS DOC]
+    # Stateful EW window supporting incremental mean computation, created by the online
+    # method of the EW window. Subclass of the EW window class, supporting only the
+    # numba engine and no times.
+    # State: the engine name and engine keyword arguments, and a private mean-state
+    # object (holding the last EW values and weights) that persists between mean calls.
+    # Public behavior: mean (initial computation, or continuation with an update) and
+    # reset (clear the state). The aggregate, std, corr, cov and var methods are
+    # overridden to raise a not-implemented error.
     def __init__(
         self,
         obj: NDFrame,
@@ -1031,6 +1206,14 @@ class OnlineExponentialMovingWindow(ExponentialMovingWindow):
         *,
         selection=None,
     ) -> None:
+        # [FUNCTION DOC]
+        # Construct the online EW window. Inputs are as for the parent constructor,
+        # except there is no method argument, plus engine (default "numba") and
+        # engine_kwargs (optional numba jit options).
+        # Raises a not-implemented error if times is given. After parent construction it
+        # creates the mean-state object from the center of mass, adjust, ignore_na and
+        # the object shape. It raises a value error unless the numba engine is selected
+        # (explicitly, or by default through the global numba option).
         if times is not None:
             raise NotImplementedError(
                 "times is not implemented with online operations."
@@ -1055,15 +1238,25 @@ class OnlineExponentialMovingWindow(ExponentialMovingWindow):
             raise ValueError("'numba' is the only supported engine")
 
     def reset(self) -> None:
+        # [FUNCTION DOC]
+        # Clear the stored online state (last EW values and weights) so the next mean
+        # call starts afresh. Takes no inputs, returns nothing; mutates the private
+        # mean-state object.
         """
         Reset the state captured by `update` calls.
         """
         self._mean.reset()
 
     def aggregate(self, func=None, *args, **kwargs):
+        # [FUNCTION DOC]
+        # Unsupported override: always raises a not-implemented error; all arguments
+        # are ignored.
         raise NotImplementedError("aggregate is not implemented.")
 
     def std(self, bias: bool = False, *args, **kwargs):
+        # [FUNCTION DOC]
+        # Unsupported override: always raises a not-implemented error; all arguments
+        # are ignored.
         raise NotImplementedError("std is not implemented.")
 
     def corr(
@@ -1072,6 +1265,9 @@ class OnlineExponentialMovingWindow(ExponentialMovingWindow):
         pairwise: bool | None = None,
         numeric_only: bool = False,
     ):
+        # [FUNCTION DOC]
+        # Unsupported override: always raises a not-implemented error; all arguments
+        # are ignored.
         raise NotImplementedError("corr is not implemented.")
 
     def cov(
@@ -1081,12 +1277,33 @@ class OnlineExponentialMovingWindow(ExponentialMovingWindow):
         bias: bool = False,
         numeric_only: bool = False,
     ):
+        # [FUNCTION DOC]
+        # Unsupported override: always raises a not-implemented error; all arguments
+        # are ignored.
         raise NotImplementedError("cov is not implemented.")
 
     def var(self, bias: bool = False, numeric_only: bool = False):
+        # [FUNCTION DOC]
+        # Unsupported override: always raises a not-implemented error; all arguments
+        # are ignored.
         raise NotImplementedError("var is not implemented.")
 
     def mean(self, *args, update=None, update_times=None, **kwargs):
+        # [FUNCTION DOC]
+        # Compute the online EW mean, optionally continuing from saved state.
+        # Inputs: extra positional and keyword arguments (accepted and ignored);
+        # update (keyword-only, optional Series or DataFrame of new float values to
+        # append to the previous state; must be none on the first call); update_times
+        # (unsupported; any non-none value raises a not-implemented error).
+        # Raises a value error if update is given before any initial mean call has
+        # stored state. Without update, the whole selected object is cast to float64 and
+        # the state is initialized from it; with update, the last stored EW value is
+        # prepended as a seed row and only the rows from the update are returned. The
+        # kernel is built from the stored engine options, deltas are all ones, and the
+        # minimum periods setting applies. Side effect: the internal mean state is
+        # advanced by the call. Returns a Series or DataFrame (same kind as the
+        # selected object) indexed like the update (or the original object) and with
+        # matching column or series names.
         """
         Calculate an online exponentially weighted mean.
 

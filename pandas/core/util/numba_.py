@@ -1,4 +1,15 @@
 """Common utilities for Numba operations"""
+# [MODULE DOC]
+# HELPER module: shared utilities for the numba engine used by window, groupby and
+# apply code paths.
+# Contents: a module-level global switch (default false) recording whether numba is
+# enabled by default; functions to decide whether to use numba, to set the global
+# switch, to normalize jit options, to mark a user function as jit-compilable, and
+# to move keyword arguments into positional ones for jitted calls; and a private
+# sentinel object.
+# Relationships: depends on the optional-dependency importer (numba is imported
+# lazily, only when needed) and on the pandas numba error class.
+# Import-time side effects: none (numba is not imported at import time).
 
 from __future__ import annotations
 
@@ -18,11 +29,22 @@ GLOBAL_USE_NUMBA: bool = False
 
 
 def maybe_use_numba(engine: str | None) -> bool:
+    # [FUNCTION DOC]
+    # Decide whether numba routines should be used.
+    # Input: engine, a string or None. Returns true when engine is the string "numba",
+    # or when engine is None and the global numba switch is enabled; otherwise false.
+    # No side effects.
     """Signal whether to use numba routines."""
     return engine == "numba" or (engine is None and GLOBAL_USE_NUMBA)
 
 
 def set_use_numba(enable: bool = False) -> None:
+    # [FUNCTION DOC]
+    # Set the global default for using numba (the module-level switch).
+    # Input: enable (default false). When true, the optional numba dependency is
+    # imported first, so an import error is raised from the optional-dependency
+    # importer if numba is not installed, and the switch is left unchanged in that
+    # case. Side effect: mutates the module-level switch. Returns nothing.
     global GLOBAL_USE_NUMBA
     if enable:
         import_optional_dependency("numba")
@@ -30,6 +52,15 @@ def set_use_numba(enable: bool = False) -> None:
 
 
 def get_jit_arguments(engine_kwargs: dict[str, bool] | None = None) -> dict[str, bool]:
+    # [FUNCTION DOC]
+    # Build the numba jit options from user-supplied engine keyword arguments.
+    # Input: engine_kwargs, a mapping or None (default, treated as empty).
+    # Returns a new mapping with exactly three boolean entries: nopython (default
+    # true), nogil (default false) and parallel (default false), taking the user's
+    # value for each when present. Other keys in the input are ignored. The input is
+    # not mutated.
+    # KNOWN ISSUE: the docstring says this function raises the numba utility error,
+    # but nothing in the body raises it (unknown keys are silently ignored).
     """
     Return arguments to pass to numba.JIT, falling back on pandas default JIT settings.
 
@@ -57,6 +88,13 @@ def get_jit_arguments(engine_kwargs: dict[str, bool] | None = None) -> dict[str,
 
 
 def jit_user_function(func: Callable) -> Callable:
+    # [FUNCTION DOC]
+    # Make a user function usable from numba-compiled code.
+    # Input: func, a callable. Imports numba lazily (import error if it is missing).
+    # Returns func unchanged if it is already numba-jitted, or if it is the numpy
+    # attribute of the same name as the function or a builtin function (registering
+    # those would break registration); otherwise returns the result of registering
+    # func as jit-able with numba. The input function is not mutated by pandas.
     """
     If user function is not jitted already, mark the user's function
     as jitable.
@@ -97,6 +135,21 @@ _sentinel = object()
 def prepare_function_arguments(
     func: Callable, args: tuple, kwargs: dict, *, num_required_args: int
 ) -> tuple[tuple, dict]:
+    # [FUNCTION DOC]
+    # Move keyword arguments into positional ones, because numba functions cannot
+    # take keyword arguments.
+    # Inputs: func, the user function; args, the user's positional arguments; kwargs,
+    # the user's keyword arguments; num_required_args (keyword-only), the count of
+    # leading positional parameters of func that pandas itself supplies (for example
+    # two for groupby kernels taking values and index).
+    # Returns a pair (args, kwargs). If kwargs is empty both inputs are returned
+    # untouched. Otherwise the function signature is bound using placeholder objects
+    # for the required leading arguments plus the user's args and kwargs, defaults
+    # are applied, and the resulting positional arguments (with the leading
+    # placeholders dropped) and the leftover keyword arguments are returned.
+    # Raises the numba utility error if keyword arguments remain after binding
+    # (keyword-only parameters); signature binding itself may raise a type error if
+    # the arguments do not fit the signature.
     """
     Prepare arguments for jitted function. As numba functions do not support kwargs,
     we try to move kwargs into args if possible.

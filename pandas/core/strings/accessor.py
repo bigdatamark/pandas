@@ -1,3 +1,18 @@
+# [MODULE DOC]
+# The string accessor: the object behind the str namespace of Series and Index.
+# Public contents: StringMethods (the accessor class with one method per vectorized
+# string operation, plus the decorator-based type checks) and forbid_nonstring_types (a
+# decorator factory restricting a method to certain inferred data kinds). Module-level
+# helpers: cat_safe and cat_core (element-wise concatenation of columns), str_extractall
+# (the implementation of extracting all matches), and private helpers for choosing
+# result dtypes and extracting regex group names. Two module-level tuples list the
+# encodings that CPython optimizes for encoding and decoding.
+# Relationships: most methods validate their arguments, dispatch to a private "_str_"
+# method on the underlying array (implemented for object arrays in the object-array
+# mixin and overridden by string/arrow/categorical arrays), and wrap the result back
+# into a Series, Index or DataFrame through the accessor's result-wrapping method.
+# Concatenation and extracting all matches are not dispatched to the array.
+# No import-time side effects.
 from __future__ import annotations
 
 import codecs
@@ -81,6 +96,18 @@ _cpython_optimized_decoders = (*_cpython_optimized_encoders, "utf-16", "utf-32")
 def forbid_nonstring_types(
     forbidden: list[str] | None, name: str | None = None
 ) -> Callable[[F], F]:
+    # [FUNCTION DOC]
+    # Create a decorator that rejects accessor methods being called on data of certain
+    # inferred kinds.
+    # Inputs: forbidden, a list of kind names to reject (any of "bytes", "mixed",
+    # "mixed-integer"; none means nothing extra is forbidden); name, the method name to
+    # show in the error message (default: the wrapped function's own name).
+    # The set of allowed kinds is the five kinds the accessor constructor admits (string,
+    # empty, bytes, mixed, mixed-integer) minus the forbidden ones. The returned
+    # decorator wraps a method so that, when the accessor's inferred data kind is not
+    # allowed, it raises a type error naming the method and the inferred kind; otherwise
+    # it calls the method. The wrapper preserves the wrapped function's metadata and its
+    # name is set to the displayed name.
     """
     Decorator to forbid specific types for a method of StringMethods.
 
@@ -129,10 +156,19 @@ def forbid_nonstring_types(
     )
 
     def _forbid_nonstring_types(func: F) -> F:
+        # [FUNCTION DOC]
+        # HELPER: forbid_nonstring_types. The actual decorator. Input: func, the method to
+        # wrap. Returns the wrapped method (see the wrapper below), whose name is the
+        # explicit name or the original function name.
         func_name = func.__name__ if name is None else name
 
         @wraps(func)
         def wrapper(self, *args, **kwargs):
+            # [FUNCTION DOC]
+            # HELPER: forbid_nonstring_types. Checks the accessor's inferred data kind
+            # against the allowed kinds; raises a type error if it is not allowed,
+            # otherwise returns the result of the wrapped method called with the same
+            # arguments.
             if self._inferred_dtype not in allowed_types:
                 msg = (
                     f"Cannot use .str.{func_name} with values of "
@@ -148,6 +184,19 @@ def forbid_nonstring_types(
 
 
 class StringMethods(NoNewAttributesMixin):
+    # [CLASS DOC]
+    # The accessor object returned by the str attribute of Series and Index. Subclass of
+    # the no-new-attributes mixin, so after construction no new attributes can be added.
+    # State (set once in the constructor): the inferred kind of the data, whether it is
+    # categorical, whether it is a nullable-string dtype, the wrapped Series/Index, the
+    # series index and name (none for an Index), the parent (the categories when
+    # categorical, else the data) and the original object (used when rebuilding
+    # results).
+    # Methods: one public method per string operation (most guarded by the type-check
+    # decorator so that byte-like data is rejected), the result-wrapping method that
+    # converts raw array results into Series/Index/DataFrame/MultiIndex, and the
+    # concatenation helper that normalizes the "others" argument. Item access with a key
+    # or slice delegates to element/slice extraction. Iteration is not allowed.
     """
     Vectorized string functions for Series and Index.
 
@@ -189,6 +238,13 @@ class StringMethods(NoNewAttributesMixin):
     # * extractall
 
     def __init__(self, data) -> None:
+        # [FUNCTION DOC]
+        # Create the accessor for a Series or Index. Input: data. Validates the data kind
+        # (raising an attribute error for a MultiIndex or for data whose inferred kind is
+        # not string, empty, bytes, mixed or mixed-integer), then records the inferred
+        # kind, the categorical and string-dtype flags, the data, the index and name (for
+        # a Series), the parent and the original object, and freezes the instance against
+        # new attributes.
         from pandas.core.arrays.string_ import StringDtype
 
         self._inferred_dtype = self._validate(data)
@@ -209,6 +265,12 @@ class StringMethods(NoNewAttributesMixin):
 
     @staticmethod
     def _validate(data):
+        # [FUNCTION DOC]
+        # HELPER: StringMethods constructor. Infers and checks the kind of the data.
+        # Input: data, a Series or Index. Raises an attribute error for a MultiIndex, and
+        # for inferred kinds other than string, empty, bytes, mixed and mixed-integer
+        # (missing values are skipped during inference; for categorical data the
+        # categories are inspected). Returns the inferred kind string.
         """
         Auxiliary function for StringMethods, infers and checks dtype of data.
 
@@ -251,10 +313,16 @@ class StringMethods(NoNewAttributesMixin):
         return inferred_dtype
 
     def __getitem__(self, key):
+        # [FUNCTION DOC]
+        # Index each string: a slice behaves like the slice method and any other key like
+        # the get method. Input: key. Returns the wrapped Series/Index result.
         result = self._data.array._str_getitem(key)
         return self._wrap_result(result)
 
     def __iter__(self) -> Iterator:
+        # [FUNCTION DOC]
+        # Iteration over the accessor is not supported: always raises a type error saying
+        # the object is not iterable.
         raise TypeError(f"'{type(self).__name__}' object is not iterable")
 
     def _wrap_result(
@@ -266,6 +334,30 @@ class StringMethods(NoNewAttributesMixin):
         returns_string: bool = True,
         dtype=None,
     ):
+        # [FUNCTION DOC]
+        # HELPER: every accessor method. Convert a raw result into the right pandas object.
+        # Inputs: result (array, list of rows, dict of columns, DataFrame, or scalar); name
+        # (result name or column labels); expand (none means infer: expand when the result
+        # is two-dimensional); fill_value; returns_string (whether the result holds strings,
+        # used to choose the output dtype for string-dtype data); dtype (explicit result
+        # dtype).
+        # Results lacking dimension/dtype attributes are returned as is (a DataFrame result
+        # gets metadata propagated first). Results must have at most two dimensions
+        # (assertion). With an explicit expand=True on a Series: arrow list results are
+        # padded to the longest list and split into a dict of arrow columns; object results
+        # are turned into rows (non-list-likes become one-element rows), and, for non-string
+        # dtypes, rows that are empty or start with a missing value are extended to the
+        # longest row length. A non-bool expand raises a value error. With expand false the
+        # name defaults to the result's own name, then the original's name.
+        # For an Index original: boolean results are returned as a plain array; expanding
+        # builds a MultiIndex (collapsed to a flat Index when one level); otherwise a plain
+        # Index with the name and dtype. For a Series original: the dtype defaults to the
+        # explicit dtype, or for string-dtype data the result's boolean dtype, the original
+        # dtype (if returns_string) or the result dtype, or else the result dtype; the
+        # result is built as a DataFrame (expanding) or a Series, with the original index,
+        # metadata is propagated from the original, and a supplied name overrides a copied
+        # one.
+        # KNOWN ISSUE: the fill_value argument is accepted but never used.
         from pandas import (
             Index,
             MultiIndex,
@@ -325,6 +417,9 @@ class StringMethods(NoNewAttributesMixin):
             elif is_object_dtype(result):
 
                 def cons_row(x):
+                    # [FUNCTION DOC]
+                    # HELPER: _wrap_result. Returns x unchanged if it is list-like,
+                    # otherwise a one-element list containing x.
                     if is_list_like(x):
                         return x
                     else:
@@ -402,6 +497,16 @@ class StringMethods(NoNewAttributesMixin):
             return result
 
     def _get_series_list(self, others):
+        # [FUNCTION DOC]
+        # HELPER: cat. Normalize the "others" argument into a list of Series.
+        # Input: others, a Series, Index, DataFrame, two-dimensional array, one-dimensional
+        # array, extension array, or a list-like of such objects or of strings (sets and
+        # strings are not accepted as list-likes). A Series is wrapped as is; an Index
+        # becomes a Series on the caller's index; a DataFrame or 2-D array gives one Series
+        # per column; a list-like made only of Series/Index/arrays is flattened
+        # recursively; a list-like of non-list-like items becomes a single Series on the
+        # caller's index. Raises a type error for any other input.
+        # Returns the list of Series.
         """
         Auxiliary function for :meth:`str.cat`. Turn potentially mixed input
         into a list of Series (elements without an index must match the length
@@ -473,6 +578,25 @@ class StringMethods(NoNewAttributesMixin):
         na_rep=None,
         join: AlignJoin = "left",
     ) -> str | Series | Index:
+        # [FUNCTION DOC]
+        # Concatenate the strings of the caller, either all into one string or element-wise
+        # with other objects.
+        # Inputs: others (Series, Index, DataFrame, array or list-likes thereof; default
+        # none); sep (default none, meaning the empty string); na_rep (replacement for
+        # missing values; default none); join ("left" default, "right", "outer" or "inner";
+        # alignment style for indexed objects).
+        # Raises a value error if others is a plain string (the user probably meant sep), or
+        # if unindexed others have a different length from the caller; raises a type error
+        # for unsupported others or if any column holds non-string values.
+        # Without others: all values are joined with sep; with na_rep none, missing values
+        # are omitted, otherwise replaced by na_rep. Returns a single string.
+        # With others: all inputs are turned into Series; if their indexes differ, they are
+        # aligned with the chosen join (the combined alignment uses an outer join unless
+        # join is inner). Rows are concatenated with sep. With na_rep none, any row having
+        # a missing value in any column is missing in the result; otherwise missing values
+        # are replaced by na_rep. The result keeps the caller's name and (for categorical
+        # input) uses the categories' dtype; an Index caller gets an Index (object dtype if
+        # everything is missing), a Series caller gets a Series on the aligned index.
         """
         Concatenate strings in the Series/Index with given separator.
 
@@ -706,6 +830,18 @@ class StringMethods(NoNewAttributesMixin):
         expand: bool = False,
         regex: bool | None = None,
     ):
+        # [FUNCTION DOC]
+        # Split each string from the left around a separator.
+        # Inputs: pat (string, compiled pattern, or none for whitespace); n (keyword-only,
+        # maximum splits; default -1; none, 0 and -1 all mean unlimited); expand (keyword-
+        # only; default false; return columns/MultiIndex instead of lists); regex (keyword-
+        # only; true, false, or none for the single-character-literal legacy rule).
+        # Raises a value error if regex is false and pat is a compiled pattern; a compiled
+        # pattern forces regex mode. Delegates to the array's split, then wraps the result
+        # with expand and a dtype: for categorical data the categories' dtype when
+        # expanding (else object); for object data object; otherwise inferred.
+        # KNOWN ISSUE: the error message for a compiled pattern with regex false talks
+        # about a "replacement pattern", copied from the replace method.
         r"""
         Split strings around given separator/delimiter.
 
@@ -900,6 +1036,12 @@ class StringMethods(NoNewAttributesMixin):
 
     @forbid_nonstring_types(["bytes"])
     def rsplit(self, pat=None, *, n=-1, expand: bool = False):
+        # [FUNCTION DOC]
+        # Split each string from the right around a separator.
+        # Inputs: pat (string or none for whitespace; always literal); n (keyword-only,
+        # default -1; none, 0 and -1 mean unlimited); expand (keyword-only; default false).
+        # Delegates to the array's right split and wraps with the same dtype rules as the
+        # left split. Returns Series/Index of lists, or DataFrame/MultiIndex when expanding.
         """
         Split strings around given separator/delimiter.
 
@@ -1032,6 +1174,12 @@ class StringMethods(NoNewAttributesMixin):
 
     @forbid_nonstring_types(["bytes"])
     def partition(self, sep: str = " ", expand: bool = True):
+        # [FUNCTION DOC]
+        # Split each string at the first occurrence of a separator into three parts
+        # (before, separator, after). Inputs: sep (default a single space); expand (default
+        # true; return columns/MultiIndex instead of tuples). Delegates to the array and
+        # wraps with the same dtype rules as the split methods. When the separator is
+        # absent, the parts are the string and two empty strings.
         """
         Split the string at the first occurrence of `sep`.
 
@@ -1124,6 +1272,10 @@ class StringMethods(NoNewAttributesMixin):
 
     @forbid_nonstring_types(["bytes"])
     def rpartition(self, sep: str = " ", expand: bool = True):
+        # [FUNCTION DOC]
+        # Split each string at the last occurrence of a separator into three parts. Inputs
+        # and wrapping as for the partition method. When the separator is absent, the
+        # parts are two empty strings and the string.
         """
         Split the string at the last occurrence of `sep`.
 
@@ -1215,6 +1367,12 @@ class StringMethods(NoNewAttributesMixin):
         )
 
     def get(self, i):
+        # [FUNCTION DOC]
+        # Extract one component from each element. Input: i, an integer position (for
+        # strings, lists, tuples) or a dictionary key. Delegates to the array's get
+        # operation and wraps the result as Series/Index. Out-of-range positions and
+        # non-container elements give missing values. Not restricted by the type-check
+        # decorator.
         """
         Extract element from each component at specified position or with specified key.
 
@@ -1294,6 +1452,10 @@ class StringMethods(NoNewAttributesMixin):
 
     @forbid_nonstring_types(["bytes"])
     def join(self, sep: str):
+        # [FUNCTION DOC]
+        # Join the items of list-like elements with a separator. Input: sep. Delegates to
+        # the array's join; elements that are not lists of strings give missing values.
+        # Returns a Series/Index of object strings.
         """
         Join lists contained as elements in the Series/Index with passed delimiter.
 
@@ -1371,6 +1533,15 @@ class StringMethods(NoNewAttributesMixin):
         na=lib.no_default,
         regex: bool = True,
     ):
+        # [FUNCTION DOC]
+        # Test whether each string contains a pattern. Inputs: pat; case (default true);
+        # flags (regex flags); na (value for missing; default depends on dtype); regex
+        # (default true).
+        # In regex mode, if the pattern compiles and has capture groups, a user warning is
+        # issued suggesting extract (a pattern that fails to compile is left for the array
+        # method to report). Delegates to the array's contains operation and wraps the
+        # boolean result without treating it as strings. Returns a boolean Series or
+        # array (boolean array for an Index).
         r"""
         Test if pattern or regex is contained within a string of a Series or Index.
 
@@ -1507,6 +1678,18 @@ class StringMethods(NoNewAttributesMixin):
         flags: int | lib.NoDefault = lib.no_default,
         na=lib.no_default,
     ):
+        # [FUNCTION DOC]
+        # Test whether each string starts with a match of a regular expression.
+        # Inputs: pat (string or compiled pattern); case (default unset); flags (default
+        # unset); na (value for missing).
+        # Flags, when given, are combined with the unicode flag; a compiled pattern whose
+        # flags differ raises a value error, while a string pattern is compiled with them.
+        # The case argument defaults to the pattern's case sensitivity (true for string
+        # patterns); passing a case that conflicts with a compiled pattern's ignore-case
+        # flag raises a value error. Delegates to the array's match operation with flags
+        # reset to zero and wraps the boolean result.
+        # KNOWN ISSUE: the docstring gives defaults of true for case and 0 for flags, but
+        # the real defaults are unset sentinels that are resolved from the pattern.
         """
         Determine if each string starts with a match of a regular expression.
 
@@ -1590,6 +1773,11 @@ class StringMethods(NoNewAttributesMixin):
 
     @forbid_nonstring_types(["bytes"])
     def fullmatch(self, pat, case: bool = True, flags: int = 0, na=lib.no_default):
+        # [FUNCTION DOC]
+        # Test whether each string matches a regular expression in its entirety. Inputs:
+        # pat; case (default true); flags (default 0); na (value for missing). Delegates to
+        # the array's full-match operation and wraps the boolean result. Returns a
+        # boolean Series/array.
         """
         Determine if each string entirely matches a regular expression.
 
@@ -1647,6 +1835,19 @@ class StringMethods(NoNewAttributesMixin):
         flags: int = 0,
         regex: bool = False,
     ):
+        # [FUNCTION DOC]
+        # Replace occurrences of a pattern in each string.
+        # Inputs: pat (string, compiled pattern, or a dict of pattern to replacement); repl
+        # (replacement string or callable receiving the match; must be none when pat is a
+        # dict); n (maximum replacements; default -1 meaning all); case (default none,
+        # meaning case-sensitive); flags (default 0); regex (default false).
+        # Raises a value error if pat is a dict and repl is given; a type error if repl is
+        # neither a string nor callable (unless pat is a dict); a value error if a compiled
+        # pattern is combined with case or non-zero flags in regex mode; a value error if
+        # regex is false and pat is compiled or repl is callable.
+        # A single pattern is treated as a one-entry mapping. The array's replace operation
+        # is applied once per entry in order, each time to the previous wrapped output, so
+        # later patterns see earlier replacements. Returns the final Series/Index.
         r"""
         Replace each occurrence of pattern/regex in the Series/Index.
 
@@ -1823,6 +2024,10 @@ class StringMethods(NoNewAttributesMixin):
 
     @forbid_nonstring_types(["bytes"])
     def repeat(self, repeats):
+        # [FUNCTION DOC]
+        # Repeat each string. Input: repeats, one integer for all elements or a sequence with
+        # one integer per element. Delegates to the array's repeat operation and wraps the
+        # result as a Series/Index of strings.
         """
         Duplicate each string in the Series or Index.
 
@@ -1890,6 +2095,14 @@ class StringMethods(NoNewAttributesMixin):
         side: Literal["left", "right", "both"] = "left",
         fillchar: str = " ",
     ):
+        # [FUNCTION DOC]
+        # Pad each string to a minimum width. Inputs: width (integer); side ("left" default,
+        # "right" or "both"); fillchar (single character, default a space).
+        # Raises a type error if fillchar is not a string, if it is not exactly one
+        # character long, or if width is not an integer. Delegates to the array's pad
+        # operation and wraps the result.
+        # KNOWN ISSUE: the type error for a wrong-length fillchar reads "not str", which
+        # is misleading since the value is a string of the wrong length.
         """
         Pad strings in the Series/Index up to width.
 
@@ -1964,6 +2177,10 @@ class StringMethods(NoNewAttributesMixin):
 
     @forbid_nonstring_types(["bytes"])
     def center(self, width: int, fillchar: str = " "):
+        # [FUNCTION DOC]
+        # Pad both sides of each string to a minimum width. Inputs: width; fillchar (single
+        # character, default a space). Equivalent to the pad method with side "both" (so
+        # the same type errors apply). Returns the padded Series/Index.
         """
         Pad left and right side of strings in the Series/Index.
 
@@ -2026,6 +2243,10 @@ class StringMethods(NoNewAttributesMixin):
 
     @forbid_nonstring_types(["bytes"])
     def ljust(self, width: int, fillchar: str = " "):
+        # [FUNCTION DOC]
+        # Pad the right side of each string to a minimum width (left-justify). Inputs:
+        # width; fillchar (single character, default a space). Equivalent to the pad method
+        # with side "right". Returns the padded Series/Index.
         """
         Pad right side of strings in the Series/Index.
 
@@ -2088,6 +2309,10 @@ class StringMethods(NoNewAttributesMixin):
 
     @forbid_nonstring_types(["bytes"])
     def rjust(self, width: int, fillchar: str = " "):
+        # [FUNCTION DOC]
+        # Pad the left side of each string to a minimum width (right-justify). Inputs:
+        # width; fillchar (single character, default a space). Equivalent to the pad method
+        # with side "left". Returns the padded Series/Index.
         """
         Pad left side of strings in the Series/Index.
 
@@ -2150,6 +2375,14 @@ class StringMethods(NoNewAttributesMixin):
 
     @forbid_nonstring_types(["bytes"])
     def zfill(self, width: int):
+        # [FUNCTION DOC]
+        # Left-pad each string with zeros to a minimum width. Input: width (integer; a
+        # non-integer raises a type error). Delegates to the array's zero-fill operation
+        # and wraps the result.
+        # KNOWN ISSUE: the docstring's Notes say this differs from the standard library
+        # method by not special-casing a leading plus or minus sign, but the object-array
+        # implementation calls the standard library zero-fill directly, which does place
+        # padding after the sign.
         """
         Pad strings in the Series/Index by prepending '0' characters.
 
@@ -2218,6 +2451,10 @@ class StringMethods(NoNewAttributesMixin):
         return self._wrap_result(result)
 
     def slice(self, start=None, stop=None, step=None):
+        # [FUNCTION DOC]
+        # Slice each string. Inputs: start, stop, step (all default none, with usual slice
+        # semantics). Delegates to the array's slice operation and wraps the result.
+        # Not restricted by the type-check decorator.
         """
         Slice substrings from each element in the Series or Index.
 
@@ -2299,6 +2536,10 @@ class StringMethods(NoNewAttributesMixin):
 
     @forbid_nonstring_types(["bytes"])
     def slice_replace(self, start=None, stop=None, repl=None):
+        # [FUNCTION DOC]
+        # Replace a positional slice of each string. Inputs: start and stop (default none,
+        # unbounded); repl (default none, meaning empty text). Delegates to the array's
+        # slice-replace operation and wraps the result.
         """
         Replace a positional slice of a string with another value.
 
@@ -2381,6 +2622,17 @@ class StringMethods(NoNewAttributesMixin):
     def decode(
         self, encoding, errors: str = "strict", dtype: str | DtypeObj | None = None
     ):
+        # [FUNCTION DOC]
+        # Decode bytes elements to text. Inputs: encoding (codec name); errors (default
+        # "strict"); dtype (default none; if given it must be a string or object dtype,
+        # otherwise a value error is raised; when none and the future string-dtype option is
+        # on, the string dtype is used).
+        # Encodings with CPython fast paths use the bytes decode method directly; others use
+        # a codec lookup. Delegates to the array's generic mapping method and wraps the
+        # result with the dtype. Not restricted by the type-check decorator, since it is
+        # meant for bytes data.
+        # KNOWN ISSUE: the docstring calls this equivalent to a Python 2 method, which is
+        # outdated; only the bytes decode method applies.
         """
         Decode character string in the Series/Index using indicated encoding.
 
@@ -2438,6 +2690,10 @@ class StringMethods(NoNewAttributesMixin):
 
     @forbid_nonstring_types(["bytes"])
     def encode(self, encoding, errors: str = "strict"):
+        # [FUNCTION DOC]
+        # Encode each string to bytes. Inputs: encoding (codec name); errors (default
+        # "strict"). Delegates to the array's encode operation and wraps the result as
+        # non-string (object) data.
         """
         Encode character string in the Series/Index using indicated encoding.
 
@@ -2474,6 +2730,10 @@ class StringMethods(NoNewAttributesMixin):
 
     @forbid_nonstring_types(["bytes"])
     def strip(self, to_strip=None):
+        # [FUNCTION DOC]
+        # Remove leading and trailing characters. Input: to_strip (a set of characters; none
+        # means whitespace). Delegates to the array's strip operation; non-string elements
+        # become missing. Returns a Series/Index of strings.
         """
         Remove leading and trailing characters.
 
@@ -2554,6 +2814,8 @@ class StringMethods(NoNewAttributesMixin):
 
     @forbid_nonstring_types(["bytes"])
     def lstrip(self, to_strip=None):
+        # [FUNCTION DOC]
+        # Remove leading characters only. Input and result as for the strip method.
         """
         Remove leading characters.
 
@@ -2633,6 +2895,8 @@ class StringMethods(NoNewAttributesMixin):
 
     @forbid_nonstring_types(["bytes"])
     def rstrip(self, to_strip=None):
+        # [FUNCTION DOC]
+        # Remove trailing characters only. Input and result as for the strip method.
         """
         Remove trailing characters.
 
@@ -2712,6 +2976,11 @@ class StringMethods(NoNewAttributesMixin):
 
     @forbid_nonstring_types(["bytes"])
     def removeprefix(self, prefix: str):
+        # [FUNCTION DOC]
+        # Remove a leading prefix from each string when present. Input: prefix. Delegates to
+        # the array and wraps the result.
+        # KNOWN ISSUE: the docstring examples include the suffix-removal example, shared
+        # with the removesuffix method.
         """
         Remove a prefix from an object series.
 
@@ -2762,6 +3031,9 @@ class StringMethods(NoNewAttributesMixin):
 
     @forbid_nonstring_types(["bytes"])
     def removesuffix(self, suffix: str):
+        # [FUNCTION DOC]
+        # Remove a trailing suffix from each string when present. Input: suffix. Delegates to
+        # the array and wraps the result.
         """
         Remove a suffix from an object series.
 
@@ -2826,6 +3098,15 @@ class StringMethods(NoNewAttributesMixin):
         max_lines: int | None = None,
         placeholder: str = " [...]",
     ):
+        # [FUNCTION DOC]
+        # Wrap each string into lines of at most a given width, joined with newlines.
+        # Inputs: width (required); the remaining options (expand tabs, tab size, replace
+        # whitespace, drop whitespace, initial indent, subsequent indent, fix sentence
+        # endings, break long words, break on hyphens, max lines, placeholder) are passed
+        # unchanged to the standard text wrapper, with the same defaults. Delegates to the
+        # array's wrap operation and wraps the result.
+        # KNOWN ISSUE: the Notes in the docstring say the wrapper uses default settings,
+        # but all the options listed above are forwarded to it.
         r"""
         Wrap strings in Series/Index at specified line width.
 
@@ -2941,6 +3222,15 @@ class StringMethods(NoNewAttributesMixin):
         sep: str = "|",
         dtype: NpDtype | None = None,
     ):
+        # [FUNCTION DOC]
+        # Build a DataFrame of indicator columns from separator-delimited strings.
+        # Inputs: sep (default a vertical bar); dtype (default none, meaning 64-bit
+        # integer in the array method; must otherwise be numeric or boolean, else a value
+        # error is raised).
+        # The array produces the indicator matrix and the sorted tag names. For extension
+        # dtypes, a DataFrame with those columns and that dtype is wrapped; otherwise the
+        # matrix is wrapped with expansion, using the tags as column labels. Returns a
+        # DataFrame (a MultiIndex for an Index caller).
         """
         Return DataFrame of dummy/indicator variables for Series.
 
@@ -3006,6 +3296,11 @@ class StringMethods(NoNewAttributesMixin):
 
     @forbid_nonstring_types(["bytes"])
     def translate(self, table):
+        # [FUNCTION DOC]
+        # Map characters of each string through a translation table. Input: table, a mapping
+        # of Unicode ordinals to ordinals, strings or none (none deletes the character).
+        # Delegates to the array and wraps the result; the dtype is forced to object only
+        # for object-dtype data.
         """
         Map all characters in the string through the given mapping table.
 
@@ -3050,6 +3345,10 @@ class StringMethods(NoNewAttributesMixin):
 
     @forbid_nonstring_types(["bytes"])
     def count(self, pat, flags: int = 0):
+        # [FUNCTION DOC]
+        # Count regular-expression matches in each string. Inputs: pat (pattern string);
+        # flags (default 0). Delegates to the array's count operation and wraps the numeric
+        # result (integers, or floating point if any value is missing for object data).
         r"""
         Count occurrences of pattern in each string of the Series/Index.
 
@@ -3118,6 +3417,11 @@ class StringMethods(NoNewAttributesMixin):
     def startswith(
         self, pat: str | tuple[str, ...], na: Scalar | lib.NoDefault = lib.no_default
     ) -> Series | Index:
+        # [FUNCTION DOC]
+        # Test whether each string starts with a prefix. Inputs: pat (a string or a tuple of
+        # strings; regular expressions are not supported); na (value for non-string/missing
+        # elements; default depends on dtype). Raises a type error if pat is neither a
+        # string nor a tuple. Delegates to the array and wraps the boolean result.
         """
         Test if the start of each string element matches a pattern.
 
@@ -3180,6 +3484,9 @@ class StringMethods(NoNewAttributesMixin):
     def endswith(
         self, pat: str | tuple[str, ...], na: Scalar | lib.NoDefault = lib.no_default
     ) -> Series | Index:
+        # [FUNCTION DOC]
+        # Test whether each string ends with a suffix. Inputs and behavior as for the
+        # starts-with method, but testing the end of the string.
         """
         Test if the end of each string element matches a pattern.
 
@@ -3240,6 +3547,10 @@ class StringMethods(NoNewAttributesMixin):
 
     @forbid_nonstring_types(["bytes"])
     def findall(self, pat, flags: int = 0):
+        # [FUNCTION DOC]
+        # Find all non-overlapping regex matches in each string. Inputs: pat (pattern);
+        # flags (default 0). Delegates to the array and wraps the object result: each
+        # element is a list of matches.
         """
         Find all occurrences of pattern or regular expression in the Series/Index.
 
@@ -3335,6 +3646,18 @@ class StringMethods(NoNewAttributesMixin):
     def extract(
         self, pat: str, flags: int = 0, expand: bool = True
     ) -> DataFrame | Series | Index:
+        # [FUNCTION DOC]
+        # Extract the capture groups of the first regex match in each string.
+        # Inputs: pat (pattern with at least one capture group); flags (default 0); expand
+        # (default true; must be a real bool).
+        # Raises a value error if expand is not a bool, if the pattern has no capture
+        # groups, or if expand is false with several groups on an Index. A DataFrame is
+        # returned when expand is true or there are several groups: columns are the group
+        # names, or numbers for unnamed groups (empty input gives an empty frame); rows come
+        # from the array's extract operation and the frame uses the caller's index for a
+        # Series. With a single group and expand false, a Series/Index is returned,
+        # named after the group if named. Result dtype is the caller's arrow/string dtype,
+        # otherwise object.
         r"""
         Extract capture groups in the regex `pat` as columns in a DataFrame.
 
@@ -3461,6 +3784,12 @@ class StringMethods(NoNewAttributesMixin):
 
     @forbid_nonstring_types(["bytes"])
     def extractall(self, pat, flags: int = 0) -> DataFrame:
+        # [FUNCTION DOC]
+        # Extract the capture groups of every regex match in each string. Inputs: pat
+        # (pattern with capture groups); flags (default 0). Not dispatched to the array:
+        # calls the module-level extract-all function with the original object. Returns a
+        # DataFrame with a MultiIndex whose last level, named "match", numbers the matches
+        # of each subject.
         r"""
         Extract capture groups in the regex `pat` as columns in DataFrame.
 
@@ -3539,6 +3868,10 @@ class StringMethods(NoNewAttributesMixin):
 
     @forbid_nonstring_types(["bytes"])
     def find(self, sub, start: int = 0, end=None):
+        # [FUNCTION DOC]
+        # Lowest index of a substring in each string, or -1. Inputs: sub (must be a string,
+        # otherwise a type error); start (default 0); end (default none). Delegates to the
+        # array and wraps the integer result.
         """
         Return lowest indexes in each strings in the Series/Index.
 
@@ -3595,6 +3928,9 @@ class StringMethods(NoNewAttributesMixin):
 
     @forbid_nonstring_types(["bytes"])
     def rfind(self, sub, start: int = 0, end=None):
+        # [FUNCTION DOC]
+        # Highest index of a substring in each string, or -1. Inputs and behavior as for the
+        # find method, using the reverse search.
         """
         Return highest indexes in each strings in the Series/Index.
 
@@ -3651,6 +3987,9 @@ class StringMethods(NoNewAttributesMixin):
 
     @forbid_nonstring_types(["bytes"])
     def normalize(self, form):
+        # [FUNCTION DOC]
+        # Apply a Unicode normalization form to each string. Input: form (one of the four
+        # form names). Delegates to the array and wraps the result.
         """
         Return the Unicode normal form for the strings in the Series/Index.
 
@@ -3691,6 +4030,10 @@ class StringMethods(NoNewAttributesMixin):
 
     @forbid_nonstring_types(["bytes"])
     def index(self, sub, start: int = 0, end=None):
+        # [FUNCTION DOC]
+        # Lowest index of a substring in each string; a value error is raised where it is
+        # absent. Inputs: sub (must be a string, otherwise a type error); start (default 0);
+        # end (default none). Delegates to the array and wraps the integer result.
         """
         Return lowest indexes in each string in Series/Index.
 
@@ -3748,6 +4091,9 @@ class StringMethods(NoNewAttributesMixin):
 
     @forbid_nonstring_types(["bytes"])
     def rindex(self, sub, start: int = 0, end=None):
+        # [FUNCTION DOC]
+        # Highest index of a substring in each string; a value error is raised where it is
+        # absent. Inputs and behavior as for the index method, using the reverse search.
         """
         Return highest indexes in each string in Series/Index.
 
@@ -3804,6 +4150,10 @@ class StringMethods(NoNewAttributesMixin):
         return self._wrap_result(result, returns_string=False)
 
     def len(self):
+        # [FUNCTION DOC]
+        # Length of each element (string, list, tuple, dictionary). Delegates to the array
+        # and wraps the numeric result; elements without a length become missing. Not
+        # restricted by the type-check decorator.
         """
         Compute the length of each element in the Series/Index.
 
@@ -3851,6 +4201,8 @@ class StringMethods(NoNewAttributesMixin):
 
     @forbid_nonstring_types(["bytes"])
     def lower(self):
+        # [FUNCTION DOC]
+        # Lower-case each string by delegating to the array and wrapping the string result.
         """
         Convert strings in the Series/Index to lowercase.
 
@@ -3923,6 +4275,8 @@ class StringMethods(NoNewAttributesMixin):
 
     @forbid_nonstring_types(["bytes"])
     def upper(self):
+        # [FUNCTION DOC]
+        # Upper-case each string by delegating to the array and wrapping the string result.
         """
         Convert strings in the Series/Index to uppercase.
 
@@ -3995,6 +4349,8 @@ class StringMethods(NoNewAttributesMixin):
 
     @forbid_nonstring_types(["bytes"])
     def title(self):
+        # [FUNCTION DOC]
+        # Title-case each string by delegating to the array and wrapping the string result.
         """
         Convert strings in the Series/Index to titlecase.
 
@@ -4067,6 +4423,9 @@ class StringMethods(NoNewAttributesMixin):
 
     @forbid_nonstring_types(["bytes"])
     def capitalize(self):
+        # [FUNCTION DOC]
+        # Capitalize each string (first character upper, remainder lower) by delegating to
+        # the array and wrapping the string result.
         """
         Convert strings in the Series/Index to be capitalized.
 
@@ -4139,6 +4498,9 @@ class StringMethods(NoNewAttributesMixin):
 
     @forbid_nonstring_types(["bytes"])
     def swapcase(self):
+        # [FUNCTION DOC]
+        # Swap the case of each string by delegating to the array and wrapping the string
+        # result.
         """
         Convert strings in the Series/Index to be swapcased.
 
@@ -4211,6 +4573,8 @@ class StringMethods(NoNewAttributesMixin):
 
     @forbid_nonstring_types(["bytes"])
     def casefold(self):
+        # [FUNCTION DOC]
+        # Case-fold each string by delegating to the array and wrapping the string result.
         """
         Convert strings in the Series/Index to be casefolded.
 
@@ -4283,6 +4647,9 @@ class StringMethods(NoNewAttributesMixin):
 
     @forbid_nonstring_types(["bytes"])
     def isalnum(self):
+        # [FUNCTION DOC]
+        # Test whether each string is non-empty and entirely alphanumeric. Delegates to the
+        # array and wraps the boolean result (not treated as strings).
         """
         Check whether all characters in each string are alphanumeric.
 
@@ -4333,6 +4700,9 @@ class StringMethods(NoNewAttributesMixin):
 
     @forbid_nonstring_types(["bytes"])
     def isalpha(self):
+        # [FUNCTION DOC]
+        # Test whether each string is non-empty and entirely alphabetic. Delegates to the
+        # array and wraps the boolean result.
         """
         Check whether all characters in each string are alphabetic.
 
@@ -4374,6 +4744,10 @@ class StringMethods(NoNewAttributesMixin):
 
     @forbid_nonstring_types(["bytes"])
     def isdigit(self):
+        # [FUNCTION DOC]
+        # Test whether each string is non-empty and entirely digits (including special
+        # digits such as superscripts). Delegates to the array and wraps the boolean
+        # result.
         """
         Check whether all characters in each string are digits.
 
@@ -4427,6 +4801,9 @@ class StringMethods(NoNewAttributesMixin):
 
     @forbid_nonstring_types(["bytes"])
     def isspace(self):
+        # [FUNCTION DOC]
+        # Test whether each string is non-empty and entirely whitespace. Delegates to the
+        # array and wraps the boolean result.
         """
         Check whether all characters in each string are whitespace.
 
@@ -4467,6 +4844,9 @@ class StringMethods(NoNewAttributesMixin):
 
     @forbid_nonstring_types(["bytes"])
     def islower(self):
+        # [FUNCTION DOC]
+        # Test whether each string has cased characters that are all lower case. Delegates
+        # to the array and wraps the boolean result.
         """
         Check whether all characters in each string are lowercase.
 
@@ -4508,6 +4888,9 @@ class StringMethods(NoNewAttributesMixin):
 
     @forbid_nonstring_types(["bytes"])
     def isascii(self):
+        # [FUNCTION DOC]
+        # Test whether each string contains only ASCII characters. Delegates to the array
+        # and wraps the boolean result.
         """
         Check whether all characters in each string are ascii.
 
@@ -4552,6 +4935,9 @@ class StringMethods(NoNewAttributesMixin):
 
     @forbid_nonstring_types(["bytes"])
     def isupper(self):
+        # [FUNCTION DOC]
+        # Test whether each string has cased characters that are all upper case. Delegates
+        # to the array and wraps the boolean result.
         """
         Check whether all characters in each string are uppercase.
 
@@ -4593,6 +4979,9 @@ class StringMethods(NoNewAttributesMixin):
 
     @forbid_nonstring_types(["bytes"])
     def istitle(self):
+        # [FUNCTION DOC]
+        # Test whether each string is title-cased. Delegates to the array and wraps the
+        # boolean result.
         """
         Check whether all characters in each string are titlecase.
 
@@ -4638,6 +5027,9 @@ class StringMethods(NoNewAttributesMixin):
 
     @forbid_nonstring_types(["bytes"])
     def isnumeric(self):
+        # [FUNCTION DOC]
+        # Test whether each string is non-empty and entirely numeric characters. Delegates to
+        # the array and wraps the boolean result.
         """
         Check whether all characters in each string are numeric.
 
@@ -4699,6 +5091,9 @@ class StringMethods(NoNewAttributesMixin):
 
     @forbid_nonstring_types(["bytes"])
     def isdecimal(self):
+        # [FUNCTION DOC]
+        # Test whether each string is non-empty and entirely decimal characters. Delegates
+        # to the array and wraps the boolean result.
         """
         Check whether all characters in each string are decimal.
 
@@ -4742,6 +5137,16 @@ class StringMethods(NoNewAttributesMixin):
 
 
 def cat_safe(list_of_columns: list[npt.NDArray[np.object_]], sep: str):
+    # [FUNCTION DOC]
+    # HELPER: StringMethods.cat. Concatenate columns with a separator, converting
+    # low-level type errors into a clearer one.
+    # Inputs: list_of_columns, object arrays without missing values; sep, the separator.
+    # Calls the core concatenation. If that raises a type error, each column's inferred
+    # kind is inspected and a type error naming the first offending kind is raised
+    # (the original error is suppressed). Returns the concatenated array.
+    # KNOWN ISSUE: if the core concatenation raised a type error but every column infers as
+    # string or empty, no new error is raised and the final return refers to an unassigned
+    # result, producing an unbound-local error.
     """
     Auxiliary function for :meth:`str.cat`.
 
@@ -4778,6 +5183,13 @@ def cat_safe(list_of_columns: list[npt.NDArray[np.object_]], sep: str):
 
 
 def cat_core(list_of_columns: list, sep: str):
+    # [FUNCTION DOC]
+    # HELPER: StringMethods.cat. Element-wise concatenation of columns with a separator.
+    # Inputs: list_of_columns, equal-length object arrays (no missing values); sep, the
+    # separator. With an empty separator the columns are summed directly as an object
+    # array; otherwise the separator is interleaved between the columns before summing.
+    # Returns one object array of concatenated strings. Non-string contents cause a type
+    # error from the summation.
     """
     Auxiliary function for :meth:`str.cat`
 
@@ -4805,6 +5217,11 @@ def cat_core(list_of_columns: list, sep: str):
 
 
 def _result_dtype(arr):
+    # [FUNCTION DOC]
+    # HELPER: extract and extract-all. Choose the dtype for extracted results. Input: arr,
+    # a Series or Index. Returns the array's own dtype if it is arrow-backed or a
+    # nullable-string dtype, otherwise the generic object dtype. (A workaround for failures
+    # with empty value lists when passing the dtype unconditionally.)
     # workaround #27953
     # ideally we just pass `dtype=arr.dtype` unconditionally, but this fails
     # when the list of values is empty.
@@ -4816,6 +5233,9 @@ def _result_dtype(arr):
 
 
 def _get_single_group_name(regex: re.Pattern) -> Hashable:
+    # [FUNCTION DOC]
+    # HELPER: extract. Input: regex, a compiled pattern. Returns the first group name
+    # defined in the pattern, or none if the pattern has no named groups.
     if regex.groupindex:
         return next(iter(regex.groupindex))
     else:
@@ -4823,6 +5243,12 @@ def _get_single_group_name(regex: re.Pattern) -> Hashable:
 
 
 def _get_group_names(regex: re.Pattern) -> list[Hashable] | range:
+    # [FUNCTION DOC]
+    # HELPER: extract and extract-all. Column labels for the capture groups of a compiled
+    # pattern. Input: regex. Returns a plain range of group numbers when the pattern has no
+    # named groups or when the resulting labels are exactly the numbers in order;
+    # otherwise a list in group order where named groups use their names and unnamed
+    # groups use their zero-based position.
     """
     Get named groups from compiled regex.
 
@@ -4848,6 +5274,17 @@ def _get_group_names(regex: re.Pattern) -> list[Hashable] | range:
 
 
 def str_extractall(arr, pat, flags: int = 0) -> DataFrame:
+    # [FUNCTION DOC]
+    # Implementation of extracting all regex matches from each string.
+    # Inputs: arr, the original Series or Index; pat, a pattern with capture groups; flags
+    # (default 0). Raises a value error if the pattern has no capture groups. An Index is
+    # first converted to a Series with a fresh default index (keeping the dtype). For each
+    # string element (non-strings are skipped) every match is turned into a row; empty
+    # group matches become missing. The row labels append the match number to the
+    # subject's key (a tuple for multi-level indexes).
+    # Returns a DataFrame built with the caller's frame type, indexed by a MultiIndex whose
+    # names are the subject index names plus "match", with group-name columns and the
+    # extraction result dtype.
     regex = re.compile(pat, flags=flags)
     # the regex must contain capture groups.
     if regex.groups == 0:

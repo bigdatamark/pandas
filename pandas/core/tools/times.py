@@ -1,3 +1,11 @@
+# [MODULE DOC]
+# Parsing of time-of-day strings into time objects.
+# Public contents: to_time, which converts a scalar, list-like, index or series of
+# strings (or time objects) into time objects. Private contents: the fixed list of
+# accepted format strings and a helper that guesses a format from an array.
+# Relationships: uses the library list-like check, the generic Series/Index
+# abstract classes and the not-null check from the core dtypes package.
+# No import-time side effects beyond defining the module-level format list.
 from __future__ import annotations
 
 from datetime import (
@@ -26,6 +34,26 @@ def to_time(
     infer_time_format: bool = False,
     errors: DateTimeErrorChoices = "raise",
 ):
+    # [FUNCTION DOC]
+    # Convert time strings to datetime.time objects.
+    # Parameters: arg is a scalar string, a time object, None, a list, tuple, 1-d
+    # array, Index or Series; format is an optional strptime format (default none,
+    # meaning the fixed module-level formats are tried); infer_time_format (default
+    # false) guesses one format from the first non-missing element when no format is
+    # given; errors is either "raise" (default) or "coerce".
+    # Raises a value error up front if errors is any other value. Raises a value error
+    # when an element cannot be parsed and errors is "raise"; raises a type error for
+    # list-like input with more than one dimension.
+    # Returns: None for None input; the same object for a time input; for a Series a
+    # new Series (same constructor, index and name) of time objects; for an Index or
+    # other list-like a plain list of time objects; for any other scalar a single time
+    # object. With "coerce", unparseable elements become None.
+    # No input is mutated. Without a format, each element is first tried as an
+    # ISO-format time and then against the fixed formats; the fixed format list is
+    # copied per call and the first format that succeeds is moved to the front for
+    # the remaining elements.
+    # KNOWN ISSUE: the docstring says the return type is only a time object, but list
+    # and Series inputs return lists and Series respectively.
     """
     Parse time strings to time objects using fixed strptime formats ("%H:%M",
     "%H%M", "%I:%M%p", "%I%M%p", "%H:%M:%S", "%H%M%S", "%I:%M:%S%p",
@@ -55,6 +83,17 @@ def to_time(
         raise ValueError("errors must be one of 'raise', or 'coerce'.")
 
     def _convert_listlike(arg, format):
+        # [FUNCTION DOC]
+        # HELPER: to_time. Converts a list-like of strings to a list of time objects.
+        # Inputs: arg is a list, tuple or array-like (lists and tuples are turned into
+        # an object array; other inputs must have at most one dimension, otherwise a
+        # type error is raised); format is an optional strptime format, which is
+        # guessed from the array when it is None and infer_time_format is set in the
+        # enclosing scope.
+        # Returns a list the same length as the input, with None for failed elements
+        # when the enclosing errors setting is "coerce". Raises a value error for an
+        # unparseable element when errors is "raise" (the message names the element
+        # when a format was used, and the whole array when none was).
         if isinstance(arg, (list, tuple)):
             arg = np.array(arg, dtype="O")
 
@@ -139,6 +178,14 @@ _time_formats = [
 
 
 def _guess_time_format_for_array(arr):
+    # [FUNCTION DOC]
+    # HELPER: to_time (format inference). Guesses a strptime format for an array of
+    # time strings.
+    # Input: arr, an object array of strings that may contain missing values.
+    # Looks only at the first non-missing element and returns the first format in the
+    # module-level format list that parses it; returns None if the array has no
+    # non-missing element or no format parses it. Non-value-error failures (such as a
+    # type error for non-string elements) are not caught and propagate.
     # Try to guess the format based on the first non-NaN element
     non_nan_elements = notna(arr).nonzero()[0]
     if len(non_nan_elements):

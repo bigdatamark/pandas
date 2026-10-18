@@ -1,3 +1,17 @@
+# [MODULE DOC]
+# Conversion of scalars, sequences, Series, DataFrames and mappings to datetime values.
+# Public contents (listed in the public name list): to_datetime (typed overloads for
+# scalar, Series/mapping and list-like input), should_cache (heuristic for caching
+# conversions) and the DateParseError exception re-exported from the tslibs parsing
+# module. Also defined: type aliases and two typed dictionary classes describing
+# accepted mapping layouts, a module-level threshold for starting to cache, a table
+# mapping column names to unit codes, and private helpers for format guessing,
+# caching, boxing results, unit-based conversion, origin adjustment and assembling
+# datetimes from DataFrame columns.
+# Relationships: parsing is done by the compiled tslibs routines and by the
+# DatetimeArray conversion helpers; numeric and timedelta conversion tools are
+# imported lazily from the package namespace for column assembly.
+# No import-time side effects.
 from __future__ import annotations
 
 from collections import abc
@@ -106,12 +120,22 @@ DatetimeDictArg: TypeAlias = list[Scalar] | tuple[Scalar, ...] | AnyArrayLike
 
 
 class YearMonthDayDict(TypedDict, total=True):
+    # [CLASS DOC]
+    # Typing-only description of a mapping with the three required keys year, month and
+    # day, each holding a list, tuple or array-like of scalars. A typed dictionary: no
+    # runtime behavior beyond being a plain dict; used in annotations of the
+    # datetime-assembly input.
     year: DatetimeDictArg
     month: DatetimeDictArg
     day: DatetimeDictArg
 
 
 class FulldatetimeDict(YearMonthDayDict, total=False):
+    # [CLASS DOC]
+    # Typing-only extension of the year/month/day mapping with optional time keys: hour,
+    # minute, second (singular and plural spellings), and ms, us, ns. All values are
+    # list, tuple or array-like of scalars. A typed dictionary with no runtime
+    # behavior.
     hour: DatetimeDictArg
     hours: DatetimeDictArg
     minute: DatetimeDictArg
@@ -131,6 +155,15 @@ start_caching_at = 50
 
 
 def _guess_datetime_format_for_array(arr, dayfirst: bool | None = False) -> str | None:
+    # [FUNCTION DOC]
+    # HELPER: _convert_listlike_datetimes. Guess a single strptime-style format for an
+    # object array of date strings.
+    # Inputs: arr, an object array; dayfirst (default false), the day-first preference
+    # passed to the guesser. Only the first non-null element is examined, and only if it
+    # is exactly a built-in string. Returns the guessed format, or None when there is no
+    # non-null element, the element is not a string, or no format could be guessed. In
+    # the last case, if more non-null elements follow, emits a user warning that each
+    # element will be parsed individually.
     # Try to guess the format based on the first non-NaN element, return None if can't
     if (first_non_null := tslib.first_non_null(arr)) != -1:
         if type(first_non_nan_element := arr[first_non_null]) is str:
@@ -156,6 +189,16 @@ def _guess_datetime_format_for_array(arr, dayfirst: bool | None = False) -> str 
 def should_cache(
     arg: ArrayConvertible, unique_share: float = 0.7, check_count: int | None = None
 ) -> bool:
+    # [FUNCTION DOC]
+    # Decide whether caching unique conversions is worthwhile for the input.
+    # Inputs: arg, a sized iterable; unique_share (default 0.7, must lie strictly
+    # between 0 and 1, enforced by an assertion); check_count, how many leading
+    # elements to sample (default none; if given it must be between 0 and the length,
+    # enforced by an assertion, and zero returns false).
+    # Default sampling: inputs of at most the module threshold (50) elements never
+    # cache; up to 5000 elements sample a tenth of them; longer inputs sample 500.
+    # Returns false if the sampled elements are unhashable, or if the number of distinct
+    # sampled elements exceeds the sample size times unique_share; otherwise true.
     """
     Decides whether to do caching.
 
@@ -219,6 +262,16 @@ def _maybe_cache(
     cache: bool,
     convert_listlike: Callable,
 ) -> Series:
+    # [FUNCTION DOC]
+    # HELPER: to_datetime. Build a lookup cache mapping unique inputs to converted values.
+    # Inputs: arg, a list, tuple, array, Index or Series; format, the format passed to the
+    # converter; cache, whether caching is enabled; convert_listlike, the conversion
+    # function called with the unique values and the format.
+    # Returns an empty object Series (meaning no cache) when caching is disabled, the
+    # sampling heuristic says it is not worthwhile, there are no duplicates, or the
+    # conversion raises an out-of-bounds error. Otherwise returns a Series of converted
+    # values indexed by the unique inputs, with duplicate index entries (arising from
+    # None and NaT) removed keeping the first.
     """
     Create a cache of unique dates from an array of dates
 
@@ -266,6 +319,12 @@ def _maybe_cache(
 def _box_as_indexlike(
     dt_array: ArrayLike, utc: bool = False, name: Hashable | None = None
 ) -> Index:
+    # [FUNCTION DOC]
+    # HELPER: datetime conversion. Wrap converted values in an Index.
+    # Inputs: dt_array, a one-dimensional array; utc (default false), localize to UTC
+    # when the array is datetime64; name, the resulting index name. A numpy datetime64
+    # array becomes a DatetimeIndex (with a UTC timezone when utc is true); any other
+    # array becomes a generic Index with the array's own dtype. Returns the index.
     """
     Properly boxes the ndarray of datetimes to DatetimeIndex
     if it is possible or to generic Index instead
@@ -297,6 +356,12 @@ def _convert_and_box_cache(
     cache_array: Series,
     name: Hashable | None = None,
 ) -> Index:
+    # [FUNCTION DOC]
+    # HELPER: to_datetime. Convert values by looking each up in a precomputed cache.
+    # Inputs: arg, the raw values; cache_array, a Series from unique raw values to
+    # converted values; name, the resulting index name (default none). The raw values are
+    # wrapped as a Series of the cache index's dtype, mapped through the cache, and
+    # boxed as an index without UTC localization. Returns that index.
     """
     Convert array of dates with a cache and wrap the result in an Index.
 
@@ -329,6 +394,27 @@ def _convert_listlike_datetimes(
     yearfirst: bool | None = None,
     exact: bool = True,
 ):
+    # [FUNCTION DOC]
+    # HELPER: to_datetime. Convert a one-dimensional list-like of dates to an index-like
+    # of datetimes.
+    # Inputs: arg (list, tuple, array, extension array, Index or Series values); format
+    # (a format string, "mixed", or none to infer); name (index name); utc; unit (a
+    # numeric unit or none); errors ("raise" or "coerce"); dayfirst and yearfirst
+    # parsing preferences; exact (whether the format must match the whole string).
+    # Order of handling: lists/tuples become object arrays. Timezone-aware datetime data
+    # is returned (converted to UTC if requested). Arrow timestamp data is returned
+    # (converted or localized to UTC if requested). Numpy datetime64 data is converted
+    # to a supported resolution if needed, then wrapped or localized to UTC. If a unit
+    # is given the data is treated as numbers (a value error is raised if a format is
+    # also given). More than one dimension raises a type error. Then period data raises
+    # (or, with coerce, yields all-missing) and timedelta data warns; the values are
+    # made an object array; the format is inferred when absent; with a concrete format
+    # the strict parser is used; otherwise the general object parser is used, and a
+    # parsed timezone yields a timezone-aware index.
+    # Returns an index-like (DatetimeIndex, arrow-backed or object Index) of converted
+    # values.
+    # KNOWN ISSUE: the docstring omits the format parameter and says nothing of the
+    # shortcuts for already-datetime inputs.
     """
     Helper function for to_datetime. Performs the conversions of 1D listlike
     of dates
@@ -464,6 +550,16 @@ def _array_strptime_with_fallback(
     exact: bool,
     errors: str,
 ) -> Index:
+    # [FUNCTION DOC]
+    # HELPER: _convert_listlike_datetimes. Parse an object array with a fixed format.
+    # Inputs: arg, object array of strings; name, index name; utc; fmt, the format; exact;
+    # errors. Calls the compiled strict parser. If it reports a timezone, builds a
+    # timezone-aware datetime index with that timezone (converted to UTC when utc is
+    # true). Else if the result is datetime64 and utc is true, builds an index typed as
+    # UTC at the same resolution. Otherwise returns an index of the result as is (which
+    # may have object dtype for mixed/unparseable results). Returns the index.
+    # KNOWN ISSUE: the docstring mentions "fallback behavior", but no fallback to another
+    # parser exists here.
     """
     Call array_strptime, with fallback behavior depending on 'errors'.
     """
@@ -485,6 +581,21 @@ def _array_strptime_with_fallback(
 
 
 def _to_datetime_with_unit(arg, unit, name, utc: bool, errors: str) -> Index:
+    # [FUNCTION DOC]
+    # HELPER: _convert_listlike_datetimes. Convert numeric (or numeric-like) data to
+    # datetimes counted in the given unit since the epoch.
+    # Inputs: arg (array-like), unit (e.g. seconds, milliseconds), name (index name), utc,
+    # errors. Paths: nullable integer arrays are cast directly; integer numpy arrays are
+    # cast to the unit and then to the nearest supported resolution (an out-of-bounds
+    # error is re-raised for "raise"; otherwise conversion retries as objects);
+    # floats that are all whole or missing are converted as integers and the missing
+    # positions set to missing; other floats use the vectorized unit conversion at
+    # nanosecond resolution (overflow is retried as objects unless raising, in which case
+    # it is re-raised with a message naming the unit); everything else is parsed as objects
+    # with the unit applied to numbers. The result is a naive-UTC DatetimeIndex localized
+    # and converted to any timezone parsed from the data, then localized or converted to
+    # UTC when utc is true. Returns the index (or whatever non-datetime index the
+    # constructor produced).
     """
     to_datetime specalized to the case where a 'unit' is passed.
     """
@@ -565,6 +676,18 @@ def _to_datetime_with_unit(arg, unit, name, utc: bool, errors: str) -> Index:
 
 
 def _adjust_to_origin(arg, origin, unit):
+    # [FUNCTION DOC]
+    # HELPER: to_datetime. Shift numeric input so that it is relative to the Unix epoch.
+    # Inputs: arg (scalar, list-like, array or Series of numbers); origin ("julian" or a
+    # Timestamp-convertible value or a number); unit (the unit of arg).
+    # Julian origin: unit must be days (else a value error); the Julian day of the epoch
+    # is subtracted (a type error becomes a value error), and out-of-range results raise
+    # an out-of-bounds error. Other origins: arg must be numeric (else a value error); the
+    # origin becomes a Timestamp (numbers are interpreted in the unit); out-of-bounds or
+    # unconvertible origins raise errors; a timezone-aware origin raises a value error;
+    # the origin's offset from the epoch in whole units of unit is added to arg (plain
+    # lists are converted to arrays first). Returns the adjusted data, same kind as the
+    # input except for lists.
     """
     Helper function for to_datetime.
     Adjust input argument to the specified origin
@@ -651,7 +774,10 @@ def to_datetime(
     unit: str | None = ...,
     origin=...,
     cache: bool = ...,
-) -> Timestamp: ...
+) -> Timestamp:
+    # [FUNCTION DOC]
+    # Overload stub: scalar input returns a Timestamp; see the implementation below.
+    ...
 
 
 @overload
@@ -666,7 +792,11 @@ def to_datetime(
     unit: str | None = ...,
     origin=...,
     cache: bool = ...,
-) -> Series: ...
+) -> Series:
+    # [FUNCTION DOC]
+    # Overload stub: Series or mapping/DataFrame input returns a Series; see the
+    # implementation below.
+    ...
 
 
 @overload
@@ -681,7 +811,11 @@ def to_datetime(
     unit: str | None = ...,
     origin=...,
     cache: bool = ...,
-) -> DatetimeIndex: ...
+) -> DatetimeIndex:
+    # [FUNCTION DOC]
+    # Overload stub: list-like input returns a DatetimeIndex; see the implementation
+    # below.
+    ...
 
 
 @set_module("pandas")
@@ -697,6 +831,28 @@ def to_datetime(
     origin: str = "unix",
     cache: bool = True,
 ) -> DatetimeIndex | Series | DatetimeScalar | NaTType:
+    # [FUNCTION DOC]
+    # Convert a scalar, list-like, Series, Index, DataFrame or mapping to datetime values.
+    # Inputs: arg; errors ("raise" default or "coerce"); dayfirst and yearfirst (default
+    # false; parse-order preferences); utc (default false; always return UTC-aware
+    # results, localizing naive and converting aware inputs); format (strptime-style
+    # string, "ISO8601", "mixed" or none to infer); exact (unset by default; whether the
+    # format must match fully; passing it with format "mixed" or "ISO8601" raises a
+    # value error); unit (unit for numeric input); origin (default "unix"; "julian" or a
+    # reference date/number for numeric input); cache (default true; use a cache of
+    # unique conversions when the data is large and has many duplicates).
+    # Behavior: None returns the missing datetime marker. A non-unix origin first
+    # adjusts the input. Timestamps are returned (converted/localized to UTC if
+    # requested). Series are converted and rebuilt with the same index and name (using the
+    # cache when it exists). DataFrames and mutable mappings are assembled from year,
+    # month, day (and optional time) columns into a Series. Index and other list-likes
+    # become a DatetimeIndex (or Index); an out-of-bounds error while building the cache
+    # is re-raised for "raise" and otherwise caching is skipped. Any other scalar is
+    # converted via a one-element array, with booleans kept as booleans.
+    # Returns the converted value, with kinds matching the overloads.
+    # KNOWN ISSUE: the docstring says unit has default 'ns' but the actual default is
+    # none, and says exact defaults to true while the actual default is an unset
+    # sentinel (only an explicit value triggers the mixed/ISO8601 conflict check).
     """
     Convert argument to datetime.
 
@@ -1110,6 +1266,19 @@ _unit_map = {
 def _assemble_from_unit_mappings(
     arg, errors: DateTimeErrorChoices, utc: bool
 ) -> Series:
+    # [FUNCTION DOC]
+    # HELPER: to_datetime (DataFrame / mapping input). Build datetimes from columns.
+    # Inputs: arg, a DataFrame or mapping (converted to a DataFrame); errors; utc.
+    # Column names are matched (case-insensitively, falling back to the exact name since
+    # the minute code is case significant) to canonical unit codes via the module table.
+    # Raises a value error for duplicate column names, for missing year, month or day,
+    # and for unrecognized extra keys. Year, month and day are converted to numbers
+    # (floats widened to 64-bit, small integers widened to 64-bit), combined into an
+    # eight-digit date number and parsed with the year-month-day format; parsing errors
+    # become a value error naming the failure. Then each present time component (hour,
+    # minute, second, millisecond, microsecond, nanosecond) is converted to a timedelta
+    # in that unit and added, with errors likewise wrapped in value errors. Returns the
+    # resulting datetime Series.
     """
     assemble the unit specified fields from the arg (DataFrame)
     Return a Series for actual parsing
@@ -1140,6 +1309,11 @@ def _assemble_from_unit_mappings(
 
     # replace passed unit with _unit_map
     def f(value):
+        # [FUNCTION DOC]
+        # HELPER: _assemble_from_unit_mappings. Normalize a column name to its canonical
+        # unit code: exact match in the unit table first, then lower-cased match, else
+        # the name unchanged. Input: value, a column label. Non-string labels that are not
+        # in the table fail on lower-casing.
         if value in _unit_map:
             return _unit_map[value]
 
@@ -1171,6 +1345,10 @@ def _assemble_from_unit_mappings(
         )
 
     def coerce(values):
+        # [FUNCTION DOC]
+        # HELPER: _assemble_from_unit_mappings. Convert a column to numbers using the
+        # enclosing error mode, then widen floats to 64-bit float and integers to 64-bit
+        # integer to avoid precision loss and overflow. Returns the converted column.
         # we allow coercion to if errors allows
         values = to_numeric(values, errors=errors)
 

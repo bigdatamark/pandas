@@ -1,6 +1,19 @@
 """
 data hash pandas / numpy objects
 """
+# [MODULE DOC]
+# Deterministic, vectorized 64-bit hashing of pandas and numpy objects.
+# Public contents: hash_pandas_object (hash an Index, Series or DataFrame to a
+# Series of unsigned 64-bit integers), hash_tuples (hash a MultiIndex or an iterable
+# of tuples), hash_array (hash a one-dimensional numpy or extension array) and
+# combine_hash_arrays (combine several hash arrays into one, mimicking the CPython
+# tuple hash). Private contents: the default 16-character hash key string and the
+# numpy-array hashing kernel.
+# Relationships: object arrays are hashed by the compiled hashing library routine;
+# extension arrays supply their own private hashing method; categoricals are used to
+# speed up hashing of repeated values. The public functions are exposed through the
+# pandas util namespace.
+# Import-time side effects: none beyond defining the default key.
 
 from __future__ import annotations
 
@@ -48,6 +61,17 @@ _default_hash_key = "0123456789123456"
 def combine_hash_arrays(
     arrays: Iterator[np.ndarray], num_items: int
 ) -> npt.NDArray[np.uint64]:
+    # [FUNCTION DOC]
+    # Combine several equal-length unsigned 64-bit hash arrays into a single array,
+    # element-wise, using the same multiply/xor scheme as the CPython tuple hash.
+    # Inputs: arrays, an iterator (consumed) of uint64 arrays; num_items, the exact
+    # number of arrays the iterator is expected to yield.
+    # Returns a new uint64 array of the same length as the first array; if the
+    # iterator is empty, returns an empty uint64 array. The multiplier starts at
+    # 1000003 and is advanced after each array by an amount depending on the
+    # remaining item count, and a constant is added at the end.
+    # Raises an assertion error if the number of arrays actually yielded differs from
+    # num_items. Arithmetic wraps around on overflow.
     """
     Parameters
     ----------
@@ -88,6 +112,21 @@ def hash_pandas_object(
     hash_key: str | None = _default_hash_key,
     categorize: bool = True,
 ) -> Series:
+    # [FUNCTION DOC]
+    # Compute a deterministic row-wise 64-bit hash of an Index, MultiIndex, Series or
+    # DataFrame.
+    # Inputs: obj, the object to hash; index (default true) whether to mix the index
+    # hash into the result (applies to Series and DataFrame only; it is ignored for
+    # Index and MultiIndex); encoding (default utf8) and hash_key (default the module
+    # default key; a None value is replaced by the default) are used when hashing
+    # strings; categorize (default true) factorizes object data before hashing for
+    # speed. categorize is ignored for a MultiIndex.
+    # Returns a uint64 Series with the same length as obj: indexed by the object
+    # itself for an Index, by the index for a Series or DataFrame, and for a
+    # MultiIndex a Series with a default integer index of hashed tuples.
+    # A DataFrame row hash combines each column's hash (and the index hash when
+    # requested) in column order. Raises a type error for any other object type.
+    # No input is mutated.
     """
     Return a data hash of the Index/Series/DataFrame.
 
@@ -196,6 +235,15 @@ def hash_tuples(
     encoding: str = "utf8",
     hash_key: str = _default_hash_key,
 ) -> npt.NDArray[np.uint64]:
+    # [FUNCTION DOC]
+    # Hash a MultiIndex or an iterable of tuples into one uint64 value per tuple.
+    # Inputs: vals, a MultiIndex or list-like of tuples (non list-likes raise a type
+    # error; other list-likes are first converted to a MultiIndex); encoding and
+    # hash_key as in the other hashing functions.
+    # Method: each level is wrapped as an unordered categorical built directly from
+    # the codes and levels, hashed without further categorization, and the per-level
+    # hashes are combined in level order.
+    # Returns a uint64 array with one element per row.
     """
     Hash a MultiIndex / listlike-of-tuples efficiently.
 
@@ -247,6 +295,14 @@ def hash_array(
     hash_key: str = _default_hash_key,
     categorize: bool = True,
 ) -> npt.NDArray[np.uint64]:
+    # [FUNCTION DOC]
+    # Hash a one-dimensional array into deterministic uint64 values.
+    # Inputs: vals, a numpy array or extension array; encoding, hash_key and
+    # categorize as in the other hashing functions.
+    # Raises a type error if vals has no dtype attribute, or if it is neither a numpy
+    # array nor an extension array. Extension arrays are hashed by their own private
+    # hashing method; numpy arrays are hashed by the private numpy kernel.
+    # Returns a uint64 array of the same length as vals.
     """
     Given a 1d array, return an array of deterministic integers.
 
@@ -302,6 +358,20 @@ def _hash_ndarray(
     hash_key: str = _default_hash_key,
     categorize: bool = True,
 ) -> npt.NDArray[np.uint64]:
+    # [FUNCTION DOC]
+    # HELPER: hash_array (numpy-array kernel). Same parameters as hash_array, but vals
+    # must be a numpy array.
+    # Steps: complex128 arrays are split and the real hash is added to 23 times the
+    # imaginary hash. Booleans are cast to unsigned 64-bit; datetime and timedelta
+    # values are reinterpreted as integers and cast; numeric dtypes of at most 8 bytes
+    # are reinterpreted as unsigned of the same width and widened. Other dtypes
+    # (objects, strings, wider types) are either factorized into a categorical and
+    # hashed through it when categorize is true (returning early), or hashed by the
+    # compiled object hasher, falling back to string conversion of every element if
+    # it raises a type error on mixed types. The resulting 64-bit values are then
+    # scrambled with a fixed shift/xor/multiply mixing sequence.
+    # Returns a uint64 array. The input array is not mutated (all branches copy before
+    # the in-place mixing).
     """
     See hash_array.__doc__.
     """

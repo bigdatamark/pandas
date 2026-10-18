@@ -1,6 +1,14 @@
 """
 timedelta support tools
 """
+# [MODULE DOC]
+# Conversion of scalars, sequences and Series to timedelta values.
+# Public contents: to_timedelta (typed overloads for scalar, Series and list-like
+# input, exposed in the top-level pandas namespace). Private helpers convert a scalar
+# and a list-like.
+# Relationships: uses the Timedelta scalar and unit parsing from the timedelta
+# tslibs module and the array-level converter from the timedelta arrays module.
+# No import-time side effects.
 
 from __future__ import annotations
 
@@ -55,7 +63,11 @@ def to_timedelta(
     arg: str | float | timedelta,
     unit: UnitChoices | None = ...,
     errors: DateTimeErrorChoices = ...,
-) -> Timedelta: ...
+) -> Timedelta:
+    # [FUNCTION DOC]
+    # Overload stub: scalar input (string, number or timedelta) returns a Timedelta;
+    # see the implementation below.
+    ...
 
 
 @overload
@@ -63,7 +75,10 @@ def to_timedelta(
     arg: Series,
     unit: UnitChoices | None = ...,
     errors: DateTimeErrorChoices = ...,
-) -> Series: ...
+) -> Series:
+    # [FUNCTION DOC]
+    # Overload stub: Series input returns a Series; see the implementation below.
+    ...
 
 
 @overload
@@ -71,7 +86,11 @@ def to_timedelta(
     arg: list | tuple | range | ArrayLike | Index,
     unit: UnitChoices | None = ...,
     errors: DateTimeErrorChoices = ...,
-) -> TimedeltaIndex: ...
+) -> TimedeltaIndex:
+    # [FUNCTION DOC]
+    # Overload stub: list-like input returns a TimedeltaIndex; see the implementation
+    # below.
+    ...
 
 
 @set_module("pandas")
@@ -89,6 +108,21 @@ def to_timedelta(
     unit: UnitChoices | None = None,
     errors: DateTimeErrorChoices = "raise",
 ) -> Timedelta | TimedeltaIndex | Series | NaTType | Any:
+    # [FUNCTION DOC]
+    # Convert a scalar, list-like, Index or Series to timedelta values.
+    # Inputs: arg; unit (default none, meaning nanoseconds for numbers; when given it
+    # is normalized through the unit parser and ambiguous units such as months and
+    # years raise an error); errors ("raise" default or "coerce").
+    # Raises a value error for an invalid errors value, and when a unit is given
+    # together with a scalar string; raises a type error for input with more than one
+    # dimension. Unparseable scalars raise (or become missing when coerced).
+    # Behavior: None returns the missing timedelta marker; a Series is converted
+    # through its values and rebuilt with the same index and name; an Index or other
+    # one-dimensional list-like becomes a TimedeltaIndex (named after the Index when
+    # an Index was given); zero-dimensional arrays are unwrapped to a scalar; anything
+    # else is treated as a scalar and converted to a Timedelta.
+    # KNOWN ISSUE: the docstring's Returns section omits the missing-value marker
+    # returned for None input.
     """
     Convert argument to timedelta.
 
@@ -210,6 +244,13 @@ def to_timedelta(
 def _coerce_scalar_to_timedelta_type(
     r, unit: UnitChoices | None = "ns", errors: DateTimeErrorChoices = "raise"
 ) -> Timedelta | NaTType:
+    # [FUNCTION DOC]
+    # HELPER: to_timedelta. Convert a single scalar to a Timedelta.
+    # Inputs: r, the scalar; unit (default "ns"); errors ("raise" default). A value
+    # error from construction is re-raised when errors is "raise" and otherwise
+    # replaced with the missing timedelta marker. Returns that Timedelta or marker.
+    # KNOWN ISSUE: the docstring says it converts a string, but any scalar accepted
+    # by the Timedelta constructor is handled.
     """Convert string 'r' to a timedelta object."""
     result: Timedelta | NaTType
 
@@ -230,6 +271,15 @@ def _convert_listlike(
     errors: DateTimeErrorChoices = "raise",
     name: Hashable | None = None,
 ):
+    # [FUNCTION DOC]
+    # HELPER: to_timedelta. Convert a list-like to a timedelta index.
+    # Inputs: arg (list, tuple, array, Index or extension array); unit (default none);
+    # errors ("raise" default); name (label for the resulting index, default none).
+    # Lists, tuples and objects without a dtype are first turned into an object array.
+    # Arrow-backed timedelta data is returned unchanged. Otherwise the array converter
+    # produces nanosecond timedelta data, which is wrapped in a TimedeltaIndex; the
+    # data is copied only if the result shares memory with the input. Returns that
+    # index (or the unchanged arrow-backed input).
     """Convert a list of objects to a timedelta index object."""
     arg_dtype = getattr(arg, "dtype", None)
     if isinstance(arg, (list, tuple)) or arg_dtype is None:

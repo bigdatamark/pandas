@@ -1,4 +1,16 @@
 """Any shareable docstring components for rolling/expanding/ewm"""
+# [MODULE DOC]
+# HELPER module: reusable documentation text fragments shared by the rolling,
+# expanding and ewm window classes, used when building method docstrings.
+# Contents: a local copy of the shared docstring dictionary; create_section_header
+# (build a numpydoc section header); string templates for the summary header, returns
+# section, see-also section, numeric-only keyword, SciPy keyword, apply parameters
+# and the pipe method; a numba note; and window_agg_numba_parameters (engine
+# parameter text parameterized by version).
+# Templates contain placeholders (curly-brace fields or percent-style fields) filled
+# in by the callers with format operations; doubled curly braces are literal braces.
+# Import-time side effects: copies the shared docstring dictionary (the copy is
+# module-local, so later changes to the original are not seen).
 
 from __future__ import annotations
 
@@ -10,6 +22,10 @@ _shared_docs = dict(**_shared_docs)
 
 
 def create_section_header(header: str) -> str:
+    # [FUNCTION DOC]
+    # Build a numpydoc section header: the header text, a newline, a line of dashes of
+    # the same length as the text, and a trailing newline. Input: header, a string.
+    # Returns the combined string.
     """Create numpydoc section header"""
     return f"{header}\n{'-' * len(header)}\n"
 
@@ -149,6 +165,15 @@ numba_notes = (
 
 
 def window_agg_numba_parameters(version: str = "1.3") -> str:
+    # [FUNCTION DOC]
+    # Build the docstring text for the engine and engine_kwargs parameters of window
+    # aggregations that support numba.
+    # Input: version (default "1.3"), a string such as a major.minor release number;
+    # it is substituted into the "versionadded" directives, each of which appends a
+    # ".0" suffix to it. Returns the dedented parameter text with the leading blank
+    # line removed and the version filled in. Literal braces in the default engine
+    # keyword dictionary are written doubled in the template and remain doubled in the
+    # output, to be resolved by a later format step in the caller.
     return (
         dedent(
             """

@@ -1,3 +1,11 @@
+# [MODULE DOC]
+# Conversion of scalars, sequences, Index and Series data to numeric types.
+# Public contents: to_numeric, exposed in the top-level pandas namespace (the module
+# name is overridden for documentation purposes).
+# Relationships: uses the compiled numeric-conversion routine from the library
+# module, the downcasting helper from the dtypes cast module, masked/arrow/string
+# array classes for nullable and pyarrow-backed results.
+# No import-time side effects.
 from __future__ import annotations
 
 from typing import (
@@ -54,6 +62,31 @@ def to_numeric(
     downcast: Literal["integer", "signed", "unsigned", "float"] | None = None,
     dtype_backend: DtypeBackend | lib.NoDefault = lib.no_default,
 ):
+    # [FUNCTION DOC]
+    # Convert a scalar, list, tuple, array, Index or Series to numeric values.
+    # Inputs: arg; errors ("raise" default, or "coerce" to turn unparseable entries into
+    # missing values); downcast (None default, or "integer", "signed", "unsigned",
+    # "float": after conversion, try progressively larger numeric types and keep the
+    # first that holds the values without loss, never growing the type; unsigned
+    # downcasting is only attempted when no value is negative; downcast errors are not
+    # affected by the errors setting); dtype_backend (unset by default; "numpy_nullable"
+    # or "pyarrow" produce nullable or arrow-backed results, validated up front).
+    # Raises a value error for an invalid downcast or errors value, and a type error
+    # for arrays of more than one dimension; unparseable values raise a value error when
+    # errors is "raise".
+    # Behavior by input kind: decimal scalars become floats; other numbers are returned
+    # unchanged; Timedelta and Timestamp scalars return their integer value; other
+    # scalars are converted via a one-element object array and unwrapped. Series and
+    # Index inputs keep index/name (Index results are rebuilt with the default Index
+    # constructor). Datetime-like data is reinterpreted as 64-bit integers. For masked
+    # or arrow-backed inputs, only valid values are converted and the missing-value
+    # mask is reapplied afterwards (producing an integer, boolean or floating masked
+    # array, wrapped in an arrow-backed array when pyarrow output is requested or the
+    # input was arrow-backed). Nullable string inputs and any set dtype_backend also
+    # yield masked results.
+    # KNOWN ISSUE: the docstring says the return is a Series for Series input and an
+    # ndarray otherwise, but Index input returns an Index, scalars return a scalar and
+    # extension-array inputs may return an extension array.
     """
     Convert argument to a numeric type.
 

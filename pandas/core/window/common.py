@@ -1,4 +1,15 @@
 """Common utility functions for rolling operations"""
+# [MODULE DOC]
+# HELPER module: shared utilities for the window (rolling, expanding, exponentially
+# weighted) implementations, mainly for binary moments such as covariance and
+# correlation.
+# Contents: flex_binary_moment (apply a pairwise binary kernel across two Series /
+# DataFrames, optionally pairwise over columns), zsqrt (square root clipped to zero
+# for negative inputs) and prep_binary (align two objects and mask them to a common
+# set of missing values).
+# Relationships: used by the rolling and ewm modules; builds frames with the public
+# DataFrame, concat and MultiIndex tools (imported lazily inside functions).
+# No import-time side effects.
 
 from __future__ import annotations
 
@@ -16,6 +27,29 @@ from pandas.core.indexes.api import MultiIndex
 
 
 def flex_binary_moment(arg1, arg2, f, pairwise: bool = False):
+    # [FUNCTION DOC]
+    # HELPER: window binary moments (covariance, correlation). Applies the binary
+    # kernel f to Series/DataFrame operands and assembles the result.
+    # Inputs: arg1 and arg2, each a Series or DataFrame; f, a callable taking two
+    # aligned Series and returning a Series; pairwise (default false), whether to
+    # compute f for every pair of columns between the two frames.
+    # Cases: two Series are masked to a common index and passed to f directly. If arg1
+    # is a DataFrame and arg2 a DataFrame: with pairwise false, identical frames are
+    # processed column by column (supporting duplicate column names) and different
+    # frames must each have unique columns (otherwise a value error is raised), are
+    # outer-aligned and combined over the union of columns, keeping only columns
+    # present in both; with pairwise true, every column pair is computed (reusing the
+    # transposed result when both frames are the same object), the pieces are
+    # concatenated and indexed by a (row label, arg2 column) multi-level index, with
+    # column names taken from arg1 and index names from the row index plus arg2
+    # column names; an empty union of row labels gives an empty float frame.
+    # If arg1 is a DataFrame and arg2 is not, each column of arg1 is combined with arg2
+    # and the columns of arg1 are kept. If arg1 is neither (a Series with a
+    # DataFrame), the arguments are swapped and the call repeated without pairwise.
+    # Returns the Series or DataFrame result.
+    # KNOWN ISSUE: with two DataFrames, a pairwise value that is neither true nor
+    # false (for example None) matches neither branch, so the function falls through
+    # and returns None.
     if isinstance(arg1, ABCSeries) and isinstance(arg2, ABCSeries):
         X, Y = prep_binary(arg1, arg2)
         return f(X, Y)
@@ -24,6 +58,12 @@ def flex_binary_moment(arg1, arg2, f, pairwise: bool = False):
         from pandas import DataFrame
 
         def dataframe_from_int_dict(data, frame_template) -> DataFrame:
+            # [FUNCTION DOC]
+            # HELPER: flex_binary_moment. Builds a frame from a mapping of integer
+            # column positions to results, indexed like frame_template.
+            # Columns are relabeled by looking up the integer positions in the
+            # template's columns; if the result has no columns, the template's columns
+            # are copied instead. Returns the new frame.
             result = DataFrame(data, index=frame_template.index)
             if len(result.columns) > 0:
                 result.columns = frame_template.columns[result.columns]
@@ -150,6 +190,13 @@ def flex_binary_moment(arg1, arg2, f, pairwise: bool = False):
 
 
 def zsqrt(x):
+    # [FUNCTION DOC]
+    # HELPER: window variance/standard-deviation computations. Square root that maps
+    # negative inputs to zero instead of not-a-number.
+    # Input: x, a numpy array, Series or DataFrame. Floating-point warnings are
+    # suppressed during the computation. Returns the element-wise square root with
+    # entries where x was negative set to zero (missing values stay missing). The
+    # result is a new object; x is not mutated.
     with np.errstate(all="ignore"):
         result = np.sqrt(x)
         mask = x < 0
@@ -164,6 +211,12 @@ def zsqrt(x):
 
 
 def prep_binary(arg1, arg2):
+    # [FUNCTION DOC]
+    # HELPER: window binary moments. Align two objects to a common index and mask
+    # each so that a value is missing wherever either input is missing.
+    # Inputs: arg1 and arg2, Series or DataFrames (or scalars supporting arithmetic).
+    # Each result is its input plus zero times the other, which broadcasts/aligns the
+    # indexes and propagates missing values. Returns the pair of new objects.
     # mask out values, this also makes a common index...
     X = arg1 + 0 * arg2
     Y = arg2 + 0 * arg1

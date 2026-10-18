@@ -1,4 +1,18 @@
 """miscellaneous sorting / groupby utilities"""
+# [MODULE DOC]
+# HELPER module: internal sorting and group-index utilities used by sort_index,
+# sort_values, groupby, merge and extension arrays.
+# Contents: indexer computation for index sorting (get_indexer_indexer); the
+# "group index" machinery that encodes tuples of integer labels into single 64-bit
+# ids and back (get_group_index, get_compressed_ids, is_int64_overflow_possible,
+# decons_obs_group_ids, compress_group_index and private helpers); multi-key and
+# single-key argsort that handle missing values (lexsort_indexer, nargsort); arg-min/
+# arg-max for extension arrays (nargminmax); key-function application for sorting
+# (ensure_key_mapped); a label-to-positions dictionary builder (get_indexer_dict); and
+# a stable sorter for group ids (get_group_index_sorter).
+# Relationships: relies on the compiled algorithms and hashtable libraries and on
+# array extraction utilities; Categorical is imported lazily.
+# No import-time side effects.
 
 from __future__ import annotations
 
@@ -64,6 +78,22 @@ def get_indexer_indexer(
     sort_remaining: bool,
     key: IndexKeyFunc,
 ) -> npt.NDArray[np.intp] | None:
+    # [FUNCTION DOC]
+    # HELPER: sort_index of DataFrame and Series. Computes the positions that would
+    # sort an Index (or MultiIndex), or None if no reordering is needed.
+    # Inputs: target, the index; level, optional level number/name or list of them;
+    # ascending, a bool or per-level list of bools; kind, the sort algorithm name;
+    # na_position, "first" or "last"; sort_remaining, whether unspecified levels are
+    # sorted too (used with level); key, an optional function applied to the index (or
+    # to the chosen levels) before sorting.
+    # Steps: apply the key mapping, make multi-index levels monotonic, then: with level
+    # given, delegate to the index's level-sorting method; otherwise return None when
+    # the index is already monotonic in the requested direction (all-ascending or
+    # all-descending); for a MultiIndex build a lexical sort from the codes of each
+    # level; for a flat index use the missing-value-aware argsort.
+    # Returns an integer position array or None.
+    # The ascending value is only a sequence for a MultiIndex; for a flat index it is
+    # treated as a single bool.
     """
     Helper method that return the indexer according to input parameters for
     the sort_index method of DataFrame and Series.
@@ -121,6 +151,20 @@ def get_indexer_indexer(
 def get_group_index(
     labels, shape: Shape, sort: bool, xnull: bool
 ) -> npt.NDArray[np.int64]:
+    # [FUNCTION DOC]
+    # Encode tuples of integer labels into single int64 "group ids".
+    # Inputs: labels, a sequence of integer arrays (one per level, same length, -1
+    # meaning missing); shape, the number of distinct labels per level; sort, whether
+    # the ids, when intermediate compression is needed, keep lexical order; xnull,
+    # whether rows with a missing label at any level are given id -1 (true) or the
+    # missing value is treated as an extra label by shifting that level up by one
+    # (false).
+    # Labels and shape must have the same length. Levels are processed in chunks sized
+    # so the running product of level sizes stays below the int64 maximum; between
+    # chunks the partial ids are compressed to consecutive ids. Zero-sized levels
+    # force a zero stride. Returns an int64 array in which two rows have equal ids
+    # exactly when their labels are equal at every level; ids are deconstructable only
+    # if the full product of sizes fits in int64.
     """
     For the particular label_list, gets the offsets into the hypothetical list
     representing the totally ordered cartesian product of all possible label
@@ -154,6 +198,11 @@ def get_group_index(
     """
 
     def _int64_cut_off(shape) -> int:
+        # [FUNCTION DOC]
+        # HELPER: get_group_index. Returns how many leading levels of shape can be
+        # multiplied together while the running product stays strictly below the int64
+        # maximum (the index of the first level that would overflow, or the number of
+        # levels if none do).
         acc = 1
         for i, mul in enumerate(shape):
             acc *= int(mul)
@@ -162,6 +211,11 @@ def get_group_index(
         return len(shape)
 
     def maybe_lift(lab, size: int) -> tuple[np.ndarray, int]:
+        # [FUNCTION DOC]
+        # HELPER: get_group_index. Inputs: lab, an integer label array; size, the
+        # level size. If any label is -1 (missing), returns the labels shifted up by
+        # one and the size increased by one so all values are non-negative; otherwise
+        # returns both unchanged.
         # promote nan values (assigned -1 label in lab array)
         # so that all output values are non-negative
         return (lab + 1, size + 1) if (lab == -1).any() else (lab, size)
@@ -211,6 +265,12 @@ def get_group_index(
 def get_compressed_ids(
     labels, sizes: Shape
 ) -> tuple[npt.NDArray[np.intp], npt.NDArray[np.int64]]:
+    # [FUNCTION DOC]
+    # Compute compressed group ids for a set of label arrays.
+    # Inputs: labels, a list of integer label arrays; sizes, the number of distinct
+    # labels per level. Builds sorted group ids with missing labels treated as an extra
+    # label (not excluded), then compresses them. Returns a pair: the compressed id of
+    # each row, and the sorted array of distinct observed group ids.
     """
     Group_index is offsets into cartesian product of all possible labels. This
     space can be huge, so this function compresses it, by computing offsets
@@ -233,6 +293,10 @@ def get_compressed_ids(
 
 
 def is_int64_overflow_possible(shape: Shape) -> bool:
+    # [FUNCTION DOC]
+    # Report whether the product of the level sizes could overflow a signed 64-bit
+    # integer. Input: shape, a sequence of level sizes. The product is computed with
+    # arbitrary-precision integers; returns true if it is at least the int64 maximum.
     the_prod = 1
     for x in shape:
         the_prod *= int(x)
@@ -243,6 +307,13 @@ def is_int64_overflow_possible(shape: Shape) -> bool:
 def _decons_group_index(
     comp_labels: npt.NDArray[np.intp], shape: Shape
 ) -> list[npt.NDArray[np.intp]]:
+    # [FUNCTION DOC]
+    # HELPER: decons_obs_group_ids. Reconstruct per-level labels from group ids.
+    # Inputs: comp_labels, the group ids; shape, the level sizes. Raises a value error
+    # if the product of level sizes could overflow int64 (the ids were then
+    # factorized and cannot be deconstructed). Otherwise extracts each level by modular
+    # arithmetic, from the last level to the first, restoring -1 wherever the id was
+    # negative. Returns a list of label arrays in level order.
     # reconstruct labels
     if is_int64_overflow_possible(shape):
         # at some point group indices are factorized,
@@ -269,6 +340,17 @@ def decons_obs_group_ids(
     labels: Sequence[npt.NDArray[np.signedinteger]],
     xnull: bool,
 ) -> list[npt.NDArray[np.intp]]:
+    # [FUNCTION DOC]
+    # Reconstruct per-level labels from observed group ids.
+    # Inputs: comp_ids, the compressed id of each row; obs_ids, the distinct observed
+    # group ids; shape, the level sizes; labels, the original per-level label arrays;
+    # xnull, whether missing labels (-1) were passed through rather than shifted.
+    # When xnull is false, the sizes of levels containing missing labels are increased
+    # by one. If the product of sizes cannot overflow, the labels are decoded
+    # arithmetically from the observed ids, and (for xnull false) levels that were
+    # shifted are shifted back down. Otherwise, the first row of each group is located
+    # and its original labels are copied (as platform integers).
+    # Returns a list of label arrays, one per level.
     """
     Reconstruct labels from observed group ids.
 
@@ -306,6 +388,20 @@ def lexsort_indexer(
     key: Callable | None = None,
     codes_given: bool = False,
 ) -> npt.NDArray[np.intp]:
+    # [FUNCTION DOC]
+    # Compute the positions that sort rows lexically by several keys.
+    # Inputs: keys, a sequence of arrays/Index/Series (the first key is the most
+    # significant); orders, a bool, a per-key list of bools, or None (all ascending);
+    # na_position, "first" or "last" (default "last"); key, an optional function applied
+    # to each key first; codes_given, true if the keys are already integer codes (with
+    # -1 for missing) so no categorical needs to be built.
+    # Raises a value error for an invalid na_position; a per-key orders list shorter or
+    # longer than keys raises a value error from the strict pairing.
+    # Each key is converted to integer codes (via an ordered categorical, or used
+    # directly), missing codes are moved to the end when requested, and descending
+    # order is obtained by reversing the codes of non-missing entries. The keys are
+    # processed from last to first and passed to the lexical sort. Returns an integer
+    # position array.
     """
     Performs lexical sorting on a set of keys
 
@@ -377,6 +473,18 @@ def nargsort(
     key: Callable | None = None,
     mask: npt.NDArray[np.bool_] | None = None,
 ) -> npt.NDArray[np.intp]:
+    # [FUNCTION DOC]
+    # Missing-value-aware argsort for arrays, Index and Series.
+    # Inputs: items; kind, the sort algorithm name (default "quicksort"); ascending
+    # (default true); na_position, "first" or "last" (default "last"); key, an optional
+    # function applied to items first (the function is then called again without it);
+    # mask, an optional precomputed missing-value mask (computed when not given).
+    # Raises a type error for a MultiIndex, and a value error for an invalid
+    # na_position (detected for numpy arrays after sorting).
+    # A range index delegates to its own argsort. Extension arrays delegate to their own
+    # argsort with the same options. For numpy arrays, non-missing entries are sorted,
+    # reversed twice when descending so ties keep their original order, and the missing
+    # positions are placed first or last. Returns a platform-integer position array.
     """
     Intended to be a drop-in replacement for np.argsort which handles NaNs.
 
@@ -454,6 +562,18 @@ def nargsort(
 
 
 def nargminmax(values: ExtensionArray, method: str, axis: AxisInt = 0):
+    # [FUNCTION DOC]
+    # Position of the minimum or maximum of an extension array, skipping missing
+    # values.
+    # Inputs: values; method, either "argmax" or "argmin" (anything else fails an
+    # assertion); axis (default 0, used only for two-dimensional data).
+    # The array is converted to its sortable numpy representation. For one-dimensional
+    # data, the position (in the original array) of the extreme non-missing value is
+    # returned. For two-dimensional data with missing values, the same is done per
+    # column (axis 0) or row (axis 1) and an array of positions is returned; without
+    # missing values the plain numpy result for that axis is returned.
+    # KNOWN ISSUE: the docstring says the return is an int, but two-dimensional input
+    # returns an array of positions.
     """
     Implementation of np.argmin/argmax but for ExtensionArray and which
     handles missing values.
@@ -487,6 +607,12 @@ def nargminmax(values: ExtensionArray, method: str, axis: AxisInt = 0):
 
 
 def _nanargminmax(values: np.ndarray, mask: npt.NDArray[np.bool_], func) -> int:
+    # [FUNCTION DOC]
+    # HELPER: nargminmax. Inputs: values, a one-dimensional array; mask, a boolean
+    # array marking missing entries; func, the numpy arg-min or arg-max function.
+    # Applies func to the non-missing values only and maps the result back to a position
+    # in the original array. Returns that position. Fails with an index error if all
+    # values are missing.
     """
     See nanargminmax.__doc__.
     """
@@ -500,6 +626,14 @@ def _nanargminmax(values: np.ndarray, mask: npt.NDArray[np.bool_], func) -> int:
 def _ensure_key_mapped_multiindex(
     index: MultiIndex, key: Callable, level=None
 ) -> MultiIndex:
+    # [FUNCTION DOC]
+    # HELPER: ensure_key_mapped (MultiIndex case). Apply a key function to selected
+    # levels of a MultiIndex.
+    # Inputs: index; key, a function mapping an Index to an equal-length Index; level,
+    # optional single level or list of levels (numbers or names; default none meaning
+    # all levels). Unselected levels are carried over unchanged. Returns a new
+    # MultiIndex (same class) built from the per-level values; the input is not
+    # modified.
     """
     Returns a new MultiIndex in which key has been applied
     to all levels specified in level (or all levels if level
@@ -551,6 +685,17 @@ def _ensure_key_mapped_multiindex(
 def ensure_key_mapped(
     values: ArrayLike | Index | Series, key: Callable | None, levels=None
 ) -> ArrayLike | Index | Series:
+    # [FUNCTION DOC]
+    # Apply a user-supplied key function to values used for sorting.
+    # Inputs: values, an array, Index or Series; key, an optional function (when none or
+    # otherwise falsy the values are returned unchanged); levels, optional levels to
+    # which the key applies when values is a MultiIndex (delegated to the MultiIndex
+    # helper).
+    # The key is called on a copy of the values. Raises a value error if the result has a
+    # different length, and a type error if the result cannot be converted back to the
+    # type of the input. An Index input yields a new flat Index (not necessarily the
+    # same subclass, and without splitting tuples); other inputs are rebuilt using their
+    # own type's constructor. Returns the mapped values.
     """
     Applies a callable key function to the values function and checks
     that the resulting value has the same shape. Can be called on Index
@@ -599,6 +744,14 @@ def ensure_key_mapped(
 def get_indexer_dict(
     label_list: list[np.ndarray], keys: list[Index]
 ) -> dict[Hashable, npt.NDArray[np.intp]]:
+    # [FUNCTION DOC]
+    # Build a mapping from each observed label combination to the positions of the rows
+    # having it.
+    # Inputs: label_list, one integer label array per level; keys, the Index of distinct
+    # values for each level. Group ids are computed (missing labels excluded), the
+    # function returns an empty mapping if every row is missing, otherwise rows are
+    # stably sorted by group id and the compiled helper builds the mapping. Returns a
+    # dictionary keyed by label tuples (or single labels) with integer position arrays.
     """
     Returns
     -------
@@ -632,6 +785,13 @@ def get_indexer_dict(
 def get_group_index_sorter(
     group_index: npt.NDArray[np.intp], ngroups: int | None = None
 ) -> npt.NDArray[np.intp]:
+    # [FUNCTION DOC]
+    # Compute a stable sorting permutation for group ids.
+    # Inputs: group_index, signed integer group ids; ngroups, the number of possible
+    # groups (default none, taken as one plus the maximum id). Chooses between a
+    # counting sort (when the number of groups is smaller than count times the natural
+    # log of count, for a non-empty input) and a stable merge sort. Both are stable.
+    # Returns a platform-integer permutation array.
     """
     algos.groupsort_indexer implements `counting sort` and it is at least
     O(ngroups), where
@@ -675,6 +835,17 @@ def get_group_index_sorter(
 def compress_group_index(
     group_index: npt.NDArray[np.int64], sort: bool = True
 ) -> tuple[npt.NDArray[np.int64], npt.NDArray[np.int64]]:
+    # [FUNCTION DOC]
+    # Compress sparse group ids into consecutive ids.
+    # Inputs: group_index, int64 group ids (-1 meaning missing); sort (default true),
+    # whether the observed ids are returned in sorted order. If the input is already
+    # non-decreasing, a fast path derives the compressed ids from changes between
+    # neighbors (the sort option does not matter, and a leading negative id gets
+    # compressed id -1 and is excluded from the observed ids). Otherwise a hash table
+    # assigns ids in order of first appearance, and they are reordered by sorted value
+    # when sort is true and anything was observed.
+    # Returns a pair of int64 arrays: the compressed id for each row, and the distinct
+    # observed group ids.
     """
     Group_index is offsets into cartesian product of all possible labels. This
     space can be huge, so this function compresses it, by computing offsets
@@ -706,6 +877,13 @@ def compress_group_index(
 def _reorder_by_uniques(
     uniques: npt.NDArray[np.int64], labels: npt.NDArray[np.intp]
 ) -> tuple[npt.NDArray[np.int64], npt.NDArray[np.intp]]:
+    # [FUNCTION DOC]
+    # HELPER: compress_group_index. Renumber compressed labels so the distinct values
+    # are in ascending order.
+    # Inputs: uniques, the distinct ids in first-appearance order; labels, per-row
+    # indices into uniques (negative meaning missing). Returns a pair: the sorted
+    # distinct ids, and the labels remapped to the sorted order, with missing entries
+    # kept as -1.
     """
     Parameters
     ----------
