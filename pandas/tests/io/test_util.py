@@ -1,3 +1,10 @@
+# [MODULE DOC]
+# Tests for the arrow table conversion utility in the io utilities module.
+# Covers timezone normalization when converting an Arrow table to a DataFrame:
+# timezone-aware data in columns, the row index, the column labels and a
+# multi-level index must all end up with standard-library zone info timezone objects.
+# Requires pyarrow and pytz (skipped otherwise). A module-level mark ignores the
+# deprecation warning about passing a block manager to the frame constructor.
 import zoneinfo
 
 import pytest
@@ -22,6 +29,10 @@ pytestmark = pytest.mark.filterwarnings(
 
 
 def test_arrow_table_to_pandas_normalize_timezones():
+    # [FUNCTION DOC]
+    # Verifies that converting an Arrow table built from a frame with a timezone-aware
+    # column and a timezone-aware datetime index yields a frame equal to the original
+    # (index frequency cleared), and that both timezones are standard-library zone info objects.
     df = pd.DataFrame(
         {"ts": pd.date_range("2024-03-01", periods=2, tz="America/New_York")},
         index=pd.date_range("2024-01-01", periods=2, tz="US/Eastern"),
@@ -38,6 +49,11 @@ def test_arrow_table_to_pandas_normalize_timezones():
 
 
 def test_arrow_table_to_pandas_normalize_timezones_columns():
+    # [FUNCTION DOC]
+    # Verifies normalization when the timezone-aware values are the column labels:
+    # the round-tripped frame equals the original (columns cast to nanosecond unit when
+    # the installed pyarrow is in the range that loses the unit) and the columns timezone
+    # is a zone info object.
     df = pd.DataFrame(
         [[1, 2], [3, 4]],
         columns=pd.date_range("2024-02-01", periods=2, tz="Europe/Berlin"),
@@ -55,6 +71,10 @@ def test_arrow_table_to_pandas_normalize_timezones_columns():
 
 
 def test_arrow_table_to_pandas_normalize_timezones_multiindex():
+    # [FUNCTION DOC]
+    # Verifies normalization with a two-level index whose second level is timezone-aware
+    # and also kept as a column: the round trip equals the original frame, and both the
+    # column dtype timezone and the index level timezone are zone info objects.
     df = pd.DataFrame(
         {"ts": pd.date_range("2024-03-01", periods=2, tz="America/New_York")},
         index=pd.Index([1, 2], name="index"),

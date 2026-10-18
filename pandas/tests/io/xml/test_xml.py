@@ -1,3 +1,14 @@
+# [MODULE DOC]
+# Tests for the XML reader (the top-level XML read function in the XML io module), run
+# against both the lxml and the standard-library element tree parsers. Covers file,
+# file-like and URL inputs, character sets and encodings, whitespace and content
+# handling, XPath selection and errors, namespaces and prefixes, element versus
+# attribute selection, column renaming, parser selection, XSLT stylesheets (lxml only),
+# the streaming iterparse mode, compression, remote storage and nullable dtype backends.
+# Module-level data: a sample frame of shapes, two sample XML documents (default and
+# prefixed namespace) and an expected frame built from the KML example file. A
+# checklist comment near the top lists the error cases covered. Fixtures here supply
+# the read mode and parser name; example file fixtures come from the package conftest module.
 from __future__ import annotations
 
 from io import (
@@ -245,6 +256,10 @@ df_kml = DataFrame(
 
 
 def test_literal_xml_raises():
+    # [FUNCTION DOC]
+    # Regression test for passing literal XML text as the first argument (which is treated
+    # as a path in current versions). Requires lxml. Expects a file-not-found or operating
+    # system error whose message says no such file or directory or invalid argument.
     # GH 53809
     pytest.importorskip("lxml")
     msg = "|".join([r".*No such file or directory", r".*Invalid argument"])
@@ -255,20 +270,33 @@ def test_literal_xml_raises():
 
 @pytest.fixture(params=["rb", "r"])
 def mode(request):
+    # [FUNCTION DOC]
+    # Fixture parametrized over the binary and text read modes; returns the mode string.
     return request.param
 
 
 @pytest.fixture(params=[pytest.param("lxml", marks=td.skip_if_no("lxml")), "etree"])
 def parser(request):
+    # [FUNCTION DOC]
+    # Fixture parametrized over lxml (skipped if lxml is missing) and etree; returns the parser name.
     return request.param
 
 
 def read_xml_iterparse(data, temp_path, **kwargs):
+    # [FUNCTION DOC]
+    # HELPER: writes XML text to the given temporary path (utf-8) and then reads that
+    # path with the XML reader, forwarding keyword arguments; used to exercise the
+    # streaming iterparse code path against a real file. Returns the resulting frame.
     temp_path.write_text(data, encoding="utf-8")
     return read_xml(temp_path, **kwargs)
 
 
 def read_xml_iterparse_comp(comp_path, compression_only, temp_path, **kwargs):
+    # [FUNCTION DOC]
+    # HELPER: opens a compressed file with the io handle helper using the given
+    # compression, copies the decompressed text to the temporary path (utf-8) and reads
+    # that plain file with the XML reader, forwarding keyword arguments. Returns the frame.
+    # This allows iterparse (which does not support compressed input) to be compared.
     with get_handle(comp_path, "r", compression=compression_only) as handles:
         temp_path.write_text(handles.handle.read(), encoding="utf-8")
         return read_xml(temp_path, **kwargs)
@@ -278,6 +306,9 @@ def read_xml_iterparse_comp(comp_path, compression_only, temp_path, **kwargs):
 
 
 def test_parser_consistency_file(xml_books):
+    # [FUNCTION DOC]
+    # Requires lxml. Reads the books example file with both parsers using both xpath and
+    # iterparse; all four results must be equal.
     pytest.importorskip("lxml")
     df_file_lxml = read_xml(xml_books, parser="lxml")
     df_file_etree = read_xml(xml_books, parser="etree")
@@ -301,6 +332,11 @@ def test_parser_consistency_file(xml_books):
 @pytest.mark.network
 @pytest.mark.single_cpu
 def test_parser_consistency_url(parser, httpserver):
+    # [FUNCTION DOC]
+    # Network and single-CPU test. Serves the default-namespace XML from a local test
+    # http server but then reads from in-memory string and bytes buffers rather than the URL;
+    # the xpath result and the iterparse result must be equal.
+    # KNOWN ISSUE: the served URL is never read, so the test does not actually exercise URL input.
     httpserver.serve_content(content=xml_default_nmsp)
 
     df_xpath = read_xml(StringIO(xml_default_nmsp), parser=parser)
@@ -314,6 +350,8 @@ def test_parser_consistency_url(parser, httpserver):
 
 
 def test_file_like(xml_books, parser, mode):
+    # [FUNCTION DOC]
+    # Reads the books example from an open file handle in binary or text mode; result equals the expected three-row books frame.
     with open(xml_books, mode, encoding="utf-8" if mode == "r" else None) as f:
         df_file = read_xml(f, parser=parser)
 
@@ -331,6 +369,8 @@ def test_file_like(xml_books, parser, mode):
 
 
 def test_file_io(xml_books, parser, mode):
+    # [FUNCTION DOC]
+    # Reads the books example into memory and parses from an in-memory bytes or text buffer matching the mode; result equals the expected books frame.
     with open(xml_books, mode, encoding="utf-8" if mode == "r" else None) as f:
         xml_obj = f.read()
 
@@ -353,6 +393,8 @@ def test_file_io(xml_books, parser, mode):
 
 
 def test_file_buffered_reader_string(xml_books, parser, mode):
+    # [FUNCTION DOC]
+    # Reads the file content (decoding bytes in binary mode) into a text buffer and parses it; result equals the expected books frame.
     with open(xml_books, mode, encoding="utf-8" if mode == "r" else None) as f:
         xml_obj = f.read()
 
@@ -377,6 +419,8 @@ def test_file_buffered_reader_string(xml_books, parser, mode):
 
 
 def test_file_buffered_reader_no_xml_declaration(xml_books, parser, mode):
+    # [FUNCTION DOC]
+    # Skips the first line (the XML declaration) of the file before reading the rest into a text buffer; parsing still succeeds and equals the expected books frame.
     with open(xml_books, mode, encoding="utf-8" if mode == "r" else None) as f:
         next(f)
         xml_obj = f.read()
@@ -402,6 +446,8 @@ def test_file_buffered_reader_no_xml_declaration(xml_books, parser, mode):
 
 
 def test_string_charset(parser):
+    # [FUNCTION DOC]
+    # Parsing a document with Chinese tag names from a text buffer yields a one-row frame with the two child columns (both integers).
     txt = "<中文標籤><row><c1>1</c1><c2>2</c2></row></中文標籤>"
 
     df_str = read_xml(StringIO(txt), parser=parser)
@@ -412,6 +458,8 @@ def test_string_charset(parser):
 
 
 def test_file_charset(xml_doc_ch_utf, parser):
+    # [FUNCTION DOC]
+    # Reads the Chinese UTF-8 document example file; result equals an expected frame with Chinese column names, strings and missing values (none) where elements are absent.
     df_file = read_xml(xml_doc_ch_utf, parser=parser)
 
     df_expected = DataFrame(
@@ -443,6 +491,8 @@ def test_file_charset(xml_doc_ch_utf, parser):
 
 
 def test_file_handle_close(xml_books, parser):
+    # [FUNCTION DOC]
+    # Verifies that reading from an in-memory buffer built from an open file does not close the caller's open file handle.
     with open(xml_books, "rb") as f:
         read_xml(BytesIO(f.read()), parser=parser)
 
@@ -451,6 +501,8 @@ def test_file_handle_close(xml_books, parser):
 
 @pytest.mark.parametrize("val", ["", b""])
 def test_empty_string_lxml(val):
+    # [FUNCTION DOC]
+    # Parametrized over empty text and empty bytes. Requires lxml. Reading an empty buffer with the lxml parser raises the lxml syntax error for an empty document.
     lxml_etree = pytest.importorskip("lxml.etree")
 
     msg = "|".join(
@@ -470,6 +522,8 @@ def test_empty_string_lxml(val):
 
 @pytest.mark.parametrize("val", ["", b""])
 def test_empty_string_etree(val):
+    # [FUNCTION DOC]
+    # Parametrized over empty text and empty bytes. Reading an empty buffer with the element tree parser raises a parse error saying no element was found.
     if isinstance(val, str):
         data = StringIO(val)
     else:
@@ -480,6 +534,8 @@ def test_empty_string_etree(val):
 
 @pytest.mark.skipif(WASM, reason="limited file system access on WASM")
 def test_wrong_file_path(parser):
+    # [FUNCTION DOC]
+    # Skipped on WASM. A path that does not exist raises a file-not-found error with the standard no such file or directory message, for either parser.
     filename = os.path.join("does", "not", "exist", "books.xml")
 
     with pytest.raises(
@@ -491,6 +547,8 @@ def test_wrong_file_path(parser):
 @pytest.mark.network
 @pytest.mark.single_cpu
 def test_url(httpserver, xml_file):
+    # [FUNCTION DOC]
+    # Network and single-CPU test. Requires lxml. Serves the books file from a local http server and reads it from the URL using an xpath that selects books with four children; the result equals the expected books frame.
     pytest.importorskip("lxml")
     with open(xml_file, encoding="utf-8") as f:
         httpserver.serve_content(content=f.read())
@@ -512,6 +570,8 @@ def test_url(httpserver, xml_file):
 @pytest.mark.network
 @pytest.mark.single_cpu
 def test_wrong_url(parser, httpserver):
+    # [FUNCTION DOC]
+    # Network and single-CPU test. A server answering with status 404 makes the reader raise an HTTP error with a not found message; the error object is closed afterwards in a finally clause to release its file-like handle.
     httpserver.serve_content("NOT FOUND", code=404)
     try:
         with pytest.raises(HTTPError, match=("HTTP Error 404: NOT FOUND")) as err:
@@ -527,6 +587,8 @@ def test_wrong_url(parser, httpserver):
 
 
 def test_whitespace(parser, temp_file):
+    # [FUNCTION DOC]
+    # Parses an XML document with surrounding whitespace in attribute values, text and character references, as strings, via xpath and via iterparse; both preserve the whitespace exactly (tabs and newlines) and equal the expected string-typed frame.
     xml = """
       <data>
         <row sides=" 4 ">
@@ -580,12 +642,16 @@ def test_whitespace(parser, temp_file):
 
 
 def test_empty_xpath_lxml(xml_books):
+    # [FUNCTION DOC]
+    # Requires lxml. An xpath matching no nodes raises a value error saying xpath does not return any nodes.
     pytest.importorskip("lxml")
     with pytest.raises(ValueError, match=("xpath does not return any nodes")):
         read_xml(xml_books, xpath=".//python", parser="lxml")
 
 
 def test_bad_xpath_etree(xml_books):
+    # [FUNCTION DOC]
+    # An invalid xpath expression with the element tree parser raises a syntax error saying the xpath is incorrect or unsupported.
     with pytest.raises(
         SyntaxError, match=("You have used an incorrect or unsupported XPath")
     ):
@@ -593,6 +659,8 @@ def test_bad_xpath_etree(xml_books):
 
 
 def test_bad_xpath_lxml(xml_books):
+    # [FUNCTION DOC]
+    # Requires lxml. An invalid xpath expression with the lxml parser raises the lxml xpath evaluation error for an invalid expression.
     lxml_etree = pytest.importorskip("lxml.etree")
 
     with pytest.raises(lxml_etree.XPathEvalError, match=("Invalid expression")):
@@ -603,6 +671,8 @@ def test_bad_xpath_lxml(xml_books):
 
 
 def test_default_namespace(parser, temp_file):
+    # [FUNCTION DOC]
+    # Reads the default-namespace document selecting rows by a namespace-prefixed xpath with a namespace mapping, and also via iterparse (which ignores namespaces); both give the expected three-row frame with a missing side value.
     df_nmsp = read_xml(
         StringIO(xml_default_nmsp),
         xpath=".//ns:row",
@@ -630,6 +700,8 @@ def test_default_namespace(parser, temp_file):
 
 
 def test_prefix_namespace(parser, temp_file):
+    # [FUNCTION DOC]
+    # Same as the default-namespace test but for a document using a namespace prefix on every element; both xpath with namespaces and iterparse give the expected frame.
     df_nmsp = read_xml(
         StringIO(xml_prefix_nmsp),
         xpath=".//doc:row",
@@ -656,6 +728,8 @@ def test_prefix_namespace(parser, temp_file):
 
 
 def test_consistency_default_namespace():
+    # [FUNCTION DOC]
+    # Requires lxml. For the default-namespace document, the lxml and element tree parsers give equal frames when queried with a namespace mapping.
     pytest.importorskip("lxml")
     df_lxml = read_xml(
         StringIO(xml_default_nmsp),
@@ -675,6 +749,8 @@ def test_consistency_default_namespace():
 
 
 def test_consistency_prefix_namespace():
+    # [FUNCTION DOC]
+    # Requires lxml. For the prefixed-namespace document, both parsers give equal frames.
     pytest.importorskip("lxml")
     df_lxml = read_xml(
         StringIO(xml_prefix_nmsp),
@@ -697,16 +773,22 @@ def test_consistency_prefix_namespace():
 
 
 def test_missing_prefix_with_default_namespace(xml_books, parser):
+    # [FUNCTION DOC]
+    # Selecting elements without any prefix in a document that uses a default namespace finds no nodes and raises a value error about xpath returning no nodes. Uses the books file.
     with pytest.raises(ValueError, match=("xpath does not return any nodes")):
         read_xml(xml_books, xpath=".//Placemark", parser=parser)
 
 
 def test_missing_prefix_definition_etree(kml_cta_rail_lines):
+    # [FUNCTION DOC]
+    # Using an undeclared namespace prefix in the xpath with the element tree parser raises a syntax error mentioning an undeclared namespace prefix.
     with pytest.raises(SyntaxError, match=("you used an undeclared namespace prefix")):
         read_xml(kml_cta_rail_lines, xpath=".//kml:Placemark", parser="etree")
 
 
 def test_missing_prefix_definition_lxml(kml_cta_rail_lines):
+    # [FUNCTION DOC]
+    # Requires lxml. Using an undeclared namespace prefix in the xpath with the lxml parser raises the lxml xpath evaluation error about an undefined namespace prefix.
     lxml_etree = pytest.importorskip("lxml.etree")
 
     with pytest.raises(lxml_etree.XPathEvalError, match=("Undefined namespace prefix")):
@@ -715,6 +797,8 @@ def test_missing_prefix_definition_lxml(kml_cta_rail_lines):
 
 @pytest.mark.parametrize("key", ["", None])
 def test_none_namespace_prefix(key):
+    # [FUNCTION DOC]
+    # Parametrized over an empty-string key and a none key. Requires lxml. A namespace mapping with an empty prefix key makes the lxml parser raise a type error that empty namespace prefixes are not supported in xpath.
     pytest.importorskip("lxml")
     with pytest.raises(
         TypeError, match=("empty namespace prefix is not supported in XPath")
@@ -731,6 +815,8 @@ def test_none_namespace_prefix(key):
 
 
 def test_file_elems_and_attrs(xml_books, parser):
+    # [FUNCTION DOC]
+    # By default both attributes and elements of each selected element are read; the books file gives an expected frame with category (attribute) first followed by element columns, via xpath and via iterparse.
     df_file = read_xml(xml_books, parser=parser)
     df_iter = read_xml(
         xml_books,
@@ -752,6 +838,8 @@ def test_file_elems_and_attrs(xml_books, parser):
 
 
 def test_file_only_attrs(xml_books, parser):
+    # [FUNCTION DOC]
+    # With the attributes-only option only the category attribute is read; xpath and iterparse results equal a one-column frame.
     df_file = read_xml(xml_books, attrs_only=True, parser=parser)
     df_iter = read_xml(xml_books, parser=parser, iterparse={"book": ["category"]})
     df_expected = DataFrame({"category": ["cooking", "children", "web"]})
@@ -761,6 +849,8 @@ def test_file_only_attrs(xml_books, parser):
 
 
 def test_file_only_elems(xml_books, parser):
+    # [FUNCTION DOC]
+    # With the elements-only option only child elements are read (no category); xpath and iterparse results equal the four-column frame.
     df_file = read_xml(xml_books, elems_only=True, parser=parser)
     df_iter = read_xml(
         xml_books,
@@ -781,6 +871,8 @@ def test_file_only_elems(xml_books, parser):
 
 
 def test_elem_and_attrs_only(kml_cta_rail_lines, parser):
+    # [FUNCTION DOC]
+    # Requesting both attributes-only and elements-only raises a value error that either elements or attributes can be parsed, not both.
     with pytest.raises(
         ValueError,
         match=("Either element or attributes can be parsed not both"),
@@ -789,6 +881,8 @@ def test_elem_and_attrs_only(kml_cta_rail_lines, parser):
 
 
 def test_empty_attrs_only(parser):
+    # [FUNCTION DOC]
+    # A document whose rows have only child elements (the attributes are on the grandchildren) read with attributes-only raises a value error that xpath returns no nodes or attributes.
     xml = """
       <data>
         <row>
@@ -813,6 +907,8 @@ def test_empty_attrs_only(parser):
 
 
 def test_empty_elems_only(parser):
+    # [FUNCTION DOC]
+    # A document whose rows have only attributes read with elements-only raises a value error that xpath returns no nodes or attributes.
     xml = """
       <data>
         <row sides="4" shape="square" degrees="360"/>
@@ -828,6 +924,8 @@ def test_empty_elems_only(parser):
 
 
 def test_attribute_centric_xml(temp_file):
+    # [FUNCTION DOC]
+    # Requires lxml. An attribute-centric document read with the default lxml parser, with the element tree parser, and by iterparse for each parser; the lxml and element tree results must be equal, as must the two iterparse results.
     pytest.importorskip("lxml")
     xml = """\
 <?xml version="1.0" encoding="UTF-8"?>
@@ -867,6 +965,8 @@ def test_attribute_centric_xml(temp_file):
 
 
 def test_names_option_output(xml_books, parser):
+    # [FUNCTION DOC]
+    # The names option renames all five books columns in order; checked with xpath and iterparse against the expected renamed frame.
     df_file = read_xml(
         xml_books, names=["Col1", "Col2", "Col3", "Col4", "Col5"], parser=parser
     )
@@ -892,6 +992,8 @@ def test_names_option_output(xml_books, parser):
 
 
 def test_repeat_names(parser, temp_file):
+    # [FUNCTION DOC]
+    # A document where a tag name (type) occurs both as an attribute and a child element; supplying three new column names maps them in order of appearance, via xpath and via iterparse.
     xml = """\
 <shapes>
   <shape type="2D">
@@ -931,6 +1033,8 @@ def test_repeat_names(parser, temp_file):
 
 
 def test_repeat_values_new_names(parser, temp_file):
+    # [FUNCTION DOC]
+    # Renaming columns whose values repeat across rows (name and family become name and group); verifies the new names and values via xpath and iterparse.
     xml = """\
 <shapes>
   <shape>
@@ -974,6 +1078,8 @@ def test_repeat_values_new_names(parser, temp_file):
 
 
 def test_repeat_elements(parser, temp_file):
+    # [FUNCTION DOC]
+    # Repeated child elements with the same tag name (value) are read in order and renamed through the names option; the numeric columns are inferred as integers; checked via xpath and iterparse.
     xml = """\
 <shapes>
   <shape>
@@ -1024,11 +1130,15 @@ def test_repeat_elements(parser, temp_file):
 
 
 def test_names_option_wrong_length(xml_books, parser):
+    # [FUNCTION DOC]
+    # Supplying a names list with fewer entries than columns raises a value error saying the names do not match the length of child elements.
     with pytest.raises(ValueError, match=("names does not match length")):
         read_xml(xml_books, names=["Col1", "Col2", "Col3"], parser=parser)
 
 
 def test_names_option_wrong_type(xml_books, parser):
+    # [FUNCTION DOC]
+    # Supplying names as a string rather than a list raises a type error saying the type is not valid for names.
     with pytest.raises(TypeError, match=("is not a valid type for names")):
         read_xml(xml_books, names="Col1, Col2, Col3", parser=parser)
 
@@ -1037,11 +1147,15 @@ def test_names_option_wrong_type(xml_books, parser):
 
 
 def test_wrong_encoding(xml_baby_names, parser):
+    # [FUNCTION DOC]
+    # Reading the ISO-8859-1 baby names file with the default utf-8 encoding raises a unicode decode error mentioning the utf-8 codec.
     with pytest.raises(UnicodeDecodeError, match=("'utf-8' codec can't decode")):
         read_xml(xml_baby_names, parser=parser)
 
 
 def test_utf16_encoding(xml_baby_names, parser):
+    # [FUNCTION DOC]
+    # Reading the same file with the UTF-16 encoding raises a unicode error about a missing byte order mark or a utf-16 decode failure.
     with pytest.raises(
         UnicodeError,
         match=(
@@ -1053,16 +1167,22 @@ def test_utf16_encoding(xml_baby_names, parser):
 
 
 def test_unknown_encoding(xml_baby_names, parser):
+    # [FUNCTION DOC]
+    # An unknown encoding name raises a lookup error naming the unknown encoding.
     with pytest.raises(LookupError, match=("unknown encoding: UFT-8")):
         read_xml(xml_baby_names, encoding="UFT-8", parser=parser)
 
 
 def test_ascii_encoding(xml_baby_names, parser):
+    # [FUNCTION DOC]
+    # Reading the file as ascii raises a unicode decode error for the ascii codec.
     with pytest.raises(UnicodeDecodeError, match=("'ascii' codec can't decode byte")):
         read_xml(xml_baby_names, encoding="ascii", parser=parser)
 
 
 def test_parser_consistency_with_encoding(xml_baby_names):
+    # [FUNCTION DOC]
+    # Requires lxml. Reading the baby names file as ISO-8859-1 via xpath and via iterparse with both parsers gives equal frames (encoding name case differs between parsers).
     pytest.importorskip("lxml")
     df_xpath_lxml = read_xml(xml_baby_names, parser="lxml", encoding="ISO-8859-1")
     df_xpath_etree = read_xml(xml_baby_names, parser="etree", encoding="iso-8859-1")
@@ -1086,6 +1206,8 @@ def test_parser_consistency_with_encoding(xml_baby_names):
 
 
 def test_wrong_encoding_for_lxml():
+    # [FUNCTION DOC]
+    # Regression test for an earlier issue. Requires lxml. Passing a none encoding to the lxml parser raises a type error mentioning the encoding.
     pytest.importorskip("lxml")
     # GH#45133
     data = """<data>
@@ -1099,6 +1221,8 @@ def test_wrong_encoding_for_lxml():
 
 
 def test_none_encoding_etree():
+    # [FUNCTION DOC]
+    # Regression test for an earlier issue. A none encoding with the element tree parser is accepted: a small document reads into the expected one-column frame.
     # GH#45133
     data = """<data>
   <row>
@@ -1116,6 +1240,8 @@ def test_none_encoding_etree():
 
 @td.skip_if_installed("lxml")
 def test_default_parser_no_lxml(xml_books):
+    # [FUNCTION DOC]
+    # Runs only when lxml is not installed. Reading with the default parser raises an import error asking to install lxml or use the element tree parser.
     with pytest.raises(
         ImportError, match=("lxml not found, please install or use the etree parser.")
     ):
@@ -1123,6 +1249,8 @@ def test_default_parser_no_lxml(xml_books):
 
 
 def test_wrong_parser(xml_books):
+    # [FUNCTION DOC]
+    # An unsupported parser name raises a value error saying parser values can only be lxml or etree.
     with pytest.raises(
         ValueError, match=("Values for parser can only be lxml or etree.")
     ):
@@ -1133,6 +1261,8 @@ def test_wrong_parser(xml_books):
 
 
 def test_stylesheet_file(kml_cta_rail_lines, xsl_flatten_doc):
+    # [FUNCTION DOC]
+    # Requires lxml. Applies the flatten document stylesheet (a path) to the KML example with a namespace mapping and compares to the expected KML frame; iterparse of the original file gives the same frame.
     pytest.importorskip("lxml")
     df_style = read_xml(
         kml_cta_rail_lines,
@@ -1160,6 +1290,8 @@ def test_stylesheet_file(kml_cta_rail_lines, xsl_flatten_doc):
 
 
 def test_stylesheet_file_like(kml_cta_rail_lines, xsl_flatten_doc, mode):
+    # [FUNCTION DOC]
+    # Requires lxml. Passes an open stylesheet file (binary or text mode) as the stylesheet; result equals the expected KML frame.
     pytest.importorskip("lxml")
     with open(xsl_flatten_doc, mode, encoding="utf-8" if mode == "r" else None) as f:
         df_style = read_xml(
@@ -1173,6 +1305,8 @@ def test_stylesheet_file_like(kml_cta_rail_lines, xsl_flatten_doc, mode):
 
 
 def test_stylesheet_io(kml_cta_rail_lines, xsl_flatten_doc, mode):
+    # [FUNCTION DOC]
+    # Requires lxml. Reads the stylesheet into an in-memory bytes or text buffer matching the mode and passes it; result equals the expected KML frame.
     # note: By default the bodies of untyped functions are not checked,
     # consider using --check-untyped-defs
     pytest.importorskip("lxml")
@@ -1195,6 +1329,8 @@ def test_stylesheet_io(kml_cta_rail_lines, xsl_flatten_doc, mode):
 
 
 def test_stylesheet_buffered_reader(kml_cta_rail_lines, xsl_flatten_doc, mode):
+    # [FUNCTION DOC]
+    # Requires lxml. Passes the open buffered stylesheet reader directly (binary or text mode); result equals the expected KML frame.
     pytest.importorskip("lxml")
     with open(xsl_flatten_doc, mode, encoding="utf-8" if mode == "r" else None) as f:
         df_style = read_xml(
@@ -1208,6 +1344,8 @@ def test_stylesheet_buffered_reader(kml_cta_rail_lines, xsl_flatten_doc, mode):
 
 
 def test_style_charset():
+    # [FUNCTION DOC]
+    # Requires lxml. A stylesheet that renames a Chinese root tag to another Chinese tag still parses: the frame with the stylesheet equals the frame without it.
     pytest.importorskip("lxml")
     xml = "<中文標籤><row><c1>1</c1><c2>2</c2></row></中文標籤>"
 
@@ -1237,6 +1375,8 @@ def test_style_charset():
 
 
 def test_not_stylesheet(kml_cta_rail_lines, xml_books):
+    # [FUNCTION DOC]
+    # Requires lxml. Passing a document that is not an XSL stylesheet (the books file) as the stylesheet raises the lxml stylesheet parse error that the document is not a stylesheet.
     lxml_etree = pytest.importorskip("lxml.etree")
 
     with pytest.raises(
@@ -1246,6 +1386,8 @@ def test_not_stylesheet(kml_cta_rail_lines, xml_books):
 
 
 def test_incorrect_xsl_syntax(kml_cta_rail_lines):
+    # [FUNCTION DOC]
+    # Requires lxml. A malformed stylesheet (self-closed root followed by more content) raises the lxml syntax error about extra content at the end of the document.
     lxml_etree = pytest.importorskip("lxml.etree")
 
     xsl = """\
@@ -1275,6 +1417,8 @@ def test_incorrect_xsl_syntax(kml_cta_rail_lines):
 
 
 def test_incorrect_xsl_eval(kml_cta_rail_lines):
+    # [FUNCTION DOC]
+    # Requires lxml. A stylesheet with an invalid match pattern raises the lxml stylesheet parse error that it failed to compile.
     lxml_etree = pytest.importorskip("lxml.etree")
 
     xsl = """\
@@ -1302,6 +1446,8 @@ def test_incorrect_xsl_eval(kml_cta_rail_lines):
 
 
 def test_incorrect_xsl_apply(kml_cta_rail_lines):
+    # [FUNCTION DOC]
+    # Requires lxml. A stylesheet that copies from a non-existent external document raises the lxml stylesheet apply error about being unable to resolve the URI.
     lxml_etree = pytest.importorskip("lxml.etree")
 
     xsl = """\
@@ -1321,6 +1467,8 @@ def test_incorrect_xsl_apply(kml_cta_rail_lines):
 
 
 def test_wrong_stylesheet(kml_cta_rail_lines, xml_data_path):
+    # [FUNCTION DOC]
+    # Requires lxml. A stylesheet path that does not exist raises a file-not-found error with the usual no such file or directory message.
     pytest.importorskip("lxml.etree")
 
     xsl = xml_data_path / "flatten_doesnt_exist.xsl"
@@ -1332,6 +1480,8 @@ def test_wrong_stylesheet(kml_cta_rail_lines, xml_data_path):
 
 
 def test_stylesheet_file_close(kml_cta_rail_lines, xsl_flatten_doc, mode):
+    # [FUNCTION DOC]
+    # Requires lxml. Reads with a stylesheet from an in-memory buffer inside the open file context and asserts the open file handle is still not closed afterwards.
     # note: By default the bodies of untyped functions are not checked,
     # consider using --check-untyped-defs
     pytest.importorskip("lxml")
@@ -1349,6 +1499,8 @@ def test_stylesheet_file_close(kml_cta_rail_lines, xsl_flatten_doc, mode):
 
 
 def test_stylesheet_with_etree(kml_cta_rail_lines, xsl_flatten_doc):
+    # [FUNCTION DOC]
+    # Requires lxml. Using a stylesheet with the element tree parser raises a value error that lxml must be installed to use a stylesheet.
     pytest.importorskip("lxml")
     with pytest.raises(
         ValueError, match=("To use stylesheet, you need lxml installed")
@@ -1358,6 +1510,8 @@ def test_stylesheet_with_etree(kml_cta_rail_lines, xsl_flatten_doc):
 
 @pytest.mark.parametrize("val", [StringIO(""), BytesIO(b"")])
 def test_empty_stylesheet(val, kml_cta_rail_lines):
+    # [FUNCTION DOC]
+    # Parametrized over an empty text buffer and an empty bytes buffer. Requires lxml. An empty stylesheet raises the lxml syntax error.
     lxml_etree = pytest.importorskip("lxml.etree")
     with pytest.raises(lxml_etree.XMLSyntaxError):
         read_xml(kml_cta_rail_lines, stylesheet=val)
@@ -1365,6 +1519,8 @@ def test_empty_stylesheet(val, kml_cta_rail_lines):
 
 # ITERPARSE
 def test_file_like_iterparse(xml_books, parser, mode):
+    # [FUNCTION DOC]
+    # Streaming (iterparse) read from an open file handle of the books file. In text mode with lxml, a type error that file objects must return bytes is expected and the test returns early; otherwise the result equals the expected books frame.
     with open(xml_books, mode, encoding="utf-8" if mode == "r" else None) as f:
         if mode == "r" and parser == "lxml":
             with pytest.raises(
@@ -1399,6 +1555,8 @@ def test_file_like_iterparse(xml_books, parser, mode):
 
 
 def test_file_io_iterparse(xml_books, parser, mode):
+    # [FUNCTION DOC]
+    # Streaming (iterparse) read from an in-memory buffer (text or bytes by mode). Text mode with lxml expects a type error that reading must return bytes and returns early; otherwise the frame equals the expected books frame.
     funcIO = StringIO if mode == "r" else BytesIO
     with open(
         xml_books,
@@ -1443,6 +1601,8 @@ def test_file_io_iterparse(xml_books, parser, mode):
 @pytest.mark.network
 @pytest.mark.single_cpu
 def test_url_path_error(parser, httpserver, xml_file):
+    # [FUNCTION DOC]
+    # Network and single-CPU test. Streaming read from a URL is not allowed: serving the file locally and requesting iterparse raises a parser error saying iterparse is designed for large local XML files.
     with open(xml_file, encoding="utf-8") as f:
         httpserver.serve_content(content=f.read())
         with pytest.raises(
@@ -1456,6 +1616,8 @@ def test_url_path_error(parser, httpserver, xml_file):
 
 
 def test_compression_error(parser, compression_only, tmp_path):
+    # [FUNCTION DOC]
+    # Writes a compressed file (path ending in zip regardless of the actual compression fixture) and then asks for iterparse with a compression argument; raises a parser error that iterparse is designed for large XML files.
     path = tmp_path / "geom_xml.zip"
     geom_df.to_xml(path, parser=parser, compression=compression_only)
 
@@ -1471,6 +1633,8 @@ def test_compression_error(parser, compression_only, tmp_path):
 
 
 def test_wrong_dict_type(xml_books, parser):
+    # [FUNCTION DOC]
+    # Passing a list rather than a dictionary for iterparse raises a type error saying list is not a valid type for iterparse.
     with pytest.raises(TypeError, match="list is not a valid type for iterparse"):
         read_xml(
             xml_books,
@@ -1480,6 +1644,8 @@ def test_wrong_dict_type(xml_books, parser):
 
 
 def test_wrong_dict_value(xml_books, parser):
+    # [FUNCTION DOC]
+    # Passing a dictionary whose value is a string instead of a list raises a type error saying that string type is not valid for a value in iterparse.
     with pytest.raises(
         TypeError, match="<class 'str'> is not a valid type for value in iterparse"
     ):
@@ -1487,6 +1653,8 @@ def test_wrong_dict_value(xml_books, parser):
 
 
 def test_bad_xml(parser, temp_file):
+    # [FUNCTION DOC]
+    # Writes a malformed document (multiple root rows and a misindented closing tag) to a temp file and streams it with date parsing; raises a syntax error about extra content at the end of the document or junk after the document element.
     bad_xml = """\
 <?xml version='1.0' encoding='utf-8'?>
   <row>
@@ -1523,6 +1691,8 @@ def test_bad_xml(parser, temp_file):
 
 
 def test_comment(parser, temp_file):
+    # [FUNCTION DOC]
+    # A document with comments before, within and after the root and children reads correctly via xpath and iterparse into the expected two-row frame.
     xml = """\
 <!-- comment before root -->
 <shapes>
@@ -1558,6 +1728,8 @@ def test_comment(parser, temp_file):
 
 
 def test_dtd(parser, temp_file):
+    # [FUNCTION DOC]
+    # A document with an inline document type definition reads correctly via xpath and iterparse into the expected two-row frame.
     xml = """\
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE non-profits [
@@ -1594,6 +1766,8 @@ def test_dtd(parser, temp_file):
 
 
 def test_processing_instruction(parser, temp_file):
+    # [FUNCTION DOC]
+    # A document with several processing instructions before the root reads correctly via xpath and iterparse into the expected two-row frame.
     xml = """\
 <?xml version="1.0" encoding="UTF-8"?>
 <?xml-stylesheet type="text/xsl" href="style.xsl"?>
@@ -1630,6 +1804,8 @@ def test_processing_instruction(parser, temp_file):
 
 
 def test_no_result(xml_books, parser):
+    # [FUNCTION DOC]
+    # Streaming read selecting a nonexistent element name raises a parser error saying there is no result from the selected items.
     with pytest.raises(
         ParserError, match="No result from selected items in iterparse."
     ):
@@ -1641,6 +1817,8 @@ def test_no_result(xml_books, parser):
 
 
 def test_empty_data(xml_books, parser):
+    # [FUNCTION DOC]
+    # Streaming read selecting an existing element with nonexistent child names raises the empty data error that there are no columns to parse.
     with pytest.raises(EmptyDataError, match="No columns to parse from file"):
         read_xml(
             xml_books,
@@ -1650,6 +1828,9 @@ def test_empty_data(xml_books, parser):
 
 
 def test_online_stylesheet():
+    # [FUNCTION DOC]
+    # Requires lxml. Applies an in-memory stylesheet that renders a catalog into an HTML table, then selects table rows by xpath with a position limit and names the two columns; result equals the expected five-row frame of titles and artists.
+    # KNOWN ISSUE: the name and the expected behavior suggest an online stylesheet, but the stylesheet is supplied locally as an in-memory string, so nothing is fetched.
     pytest.importorskip("lxml")
     xml = """\
 <?xml version="1.0" encoding="UTF-8"?>
@@ -1922,6 +2103,8 @@ def test_online_stylesheet():
 
 
 def test_compression_read(parser, compression_only, tmp_path, temp_file):
+    # [FUNCTION DOC]
+    # Writes the shapes frame compressed with each compression method and reads it back with the same compression using xpath, and via a decompressed temp copy with iterparse; both equal the original frame.
     comp_path = tmp_path / "test.xml"
     geom_df.to_xml(comp_path, index=False, parser=parser, compression=compression_only)
 
@@ -1941,6 +2124,8 @@ def test_compression_read(parser, compression_only, tmp_path, temp_file):
 
 
 def test_wrong_compression(parser, compression, compression_only, temp_file):
+    # [FUNCTION DOC]
+    # Writes the shapes frame with one compression and tries to read it with a different one; skipped when both are equal. Expects the codec-specific error for the attempted compression (invalid data stream, not gzipped, bad zip file, tar read error, and zstd or xz errors when those libraries are available).
     actual_compression = compression
     attempted_compression = compression_only
 
@@ -1968,6 +2153,8 @@ def test_wrong_compression(parser, compression, compression_only, temp_file):
 
 
 def test_unsupported_compression(parser, temp_file):
+    # [FUNCTION DOC]
+    # An unrecognized compression type (7z) raises a value error that the compression type is unrecognized.
     with pytest.raises(ValueError, match="Unrecognized compression type"):
         read_xml(temp_file, parser=parser, compression="7z")
 
@@ -1978,6 +2165,8 @@ def test_unsupported_compression(parser, temp_file):
 @pytest.mark.network
 @pytest.mark.single_cpu
 def test_s3_parser_consistency(s3_bucket_public_with_data, s3so):
+    # [FUNCTION DOC]
+    # Network and single-CPU test. Requires s3fs and lxml. Reads the books file from a mock S3 bucket with both parsers and storage options; the two frames must be equal.
     pytest.importorskip("s3fs")
     pytest.importorskip("lxml")
     s3 = f"s3://{s3_bucket_public_with_data.name}/books.xml"
@@ -1991,6 +2180,8 @@ def test_s3_parser_consistency(s3_bucket_public_with_data, s3so):
 def test_read_xml_nullable_dtypes(
     parser, string_storage, dtype_backend, using_infer_string
 ):
+    # [FUNCTION DOC]
+    # Regression test for nullable dtypes. Parametrized by parser, string storage setting and dtype backend. Reads a document with string, integer, float, empty and boolean columns under the string storage option and compares with an expected frame of nullable string, Int64, Float64 and boolean dtypes, or the Arrow-backed equivalents (with the all-empty column as a null Arrow type) for the pyarrow backend. Column index type is not checked because string storage affects it.
     # GH#50500
     data = """<?xml version='1.0' encoding='utf-8'?>
 <data xmlns="http://example.com">
@@ -2059,6 +2250,8 @@ def test_read_xml_nullable_dtypes(
 
 
 def test_invalid_dtype_backend():
+    # [FUNCTION DOC]
+    # An invalid dtype backend name raises a value error listing the allowed backends.
     msg = (
         "dtype_backend numpy is invalid, only 'numpy_nullable' and "
         "'pyarrow' are allowed."

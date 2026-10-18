@@ -1,3 +1,8 @@
+# [MODULE DOC]
+# Fixtures for the XML IO tests: each provides the path to an example data file
+# under the shared test data directory for XML (books, Chinese UTF-8 document,
+# baby names, CTA rail lines KML, and two XSL stylesheets). Used by the read and
+# write XML test modules in this package. No import-time side effects.
 from pathlib import Path
 
 import pytest
@@ -5,6 +10,9 @@ import pytest
 
 @pytest.fixture
 def xml_data_path():
+    # [FUNCTION DOC]
+    # Fixture returning a path object for the XML example data directory, located
+    # relative to this file in the shared data folder one level above the package.
     """
     Returns a Path object to the XML example directory.
 
@@ -18,6 +26,9 @@ def xml_data_path():
 
 @pytest.fixture
 def xml_books(xml_data_path, datapath):
+    # [FUNCTION DOC]
+    # Fixture taking the data directory fixture and the data path factory; returns the
+    # path, as a string, of the books example XML file.
     """
     Returns the path (as `str`) to the `books.xml` example file.
 
@@ -31,6 +42,8 @@ def xml_books(xml_data_path, datapath):
 
 @pytest.fixture
 def xml_doc_ch_utf(xml_data_path, datapath):
+    # [FUNCTION DOC]
+    # Fixture returning the path, as a string, of the Chinese UTF-8 document example XML file.
     """
     Returns the path (as `str`) to the `doc_ch_utf.xml` example file.
 
@@ -44,6 +57,8 @@ def xml_doc_ch_utf(xml_data_path, datapath):
 
 @pytest.fixture
 def xml_baby_names(xml_data_path, datapath):
+    # [FUNCTION DOC]
+    # Fixture returning the path, as a string, of the baby names example XML file.
     """
     Returns the path (as `str`) to the `baby_names.xml` example file.
 
@@ -57,6 +72,8 @@ def xml_baby_names(xml_data_path, datapath):
 
 @pytest.fixture
 def kml_cta_rail_lines(xml_data_path, datapath):
+    # [FUNCTION DOC]
+    # Fixture returning the path, as a string, of the CTA rail lines example KML file.
     """
     Returns the path (as `str`) to the `cta_rail_lines.kml` example file.
 
@@ -75,6 +92,8 @@ def kml_cta_rail_lines(xml_data_path, datapath):
 
 @pytest.fixture
 def xsl_flatten_doc(xml_data_path, datapath):
+    # [FUNCTION DOC]
+    # Fixture returning the path, as a string, of the flatten document example XSL stylesheet.
     """
     Returns the path (as `str`) to the `flatten_doc.xsl` example file.
 
@@ -91,6 +110,8 @@ def xsl_flatten_doc(xml_data_path, datapath):
 
 @pytest.fixture
 def xsl_row_field_output(xml_data_path, datapath):
+    # [FUNCTION DOC]
+    # Fixture returning the path, as a string, of the row and field output example XSL stylesheet.
     """
     Returns the path (as `str`) to the `row_field_output.xsl` example file.
 

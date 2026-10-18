@@ -1,3 +1,19 @@
+# [MODULE DOC]
+# Tests for the SQL io module (reading and writing frames with relational databases):
+# the top-level read and write functions (read sql, read sql query, read sql table,
+# the frame to-sql method), the sqlite and SQLAlchemy backed database classes, the
+# generic database builder, schema generation and table checks. The same shared test
+# bodies are run against many connection kinds through fixtures: SQLAlchemy engines and
+# connections and connection strings for sqlite, MySQL (pymysql) and PostgreSQL
+# (psycopg2), ADBC connections for sqlite and PostgreSQL, and the built-in sqlite3
+# connection. Database-server variants need a live server and carry the database marker;
+# sqlite variants run locally. The module is marked single-CPU and ignores a block manager
+# deprecation warning. Module-level helper functions create and load the iris and types
+# tables, list and drop tables and views, and count rows; module-level lists of fixture
+# names group the connection kinds. Tests are in a flat set of functions grouped by area
+# (read, write, dtype handling, dates, schema, transactions, ADBC specifics, sqlite
+# built-in connection tests prefixed with xsqlite). There are no module-level test
+# classes; the only classes are small helpers defined inside some test functions.
 from __future__ import annotations
 
 import contextlib
@@ -66,6 +82,10 @@ pytestmark = [
 
 @pytest.fixture
 def sql_strings():
+    # [FUNCTION DOC]
+    # Fixture returning a nested mapping from a query kind (parameterized read, named
+    # parameters, a query with a literal percent sign) to a mapping from dialect (sqlite,
+    # mysql, postgresql) to the query text in that dialect's parameter and quoting style, over the iris table.
     return {
         "read_parameters": {
             "sqlite": "SELECT * FROM iris WHERE Name=? AND SepalLength=?",
@@ -94,6 +114,10 @@ def sql_strings():
 
 
 def iris_table_metadata():
+    # [FUNCTION DOC]
+    # HELPER: builds and returns a SQLAlchemy table definition for the iris table (four
+    # double-precision float columns and a 200 character name column). Imports
+    # SQLAlchemy lazily and uses a double type for SQLAlchemy 2 or later, otherwise float.
     import sqlalchemy
     from sqlalchemy import (
         Column,
@@ -119,6 +143,10 @@ def iris_table_metadata():
 
 
 def create_and_load_iris_sqlite3(conn, iris_file: Path):
+    # [FUNCTION DOC]
+    # HELPER: creates the iris table in a built-in sqlite3 style connection (also used for ADBC sqlite) and loads rows from the iris csv file given by path.
+    # The first csv row (header) is skipped and numeric fields are converted to floats because ADBC requires explicit types. Commits at the end.
+    # KNOWN ISSUE: the records list is initialised empty and then immediately reassigned, so the first assignment is dead code.
     stmt = """CREATE TABLE iris (
             "SepalLength" REAL,
             "SepalWidth" REAL,
@@ -153,6 +181,8 @@ def create_and_load_iris_sqlite3(conn, iris_file: Path):
 
 
 def create_and_load_iris_postgresql(conn, iris_file: Path):
+    # [FUNCTION DOC]
+    # HELPER: creates the iris table in a PostgreSQL ADBC connection using double precision and text columns, and loads rows from the iris csv path using positional dollar parameters; numeric fields are converted to floats. Commits at the end.
     stmt = """CREATE TABLE iris (
             "SepalLength" DOUBLE PRECISION,
             "SepalWidth" DOUBLE PRECISION,
@@ -184,6 +214,8 @@ def create_and_load_iris_postgresql(conn, iris_file: Path):
 
 
 def create_and_load_iris(conn, iris_file: Path):
+    # [FUNCTION DOC]
+    # HELPER: creates the iris table on a SQLAlchemy engine or connection from the shared table definition and loads the rows from the csv file (header row used as keys). Inside a transaction it drops any existing iris table, creates it, and inserts all rows.
     from sqlalchemy import insert
 
     iris = iris_table_metadata()
@@ -200,6 +232,8 @@ def create_and_load_iris(conn, iris_file: Path):
 
 
 def create_and_load_iris_view(conn):
+    # [FUNCTION DOC]
+    # HELPER: creates a view of the iris table named iris view on the given connection. Handles three connection kinds: a built-in sqlite3 connection (executes via a cursor, no commit), an ADBC connection (executes via a cursor and commits) and otherwise a SQLAlchemy connection or engine (within a transaction).
     stmt = "CREATE VIEW iris_view AS SELECT * FROM iris"
     if isinstance(conn, sqlite3.Connection):
         cur = conn.cursor()
@@ -219,6 +253,8 @@ def create_and_load_iris_view(conn):
 
 
 def types_table_metadata(dialect: str):
+    # [FUNCTION DOC]
+    # HELPER: builds a SQLAlchemy table definition for the types table for the given dialect name. For sqlite the date column is text and boolean columns are integers; for other dialects the date column is a datetime and the boolean columns are real booleans. Includes columns for text, date, integer-encoded dates, float, integer, boolean and nullable integer and boolean.
     from sqlalchemy import (
         TEXT,
         Boolean,
@@ -253,6 +289,9 @@ def types_table_metadata(dialect: str):
 
 
 def create_and_load_types_sqlite3(conn, types_data: list[dict]):
+    # [FUNCTION DOC]
+    # HELPER: creates the types table in a built-in sqlite3 (or ADBC sqlite) connection and bulk inserts the rows with positional parameters. For a built-in connection uses a plain cursor; otherwise a context-managed cursor and an explicit commit.
+    # KNOWN ISSUE: the parameter is annotated as a list of mappings but callers pass sequences of tuples (positional values).
     stmt = """CREATE TABLE types (
                     "TextCol" TEXT,
                     "DateCol" TEXT,
@@ -283,6 +322,8 @@ def create_and_load_types_sqlite3(conn, types_data: list[dict]):
 
 
 def create_and_load_types_postgresql(conn, types_data: list[dict]):
+    # [FUNCTION DOC]
+    # HELPER: creates the types table in a PostgreSQL ADBC connection with PostgreSQL column types and inserts the given rows (tuples) using numbered parameters, casting the date to timestamp; commits.
     with conn.cursor() as cur:
         stmt = """CREATE TABLE types (
                         "TextCol" TEXT,
@@ -308,6 +349,8 @@ def create_and_load_types_postgresql(conn, types_data: list[dict]):
 
 
 def create_and_load_types(conn, types_data: list[dict], dialect: str):
+    # [FUNCTION DOC]
+    # HELPER: creates the types table on a SQLAlchemy engine or connection for the dialect name and inserts the rows. For an engine, opens a connection and transaction; otherwise uses the given connection. Drops any existing table first.
     from sqlalchemy import insert
     from sqlalchemy.engine import Engine
 
@@ -328,6 +371,8 @@ def create_and_load_types(conn, types_data: list[dict], dialect: str):
 
 
 def create_and_load_postgres_datetz(conn):
+    # [FUNCTION DOC]
+    # HELPER: creates a PostgreSQL table with a single timezone-aware datetime column and inserts two values given with different UTC offsets (winter and summer). Returns the expected column read back, as a series of microsecond-unit UTC datetimes named for the column.
     from sqlalchemy import (
         Column,
         DateTime,
@@ -373,6 +418,8 @@ def create_and_load_postgres_datetz(conn):
 
 
 def check_iris_frame(frame: DataFrame):
+    # [FUNCTION DOC]
+    # HELPER: asserts that a frame has the shape of the iris data: first column dtype is a floating type, the first row equals the known first iris record, and the shape is either the full 150 rows by 5 columns or the 8 by 5 test subset.
     pytype = frame.dtypes.iloc[0].type
     row = frame.iloc[0]
     assert issubclass(pytype, np.floating)
@@ -383,6 +430,8 @@ def check_iris_frame(frame: DataFrame):
 
 
 def count_rows(conn, table_name: str):
+    # [FUNCTION DOC]
+    # HELPER: returns the number of rows in a table by a count query. Dispatches on the connection kind: built-in sqlite3, ADBC, a connection string (creates and disposes an engine), a SQLAlchemy engine or a SQLAlchemy connection.
     stmt = f"SELECT count(*) AS count_1 FROM {table_name}"
     adbc = import_optional_dependency("adbc_driver_manager.dbapi", errors="ignore")
     if isinstance(conn, sqlite3.Connection):
@@ -412,12 +461,16 @@ def count_rows(conn, table_name: str):
 
 @pytest.fixture
 def iris_path(datapath):
+    # [FUNCTION DOC]
+    # Fixture returning the path object of the iris csv data file in the shared io test data directory.
     iris_path = datapath("io", "data", "csv", "iris.csv")
     return Path(iris_path)
 
 
 @pytest.fixture
 def types_data():
+    # [FUNCTION DOC]
+    # Fixture returning a list of two mappings (rows) for the types table, covering text, date string, integer-encoded date columns, float, integer, boolean and nullable integer and boolean values (the second row has missing values).
     return [
         {
             "TextCol": "first",
@@ -446,6 +499,8 @@ def types_data():
 
 @pytest.fixture
 def types_data_frame(types_data):
+    # [FUNCTION DOC]
+    # Fixture that builds a frame from the types rows with the expected pandas dtypes (strings, 64-bit integers, floats; booleans as integers; nullable columns as float).
     dtypes = {
         "TextCol": "str",
         "DateCol": "str",
@@ -463,6 +518,8 @@ def types_data_frame(types_data):
 
 @pytest.fixture
 def test_frame1():
+    # [FUNCTION DOC]
+    # Fixture returning a four-row frame with a string index column of dates and four float columns, used for write and round trip tests.
     columns = ["index", "A", "B", "C", "D"]
     data = [
         (
@@ -499,6 +556,8 @@ def test_frame1():
 
 @pytest.fixture
 def test_frame3():
+    # [FUNCTION DOC]
+    # Fixture returning a four-row frame with a string index column of dates, an integer column (including the maximum 32-bit value) and a float column.
     columns = ["index", "A", "B"]
     data = [
         ("2000-01-03 00:00:00", 2**31 - 1, -1.987670),
@@ -510,6 +569,9 @@ def test_frame3():
 
 
 def get_all_views(conn):
+    # [FUNCTION DOC]
+    # HELPER: returns the list of view names in the database behind the connection. Dispatches on built-in sqlite3 (queries the master table), ADBC (walks the catalog objects and collects entries of type view) or SQLAlchemy (inspector).
+    # KNOWN ISSUE: in the ADBC branch, two lines index the catalog and schema dictionaries for names and discard the results; they have no effect.
     if isinstance(conn, sqlite3.Connection):
         c = conn.execute("SELECT name FROM sqlite_master WHERE type='view'")
         return [view[0] for view in c.fetchall()]
@@ -535,6 +597,8 @@ def get_all_views(conn):
 
 
 def get_all_tables(conn):
+    # [FUNCTION DOC]
+    # HELPER: returns the list of table names in the database behind the connection; same dispatch as listing views but collecting entries of type table.
     if isinstance(conn, sqlite3.Connection):
         c = conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
         return [table[0] for table in c.fetchall()]
@@ -562,6 +626,8 @@ def drop_table(
     table_name: str,
     conn: sqlite3.Connection | sqlalchemy.engine.Engine | sqlalchemy.engine.Connection,
 ):
+    # [FUNCTION DOC]
+    # HELPER: drops the named table if it exists. Takes the table name and a built-in sqlite3 connection, SQLAlchemy engine or SQLAlchemy connection (or an ADBC connection). Built-in sqlite3 uses a quoted name and commits; ADBC uses a cursor; SQLAlchemy opens a transaction and uses the database wrapper drop-table method.
     if isinstance(conn, sqlite3.Connection):
         conn.execute(f"DROP TABLE IF EXISTS {sql._get_valid_sqlite_name(table_name)}")
         conn.commit()
@@ -581,6 +647,8 @@ def drop_view(
     view_name: str,
     conn: sqlite3.Connection | sqlalchemy.engine.Engine | sqlalchemy.engine.Connection,
 ):
+    # [FUNCTION DOC]
+    # HELPER: drops the named view if it exists, with the same connection dispatch as dropping a table: built-in sqlite3 (commit), ADBC (cursor, no commit), and SQLAlchemy (quoted identifier through the dialect in a transaction).
     import sqlalchemy
 
     if isinstance(conn, sqlite3.Connection):
@@ -602,6 +670,8 @@ def drop_view(
 
 @pytest.fixture
 def mysql_pymysql_engine():
+    # [FUNCTION DOC]
+    # Fixture (skips if SQLAlchemy or pymysql are missing) yielding a SQLAlchemy engine to a local MySQL server with multi-statement support and no connection pooling. After the test it drops all views and then all tables and disposes the engine.
     sqlalchemy = pytest.importorskip("sqlalchemy")
     pymysql = pytest.importorskip("pymysql")
     engine = sqlalchemy.create_engine(
@@ -619,6 +689,8 @@ def mysql_pymysql_engine():
 
 @pytest.fixture
 def mysql_pymysql_engine_iris(mysql_pymysql_engine, iris_path):
+    # [FUNCTION DOC]
+    # Fixture: the MySQL engine with the iris table and view created and loaded; returns the engine.
     create_and_load_iris(mysql_pymysql_engine, iris_path)
     create_and_load_iris_view(mysql_pymysql_engine)
     return mysql_pymysql_engine
@@ -626,30 +698,40 @@ def mysql_pymysql_engine_iris(mysql_pymysql_engine, iris_path):
 
 @pytest.fixture
 def mysql_pymysql_engine_types(mysql_pymysql_engine, types_data):
+    # [FUNCTION DOC]
+    # Fixture: the MySQL engine with the types table created and loaded; returns the engine.
     create_and_load_types(mysql_pymysql_engine, types_data, "mysql")
     return mysql_pymysql_engine
 
 
 @pytest.fixture
 def mysql_pymysql_conn(mysql_pymysql_engine):
+    # [FUNCTION DOC]
+    # Fixture yielding a connection from the MySQL engine (closed afterwards).
     with mysql_pymysql_engine.connect() as conn:
         yield conn
 
 
 @pytest.fixture
 def mysql_pymysql_conn_iris(mysql_pymysql_engine_iris):
+    # [FUNCTION DOC]
+    # Fixture yielding a connection from the MySQL engine with iris loaded.
     with mysql_pymysql_engine_iris.connect() as conn:
         yield conn
 
 
 @pytest.fixture
 def mysql_pymysql_conn_types(mysql_pymysql_engine_types):
+    # [FUNCTION DOC]
+    # Fixture yielding a connection from the MySQL engine with the types table loaded.
     with mysql_pymysql_engine_types.connect() as conn:
         yield conn
 
 
 @pytest.fixture
 def postgresql_psycopg2_engine():
+    # [FUNCTION DOC]
+    # Fixture (skips if SQLAlchemy or psycopg2 are missing) yielding a SQLAlchemy engine for a local PostgreSQL server without pooling; afterwards drops all views and tables and disposes the engine.
     sqlalchemy = pytest.importorskip("sqlalchemy")
     pytest.importorskip("psycopg2")
     engine = sqlalchemy.create_engine(
@@ -666,6 +748,8 @@ def postgresql_psycopg2_engine():
 
 @pytest.fixture
 def postgresql_psycopg2_engine_iris(postgresql_psycopg2_engine, iris_path):
+    # [FUNCTION DOC]
+    # Fixture: the PostgreSQL psycopg2 engine with the iris table and view created and loaded; returns the engine.
     create_and_load_iris(postgresql_psycopg2_engine, iris_path)
     create_and_load_iris_view(postgresql_psycopg2_engine)
     return postgresql_psycopg2_engine
@@ -673,18 +757,24 @@ def postgresql_psycopg2_engine_iris(postgresql_psycopg2_engine, iris_path):
 
 @pytest.fixture
 def postgresql_psycopg2_engine_types(postgresql_psycopg2_engine, types_data):
+    # [FUNCTION DOC]
+    # Fixture: the PostgreSQL psycopg2 engine with the types table loaded (using the postgres dialect); returns the engine.
     create_and_load_types(postgresql_psycopg2_engine, types_data, "postgres")
     return postgresql_psycopg2_engine
 
 
 @pytest.fixture
 def postgresql_psycopg2_conn(postgresql_psycopg2_engine):
+    # [FUNCTION DOC]
+    # Fixture yielding a connection from the PostgreSQL psycopg2 engine.
     with postgresql_psycopg2_engine.connect() as conn:
         yield conn
 
 
 @pytest.fixture
 def postgresql_adbc_conn():
+    # [FUNCTION DOC]
+    # Fixture (skips without pyarrow and the ADBC PostgreSQL driver) yielding an ADBC connection to a local PostgreSQL server; after the test drops all views and tables and commits.
     pytest.importorskip("pyarrow")
     pytest.importorskip("adbc_driver_postgresql")
     from adbc_driver_postgresql import dbapi
@@ -701,6 +791,8 @@ def postgresql_adbc_conn():
 
 @pytest.fixture
 def postgresql_adbc_iris(postgresql_adbc_conn, iris_path):
+    # [FUNCTION DOC]
+    # Fixture: on the PostgreSQL ADBC connection, creates and loads the iris table and the view only if their schemas are not found (a programming error triggers a rollback and the creation). Returns the connection.
     import adbc_driver_manager as mgr
 
     conn = postgresql_adbc_conn
@@ -720,6 +812,8 @@ def postgresql_adbc_iris(postgresql_adbc_conn, iris_path):
 
 @pytest.fixture
 def postgresql_adbc_types(postgresql_adbc_conn, types_data):
+    # [FUNCTION DOC]
+    # Fixture: on the PostgreSQL ADBC connection, creates and loads the types table unless it already exists, converting the row mappings to tuples. Returns the connection.
     import adbc_driver_manager as mgr
 
     conn = postgresql_adbc_conn
@@ -737,24 +831,32 @@ def postgresql_adbc_types(postgresql_adbc_conn, types_data):
 
 @pytest.fixture
 def postgresql_psycopg2_conn_iris(postgresql_psycopg2_engine_iris):
+    # [FUNCTION DOC]
+    # Fixture yielding a connection from the PostgreSQL psycopg2 engine with iris loaded.
     with postgresql_psycopg2_engine_iris.connect() as conn:
         yield conn
 
 
 @pytest.fixture
 def postgresql_psycopg2_conn_types(postgresql_psycopg2_engine_types):
+    # [FUNCTION DOC]
+    # Fixture yielding a connection from the PostgreSQL psycopg2 engine with types loaded.
     with postgresql_psycopg2_engine_types.connect() as conn:
         yield conn
 
 
 @pytest.fixture
 def sqlite_str(temp_file):
+    # [FUNCTION DOC]
+    # Fixture (skips if SQLAlchemy is missing) returning a sqlite connection string pointing at the temporary file.
     pytest.importorskip("sqlalchemy")
     return f"sqlite:///{temp_file}"
 
 
 @pytest.fixture
 def sqlite_engine(sqlite_str):
+    # [FUNCTION DOC]
+    # Fixture yielding a SQLAlchemy engine for the sqlite temporary file (no pooling); afterwards drops all views and tables and disposes it.
     sqlalchemy = pytest.importorskip("sqlalchemy")
     engine = sqlalchemy.create_engine(sqlite_str, poolclass=sqlalchemy.pool.NullPool)
     yield engine
@@ -767,12 +869,16 @@ def sqlite_engine(sqlite_str):
 
 @pytest.fixture
 def sqlite_conn(sqlite_engine):
+    # [FUNCTION DOC]
+    # Fixture yielding a connection from the sqlite engine.
     with sqlite_engine.connect() as conn:
         yield conn
 
 
 @pytest.fixture
 def sqlite_str_iris(sqlite_str, iris_path):
+    # [FUNCTION DOC]
+    # Fixture: creates and loads iris and its view via a temporary engine on the sqlite string (disposed afterwards) and returns the connection string.
     sqlalchemy = pytest.importorskip("sqlalchemy")
     engine = sqlalchemy.create_engine(sqlite_str)
     create_and_load_iris(engine, iris_path)
@@ -783,6 +889,8 @@ def sqlite_str_iris(sqlite_str, iris_path):
 
 @pytest.fixture
 def sqlite_engine_iris(sqlite_engine, iris_path):
+    # [FUNCTION DOC]
+    # Fixture: the sqlite engine with iris and its view created and loaded; returns the engine.
     create_and_load_iris(sqlite_engine, iris_path)
     create_and_load_iris_view(sqlite_engine)
     return sqlite_engine
@@ -790,12 +898,16 @@ def sqlite_engine_iris(sqlite_engine, iris_path):
 
 @pytest.fixture
 def sqlite_conn_iris(sqlite_engine_iris):
+    # [FUNCTION DOC]
+    # Fixture yielding a connection from the sqlite engine with iris loaded.
     with sqlite_engine_iris.connect() as conn:
         yield conn
 
 
 @pytest.fixture
 def sqlite_str_types(sqlite_str, types_data):
+    # [FUNCTION DOC]
+    # Fixture: creates and loads the types table through a temporary engine on the sqlite string and returns the connection string.
     sqlalchemy = pytest.importorskip("sqlalchemy")
     engine = sqlalchemy.create_engine(sqlite_str)
     create_and_load_types(engine, types_data, "sqlite")
@@ -805,18 +917,24 @@ def sqlite_str_types(sqlite_str, types_data):
 
 @pytest.fixture
 def sqlite_engine_types(sqlite_engine, types_data):
+    # [FUNCTION DOC]
+    # Fixture: the sqlite engine with the types table loaded; returns the engine.
     create_and_load_types(sqlite_engine, types_data, "sqlite")
     return sqlite_engine
 
 
 @pytest.fixture
 def sqlite_conn_types(sqlite_engine_types):
+    # [FUNCTION DOC]
+    # Fixture yielding a connection from the sqlite engine with types loaded.
     with sqlite_engine_types.connect() as conn:
         yield conn
 
 
 @pytest.fixture
 def sqlite_adbc_conn(temp_file):
+    # [FUNCTION DOC]
+    # Fixture (skips without pyarrow and the ADBC sqlite driver) yielding an ADBC sqlite connection to the temporary file; afterwards drops views and tables and commits.
     pytest.importorskip("pyarrow")
     pytest.importorskip("adbc_driver_sqlite")
     from adbc_driver_sqlite import dbapi
@@ -833,6 +951,8 @@ def sqlite_adbc_conn(temp_file):
 
 @pytest.fixture
 def sqlite_adbc_iris(sqlite_adbc_conn, iris_path):
+    # [FUNCTION DOC]
+    # Fixture: on the sqlite ADBC connection creates and loads iris and its view unless they already exist (rolling back on the programming error); returns the connection.
     import adbc_driver_manager as mgr
 
     conn = sqlite_adbc_conn
@@ -851,6 +971,9 @@ def sqlite_adbc_iris(sqlite_adbc_conn, iris_path):
 
 @pytest.fixture
 def sqlite_adbc_types(sqlite_adbc_conn, types_data):
+    # [FUNCTION DOC]
+    # Fixture: on the sqlite ADBC connection creates and loads the types table unless it exists, first converting boolean values to integers (mutating the row mappings) and the rows to tuples; commits. Returns the connection.
+    # KNOWN ISSUE: the shared row mappings from the types data fixture are mutated in place.
     import adbc_driver_manager as mgr
 
     conn = sqlite_adbc_conn
@@ -873,6 +996,8 @@ def sqlite_adbc_types(sqlite_adbc_conn, types_data):
 
 @pytest.fixture
 def sqlite_buildin():
+    # [FUNCTION DOC]
+    # Fixture yielding a built-in sqlite3 in-memory connection, wrapped so the connection is closed and the transaction context managed on exit.
     with contextlib.closing(sqlite3.connect(":memory:")) as closing_conn:
         with closing_conn as conn:
             yield conn
@@ -880,6 +1005,8 @@ def sqlite_buildin():
 
 @pytest.fixture
 def sqlite_buildin_iris(sqlite_buildin, iris_path):
+    # [FUNCTION DOC]
+    # Fixture: built-in sqlite3 connection with iris and its view loaded; returns it.
     create_and_load_iris_sqlite3(sqlite_buildin, iris_path)
     create_and_load_iris_view(sqlite_buildin)
     return sqlite_buildin
@@ -887,6 +1014,8 @@ def sqlite_buildin_iris(sqlite_buildin, iris_path):
 
 @pytest.fixture
 def sqlite_buildin_types(sqlite_buildin, types_data):
+    # [FUNCTION DOC]
+    # Fixture: built-in sqlite3 connection with types loaded from tuples built from the row mappings; returns it.
     types_data = [tuple(entry.values()) for entry in types_data]
     create_and_load_types_sqlite3(sqlite_buildin, types_data)
     return sqlite_buildin
@@ -983,6 +1112,8 @@ all_connectable_types = [
 
 @pytest.mark.parametrize("conn", all_connectable)
 def test_dataframe_to_sql(conn, test_frame1, request):
+    # [FUNCTION DOC]
+    # Parametrized over every connection kind (SQLAlchemy engines/connections/strings, built-in sqlite3, ADBC). Regression smoke test: writes the first sample frame to a table, appending, without the index; passes if no error is raised.
     # GH 51086 if conn is sqlite_engine
     conn = request.getfixturevalue(conn)
     test_frame1.to_sql(name="test", con=conn, if_exists="append", index=False)
@@ -990,6 +1121,8 @@ def test_dataframe_to_sql(conn, test_frame1, request):
 
 @pytest.mark.parametrize("conn", all_connectable)
 def test_dataframe_to_sql_empty(conn, test_frame1, request):
+    # [FUNCTION DOC]
+    # Parametrized over all connection kinds. Writes an empty (zero-row) slice of the sample frame, appending, without the index. For the PostgreSQL ADBC connection when string dtype inference is off and the driver is older than 1.11, the test is marked as an expected failure since the driver cannot insert an index of null type. Passes if no error is raised.
     if conn == "postgresql_adbc_conn" and not using_string_dtype():
         adbc_pg = pytest.importorskip("adbc_driver_postgresql")
         if Version(adbc_pg.__version__) < Version("1.11"):
@@ -1009,6 +1142,8 @@ def test_dataframe_to_sql_empty(conn, test_frame1, request):
 
 @pytest.mark.parametrize("conn", all_connectable)
 def test_dataframe_to_sql_arrow_dtypes(conn, request):
+    # [FUNCTION DOC]
+    # Parametrized over all connection kinds. Requires pyarrow. Writes a frame with Arrow-backed integer, datetime, date, duration and string columns, replacing any existing table. ADBC sqlite drops the duration column first. Expected warnings: ADBC with old pyarrow expects a deprecation warning about sparse checks; non-ADBC connections expect a user warning about the timedelta column; otherwise none.
     # GH 52046
     pytest.importorskip("pyarrow")
     df = DataFrame(
@@ -1043,6 +1178,8 @@ def test_dataframe_to_sql_arrow_dtypes(conn, request):
 
 @pytest.mark.parametrize("conn", all_connectable)
 def test_dataframe_to_sql_arrow_dtypes_missing(conn, request, nulls_fixture):
+    # [FUNCTION DOC]
+    # Parametrized over all connection kinds and the null-value fixture. Requires pyarrow; skipped for the decimal NaN null. Writes an Arrow timestamp column containing one real value and one null-like value, replacing the table; passes if no error is raised.
     # GH 52046
     pytest.importorskip("pyarrow")
     if isinstance(nulls_fixture, Decimal):
@@ -1065,6 +1202,8 @@ def test_dataframe_to_sql_arrow_dtypes_missing(conn, request, nulls_fixture):
 @pytest.mark.parametrize("conn", all_connectable)
 @pytest.mark.parametrize("method", [None, "multi"])
 def test_to_sql(conn, method, test_frame1, request):
+    # [FUNCTION DOC]
+    # Parametrized over connection kinds and insertion method (default or multi-row). Writes the sample frame with a database builder in a transaction and checks the table exists and the row count equals the frame length. The multi-row method with ADBC is a strict expected failure because the method option is not supported there.
     if method == "multi" and "adbc" in conn:
         request.node.add_marker(
             pytest.mark.xfail(
@@ -1084,6 +1223,8 @@ def test_to_sql(conn, method, test_frame1, request):
     "mode, num_row_coef", [("replace", 1), ("append", 2), ("delete_rows", 1)]
 )
 def test_to_sql_exist(conn, mode, num_row_coef, test_frame1, request):
+    # [FUNCTION DOC]
+    # Parametrized over connection kinds and existing-table mode (replace, append, delete rows). Writes the sample frame (failing if exists) and then again with the mode; checks the table exists and the row count is the length times 1 (replace, delete rows) or 2 (append).
     conn = request.getfixturevalue(conn)
     with pandasSQL_builder(conn, need_transaction=True) as pandasSQL:
         pandasSQL.to_sql(test_frame1, "test_frame", if_exists="fail")
@@ -1094,6 +1235,8 @@ def test_to_sql_exist(conn, mode, num_row_coef, test_frame1, request):
 
 @pytest.mark.parametrize("conn", all_connectable)
 def test_to_sql_exist_fail(conn, test_frame1, request):
+    # [FUNCTION DOC]
+    # Parametrized over connection kinds. After writing a table, a second write with the fail-if-exists mode raises a value error saying the table already exists.
     conn = request.getfixturevalue(conn)
     with pandasSQL_builder(conn, need_transaction=True) as pandasSQL:
         pandasSQL.to_sql(test_frame1, "test_frame", if_exists="fail")
@@ -1106,6 +1249,8 @@ def test_to_sql_exist_fail(conn, test_frame1, request):
 
 @pytest.mark.parametrize("conn", all_connectable_iris)
 def test_read_iris_query(conn, request):
+    # [FUNCTION DOC]
+    # Parametrized over all iris connection kinds. Reads the full iris table via the query function and the general read function and checks the iris frame shape and values; a query that returns no rows still has the five columns.
     conn = request.getfixturevalue(conn)
     iris_frame = read_sql_query("SELECT * FROM iris", conn)
     check_iris_frame(iris_frame)
@@ -1118,6 +1263,8 @@ def test_read_iris_query(conn, request):
 
 @pytest.mark.parametrize("conn", all_connectable_iris)
 def test_read_iris_query_chunksize(conn, request):
+    # [FUNCTION DOC]
+    # Parametrized over all iris connection kinds. Reads the iris table with chunk size seven using both read functions, concatenates the chunks, and checks the frame; an empty result concatenates to a frame with five columns. ADBC is a strict expected failure since chunk size is not supported.
     if "adbc" in conn:
         request.node.add_marker(
             pytest.mark.xfail(
@@ -1137,6 +1284,9 @@ def test_read_iris_query_chunksize(conn, request):
 
 @pytest.mark.parametrize("conn", sqlalchemy_connectable_iris)
 def test_read_iris_query_expression_with_parameter(conn, request):
+    # [FUNCTION DOC]
+    # Parametrized over SQLAlchemy iris connection kinds. Builds a SQLAlchemy select over the reflected iris table (using an engine created from the string when needed) and reads it with the query function giving a parameters mapping; the result is the full iris frame. Disposes the temporary engine when a connection string was used.
+    # KNOWN ISSUE: the ADBC expected-failure branch can never run because the connection kinds list contains no ADBC entries, and its reason text talks about chunk size which this test does not use.
     if "adbc" in conn:
         request.node.add_marker(
             pytest.mark.xfail(
@@ -1165,6 +1315,9 @@ def test_read_iris_query_expression_with_parameter(conn, request):
 
 @pytest.mark.parametrize("conn", all_connectable_iris)
 def test_read_iris_query_string_with_parameter(conn, request, sql_strings):
+    # [FUNCTION DOC]
+    # Parametrized over all iris connection kinds. Picks the parameterized query for the dialect found in the fixture name (raising a key error when none matches), then reads with a sequence of parameters (name and length); the result is the iris frame. ADBC is a strict expected failure.
+    # KNOWN ISSUE: the expected-failure reason text says chunk size is unsupported although the test exercises query parameters.
     if "adbc" in conn:
         request.node.add_marker(
             pytest.mark.xfail(
@@ -1185,6 +1338,8 @@ def test_read_iris_query_string_with_parameter(conn, request, sql_strings):
 
 @pytest.mark.parametrize("conn", sqlalchemy_connectable_iris)
 def test_read_iris_table(conn, request):
+    # [FUNCTION DOC]
+    # Parametrized over SQLAlchemy iris connection kinds. Reads the iris table by name with the table reader and the general reader; both give the iris frame (regression for connection strings with sqlite).
     # GH 51015 if conn = sqlite_iris_str
     conn = request.getfixturevalue(conn)
     iris_frame = read_sql_table("iris", conn)
@@ -1195,6 +1350,9 @@ def test_read_iris_table(conn, request):
 
 @pytest.mark.parametrize("conn", sqlalchemy_connectable_iris)
 def test_read_iris_table_chunksize(conn, request):
+    # [FUNCTION DOC]
+    # Parametrized over SQLAlchemy iris connection kinds. Reads the iris table by name in chunks of seven with both read functions and checks the concatenated frame.
+    # KNOWN ISSUE: the ADBC expected-failure branch is unreachable because the connection kinds list has no ADBC entries.
     if "adbc" in conn:
         request.node.add_marker(
             pytest.mark.xfail(reason="chunksize argument NotImplemented with ADBC")
@@ -1208,11 +1366,15 @@ def test_read_iris_table_chunksize(conn, request):
 
 @pytest.mark.parametrize("conn", sqlalchemy_connectable)
 def test_to_sql_callable(conn, test_frame1, request):
+    # [FUNCTION DOC]
+    # Parametrized over SQLAlchemy connection kinds. Writes the sample frame through a user-supplied callable insertion method that records its invocation, converts the iterator rows to mappings and executes a bulk insert. Checks the callable was called exactly once, the table exists and all rows were inserted.
     conn = request.getfixturevalue(conn)
 
     check = []  # used to double check function below is really being used
 
     def sample(pd_table, conn, keys, data_iter):
+        # [FUNCTION DOC]
+        # HELPER: custom insertion method used by the callable-method test. Receives the pandas table object, the connection, column names and a row iterator; appends a marker to the enclosing list to show it ran, builds one mapping per row from keys and values and runs a bulk insert on the table. Returns nothing.
         check.append(1)
         data = [dict(zip(keys, row)) for row in data_iter]
         conn.execute(pd_table.table.insert(), data)
@@ -1226,6 +1388,8 @@ def test_to_sql_callable(conn, test_frame1, request):
 
 @pytest.mark.parametrize("conn", all_connectable_types)
 def test_default_type_conversion(conn, request):
+    # [FUNCTION DOC]
+    # Parametrized over all types connection kinds. Reads the types table (expected failure for the built-in sqlite3 connection since it lacks the table reader) and checks the default dtypes: floating for float, integer for integer, boolean for PostgreSQL else integer, integer-with-missing as float, and boolean-with-missing as object for PostgreSQL else float.
     conn_name = conn
     if conn_name == "sqlite_buildin_types":
         request.applymarker(
@@ -1258,6 +1422,8 @@ def test_default_type_conversion(conn, request):
 
 @pytest.mark.parametrize("conn", mysql_connectable)
 def test_read_procedure(conn, request):
+    # [FUNCTION DOC]
+    # Parametrized over MySQL connections. Regression for stored procedures: writes a small frame, creates a procedure that selects from it (via a transaction on the engine or connection), then reads the result of calling it with both the query function and the general read function; both equal the frame.
     conn = request.getfixturevalue(conn)
 
     # GH 7324
@@ -1296,10 +1462,15 @@ def test_read_procedure(conn, request):
 @pytest.mark.parametrize("conn", postgresql_connectable)
 @pytest.mark.parametrize("expected_count", [2, "Success!"])
 def test_copy_from_callable_insertion_method(conn, expected_count, request):
+    # [FUNCTION DOC]
+    # Parametrized over PostgreSQL connections and the value returned by the custom method (2 or a string). Regression test using the documented copy-based insertion method: writes a frame through a callable that streams csv rows into the table with a bulk copy and returns the given value; the return value of the write must equal it and the table read back must equal the frame.
+    # KNOWN ISSUE: the branch handling a none expected count can never run because the parametrization only uses a number and a string.
     # GH 8953
     # Example in io.rst found under _io.sql.method
     # not available in sqlite, mysql
     def psql_insert_copy(table, conn, keys, data_iter):
+        # [FUNCTION DOC]
+        # HELPER: insertion method for the copy test. Takes the pandas table, the connection, column names and a row iterator; gets the underlying DBAPI connection, writes the rows to an in-memory csv buffer, builds a copy statement with the quoted column list and the schema-qualified table name, executes it through the driver's copy-expert call, and returns the expected count taken from the enclosing test parameter.
         # gets a DBAPI connection that can provide a cursor
         dbapi_conn = conn.connection
         with dbapi_conn.cursor() as cur:
@@ -1334,6 +1505,8 @@ def test_copy_from_callable_insertion_method(conn, expected_count, request):
 
 @pytest.mark.parametrize("conn", postgresql_connectable)
 def test_insertion_method_on_conflict_do_nothing(conn, request):
+    # [FUNCTION DOC]
+    # Parametrized over PostgreSQL connections. Regression test of the documented example for conflict handling: creates a table with a primary key, writes a row, then writes a conflicting row using a custom method that inserts with on-conflict-do-nothing. The table must be unchanged (equal to the first frame) and the reported number of inserted rows is zero. Cleans up by dropping the table.
     # GH 15988: Example in to_sql docstring
     conn = request.getfixturevalue(conn)
 
@@ -1342,6 +1515,8 @@ def test_insertion_method_on_conflict_do_nothing(conn, request):
     from sqlalchemy.sql import text
 
     def insert_on_conflict(table, conn, keys, data_iter):
+        # [FUNCTION DOC]
+        # HELPER: insertion method for the on-conflict test. Builds mappings from keys and rows, creates a PostgreSQL insert with an on-conflict-do-nothing clause on the key column, executes it and returns the row count.
         data = [dict(zip(keys, row)) for row in data_iter]
         stmt = (
             insert(table.table)
@@ -1392,6 +1567,8 @@ def test_insertion_method_on_conflict_do_nothing(conn, request):
 
 @pytest.mark.parametrize("conn", all_connectable)
 def test_to_sql_on_public_schema(conn, request):
+    # [FUNCTION DOC]
+    # Parametrized over all connection kinds. Writes and reads a frame using the public schema explicitly; expected failure for sqlite and MySQL since the schema is PostgreSQL specific. The re-read frame equals the written one.
     if "sqlite" in conn or "mysql" in conn:
         request.applymarker(
             pytest.mark.xfail(
@@ -1416,6 +1593,8 @@ def test_to_sql_on_public_schema(conn, request):
 
 @pytest.mark.parametrize("conn", mysql_connectable)
 def test_insertion_method_on_conflict_update(conn, request):
+    # [FUNCTION DOC]
+    # Parametrized over MySQL connections. Regression test of the documented example: creates a table with a primary key, writes a row, then writes a conflicting row with a custom method using on-duplicate-key-update; the table equals the second frame and the reported row count is two (MySQL counts an update as two). Cleans up by dropping the table.
     # GH 14553: Example in to_sql docstring
     conn = request.getfixturevalue(conn)
 
@@ -1424,6 +1603,8 @@ def test_insertion_method_on_conflict_update(conn, request):
     from sqlalchemy.sql import text
 
     def insert_on_conflict(table, conn, keys, data_iter):
+        # [FUNCTION DOC]
+        # HELPER: insertion method for the MySQL conflict test. Builds mappings from keys and rows, creates a MySQL insert with an on-duplicate-key-update clause updating the second and third columns from the inserted values, executes it and returns the row count.
         data = [dict(zip(keys, row)) for row in data_iter]
         stmt = insert(table.table).values(data)
         stmt = stmt.on_duplicate_key_update(b=stmt.inserted.b, c=stmt.inserted.c)
@@ -1469,6 +1650,8 @@ def test_insertion_method_on_conflict_update(conn, request):
 
 @pytest.mark.parametrize("conn", postgresql_connectable)
 def test_read_view_postgres(conn, request):
+    # [FUNCTION DOC]
+    # Parametrized over PostgreSQL connections. Regression test: creates a table, inserts a row and creates a view over it with randomly named objects, then reads the view with the table reader.
     # GH 52969
     conn = request.getfixturevalue(conn)
 
@@ -1504,6 +1687,8 @@ def test_read_view_postgres(conn, request):
 
 
 def test_read_view_sqlite(sqlite_buildin):
+    # [FUNCTION DOC]
+    # Using a built-in sqlite3 connection, creates a table, inserts a row and creates a view, then reads the view with a query; result equals the expected one-row frame. Regression for views.
     # GH 52969
     create_table = """
 CREATE TABLE groups (
@@ -1529,6 +1714,8 @@ SELECT * FROM groups;
 
 
 def flavor(conn_name):
+    # [FUNCTION DOC]
+    # HELPER: maps a connection fixture name to the dialect name (postgresql, sqlite or mysql) by substring, checked in that order; raises a value error for an unsupported name.
     if "postgresql" in conn_name:
         return "postgresql"
     elif "sqlite" in conn_name:
@@ -1541,6 +1728,8 @@ def flavor(conn_name):
 
 @pytest.mark.parametrize("conn", all_connectable_iris)
 def test_read_sql_iris_parameter(conn, request, sql_strings):
+    # [FUNCTION DOC]
+    # Parametrized over all iris connection kinds. Reads the parameterized iris query for the dialect through a database builder inside a transaction with a sequence of parameters, and checks the iris frame. ADBC is a strict expected failure (parameters unsupported).
     if "adbc" in conn:
         request.node.add_marker(
             pytest.mark.xfail(
@@ -1560,6 +1749,8 @@ def test_read_sql_iris_parameter(conn, request, sql_strings):
 
 @pytest.mark.parametrize("conn", all_connectable_iris)
 def test_read_sql_iris_named_parameter(conn, request, sql_strings):
+    # [FUNCTION DOC]
+    # Parametrized over all iris connection kinds. Same as the previous test but with a named-parameter query and a mapping of parameters. ADBC is a strict expected failure.
     if "adbc" in conn:
         request.node.add_marker(
             pytest.mark.xfail(
@@ -1580,6 +1771,8 @@ def test_read_sql_iris_named_parameter(conn, request, sql_strings):
 
 @pytest.mark.parametrize("conn", all_connectable_iris)
 def test_read_sql_iris_no_parameter_with_percent(conn, request, sql_strings):
+    # [FUNCTION DOC]
+    # Parametrized over all iris connection kinds. Reads a query containing a literal percent sign with no parameters; expected failure (marked broken) for MySQL and non-ADBC PostgreSQL connections. Result is the iris frame.
     if "mysql" in conn or ("postgresql" in conn and "adbc" not in conn):
         request.applymarker(pytest.mark.xfail(reason="broken test"))
 
@@ -1599,6 +1792,8 @@ def test_read_sql_iris_no_parameter_with_percent(conn, request, sql_strings):
 
 @pytest.mark.parametrize("conn", all_connectable_iris)
 def test_api_read_sql_view(conn, request):
+    # [FUNCTION DOC]
+    # Parametrized over all iris connection kinds. Public API: reads the iris view with the query function and checks the iris frame.
     conn = request.getfixturevalue(conn)
     iris_frame = sql.read_sql_query("SELECT * FROM iris_view", conn)
     check_iris_frame(iris_frame)
@@ -1606,6 +1801,8 @@ def test_api_read_sql_view(conn, request):
 
 @pytest.mark.parametrize("conn", all_connectable_iris)
 def test_api_read_sql_with_chunksize_no_result(conn, request):
+    # [FUNCTION DOC]
+    # Parametrized over all iris connection kinds. Reading a query that returns no rows with a chunk size gives chunks whose concatenation equals the non-chunked result. ADBC is an expected failure (chunk size unsupported).
     if "adbc" in conn:
         request.node.add_marker(
             pytest.mark.xfail(reason="chunksize argument NotImplemented with ADBC")
@@ -1619,6 +1816,8 @@ def test_api_read_sql_with_chunksize_no_result(conn, request):
 
 @pytest.mark.parametrize("conn", all_connectable)
 def test_api_to_sql(conn, request, test_frame1):
+    # [FUNCTION DOC]
+    # Parametrized over all connection kinds. Public API: drops the test table if it exists, writes the sample frame with the public function and checks the table exists.
     conn = request.getfixturevalue(conn)
     if sql.has_table("test_frame1", conn):
         with sql.SQLDatabase(conn, need_transaction=True) as pandasSQL:
@@ -1630,6 +1829,8 @@ def test_api_to_sql(conn, request, test_frame1):
 
 @pytest.mark.parametrize("conn", all_connectable)
 def test_api_to_sql_fail(conn, request, test_frame1):
+    # [FUNCTION DOC]
+    # Parametrized over all connection kinds. Public API: after dropping any existing table, writes with fail-if-exists, then a second write raises a value error that the table already exists.
     conn = request.getfixturevalue(conn)
     if sql.has_table("test_frame2", conn):
         with sql.SQLDatabase(conn, need_transaction=True) as pandasSQL:
@@ -1645,6 +1846,8 @@ def test_api_to_sql_fail(conn, request, test_frame1):
 
 @pytest.mark.parametrize("conn", all_connectable)
 def test_api_to_sql_replace(conn, request, test_frame1):
+    # [FUNCTION DOC]
+    # Parametrized over all connection kinds. Public API: writes with fail-if-exists then again with replace; the table exists and has the same number of rows as the frame.
     conn = request.getfixturevalue(conn)
     if sql.has_table("test_frame3", conn):
         with sql.SQLDatabase(conn, need_transaction=True) as pandasSQL:
@@ -1663,6 +1866,8 @@ def test_api_to_sql_replace(conn, request, test_frame1):
 
 @pytest.mark.parametrize("conn", all_connectable)
 def test_api_to_sql_append(conn, request, test_frame1):
+    # [FUNCTION DOC]
+    # Parametrized over all connection kinds. Public API: the write function returns the number of rows written (four), first with fail-if-exists and then with append; the table ends up with twice the number of rows.
     conn = request.getfixturevalue(conn)
     if sql.has_table("test_frame4", conn):
         with sql.SQLDatabase(conn, need_transaction=True) as pandasSQL:
@@ -1682,6 +1887,8 @@ def test_api_to_sql_append(conn, request, test_frame1):
 
 @pytest.mark.parametrize("conn", all_connectable)
 def test_api_to_sql_type_mapping(conn, request, test_frame3):
+    # [FUNCTION DOC]
+    # Parametrized over all connection kinds. Writes the integer-and-float sample frame without the index and reads it back with a plain query; the frames are equal (types mapped without change).
     conn = request.getfixturevalue(conn)
     if sql.has_table("test_frame5", conn):
         with sql.SQLDatabase(conn, need_transaction=True) as pandasSQL:
@@ -1695,6 +1902,8 @@ def test_api_to_sql_type_mapping(conn, request, test_frame3):
 
 @pytest.mark.parametrize("conn", all_connectable)
 def test_api_to_sql_series(conn, request):
+    # [FUNCTION DOC]
+    # Parametrized over all connection kinds. Writing a series (named, 64-bit integers) without index and reading back gives a frame equal to the series converted to a frame.
     conn = request.getfixturevalue(conn)
     if sql.has_table("test_series", conn):
         with sql.SQLDatabase(conn, need_transaction=True) as pandasSQL:
@@ -1708,6 +1917,9 @@ def test_api_to_sql_series(conn, request):
 
 @pytest.mark.parametrize("conn", all_connectable)
 def test_api_roundtrip(conn, request, test_frame1):
+    # [FUNCTION DOC]
+    # Parametrized over all connection kinds. Writes the sample frame with its index and reads it back with a query; the extra index column (named level_0, or a generated name for ADBC) is dropped before comparing with the original.
+    # KNOWN ISSUE: the code labels the dropping of the index column as a hack; the expected index column name depends on the backend.
     conn_name = conn
     conn = request.getfixturevalue(conn)
     if sql.has_table("test_frame_roundtrip", conn):
@@ -1727,6 +1939,8 @@ def test_api_roundtrip(conn, request, test_frame1):
 
 @pytest.mark.parametrize("conn", all_connectable)
 def test_api_roundtrip_chunksize(conn, request, test_frame1):
+    # [FUNCTION DOC]
+    # Parametrized over all connection kinds. Writes the sample frame in chunks of two rows, without the index, and reads it back; equal to the original. ADBC is an expected failure (chunk size unsupported).
     if "adbc" in conn:
         request.node.add_marker(
             pytest.mark.xfail(reason="chunksize argument NotImplemented with ADBC")
@@ -1749,6 +1963,8 @@ def test_api_roundtrip_chunksize(conn, request, test_frame1):
 
 @pytest.mark.parametrize("conn", all_connectable_iris)
 def test_api_execute_sql(conn, request):
+    # [FUNCTION DOC]
+    # Parametrized over all iris connection kinds. Through a database builder, executes a select over the iris table, fetches one row and closes the result; the first row equals the known first iris record.
     # drop_sql = "DROP TABLE IF EXISTS test"  # should already be done
     conn = request.getfixturevalue(conn)
     with sql.pandasSQL_builder(conn) as pandas_sql:
@@ -1760,6 +1976,8 @@ def test_api_execute_sql(conn, request):
 
 @pytest.mark.parametrize("conn", all_connectable_types)
 def test_api_date_parsing(conn, request):
+    # [FUNCTION DOC]
+    # Parametrized over all types connection kinds. Exercises date parsing in the query reader: no parsing leaves the date column non-datetime (except MySQL and PostgreSQL, which return datetimes natively); parsing by name, by a name with format mapping, integer epoch seconds column by name and with the seconds unit, and an integer date-only column with a year-month-day format each give the expected timestamps.
     conn_name = conn
     conn = request.getfixturevalue(conn)
     # Test date parsing in read_sql
@@ -1832,6 +2050,9 @@ def test_api_date_parsing(conn, request):
 def test_api_custom_dateparsing_error(
     conn, request, read_sql, text, mode, error, types_data_frame
 ):
+    # [FUNCTION DOC]
+    # Parametrized over all types connection kinds, error handling mode (raise or coerce), and four reader variants (general reader with a query or a table name, the query reader, and the table reader, with the allowed modes). Reads with date parsing given as a mapping with an errors option; compares the result with the expected types frame whose date column is microsecond-unit datetime (PostgreSQL boolean columns converted to integer and float; the PostgreSQL ADBC columns narrowed to 32-bit integers). The combination of a table name with the built-in sqlite3 connection is an expected failure.
+    # KNOWN ISSUE: the mode parameter is parametrized but not used; also the PostgreSQL branch has a to-do about cleaning up the shared types frame fixture.
     conn_name = conn
     conn = request.getfixturevalue(conn)
     if text == "types" and conn_name == "sqlite_buildin_types":
@@ -1867,6 +2088,8 @@ def test_api_custom_dateparsing_error(
 
 @pytest.mark.parametrize("conn", all_connectable_types)
 def test_api_date_and_index(conn, request):
+    # [FUNCTION DOC]
+    # Parametrized over all types connection kinds. When the same column is both parsed as a date and used as the index column, the index is datetime and the other parsed column is datetime.
     # Test case where same column appears in parse_date and index_col
     conn = request.getfixturevalue(conn)
     df = sql.read_sql_query(
@@ -1882,6 +2105,8 @@ def test_api_date_and_index(conn, request):
 
 @pytest.mark.parametrize("conn", all_connectable)
 def test_api_timedelta(conn, request):
+    # [FUNCTION DOC]
+    # Parametrized over all connection kinds. Writing a timedelta column returns two rows written, with a user warning (a deprecation warning for ADBC with old pyarrow, none otherwise); the sqlite ADBC driver is an expected failure. Reading back gives 64-bit integers (nanoseconds) for most backends, or DateOffset objects for PostgreSQL ADBC where the interval type is read as month-day-nano.
     # see #6921
     conn_name = conn
     conn = request.getfixturevalue(conn)
@@ -1929,6 +2154,9 @@ def test_api_timedelta(conn, request):
 
 @pytest.mark.parametrize("conn", all_connectable)
 def test_api_complex_raises(conn, request):
+    # [FUNCTION DOC]
+    # Parametrized over all connection kinds. Writing complex numbers raises a value error (message about unsupported datatypes, differing for ADBC).
+    # KNOWN ISSUE: the assertion inside the raises block is never evaluated because the write raises first.
     conn_name = conn
     conn = request.getfixturevalue(conn)
     df = DataFrame({"a": [1 + 1j, 2j]})
@@ -1960,6 +2188,8 @@ def test_api_complex_raises(conn, request):
     ],
 )
 def test_api_to_sql_index_label(conn, request, index_name, index_label, expected):
+    # [FUNCTION DOC]
+    # Parametrized over all connection kinds and six combinations of index name and index label (including integers). Writes a frame with the given index name and label and checks the first column name read back equals the expected: the label if given, else the index name, else the default index name; integers are converted to strings. ADBC is an expected failure (index label unsupported).
     if "adbc" in conn:
         request.node.add_marker(
             pytest.mark.xfail(reason="index_label argument NotImplemented with ADBC")
@@ -1979,6 +2209,8 @@ def test_api_to_sql_index_label(conn, request, index_name, index_label, expected
 
 @pytest.mark.parametrize("conn", all_connectable)
 def test_api_to_sql_index_label_multiindex(conn, request):
+    # [FUNCTION DOC]
+    # Parametrized over all connection kinds. Writes a frame with a two-level index: default names are level zero and level one; an index label list overrides; the index level names are used when set; a list label overrides the names; a string label for two levels raises a value error that the length must match the number of levels. Each write returns four rows. MySQL is a non-strict expected failure (text keys) and ADBC an expected failure.
     conn_name = conn
     if "mysql" in conn_name:
         request.applymarker(
@@ -2053,6 +2285,8 @@ def test_api_to_sql_index_label_multiindex(conn, request):
 
 @pytest.mark.parametrize("conn", all_connectable)
 def test_api_multiindex_roundtrip(conn, request):
+    # [FUNCTION DOC]
+    # Parametrized over all connection kinds. Writes a frame indexed by two columns and reads it back using those columns as the index; frames are equal including the index type.
     conn = request.getfixturevalue(conn)
     if sql.has_table("test_multiindex_roundtrip", conn):
         with sql.SQLDatabase(conn, need_transaction=True) as pandasSQL:
@@ -2082,6 +2316,8 @@ def test_api_multiindex_roundtrip(conn, request):
     ],
 )
 def test_api_dtype_argument(conn, request, dtype):
+    # [FUNCTION DOC]
+    # Parametrized over all connection kinds and dtype argument values (none, integer, float, per-column mapping). Regression: writes a two-column float frame (two rows written) and reads back with the dtype argument; the result equals the original cast to that dtype. Quotes column names for PostgreSQL.
     # GH10285 Add dtype argument to read_sql_query
     conn_name = conn
     conn = request.getfixturevalue(conn)
@@ -2105,6 +2341,8 @@ def test_api_dtype_argument(conn, request, dtype):
 
 @pytest.mark.parametrize("conn", all_connectable)
 def test_api_integer_col_names(conn, request):
+    # [FUNCTION DOC]
+    # Parametrized over all connection kinds. Smoke test: writing a frame with integer column labels replaces the table without error.
     conn = request.getfixturevalue(conn)
     df = DataFrame([[1, 2], [3, 4]], columns=[0, 1])
     sql.to_sql(df, "test_frame_integer_col_names", conn, if_exists="replace")
@@ -2112,6 +2350,8 @@ def test_api_integer_col_names(conn, request):
 
 @pytest.mark.parametrize("conn", all_connectable)
 def test_api_get_schema(conn, request, test_frame1):
+    # [FUNCTION DOC]
+    # Parametrized over all connection kinds. The schema generator returns a create statement for the sample frame. ADBC is a strict expected failure.
     if "adbc" in conn:
         request.node.add_marker(
             pytest.mark.xfail(
@@ -2126,6 +2366,8 @@ def test_api_get_schema(conn, request, test_frame1):
 
 @pytest.mark.parametrize("conn", all_connectable)
 def test_api_get_schema_with_schema(conn, request, test_frame1):
+    # [FUNCTION DOC]
+    # Parametrized over all connection kinds. Regression: the schema generator with a schema name produces a statement prefixed with the schema-qualified create-table phrase. ADBC is a strict expected failure.
     # GH28486
     if "adbc" in conn:
         request.node.add_marker(
@@ -2141,6 +2383,8 @@ def test_api_get_schema_with_schema(conn, request, test_frame1):
 
 @pytest.mark.parametrize("conn", all_connectable)
 def test_api_get_schema_dtypes(conn, request):
+    # [FUNCTION DOC]
+    # Parametrized over all connection kinds. The schema generator accepts a per-column type override mapping (a SQLAlchemy integer type, or the string INTEGER for the built-in sqlite3 connection): the generated create statement contains both the create keyword and the integer type name. ADBC is a strict expected failure.
     if "adbc" in conn:
         request.node.add_marker(
             pytest.mark.xfail(
@@ -2165,6 +2409,8 @@ def test_api_get_schema_dtypes(conn, request):
 
 @pytest.mark.parametrize("conn", all_connectable)
 def test_api_get_schema_keys(conn, request, test_frame1):
+    # [FUNCTION DOC]
+    # Parametrized over all connection kinds. The schema generator with a key column (one name, or a list of names) adds a named primary key constraint with the key columns, quoted with backticks for MySQL and double quotes otherwise. ADBC is a strict expected failure.
     if "adbc" in conn:
         request.node.add_marker(
             pytest.mark.xfail(
@@ -2194,6 +2440,8 @@ def test_api_get_schema_keys(conn, request, test_frame1):
 
 @pytest.mark.parametrize("conn", all_connectable)
 def test_api_chunksize_read(conn, request):
+    # [FUNCTION DOC]
+    # Parametrized over all connection kinds. Writes 22 random rows and reads them in chunks of five (sizes five, five, five, five, two) using the query reader, and concatenated equals the unchunked read; chunked reading with the table reader gives the same, except the built-in sqlite3 connection which raises a not-implemented error with an empty message. ADBC is an expected failure.
     if "adbc" in conn:
         request.node.add_marker(
             pytest.mark.xfail(reason="chunksize argument NotImplemented with ADBC")
@@ -2243,6 +2491,8 @@ def test_api_chunksize_read(conn, request):
 
 @pytest.mark.parametrize("conn", all_connectable)
 def test_api_categorical(conn, request):
+    # [FUNCTION DOC]
+    # Parametrized over all connection kinds. Regression: a categorical column is written as a plain (dense) column and read back as strings equal to the original; the PostgreSQL ADBC driver below version 0.9 is a strict expected failure.
     if conn == "postgresql_adbc_conn":
         adbc = import_optional_dependency("adbc_driver_postgresql", errors="ignore")
         if adbc is not None and Version(adbc.__version__) < Version("0.9.0"):
@@ -2276,6 +2526,8 @@ def test_api_categorical(conn, request):
 
 @pytest.mark.parametrize("conn", all_connectable)
 def test_api_unicode_column_name(conn, request):
+    # [FUNCTION DOC]
+    # Parametrized over all connection kinds. Regression smoke test: a column name with a non-ascii character can be written.
     # GH 11431
     conn = request.getfixturevalue(conn)
     if sql.has_table("test_unicode", conn):
@@ -2288,6 +2540,8 @@ def test_api_unicode_column_name(conn, request):
 
 @pytest.mark.parametrize("conn", all_connectable)
 def test_api_escaped_table_name(conn, request):
+    # [FUNCTION DOC]
+    # Parametrized over all connection kinds. Regression: a table name containing hyphens is written and read back with a query that quotes the name (double quotes for PostgreSQL, backticks otherwise).
     # GH 13206
     conn_name = conn
     conn = request.getfixturevalue(conn)
@@ -2309,6 +2563,8 @@ def test_api_escaped_table_name(conn, request):
 
 @pytest.mark.parametrize("conn", all_connectable)
 def test_api_table_name_quoted(conn, request):
+    # [FUNCTION DOC]
+    # Parametrized over all connection kinds (skipped for the built-in sqlite3). Regression: a table name containing a space is written, read by the table reader, and rewritten with delete-rows mode, exercising identifier quoting in the write, read and delete paths of the ADBC database class.
     # GH#65065 ADBCDatabase did not escape SQL identifiers in
     # delete_rows, read_table, and to_sql (DROP TABLE path)
     conn_name = conn
@@ -2333,6 +2589,8 @@ def test_api_table_name_quoted(conn, request):
 
 @pytest.mark.parametrize("conn", all_connectable)
 def test_api_read_sql_duplicate_columns(conn, request):
+    # [FUNCTION DOC]
+    # Parametrized over all connection kinds. Regression: reading a query with duplicate output column names preserves both columns in the frame; for ADBC this works only with pyarrow 16 or newer on sqlite or PostgreSQL, else it is a strict expected failure.
     # GH#53117
     if "adbc" in conn:
         pa = pytest.importorskip("pyarrow")
@@ -2363,6 +2621,8 @@ def test_api_read_sql_duplicate_columns(conn, request):
 
 @pytest.mark.parametrize("conn", all_connectable)
 def test_read_table_columns(conn, request, test_frame1):
+    # [FUNCTION DOC]
+    # Parametrized over all connection kinds. The table reader with a column list returns only those columns in that order; the built-in sqlite3 connection is an expected failure.
     # test columns argument in read_table
     conn_name = conn
     if conn_name == "sqlite_buildin":
@@ -2379,6 +2639,8 @@ def test_read_table_columns(conn, request, test_frame1):
 
 @pytest.mark.parametrize("conn", all_connectable)
 def test_read_table_index_col(conn, request, test_frame1):
+    # [FUNCTION DOC]
+    # Parametrized over all connection kinds. The table reader's index column argument: a single name or a list sets the index names, and combining it with a column list returns only those columns; the built-in sqlite3 connection is an expected failure.
     # test columns argument in read_table
     conn_name = conn
     if conn_name == "sqlite_buildin":
@@ -2402,6 +2664,8 @@ def test_read_table_index_col(conn, request, test_frame1):
 
 @pytest.mark.parametrize("conn", all_connectable_iris)
 def test_read_sql_delegate(conn, request):
+    # [FUNCTION DOC]
+    # Parametrized over all iris connection kinds. The general reader delegates to the query reader for query text and to the table reader for a bare table name; results equal. The built-in sqlite3 connection is an expected failure.
     if conn == "sqlite_buildin_iris":
         request.applymarker(
             pytest.mark.xfail(
@@ -2420,6 +2684,9 @@ def test_read_sql_delegate(conn, request):
 
 
 def test_not_reflect_all_tables(sqlite_conn):
+    # [FUNCTION DOC]
+    # Creates a table with an unknown column type and another valid table on the sqlite connection, then reads the valid table with both readers and expects no warning (an unreflectable table does not break reflection).
+    # KNOWN ISSUE: the engine-handling branch rebinds the connection variable but cannot be reached because the fixture provides a connection, not an engine.
     conn = sqlite_conn
     from sqlalchemy import text
     from sqlalchemy.engine import Engine
@@ -2446,6 +2713,8 @@ def test_not_reflect_all_tables(sqlite_conn):
 
 @pytest.mark.parametrize("conn", all_connectable)
 def test_warning_case_insensitive_table_name(conn, request, test_frame1):
+    # [FUNCTION DOC]
+    # Parametrized over all connection kinds. Calling the case-sensitivity check on a table name that does not exist as written emits a user warning about case sensitivity; a normal write of a mixed-case name emits no warning. Built-in sqlite3 and ADBC are expected failures (no warning raised).
     conn_name = conn
     if conn_name == "sqlite_buildin" or "adbc" in conn_name:
         request.applymarker(pytest.mark.xfail(reason="Does not raise warning"))
@@ -2470,6 +2739,8 @@ def test_warning_case_insensitive_table_name(conn, request, test_frame1):
 
 @pytest.mark.parametrize("conn", sqlalchemy_connectable)
 def test_sqlalchemy_type_mapping(conn, request):
+    # [FUNCTION DOC]
+    # Parametrized over SQLAlchemy connection kinds. A timezone-aware datetime column maps to the SQLAlchemy TIMESTAMP type in the table definition.
     conn = request.getfixturevalue(conn)
     from sqlalchemy import TIMESTAMP
 
@@ -2505,6 +2776,8 @@ def test_sqlalchemy_type_mapping(conn, request):
     ],
 )
 def test_sqlalchemy_integer_mapping(conn, request, integer, expected):
+    # [FUNCTION DOC]
+    # Parametrized over SQLAlchemy connection kinds and integer dtypes (signed, unsigned, nullable, built-in integer). Regression: each integer dtype maps to the smallest SQL integer type that holds it (small, regular or big integer); the built-in integer maps by platform width.
     # GH35076 Map pandas integer to optimal SQLAlchemy integer type
     conn = request.getfixturevalue(conn)
     df = DataFrame([0, 1], columns=["a"], dtype=integer)
@@ -2518,6 +2791,8 @@ def test_sqlalchemy_integer_mapping(conn, request, integer, expected):
 @pytest.mark.parametrize("conn", sqlalchemy_connectable)
 @pytest.mark.parametrize("integer", ["uint64", "UInt64"])
 def test_sqlalchemy_integer_overload_mapping(conn, request, integer):
+    # [FUNCTION DOC]
+    # Parametrized over SQLAlchemy connection kinds and the unsigned 64-bit dtype names. Creating a table definition from such a column raises a value error that unsigned 64 bit integers are not supported.
     conn = request.getfixturevalue(conn)
     # GH35076 Map pandas integer to optimal SQLAlchemy integer type
     df = DataFrame([0, 1], columns=["a"], dtype=integer)
@@ -2529,6 +2804,8 @@ def test_sqlalchemy_integer_overload_mapping(conn, request, integer):
 
 
 def test_database_uri_string(temp_file, request, test_frame1):
+    # [FUNCTION DOC]
+    # Requires SQLAlchemy. Writes and reads through the public functions using a database URI string for a temporary sqlite file (general, table and query readers); every result equals the original.
     pytest.importorskip("sqlalchemy")
     # Test read_sql and .to_sql method with a database URI (GH10654)
     # db_uri = 'sqlite:///:memory:' # raises
@@ -2549,6 +2826,8 @@ def test_database_uri_string(temp_file, request, test_frame1):
 
 @td.skip_if_installed("pg8000")
 def test_pg8000_sqlalchemy_passthrough_error(request):
+    # [FUNCTION DOC]
+    # Runs only when the pg8000 driver is not installed. Requires SQLAlchemy. Reading with a connection string for that driver propagates the engine-creation import error naming the driver.
     pytest.importorskip("sqlalchemy")
     # using driver that will not be installed on CI to trigger error
     # in sqlalchemy.create_engine -> test passing of this error to user
@@ -2559,6 +2838,8 @@ def test_pg8000_sqlalchemy_passthrough_error(request):
 
 @pytest.mark.parametrize("conn", sqlalchemy_connectable_iris)
 def test_query_by_text_obj(conn, request):
+    # [FUNCTION DOC]
+    # Parametrized over SQLAlchemy iris connection kinds. Reads with a text clause object using a named bind parameter (quoted column for PostgreSQL); only rows of the requested species are returned.
     # WIP : GH10846
     conn_name = conn
     conn = request.getfixturevalue(conn)
@@ -2575,6 +2856,8 @@ def test_query_by_text_obj(conn, request):
 
 @pytest.mark.parametrize("conn", sqlalchemy_connectable_iris)
 def test_query_by_select_obj(conn, request):
+    # [FUNCTION DOC]
+    # Parametrized over SQLAlchemy iris connection kinds. Reads with a select statement filtered by a bound parameter; only rows of the requested species are returned.
     conn = request.getfixturevalue(conn)
     # WIP : GH10846
     from sqlalchemy import (
@@ -2591,6 +2874,8 @@ def test_query_by_select_obj(conn, request):
 
 @pytest.mark.parametrize("conn", all_connectable)
 def test_column_with_percentage(conn, request):
+    # [FUNCTION DOC]
+    # Parametrized over all connection kinds. Regression: a column name containing a percent sign is written and read with the table reader. The built-in sqlite3 connection is an expected failure.
     # GH 37157
     conn_name = conn
     if conn_name == "sqlite_buildin":
@@ -2606,6 +2891,8 @@ def test_column_with_percentage(conn, request):
 
 
 def test_sql_open_close(temp_file, test_frame3):
+    # [FUNCTION DOC]
+    # Writes via a built-in sqlite3 connection that is then closed (the write returns four rows), then reads via a new connection to the same file; the result equals the original.
     # Test if the IO in the database still work if the connection closed
     # between the writing and reading (as in many real situations).
 
@@ -2620,6 +2907,8 @@ def test_sql_open_close(temp_file, test_frame3):
 
 @td.skip_if_installed("sqlalchemy")
 def test_con_string_import_error():
+    # [FUNCTION DOC]
+    # Runs only when SQLAlchemy is not installed. Reading with a connection URI string raises an import error saying a URI string was used without SQLAlchemy.
     conn = "mysql://root@localhost/pandas"
     msg = "Using URI string without sqlalchemy installed"
     with pytest.raises(ImportError, match=msg):
@@ -2628,14 +2917,24 @@ def test_con_string_import_error():
 
 @td.skip_if_installed("sqlalchemy")
 def test_con_unknown_dbapi2_class_does_not_error_without_sql_alchemy_installed():
+    # [FUNCTION DOC]
+    # Runs only when SQLAlchemy is not installed. With a minimal wrapper object around a built-in sqlite3 connection (not recognised as a sqlite3 connection class), reading a trivial query emits a user warning that only SQLAlchemy is supported, but does not raise.
     class MockSqliteConnection:
+        # [CLASS DOC]
+        # HELPER: minimal stand-in for a sqlite connection used only by the test above. Wraps a real built-in sqlite3 connection created from the constructor arguments, forwards unknown attribute lookups to it and provides a close method that closes it; it is deliberately not a subclass of the sqlite connection class.
         def __init__(self, *args, **kwargs) -> None:
+            # [FUNCTION DOC]
+            # HELPER: constructor. Creates the wrapped sqlite3 connection from all positional and keyword arguments and stores it as the connection attribute.
             self.conn = sqlite3.Connection(*args, **kwargs)
 
         def __getattr__(self, name):
+            # [FUNCTION DOC]
+            # HELPER: attribute fallback; returns the attribute of the wrapped connection with the given name (any missing attribute is delegated).
             return getattr(self.conn, name)
 
         def close(self):
+            # [FUNCTION DOC]
+            # HELPER: closes the wrapped connection.
             self.conn.close()
 
     with contextlib.closing(MockSqliteConnection(":memory:")) as conn:
@@ -2644,6 +2943,8 @@ def test_con_unknown_dbapi2_class_does_not_error_without_sql_alchemy_installed()
 
 
 def test_sqlite_read_sql_delegate(sqlite_buildin_iris):
+    # [FUNCTION DOC]
+    # With a built-in sqlite3 iris connection, the general reader delegates a query to the query reader (equal results); passing a bare table name raises a database error whose message reports an execution failure with a syntax error near the table name.
     conn = sqlite_buildin_iris
     iris_frame1 = sql.read_sql_query("SELECT * FROM iris", conn)
     iris_frame2 = sql.read_sql("SELECT * FROM iris", conn)
@@ -2655,12 +2956,16 @@ def test_sqlite_read_sql_delegate(sqlite_buildin_iris):
 
 
 def test_get_schema2(test_frame1):
+    # [FUNCTION DOC]
+    # The schema generator works without a connection argument (kept for backward compatibility) and returns a create statement.
     # without providing a connection object (available for backwards comp)
     create_sql = sql.get_schema(test_frame1, "test")
     assert "CREATE" in create_sql
 
 
 def test_sqlite_type_mapping(sqlite_buildin):
+    # [FUNCTION DOC]
+    # Creates a sqlite table definition (not through SQLAlchemy) for a timezone-aware datetime column and verifies in the generated schema text that the column type is timestamp.
     # Test Timestamp objects (no datetime64 because of timezone) (GH9085)
     conn = sqlite_buildin
     df = DataFrame(
@@ -2680,6 +2985,8 @@ def test_sqlite_type_mapping(sqlite_buildin):
 
 @pytest.mark.parametrize("conn", sqlalchemy_connectable)
 def test_create_table(conn, request):
+    # [FUNCTION DOC]
+    # Parametrized over SQLAlchemy connection kinds (skipped for the connection string, which cannot be inspected). Writes a frame (four rows returned) through a database object in a transaction, verifies with the inspector that the table exists, and then drops it.
     if conn == "sqlite_str":
         pytest.skip("sqlite_str has no inspection system")
 
@@ -2701,6 +3008,8 @@ def test_create_table(conn, request):
 
 @pytest.mark.parametrize("conn", sqlalchemy_connectable)
 def test_drop_table(conn, request):
+    # [FUNCTION DOC]
+    # Parametrized over SQLAlchemy connection kinds (skipped for the connection string). Creates a table and checks it exists via the inspector, drops it in another transaction, clears the inspector cache when supported, and verifies the table no longer exists.
     if conn == "sqlite_str":
         pytest.skip("sqlite_str has no inspection system")
 
@@ -2727,6 +3036,8 @@ def test_drop_table(conn, request):
 
 @pytest.mark.parametrize("conn_name", all_connectable)
 def test_delete_rows_success(conn_name, test_frame1, request):
+    # [FUNCTION DOC]
+    # Parametrized over all connection kinds. After writing a table, deleting all rows returns nothing; the row count is zero and the table still exists.
     table_name = "temp_delete_rows_frame"
     conn = request.getfixturevalue(conn_name)
 
@@ -2743,6 +3054,8 @@ def test_delete_rows_success(conn_name, test_frame1, request):
 
 @pytest.mark.parametrize("conn_name", all_connectable)
 def test_delete_rows_is_atomic(conn_name, request):
+    # [FUNCTION DOC]
+    # Parametrized over all connection kinds. Requires SQLAlchemy. Creates a table with a uniqueness constraint and original rows (32-bit integers), then writes replacement rows with duplicate values in delete-rows mode: a database error is raised and the delete is rolled back, so the original data remains.
     sqlalchemy = pytest.importorskip("sqlalchemy")
 
     table_name = "temp_delete_rows_atomic_frame"
@@ -2780,6 +3093,9 @@ def test_delete_rows_is_atomic(conn_name, request):
 
 @pytest.mark.parametrize("conn", all_connectable)
 def test_roundtrip(conn, request, test_frame1):
+    # [FUNCTION DOC]
+    # Parametrized over all connection kinds (skipped for the connection string). Writes the sample frame (four rows) and reads it with a query through a database object in a transaction; after renaming the generated index column for ADBC and setting it as the index (name cleared), the frame equals the original.
+    # KNOWN ISSUE: a commented-out line about converting the index to integers remains in the body.
     if conn == "sqlite_str":
         pytest.skip("sqlite_str has no inspection system")
 
@@ -2802,6 +3118,8 @@ def test_roundtrip(conn, request, test_frame1):
 
 @pytest.mark.parametrize("conn", all_connectable_iris)
 def test_execute_sql(conn, request):
+    # [FUNCTION DOC]
+    # Parametrized over all iris connection kinds. Through a database object inside a transaction, executes a select on iris, fetches the first row and closes the result; the row equals the known first iris record.
     conn = request.getfixturevalue(conn)
     with pandasSQL_builder(conn) as pandasSQL:
         with pandasSQL.run_transaction():
@@ -2813,6 +3131,8 @@ def test_execute_sql(conn, request):
 
 @pytest.mark.parametrize("conn", sqlalchemy_connectable_iris)
 def test_sqlalchemy_read_table(conn, request):
+    # [FUNCTION DOC]
+    # Parametrized over SQLAlchemy iris connection kinds. The table reader returns the full iris frame.
     conn = request.getfixturevalue(conn)
     iris_frame = sql.read_sql_table("iris", con=conn)
     check_iris_frame(iris_frame)
@@ -2820,6 +3140,8 @@ def test_sqlalchemy_read_table(conn, request):
 
 @pytest.mark.parametrize("conn", sqlalchemy_connectable_iris)
 def test_sqlalchemy_read_table_columns(conn, request):
+    # [FUNCTION DOC]
+    # Parametrized over SQLAlchemy iris connection kinds. Selecting the same column name twice yields column labels where the duplicate gets a double-underscore numeric suffix.
     conn = request.getfixturevalue(conn)
     iris_frame = sql.read_sql_table(
         "iris", con=conn, columns=["SepalLength", "SepalLength"]
@@ -2829,6 +3151,8 @@ def test_sqlalchemy_read_table_columns(conn, request):
 
 @pytest.mark.parametrize("conn", sqlalchemy_connectable_iris)
 def test_read_table_absent_raises(conn, request):
+    # [FUNCTION DOC]
+    # Parametrized over SQLAlchemy iris connection kinds. Reading a table that does not exist raises a value error that the table was not found.
     conn = request.getfixturevalue(conn)
     msg = "Table this_doesnt_exist not found"
     with pytest.raises(ValueError, match=msg):
@@ -2837,6 +3161,8 @@ def test_read_table_absent_raises(conn, request):
 
 @pytest.mark.parametrize("conn", sqlalchemy_connectable_types)
 def test_sqlalchemy_default_type_conversion(conn, request):
+    # [FUNCTION DOC]
+    # Parametrized over SQLAlchemy types connection kinds (skipped for the connection string). Reads the types table with the table reader and checks default dtypes: float, integer, boolean (true boolean), integer-with-missing as float and boolean-with-missing as object. Expected failure for MySQL and sqlite as booleans are not inferred.
     conn_name = conn
     if conn_name == "sqlite_str":
         pytest.skip("types tables not created in sqlite_str fixture")
@@ -2860,6 +3186,8 @@ def test_sqlalchemy_default_type_conversion(conn, request):
 
 @pytest.mark.parametrize("conn", sqlalchemy_connectable)
 def test_bigint(conn, request):
+    # [FUNCTION DOC]
+    # Parametrized over SQLAlchemy connection kinds. Regression: a 64-bit integer near 2 to the 62nd power is written as a big integer column (one row returned) and read back equal.
     # int64 should be converted to BigInteger, GH7433
     conn = request.getfixturevalue(conn)
     df = DataFrame(data={"i64": [2**62]})
@@ -2871,6 +3199,8 @@ def test_bigint(conn, request):
 
 @pytest.mark.parametrize("conn", sqlalchemy_connectable_types)
 def test_default_date_load(conn, request):
+    # [FUNCTION DOC]
+    # Parametrized over SQLAlchemy types connection kinds. Reading the types table gives a datetime dtype for the date column by default (skipped for the connection string; expected failure for sqlite).
     conn_name = conn
     if conn_name == "sqlite_str":
         pytest.skip("types tables not created in sqlite_str fixture")
@@ -2888,6 +3218,8 @@ def test_default_date_load(conn, request):
 @pytest.mark.parametrize("conn", postgresql_connectable)
 @pytest.mark.parametrize("parse_dates", [None, ["DateColWithTz"]])
 def test_datetime_with_timezone_query(conn, request, parse_dates):
+    # [FUNCTION DOC]
+    # Parametrized over PostgreSQL connections and date parsing (none or the column). Edge case: a timestamp-with-time-zone column read by a query is converted to UTC datetimes (microsecond unit) and equals the expected series from the helper.
     # edge case that converts postgresql datetime with time zone types
     # to datetime64[ns,psycopg2.tz.FixedOffsetTimezone..], which is ok
     # but should be more natural, so coerce to datetime64[ns] for now
@@ -2902,6 +3234,8 @@ def test_datetime_with_timezone_query(conn, request, parse_dates):
 
 @pytest.mark.parametrize("conn", postgresql_connectable)
 def test_datetime_with_timezone_query_chunksize(conn, request):
+    # [FUNCTION DOC]
+    # Parametrized over PostgreSQL connections. Same as the previous test but reading in chunks of one row, concatenating them.
     conn = request.getfixturevalue(conn)
     expected = create_and_load_postgres_datetz(conn)
 
@@ -2915,6 +3249,8 @@ def test_datetime_with_timezone_query_chunksize(conn, request):
 
 @pytest.mark.parametrize("conn", postgresql_connectable)
 def test_datetime_with_timezone_table(conn, request):
+    # [FUNCTION DOC]
+    # Parametrized over PostgreSQL connections. Reading the time zone table with the table reader gives the expected one-column frame in UTC.
     conn = request.getfixturevalue(conn)
     expected = create_and_load_postgres_datetz(conn)
     result = sql.read_sql_table("datetz", conn)
@@ -2925,6 +3261,8 @@ def test_datetime_with_timezone_table(conn, request):
 
 @pytest.mark.parametrize("conn", sqlalchemy_connectable)
 def test_datetime_with_timezone_roundtrip(conn, request):
+    # [FUNCTION DOC]
+    # Parametrized over SQLAlchemy connection kinds. Writes a timezone-aware column (three values returned) and reads it back with the table reader and with a query. PostgreSQL returns UTC-aware values; other databases return naive values (converted from the original local time). For sqlite the query reader returns strings that are parsed.
     conn_name = conn
     conn = request.getfixturevalue(conn)
     # GH 9086
@@ -2956,6 +3294,8 @@ def test_datetime_with_timezone_roundtrip(conn, request):
 
 @pytest.mark.parametrize("conn", sqlalchemy_connectable)
 def test_out_of_bounds_datetime(conn, request):
+    # [FUNCTION DOC]
+    # Parametrized over SQLAlchemy connection kinds. Regression: a date far in the future (year 9999) is written and read back as a microsecond-unit datetime.
     # GH 26761
     conn = request.getfixturevalue(conn)
     data = DataFrame({"date": datetime(9999, 1, 1)}, index=[0])
@@ -2969,6 +3309,8 @@ def test_out_of_bounds_datetime(conn, request):
 
 @pytest.mark.parametrize("conn", sqlalchemy_connectable)
 def test_naive_datetimeindex_roundtrip(conn, request):
+    # [FUNCTION DOC]
+    # Parametrized over SQLAlchemy connection kinds. Regression: a naive datetime index with an index label is written (five rows) and read back with the label as index; it is not converted to UTC and the frames are equal ignoring names.
     # GH 23510
     # Ensure that a naive DatetimeIndex isn't converted to UTC
     conn = request.getfixturevalue(conn)
@@ -2982,6 +3324,8 @@ def test_naive_datetimeindex_roundtrip(conn, request):
 
 @pytest.mark.parametrize("conn", sqlalchemy_connectable_types)
 def test_date_parsing(conn, request):
+    # [FUNCTION DOC]
+    # Parametrized over SQLAlchemy types connection kinds. Table reader date parsing: by default the date column is object for sqlite and datetime otherwise; listing the column, giving a format mapping, a format option dict, and for the epoch-seconds integer column the column name, a unit string and a unit option dict all produce datetime dtypes.
     # No Parsing
     conn_name = conn
     conn = request.getfixturevalue(conn)
@@ -3014,6 +3358,8 @@ def test_date_parsing(conn, request):
 
 @pytest.mark.parametrize("conn", sqlalchemy_connectable)
 def test_datetime(conn, request):
+    # [FUNCTION DOC]
+    # Parametrized over SQLAlchemy connection kinds. Writes a frame with a datetime column and a float column with the index (three rows); the table reader returns the datetime in microsecond unit; the query reader returns strings for sqlite which are parsed, else datetimes.
     conn_name = conn
     conn = request.getfixturevalue(conn)
     df = DataFrame(
@@ -3040,6 +3386,8 @@ def test_datetime(conn, request):
 
 @pytest.mark.parametrize("conn", sqlalchemy_connectable)
 def test_datetime_NaT(conn, request):
+    # [FUNCTION DOC]
+    # Parametrized over SQLAlchemy connection kinds. Same as the previous test but with a missing datetime and without the index; reading back preserves the missing value as NaT, with sqlite strings parsed with errors coerced.
     conn_name = conn
     conn = request.getfixturevalue(conn)
     df = DataFrame(
@@ -3065,6 +3413,8 @@ def test_datetime_NaT(conn, request):
 
 @pytest.mark.parametrize("conn", sqlalchemy_connectable)
 def test_datetime_date(conn, request):
+    # [FUNCTION DOC]
+    # Parametrized over SQLAlchemy connection kinds. Writes date objects (two rows) and reads back datetimes equal to the converted series.
     # test support for datetime.date
     conn = request.getfixturevalue(conn)
     df = DataFrame([date(2014, 1, 1), date(2014, 1, 2)], columns=["a"])
@@ -3078,6 +3428,8 @@ def test_datetime_date(conn, request):
 
 @pytest.mark.parametrize("conn", sqlalchemy_connectable)
 def test_datetime_time(conn, request, sqlite_buildin):
+    # [FUNCTION DOC]
+    # Parametrized over SQLAlchemy connection kinds, also using the built-in sqlite3 connection fixture. Regression test: time objects round trip with the table reader; the fallback sqlite path stores them as formatted strings and a registered adapter does not affect the SQLAlchemy path (which returns times, or strings on query for sqlite).
     # test support for datetime.time
     conn_name = conn
     conn = request.getfixturevalue(conn)
@@ -3105,6 +3457,8 @@ def test_datetime_time(conn, request, sqlite_buildin):
 
 @pytest.mark.parametrize("conn", sqlalchemy_connectable)
 def test_mixed_dtype_insert(conn, request):
+    # [FUNCTION DOC]
+    # Parametrized over SQLAlchemy connection kinds. Regression: a frame with a 32-bit integer and a 32-bit float column is written (one row) and read back exactly equal (dtype not checked).
     # see GH6509
     conn = request.getfixturevalue(conn)
     s1 = Series(2**25 + 1, dtype=np.int32)
@@ -3120,6 +3474,8 @@ def test_mixed_dtype_insert(conn, request):
 
 @pytest.mark.parametrize("conn", sqlalchemy_connectable)
 def test_nan_numeric(conn, request):
+    # [FUNCTION DOC]
+    # Parametrized over SQLAlchemy connection kinds. A float column with a missing value round-trips with both the table reader and the query reader.
     # NaNs in numeric float column
     conn = request.getfixturevalue(conn)
     df = DataFrame({"A": [0, 1, 2], "B": [0.2, np.nan, 5.6]})
@@ -3136,6 +3492,8 @@ def test_nan_numeric(conn, request):
 
 @pytest.mark.parametrize("conn", sqlalchemy_connectable)
 def test_nan_fullcolumn(conn, request):
+    # [FUNCTION DOC]
+    # Parametrized over SQLAlchemy connection kinds. A float column that is entirely missing round-trips with the table reader; with the query reader the column comes back as an object column of none.
     # full NaN column (numeric float column)
     conn = request.getfixturevalue(conn)
     df = DataFrame({"A": [0, 1, 2], "B": [np.nan, np.nan, np.nan]})
@@ -3154,6 +3512,8 @@ def test_nan_fullcolumn(conn, request):
 
 @pytest.mark.parametrize("conn", sqlalchemy_connectable)
 def test_nan_string(conn, request):
+    # [FUNCTION DOC]
+    # Parametrized over SQLAlchemy connection kinds. A string column with a missing value round-trips with both readers, the missing value coming back as none.
     # NaNs in string column
     conn = request.getfixturevalue(conn)
     df = DataFrame({"A": [0, 1, 2], "B": ["a", "b", np.nan]})
@@ -3173,6 +3533,8 @@ def test_nan_string(conn, request):
 
 @pytest.mark.parametrize("conn", all_connectable)
 def test_to_sql_save_index(conn, request):
+    # [FUNCTION DOC]
+    # Parametrized over all connection kinds. Writing a frame whose index is a column named A (two rows) creates exactly one index in the database on that column; checked via the sqlite master table and index info for the sqlite connections or the inspector otherwise. ADBC is a strict expected failure since no index is created.
     if "adbc" in conn:
         request.node.add_marker(
             pytest.mark.xfail(
@@ -3213,6 +3575,8 @@ def test_to_sql_save_index(conn, request):
 
 @pytest.mark.parametrize("conn", all_connectable)
 def test_transactions(conn, request):
+    # [FUNCTION DOC]
+    # Parametrized over all connection kinds. Smoke test: executing a create-table statement inside a database transaction block (statement wrapped as a text clause for SQLAlchemy kinds) does not raise.
     conn_name = conn
     conn = request.getfixturevalue(conn)
 
@@ -3229,6 +3593,8 @@ def test_transactions(conn, request):
 
 @pytest.mark.parametrize("conn", all_connectable)
 def test_transaction_rollback(conn, request):
+    # [FUNCTION DOC]
+    # Parametrized over all connection kinds. Creates a table in a transaction, then raises a local exception inside a second transaction after inserting a row; reading afterwards shows no rows (rolled back). A committed insert in a third transaction is visible (one row).
     conn_name = conn
     conn = request.getfixturevalue(conn)
     with pandasSQL_builder(conn) as pandasSQL:
@@ -3243,6 +3609,8 @@ def test_transaction_rollback(conn, request):
                 trans.execute(stmt)
 
         class DummyException(Exception):
+            # [CLASS DOC]
+            # HELPER: exception type defined only to be raised inside a transaction in the rollback test, so it can be distinguished and swallowed. No state or behavior.
             pass
 
         # Make sure when transaction is rolled back, no rows get inserted
@@ -3271,6 +3639,8 @@ def test_transaction_rollback(conn, request):
 
 @pytest.mark.parametrize("conn", sqlalchemy_connectable)
 def test_get_schema_create_table(conn, request, test_frame3):
+    # [FUNCTION DOC]
+    # Parametrized over SQLAlchemy connection kinds (expected failure for the connection string). Generates a create statement from a frame with the schema generator, executes it (opening a connection for an engine), then reads the empty table with the table reader and compares it to the zero-row frame (index type not checked).
     # Use a dataframe without a bool column, since MySQL converts bool to
     # TINYINT (which read_sql_table returns as an int and causes a dtype
     # mismatch)
@@ -3301,6 +3671,8 @@ def test_get_schema_create_table(conn, request, test_frame3):
 
 @pytest.mark.parametrize("conn", sqlalchemy_connectable)
 def test_dtype(conn, request):
+    # [FUNCTION DOC]
+    # Parametrized over SQLAlchemy connection kinds (skipped for the connection string). Writing with a per-column type mapping to TEXT gives a TEXT column in the reflected metadata; a plain string type (not a SQLAlchemy type) raises a value error; a string type with length ten yields length ten; a single type applies to all columns.
     if conn == "sqlite_str":
         pytest.skip("sqlite_str has no inspection system")
 
@@ -3343,6 +3715,8 @@ def test_dtype(conn, request):
 
 @pytest.mark.parametrize("conn", sqlalchemy_connectable)
 def test_notna_dtype(conn, request):
+    # [FUNCTION DOC]
+    # Parametrized over SQLAlchemy connection kinds (skipped for the connection string). Writes a frame of boolean, date, object-integer and float columns each with a missing value; the reflected column types are boolean (integer for MySQL), datetime, integer and float, showing that types are inferred from the non-missing values.
     if conn == "sqlite_str":
         pytest.skip("sqlite_str has no inspection system")
 
@@ -3380,6 +3754,8 @@ def test_notna_dtype(conn, request):
 
 @pytest.mark.parametrize("conn", sqlalchemy_connectable)
 def test_double_precision(conn, request):
+    # [FUNCTION DOC]
+    # Parametrized over SQLAlchemy connection kinds (skipped for the connection string). Writes 32- and 64-bit floats, one 64-bit column forced to a 23-bit precision float, and 32/64-bit integers; verifies 64-bit floats keep 14-decimal precision, the forced column has the same SQL type as the 32-bit float, and integer types are integer and big integer.
     if conn == "sqlite_str":
         pytest.skip("sqlite_str has no inspection system")
 
@@ -3432,6 +3808,8 @@ def test_double_precision(conn, request):
 
 @pytest.mark.parametrize("conn", sqlalchemy_connectable)
 def test_connectable_issue_example(conn, request):
+    # [FUNCTION DOC]
+    # Parametrized over SQLAlchemy connection kinds. Reproduces a reported issue: reading a table through a connection obtained from an engine (or the connection itself) and appending the result to the same table within a transaction must work. Defines nested helper functions for selecting, appending, wrapping in a transaction and the entry point, then runs the entry point after creating the table with three rows.
     conn = request.getfixturevalue(conn)
 
     # This tests the example raised in issue
@@ -3439,19 +3817,28 @@ def test_connectable_issue_example(conn, request):
     from sqlalchemy.engine import Engine
 
     def test_select(connection):
+        # [FUNCTION DOC]
+        # HELPER: nested helper of the connectable-issue test. Reads the whole test table through the given connection with the query reader and returns the frame.
         query = "SELECT test_foo_data FROM test_foo_data"
         return sql.read_sql_query(query, con=connection)
 
     def test_append(connection, data):
+        # [FUNCTION DOC]
+        # HELPER: nested helper of the connectable-issue test. Appends the given frame to the test table through the given connection; returns nothing.
         data.to_sql(name="test_foo_data", con=connection, if_exists="append")
 
     def test_connectable(conn):
+        # [FUNCTION DOC]
+        # HELPER: nested helper of the connectable-issue test. Reads the table and appends the result back using the given connection.
         # https://github.com/sqlalchemy/sqlalchemy/commit/
         # 00b5c10846e800304caa86549ab9da373b42fa5d#r48323973
         foo_data = test_select(conn)
         test_append(conn, foo_data)
 
     def main(connectable):
+        # [FUNCTION DOC]
+        # HELPER: nested helper of the connectable-issue test. If given an engine, opens a connection and a transaction and calls the connection helper within it; otherwise calls the helper directly.
+        # KNOWN ISSUE: these nested helper functions are named like tests but are not collected since they are nested.
         if isinstance(connectable, Engine):
             with connectable.connect() as conn:
                 with conn.begin():
@@ -3472,6 +3859,8 @@ def test_connectable_issue_example(conn, request):
     [{"foo": [np.inf]}, {"foo": [-np.inf]}, {"foo": [-np.inf], "infe0": ["bar"]}],
 )
 def test_to_sql_with_negative_npinf(conn, request, input):
+    # [FUNCTION DOC]
+    # Parametrized over SQLAlchemy connection kinds and three frames with infinity. Regression: writing negative or positive infinity. For MySQL, a database error with an execution-failed message is expected; for others the write returns one row and reading back equals the original.
     # GH 34431
 
     df = DataFrame(input)
@@ -3493,6 +3882,8 @@ def test_to_sql_with_negative_npinf(conn, request, input):
 
 @pytest.mark.parametrize("conn", sqlalchemy_connectable)
 def test_temporary_table(conn, request):
+    # [FUNCTION DOC]
+    # Parametrized over SQLAlchemy connection kinds (skipped for the connection string). Regression: defines an ORM mapped class for a temporary table, creates the table inside an ORM session on the connection, adds a row and reads it back with the query reader using a select on the mapped column, within the same session connection; the result equals the expected one-row frame.
     if conn == "sqlite_str":
         pytest.skip("test does not work with str connection")
 
@@ -3514,6 +3905,8 @@ def test_temporary_table(conn, request):
     Base = declarative_base()
 
     class Temporary(Base):
+        # [CLASS DOC]
+        # HELPER: ORM mapped class for a temporary table with an integer primary key and a required unicode column; created inside the temporary table test. Declared with a prefix making the table temporary.
         __tablename__ = "temp_test"
         __table_args__ = {"prefixes": ["TEMPORARY"]}
         id = Column(Integer, primary_key=True)
@@ -3531,6 +3924,8 @@ def test_temporary_table(conn, request):
 
 @pytest.mark.parametrize("conn", all_connectable)
 def test_invalid_engine(conn, request, test_frame1):
+    # [FUNCTION DOC]
+    # Parametrized over all connection kinds. Passing an unknown engine name to the write raises a value error listing the allowed engines; the built-in sqlite3 and ADBC kinds are expected failures because they do not validate the engine.
     if conn == "sqlite_buildin" or "adbc" in conn:
         request.applymarker(
             pytest.mark.xfail(
@@ -3547,6 +3942,8 @@ def test_invalid_engine(conn, request, test_frame1):
 
 @pytest.mark.parametrize("conn", all_connectable)
 def test_to_sql_with_sql_engine(conn, request, test_frame1):
+    # [FUNCTION DOC]
+    # Parametrized over all connection kinds. Writing with the automatic engine choice works: four rows written, table exists and row count equals the frame length.
     """`to_sql` with the `engine` param"""
     # mostly copied from this class's `_to_sql()` method
     conn = request.getfixturevalue(conn)
@@ -3562,6 +3959,8 @@ def test_to_sql_with_sql_engine(conn, request, test_frame1):
 
 @pytest.mark.parametrize("conn", sqlalchemy_connectable)
 def test_options_sqlalchemy(conn, request, test_frame1):
+    # [FUNCTION DOC]
+    # Parametrized over SQLAlchemy connection kinds. With the global io SQL engine option set to SQLAlchemy, a write succeeds (four rows) and the row count matches.
     # use the set option
     conn = request.getfixturevalue(conn)
     with pd.option_context("io.sql.engine", "sqlalchemy"):
@@ -3577,6 +3976,8 @@ def test_options_sqlalchemy(conn, request, test_frame1):
 
 @pytest.mark.parametrize("conn", all_connectable)
 def test_options_auto(conn, request, test_frame1):
+    # [FUNCTION DOC]
+    # Parametrized over all connection kinds. Same with the engine option set to automatic.
     # use the set option
     conn = request.getfixturevalue(conn)
     with pd.option_context("io.sql.engine", "auto"):
@@ -3591,6 +3992,8 @@ def test_options_auto(conn, request, test_frame1):
 
 
 def test_options_get_engine():
+    # [FUNCTION DOC]
+    # Requires SQLAlchemy. The engine factory returns the SQLAlchemy engine implementation both when asked explicitly and when asked for automatic, with the global option set to either value.
     pytest.importorskip("sqlalchemy")
     assert isinstance(get_engine("sqlalchemy"), SQLAlchemyEngine)
 
@@ -3614,6 +4017,9 @@ def test_read_sql_dtype_backend(
     dtype_backend_data,
     dtype_backend_expected,
 ):
+    # [FUNCTION DOC]
+    # Parametrized over all connection kinds, the two read functions, the string storage setting, the dtype backend and shared fixtures for the data and the expected frame. Writes the data frame and reads with the dtype backend, comparing with the expected frame built by the expected-frame fixture; then repeats with a chunk size of three and compares every chunk. ADBC is marked as expected failure before the chunked part.
+    # KNOWN ISSUE: for ADBC the expected-failure marker is applied after the non-chunked comparison; the marker applies to the whole test, even though only the chunked part is unsupported.
     # GH#50048
     conn_name = conn
     conn = request.getfixturevalue(conn)
@@ -3658,6 +4064,8 @@ def test_read_sql_dtype_backend_table(
     dtype_backend_data,
     dtype_backend_expected,
 ):
+    # [FUNCTION DOC]
+    # Parametrized like the previous test but for the general reader and the table reader with a table name. Non-ADBC sqlite kinds are expected failures. Writes data, reads with the backend and compares; for ADBC returns before the chunked part, otherwise also reads in chunks of three and compares each chunk.
     if "sqlite" in conn and "adbc" not in conn:
         request.applymarker(
             pytest.mark.xfail(
@@ -3698,6 +4106,8 @@ def test_read_sql_dtype_backend_table(
 @pytest.mark.parametrize("conn", all_connectable)
 @pytest.mark.parametrize("func", ["read_sql", "read_sql_table", "read_sql_query"])
 def test_read_sql_invalid_dtype_backend_table(conn, request, func, dtype_backend_data):
+    # [FUNCTION DOC]
+    # Parametrized over all connection kinds and the three read functions. An invalid dtype backend name raises a value error listing the two allowed backends.
     conn = request.getfixturevalue(conn)
     table = "test"
     df = dtype_backend_data
@@ -3713,6 +4123,8 @@ def test_read_sql_invalid_dtype_backend_table(conn, request, func, dtype_backend
 
 @pytest.fixture
 def dtype_backend_data() -> DataFrame:
+    # [FUNCTION DOC]
+    # Fixture returning a frame of eight columns: nullable integers (with and without a missing value), nullable floats (with and without), booleans (with and without a missing value), and strings (with and without a missing value).
     return DataFrame(
         {
             "a": Series([1, pd.NA, 3], dtype="Int64"),
@@ -3729,7 +4141,11 @@ def dtype_backend_data() -> DataFrame:
 
 @pytest.fixture
 def dtype_backend_expected():
+    # [FUNCTION DOC]
+    # Fixture returning a function used by tests to compute the expected frame after reading the data with a dtype backend. Takes no arguments itself; the returned function takes the string storage, dtype backend and connection name.
     def func(string_storage, dtype_backend, conn_name) -> DataFrame:
+        # [FUNCTION DOC]
+        # HELPER: returned by the expected-frame fixture. Builds the expected frame for the shared data: nullable integer, float, boolean and string columns (string dtype from the string storage setting or the Arrow string type); for the pyarrow backend converts every column to an Arrow-backed extension array; for MySQL and sqlite connections the boolean columns become integer columns of the respective nullable or Arrow type. Returns the frame.
         string_dtype: pd.StringDtype | pd.ArrowDtype
         if dtype_backend == "pyarrow":
             pa = pytest.importorskip("pyarrow")
@@ -3774,6 +4190,8 @@ def dtype_backend_expected():
 
 @pytest.mark.parametrize("conn", all_connectable)
 def test_chunksize_empty_dtypes(conn, request):
+    # [FUNCTION DOC]
+    # Parametrized over all connection kinds. Regression: an empty frame with integer and object columns is written and read back in chunks of one row with those dtypes; every chunk (if any) equals the empty expected frame. ADBC is an expected failure.
     # GH#50245
     if "adbc" in conn:
         request.node.add_marker(
@@ -3798,6 +4216,8 @@ def test_chunksize_empty_dtypes(conn, request):
 @pytest.mark.parametrize("dtype_backend", [lib.no_default, "numpy_nullable"])
 @pytest.mark.parametrize("func", ["read_sql", "read_sql_query"])
 def test_read_sql_dtype(conn, request, func, dtype_backend):
+    # [FUNCTION DOC]
+    # Parametrized over all connection kinds, both read functions and the dtype backend (default or nullable). Regression: a per-column dtype argument converts the first column to 64-bit float, and the other column keeps its integer type (nullable integer if the nullable backend is requested).
     # GH#50797
     conn = request.getfixturevalue(conn)
     table = "test"
@@ -3823,6 +4243,8 @@ def test_read_sql_dtype(conn, request, func, dtype_backend):
 
 
 def test_bigint_warning(sqlite_engine):
+    # [FUNCTION DOC]
+    # Regression: reading a table with a big integer column through the sqlite engine emits no warning.
     conn = sqlite_engine
     # test no warning for BIGINT (to support int64) is raised (GH7433)
     df = DataFrame({"a": [1, 2]}, dtype="int64")
@@ -3833,6 +4255,8 @@ def test_bigint_warning(sqlite_engine):
 
 
 def test_valueerror_exception(sqlite_engine):
+    # [FUNCTION DOC]
+    # Writing with an empty table name raises a value error saying the table name is empty.
     conn = sqlite_engine
     df = DataFrame({"col1": [1, 2], "col2": [3, 4]})
     with pytest.raises(ValueError, match="Empty table name specified"):
@@ -3840,6 +4264,8 @@ def test_valueerror_exception(sqlite_engine):
 
 
 def test_row_object_is_named_tuple(sqlite_engine):
+    # [FUNCTION DOC]
+    # Regression test for the named tuple check: builds an ORM class and session on the sqlite engine, writes a frame, queries the mapped columns and constructs a frame from the query's row objects; the column labels equal the mapped column names.
     conn = sqlite_engine
     # GH 40682
     # Test for the is_named_tuple() function
@@ -3858,6 +4284,8 @@ def test_row_object_is_named_tuple(sqlite_engine):
     BaseModel = declarative_base()
 
     class Test(BaseModel):
+        # [CLASS DOC]
+        # HELPER: ORM mapped class with an integer primary key and a 50 character string column, bound to the table named for the test frame; used only to produce row objects with named fields for the named tuple test.
         __tablename__ = "test_frame"
         id = Column(Integer, primary_key=True)
         string_column = Column(String(50))
@@ -3879,6 +4307,8 @@ def test_row_object_is_named_tuple(sqlite_engine):
 
 
 def test_read_sql_string_inference(sqlite_engine):
+    # [FUNCTION DOC]
+    # Regression test: with the global string-inference option enabled, reading a table with a string column returns the string dtype (with missing value being not-a-number) for both the column and the column index.
     conn = sqlite_engine
     # GH#54430
     table = "test"
@@ -3897,6 +4327,8 @@ def test_read_sql_string_inference(sqlite_engine):
 
 
 def test_roundtripping_datetimes(sqlite_engine):
+    # [FUNCTION DOC]
+    # Regression: a nanosecond-unit datetime written through the sqlite engine and read with a plain query comes back as the string with microsecond precision.
     conn = sqlite_engine
     # GH#54877
     df = DataFrame({"t": [datetime(2020, 12, 31, 12)]}, dtype="datetime64[ns]")
@@ -3907,6 +4339,8 @@ def test_roundtripping_datetimes(sqlite_engine):
 
 @pytest.fixture
 def sqlite_builtin_detect_types():
+    # [FUNCTION DOC]
+    # Fixture yielding an in-memory built-in sqlite3 connection configured to parse declared column types into native Python objects, properly closed after use.
     with contextlib.closing(
         sqlite3.connect(":memory:", detect_types=sqlite3.PARSE_DECLTYPES)
     ) as closing_conn:
@@ -3915,6 +4349,8 @@ def sqlite_builtin_detect_types():
 
 
 def test_roundtripping_datetimes_detect_types(sqlite_builtin_detect_types):
+    # [FUNCTION DOC]
+    # Regression: with a declared-type parsing sqlite connection, a nanosecond-unit datetime written and read by query comes back as a timestamp equal to the original.
     # https://github.com/pandas-dev/pandas/issues/55554
     conn = sqlite_builtin_detect_types
     df = DataFrame({"t": [datetime(2020, 12, 31, 12)]}, dtype="datetime64[ns]")
@@ -3925,6 +4361,8 @@ def test_roundtripping_datetimes_detect_types(sqlite_builtin_detect_types):
 
 @pytest.mark.db
 def test_psycopg2_schema_support(postgresql_psycopg2_engine):
+    # [FUNCTION DOC]
+    # Database-marked test for PostgreSQL. Creates a schema, writes frames to the default, an explicit public schema and a second schema (each returning two rows), reads each back using the table reader with and without the schema argument (reading the second table under the wrong schema raises a value error that the table was not found). Then recreates the schema and checks the replace and append existence modes produce a doubled frame.
     conn = postgresql_psycopg2_engine
 
     # only test this for postgresql (schema's not supported in
@@ -4000,6 +4438,8 @@ def test_psycopg2_schema_support(postgresql_psycopg2_engine):
 
 @pytest.mark.db
 def test_self_join_date_columns(postgresql_psycopg2_engine):
+    # [FUNCTION DOC]
+    # Database-marked test for PostgreSQL. Regression: a table with a timezone-aware timestamp column is self-joined through a query so the same column name appears twice; result is a frame with duplicate names holding UTC datetimes in microsecond unit. Cleans up the table.
     # GH 44421
     conn = postgresql_psycopg2_engine
     from sqlalchemy.sql import text
@@ -4036,6 +4476,8 @@ def test_self_join_date_columns(postgresql_psycopg2_engine):
 
 
 def test_create_and_drop_table(sqlite_engine):
+    # [FUNCTION DOC]
+    # With the sqlite engine, writes a table (four rows) and verifies it exists, drops it in another transaction and verifies it no longer exists.
     conn = sqlite_engine
     temp_frame = DataFrame({"one": [1.0, 2.0, 3.0, 4.0], "two": [4.0, 3.0, 2.0, 1.0]})
     with sql.SQLDatabase(conn) as pandasSQL:
@@ -4051,6 +4493,8 @@ def test_create_and_drop_table(sqlite_engine):
 
 
 def test_sqlite_datetime_date(sqlite_buildin):
+    # [FUNCTION DOC]
+    # With a built-in sqlite3 connection, date objects are written (two rows) and read back as strings.
     conn = sqlite_buildin
     df = DataFrame([date(2014, 1, 1), date(2014, 1, 2)], columns=["a"])
     assert df.to_sql(name="test_date", con=conn, index=False) == 2
@@ -4061,6 +4505,8 @@ def test_sqlite_datetime_date(sqlite_buildin):
 
 @pytest.mark.parametrize("tz_aware", [False, True])
 def test_sqlite_datetime_time(tz_aware, sqlite_buildin):
+    # [FUNCTION DOC]
+    # Parametrized over timezone-naive or timezone-aware time values. Regression: time values (taken from a timezone-aware datetime range in the aware case) are written to built-in sqlite3 (two rows) and read back as formatted time strings with microseconds.
     conn = sqlite_buildin
     # test support for datetime.time, GH #8341
     if not tz_aware:
@@ -4079,6 +4525,8 @@ def test_sqlite_datetime_time(tz_aware, sqlite_buildin):
 
 
 def get_sqlite_column_type(conn, table, column):
+    # [FUNCTION DOC]
+    # HELPER: returns the declared type string of a column in a sqlite table by reading its table information; raises a value error if the column is not found.
     recs = conn.execute(f"PRAGMA table_info({table})")
     for cid, name, ctype, not_null, default, pk in recs:
         if name == column:
@@ -4087,6 +4535,8 @@ def get_sqlite_column_type(conn, table, column):
 
 
 def test_sqlite_test_dtype(sqlite_buildin):
+    # [FUNCTION DOC]
+    # With a built-in sqlite3 connection, writing a frame with booleans declares the boolean column as integer, and a per-column dtype mapping with a plain string type (STRING) sets the declared column type to it.
     conn = sqlite_buildin
     cols = ["A", "B"]
     data = [(0.8, True), (0.9, None)]
@@ -4109,6 +4559,8 @@ def test_sqlite_test_dtype(sqlite_buildin):
 
 
 def test_sqlite_notna_dtype(sqlite_buildin):
+    # [FUNCTION DOC]
+    # With a built-in sqlite3 connection, writing columns of booleans, dates, object-integers and floats each with a missing value gives declared column types integer, timestamp, integer and real.
     conn = sqlite_buildin
     cols = {
         "Bool": Series([True, None]),
@@ -4128,6 +4580,9 @@ def test_sqlite_notna_dtype(sqlite_buildin):
 
 
 def test_sqlite_illegal_names(sqlite_buildin):
+    # [FUNCTION DOC]
+    # With a built-in sqlite3 connection, an empty table name raises a value error; unusual table names (brackets, quotes, backticks, dots, digits first, non-ascii) and columns named with them can all be written (two rows each).
+    # KNOWN ISSUE: the results of the table-exists checks after writing are discarded, so nothing asserts the tables actually exist.
     # For sqlite, these should work fine
     conn = sqlite_buildin
     df = DataFrame([[1, 2], [3, 4]], columns=["a", "b"])
@@ -4160,6 +4615,8 @@ def test_sqlite_illegal_names(sqlite_buildin):
 
 
 def format_query(sql, *args):
+    # [FUNCTION DOC]
+    # HELPER: formats a query template with literal values for the old-style string interpolation. Takes the template and values; for each value that is a float and missing replaces it with none, picks a literal formatter by the value's exact type (quoted for strings, datetimes, bytes and booleans; fixed decimals for floats; integer for ints; the word NULL for none) and returns the template filled with the formatted values. Raises a key error for an unsupported value type.
     _formatters = {
         datetime: "'{}'".format,
         str: "'{}'".format,
@@ -4183,6 +4640,8 @@ def format_query(sql, *args):
 
 
 def tquery(query, con=None):
+    # [FUNCTION DOC]
+    # HELPER: replacement for a removed legacy function. Runs the query through a database object built from the connection, fetches all rows, and returns them as a list (or none if the result is none).
     """Replace removed sql.tquery function"""
     with sql.pandasSQL_builder(con) as pandas_sql:
         res = pandas_sql.execute(query).fetchall()
@@ -4190,6 +4649,9 @@ def tquery(query, con=None):
 
 
 def test_xsqlite_basic(sqlite_buildin):
+    # [FUNCTION DOC]
+    # With a built-in sqlite3 connection: a random frame written without the index (ten rows) is read back equal after restoring the index; then a frame with an extra text column and an integer column used as the index column round-trips with that name.
+    # KNOWN ISSUE: contains a hack replacing the index of the result, and an assigned expected variable that is overwritten before use.
     frame = DataFrame(
         np.random.default_rng(2).standard_normal((10, 4)),
         columns=Index(list("ABCD")),
@@ -4217,6 +4679,8 @@ def test_xsqlite_basic(sqlite_buildin):
 
 
 def test_xsqlite_write_row_by_row(sqlite_buildin):
+    # [FUNCTION DOC]
+    # Creates a table from the schema generator, then inserts the frame one row at a time using formatted literal queries (one value is missing), commits, and compares the reread frame with a relative tolerance.
     frame = DataFrame(
         np.random.default_rng(2).standard_normal((10, 4)),
         columns=Index(list("ABCD")),
@@ -4240,6 +4704,8 @@ def test_xsqlite_write_row_by_row(sqlite_buildin):
 
 
 def test_xsqlite_execute(sqlite_buildin):
+    # [FUNCTION DOC]
+    # Creates a table from the schema generator, inserts the first row through the database object's parameterized execute method, commits, and verifies the table contains that single row.
     frame = DataFrame(
         np.random.default_rng(2).standard_normal((10, 4)),
         columns=Index(list("ABCD")),
@@ -4261,6 +4727,9 @@ def test_xsqlite_execute(sqlite_buildin):
 
 
 def test_xsqlite_schema(sqlite_buildin):
+    # [FUNCTION DOC]
+    # The schema generated for a frame with a datetime index column named A uses the datetime type for it; with key columns, the statement contains a primary key clause for the two columns, and executes successfully on the connection.
+    # KNOWN ISSUE: the line list computed after the second schema call is never used.
     frame = DataFrame(
         np.random.default_rng(2).standard_normal((10, 4)),
         columns=Index(list("ABCD")),
@@ -4281,6 +4750,8 @@ def test_xsqlite_schema(sqlite_buildin):
 
 
 def test_xsqlite_execute_fail(sqlite_buildin):
+    # [FUNCTION DOC]
+    # Creates a table with a composite primary key, inserts two rows, and verifies that inserting a duplicate key raises a database error with an execution failed message.
     create_sql = """
     CREATE TABLE test
     (
@@ -4302,6 +4773,8 @@ def test_xsqlite_execute_fail(sqlite_buildin):
 
 
 def test_xsqlite_execute_closed_connection():
+    # [FUNCTION DOC]
+    # Creates a table and inserts a row inside a database object, closes the connection, then runs a query on the closed connection through the helper, which raises a sqlite programming error that the database is closed.
     create_sql = """
     CREATE TABLE test
     (
@@ -4324,11 +4797,15 @@ def test_xsqlite_execute_closed_connection():
 
 
 def test_xsqlite_keyword_as_column_names(sqlite_buildin):
+    # [FUNCTION DOC]
+    # Writing a column named with an SQL keyword (From) works: five rows written.
     df = DataFrame({"From": np.ones(5)})
     assert sql.to_sql(df, con=sqlite_buildin, name="testkeywords", index=False) == 5
 
 
 def test_xsqlite_onecolumn_of_integer(sqlite_buildin):
+    # [FUNCTION DOC]
+    # Regression: a one-column integer frame is written (two rows), summing the column through plain SQL gives three, and the table reads back equal to the frame.
     # GH 3628
     # a column_of_integers dataframe should transfer well to sql
 
@@ -4345,6 +4822,8 @@ def test_xsqlite_onecolumn_of_integer(sqlite_buildin):
 
 
 def test_xsqlite_if_exists(sqlite_buildin):
+    # [FUNCTION DOC]
+    # With a built-in sqlite3 connection, an invalid existence mode raises a value error; fail mode raises on an existing table; replace mode replaces the table contents with the new rows (three rows returned); append mode keeps and extends the rows. Compares the stored rows with the helper query between steps and drops the table between phases.
     df_if_exists_1 = DataFrame({"col1": [1, 2], "col2": ["A", "B"]})
     df_if_exists_2 = DataFrame({"col1": [3, 4, 5], "col2": ["C", "D", "E"]})
     table_name = "table_if_exists"

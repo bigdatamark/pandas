@@ -1,3 +1,14 @@
+# [MODULE DOC]
+# Tests for Stata file support: the stata reader and writer functions, the stata reader
+# and writer classes (including the UTF-8 writer for newer formats), missing value
+# objects and the related warnings. Most tests read example files in the shared io
+# data directory for stata (formats 102 through 119, both byte orders) or round-trip
+# frames through temporary files, then compare with expected frames. Covers dates and
+# datetime conversion, value labels and categoricals, string and long string columns,
+# encodings, column name sanitizing, integer and float type downcasting, missing value
+# codes, chunked and iterator reading, compression, byte-stream sources, and error cases.
+# The test classes group read/write tests (the main class) and helpers; module-level
+# fixtures supply a mixed-type frame and a frame parsed from a reference file.
 import bz2
 import datetime as dt
 from datetime import datetime
@@ -40,6 +51,8 @@ from pandas.io.stata import (
 
 @pytest.fixture
 def mixed_frame():
+    # [FUNCTION DOC]
+    # Fixture returning a four-row frame with an integer column a, a float column b and a string column c of city names.
     return DataFrame(
         {
             "a": [1, 2, 3, 4],
@@ -51,6 +64,8 @@ def mixed_frame():
 
 @pytest.fixture
 def parsed_114(datapath):
+    # [FUNCTION DOC]
+    # Fixture that reads the reference stata 114 example file with date conversion enabled, names its index index, and returns the frame; used as a baseline for round-trip tests.
     dta14_114 = datapath("io", "data", "stata", "stata5_114.dta")
     parsed_114 = read_stata(dta14_114, convert_dates=True)
     parsed_114.index.name = "index"
@@ -58,15 +73,23 @@ def parsed_114(datapath):
 
 
 class TestStata:
+    # [CLASS DOC]
+    # Main group of tests for reading and writing Stata files. Has no state of its own; two small helper methods wrap the standard readers with legacy defaults, and each test method verifies one reading, writing or round-trip behavior using example files or temporary paths.
     def read_dta(self, file):
+        # [FUNCTION DOC]
+        # HELPER: reads a Stata file with date conversion turned on (the legacy default configuration used by many tests) and returns the frame.
         # Legacy default reader configuration
         return read_stata(file, convert_dates=True)
 
     def read_csv(self, file):
+        # [FUNCTION DOC]
+        # HELPER: reads a csv file with date parsing enabled and returns the frame; used to build expected frames from reference csv data.
         return read_csv(file, parse_dates=True)
 
     @pytest.mark.parametrize("version", [114, 117, 118, 119, None])
     def test_read_empty_dta(self, version, temp_file):
+        # [FUNCTION DOC]
+        # Parametrized over Stata versions (and automatic). Writes an empty frame with one column (no index) to a temporary file and reads it back; the zero-row frame must round-trip equal. Regression for reading zero-observation files.
         empty_ds = DataFrame(columns=["unit"])
         # GH 7369, make sure can read a 0-obs dta file
         path = temp_file
@@ -76,6 +99,8 @@ class TestStata:
 
     @pytest.mark.parametrize("version", [114, 117, 118, 119, None])
     def test_read_empty_dta_with_dtypes(self, version, temp_file):
+        # [FUNCTION DOC]
+        # Parametrized over versions. Regression test: writes a one-row frame with every integer, unsigned and float width, then reads it back. Expected: unsigned types and 64-bit integers are downcast to the smallest signed type that fits (8, 16, 32-bit), floats keep their width; frame and dtypes match.
         # GH 46240
         # Fixing above bug revealed that types are not correctly preserved when
         # writing empty DataFrames
@@ -112,6 +137,8 @@ class TestStata:
 
     @pytest.mark.parametrize("version", [114, 117, 118, 119, None])
     def test_read_index_col_none(self, version, temp_file):
+        # [FUNCTION DOC]
+        # Parametrized over versions. Writes a frame without the index and reads it back: the result has a range index and equal contents, with the integer column narrowed to 32-bit.
         df = DataFrame({"a": range(5), "b": ["b1", "b2", "b3", "b4", "b5"]})
         # GH 7369, make sure can read a 0-obs dta file
         path = temp_file
@@ -127,6 +154,8 @@ class TestStata:
         "version", [102, 103, 104, 105, 108, 110, 111, 113, 114, 115, 117, 118, 119]
     )
     def test_read_dta1(self, version, datapath):
+        # [FUNCTION DOC]
+        # Parametrized over Stata formats 102 to 119. Reads the stata1 example file and expects a one-row frame of missing values with the five missing-value columns (single-precision float for the first); for formats up to 108 the short legacy column names are expected.
         file = datapath("io", "data", "stata", f"stata1_{version}.dta")
         parsed = self.read_dta(file)
 
@@ -156,6 +185,9 @@ class TestStata:
         tm.assert_frame_equal(parsed, expected)
 
     def test_read_dta2(self, datapath):
+        # [FUNCTION DOC]
+        # Reads the stata2 example files in formats 114, 115 and 117, each expected to emit a warning about leaving values in Stata internal format, and compares with an expected frame of different Stata date and datetime encodings (millisecond and second units, NaT row).
+        # KNOWN ISSUE: comments inside mention commented-out checks for format 113 that are never run, because of date format limits.
         expected = DataFrame.from_records(
             [
                 (
@@ -229,6 +261,8 @@ class TestStata:
         "file", ["stata3_113", "stata3_114", "stata3_115", "stata3_117"]
     )
     def test_read_dta3(self, file, datapath):
+        # [FUNCTION DOC]
+        # Parametrized over formats 113 to 117. Reads the stata3 example and compares to the equivalent csv data cast to single-precision floats with year as 16-bit and quarter as 8-bit integers.
         file = datapath("io", "data", "stata", f"{file}.dta")
         parsed = self.read_dta(file)
 
@@ -242,6 +276,8 @@ class TestStata:
 
     @pytest.mark.parametrize("version", [110, 111, 113, 114, 115, 117])
     def test_read_dta4(self, version, datapath):
+        # [FUNCTION DOC]
+        # Parametrized over formats 110 to 117. Reads the stata4 example with value labels and compares to an expected frame of ordered categoricals built from the label values (incompletely labeled columns keep unlabeled values; no category metadata is stored).
         file = datapath("io", "data", "stata", f"stata4_{version}.dta")
         parsed = self.read_dta(file)
 
@@ -286,6 +322,8 @@ class TestStata:
 
     @pytest.mark.parametrize("version", [102, 103, 104, 105, 108])
     def test_readold_dta4(self, version, datapath):
+        # [FUNCTION DOC]
+        # Parametrized over legacy formats 102 to 108. Same as the previous test but with the short column names forced by older formats.
         # This test is the same as test_read_dta4 above except that the columns
         # had to be renamed to match the restrictions in older file format
         file = datapath("io", "data", "stata", f"stata4_{version}.dta")
@@ -343,6 +381,8 @@ class TestStata:
         ],
     )
     def test_read_dta_strl(self, file, datapath):
+        # [FUNCTION DOC]
+        # Parametrized over files with long string columns (formats 117, 118, 119, both byte orders). Reads the file and compares with the expected three-row frame of an integer and two string columns, ignoring dtype.
         parsed = self.read_dta(datapath("io", "data", "stata", f"{file}.dta"))
         expected = DataFrame.from_records(
             [
@@ -366,6 +406,8 @@ class TestStata:
         ],
     )
     def test_read_dta118_119(self, file, datapath):
+        # [FUNCTION DOC]
+        # Parametrized over format 118 and 119 files (both byte orders) containing unicode text. Reads each, compares every column to the expected values, then opens a reader to verify the variable labels dictionary and the unicode data label.
         parsed_118 = self.read_dta(datapath("io", "data", "stata", f"{file}.dta"))
         parsed_118["Bytes"] = parsed_118["Bytes"].astype("O")
         expected = DataFrame.from_records(
@@ -406,6 +448,8 @@ class TestStata:
             assert rdr.data_label == "This is a  Ünicode data label"
 
     def test_read_write_dta5(self, temp_file):
+        # [FUNCTION DOC]
+        # Writes a one-row frame of missing values of each width with the date conversion disabled and reads it back; the index (set to 32-bit integers) and values match.
         original = DataFrame(
             [(np.nan, np.nan, np.nan, np.nan, np.nan)],
             columns=["float_miss", "double_miss", "byte_miss", "int_miss", "long_miss"],
@@ -421,6 +465,8 @@ class TestStata:
         tm.assert_frame_equal(written_and_read_again.set_index("index"), expected)
 
     def test_write_dta6(self, datapath, temp_file):
+        # [FUNCTION DOC]
+        # Round trip of the stata3 csv data written without date conversion: integer columns become 32-bit; contents match ignoring index type.
         original = self.read_csv(datapath("io", "data", "stata", "stata3.csv"))
         original.index.name = "index"
         original.index = original.index.astype(np.int32)
@@ -438,6 +484,8 @@ class TestStata:
 
     @pytest.mark.parametrize("version", [114, 117, 118, 119, None])
     def test_read_write_dta10(self, version, temp_file, using_infer_string):
+        # [FUNCTION DOC]
+        # Parametrized over versions. Writes a frame with string, object, integer, float and datetime columns converting the datetime with millisecond clock format, reads it back, and expects the datetime in millisecond unit; with string inference the object column becomes the string dtype.
         original = DataFrame(
             data=[["string", "object", 1, 1.1, np.datetime64("2003-12-25")]],
             columns=["string", "object", "integer", "floating", "datetime"],
@@ -463,6 +511,8 @@ class TestStata:
         )
 
     def test_stata_doc_examples(self, temp_file):
+        # [FUNCTION DOC]
+        # Smoke test taken from the documentation: writes a random frame to a Stata file without errors; no assertions.
         path = temp_file
         df = DataFrame(
             np.random.default_rng(2).standard_normal((10, 2)), columns=list("AB")
@@ -470,6 +520,8 @@ class TestStata:
         df.to_stata(path)
 
     def test_write_preserves_original(self, temp_file):
+        # [FUNCTION DOC]
+        # Regression test for an earlier issue: writing a frame with missing values must not alter the original frame; compared with a prior copy.
         # 9795
 
         df = DataFrame(
@@ -483,6 +535,8 @@ class TestStata:
 
     @pytest.mark.parametrize("version", [114, 117, 118, 119, None])
     def test_encoding(self, version, datapath, temp_file):
+        # [FUNCTION DOC]
+        # Parametrized over versions. Regression test for encoding handling: reads the example file with non-ascii text twice, checks the value of a cell is a string and equals the other copy, then writes and reads back to check the frames are equal.
         # GH 4626, proper encoding handling
         raw = read_stata(datapath("io", "data", "stata", "stata1_encoding.dta"))
         encoded = read_stata(datapath("io", "data", "stata", "stata1_encoding.dta"))
@@ -498,6 +552,8 @@ class TestStata:
         tm.assert_frame_equal(encoded, reread_encoded)
 
     def test_read_write_dta11(self, temp_file):
+        # [FUNCTION DOC]
+        # Writing column names that are invalid Stata variable names (non-ascii, leading digit, too long) emits a warning that not all names were valid; after the round trip the names are sanitized (replaced by underscores, prefixed and truncated to 32 characters) and the data is unchanged.
         original = DataFrame(
             [(1, 2, 3, 4)],
             columns=[
@@ -527,6 +583,8 @@ class TestStata:
 
     @pytest.mark.parametrize("version", [114, 117, 118, 119, None])
     def test_read_write_dta12(self, version, temp_file):
+        # [FUNCTION DOC]
+        # Parametrized over versions. Writing duplicated-after-truncation names and reserved words and symbols emits the invalid column name warning; the round-trip names are deduplicated with numeric suffixes, prefixed by an underscore for reserved words, and truncated.
         original = DataFrame(
             [(1, 2, 3, 4, 5, 6)],
             columns=[
@@ -565,6 +623,9 @@ class TestStata:
         tm.assert_frame_equal(written_and_read_again.set_index("index"), expected)
 
     def test_read_write_dta13(self, temp_file):
+        # [FUNCTION DOC]
+        # Writes integer columns of 16, 32 and 64-bit width holding large values; reading back gives 64-bit integers as floats while smaller ones keep their width.
+        # KNOWN ISSUE: the formatted variable aliases the original frame, so the conversion applies to both; the expected frame is effectively the mutated original.
         s1 = Series(2**9, dtype=np.int16)
         s2 = Series(2**17, dtype=np.int32)
         s3 = Series(2**33, dtype=np.int64)
@@ -589,6 +650,8 @@ class TestStata:
     def test_read_write_reread_dta14(
         self, file, parsed_114, version, datapath, temp_file
     ):
+        # [FUNCTION DOC]
+        # Parametrized over files (formats 113 to 117) and write versions. Reads each stata5 example and checks equality with the baseline fixture, then writes the baseline with date conversion and reads it back, expecting equality.
         file = datapath("io", "data", "stata", f"{file}.dta")
         parsed = self.read_dta(file)
         parsed.index.name = "index"
@@ -606,6 +669,8 @@ class TestStata:
         "file", ["stata6_113", "stata6_114", "stata6_115", "stata6_117"]
     )
     def test_read_write_reread_dta15(self, file, datapath):
+        # [FUNCTION DOC]
+        # Parametrized over stata6 files of formats 113 to 117. Reads each file and compares with the csv-derived frame with types cast to the Stata storage types (byte, int, long, float, double) and the date converted to second-unit datetimes.
         expected = self.read_csv(datapath("io", "data", "stata", "stata6.csv"))
         expected["byte_"] = expected["byte_"].astype(np.int8)
         expected["int_"] = expected["int_"].astype(np.int16)
@@ -624,6 +689,8 @@ class TestStata:
 
     @pytest.mark.parametrize("version", [114, 117, 118, 119, None])
     def test_timestamp_and_label(self, version, temp_file):
+        # [FUNCTION DOC]
+        # Parametrized over versions. Writes with an explicit timestamp and data label and checks the reader exposes the formatted timestamp string and the data label.
         original = DataFrame([(1,)], columns=["variable"])
         time_stamp = datetime(2000, 2, 29, 14, 21)
         data_label = "This is a data file."
@@ -638,6 +705,8 @@ class TestStata:
 
     @pytest.mark.parametrize("version", [114, 117, 118, 119, None])
     def test_invalid_timestamp(self, version, temp_file):
+        # [FUNCTION DOC]
+        # Parametrized over versions. A timestamp that is a string rather than a datetime raises a value error saying it should be a datetime type; the file must not exist afterwards.
         original = DataFrame([(1,)], columns=["variable"])
         time_stamp = "01 Jan 2000, 00:00:00"
         path = temp_file
@@ -647,6 +716,8 @@ class TestStata:
         assert not os.path.isfile(path)
 
     def test_numeric_column_names(self, temp_file):
+        # [FUNCTION DOC]
+        # Writing a frame with numeric column names emits the invalid column name warning; on reading, names are prefixed strings, and after converting them back to integers the frame equals the original.
         original = DataFrame(np.reshape(np.arange(25.0), (5, 5)))
         original.index.name = "index"
         path = temp_file
@@ -667,6 +738,8 @@ class TestStata:
 
     @pytest.mark.parametrize("version", [114, 117, 118, 119, None])
     def test_nan_to_missing_value(self, version, temp_file):
+        # [FUNCTION DOC]
+        # Parametrized over versions. Writing single- and double-precision float columns containing missing values round-trips them unchanged.
         s1 = Series(np.arange(4.0), dtype=np.float32)
         s2 = Series(np.arange(4.0), dtype=np.float64)
         s1[::2] = np.nan
@@ -683,6 +756,8 @@ class TestStata:
         tm.assert_frame_equal(written_and_read_again, expected)
 
     def test_no_index(self, temp_file):
+        # [FUNCTION DOC]
+        # Writing without the index: reading back and looking up the index name as a column raises a key error.
         columns = ["x", "y"]
         original = DataFrame(np.reshape(np.arange(10.0), (5, 2)), columns=columns)
         original.index.name = "index_not_written"
@@ -693,6 +768,8 @@ class TestStata:
             written_and_read_again["index_not_written"]
 
     def test_string_no_dates(self, temp_file):
+        # [FUNCTION DOC]
+        # Writes a frame with a short and a longer string column plus floats with no date conversion; round trip equals the original.
         s1 = Series(["a", "A longer string"])
         s2 = Series([1.0, 2.0], dtype=np.float64)
         original = DataFrame({"s1": s1, "s2": s2})
@@ -705,6 +782,8 @@ class TestStata:
         tm.assert_frame_equal(written_and_read_again.set_index("index"), expected)
 
     def test_large_value_conversion(self, temp_file):
+        # [FUNCTION DOC]
+        # Writes integer columns, one of which holds the maximum 64-bit value, expecting a possible-precision-loss warning about converting from 64-bit integers; on reading, the byte column holding 127 is widened to 16-bit, the 16-bit column with the maximum value to 32-bit and the 64-bit column to double.
         s0 = Series([1, 99], dtype=np.int8)
         s1 = Series([1, 127], dtype=np.int8)
         s2 = Series([1, 2**15 - 1], dtype=np.int16)
@@ -724,6 +803,8 @@ class TestStata:
         tm.assert_frame_equal(written_and_read_again.set_index("index"), modified)
 
     def test_dates_invalid_column(self, temp_file):
+        # [FUNCTION DOC]
+        # Writing a frame with an integer column label (zero) and an explicit date conversion by that label emits the invalid column name warning; the column is renamed with a leading underscore and read back as a millisecond-unit datetime.
         original = DataFrame([datetime(2006, 11, 19, 23, 13, 20)])
         original.index.name = "index"
         path = temp_file
@@ -740,6 +821,8 @@ class TestStata:
         tm.assert_frame_equal(written_and_read_again.set_index("index"), expected)
 
     def test_105(self, datapath):
+        # [FUNCTION DOC]
+        # Reads an old-format World Bank example file (format 105) and compares its first three rows with an expected frame with columns narrowed to specific integer widths and single-precision float.
         # Data obtained from:
         # http://go.worldbank.org/ZXY29PVJ21
         dpath = datapath("io", "data", "stata", "S4_EDUC1.dta")
@@ -754,6 +837,8 @@ class TestStata:
         tm.assert_frame_equal(df.head(3), df0)
 
     def test_value_labels_old_format(self, datapath):
+        # [FUNCTION DOC]
+        # Regression test for value labels in old formats: the value labels dictionary of a reader on a pre-value-label format file is empty.
         # GH 19417
         #
         # Test that value_labels() returns an empty dict if the file format
@@ -763,6 +848,8 @@ class TestStata:
             assert reader.value_labels() == {}
 
     def test_date_export_formats(self, temp_file):
+        # [FUNCTION DOC]
+        # Writes a single datetime with each Stata date export format (clock, day, week, month, quarter, half year, year); reading back gives each truncated to the start of its period, as second-unit datetimes except the clock column which is millisecond unit.
         columns = ["tc", "td", "tw", "tm", "tq", "th", "ty"]
         conversions = {c: c for c in columns}
         data = [datetime(2006, 11, 20, 23, 13, 20)] * len(columns)
@@ -793,6 +880,8 @@ class TestStata:
         tm.assert_frame_equal(written_and_read_again.set_index("index"), expected)
 
     def test_write_missing_strings(self, temp_file):
+        # [FUNCTION DOC]
+        # Writing a string column containing a missing value stores the missing string as an empty string, which is what is read back.
         original = DataFrame([["1"], [None]], columns=["foo"])
 
         expected = DataFrame(
@@ -810,6 +899,8 @@ class TestStata:
     @pytest.mark.parametrize("version", [114, 117, 118, 119, None])
     @pytest.mark.parametrize("byteorder", [">", "<"])
     def test_bool_uint(self, byteorder, version, temp_file):
+        # [FUNCTION DOC]
+        # Parametrized over versions and byte orders. Writes boolean and unsigned integer columns of various widths; read back, each is the smallest signed type that holds its values (8-bit, 16-bit, 32-bit) with the largest unsigned 32-bit values coming back as doubles.
         s0 = Series([0, 1, True], dtype=np.bool_)
         s1 = Series([0, 1, 100], dtype=np.uint8)
         s2 = Series([0, 1, 255], dtype=np.uint8)
@@ -845,6 +936,8 @@ class TestStata:
         tm.assert_frame_equal(written_and_read_again, expected)
 
     def test_variable_labels(self, datapath):
+        # [FUNCTION DOC]
+        # Reads variable labels from stata7 example files in format 115 and 117; labels agree between the two and fall in the expected sets.
         with StataReader(datapath("io", "data", "stata", "stata7_115.dta")) as rdr:
             sr_115 = rdr.variable_labels()
         with StataReader(datapath("io", "data", "stata", "stata7_117.dta")) as rdr:
@@ -858,6 +951,8 @@ class TestStata:
             assert v in labels
 
     def test_minimal_size_col(self, temp_file):
+        # [FUNCTION DOC]
+        # Writes string columns of lengths 1, 100 and 244 with no index and, through a reader, verifies that each variable's type code and format width equal its string length (the smallest fixed width). Accesses private reader state after forcing the file open.
         str_lens = (1, 100, 244)
         s = {}
         for str_len in str_lens:
@@ -875,6 +970,8 @@ class TestStata:
                 assert int(variable[1:]) == typ
 
     def test_excessively_long_string(self, temp_file):
+        # [FUNCTION DOC]
+        # Writing a fixed-width string column longer than 244 characters in the old format raises a value error with a message advising version 117 for the newer format.
         str_lens = (1, 244, 500)
         s = {}
         for str_len in str_lens:
@@ -893,6 +990,9 @@ class TestStata:
             original.to_stata(path)
 
     def test_missing_value_generator(self, temp_file):
+        # [FUNCTION DOC]
+        # Verifies the missing value object for every valid code just above the valid range of each integer type (byte, short, long), yielding the dot and dot-letter strings; and the float and double extremes for the plain and dot-z missing values.
+        # KNOWN ISSUE: the comment before the double-precision extremes repeats the word floats; they are doubles.
         types = ("b", "h", "l")
         df = DataFrame([[0.0]], columns=["float_"])
         path = temp_file
@@ -925,6 +1025,8 @@ class TestStata:
 
     @pytest.mark.parametrize("version", [113, 115, 117])
     def test_missing_value_conversion(self, version, datapath):
+        # [FUNCTION DOC]
+        # Parametrized over formats 113, 115 and 117. Reads stata8 example file with missing-value conversion enabled; the frame holds missing value objects for all 27 codes in each of five columns.
         columns = ["int8_", "int16_", "int32_", "float32_", "float64_"]
         smv = StataMissingValue(101)
         keys = sorted(smv.MISSING_VALUES.keys())
@@ -942,6 +1044,8 @@ class TestStata:
 
     @pytest.mark.parametrize("version", [104, 105, 108, 110, 111])
     def test_missing_value_conversion_compat(self, version, datapath):
+        # [FUNCTION DOC]
+        # Parametrized over formats 104 to 111. Same as the previous test, but older formats only support the standard missing code in each column, giving a one-row expected frame.
         columns = ["int8_", "int16_", "int32_", "float32_", "float64_"]
         smv = StataMissingValue(101)
         keys = sorted(smv.MISSING_VALUES.keys())
@@ -959,6 +1063,8 @@ class TestStata:
     # The byte type was not supported prior to the 104 format
     @pytest.mark.parametrize("version", [102, 103])
     def test_missing_value_conversion_compat_nobyte(self, version, datapath):
+        # [FUNCTION DOC]
+        # Parametrized over formats 102 and 103 (no byte type). Reads with missing-value conversion; the expected single row uses the codes for the types available (the first column is a short type).
         columns = ["int8_", "int16_", "int32_", "float32_", "float64_"]
         smv = StataMissingValue(101)
         keys = sorted(smv.MISSING_VALUES.keys())
@@ -974,6 +1080,9 @@ class TestStata:
         tm.assert_frame_equal(parsed, expected)
 
     def test_big_dates(self, datapath, temp_file):
+        # [FUNCTION DOC]
+        # Reads the stata9 example files (formats 115 and 117) containing extreme dates in all Stata date formats and compares with an expected frame (including period-start adjustments and a NaT row); then writes the object-dtype version with date conversions, expecting a deprecation warning about converting object columns of datetimes, and checks the round trip.
+        # KNOWN ISSUE: a commented-out duplicate of the dictionary comprehension remains in the body.
         yr = [1960, 2000, 9999, 100, 2262, 1677]
         mo = [1, 1, 12, 1, 4, 9]
         dd = [1, 1, 31, 1, 22, 23]
@@ -1046,6 +1155,8 @@ class TestStata:
         )
 
     def test_dtype_conversion(self, datapath):
+        # [FUNCTION DOC]
+        # Reads stata6 file with default dtype preservation and with preservation disabled and compares both with csv-based frames (narrow integer and float types versus csv-default types, dates as second-unit datetimes).
         expected = self.read_csv(datapath("io", "data", "stata", "stata6.csv"))
         expected["byte_"] = expected["byte_"].astype(np.int8)
         expected["int_"] = expected["int_"].astype(np.int16)
@@ -1072,6 +1183,8 @@ class TestStata:
         tm.assert_frame_equal(expected2, conversion)
 
     def test_drop_column(self, datapath):
+        # [FUNCTION DOC]
+        # Reading a subset of columns returns them in requested order; duplicate column names raise a value error about duplicate entries; a column name not in the file raises a value error listing the missing column.
         expected = self.read_csv(datapath("io", "data", "stata", "stata6.csv"))
         expected["byte_"] = expected["byte_"].astype(np.int8)
         expected["int_"] = expected["int_"].astype(np.int16)
@@ -1123,6 +1236,8 @@ class TestStata:
         "ignore:\\nStata value:pandas.io.stata.ValueLabelTypeMismatch"
     )
     def test_categorical_writing(self, version, temp_file):
+        # [FUNCTION DOC]
+        # Parametrized over versions. A value-label type mismatch warning is ignored. Writes a frame converted entirely to categoricals; the round trip yields ordered categoricals with stringified categories for the incompletely labeled and unlabeled columns.
         original = DataFrame.from_records(
             [
                 ["one", "ten", "one", "one", "one", 1],
@@ -1171,6 +1286,8 @@ class TestStata:
         tm.assert_frame_equal(res, expected)
 
     def test_categorical_warnings_and_errors(self, temp_file):
+        # [FUNCTION DOC]
+        # Writing a categorical with mixed string and integer categories emits a value-label type mismatch warning about information lost due to duplicate labels.
         # Warning for non-string labels
         original = DataFrame.from_records(
             [["a"], ["b"], ["c"], ["d"], [1]], columns=["Too_long"]
@@ -1183,6 +1300,8 @@ class TestStata:
 
     @pytest.mark.parametrize("version", [114, 117, 118, 119, None])
     def test_categorical_with_stata_missing_values(self, version, temp_file):
+        # [FUNCTION DOC]
+        # Parametrized over versions. Writes a categorical column with 120 categories and a missing value; the round trip returns an ordered categorical with the unused categories removed and the missing value preserved.
         values = [["a" + str(i)] for i in range(120)]
         values.append([np.nan])
         original = DataFrame.from_records(values, columns=["many_labels"])
@@ -1206,6 +1325,8 @@ class TestStata:
 
     @pytest.mark.parametrize("file", ["stata10_115", "stata10_117"])
     def test_categorical_order(self, file, datapath):
+        # [FUNCTION DOC]
+        # Parametrized over formats 115 and 117. Reads stata10 example and compares with a frame built directly from codes and labels, including ordered categoricals in various code orders, a missing-coded column and an unlabeled float column; checks category codes and categories are identical.
         # Directly construct using expected codes
         # Format is is_cat, col_name, labels (in order), underlying data
         expected = [
@@ -1242,6 +1363,8 @@ class TestStata:
 
     @pytest.mark.parametrize("file", ["stata11_115", "stata11_117"])
     def test_categorical_sorting(self, file, datapath):
+        # [FUNCTION DOC]
+        # Parametrized over formats 115 and 117. Sorting the categorical column in the stata11 example sorts by category codes (not by label strings) with missing first; matches the expected ordered categorical series.
         parsed = read_stata(datapath("io", "data", "stata", f"{file}.dta"))
 
         # Sort based on codes, not strings
@@ -1259,6 +1382,8 @@ class TestStata:
 
     @pytest.mark.parametrize("file", ["stata10_115", "stata10_117"])
     def test_categorical_ordering(self, file, datapath):
+        # [FUNCTION DOC]
+        # Parametrized over formats 115 and 117. Categorical columns are ordered by default and unordered when ordering of categoricals is disabled on read.
         file = datapath("io", "data", "stata", f"{file}.dta")
         parsed = read_stata(file)
 
@@ -1292,6 +1417,8 @@ class TestStata:
     def test_read_chunks_117(
         self, file, chunksize, convert_categoricals, convert_dates, datapath
     ):
+        # [FUNCTION DOC]
+        # Parametrized over eleven format-117 files, chunk size one or two, categorical conversion and date conversion flags; user warnings are ignored. Reads the entire file, then iterates over chunks with the reader as an iterator (up to five chunks, stopping on exhaustion); each chunk must equal the corresponding rows of the full frame after normalizing categorical dtypes (dtype not checked).
         fname = datapath("io", "data", "stata", f"{file}.dta")
 
         parsed = read_stata(
@@ -1322,6 +1449,8 @@ class TestStata:
 
     @staticmethod
     def _convert_categorical(from_frame: DataFrame) -> DataFrame:
+        # [FUNCTION DOC]
+        # HELPER: static method for the chunked reading test. Takes a frame and returns it with every categorical column normalized to what a write-and-read round trip would produce: unused categories removed, object-typed categories re-inferred into an index, and empty string-typed categories converted to object. Mutates and returns the same frame.
         """
         Emulate the categorical casting behavior we expect from roundtripping.
         """
@@ -1342,6 +1471,8 @@ class TestStata:
         return from_frame
 
     def test_iterator(self, datapath):
+        # [FUNCTION DOC]
+        # Reads the stata12 example through every iteration interface: iterator with explicit count, chunk size with next, iterator with get-chunk given a count, chunk size with get-chunk default; each first chunk equals the first five rows. Also regression-checks that concatenating all chunks of size four reproduces the full frame.
         fname = datapath("io", "data", "stata", "stata12_117.dta")
 
         parsed = read_stata(fname)
@@ -1390,6 +1521,8 @@ class TestStata:
     def test_read_chunks_115(
         self, file, chunksize, convert_categoricals, convert_dates, datapath
     ):
+        # [FUNCTION DOC]
+        # Same as the format-117 chunked-read test but for ten format-115 files (with no first-file variant); chunks of size one or two compared with slices of the full frame after categorical normalization, dtype not checked.
         fname = datapath("io", "data", "stata", f"{file}.dta")
 
         # Read the whole file
@@ -1422,6 +1555,8 @@ class TestStata:
                 pos += chunksize
 
     def test_read_chunks_columns(self, datapath):
+        # [FUNCTION DOC]
+        # Reads a stata3 117 file in chunks of two rows selecting a subset of columns on each chunk read; each chunk equals the corresponding slice of the column-restricted full frame (dtype not checked).
         fname = datapath("io", "data", "stata", "stata3_117.dta")
         columns = ["quarter", "cpi", "m1"]
         chunksize = 2
@@ -1439,6 +1574,8 @@ class TestStata:
 
     @pytest.mark.parametrize("version", [114, 117, 118, 119, None])
     def test_write_variable_labels(self, version, mixed_frame, temp_file):
+        # [FUNCTION DOC]
+        # Parametrized over versions. Writes variable labels for the data columns and checks a reader reports them with an empty label for the index; then adds a label for the index and checks the full dictionary round-trips.
         # GH 13631, add support for writing variable labels
         mixed_frame.index.name = "index"
         variable_labels = {"a": "City Rank", "b": "City Exponent", "c": "City"}
@@ -1463,6 +1600,8 @@ class TestStata:
 
     @pytest.mark.parametrize("version", [114, 117, 118, 119, None])
     def test_invalid_variable_labels(self, version, mixed_frame, temp_file):
+        # [FUNCTION DOC]
+        # Parametrized over versions. A variable label of more than 80 characters raises a value error saying labels must be 80 characters or fewer.
         mixed_frame.index.name = "index"
         variable_labels = {"a": "very long" * 10, "b": "City Exponent", "c": "City"}
         path = temp_file
@@ -1472,6 +1611,9 @@ class TestStata:
 
     @pytest.mark.parametrize("version", [114, 117])
     def test_invalid_variable_label_encoding(self, version, mixed_frame, temp_file):
+        # [FUNCTION DOC]
+        # Parametrized over versions 114 and 117. A variable label containing a character outside the legacy encoding raises a value error saying labels must contain only characters encodable in that encoding.
+        # KNOWN ISSUE: the long label assigned first is immediately overwritten, so it is dead code.
         mixed_frame.index.name = "index"
         variable_labels = {"a": "very long" * 10, "b": "City Exponent", "c": "City"}
         variable_labels["a"] = "invalid character Œ"
@@ -1482,6 +1624,8 @@ class TestStata:
             mixed_frame.to_stata(path, variable_labels=variable_labels, version=version)
 
     def test_write_variable_label_errors(self, mixed_frame, temp_file):
+        # [FUNCTION DOC]
+        # Two error cases when writing with the default version: a label of Greek characters raises a value error about the Latin-1 encoding restriction, and an over-long label raises a value error about the 80 character limit.
         values = ["\u03a1", "\u0391", "\u039d", "\u0394", "\u0391", "\u03a3"]
 
         variable_labels_utf8 = {
@@ -1512,6 +1656,8 @@ class TestStata:
             mixed_frame.to_stata(path, variable_labels=variable_labels_long)
 
     def test_default_date_conversion(self, temp_file):
+        # [FUNCTION DOC]
+        # Regression test for default date conversion: datetime columns are written in clock format by default and read back as millisecond datetimes; explicit conversion keyed by name or by integer position gives the same result.
         # GH 12259
         dates = [
             dt.datetime(1999, 12, 31, 12, 12, 12, 12000),
@@ -1545,6 +1691,8 @@ class TestStata:
         tm.assert_frame_equal(reread, direct)
 
     def test_unsupported_type(self, temp_file):
+        # [FUNCTION DOC]
+        # Writing a complex-valued column raises a not-implemented error saying the data type is not supported.
         original = DataFrame({"a": [1 + 2j, 2 + 4j]})
 
         msg = "Data type complex128 not supported"
@@ -1553,6 +1701,8 @@ class TestStata:
             original.to_stata(path)
 
     def test_unsupported_datetype(self, temp_file):
+        # [FUNCTION DOC]
+        # The leap-second clock date format raises a not-implemented error; a timezone-aware datetime column raises a not-implemented error about the datetime data type.
         dates = [
             dt.datetime(1999, 12, 31, 12, 12, 12, 12000),
             dt.datetime(2012, 12, 21, 12, 21, 12, 21000),
@@ -1584,6 +1734,8 @@ class TestStata:
             original.to_stata(path)
 
     def test_repeated_column_labels(self, datapath):
+        # [FUNCTION DOC]
+        # Regression test: reading a file whose value labels are not unique with categorical conversion enabled raises a value error with a message naming the column and listing the repeated labels and advising reading without categorical conversion.
         # GH 13923, 25772
         msg = """
 Value labels for column ethnicsn are not unique. These cannot be converted to
@@ -1602,6 +1754,8 @@ The repeated labels are:\n-+\nwolof
             )
 
     def test_stata_111(self, datapath):
+        # [FUNCTION DOC]
+        # Reads a format-111 example (used by SAS exports) and compares with the expected frame of floats with missing values and a string column.
         # 111 is an old version but still used by current versions of
         # SAS when exporting to Stata format. We do not know of any
         # on-line documentation for this version.
@@ -1618,6 +1772,8 @@ The repeated labels are:\n-+\nwolof
         tm.assert_frame_equal(original, df)
 
     def test_out_of_range_double(self, temp_file):
+        # [FUNCTION DOC]
+        # Regression test: a double-precision column with a value too large for Stata raises a value error naming the column and saying the maximum is outside the supported range.
         # GH 14618
         df = DataFrame(
             {
@@ -1634,6 +1790,8 @@ The repeated labels are:\n-+\nwolof
             df.to_stata(path)
 
     def test_out_of_range_float(self, temp_file):
+        # [FUNCTION DOC]
+        # A single-precision column with a very large value is written and read back; the column that does not fit in a Stata float is read back as double, the other stays single precision.
         original = DataFrame(
             {
                 "ColumnOk": [
@@ -1662,6 +1820,8 @@ The repeated labels are:\n-+\nwolof
 
     @pytest.mark.parametrize("infval", [np.inf, -np.inf])
     def test_inf(self, infval, temp_file):
+        # [FUNCTION DOC]
+        # Parametrized over positive and negative infinity. Regression test: writing a column containing infinity raises a value error that it is outside the range supported by Stata.
         # GH 45350
         df = DataFrame({"WithoutInf": [0.0, 1.0], "WithInf": [2.0, infval]})
         msg = (
@@ -1673,6 +1833,8 @@ The repeated labels are:\n-+\nwolof
             df.to_stata(path)
 
     def test_path_pathlib(self, temp_file):
+        # [FUNCTION DOC]
+        # Round-trips a frame with a string index through the writer and reader using the pathlib round-trip helper from the testing module; result equals the original.
         df = DataFrame(
             1.1 * np.arange(120).reshape((30, 4)),
             columns=pd.Index(list("ABCD")),
@@ -1685,6 +1847,8 @@ The repeated labels are:\n-+\nwolof
 
     @pytest.mark.parametrize("write_index", [True, False])
     def test_value_labels_iterator(self, write_index, temp_file):
+        # [FUNCTION DOC]
+        # Parametrized over index writing. Regression test: the reader in iterator mode exposes value labels for a categorical column as a dictionary from code to label, with or without the index written.
         # GH 16923
         d = {"A": ["B", "E", "C", "A", "E"]}
         df = DataFrame(data=d)
@@ -1697,6 +1861,8 @@ The repeated labels are:\n-+\nwolof
         assert value_labels == {"A": {0: "A", 1: "B", 2: "C", 3: "E"}}
 
     def test_set_index(self, temp_file):
+        # [FUNCTION DOC]
+        # Regression test: reading a written frame with the index column parameter set to the index name restores the original frame.
         # GH 17328
         df = DataFrame(
             1.1 * np.arange(120).reshape((30, 4)),
@@ -1713,6 +1879,8 @@ The repeated labels are:\n-+\nwolof
         "column", ["ms", "day", "week", "month", "qtr", "half", "yr"]
     )
     def test_date_parsing_ignores_format_details(self, column, datapath):
+        # [FUNCTION DOC]
+        # Parametrized over seven date format columns. Regression test: the stata13 dates example has the same date stored with and without custom display formats; both columns of the first row are equal, so display format details are ignored.
         # GH 17797
         #
         # Test that display formats are ignored when determining if a numeric
@@ -1731,6 +1899,8 @@ The repeated labels are:\n-+\nwolof
 
     @pytest.mark.parametrize("byteorder", ["little", "big"])
     def test_writer_117(self, byteorder, temp_file, using_infer_string):
+        # [FUNCTION DOC]
+        # Parametrized over byte order. Writes version 117 with a variety of columns (strings, object, integers, floats, datetime, long and very long strings, a column forced to long string); reads back equal (datetime in millisecond unit, object as string when string inference is on) and verifies the original frame was not modified.
         original = DataFrame(
             data=[
                 [
@@ -1808,6 +1978,8 @@ The repeated labels are:\n-+\nwolof
         tm.assert_frame_equal(original, copy)
 
     def test_convert_strl_name_swap(self, temp_file):
+        # [FUNCTION DOC]
+        # Writes long-string conversion for columns whose names must be sanitized, one named by an integer, expecting the invalid column name warning; after reading, restoring the original column names gives a frame equal to the original, checking names do not get swapped.
         original = DataFrame(
             [["a" * 3000, "A", "apple"], ["b" * 1000, "B", "banana"]],
             columns=["long1" * 10, "long", 1],
@@ -1824,6 +1996,8 @@ The repeated labels are:\n-+\nwolof
             tm.assert_frame_equal(reread, original, check_index_type=False)
 
     def test_invalid_date_conversion(self, temp_file):
+        # [FUNCTION DOC]
+        # A date conversion mapping with a key that is neither a column name nor an integer position raises a value error.
         # GH 12259
         dates = [
             dt.datetime(1999, 12, 31, 12, 12, 12, 12000),
@@ -1845,6 +2019,8 @@ The repeated labels are:\n-+\nwolof
 
     @pytest.mark.parametrize("version", [114, 117, 118, 119, None])
     def test_nonfile_writing(self, version, temp_file):
+        # [FUNCTION DOC]
+        # Parametrized over versions. Writes to an in-memory byte buffer, copies the bytes to a temporary file and reads it back using the index column; equals the original.
         # GH 21041
         bio = io.BytesIO()
         df = DataFrame(
@@ -1862,6 +2038,8 @@ The repeated labels are:\n-+\nwolof
         tm.assert_frame_equal(df, reread)
 
     def test_gzip_writing(self, temp_file):
+        # [FUNCTION DOC]
+        # Writes version 114 (the only version without seeking) into a gzip file object and reads it back from a gzip file object; equals the original.
         # writing version 117 requires seek and cannot be used with gzip
         df = DataFrame(
             1.1 * np.arange(120).reshape((30, 4)),
@@ -1887,6 +2065,8 @@ The repeated labels are:\n-+\nwolof
         ],
     )
     def test_unicode_dta_118_119(self, file, datapath):
+        # [FUNCTION DOC]
+        # Parametrized over format 118 and 119 files (both byte orders) with unicode strings. Reads each and compares with an expected frame of utf-8, latin-1, ascii and long-string columns.
         unicode_df = self.read_dta(datapath("io", "data", "stata", f"{file}.dta"))
 
         columns = ["utf8", "latin1", "ascii", "utf8_strl", "ascii_strl"]
@@ -1904,6 +2084,8 @@ The repeated labels are:\n-+\nwolof
         tm.assert_frame_equal(unicode_df, expected)
 
     def test_mixed_string_strl(self, temp_file, using_infer_string):
+        # [FUNCTION DOC]
+        # Regression test: a string column with long values and a missing entry written as version 117 reads back with the missing value as an empty string; a column that is entirely missing converted to long string reads back as empty strings (string dtype under string inference).
         # GH 23633
         output = [{"mixed": "string" * 500, "number": 0}, {"mixed": None, "number": 1}]
         output = DataFrame(output)
@@ -1926,6 +2108,8 @@ The repeated labels are:\n-+\nwolof
 
     @pytest.mark.parametrize("version", [114, 117, 118, 119, None])
     def test_all_none_exception(self, version, temp_file):
+        # [FUNCTION DOC]
+        # Parametrized over versions. Regression: a column of all missing values raises a value error that the column cannot be exported.
         output = [{"none": "none", "number": 0}, {"none": None, "number": 1}]
         output = DataFrame(output)
         output["none"] = None
@@ -1934,6 +2118,8 @@ The repeated labels are:\n-+\nwolof
 
     @pytest.mark.parametrize("version", [114, 117, 118, 119, None])
     def test_invalid_file_not_written(self, version, temp_file):
+        # [FUNCTION DOC]
+        # Parametrized over versions. Regression: a string with characters that cannot be encoded raises a unicode encode error (message depends on platform: latin-1 encode or ascii decode failure).
         content = "Here is one __�__ Another one __·__ Another one __½__"
         df = DataFrame([content], columns=["invalid"])
         msg1 = (
@@ -1948,6 +2134,8 @@ The repeated labels are:\n-+\nwolof
             df.to_stata(temp_file)
 
     def test_strl_latin1(self, temp_file):
+        # [FUNCTION DOC]
+        # Regression test: writes version 117 with a long-string column of non-ascii text and parses the raw file bytes to verify the text appears in latin-1 and utf-8 form and that the stored size of each long string value matches its value length plus a terminator.
         # GH 23573, correct GSO data to reflect correct size
         output = DataFrame(
             [["pandas"] * 2, ["þâÑÐÅ§"] * 2], columns=["var_str", "var_strl"]
@@ -1966,6 +2154,8 @@ The repeated labels are:\n-+\nwolof
                 assert len(val) == size - 1
 
     def test_encoding_latin1_118(self, datapath):
+        # [FUNCTION DOC]
+        # Regression test: reading a version 118 file with strings not valid in utf-8 falls back to latin-1 and emits one Unicode warning with a specific message (checked at the once filter level); result equals a frame of 151 rows of one city.
         # GH 25960
         msg = """
 One or more strings in the dta file could not be decoded using utf-8, and
@@ -1987,6 +2177,8 @@ the string values returned are correct."""
 
     @pytest.mark.slow
     def test_stata_119(self, datapath):
+        # [FUNCTION DOC]
+        # Slow test. Opens a gzipped Stata 119 file containing 32,999 variables and validates the reader reports the correct number of variables (to avoid high peak memory).
         # Gzipped since contains 32,999 variables and uncompressed is 20MiB
         # Just validate that the reader reports correct number of variables
         # to avoid high peak memory
@@ -2000,6 +2192,8 @@ the string values returned are correct."""
     @pytest.mark.parametrize("version", [118, 119, None])
     @pytest.mark.parametrize("byteorder", ["little", "big"])
     def test_utf8_writer(self, version, byteorder, temp_file):
+        # [FUNCTION DOC]
+        # Parametrized over versions 118, 119 and automatic, and byte order. Writes a frame with non-latin text in column names, string values, a long-string column with a missing entry, an ordered categorical, a data label, variable labels and value labels using the UTF-8 writer class, then checks the round trip (missing long string becomes empty, the labeled column is read back as an ordered categorical), the data label and variable labels, and that the frame method with the same version also round-trips.
         cat = pd.Categorical(["a", "β", "ĉ"], ordered=True)
         data = DataFrame(
             [
@@ -2049,6 +2243,8 @@ the string values returned are correct."""
         tm.assert_frame_equal(data, reread_to_stata)
 
     def test_writer_118_exceptions(self, temp_file):
+        # [FUNCTION DOC]
+        # The UTF-8 writer rejects an unsupported version (117) with a value error saying the version must be 118 or 119, and a frame of 33000 columns with version 118 with an error saying version 119 must be used.
         df = DataFrame(np.zeros((1, 33000), dtype=np.int8))
         with pytest.raises(ValueError, match="version must be either 118 or 119."):
             StataWriterUTF8(temp_file, df, version=117)
@@ -2060,6 +2256,9 @@ the string values returned are correct."""
         ["numpy_nullable", pytest.param("pyarrow", marks=td.skip_if_no("pyarrow"))],
     )
     def test_read_write_ea_dtypes(self, dtype_backend, temp_file, tmp_path):
+        # [FUNCTION DOC]
+        # Parametrized over the nullable numpy and pyarrow backends. Writes a frame of nullable integer, string, boolean, float and datetime columns converted to the backend dtypes; reads back as float columns with missing as NaN, booleans as floats and datetimes in millisecond unit.
+        # KNOWN ISSUE: the frame is also written to a second path with version 118 that is never read or checked.
         dtype = "Int64" if dtype_backend == "numpy_nullable" else "int64[pyarrow]"
         df = DataFrame(
             {
@@ -2094,6 +2293,8 @@ the string values returned are correct."""
 
     @pytest.mark.parametrize("version", [113, 114, 115, 117, 118, 119])
     def test_read_data_int_validranges(self, version, datapath):
+        # [FUNCTION DOC]
+        # Parametrized over formats 113 to 119. Reads example files holding values at the edge of each integer type's valid range; the expected values exclude the reserved missing codes (byte, short, long).
         expected = DataFrame(
             {
                 "byte": np.array([-127, 100], dtype=np.int8),
@@ -2109,6 +2310,8 @@ the string values returned are correct."""
 
     @pytest.mark.parametrize("version", [104, 105, 108, 110, 111])
     def test_read_data_int_validranges_compat(self, version, datapath):
+        # [FUNCTION DOC]
+        # Parametrized over formats 104 to 111. Same test with the wider valid ranges used by older formats (the full range minus two codes).
         expected = DataFrame(
             {
                 "byte": np.array([-128, 126], dtype=np.int8),
@@ -2125,6 +2328,8 @@ the string values returned are correct."""
     # The byte type was not supported prior to the 104 format
     @pytest.mark.parametrize("version", [102, 103])
     def test_read_data_int_validranges_compat_nobyte(self, version, datapath):
+        # [FUNCTION DOC]
+        # Parametrized over formats 102 and 103 (no byte type). Same as the previous test but the byte column is read as a 16-bit integer.
         expected = DataFrame(
             {
                 "byte": np.array([-128, 126], dtype=np.int16),
@@ -2141,6 +2346,8 @@ the string values returned are correct."""
 
 @pytest.mark.parametrize("version", [105, 108, 110, 111, 113, 114])
 def test_backward_compat(version, datapath):
+    # [FUNCTION DOC]
+    # Parametrized over legacy formats 105 to 114. Each old-format example is read and compared with the 118-format reference file, ignoring dtypes.
     data_base = datapath("io", "data", "stata")
     ref = os.path.join(data_base, "stata-compat-118.dta")
     old = os.path.join(data_base, f"stata-compat-{version}.dta")
@@ -2151,6 +2358,8 @@ def test_backward_compat(version, datapath):
 
 @pytest.mark.parametrize("version", [103, 104])
 def test_backward_compat_nodateconversion(version, datapath):
+    # [FUNCTION DOC]
+    # Parametrized over formats 103 and 104, which have no date formats. Reads old-format and reference files with date conversion disabled and compares, ignoring dtypes.
     # The Stata data format prior to 105 did not support a date format
     # so read the raw values for comparison
     data_base = datapath("io", "data", "stata")
@@ -2163,6 +2372,9 @@ def test_backward_compat_nodateconversion(version, datapath):
 
 @pytest.mark.parametrize("version", [102])
 def test_backward_compat_nostring(version, datapath):
+    # [FUNCTION DOC]
+    # Format 102 (no string type). Reads with date conversion disabled, drops the string column of the reference, and compares ignoring dtypes.
+    # KNOWN ISSUE: the first comment in the body talks about date formats before 105 and is copied from the previous test; the relevant restriction is the lack of string support.
     # The Stata data format prior to 105 did not support a date format
     # so read the raw values for comparison
     ref = datapath("io", "data", "stata", "stata-compat-118.dta")
@@ -2176,6 +2388,8 @@ def test_backward_compat_nostring(version, datapath):
 
 @pytest.mark.parametrize("version", [105, 108, 110, 111, 113, 114, 118])
 def test_bigendian(version, datapath):
+    # [FUNCTION DOC]
+    # Parametrized over formats 105 to 118. Big-endian example files read to the same frame as the little-endian counterparts.
     ref = datapath("io", "data", "stata", f"stata-compat-{version}.dta")
     big = datapath("io", "data", "stata", f"stata-compat-be-{version}.dta")
     expected = read_stata(ref)
@@ -2186,6 +2400,8 @@ def test_bigendian(version, datapath):
 # Note: 102 format does not support big-endian byte order
 @pytest.mark.parametrize("version", [103, 104])
 def test_bigendian_nodateconversion(version, datapath):
+    # [FUNCTION DOC]
+    # Parametrized over formats 103 and 104. Big-endian versus little-endian files read with date conversion disabled are equal. (Format 102 has no big-endian example.)
     # The Stata data format prior to 105 did not support a date format
     # so read the raw values for comparison
     ref = datapath("io", "data", "stata", f"stata-compat-{version}.dta")
@@ -2196,6 +2412,9 @@ def test_bigendian_nodateconversion(version, datapath):
 
 
 def test_direct_read(datapath, monkeypatch):
+    # [FUNCTION DOC]
+    # Verifies the reader avoids needless buffering: a file path is read directly without copying into a bytes buffer, and an open binary file object or a bytes buffer is used exactly as given (identity preserved), each producing a non-empty frame.
+    # KNOWN ISSUE: the monkeypatch fixture parameter is unused.
     file_path = datapath("io", "data", "stata", "stata-compat-118.dta")
 
     # Test that opening a file path doesn't buffer the file.
@@ -2224,6 +2443,8 @@ def test_direct_read(datapath, monkeypatch):
 def test_compression(
     compression, version, use_dict, infer, compression_to_extension, tmp_path
 ):
+    # [FUNCTION DOC]
+    # Parametrized over versions, whether compression is given as a dictionary, and whether it is inferred from the file extension, with each compression fixture value. Writes with the chosen compression argument to a file named with the matching extension, decompresses it manually with the appropriate library (gzip, zip, tar, bz2, zstd or xz; skipping if a library is missing) into a bytes buffer or uses the plain file, and compares the re-read frame to the original.
     file_name = "dta_inferred_compression.dta"
     if compression:
         if use_dict:
@@ -2275,6 +2496,8 @@ def test_compression(
 @pytest.mark.parametrize("method", ["zip", "infer"])
 @pytest.mark.parametrize("file_ext", [None, "dta", "zip"])
 def test_compression_dict(method, file_ext, tmp_path):
+    # [FUNCTION DOC]
+    # Parametrized over zip or inferred method and file extension. Writes with a compression dictionary naming an archive member; when the result is a zip file verifies it holds exactly one member with that name and reads it; otherwise reads the plain file. The re-read frame equals the original.
     file_name = f"test.{file_ext}"
     archive_name = "test.dta"
     df = DataFrame(
@@ -2300,6 +2523,8 @@ def test_compression_dict(method, file_ext, tmp_path):
 
 @pytest.mark.parametrize("version", [114, 117, 118, 119, None])
 def test_chunked_categorical(version, temp_file):
+    # [FUNCTION DOC]
+    # Parametrized over versions. Reading categoricals in chunks of two rows without ordering: each chunk keeps the category column and equals the matching slice of the original series.
     df = DataFrame({"cats": Series(["a", "b", "a", "b", "c"], dtype="category")})
     df.index.name = "index"
 
@@ -2318,6 +2543,8 @@ def test_chunked_categorical(version, temp_file):
 
 
 def test_chunked_categorical_partial(datapath):
+    # [FUNCTION DOC]
+    # Reading a partially value-labeled file in chunks emits a categorical conversion warning about series not fully labeled; chunk categories are strings for the first two chunks and a float for the last. A single chunk spanning all rows equals the directly read frame.
     dta_file = datapath("io", "data", "stata", "stata-dta-partially-labeled.dta")
     values = ["a", "b", "a", "b", 3.0]
     msg = "series with value labels are not fully labeled"
@@ -2339,6 +2566,8 @@ def test_chunked_categorical_partial(datapath):
 
 @pytest.mark.parametrize("chunksize", (-1, 0, "apple"))
 def test_iterator_errors(datapath, chunksize):
+    # [FUNCTION DOC]
+    # Parametrized over invalid chunk sizes (negative, zero, non-numeric). Creating a reader with such a chunk size raises a value error saying it must be a positive integer.
     dta_file = datapath("io", "data", "stata", "stata-dta-partially-labeled.dta")
     with pytest.raises(ValueError, match="chunksize must be a positive"):
         with StataReader(dta_file, chunksize=chunksize):
@@ -2346,6 +2575,8 @@ def test_iterator_errors(datapath, chunksize):
 
 
 def test_iterator_value_labels(temp_file):
+    # [FUNCTION DOC]
+    # Regression test: reading a frame with two ordered categorical columns of more than 500 rows in chunks of 100 keeps the same full set of categories in every chunk, and each chunk equals the matching slice of the original.
     # GH 31544
     values = ["c_label", "b_label"] + ["a_label"] * 500
     df = DataFrame({f"col{k}": pd.Categorical(values, ordered=True) for k in range(2)})
@@ -2359,6 +2590,8 @@ def test_iterator_value_labels(temp_file):
 
 
 def test_precision_loss(temp_file):
+    # [FUNCTION DOC]
+    # Writing large 64-bit integers emits a possible-precision-loss warning about conversion to double; both columns are read as doubles; the smaller value is exact and the larger equals its float conversion.
     df = DataFrame(
         [[sum(2**i for i in range(60)), sum(2**i for i in range(52))]],
         columns=["big", "little"],
@@ -2375,6 +2608,8 @@ def test_precision_loss(temp_file):
 
 
 def test_compression_roundtrip(compression, temp_file):
+    # [FUNCTION DOC]
+    # Uses the compression fixture. Writes with compression and reads with the same compression; then explicitly decompresses the file bytes with the testing helper and reads from the buffer to prove the file was actually compressed; both equal the original.
     df = DataFrame(
         [[0.123456, 0.234567, 0.567567], [12.32112, 123123.2, 321321.2]],
         index=["A", "B"],
@@ -2398,6 +2633,8 @@ def test_compression_roundtrip(compression, temp_file):
 def test_stata_compression(
     compression_only, read_infer, to_infer, compression_to_extension, tmp_path
 ):
+    # [FUNCTION DOC]
+    # Parametrized over inferring compression on write and on read, with each compression method and its extension. Writes to a file with the matching extension and reads back; equals the original.
     compression = compression_only
 
     ext = compression_to_extension[compression]
@@ -2421,6 +2658,8 @@ def test_stata_compression(
 
 
 def test_non_categorical_value_labels(temp_file):
+    # [FUNCTION DOC]
+    # Writes numeric columns with explicit value labels via the writer class; the reader returns these labels plus the labels generated for the categorical column. Value labels for a column not in the data raise a key error; labels for a non-numeric (categorical) column raise a value error.
     data = DataFrame(
         {
             "fully_labelled": [1, 2, 3, 3, 1],
@@ -2459,6 +2698,8 @@ def test_non_categorical_value_labels(temp_file):
 
 
 def test_non_categorical_value_label_name_conversion(temp_file):
+    # [FUNCTION DOC]
+    # Value labels keyed by invalid column names (special characters, leading digit, too long, reserved word, non-string hashable key) are written under sanitized names; the invalid-column-name warning is emitted and the reader returns labels under the converted names.
     # Check conversion of invalid variable names
     data = DataFrame(
         {
@@ -2496,6 +2737,8 @@ def test_non_categorical_value_label_name_conversion(temp_file):
 
 
 def test_non_categorical_value_label_convert_categoricals_error(temp_file):
+    # [FUNCTION DOC]
+    # Writes value labels in which two codes share a label, which is valid in Stata. Reading without categorical conversion returns the labels; reading with it raises a value error describing the repeated labels.
     # Mapping more than one value to the same label is valid for Stata
     # labels, but can't be read with convert_categoricals=True
     value_labels = {
@@ -2548,6 +2791,8 @@ The repeated labels are:
     ],
 )
 def test_nullable_support(dtype, version, temp_file):
+    # [FUNCTION DOC]
+    # Parametrized over versions and nullable boolean and integer dtypes. Writes a frame with a float column, a nullable column with two missing values and a string column with a missing entry; reading with missing-value conversion returns the float column unchanged, the nullable column as objects with missing value objects of the corresponding Stata type (unsigned prefixes dropped, 64-bit mapped to 32-bit, boolean mapped to byte) and missing strings as empty strings.
     df = DataFrame(
         {
             "a": Series([1.0, 2.0, 3.0]),
@@ -2574,6 +2819,8 @@ def test_nullable_support(dtype, version, temp_file):
 
 
 def test_empty_frame(temp_file):
+    # [FUNCTION DOC]
+    # Regression test: an empty (zero-row) frame with an integer and a float column is written as version 117 and read back with the integer narrowed to 32-bit and float preserved; reading only a subset of columns keeps the correct dtypes.
     # GH 46240
     # create an empty DataFrame with int64 and float64 dtypes
     df = DataFrame(data={"a": range(3), "b": [1.0, 2.0, 3.0]}).head(0)
@@ -2593,6 +2840,8 @@ def test_empty_frame(temp_file):
 
 @pytest.mark.parametrize("version", [114, 117, 118, 119, None])
 def test_many_strl(temp_file, version):
+    # [FUNCTION DOC]
+    # Parametrized over versions. Smoke test: writing a 65534-row column with the maximum number of value labels (each label unique and short) does not raise.
     n = 65534
     df = DataFrame(np.arange(n), columns=["col"])
     lbls = ["".join(v) for v in itertools.product(*([string.ascii_letters] * 3))]
@@ -2602,6 +2851,8 @@ def test_many_strl(temp_file, version):
 
 @pytest.mark.parametrize("version", [117, 118, 119, None])
 def test_strl_missings(temp_file, version):
+    # [FUNCTION DOC]
+    # Parametrized over versions. Regression: long strings with a missing value as none and the pandas NA marker are written without error; no assertion.
     # GH 23633
     # Check that strl supports None and pd.NA
     df = DataFrame(
@@ -2616,6 +2867,9 @@ def test_strl_missings(temp_file, version):
 
 @pytest.mark.parametrize("version", [117, 118, 119, None])
 def test_ascii_error(temp_file, version):
+    # [FUNCTION DOC]
+    # Parametrized over versions. Regression: a column with a long run of two-byte characters is written and read back equal, with no export error.
+    # KNOWN ISSUE: the index writing argument is given the integer zero rather than a boolean.
     # GH #61583
     # Check that 2 byte long unicode characters doesn't cause export error
     df = DataFrame({"doubleByteCol": ["§" * 1500]})
