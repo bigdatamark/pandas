@@ -2,6 +2,18 @@
 Low-dependency indexing utilities.
 """
 
+# [MODULE DOC]
+# Functions for identifying, validating and converting indexers (keys used in
+# get and set item operations) with few dependencies so they can be used from
+# low-level modules. Sections: indexer identification (positional-slice,
+# list-like, scalar and empty checks), validation (setitem length checks, bounds
+# checks), conversion (negative to positive positions), miscellaneous helpers
+# (expected indexer length, tuple unpacking, view detection, key length
+# checks) and the public array-indexer checker.
+# Relationships: re-exported by the indexers package; the array-indexer checker
+# is also published as part of the public indexers api (via a module-name
+# decorator) and lazily imports the array constructor to avoid a circular import.
+# No import-time side effects.
 from __future__ import annotations
 
 from typing import (
@@ -38,6 +50,11 @@ if TYPE_CHECKING:
 
 
 def is_valid_positional_slice(slc: slice) -> bool:
+    # [FUNCTION DOC]
+    # Takes a slice and returns true when each of start, stop and step is
+    # either an integer or missing (so the slice could be read positionally).
+    # Such a slice may still be interpreted as label based by some indexes.
+    # No exceptions, no side effects.
     """
     Check if a slice object can be interpreted as a positional indexer.
 
@@ -62,6 +79,10 @@ def is_valid_positional_slice(slc: slice) -> bool:
 
 
 def is_list_like_indexer(key) -> bool:
+    # [FUNCTION DOC]
+    # Returns true if key is list-like, except that named tuples (tuple
+    # subclasses) are excluded because they may be meaningful as scalar keys.
+    # A plain tuple still counts as list-like. Takes any object; no exceptions.
     """
     Check if we have a list-like indexer that is *not* a NamedTuple.
 
@@ -78,6 +99,11 @@ def is_list_like_indexer(key) -> bool:
 
 
 def is_scalar_indexer(indexer, ndim: int) -> bool:
+    # [FUNCTION DOC]
+    # Returns true when indexer addresses a single element of an object with
+    # ndim dimensions: either a bare integer when ndim is one, or a tuple whose
+    # length equals ndim and whose entries are all integers. Otherwise false.
+    # No exceptions, no side effects.
     """
     Return True if we are all scalar indexers.
 
@@ -100,6 +126,11 @@ def is_scalar_indexer(indexer, ndim: int) -> bool:
 
 
 def is_empty_indexer(indexer) -> bool:
+    # [FUNCTION DOC]
+    # Returns true if indexer is an empty list-like, or (wrapping a non-tuple
+    # in a one-element tuple) if any component is a zero-length numpy array.
+    # Other empty containers inside a tuple, such as empty lists, do not count.
+    # No exceptions, no side effects.
     """
     Check if we have an empty indexer.
 
@@ -123,6 +154,18 @@ def is_empty_indexer(indexer) -> bool:
 
 
 def check_setitem_lengths(indexer, value, values) -> bool:
+    # [FUNCTION DOC]
+    # Validates a setitem key against the value being assigned. indexer is the
+    # key, value the data to assign, values the target array (only its
+    # dimensionality and, for slices, its length are used).
+    # For list or numpy array keys with a list-like value, when the target is
+    # one-dimensional and lengths differ, raises a value error unless the key
+    # is a boolean mask (lists are converted to arrays first) whose count of
+    # true entries equals the value length. For slice keys with a list-like
+    # value, a one-dimensional target and a value length different from the
+    # slice length also raise a value error. Other key types are not checked.
+    # Returns true when the assignment is an empty list-like no-op (empty key
+    # or empty value in the checked cases), otherwise false.
     """
     Validate that value and indexer are the same length.
 
@@ -187,6 +230,14 @@ def check_setitem_lengths(indexer, value, values) -> bool:
 
 
 def validate_indices(indices: np.ndarray, n: int) -> None:
+    # [FUNCTION DOC]
+    # Bounds-checks an integer array of positions against a target of length n,
+    # where minus one is permitted as a missing-value marker. Returns nothing.
+    # Raises a value error if any entry is below minus one, and an index error
+    # if any entry is at or above n. An empty array always passes.
+    # KNOWN ISSUE: the docstring example shows the message "negative dimensions
+    # are not allowed" for the too-small case, but the code raises a message
+    # saying the indices contain values less than allowed.
     """
     Perform bounds-checking for an indexer.
 
@@ -239,6 +290,14 @@ def validate_indices(indices: np.ndarray, n: int) -> None:
 
 
 def maybe_convert_indices(indices, n: int, verify: bool = True) -> np.ndarray:
+    # [FUNCTION DOC]
+    # Converts positions to non-negative ones for a target of length n.
+    # indices is a list or array of integers; a list is first turned into an
+    # array (an empty list yields an empty array of the platform index integer
+    # type). Negative entries get n added, on a copy so the caller's array is
+    # not mutated. When verify is true (default), raises an index error if any
+    # converted entry is still negative or is at least n. Returns the
+    # converted array (the same object if nothing was negative).
     """
     Attempt to convert indices into valid, positive indices.
 
@@ -290,6 +349,19 @@ def maybe_convert_indices(indices, n: int, verify: bool = True) -> np.ndarray:
 
 
 def length_of_indexer(indexer, target=None) -> int:
+    # [FUNCTION DOC]
+    # Returns the expected length of selecting indexer from target.
+    # With a slice and a non-missing target, normalizes start, stop and step
+    # against the target length (negative bounds wrap, stop is clipped to the
+    # length, a negative step swaps the bounds) and returns the ceiling of the
+    # span divided by the step. For series, index, numpy array or list
+    # indexers, returns the count of true entries for boolean data and the
+    # plain length otherwise. For a range returns its span divided by its step.
+    # For a non-list-like indexer (scalar) returns one. Raises an assertion
+    # error for anything else, including a slice with no target.
+    # KNOWN ISSUE: the range branch uses floor division of the span by the
+    # step, so it undercounts when the span is not a multiple of the step
+    # (and ignores negative ranges that are empty).
     """
     Return the expected length of target[indexer]
 
@@ -332,6 +404,11 @@ def length_of_indexer(indexer, target=None) -> int:
 
 
 def disallow_ndim_indexing(result) -> None:
+    # [FUNCTION DOC]
+    # Validation helper for one-dimensional Series and Index getitem. Takes
+    # the result of an indexing operation and raises a value error if it has
+    # more than one dimension (the removed behavior of returning an ndarray
+    # for keys like adding a new axis). Returns nothing otherwise.
     """
     Helper function to disallow multi-dimensional indexing on 1D Series/Index.
 
@@ -347,6 +424,11 @@ def disallow_ndim_indexing(result) -> None:
 
 
 def unpack_1tuple(tup):
+    # [FUNCTION DOC]
+    # If tup has exactly one element and it is a slice, returns that slice;
+    # otherwise returns tup unchanged. If tup is a list (the deprecated case)
+    # holding a single slice, raises a value error telling the caller to
+    # pass a tuple instead.
     """
     If we have a length-1 tuple/list that contains a slice, unpack to just
     the slice.
@@ -371,6 +453,14 @@ def unpack_1tuple(tup):
 
 
 def check_key_length(columns: Index, key, value: DataFrame) -> None:
+    # [FUNCTION DOC]
+    # Validates that assigning a frame under a list-like key matches in width.
+    # columns is the target column index, key the list-like of column keys,
+    # value the frame being assigned. For a unique column index, raises a
+    # value error when the number of value columns differs from the key
+    # length. Otherwise it counts the positions the key resolves to
+    # (non-unique lookup) and raises the same error if that count differs
+    # from the value's column count. Returns nothing.
     """
     Checks if a key used as indexer has the same length as the columns it is
     associated with.
@@ -396,6 +486,12 @@ def check_key_length(columns: Index, key, value: DataFrame) -> None:
 
 
 def unpack_tuple_and_ellipses(item: tuple):
+    # [FUNCTION DOC]
+    # Reduces a non-empty tuple key for a one-dimensional array-like to its
+    # single element. If longer than one, a leading ellipsis is removed, else
+    # a trailing ellipsis is removed. If more than one element remains, raises
+    # an index error (too many indices). Returns the first remaining element.
+    # An empty tuple would fail with a standard index error from the final lookup.
     """
     Possibly unpack arr[..., n] to arr[n]
     """
@@ -414,6 +510,13 @@ def unpack_tuple_and_ellipses(item: tuple):
 
 
 def getitem_returns_view(arr, key) -> bool:
+    # [FUNCTION DOC]
+    # Predicts whether getitem on arr with key yields a view of the data
+    # rather than a copy. A non-tuple key is wrapped in a tuple, then
+    # ellipsis and new-axis entries are dropped. Returns true if nothing
+    # remains, if the array is two-dimensional and the first remaining entry
+    # is an integer, or if all entries are slices; otherwise false. Does not
+    # touch the data and raises nothing.
     """
     Check if an ``arr.__getitem__`` call with given ``key`` would return a view
     or not.
@@ -440,6 +543,18 @@ def getitem_returns_view(arr, key) -> bool:
 
 @set_module("pandas.api.indexers")
 def check_array_indexer(array: AnyArrayLike, indexer: Any) -> Any:
+    # [FUNCTION DOC]
+    # Public validator and normalizer for array-like indexers.
+    # array supplies only the length used for boolean masks; indexer is any key.
+    # Non-list-likes (integer, slice, ellipsis, none) and tuples are returned
+    # unchanged. Other list-likes that are not already arrays are converted
+    # with the pandas array constructor (an empty one becomes an empty array of
+    # the platform index integer type). Boolean data (numpy or extension, with
+    # missing values treated as false) becomes a numpy boolean array and raises
+    # an index error when its length differs from the array. Integer data
+    # becomes a numpy array of the platform index integer type, raising a
+    # value error when it holds missing values. Any other dtype raises an
+    # index error. Returns the validated indexer; no mutation.
     """
     Check if `indexer` is a valid array indexer for `array`.
 

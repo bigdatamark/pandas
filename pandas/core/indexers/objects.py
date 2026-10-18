@@ -1,5 +1,17 @@
 """Indexer objects for computing start/end window bounds for rolling operations"""
 
+# [MODULE DOC]
+# Window-bound calculators used by rolling, expanding, exponentially weighted
+# and groupby-rolling operations. Each indexer exposes a method that, given the
+# number of values and options passed from the top-level window API, returns a
+# pair of integer arrays (start inclusive, end exclusive) with one entry per
+# output window. Contents: a base class (public, user-subclassable), fixed,
+# variable (time-based, using a compiled routine), variable-offset (public),
+# expanding, fixed-forward (public), groupby and exponentially-weighted indexers.
+# Public ones are published under the public indexers api module name.
+# Relationships: used by core.window modules; depends on the compiled window
+# indexer routines, datetime index and the nanosecond offset.
+# No import-time side effects.
 from __future__ import annotations
 
 from datetime import timedelta
@@ -19,6 +31,12 @@ from pandas.tseries.offsets import Nano
 
 @set_module("pandas.api.indexers")
 class BaseIndexer:
+    # [CLASS DOC]
+    # Abstract base for all window indexers and the extension point for user
+    # defined windows. State: an optional index array of data point labels
+    # and an integer window size, plus any extra keyword arguments stored as
+    # attributes of the same name. Subclasses must override the window bounds
+    # method, which here always raises not-implemented.
     """
     Base class for window bounds calculations.
 
@@ -63,6 +81,11 @@ class BaseIndexer:
     def __init__(
         self, index_array: np.ndarray | None = None, window_size: int = 0, **kwargs
     ) -> None:
+        # [FUNCTION DOC]
+        # Stores index_array (optional array of labels, default none) and
+        # window_size (integer, default zero) as attributes, then sets every
+        # extra keyword argument as an attribute of the same name on the
+        # instance (overwriting any existing attribute, no validation).
         self.index_array = index_array
         self.window_size = window_size
         # Set user defined kwargs as attributes that can be used in get_window_bounds
@@ -77,6 +100,15 @@ class BaseIndexer:
         closed: str | None = None,
         step: int | None = None,
     ) -> tuple[np.ndarray, np.ndarray]:
+        # [FUNCTION DOC]
+        # Abstract hook computing window bounds. Parameters (all optional):
+        # num_values is the number of observations, min_periods, center,
+        # closed and step are forwarded from the top-level window API.
+        # Returns a pair of int64 arrays (starts inclusive, ends exclusive).
+        # This base version always raises a not-implemented error.
+        # KNOWN ISSUE: the docstring documents window_size and win_type
+        # parameters that are not in the signature (window size is an
+        # instance attribute).
         """
         Computes the bounds of a window.
 
@@ -106,6 +138,10 @@ class BaseIndexer:
 
 
 class FixedWindowIndexer(BaseIndexer):
+    # [CLASS DOC]
+    # Indexer for windows of constant length equal to the window size
+    # attribute, each ending at its own row (or shifted for centering).
+    # Subclass of the base indexer; only overrides the window bounds method.
     """Creates window boundaries that are of fixed length."""
 
     def get_window_bounds(
@@ -116,6 +152,19 @@ class FixedWindowIndexer(BaseIndexer):
         closed: str | None = None,
         step: int | None = None,
     ) -> tuple[np.ndarray, np.ndarray]:
+        # [FUNCTION DOC]
+        # Fixed-length windows. num_values is the observation count; center
+        # shifts windows so they are centered (also applied when the window
+        # size is zero); closed is one of right (default when none), left, both
+        # or neither; step (none means one) subsamples the window ends;
+        # min_periods is ignored. Ends run from one (plus the centering
+        # offset, half the window size rounded down minus a half) up to the
+        # count (plus offset); starts are ends minus the window size. Closed
+        # left or both moves starts one earlier; left or neither moves ends
+        # one earlier. Both arrays are then clipped into the range zero to
+        # num_values. Returns (starts, ends) as int64 arrays.
+        # KNOWN ISSUE: the docstring documents window_size and win_type
+        # parameters that are not in the signature.
         """
         Computes the bounds of a window.
 
@@ -160,6 +209,11 @@ class FixedWindowIndexer(BaseIndexer):
 
 
 class VariableWindowIndexer(BaseIndexer):
+    # [CLASS DOC]
+    # Indexer for windows whose row count varies, used for time-based rolling.
+    # Relies on the index array attribute (the sorted labels, as integers) and
+    # on the window size attribute (span in label units). Subclass of the base
+    # indexer; delegates the computation to a compiled routine.
     """Creates window boundaries that are of variable length, namely for time series."""
 
     def get_window_bounds(
@@ -170,6 +224,15 @@ class VariableWindowIndexer(BaseIndexer):
         closed: str | None = None,
         step: int | None = None,
     ) -> tuple[np.ndarray, np.ndarray]:
+        # [FUNCTION DOC]
+        # Computes label-span windows. Requires the index array attribute to be
+        # set (an assertion fails otherwise). Raises a value error if the index
+        # array is shorter than num_values. Passes num_values, window size,
+        # min_periods, center, closed and the index array to the compiled
+        # variable-window routine and returns its (starts, ends) int64 arrays.
+        # step is accepted but ignored.
+        # KNOWN ISSUE: the docstring documents window_size and win_type
+        # parameters that are not in the signature.
         """
         Computes the bounds of a window.
 
@@ -217,6 +280,12 @@ class VariableWindowIndexer(BaseIndexer):
 
 @set_module("pandas.api.indexers")
 class VariableOffsetWindowIndexer(BaseIndexer):
+    # [CLASS DOC]
+    # Public indexer for windows whose width is a calendar offset (such as a
+    # business day) applied to a datetime index. State: the datetime index of
+    # observation labels and the offset, in addition to the inherited attributes
+    # (the inherited index array and window size are not used by the bounds
+    # computation). Subclass of the base indexer.
     """
     Calculate window boundaries based on a non-fixed offset such as a BusinessDay.
 
@@ -285,6 +354,12 @@ class VariableOffsetWindowIndexer(BaseIndexer):
         offset: BaseOffset | None = None,
         **kwargs,
     ) -> None:
+        # [FUNCTION DOC]
+        # Initializes the base attributes from index_array, window_size and
+        # extra keyword arguments, then validates and stores index (must be a
+        # datetime index) and offset (must be an offset object). Raises a
+        # value error if either is missing or of the wrong type (both default
+        # to none, so both are effectively required).
         super().__init__(index_array, window_size, **kwargs)
         if not isinstance(index, DatetimeIndex):
             raise ValueError("index must be a DatetimeIndex.")
@@ -301,6 +376,22 @@ class VariableOffsetWindowIndexer(BaseIndexer):
         closed: str | None = None,
         step: int | None = None,
     ) -> tuple[np.ndarray, np.ndarray]:
+        # [FUNCTION DOC]
+        # Offset-based windows over the stored datetime index. Raises a
+        # not-implemented error if step is given. With no values, returns two
+        # empty int64 arrays. closed defaults to right; min_periods and
+        # center are ignored. The offset sign is flipped when the index
+        # decreases from first to last element. For each position the window
+        # end is the position itself (inclusive when the right side is closed,
+        # exclusive otherwise) and the window start is the first earlier
+        # position whose label lies strictly after the label minus the
+        # offset (minus one nanosecond when the left side is closed). The
+        # scan is quadratic in the worst case. Returns (starts, ends) int64 arrays.
+        # KNOWN ISSUE: the default for closed is chosen by checking whether
+        # the stored index is present, which is always true here, so the
+        # alternative default of both is unreachable.
+        # KNOWN ISSUE: the docstring documents window_size and win_type
+        # parameters that are not in the signature.
         """
         Computes the bounds of a window.
 
@@ -396,6 +487,10 @@ class VariableOffsetWindowIndexer(BaseIndexer):
 
 
 class ExpandingIndexer(BaseIndexer):
+    # [CLASS DOC]
+    # Indexer for expanding windows, where every window starts at the first
+    # row and ends at its own row. Subclass of the base indexer with no
+    # additional state.
     """Calculate expanding window bounds, mimicking df.expanding()"""
 
     def get_window_bounds(
@@ -406,6 +501,12 @@ class ExpandingIndexer(BaseIndexer):
         closed: str | None = None,
         step: int | None = None,
     ) -> tuple[np.ndarray, np.ndarray]:
+        # [FUNCTION DOC]
+        # Returns (starts, ends) int64 arrays of length num_values: starts are
+        # all zero, ends count from one to num_values inclusive. All other
+        # arguments (min_periods, center, closed, step) are ignored.
+        # KNOWN ISSUE: the docstring documents window_size and win_type
+        # parameters that are not in the signature.
         """
         Computes the bounds of a window.
 
@@ -439,6 +540,10 @@ class ExpandingIndexer(BaseIndexer):
 
 @set_module("pandas.api.indexers")
 class FixedForwardWindowIndexer(BaseIndexer):
+    # [CLASS DOC]
+    # Public indexer for forward-looking fixed-length windows: each window
+    # starts at its own row and extends forward by the window size attribute.
+    # Subclass of the base indexer with no additional state.
     """
     Creates window boundaries for fixed-length windows that include the current row.
 
@@ -491,6 +596,16 @@ class FixedForwardWindowIndexer(BaseIndexer):
         closed: str | None = None,
         step: int | None = None,
     ) -> tuple[np.ndarray, np.ndarray]:
+        # [FUNCTION DOC]
+        # Forward-looking windows. Raises a value error if center is truthy or
+        # if closed is given. step (none means one) subsamples the window
+        # starts; min_periods is ignored. Starts are positions from zero up to
+        # num_values by step; ends are starts plus the window size, clipped
+        # to the range zero to num_values only when the window size is
+        # nonzero (with a zero window size, ends equal starts). Returns
+        # (starts, ends) int64 arrays.
+        # KNOWN ISSUE: the docstring documents window_size and win_type
+        # parameters that are not in the signature.
         """
         Computes the bounds of a window.
 
@@ -534,6 +649,12 @@ class FixedForwardWindowIndexer(BaseIndexer):
 
 
 class GroupbyIndexer(BaseIndexer):
+    # [CLASS DOC]
+    # Indexer for rolling over groups: applies an inner window indexer class
+    # separately to each group's rows and concatenates the bounds in group
+    # order. State: a mapping from group label to positional row indices,
+    # the inner indexer class, and extra keyword arguments for it, in
+    # addition to the inherited attributes. Subclass of the base indexer.
     """Calculate bounds to compute groupby rolling, mimicking df.groupby().rolling()"""
 
     def __init__(
@@ -545,6 +666,14 @@ class GroupbyIndexer(BaseIndexer):
         indexer_kwargs: dict | None = None,
         **kwargs,
     ) -> None:
+        # [FUNCTION DOC]
+        # Stores groupby_indices (mapping of group label to row positions;
+        # none becomes an empty mapping), window_indexer (inner indexer class,
+        # default the base class) and a shallow copy of indexer_kwargs (none
+        # becomes an empty mapping). A window_size entry in the copied kwargs
+        # is removed and takes precedence over the window_size argument for
+        # the base initializer, so the inner indexer receives window size
+        # separately. Extra keyword arguments become attributes via the base.
         """
         Parameters
         ----------
@@ -580,6 +709,20 @@ class GroupbyIndexer(BaseIndexer):
         closed: str | None = None,
         step: int | None = None,
     ) -> tuple[np.ndarray, np.ndarray]:
+        # [FUNCTION DOC]
+        # Per-group window bounds. For each group (in mapping order) it
+        # builds an inner indexer from the stored class with the group's
+        # slice of the index array (if any), the window size and stored
+        # keyword arguments, and asks it for bounds over that group's row
+        # count using the given min_periods, center, closed and step. The
+        # group's bounds are converted to positions in the concatenated,
+        # group-ordered result by offsetting by the cumulative count of earlier
+        # rows (with one extra sentinel position so an end equal to the group
+        # length maps correctly). Asserts that start and end lengths match.
+        # Returns (starts, ends) int64 arrays concatenated across groups, or two
+        # empty int64 arrays when there are no groups.
+        # KNOWN ISSUE: the docstring documents window_size and win_type
+        # parameters that are not in the signature.
         """
         Computes the bounds of a window.
 
@@ -651,6 +794,9 @@ class GroupbyIndexer(BaseIndexer):
 
 
 class ExponentialMovingWindowIndexer(BaseIndexer):
+    # [CLASS DOC]
+    # Indexer for exponentially weighted operations, which use the entire
+    # series as one window. Subclass of the base indexer with no extra state.
     """Calculate ewm window bounds (the entire window)"""
 
     def get_window_bounds(
@@ -661,6 +807,12 @@ class ExponentialMovingWindowIndexer(BaseIndexer):
         closed: str | None = None,
         step: int | None = None,
     ) -> tuple[np.ndarray, np.ndarray]:
+        # [FUNCTION DOC]
+        # Returns a single window covering everything: a one-element start
+        # array containing zero and a one-element end array containing
+        # num_values, both int64. All other arguments are ignored.
+        # KNOWN ISSUE: the docstring documents window_size and win_type
+        # parameters that are not in the signature.
         """
         Computes the bounds of a window.
 

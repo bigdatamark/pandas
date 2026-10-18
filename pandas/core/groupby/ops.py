@@ -6,6 +6,18 @@ operations, primarily in cython. These classes (BaseGrouper and BinGrouper)
 are contained *in* the SeriesGroupBy and DataFrameGroupBy objects.
 """
 
+# [MODULE DOC]
+# Internal implementation of groupby computation. Contents: two small result
+# helpers (validating that a user function aggregated, and unwrapping a scalar
+# from array-like results); a dispatcher class for the compiled groupby
+# routines (choosing function, input casting, output shape and dtype,
+# post-processing); the base grouper (holds groupings, codes, result index,
+# group sizes, iteration, pure-python aggregation and per-group apply); a bin
+# grouper for contiguous bins (resampling); and splitter classes that cut a
+# group-sorted series or frame into per-group objects.
+# Relationships: built by grouper.py (get_grouper) and held by SeriesGroupBy
+# and DataFrameGroupBy; depends on the compiled groupby library, sorting
+# utilities and extension array group operations. No import-time side effects.
 from __future__ import annotations
 
 import collections
@@ -79,6 +91,12 @@ if TYPE_CHECKING:
 
 
 def check_result_array(obj, dtype) -> None:
+    # [FUNCTION DOC]
+    # HELPER: sanity check for user aggregation functions. obj is the value a
+    # function returned for one group, dtype the dtype of the group's data.
+    # Raises a value error (must produce aggregated value) when obj is a numpy
+    # array and dtype is not object; object data may legitimately aggregate to
+    # arrays. Returns nothing.
     # Our operation is supposed to be an aggregation/reduction. If
     #  it returns an ndarray, this likely means an invalid operation has
     #  been passed. See test_apply_without_aggregation, test_agg_must_agg
@@ -90,6 +108,11 @@ def check_result_array(obj, dtype) -> None:
 
 
 def extract_result(res):
+    # [FUNCTION DOC]
+    # HELPER: unwraps a user function result. If res exposes underlying values
+    # (series, index, extension array), takes those (keeping extension types);
+    # when the values are one-dimensional with exactly one element, returns that
+    # single element. Anything without such values is returned unchanged.
     """
     Extract the result object, it might be a 0-dim ndarray
     or a len-1 0-dim, or a scalar
@@ -104,6 +127,17 @@ def extract_result(res):
 
 
 class WrappedCythonOp:
+    # [CLASS DOC]
+    # Dispatcher around the compiled groupby routines. State: kind (aggregate
+    # or transform), how (operation name such as mean) and has_dropped_na (true
+    # exactly when null group keys were dropped). Class data: a blocklist of
+    # operations whose compiled result is never cast back to the input dtype,
+    # a table mapping kind and operation name to a routine name or partial
+    # function, and an arity table (only open-high-low-close has more than
+    # one output column). Key methods: choose the routine for a dtype, cast
+    # inputs, work out output shape and dtypes, and run the routine with
+    # pre- and post-processing (the public entry point is the cython
+    # operation method).
     """
     Dispatch logic for functions defined in _libs.groupby
 
@@ -124,6 +158,9 @@ class WrappedCythonOp:
     )
 
     def __init__(self, kind: str, how: str, has_dropped_na: bool) -> None:
+        # [FUNCTION DOC]
+        # Stores kind (aggregate or transform), how (operation name) and
+        # has_dropped_na. No validation; unknown names fail later at lookup.
         self.kind = kind
         self.how = how
         self.has_dropped_na = has_dropped_na
@@ -162,6 +199,10 @@ class WrappedCythonOp:
 
     @classmethod
     def get_kind_from_how(cls, how: str) -> str:
+        # [FUNCTION DOC]
+        # Class method. Returns the string aggregate if the operation name is
+        # in the aggregate table, otherwise the string transform (without
+        # checking that the name is a known transform).
         if how in cls._CYTHON_FUNCTIONS["aggregate"]:
             return "aggregate"
         return "transform"
@@ -173,6 +214,17 @@ class WrappedCythonOp:
     def _get_cython_function(
         cls, kind: str, how: str, dtype: np.dtype, is_numeric: bool
     ):
+        # [FUNCTION DOC]
+        # HELPER: class-level cached lookup (all arguments hashable) of the
+        # compiled routine for kind, how, input dtype and whether the dtype
+        # is numeric. Table entries given as names are resolved from the compiled
+        # groupby library; partial functions are used directly. Numeric input
+        # returns the routine. Object dtype: raises a not-implemented error for
+        # median and cumulative product, and for routines lacking an object
+        # signature (except skew/kurt which are converted later, and the
+        # variance-family and index-of-extreme partials which are returned
+        # directly). Any other non-numeric dtype raises a not-implemented error
+        # that asks the user to report a bug.
         dtype_str = dtype.name
         ftype = cls._CYTHON_FUNCTIONS[kind][how]
 
@@ -212,6 +264,13 @@ class WrappedCythonOp:
             )
 
     def _get_cython_vals(self, values: np.ndarray) -> np.ndarray:
+        # [FUNCTION DOC]
+        # HELPER: casts input to what the compiled routine supports. For
+        # median, std, sem, skew and kurt returns float64 values. For integer
+        # data: variance and mean (and any transform when null keys were
+        # dropped) get float64; sum, open-high-low-close, product and
+        # cumulative sum/product are widened to 64-bit signed or unsigned to
+        # avoid overflow. Otherwise returns values unchanged.
         """
         Cast numeric dtypes to float64 for functions that only support that.
 
@@ -249,6 +308,12 @@ class WrappedCythonOp:
         return values
 
     def _get_output_shape(self, ngroups: int, values: np.ndarray) -> Shape:
+        # [FUNCTION DOC]
+        # HELPER: shape of the output buffer. Open-high-low-close yields
+        # ngroups rows by its arity (four) columns. An operation with arity
+        # above one otherwise raises a not-implemented error. Transforms keep
+        # the input shape; aggregations give ngroups followed by all but the
+        # first input dimension.
         how = self.how
         kind = self.kind
 
@@ -268,6 +333,12 @@ class WrappedCythonOp:
         return out_shape
 
     def _get_out_dtype(self, dtype: np.dtype) -> np.dtype:
+        # [FUNCTION DOC]
+        # HELPER: dtype of the output buffer for the compiled routine given the
+        # (already cast) input dtype. Rank gives 64-bit float; index-of-minimum
+        # and maximum give the platform integer (positions); integer, unsigned,
+        # float, complex and bool kinds keep kind and item size; everything
+        # else gives object.
         how = self.how
 
         if how == "rank":
@@ -283,6 +354,15 @@ class WrappedCythonOp:
         return np.dtype(out_dtype)
 
     def _get_result_dtype(self, dtype: np.dtype) -> np.dtype:
+        # [FUNCTION DOC]
+        # HELPER: dtype the final result should have given the original input
+        # dtype. Bool input becomes 64-bit integer for sum, cumulative sum,
+        # product and cumulative product. For mean, median, variance, standard
+        # deviation and standard error, float and complex keep their dtype
+        # while integer, unsigned and bool become 64-bit float. All others
+        # return the input dtype.
+        # KNOWN ISSUE: the sum operation name appears twice in the first
+        # membership list, which is redundant.
         """
         Get the desired dtype of a result based on the
         input dtype and how it was computed.
@@ -321,7 +401,17 @@ class WrappedCythonOp:
         initial: Any = 0,
         **kwargs,
     ) -> np.ndarray:
-        if values.ndim == 1:
+        # [FUNCTION DOC]
+        # HELPER: lets the two-dimensional-only compiled call handle 1-D data.
+        # Keyword-only inputs: values (1-D or 2-D), min_count (minimum valid
+        # entries per group), ngroups, comp_ids (group id per entry), mask and
+        # result_mask (optional boolean masks for nullable data), initial
+        # (starting value, default zero, used only by sum), plus extra
+        # keywords forwarded to the call. A 1-D input (and masks) is
+        # expanded to one row, dispatched, and returned squeezed to 1-D, or
+        # transposed when there are several output columns (open-high-low-
+        # close). 2-D input is passed straight through. Returns the array.
+
             # expand to 2d, dispatch, then squeeze if appropriate
             values2d = values[None, :]
             if mask is not None:
@@ -368,6 +458,35 @@ class WrappedCythonOp:
         initial: Any = 0,
         **kwargs,
     ) -> np.ndarray:  # np.ndarray[ndim=2]
+        # [FUNCTION DOC]
+        # HELPER: runs the compiled routine on 2-D data (variables by rows).
+        # Inputs as for the dimension-compat wrapper (values, min_count,
+        # ngroups, comp_ids, masks, initial, extra keywords; the keywords may
+        # include a skipna flag required for any/all on object data).
+        # Steps: datetime-like data is viewed as 64-bit integers (and treated
+        # as numeric), bool is viewed as small unsigned integers, half floats
+        # widen to single. For any/all a null mask is computed if absent, object
+        # data with skipna has masked entries set true, and values become int8
+        # truth flags. Data is transposed, the routine for the dtype is selected,
+        # inputs cast, output buffer allocated, and the routine called with an
+        # argument set depending on the operation: aggregation families differ
+        # in whether they take counts, an initial value (sum only), or the
+        # datetime-like flag; any/all result is converted to bool; skew/kurt on
+        # object input gives object output; an unknown aggregation raises a
+        # not-implemented error. Transforms pass the group count and the
+        # datetime-like flag (and the result mask for all but rank).
+        # After the call, for aggregations other than index-of-extreme with
+        # integer output (non datetime-like), groups with too few entries
+        # (below the larger of min_count and zero for sum/product or one) are
+        # filled with missing values by widening to float, unless a result mask is
+        # supplied (then asserted already masked). The result is transposed back
+        # and, except for blocklisted operations, cast toward the dtype implied by
+        # the original input (restoring datetime types, etc.).
+        # KNOWN ISSUE: unresolved TODOs note min_count is ignored for transforms
+        # and that rank may need to accept a result mask.
+        # KNOWN ISSUE: the inline comment says rank is the only blocklist member
+        # reaching the cast step, but the cast is skipped for all blocklisted
+        # names, so rank is actually skipped too; the comment is misleading.
         orig_values = values
 
         dtype = values.dtype
@@ -523,6 +642,11 @@ class WrappedCythonOp:
 
     @final
     def _validate_axis(self, axis: AxisInt, values: ArrayLike) -> None:
+        # [FUNCTION DOC]
+        # HELPER: checks that axis is consistent with the data. Raises a
+        # not-implemented error if values has more than two dimensions. For
+        # 2-D data asserts the axis is one; for 1-D data that is not a 1-D-only
+        # extension dtype, asserts the axis is zero. Returns nothing.
         if values.ndim > 2:
             raise NotImplementedError("number of dimensions is currently limited to 2")
         if values.ndim == 2:
@@ -543,6 +667,14 @@ class WrappedCythonOp:
         ngroups: int,
         **kwargs,
     ) -> ArrayLike:
+        # [FUNCTION DOC]
+        # Public entry point. Keyword-only inputs: values (numpy or extension
+        # array), axis (validated), min_count (default minus one), comp_ids
+        # (group id per row), ngroups, and extra keywords forwarded on.
+        # Validates the axis, then: extension arrays delegate to their own
+        # group operation method (passing the operation name, dropped-null flag,
+        # min_count, group count and ids); numpy arrays go through the
+        # dimension-compat wrapper with no mask. Returns the result array.
         """
         Call our cython function, with appropriate pre- and post- processing.
         """
@@ -570,6 +702,16 @@ class WrappedCythonOp:
 
 
 class BaseGrouper:
+    # [CLASS DOC]
+    # Internal grouper holding the computed groups. State: the axis index being
+    # grouped, a list of groupings (one per key), the sort flag and the dropna
+    # flag. Most information is derived lazily and cached: the result index
+    # with the group id of every row (a combined cache), group count, sizes,
+    # label-to-position mappings, the sorting permutation, whether null keys
+    # were dropped, and an observed-only version. Key methods: iteration over
+    # groups, aggregation of a series with a python function, per-group
+    # application of a function, compiled-operation dispatch and creation of
+    # the splitters that cut data per group. Subclassed by the bin grouper.
     """
     This is an internal Grouper class, which actually holds
     the generated groups
@@ -594,6 +736,12 @@ class BaseGrouper:
         sort: bool = True,
         dropna: bool = True,
     ) -> None:
+        # [FUNCTION DOC]
+        # Parameters: axis (index being grouped; an assertion error is raised if
+        # it is not an index), groupings (list of grouping objects), sort
+        # (default true) and dropna (default true; whether null keys are
+        # excluded). Stores them; nothing is computed yet.
+        # KNOWN ISSUE: the class docstring does not document the dropna parameter.
         assert isinstance(axis, Index), axis
 
         self.axis = axis
@@ -603,16 +751,28 @@ class BaseGrouper:
 
     @property
     def groupings(self) -> list[grouper.Grouping]:
+        # [FUNCTION DOC]
+        # Property: the list of grouping objects, one per grouping key.
         return self._groupings
 
     def __iter__(self) -> Iterator[Hashable]:
+        # [FUNCTION DOC]
+        # Iterates over the group labels (keys of the label-to-positions mapping).
         return iter(self.indices)
 
     @property
     def nkeys(self) -> int:
+        # [FUNCTION DOC]
+        # Property: the number of grouping keys.
         return len(self.groupings)
 
     def get_iterator(self, data: NDFrameT) -> Iterator[tuple[Hashable, NDFrameT]]:
+        # [FUNCTION DOC]
+        # Generator over the groups of data (series or frame). Builds a
+        # splitter and pairs each result-index label with the corresponding
+        # subset, in result order (unobserved categorical groups give empty
+        # subsets). Yields (label, subset) tuples; lengths must match or an error
+        # is raised by the strict pairing.
         """
         Groupby iterator
 
@@ -628,6 +788,13 @@ class BaseGrouper:
 
     @final
     def _get_splitter(self, data: NDFrame) -> DataSplitter:
+        # [FUNCTION DOC]
+        # HELPER: creates the splitter for data: a series splitter for a
+        # series, a frame splitter otherwise. It is built with the group count,
+        # the group ids in sorted order and the sorting permutation of rows.
+        # Returns the (lazily iterable) splitter.
+        # KNOWN ISSUE: the docstring's Returns section describes a generator of
+        # subsets; the function actually returns the splitter object.
         """
         Returns
         -------
@@ -648,6 +815,14 @@ class BaseGrouper:
 
     @cache_readonly
     def indices(self) -> dict[Hashable, npt.NDArray[np.intp]]:
+        # [FUNCTION DOC]
+        # Cached mapping from group label to the integer positions of its rows.
+        # With a single grouping and a categorical result index, uses the
+        # grouping's own mapping (so unused categories appear). Otherwise builds
+        # it from the groupings' codes and the levels. When dropna is false,
+        # missing keys are normalized to the float not-a-number value (each
+        # tuple component for multi-level keys) so missing groups collapse to
+        # one key.
         """dict {group name -> group indices}"""
         if len(self.groupings) == 1 and isinstance(self.result_index, CategoricalIndex):
             # This shows unused categories in indices GH#38642
@@ -674,6 +849,12 @@ class BaseGrouper:
     @final
     @cache_readonly
     def result_ilocs(self) -> npt.NDArray[np.intp]:
+        # [FUNCTION DOC]
+        # Cached permutation of the input rows that orders them by group id
+        # (stable per group). When null keys were dropped, rows with negative
+        # ids are excluded before sorting, and the sorter output is shifted
+        # by the number of dropped rows preceding each position so the positions
+        # refer to the original, unfiltered rows.
         """
         Get the original integer locations of result_index in the input.
         """
@@ -698,10 +879,16 @@ class BaseGrouper:
 
     @property
     def codes(self) -> list[npt.NDArray[np.signedinteger]]:
+        # [FUNCTION DOC]
+        # Property: the per-grouping code arrays, one array per key.
         return [ping.codes for ping in self.groupings]
 
     @property
     def levels(self) -> list[Index]:
+        # [FUNCTION DOC]
+        # Property: the result index levels. For several groupings, the levels
+        # of the multi-level result index; for one grouping, a one-element
+        # list holding the result index.
         if len(self.groupings) > 1:
             # mypy doesn't know result_index must be a MultiIndex
             return list(self.result_index.levels)  # type: ignore[attr-defined]
@@ -710,10 +897,16 @@ class BaseGrouper:
 
     @property
     def names(self) -> list[Hashable]:
+        # [FUNCTION DOC]
+        # Property: the name of each grouping, in order.
         return [ping.name for ping in self.groupings]
 
     @final
     def size(self) -> Series:
+        # [FUNCTION DOC]
+        # Returns a 64-bit integer series indexed by the result index giving the
+        # row count of each group. Rows with negative ids (dropped nulls) are not
+        # counted; with zero groups the series is empty.
         """
         Compute group sizes.
         """
@@ -728,6 +921,11 @@ class BaseGrouper:
 
     @cache_readonly
     def groups(self) -> dict[Hashable, Index]:
+        # [FUNCTION DOC]
+        # Cached mapping from group label to the axis labels of its rows. One
+        # grouping delegates to that grouping. Several groupings take the
+        # result index values and, for each group id, the axis labels at the
+        # row positions found by the reverse indexer of the ids.
         """dict {group name -> group labels}"""
         if len(self.groupings) == 1:
             return self.groupings[0].groups
@@ -744,12 +942,16 @@ class BaseGrouper:
     @final
     @cache_readonly
     def is_monotonic(self) -> bool:
+        # [FUNCTION DOC]
+        # Cached: true if the group ids of rows are monotonically increasing.
         # return if my group orderings are monotonic
         return Index(self.ids, copy=False).is_monotonic_increasing
 
     @final
     @cache_readonly
     def has_dropped_na(self) -> bool:
+        # [FUNCTION DOC]
+        # Cached: true if any row has a negative group id (a dropped null key).
         """
         Whether grouper has null value(s) that are dropped.
         """
@@ -757,24 +959,53 @@ class BaseGrouper:
 
     @cache_readonly
     def codes_info(self) -> npt.NDArray[np.intp]:
+        # [FUNCTION DOC]
+        # Cached: group id of each item in the original grouped axis (same
+        # as the ids; the bin grouper overrides this to reorder).
         # return the codes of items in original grouped axis
         return self.ids
 
     @final
     @cache_readonly
     def ngroups(self) -> int:
+        # [FUNCTION DOC]
+        # Cached: the number of groups, i.e. the length of the result index.
         return len(self.result_index)
 
     @property
     def result_index(self) -> Index:
+        # [FUNCTION DOC]
+        # Property: the index of the result, one entry per group (first element
+        # of the combined result index and ids computation).
         return self.result_index_and_ids[0]
 
     @property
     def ids(self) -> npt.NDArray[np.intp]:
+        # [FUNCTION DOC]
+        # Property: for each row of the axis, the position of its group in the
+        # result index, or minus one for dropped null keys (second element of
+        # the combined computation).
         return self.result_index_and_ids[1]
 
     @cache_readonly
     def result_index_and_ids(self) -> tuple[Index, npt.NDArray[np.intp]]:
+        # [FUNCTION DOC]
+        # Cached core computation returning (result index, row ids). Each
+        # grouping's unique values form an index level (categorical groupings
+        # get all original categories). One grouping: that level, named after
+        # the grouping, with the grouping's codes as ids. Several groupings,
+        # all observed: a multi-level index built only from combinations that
+        # occur, via the observed helper. None observed (all unobserved
+        # categoricals): the full cartesian product via the unobserved helper.
+        # A mix: the observed and unobserved parts are computed separately,
+        # combined as a product with unobserved levels varying slowest by
+        # construction, levels reordered to the original order and ids combined
+        # arithmetically. If any grouping sorts, the combined index is
+        # sorted (only by levels whose sort flag is on) and ids are recoded;
+        # if none sort, ids are compressed in order of appearance and the index
+        # reordered with occurring groups first, unobserved last. When dropna
+        # is on, rows whose observed or unobserved part id is negative get id
+        # minus one.
         levels = [
             Index._with_infer(ping.uniques, copy=False) for ping in self.groupings
         ]
@@ -866,6 +1097,9 @@ class BaseGrouper:
 
     @property
     def observed_grouper(self) -> BaseGrouper:
+        # [FUNCTION DOC]
+        # Property: this grouper if every grouping is already observed-only,
+        # otherwise the cached observed-only grouper.
         if all(ping._observed for ping in self.groupings):
             return self
 
@@ -873,6 +1107,9 @@ class BaseGrouper:
 
     @cache_readonly
     def _observed_grouper(self) -> BaseGrouper:
+        # [FUNCTION DOC]
+        # HELPER: cached; a new base grouper over the same axis whose groupings
+        # are the observed-only versions, with the same sort and dropna.
         groupings = [ping.observed_grouping for ping in self.groupings]
         grouper = BaseGrouper(self.axis, groupings, sort=self._sort, dropna=self.dropna)
         return grouper
@@ -884,7 +1121,17 @@ class BaseGrouper:
         names: list[Hashable],
         sorts: list[bool],
     ) -> tuple[MultiIndex, npt.NDArray[np.intp]]:
-        consistent_sorting = all(sorts[0] == sort for sort in sorts[1:])
+        # [FUNCTION DOC]
+        # HELPER: for the result index computation. Builds the multi-level
+        # index of observed combinations. Inputs: levels, per-key codes, names
+        # and per-key sort flags. Combines codes into one id (missing keys
+        # propagate as null), compresses to occurring combinations (sorted when
+        # all flags agree and are true), and deconstructs back into level codes.
+        # Returns the multi-level index (no integrity check) and the platform
+        # integer ids per row (negative for null). If the flags disagree and
+        # the index is non-empty, the index is sorted using only the levels
+        # whose flag is true, and ids are remapped (nulls stay minus one).
+
         sort_in_compress = sorts[0] if consistent_sorting else False
         shape = tuple(len(level) for level in levels)
         group_index = get_group_index(codes, shape, sort=True, xnull=True)
@@ -923,6 +1170,11 @@ class BaseGrouper:
         codes: list[npt.NDArray[np.intp]],
         names: list[Hashable],
     ) -> tuple[MultiIndex, npt.NDArray[np.intp]]:
+        # [FUNCTION DOC]
+        # HELPER: for the result index computation. Returns the full cartesian
+        # product of the levels as a named multi-level index, and per-row ids
+        # computed from the codes against the level sizes (sorted layout, nulls
+        # propagate as null), as platform integers.
         shape = tuple(len(level) for level in levels)
         unob_ids = get_group_index(codes, shape, sort=True, xnull=True)
         unob_index = MultiIndex.from_product(levels, names=names)
@@ -931,6 +1183,11 @@ class BaseGrouper:
 
     @final
     def get_group_levels(self) -> Generator[Index]:
+        # [FUNCTION DOC]
+        # Generator of per-key result levels. One grouping yields the result
+        # index once. Several groupings yield the level values of the
+        # multi-level result index from the last level to the first, each
+        # having full length (one value per group). Only used for base groupers.
         # Note: only called from _insert_inaxis_grouper, which
         #  is only called for BaseGrouper, never for BinGrouper
         result_index = self.result_index
@@ -953,6 +1210,13 @@ class BaseGrouper:
         min_count: int = -1,
         **kwargs,
     ) -> ArrayLike:
+        # [FUNCTION DOC]
+        # HELPER: runs a compiled groupby operation. Inputs: kind (must be
+        # transform or aggregate, else an assertion error), values, how
+        # (operation name), axis, min_count (default minus one) and extra
+        # keywords. Creates the dispatcher with this grouper's dropped-null
+        # flag and calls it with the row ids and group count. Returns the result
+        # array.
         """
         Returns the values of a cython operation.
         """
@@ -973,6 +1237,15 @@ class BaseGrouper:
     def agg_series(
         self, obj: Series, func: Callable, preserve_dtype: bool = False
     ) -> ArrayLike:
+        # [FUNCTION DOC]
+        # Aggregates a series group by group with a python function. obj is
+        # the series; func takes a group series and returns a scalar-like;
+        # preserve_dtype is accepted but unused. Runs the pure-python
+        # aggregation helper and asks the series' array to cast the object
+        # array of results to its appropriate type. Returns a numpy or
+        # extension array with one entry per group.
+        # KNOWN ISSUE: preserve_dtype is documented as controlling dtype
+        # preservation but the body never reads it.
         """
         Parameters
         ----------
@@ -992,6 +1265,12 @@ class BaseGrouper:
     def _aggregate_series_pure_python(
         self, obj: Series, func: Callable
     ) -> npt.NDArray[np.object_]:
+        # [FUNCTION DOC]
+        # HELPER: for the series aggregation method. Applies func to each group
+        # (obtained from a splitter) in result order, unwraps each result with
+        # the extractor, validates only the first result (raises a value error
+        # if an aggregation returned a non-object array) and stores everything
+        # in an object array of length equal to the group count, which it returns.
         result = np.empty(self.ngroups, dtype="O")
         initialized = False
 
@@ -1014,6 +1293,15 @@ class BaseGrouper:
     def apply_groupwise(
         self, f: Callable, data: DataFrame | Series
     ) -> tuple[list, bool]:
+        # [FUNCTION DOC]
+        # Applies f to every group of data (series or frame). Each group, in
+        # result order, has its name attribute set to the group label (bypassing
+        # normal attribute setting), then f is called on it. Records whether any
+        # result is not indexed like its group (mutated flag; computed against the
+        # group's axes captured before the call). If there are no groups and f
+        # is named skew, kurt, sum or product, calls f once on an empty slice
+        # of data so the usual dtype error surfaces. Returns (list of results,
+        # mutated flag).
         mutated = False
         splitter = self._get_splitter(data)
         group_keys = self.result_index
@@ -1056,6 +1344,10 @@ class BaseGrouper:
     @final
     @cache_readonly
     def _sorted_ids(self) -> npt.NDArray[np.intp]:
+        # [FUNCTION DOC]
+        # HELPER: cached; group ids arranged in the sorting permutation order,
+        # with negative ids (dropped nulls) removed when dropna applies (the
+        # attribute defaults to true if absent, as the bin grouper lacks it).
         result = self.ids.take(self.result_ilocs)
         if getattr(self, "dropna", True):
             # BinGrouper has no dropna
@@ -1064,6 +1356,14 @@ class BaseGrouper:
 
 
 class BinGrouper(BaseGrouper):
+    # [CLASS DOC]
+    # Internal grouper for contiguous, ordered bins of the axis (used by
+    # time-based resampling). State: bins (end positions of each bin as 64-bit
+    # integers), binlabels (index of bin labels, same length as bins), and an
+    # optional indexer from a sorting grouper. Subclass of the base grouper
+    # but does not call its initializer, so axis, stored groupings, sort and
+    # dropna attributes are absent; groupings are synthesized on demand. A
+    # missing (not-a-time) first label marks leading rows that belong to no bin.
     """
     This is an internal Grouper class
 
@@ -1103,6 +1403,11 @@ class BinGrouper(BaseGrouper):
         binlabels,
         indexer=None,
     ) -> None:
+        # [FUNCTION DOC]
+        # Parameters: bins (array-like of bin end positions, converted to
+        # 64-bit integers), binlabels (labels, converted to an index) and indexer
+        # (optional sort permutation from the creating grouper, default none).
+        # Raises an assertion error if the label and bin counts differ.
         self.bins = ensure_int64(bins)
         self.binlabels = ensure_index(binlabels)
         self.indexer = indexer
@@ -1113,6 +1418,11 @@ class BinGrouper(BaseGrouper):
 
     @cache_readonly
     def groups(self):
+        # [FUNCTION DOC]
+        # Cached mapping from each bin label to the end position of its bin,
+        # skipping missing (not-a-time) labels. Kept for compatibility.
+        # KNOWN ISSUE: the docstring says the values are group labels, but the
+        # values are bin end positions (integers).
         """dict {group name -> group labels}"""
         # this is mainly for compat
         # GH 3881
@@ -1125,11 +1435,17 @@ class BinGrouper(BaseGrouper):
 
     @property
     def nkeys(self) -> int:
+        # [FUNCTION DOC]
+        # Property: always one key (hard-coded).
         # still matches len(self.groupings), but we can hard-code
         return 1
 
     @cache_readonly
     def codes_info(self) -> npt.NDArray[np.intp]:
+        # [FUNCTION DOC]
+        # Cached: the ids of items. If a sort indexer exists, the ids are
+        # reordered by a lexicographic sort keyed first on the indexer and then
+        # on the ids; otherwise the ids are returned as is.
         # return the codes of items in original grouped axis
         ids = self.ids
         if self.indexer is not None:
@@ -1138,6 +1454,12 @@ class BinGrouper(BaseGrouper):
         return ids
 
     def get_iterator(self, data: NDFrame):
+        # [FUNCTION DOC]
+        # Generator over bins of data (series or frame), slicing by position.
+        # For each bin end and label, yields (label, slice from the previous end
+        # to this end), skipping missing labels (but still advancing the start).
+        # If rows remain after the last bin end, yields them with the last bin
+        # label. Slicing is positional.
         """
         Groupby iterator
 
@@ -1159,6 +1481,10 @@ class BinGrouper(BaseGrouper):
 
     @cache_readonly
     def indices(self):
+        # [FUNCTION DOC]
+        # Cached mapping (a default dictionary of lists) from bin label to the
+        # list of row positions in that bin. Empty bins and missing labels are
+        # omitted; a position cursor advances to each non-empty bin's end.
         indices = collections.defaultdict(list)
 
         i: np.int64 | int = 0
@@ -1171,10 +1497,18 @@ class BinGrouper(BaseGrouper):
 
     @cache_readonly
     def codes(self) -> list[npt.NDArray[np.intp]]:
+        # [FUNCTION DOC]
+        # Cached: a one-element list holding the row ids.
         return [self.ids]
 
     @cache_readonly
     def result_index_and_ids(self):
+        # [FUNCTION DOC]
+        # Cached (result index, ids) pair. The result index is the bin labels,
+        # minus a leading missing label if present. Ids repeat each bin number
+        # by the bin's width (differences of bin ends from zero); when a leading
+        # missing label was removed, the first bin's rows get id minus one.
+        # Returns platform integer ids.
         result_index = self.binlabels
         if len(self.binlabels) != 0 and isna(self.binlabels[0]):
             result_index = result_index[1:]
@@ -1193,14 +1527,23 @@ class BinGrouper(BaseGrouper):
 
     @property
     def levels(self) -> list[Index]:
+        # [FUNCTION DOC]
+        # Property: a one-element list holding the bin labels.
         return [self.binlabels]
 
     @property
     def names(self) -> list[Hashable]:
+        # [FUNCTION DOC]
+        # Property: a one-element list holding the bin labels' name.
         return [self.binlabels.name]
 
     @property
     def groupings(self) -> list[grouper.Grouping]:
+        # [FUNCTION DOC]
+        # Property: builds on each access a one-element list with a grouping
+        # whose axis and key are the bin labels taken at the row ids, with the
+        # bin label values as the explicit uniques (so empty bins are kept).
+        # Not cached.
         lev = self.binlabels
         codes = self.ids
         labels = lev.take(codes)
@@ -1211,10 +1554,17 @@ class BinGrouper(BaseGrouper):
 
     @property
     def observed_grouper(self) -> BinGrouper:
+        # [FUNCTION DOC]
+        # Property: returns this grouper itself (bins are always kept).
         return self
 
 
 def _is_indexed_like(obj, axes) -> bool:
+    # [FUNCTION DOC]
+    # HELPER: for the groupwise apply. True if a function result keeps the
+    # shape of its input group: for a series result, only when the group has a
+    # single axis and the series index equals it; for a frame result, when its
+    # index equals the first axis. Any other result type gives false.
     if isinstance(obj, Series):
         if len(axes) > 1:
             return False
@@ -1230,6 +1580,12 @@ def _is_indexed_like(obj, axes) -> bool:
 
 
 class DataSplitter(Generic[NDFrameT]):
+    # [CLASS DOC]
+    # Abstract, iterable splitter that cuts a group-sorted object into one
+    # piece per group. State: the data, the group count, the group ids in
+    # sorted order, and the sorting permutation of rows. Iteration yields the
+    # pieces in group order; the data is reordered once (cached). Subclasses
+    # define how a contiguous slice is turned into a series or frame.
     def __init__(
         self,
         data: NDFrameT,
@@ -1238,6 +1594,11 @@ class DataSplitter(Generic[NDFrameT]):
         sort_idx: npt.NDArray[np.intp],
         sorted_ids: npt.NDArray[np.intp],
     ) -> None:
+        # [FUNCTION DOC]
+        # Parameters: data (object to split), ngroups (number of groups),
+        # sort_idx (keyword only; row permutation ordering rows by group) and
+        # sorted_ids (keyword only; group id of each row in that order). Stores
+        # them; no validation.
         self.data = data
         self.ngroups = ngroups
 
@@ -1245,6 +1606,11 @@ class DataSplitter(Generic[NDFrameT]):
         self._sort_idx = sort_idx
 
     def __iter__(self) -> Iterator:
+        # [FUNCTION DOC]
+        # Generator yielding one piece per group, in group order. Yields nothing
+        # when there are no groups. Otherwise computes start and end offsets of
+        # each group from the sorted ids, reorders the data once, and cuts each
+        # contiguous slice with the subclass chop method.
         if self.ngroups == 0:
             # we are inside a generator, rather than raise StopIteration
             # we merely return signal the end
@@ -1257,14 +1623,28 @@ class DataSplitter(Generic[NDFrameT]):
 
     @cache_readonly
     def _sorted_data(self) -> NDFrameT:
+        # [FUNCTION DOC]
+        # HELPER: cached; the data with rows taken in the sorting permutation
+        # order along the row axis (a reordered copy).
         return self.data.take(self._sort_idx, axis=0)
 
     def _chop(self, sdata, slice_obj: slice) -> NDFrame:
+        # [FUNCTION DOC]
+        # HELPER: abstract hook. Subclasses return the piece of the sorted data
+        # for the given slice; this base version raises the abstract-method error.
         raise AbstractMethodError(self)
 
 
 class SeriesSplitter(DataSplitter):
+    # [CLASS DOC]
+    # Splitter for series data. Subclass of the base splitter; only defines
+    # the slicing step.
     def _chop(self, sdata: Series, slice_obj: slice) -> Series:
+        # [FUNCTION DOC]
+        # HELPER: fast equivalent of positional slicing of a series. Slices
+        # the underlying manager, builds a series of the same type from it,
+        # copies the name, and propagates metadata marked as from groupby.
+        # Returns the new series.
         # fastpath equivalent to `sdata.iloc[slice_obj]`
         mgr = sdata._mgr.get_slice(slice_obj)
         ser = sdata._constructor_from_mgr(mgr, axes=mgr.axes)
@@ -1273,7 +1653,14 @@ class SeriesSplitter(DataSplitter):
 
 
 class FrameSplitter(DataSplitter):
+    # [CLASS DOC]
+    # Splitter for frame data. Subclass of the base splitter; only defines
+    # the slicing step.
     def _chop(self, sdata: DataFrame, slice_obj: slice) -> DataFrame:
+        # [FUNCTION DOC]
+        # HELPER: fast equivalent of positional row slicing of a frame. Slices
+        # the manager along its row axis, builds a frame of the same type from it
+        # and propagates metadata marked as from groupby. Returns the new frame.
         # Fastpath equivalent to:
         # return sdata.iloc[slice_obj]
         mgr = sdata._mgr.get_slice(slice_obj, axis=1)

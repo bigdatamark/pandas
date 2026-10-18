@@ -3,6 +3,20 @@ Provide user facing operators for doing the split part of the
 split-apply-combine paradigm.
 """
 
+# [MODULE DOC]
+# The "split" machinery of groupby. Public contents: the Grouper class, a
+# user-facing specification of how to group (by column key, index level or, for
+# a frequency, by time bins via a time-grouper subclass); an internal Grouping
+# class describing the grouping of a single key (codes, unique values, group
+# index, label to position mappings); and the get_grouper function, which
+# interprets user keys/levels and builds the internal base grouper made of one
+# or more Grouping objects, along with the set of column names to exclude from
+# aggregation. Private helpers decide if a value is label-like and normalize a
+# user grouper (dict, Series, list, etc.) into something usable.
+# Relationships: consumed by groupby.py and by resample (which supplies the
+# time-grouper subclass, imported lazily); builds on ops.py (base and bin
+# groupers), categorical recoding helpers and the index API.
+# No import-time side effects.
 from __future__ import annotations
 
 from typing import (
@@ -68,6 +82,15 @@ if TYPE_CHECKING:
 
 @set_module("pandas")
 class Grouper:
+    # [CLASS DOC]
+    # User-facing groupby specification. State: key (column label to group by),
+    # level (index level), freq (frequency; when set, construction returns the
+    # time-grouper subclass), sort and dropna flags, plus private slots filled
+    # during grouping: a binner, the grouper axis and the sort indexer (and a
+    # deprecated copy of it). The class attribute listing the attributes used
+    # in the textual representation is in the attributes tuple. Key methods:
+    # construction hook choosing the subclass, grouper setup helpers and a
+    # representation. A key and a level are mutually exclusive.
     """
     A Grouper allows the user to specify a groupby instruction for an object.
 
@@ -262,6 +285,12 @@ class Grouper:
     _attributes: tuple[str, ...] = ("key", "level", "freq", "sort", "dropna")
 
     def __new__(cls, *args, **kwargs):
+        # [FUNCTION DOC]
+        # Construction hook. If the keyword arguments contain a frequency that
+        # is not none, the class to instantiate is replaced by the time-grouper
+        # subclass (imported lazily from the resample module); otherwise the
+        # requested class is used. Positional arguments are ignored here.
+        # Returns an uninitialized instance of the chosen class.
         if kwargs.get("freq") is not None:
             from pandas.core.resample import TimeGrouper
 
@@ -276,6 +305,12 @@ class Grouper:
         sort: bool = False,
         dropna: bool = True,
     ) -> None:
+        # [FUNCTION DOC]
+        # Stores key (column label), level (index level name or number), freq
+        # (frequency), sort (default false) and dropna (default true) as
+        # attributes, and initializes the internal state (binner, grouper axis
+        # and sort indexers) to none. No validation here; a key together with
+        # a level is rejected later when the grouper is set up.
         self.key = key
         self.level = level
         self.freq = freq
@@ -290,6 +325,13 @@ class Grouper:
     def _get_grouper(
         self, obj: NDFrameT, validate: bool = True, observed: bool = True
     ) -> tuple[ops.BaseGrouper, NDFrameT]:
+        # [FUNCTION DOC]
+        # HELPER: used by the grouping machinery to turn this specification into
+        # an internal grouper. Calls the grouper setup step (which may sort the
+        # object) and then the module-level grouper builder with this
+        # specification's key, level, sort and dropna settings plus the given
+        # validate and observed flags. Returns the base grouper and the
+        # (possibly reordered) object. Errors propagate from those steps.
         """
         Parameters
         ----------
@@ -321,6 +363,29 @@ class Grouper:
     def _set_grouper(
         self, obj: NDFrameT, sort: bool = False, *, gpr_index: Index | None = None
     ) -> tuple[NDFrameT, Index, npt.NDArray[np.intp] | None]:
+        # [FUNCTION DOC]
+        # HELPER: resolves the grouping axis for an object and optionally
+        # sorts. Inputs: obj (series or frame, must not be none), sort (extra
+        # request to sort the axis, default false), gpr_index (a previously
+        # computed grouper axis, keyword only, default none).
+        # Raises a value error if both key and level are set, a key error if
+        # the key is not found among the object's columns, and a value error
+        # if a non-multi level is neither zero nor the index name.
+        # Side effects: on the first call, stores gpr_index as the grouper axis
+        # and copies the deprecated sort indexer into the current indexer; when
+        # sorting, stores the new sort order in the deprecated indexer attribute.
+        # The axis is chosen as: when a key is set and equals the name of the
+        # supplied grouper axis and obj is a series, the stored grouper axis
+        # (un-sorted first if a sort indexer exists) taken at obj's index;
+        # otherwise the key column as an index; with no key, the object index or
+        # the requested multi-index level values. If self or the sort argument
+        # asks for sorting and the axis is not already monotonic increasing, a
+        # stable mergesort order (missing first) is computed and both axis and
+        # object are reordered along rows.
+        # Returns (object, axis, sort indexer or none when not sorted).
+        # KNOWN ISSUE: unresolved TODOs in the body admit that the assumptions
+        # about repeated calls (the first-call-only state capture) and the
+        # missing-first ordering for datetime-likes are not understood.
         """
         given an object and the specifications, setup the internal grouper
         for this particular specification
@@ -399,6 +464,11 @@ class Grouper:
 
     @final
     def __repr__(self) -> str:
+        # [FUNCTION DOC]
+        # Returns a string made of the class name followed by parentheses
+        # containing comma separated name=repr pairs for each attribute listed in
+        # the class attributes tuple (key, level, freq, sort, dropna) whose
+        # value is not none. Note a false sort flag is still shown.
         attrs_list = (
             f"{attr_name}={getattr(self, attr_name)!r}"
             for attr_name in self._attributes
@@ -411,6 +481,17 @@ class Grouper:
 
 @final
 class Grouping:
+    # [CLASS DOC]
+    # Internal description of the grouping for one key. Not subclassable.
+    # State: the axis index being grouped, the original grouper object as
+    # passed, the processed grouping vector (array, extension array, index,
+    # series, or a base/bin grouper), level, sort, observed, dropna, an
+    # optional explicit uniques array, the object grouped, a flag saying if
+    # the key is a column of the object, and the original categories when the
+    # input was categorical. Lazily computed cached attributes: name, codes and
+    # uniques (via one combined computation), indices, groups and a
+    # copy of itself with observed forced on. Used as an element of the list
+    # of groupings of a base grouper.
     """
     Holds the grouping information for a single key
 
@@ -459,6 +540,27 @@ class Grouping:
         dropna: bool = True,
         uniques: ArrayLike | None = None,
     ) -> None:
+        # [FUNCTION DOC]
+        # Parameters: index (axis being grouped), grouper (the key: mapping,
+        # function, series, array-like, Grouper, base grouper, or none when a
+        # level is used), obj (the grouped object), level (index level name or
+        # number), sort (default true), observed (default false, only matters
+        # for categorical data), in_axis (whether the key is a column of obj,
+        # default false), dropna (default true), uniques (optional array of
+        # unique values to use, enabling empty groups).
+        # Series keys are shallow-copied. The grouper is normalized by the
+        # module converter. If a level is given the grouping vector is the
+        # index (or multi-index level) values, mapped through the grouper if
+        # one was also given. Else if the vector is a Grouper object, it builds
+        # that grouper against obj (replacing obj with the possibly reordered
+        # result), keeping a bin grouper as is or, for a base grouper, taking
+        # the first grouping's vector as a named index. Else if it is not an
+        # array-like type, it must be one dimensional (else value error) and is
+        # applied as a mapper to the index; the result must have the index's
+        # length, otherwise an assertion error is raised. Datetime-like numpy
+        # arrays are normalized via a series round trip; categorical vectors
+        # have their categories remembered and are recoded for groupby using
+        # sort and observed. Stores the result as the grouping vector.
         if isinstance(grouper, Series):
             grouper = grouper.copy(deep=False)
         self.level = level
@@ -553,18 +655,30 @@ class Grouping:
         self.grouping_vector = grouping_vector
 
     def __repr__(self) -> str:
+        # [FUNCTION DOC]
+        # Returns a short string of the form Grouping(name) using the grouping name.
         return f"Grouping({self.name})"
 
     def __iter__(self) -> Iterator:
+        # [FUNCTION DOC]
+        # Iterates over the group labels (the keys of the indices mapping).
         return iter(self.indices)
 
     @cache_readonly
     def _passed_categorical(self) -> bool:
+        # [FUNCTION DOC]
+        # HELPER: cached; true when the processed grouping vector has a
+        # categorical dtype.
         dtype = getattr(self.grouping_vector, "dtype", None)
         return isinstance(dtype, CategoricalDtype)
 
     @cache_readonly
     def name(self) -> Hashable:
+        # [FUNCTION DOC]
+        # Cached label for this grouping. Order of precedence: the index level
+        # name when a level is used; the name of the original grouper if it
+        # was an index or series; the result index name if the vector is a
+        # base grouper; the name of the vector if it is an index; else none.
         ilevel = self._ilevel
         if ilevel is not None:
             return self._index.names[ilevel]
@@ -583,6 +697,11 @@ class Grouping:
 
     @cache_readonly
     def _ilevel(self) -> int | None:
+        # [FUNCTION DOC]
+        # HELPER: cached; returns none if no level was given, an integer level
+        # as is, and otherwise the position of the level name among the index
+        # names. Raises an assertion error if a non-integer level is not
+        # among the names.
         """
         If necessary, converted index level name to index level position.
         """
@@ -598,10 +717,17 @@ class Grouping:
 
     @property
     def ngroups(self) -> int:
+        # [FUNCTION DOC]
+        # Property: the number of groups, i.e. the length of the unique values.
         return len(self.uniques)
 
     @cache_readonly
     def indices(self) -> dict[Hashable, npt.NDArray[np.intp]]:
+        # [FUNCTION DOC]
+        # Cached mapping from each group label to the integer positions of its
+        # rows. Delegates to the wrapped grouper when the vector is a base
+        # grouper; otherwise builds a categorical from the vector and uses its
+        # reverse indexer.
         # we have a list of groupers
         if isinstance(self.grouping_vector, ops.BaseGrouper):
             return self.grouping_vector.indices
@@ -611,14 +737,38 @@ class Grouping:
 
     @property
     def codes(self) -> npt.NDArray[np.signedinteger]:
+        # [FUNCTION DOC]
+        # Property: the integer group code of each row (first element of the
+        # combined codes and uniques computation); missing groups are coded minus one
+        # unless dropna is false.
         return self._codes_and_uniques[0]
 
     @property
     def uniques(self) -> ArrayLike:
+        # [FUNCTION DOC]
+        # Property: the unique group values in group-code order (second element
+        # of the combined codes and uniques computation).
         return self._codes_and_uniques[1]
 
     @cache_readonly
     def _codes_and_uniques(self) -> tuple[npt.NDArray[np.signedinteger], ArrayLike]:
+        # [FUNCTION DOC]
+        # HELPER: cached core computation behind codes and uniques; returns a
+        # pair (codes, uniques).
+        # Categorical vector: uniques are a categorical built from codes that
+        # are all categories (unobserved) or only the codes that appear (observed,
+        # sorted when sort is on, minus the missing code). If dropna is false and
+        # missing values exist, a missing group is inserted: at the end when
+        # sorting (code equal to the category count), otherwise at the position
+        # of first appearance (shifting higher codes up); missing rows get that
+        # code. Base-grouper vector: its combined codes and result index values.
+        # Explicit uniques given: codes come from a categorical of the vector
+        # over those uniques (so absent uniques make empty groups). Otherwise
+        # the vector is factorized, sorted if sort is on, and missing values
+        # get their own group only when dropna is false.
+        # KNOWN ISSUE: a comment says dropna=False is not handled for
+        # categoricals (an old GH issue reference), but the code right below
+        # does handle it, so the comment is stale.
         uniques: ArrayLike
         if self._passed_categorical:
             # we make a CategoricalIndex out of the cat grouper
@@ -684,6 +834,12 @@ class Grouping:
 
     @cache_readonly
     def groups(self) -> dict[Hashable, Index]:
+        # [FUNCTION DOC]
+        # Cached mapping from each group label to the index labels of its
+        # rows, returned as a pretty-printing dict subclass. Sorts positions by
+        # code with the group sort routine, splits them by cumulative counts and
+        # takes those positions from the axis index; labels are the uniques
+        # wrapped as an index with the grouping name.
         codes, uniques = self._codes_and_uniques
         uniques = Index._with_infer(uniques, name=self.name, copy=False)
 
@@ -697,6 +853,9 @@ class Grouping:
 
     @property
     def observed_grouping(self) -> Grouping:
+        # [FUNCTION DOC]
+        # Property: this grouping itself if it is already observed-only,
+        # otherwise the cached observed-only copy.
         if self._observed:
             return self
 
@@ -704,6 +863,10 @@ class Grouping:
 
     @cache_readonly
     def _observed_grouping(self) -> Grouping:
+        # [FUNCTION DOC]
+        # HELPER: cached; builds a new grouping from the same index, original
+        # grouper, object, level, sort, in_axis, dropna and uniques but with
+        # observed forced on.
         grouping = Grouping(
             self._index,
             self._orig_grouper,
@@ -727,6 +890,33 @@ def get_grouper(
     validate: bool = True,
     dropna: bool = True,
 ) -> tuple[ops.BaseGrouper, frozenset[Hashable], NDFrameT]:
+    # [FUNCTION DOC]
+    # Builds the internal base grouper for an object. Parameters: obj (series
+    # or frame; its index is the group axis), key (a label, array-like,
+    # function, mapping, Grouper, Grouping, base grouper, or a list of those;
+    # default none), level (index level or list of levels, default none), sort
+    # (default true), observed (categoricals, default false), validate
+    # (default true; check label/level ambiguity), dropna (default true).
+    # Level handling: for a multi-index a length-one list is unwrapped and a
+    # scalar level with no key is turned into that level's values as the key;
+    # for a plain index a length-one list is unwrapped, an empty list raises a
+    # value error (no group keys), several levels raise a value error, a
+    # string level must equal the index name and an integer must be zero or
+    # minus one (value errors otherwise), after which the whole index is the key.
+    # A Grouper key is resolved via its own setup and returns immediately, with
+    # its key (if any) as the sole exclusion; a base grouper key is returned as
+    # is with no exclusions. For a list key whose length equals the axis length
+    # and holds only plain labels none of which are columns or index names, the
+    # list is treated as one array-like key. Each key then becomes a Grouping:
+    # series that share values with an obj column count as in-axis (their name
+    # is excluded); labels that are columns are looked up (value error if
+    # the column is not one dimensional; ambiguity validated if requested) and
+    # excluded; labels that are index level references become a level; other
+    # labels raise a key error; Grouper objects with a key are excluded.
+    # Existing Grouping objects are reused. If no groupings result and obj is
+    # not empty, raises a value error (no group keys); for an empty obj a
+    # placeholder empty grouping is used.
+    # Returns (base grouper, frozenset of excluded column labels, obj).
     """
     Create and return a BaseGrouper, which is an internal
     mapping of how to create the grouper indexers.
@@ -852,6 +1042,11 @@ def get_grouper(
 
     # if the actual grouper should be obj[key]
     def is_in_axis(key) -> bool:
+        # [FUNCTION DOC]
+        # HELPER: nested in the grouper builder. Returns true if key is
+        # label-like; otherwise false for a one-dimensional object, or, for a
+        # frame, true only if the key can be located among the columns (lookup
+        # failures such as missing key, wrong type or invalid index key give false).
         if not _is_label_like(key):
             if obj.ndim == 1:
                 return False
@@ -868,6 +1063,11 @@ def get_grouper(
 
     # if the grouper is obj[name]
     def is_in_obj(gpr) -> bool:
+        # [FUNCTION DOC]
+        # HELPER: nested in the grouper builder. Returns true when gpr is a
+        # series that shares its underlying values (by reference) with the
+        # object's column of the same name. False if gpr has no name, the
+        # lookup of that name fails, or either is not a series.
         if not hasattr(gpr, "name"):
             return False
         # We check the references to determine if the
@@ -936,10 +1136,21 @@ def get_grouper(
 
 
 def _is_label_like(val) -> bool:
+    # [FUNCTION DOC]
+    # HELPER: for the grouper builder. True for strings, tuples and any
+    # non-none scalar; false otherwise.
     return isinstance(val, (str, tuple)) or (val is not None and is_scalar(val))
 
 
 def _convert_grouper(axis: Index, grouper):
+    # [FUNCTION DOC]
+    # HELPER: for Grouping construction. Normalizes a user grouper against the
+    # axis. A mapping becomes its lookup function (missing keys give none). A
+    # series is returned as its raw values, first reindexed to the axis when
+    # its index differs. A multi-index becomes its tuple values. A list, tuple,
+    # index, categorical or numpy array must have the axis length (otherwise
+    # raises a value error); lists and tuples become arrays that keep tuples
+    # intact. Anything else is returned unchanged.
     if isinstance(grouper, dict):
         return grouper.get
     elif isinstance(grouper, Series):

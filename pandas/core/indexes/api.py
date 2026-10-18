@@ -1,3 +1,14 @@
+# [MODULE DOC]
+# Aggregation point for the index classes plus helpers that combine several
+# indexes. Re-exports the base index, the concrete index classes (categorical,
+# datetime, interval, multi, period, range, timedelta), the invalid-index
+# error, the missing-timestamp sentinel, and base-module utilities for index
+# construction and name handling. Defines: combining axes of objects (union or
+# intersection), sorting an index safely, union of many indexes of mixed kinds,
+# a same-contents test, and a default range index factory.
+# Relationships: depends on the base index module and each concrete index
+# module; used by frame, series, concat and alignment code. Import-time side
+# effects: importing every index submodule listed above.
 from __future__ import annotations
 
 from typing import (
@@ -66,6 +77,17 @@ def get_objs_combined_axis(
     axis: Axis = 0,
     sort: bool | lib.NoDefault = True,
 ) -> Index:
+    # [FUNCTION DOC]
+    # Collects the label index of the given axis from every object and
+    # combines them. objs is a list of series or frames; intersect (default
+    # false) chooses intersection rather than union; axis is the axis number
+    # or name (default zero); sort (default true, or the no-default sentinel
+    # used for a deprecation) controls sorting of the result. Returns the
+    # combined index via the private combiner. Raises whatever the axis lookup
+    # raises for an invalid axis.
+    # KNOWN ISSUE: the docstring says none is returned when objects lack
+    # indexes and lists axis value "outer"; the code always returns an Index
+    # (an empty default index for no objects) and has no such axis value.
     """
     Extract combined index: return intersection or union (depending on the
     value of "intersect") of indexes on given axis, or None if all objects
@@ -93,6 +115,9 @@ def get_objs_combined_axis(
 
 
 def _get_distinct_objs(objs: list[Index]) -> list[Index]:
+    # [FUNCTION DOC]
+    # HELPER: for the index combiner. Returns a new list with duplicates
+    # removed by object identity (not equality), keeping first-seen order.
     """
     Return a list with distinct elements of "objs" (different ids).
     Preserves order.
@@ -111,6 +136,20 @@ def _get_combined_index(
     intersect: bool = False,
     sort: bool | lib.NoDefault = False,
 ) -> Index:
+    # [FUNCTION DOC]
+    # HELPER: core of the axis combiner. indexes is a list of indexes (lists
+    # are only meaningful for union); intersect picks intersection over union;
+    # sort may be true, false or the no-default sentinel. Drops
+    # identical (same object) entries first. Empty input gives an empty default
+    # range index; a single entry is returned as is; intersection is folded
+    # pairwise left to right; union uses the union helper (never sorting
+    # inside it unless the sentinel is passed through) and converts to an
+    # index. Afterwards, if sort is truthy and not the sentinel, the result is
+    # sorted with the safe sort helper. Returns an index.
+    # KNOWN ISSUE: the union call passes the sort value through only when it is
+    # the no-default sentinel and otherwise passes false, which looks inverted
+    # relative to its apparent intent; sorting is then done separately below.
+    # Index names are not handled (an unresolved TODO in the code).
     """
     Return the union or intersection of indexes.
 
@@ -149,6 +188,14 @@ def _get_combined_index(
 
 
 def safe_sort_index(index: Index) -> Index:
+    # [FUNCTION DOC]
+    # Returns an index sorted ascending, keeping dtype and name(s). An index
+    # that is already monotonic increasing is returned as is. Otherwise uses
+    # the generic safe sort; if sorting raises a type error (unorderable
+    # mixed values) the original index is returned unchanged. A result that
+    # is an Index is returned directly; an array result is rebuilt as a
+    # multi-level index (with the original level names) or as a plain index
+    # with original name and dtype. No input mutation.
     """
     Returns the sorted index
 
@@ -183,6 +230,21 @@ def safe_sort_index(index: Index) -> Index:
 
 
 def union_indexes(indexes, sort: bool | lib.NoDefault = True) -> Index:
+    # [FUNCTION DOC]
+    # Union of a sequence of indexes and/or plain lists. sort (default true)
+    # may be the no-default sentinel (treated as not sorting for lists, and
+    # as sorting when all inputs are datetime indexes).
+    # Raises an assertion error for empty input. A single entry is returned as
+    # is, except a list, which becomes an index (sorted only if sort is truthy
+    # and not the sentinel). Otherwise inputs are classified: all lists use a
+    # fast ordered unique-merge of all values, with the common dtype of any
+    # index inputs; plain indexes of identical type use common-dtype casting,
+    # first unique values then appended new values, optionally sorted, and the
+    # result is renamed to the shared name if one exists; any mix of special
+    # types is folded pairwise with the index union method. In the special
+    # case, mixing tz-aware and tz-naive datetime indexes raises a type error,
+    # and mixed time zones are cast to object dtype with sorting turned off.
+    # An unknown classification raises a value error (unreachable in practice).
     """
     Return the union of indexes.
 
@@ -282,6 +344,15 @@ def union_indexes(indexes, sort: bool | lib.NoDefault = True) -> Index:
 
 
 def _sanitize_and_check(indexes):
+    # [FUNCTION DOC]
+    # HELPER: for the union helper. Takes a sequence of indexes and/or lists
+    # and returns a pair of (possibly converted sequence, kind), where kind is
+    # list (all inputs lists), special (more than one distinct type, or no
+    # exact base index type present) or array (all exact base indexes). When
+    # lists are mixed with indexes, each list is converted to an index and the
+    # list type is ignored when classifying. No exceptions.
+    # KNOWN ISSUE: the docstring says lists mixed with indexes are sorted
+    # before conversion; the code converts them without sorting.
     """
     Verify the type of indexes and convert lists to Index.
 
@@ -320,6 +391,10 @@ def _sanitize_and_check(indexes):
 
 
 def all_indexes_same(indexes) -> bool:
+    # [FUNCTION DOC]
+    # Returns true if every index equals the first one by the index equality
+    # method. indexes is a non-empty iterable (an empty one raises a stop
+    # iteration error). Consumes one-shot iterators.
     """
     Determine if all indexes contain the same elements.
 
@@ -338,5 +413,8 @@ def all_indexes_same(indexes) -> bool:
 
 
 def default_index(n: int) -> RangeIndex:
+    # [FUNCTION DOC]
+    # Returns an unnamed range index covering zero up to n (exclusive), built
+    # through the fast internal constructor with no validation of n.
     rng = range(n)
     return RangeIndex._simple_new(rng, name=None)

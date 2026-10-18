@@ -2,6 +2,20 @@
 datetimelike delegation
 """
 
+# [MODULE DOC]
+# Implements the datetime-like accessor of Series (the dt namespace). A
+# combined accessor class acts as a factory choosing, by the Series dtype, one
+# of: datetime accessor (naive or tz-aware datetimes), timedelta accessor,
+# period accessor, or an Arrow-backed temporal accessor. All but the Arrow one
+# share a base class that converts the Series to the matching index/array,
+# delegates property and method access to it, and wraps array-like results
+# back into a Series aligned to the original index. Delegation is wired by
+# class decorators that generate forwarding attributes from the datetime-like
+# operation and method name lists of the array classes.
+# Relationships: used by the Series class to build its dt accessor; depends on
+# the accessor delegation utilities, datetime-like arrays and indexes and the
+# Arrow extension array. Import-time side effects: class decorators add many
+# attributes to the accessor classes.
 from __future__ import annotations
 
 from typing import (
@@ -54,12 +68,26 @@ if TYPE_CHECKING:
 
 
 class Properties(PandasDelegate, PandasObject, NoNewAttributesMixin):
+    # [CLASS DOC]
+    # Base class of the non-Arrow dt accessors. State: the parent Series, the
+    # original categorical Series if the data was categorical (otherwise none),
+    # and the Series name; attributes are frozen after construction. Combines
+    # the delegation base (forwarding of generated properties and methods),
+    # the common pandas object base and the no-new-attributes guard. The
+    # orig and name attributes are hidden from tab completion. Key methods
+    # fetch the underlying datetime-like values and implement the get, set and
+    # method delegation hooks.
     _hidden_attrs = PandasObject._hidden_attrs | {
         "orig",
         "name",
     }
 
     def __init__(self, data: Series, orig) -> None:
+        # [FUNCTION DOC]
+        # Takes the Series whose values are datetime-like and orig, the
+        # original categorical Series or none. Raises a type error if data is
+        # not a Series. Stores the parent, orig and the Series name, then
+        # freezes the instance against adding attributes.
         if not isinstance(data, ABCSeries):
             raise TypeError(
                 f"cannot convert an object of type {type(data)} to a datetimelike index"
@@ -71,6 +99,12 @@ class Properties(PandasDelegate, PandasObject, NoNewAttributesMixin):
         self._freeze()
 
     def _get_values(self):
+        # [FUNCTION DOC]
+        # HELPER: for the delegation hooks. Wraps the parent Series data
+        # without copying: a datetime index for naive or tz-aware datetime
+        # dtypes, a timedelta index for timedelta dtype (both carrying the
+        # Series name), or a period array for period dtype. Raises a type
+        # error for any other dtype.
         data = self._parent
         if lib.is_np_dtype(data.dtype, "M"):
             return DatetimeIndex(data, copy=False, name=self.name)
@@ -89,6 +123,14 @@ class Properties(PandasDelegate, PandasObject, NoNewAttributesMixin):
         )
 
     def _delegate_property_get(self, name: str):
+        # [FUNCTION DOC]
+        # HELPER: delegation hook for reading a generated property. Reads the
+        # named attribute from the underlying values. Non-list-like results
+        # are returned as is. Integer arrays are widened to 64-bit integers;
+        # list-likes are converted to a numpy array and wrapped in a Series with
+        # the original (categorical source) Series' index if present, else
+        # the parent's index, with the Series name, and metadata propagated
+        # from the parent. Propagates errors from the attribute lookup.
         from pandas import Series
 
         values = self._get_values()
@@ -112,12 +154,24 @@ class Properties(PandasDelegate, PandasObject, NoNewAttributesMixin):
         return Series(result, index=index, name=self.name).__finalize__(self._parent)
 
     def _delegate_property_set(self, name: str, value, *args, **kwargs) -> NoReturn:
+        # [FUNCTION DOC]
+        # HELPER: delegation hook for assigning a property. Always raises a
+        # value error saying modifications are unsupported and the original
+        # data should be changed. Arguments are ignored.
         raise ValueError(
             "modifications to a property of a datetimelike object are not supported. "
             "Change values on the original."
         )
 
     def _delegate_method(self, name: str, *args, **kwargs):
+        # [FUNCTION DOC]
+        # HELPER: delegation hook for generated methods. Looks up the named
+        # method on the underlying values and calls it with the given
+        # arguments. Non-list-like results are returned as is; list-like ones
+        # are wrapped in a Series using the parent's index and name, with
+        # metadata propagated from the parent.
+        # KNOWN ISSUE: unlike the property hook, this uses the parent index
+        # even when an original categorical Series was recorded.
         from pandas import Series
 
         values = self._get_values()
@@ -162,7 +216,19 @@ class Properties(PandasDelegate, PandasObject, NoNewAttributesMixin):
     raise_on_missing=False,
 )
 class ArrowTemporalProperties(PandasDelegate, PandasObject, NoNewAttributesMixin):
+    # [CLASS DOC]
+    # Accessor for Series backed by Arrow timestamp/duration extension arrays.
+    # Decorators generate forwarding properties and methods for the datetime
+    # and timedelta operation names, routed to prefixed temporal methods on
+    # the Arrow array (missing ones are tolerated at class creation).
+    # State: the parent Series and the original categorical Series or none
+    # (stored under the underscore-prefixed name, unlike the base accessors).
+    # Does not derive from the common accessor base class.
     def __init__(self, data: Series, orig) -> None:
+        # [FUNCTION DOC]
+        # Takes the Arrow-backed Series and orig (original categorical Series
+        # or none). Raises a type error if data is not a Series. Stores both
+        # and freezes the instance against new attributes.
         if not isinstance(data, ABCSeries):
             raise TypeError(
                 f"cannot convert an object of type {type(data)} to a datetimelike index"
@@ -173,6 +239,14 @@ class ArrowTemporalProperties(PandasDelegate, PandasObject, NoNewAttributesMixin
         self._freeze()
 
     def _delegate_property_get(self, name: str):
+        # [FUNCTION DOC]
+        # HELPER: delegation hook for reading a generated property. Looks up
+        # the prefixed temporal attribute on the parent's array; raises a
+        # not-implemented error naming the dtype if the array lacks it.
+        # Non-list-like results are returned as is; otherwise the result is
+        # wrapped in a Series of the parent's type using the original
+        # (categorical source) index if present, else the parent index, with
+        # the parent name, and metadata propagated from the parent.
         if not hasattr(self._parent.array, f"_dt_{name}"):
             raise NotImplementedError(
                 f"dt.{name} is not supported for {self._parent.dtype}"
@@ -194,6 +268,14 @@ class ArrowTemporalProperties(PandasDelegate, PandasObject, NoNewAttributesMixin
         return result
 
     def _delegate_method(self, name: str, *args, **kwargs):
+        # [FUNCTION DOC]
+        # HELPER: delegation hook for generated methods. Raises a
+        # not-implemented error naming the dtype if the parent's array lacks
+        # the prefixed temporal method. Otherwise calls it with the given
+        # arguments and always wraps the result (no list-like check) in a
+        # Series of the parent's type, with the original (categorical source)
+        # index if present else the parent index, the parent name, and
+        # metadata propagated from the parent.
         if not hasattr(self._parent.array, f"_dt_{name}"):
             raise NotImplementedError(
                 f"dt.{name} is not supported for {self._parent.dtype}"
@@ -213,6 +295,11 @@ class ArrowTemporalProperties(PandasDelegate, PandasObject, NoNewAttributesMixin
         return result
 
     def to_pytimedelta(self):
+        # [FUNCTION DOC]
+        # Emits a deprecation warning (the future-change warning category)
+        # saying a future version will return a Series of timedelta objects,
+        # then returns the Arrow array's conversion to native timedelta
+        # objects (an object-dtype numpy array).
         # GH 57463
         warnings.warn(
             f"The behavior of {type(self).__name__}.to_pytimedelta is deprecated, "
@@ -225,10 +312,19 @@ class ArrowTemporalProperties(PandasDelegate, PandasObject, NoNewAttributesMixin
         return cast(ArrowExtensionArray, self._parent.array)._dt_to_pytimedelta()
 
     def to_pydatetime(self) -> Series:
+        # [FUNCTION DOC]
+        # Returns the Arrow array's conversion of its values to native
+        # datetime objects. No arguments; no warning. The annotation says
+        # Series but whatever the array conversion returns is passed through.
         # GH#20306
         return cast(ArrowExtensionArray, self._parent.array)._dt_to_pydatetime()
 
     def isocalendar(self) -> DataFrame:
+        # [FUNCTION DOC]
+        # Returns a frame with columns year, week and day built from the
+        # Arrow array's ISO calendar struct: the struct's chunks are combined
+        # and each field is wrapped in the parent's array type. The frame
+        # gets a default index (not the Series index).
         from pandas import DataFrame
 
         result = (
@@ -246,6 +342,11 @@ class ArrowTemporalProperties(PandasDelegate, PandasObject, NoNewAttributesMixin
 
     @property
     def components(self) -> DataFrame:
+        # [FUNCTION DOC]
+        # Property returning a frame with one column each for days, hours,
+        # minutes, seconds, milliseconds, microseconds and nanoseconds, taken
+        # from the prefixed temporal attributes of the parent's array. The
+        # frame gets a default index.
         from pandas import DataFrame
 
         components_df = DataFrame(
@@ -276,6 +377,11 @@ class ArrowTemporalProperties(PandasDelegate, PandasObject, NoNewAttributesMixin
     typ="method",
 )
 class DatetimeProperties(Properties):
+    # [CLASS DOC]
+    # Accessor for naive and tz-aware datetime Series. Subclass of the base
+    # accessor; decorators forward datetime properties, methods and the unit
+    # accessors to the datetime array. Adds explicit conversion to native
+    # datetimes, an inferred frequency property and the ISO calendar frame.
     """
     Accessor object for datetimelike properties of the Series values.
 
@@ -322,6 +428,12 @@ class DatetimeProperties(Properties):
     """
 
     def to_pydatetime(self) -> Series:
+        # [FUNCTION DOC]
+        # Converts the values to native datetime objects (timezone kept,
+        # precision truncated to microseconds) and returns them as an
+        # object-dtype Series with a default index (not the original index).
+        # KNOWN ISSUE: the docstring's Returns section says a numpy array,
+        # but a Series is returned.
         """
         Return the data as a Series of :class:`datetime.datetime` objects.
 
@@ -374,6 +486,9 @@ class DatetimeProperties(Properties):
 
     @property
     def freq(self):
+        # [FUNCTION DOC]
+        # Property returning the frequency string inferred from the values by
+        # the underlying datetime index, or none if it cannot be inferred.
         """
         Tries to return a string representing a frequency generated by infer_freq.
 
@@ -399,6 +514,10 @@ class DatetimeProperties(Properties):
         return self._get_values().inferred_freq
 
     def isocalendar(self) -> DataFrame:
+        # [FUNCTION DOC]
+        # Returns a frame with year, week and day columns (nullable unsigned
+        # integers, missing for missing dates) computed by the underlying
+        # datetime index, re-indexed with the parent Series index.
         """
         Calculate year, week, and day according to the ISO 8601 standard.
 
@@ -438,6 +557,11 @@ class DatetimeProperties(Properties):
     typ="method",
 )
 class TimedeltaProperties(Properties):
+    # [CLASS DOC]
+    # Accessor for timedelta Series. Subclass of the base accessor; decorators
+    # forward timedelta properties and methods to the timedelta array. Adds
+    # the deprecated native-timedelta conversion, the components frame and an
+    # inferred frequency property.
     """
     Accessor object for datetimelike properties of the Series values.
 
@@ -462,6 +586,10 @@ class TimedeltaProperties(Properties):
     """
 
     def to_pytimedelta(self) -> np.ndarray:
+        # [FUNCTION DOC]
+        # Emits a deprecation warning (future-change category) that a future
+        # version will return a Series, then returns an object-dtype numpy
+        # array of native timedelta objects, one per element.
         """
         Return an array of native :class:`datetime.timedelta` objects.
 
@@ -509,6 +637,10 @@ class TimedeltaProperties(Properties):
 
     @property
     def components(self) -> DataFrame:
+        # [FUNCTION DOC]
+        # Property returning a frame of the timedelta components (days through
+        # nanoseconds), one row per element, indexed by the parent Series
+        # index, with metadata propagated from the parent.
         """
         Return a Dataframe of the components of the Timedeltas.
 
@@ -552,6 +684,9 @@ class TimedeltaProperties(Properties):
 
     @property
     def freq(self):
+        # [FUNCTION DOC]
+        # Property returning the frequency string inferred from the values by
+        # the underlying timedelta index, or none if it cannot be inferred.
         return self._get_values().inferred_freq
 
 
@@ -562,6 +697,10 @@ class TimedeltaProperties(Properties):
     delegate=PeriodArray, accessors=PeriodArray._datetimelike_methods, typ="method"
 )
 class PeriodProperties(Properties):
+    # [CLASS DOC]
+    # Accessor for period Series. Subclass of the base accessor; decorators
+    # forward period properties and methods to the period array. No explicit
+    # methods of its own.
     """
     Accessor object for datetimelike properties of the Series values.
 
@@ -625,6 +764,12 @@ class PeriodProperties(Properties):
 class CombinedDatetimelikeProperties(
     DatetimeProperties, TimedeltaProperties, PeriodProperties
 ):
+    # [CLASS DOC]
+    # Factory class backing the dt accessor of Series. Inherits from the
+    # datetime, timedelta and period accessors only so that the combined
+    # attribute names are visible for documentation and completion; it is
+    # never really instantiated, because the constructor hook returns an
+    # instance of the appropriate concrete accessor.
     """
     Accessor object for Series values' datetime-like, timedelta and period properties.
 
@@ -664,6 +809,16 @@ class CombinedDatetimelikeProperties(
     """
 
     def __new__(cls, data: Series):  # pyright: ignore[reportInconsistentConstructor]
+        # [FUNCTION DOC]
+        # Constructor hook that picks the concrete accessor for a Series.
+        # data must be a Series, otherwise a type error is raised. A
+        # categorical Series is unwrapped to a Series of its category dtype
+        # (same index and name, no copy) and the original is remembered. Then:
+        # Arrow timestamp or duration dtype gives the Arrow accessor; naive
+        # or tz-aware datetime dtype the datetime accessor; timedelta dtype
+        # the timedelta accessor; period dtype the period accessor. Any other
+        # dtype raises an attribute error stating that the dt accessor needs
+        # datetime-like values. Returns the new accessor instance.
         # CombinedDatetimelikeProperties isn't really instantiated. Instead
         # we need to choose which parent (datetime or timedelta) is
         # appropriate. Since we're checking the dtypes anyway, we'll just
