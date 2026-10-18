@@ -2,6 +2,25 @@
 High level interface to PyTables for reading and writing pandas data structures
 to disk
 """
+# [MODULE DOC]
+# High level interface to PyTables (HDF5) for persisting pandas objects.
+# Public contents: the to_hdf and read_hdf functions, the HDFStore class (a
+# dict-like store over an HDF5 file), and the Term alias for query expressions.
+# Internally it defines a hierarchy of storer classes (fixed format: generic,
+# series, frame, block-manager, sparse-free variants; table format: appendable
+# series, frame, multi-frame, worm-table), an index/column description layer
+# (IndexCol, DataCol, DataIndexableCol, GenericDataIndexableCol), selection and
+# iteration helpers, and many conversion helpers between pandas/numpy values and
+# PyTables-storable values.
+# Relationships: relies on the optional pytables dependency (imported lazily to
+# reduce import time through a small accessor), the expression machinery in the
+# core computation pytables module for where clauses, the concat function and
+# core array types, and the io common path helper.
+# Import-time side effects: registers two configuration options in the hdf
+# section (a boolean controlling dropping all-missing rows on table append,
+# default false, and the default write format, one of fixed, table or none).
+# Module-level state: lazily-populated cache of the tables module and a flag for
+# the PyTables file-open policy.
 
 from __future__ import annotations
 
@@ -148,6 +167,9 @@ _default_encoding = "UTF-8"
 
 
 def _ensure_encoding(encoding: str | None) -> str:
+    # [FUNCTION DOC]
+    # HELPER: returns the given encoding name, or the module default (UTF-8) when the
+    # argument is none.
     # set the encoding if we need
     if encoding is None:
         encoding = _default_encoding
@@ -156,6 +178,9 @@ def _ensure_encoding(encoding: str | None) -> str:
 
 
 def _ensure_str(name):
+    # [FUNCTION DOC]
+    # HELPER: normalizes an index or column name that may be a numpy string subtype to
+    # a plain text string; any non-text value is returned unchanged.
     """
     Ensure that an index / column name is a str (python 3); otherwise they
     may be np.string dtype. Non-string dtypes are passed through unchanged.
@@ -171,6 +196,17 @@ Term: TypeAlias = PyTablesExpr
 
 
 def _ensure_term(where, scope_level: int):
+    # [FUNCTION DOC]
+    # HELPER: normalizes a where argument of a read or query into query term objects.
+    # Input where is none, a single expression text, a list or tuple of items (text
+    # expressions are converted to terms, other items such as coordinate arrays are
+    # kept, none items dropped), or an array of coordinates (returned unchanged).
+    # Input scope_level is the number of stack frames between the user's call and
+    # this function; it is used so term evaluation can look up local variables of the
+    # caller's frame (one extra frame is added, and another for list items).
+    # Returns the converted value, or none if the result is empty or was none.
+    # # KNOWN ISSUE: the docstring mentions a frame level argument fixed to 2, but the
+    # function takes a scope level parameter and computes the level from it.
     """
     Ensure that the where is a Term or a list of Term.
 
@@ -239,6 +275,11 @@ _table_file_open_policy_is_strict = False
 
 
 def _tables():
+    # [FUNCTION DOC]
+    # HELPER: lazily imports and returns the PyTables module, caching it in module
+    # state. On the first call also records in module state whether the PyTables file
+    # open policy is strict (silently skipped if the attribute is missing in the
+    # installed version). Raises an import error if PyTables is not installed.
     global _table_mod
     global _table_file_open_policy_is_strict
     if _table_mod is None:
@@ -277,6 +318,26 @@ def to_hdf(
     errors: str = "strict",
     encoding: str = "UTF-8",
 ) -> None:
+    # [FUNCTION DOC]
+    # Writes a pandas object into an HDF5 store, opening and closing the file if a
+    # path was given.
+    # Parameters: path_or_buf is a path or an already-open store; key is the group
+    # name; value is a frame or series; mode is the file open mode used only when a
+    # path is given (default append); complevel and complib configure compression
+    # for a newly opened store; append selects appending to a table instead of
+    # replacing; format, index, min_itemsize, nan_rep, data_columns, errors and
+    # encoding are forwarded to the store write method (default format none lets the
+    # store decide, index true creates table indexes, errors is strict, encoding is
+    # UTF-8); dropna is forwarded (to append directly; to put it is also forwarded
+    # as a keyword in the code, although a comment claims it is not).
+    # Behavior: builds a local function (a lambda assigned to a name) that calls
+    # either the append method or the put method of a store with the options, then
+    # applies it to the given store, or to a freshly opened store (as a context
+    # manager, so it is closed afterwards) built from the stringified path. A store
+    # passed in by the caller is not closed.
+    # Returns nothing. Errors raised by the store propagate.
+    # # KNOWN ISSUE: the inline comment says dropna is not passed to the put method,
+    # but the code does pass it.
     """store this object, close it if we opened it"""
     if append:
         f = lambda store: store.append(
@@ -330,6 +391,29 @@ def read_hdf(
     chunksize: int | None = None,
     **kwargs,
 ):
+    # [FUNCTION DOC]
+    # Reads a pandas object from an HDF5 file or an open store, optionally filtered.
+    # Parameters: path_or_buf is a path or an open HDFStore; key is the group name
+    # (none means the sole pandas object in the file); mode is the open mode, one of
+    # read, read-write or append (default read), ignored for an open store; errors is
+    # the text encoding error handling (default strict); where is a query expression
+    # or list of them (converted using the caller's variable scope); start and stop
+    # bound the selected rows; columns restricts columns; iterator and chunksize
+    # request chunked iteration; extra keyword arguments are forwarded to the store
+    # constructor.
+    # Behavior: validates the mode; converts where; if given an open store, requires
+    # it to be open and will not close it; otherwise requires a string path that
+    # exists and opens a new store, which is closed automatically when the read
+    # completes (delegated to the iterator when iterating). When key is none it
+    # inspects the groups: there must be at least one, and every group after the
+    # first must be a metadata group of the first, otherwise a key is required. Then
+    # calls the store select method.
+    # If a value, type or lookup error occurs and the store was opened here, the store
+    # is closed (ignoring attribute errors) before re-raising.
+    # Raises: a value error for a disallowed mode, no datasets, or multiple datasets
+    # without key; an os error if a passed store is closed; a not-implemented error
+    # for non-path buffers; a file-not-found error if the path does not exist.
+    # Returns the selected object (a frame, series, or an iterator when requested).
     """
     Read from the store, close it if we opened it.
 
@@ -480,6 +564,11 @@ def read_hdf(
 
 
 def _is_metadata_of(group: Node, parent_group: Node) -> bool:
+    # [FUNCTION DOC]
+    # HELPER: for read_hdf with no key. Returns true if group is a metadata group of
+    # parent_group: it must be deeper than the parent, and walking up its ancestors
+    # there must be a node named meta whose parent is the parent group. Returns false
+    # otherwise.
     """Check if a given group is a metadata group for a given parent_group."""
     if group._v_depth <= parent_group._v_depth:
         return False
@@ -495,6 +584,20 @@ def _is_metadata_of(group: Node, parent_group: Node) -> bool:
 
 @set_module("pandas")
 class HDFStore:
+    # [CLASS DOC]
+    # Dict-like interface to an HDF5 file holding pandas objects, in either the fixed
+    # or the table format; the public store class of this module, usable as a context
+    # manager.
+    # State: the file path, open mode, the PyTables file handle (none when closed),
+    # compression level, compression library, fletcher32 flag, and the PyTables
+    # filters object built from them (created at open).
+    # Key methods: open and close, is_open property, keys, groups, walk, get, select,
+    # select_as_coordinates, select_column, select_as_multiple, put, append,
+    # append_to_multiple, remove, create_table_index, get_node, get_storer, copy,
+    # info; plus mapping-style access (get item, set item, delete item, contains,
+    # length) and attribute access to stored keys.
+    # Invariants: operations other than open require an open handle and raise a
+    # closed-file error otherwise. Mode r forbids writes.
     """
     Dict-like IO interface for storing pandas objects in PyTables.
 
@@ -572,6 +675,17 @@ class HDFStore:
         fletcher32: bool = False,
         **kwargs,
     ) -> None:
+        # [FUNCTION DOC]
+        # Creates the store and opens the file.
+        # Parameters: path is a path-like (stringified); mode defaults to append (a none
+        # value is treated as append); complevel is a compression level (zero or none
+        # disables); complib is a compression library name or none; fletcher32 adds the
+        # checksum filter; extra keyword arguments are passed to the PyTables open call.
+        # Raises a value error if a format keyword is passed, or if complib is not one of
+        # the libraries PyTables supports. Raises import error if PyTables is missing. If
+        # a compression level is given without a library, the PyTables default library is
+        # used. Opening may raise further errors from the open method (file not found for
+        # read modes, etc.).
         if "format" in kwargs:
             raise ValueError("format is not a defined argument for HDFStore")
 
@@ -597,10 +711,15 @@ class HDFStore:
         self.open(mode=mode, **kwargs)
 
     def __fspath__(self) -> str:
+        # [FUNCTION DOC]
+        # Returns the file path text so that the store is usable as a path-like object.
         return self._path
 
     @property
     def root(self):
+        # [FUNCTION DOC]
+        # Property returning the root group node of the open file. Raises a closed-file
+        # error if the store is closed.
         """return the root node"""
         self._check_if_open()
         assert self._handle is not None  # for mypy
@@ -608,18 +727,33 @@ class HDFStore:
 
     @property
     def filename(self) -> str:
+        # [FUNCTION DOC]
+        # Property returning the file path text given at construction.
         return self._path
 
     def __getitem__(self, key: str):
+        # [FUNCTION DOC]
+        # Mapping read access: returns the object stored under key, same as the get
+        # method. Raises a key error if there is no such key.
         return self.get(key)
 
     def __setitem__(self, key: str, value) -> None:
+        # [FUNCTION DOC]
+        # Mapping write access: stores value under key with default options, same as the
+        # put method (replacing existing contents).
         self.put(key, value)
 
     def __delitem__(self, key: str) -> int | None:
+        # [FUNCTION DOC]
+        # Mapping delete: removes the key (or table rows if applicable) via the remove
+        # method and returns its result.
         return self.remove(key)
 
     def __getattr__(self, name: str):
+        # [FUNCTION DOC]
+        # Attribute access fallback: if no regular attribute exists, tries to return the
+        # stored object whose key equals the attribute name. Raises an attribute error
+        # when the key is missing or the file is closed.
         """allow attribute access to get stores"""
         try:
             return self.get(name)
@@ -630,6 +764,10 @@ class HDFStore:
         )
 
     def __contains__(self, key: str) -> bool:
+        # [FUNCTION DOC]
+        # Membership test by key. Looks up the node for the key and returns true only if
+        # the key equals the node's absolute path or that path without its leading
+        # slash; otherwise false.
         """
         check for existence of this key
         can match the exact pathname or the pathnm w/o the leading '/'
@@ -642,13 +780,21 @@ class HDFStore:
         return False
 
     def __len__(self) -> int:
+        # [FUNCTION DOC]
+        # Returns the number of top-level pandas groups (the count of groups reported by
+        # the groups method).
         return len(self.groups())
 
     def __repr__(self) -> str:
+        # [FUNCTION DOC]
+        # Returns a text representation: the class, then the file path on a following
+        # line.
         pstr = pprint_thing(self._path)
         return f"{type(self)}\nFile path: {pstr}\n"
 
     def __enter__(self) -> Self:
+        # [FUNCTION DOC]
+        # Context manager entry: returns the store itself.
         return self
 
     def __exit__(
@@ -657,9 +803,22 @@ class HDFStore:
         exc_value: BaseException | None,
         traceback: TracebackType | None,
     ) -> None:
+        # [FUNCTION DOC]
+        # Context manager exit: closes the store; exception arguments are ignored and
+        # exceptions are not suppressed.
         self.close()
 
     def keys(self, include: str = "pandas") -> list[str]:
+        # [FUNCTION DOC]
+        # Lists the keys of objects in the store.
+        # Parameter include is either "pandas" (default) to list the absolute path names
+        # of the top-level pandas groups, or "native" to list the paths of all native
+        # PyTables table nodes found by walking the file from the root.
+        # Returns a list of path text values, each with a leading slash.
+        # Raises a value error for any other include value. Raises a closed-file error if
+        # the store is closed (via the groups method for pandas keys).
+        # # KNOWN ISSUE: the docstring describes the parameter as a kind and its
+        # description refers to a kind argument, but the parameter is named include.
         """
         Return a list of keys corresponding to objects stored in HDFStore.
 
@@ -708,9 +867,16 @@ class HDFStore:
         )
 
     def __iter__(self) -> Iterator[str]:
+        # [FUNCTION DOC]
+        # Iterates over the keys returned by the keys method (pandas groups).
         return iter(self.keys())
 
     def items(self) -> Iterator[tuple[str, list]]:
+        # [FUNCTION DOC]
+        # Generator yielding pairs of the absolute path text and the PyTables group node
+        # for every top-level pandas group, in the order of the groups method.
+        # # KNOWN ISSUE: the return annotation says the second member is a list, but the
+        # yielded value is a group node object.
         """
         iterate on key->group
         """
@@ -718,6 +884,21 @@ class HDFStore:
             yield g._v_pathname, g
 
     def open(self, mode: str = "a", **kwargs) -> None:
+        # [FUNCTION DOC]
+        # Opens (or re-opens) the HDF5 file.
+        # Parameters: mode is the open mode (default append); extra keyword arguments go
+        # to the PyTables open call.
+        # Behavior: if the mode differs from the stored one, switching from a writing
+        # mode (append or write) to a read mode is allowed; requesting write mode while
+        # the file is open raises a possible-data-loss error (it would truncate the file);
+        # the stored mode is updated. An already open handle is closed first. If a
+        # compression level above zero is set, builds the PyTables filters object from
+        # the level, library and checksum flag. Finally opens the file and stores the
+        # handle.
+        # Raises: possible-data-loss error as above; a value error if the PyTables open
+        # policy is strict and the file is still open; errors from PyTables on open.
+        # # KNOWN ISSUE: the strict-policy check runs after the handle was closed, so the
+        # store is never open at that point and the value error can never be raised.
         """
         Open the file in the specified mode
 
@@ -763,6 +944,9 @@ class HDFStore:
         self._handle = tables.open_file(self._path, self._mode, **kwargs)
 
     def close(self) -> None:
+        # [FUNCTION DOC]
+        # Closes the underlying PyTables file handle if there is one and clears it. Safe
+        # to call repeatedly.
         """
         Close the PyTables file handle
         """
@@ -772,6 +956,9 @@ class HDFStore:
 
     @property
     def is_open(self) -> bool:
+        # [FUNCTION DOC]
+        # Property: true if there is a handle and PyTables reports it as open, otherwise
+        # false.
         """
         return a boolean indicating whether the file is open
         """
@@ -780,6 +967,11 @@ class HDFStore:
         return bool(self._handle.isopen)
 
     def flush(self, fsync: bool = False) -> None:
+        # [FUNCTION DOC]
+        # Flushes buffered writes of the open file to disk.
+        # Parameter fsync (default false): also forces the operating system to sync the
+        # file descriptor, ignoring operating system errors. Does nothing if the store is
+        # closed. Returns nothing.
         """
         Force all buffered modifications to be written to disk.
 
@@ -802,6 +994,12 @@ class HDFStore:
                     os.fsync(self._handle.fileno())
 
     def get(self, key: str):
+        # [FUNCTION DOC]
+        # Retrieves the whole object stored under key.
+        # Looks up the node and reads it with a pickle-compatibility patch applied
+        # (so legacy offset objects can be unpickled). Raises a key error if no object
+        # exists, or a closed-file error if the store is closed. Returns the reconstructed
+        # frame or series.
         """
         Retrieve pandas object stored in file.
 
@@ -847,6 +1045,18 @@ class HDFStore:
         chunksize: int | None = None,
         auto_close: bool = False,
     ):
+        # [FUNCTION DOC]
+        # Reads the object under key, optionally filtered by a where expression.
+        # Parameters: key is the group name; where is a query expression or list of
+        # them (table format only); start and stop bound rows; columns restricts columns;
+        # iterator and chunksize return a lazy iterator instead of the object;
+        # auto_close closes the store when the read (or the iteration) finishes.
+        # Behavior: raises a key error if the key is missing; converts where using the
+        # caller's variable scope; builds the storer for the group and infers its axes;
+        # defines a local reader that reads a row range and where with the column
+        # restriction; wraps it in a table iterator over the number of rows and returns
+        # that iterator's result, which is the object itself when not iterating.
+        # Returns the object, or an iterator of chunks.
         """
         Retrieve pandas object stored in file, optionally based on where criteria.
 
@@ -917,6 +1127,10 @@ class HDFStore:
 
         # function to call on iteration
         def func(_start, _stop, _where):
+            # [FUNCTION DOC]
+            # HELPER: closure for the select method. Reads rows between the given start and
+            # stop positions that satisfy the given where selection from the storer, limited
+            # to the requested columns, and returns the resulting object.
             return s.read(start=_start, stop=_stop, where=_where, columns=columns)
 
         # create the iterator
@@ -942,6 +1156,12 @@ class HDFStore:
         start: int | None = None,
         stop: int | None = None,
     ):
+        # [FUNCTION DOC]
+        # Returns the row coordinates (positions) of rows matching a where expression, as
+        # an index.
+        # Parameters: key is the table name; where is a query expression (converted using
+        # the caller's variable scope); start and stop bound the rows searched.
+        # Raises a type error if the stored object is not in table format.
         """
         return the selection as an Index
 
@@ -974,6 +1194,14 @@ class HDFStore:
         start: int | None = None,
         stop: int | None = None,
     ):
+        # [FUNCTION DOC]
+        # Returns a single column of a table-format object, generally an indexable or
+        # data column.
+        # Parameters: key is the table name; column the column name; start and stop bound
+        # the rows.
+        # Raises a type error if the object is not a table. The table read can raise a
+        # key error if the column is not found, or a value error if the column is stored
+        # inside a combined block and cannot be extracted individually.
         """
         return a single column from the table. This is generally only useful to
         select an indexable
@@ -1019,6 +1247,22 @@ class HDFStore:
         chunksize: int | None = None,
         auto_close: bool = False,
     ):
+        # [FUNCTION DOC]
+        # Reads several tables that share the same rows and combines them into one frame,
+        # using one table (the selector) to evaluate the where condition.
+        # Parameters: keys is a table name or a list or tuple of names (a one-element
+        # list is reduced to a single name); where is a query expression; selector is the
+        # table used to evaluate where (default the first key); columns restricts the
+        # columns; start and stop bound rows; iterator, chunksize and auto_close behave
+        # as for select.
+        # Behavior: a single key delegates to select. Otherwise requires a non-empty list
+        # or tuple, fetches all storers, checks that each is a table with the same
+        # number of rows, finds the concatenation axis from the tables' non-index axis,
+        # and reads the selector rows as coordinates and the objects from every table at
+        # those coordinates, concatenated along that axis and consolidated.
+        # Raises: type error if keys is not a list or tuple, or any object is not a
+        # table; value error if keys is empty or row counts differ; key error if a
+        # storer is missing.
         """
         Retrieve pandas objects from multiple tables.
 
@@ -1102,6 +1346,11 @@ class HDFStore:
         axis = {t.non_index_axes[0][0] for t in _tbls}.pop()
 
         def func(_start, _stop, _where):
+            # [FUNCTION DOC]
+            # HELPER: closure for select-as-multiple. Reads the given row range with the
+            # given coordinates from every table, restricted to the columns, and concatenates
+            # the pieces along the chosen axis without checking index integrity, then
+            # consolidates blocks. The where argument is always coordinates here.
             # retrieve the objs, _where is always passed as a set of
             # coordinates here
             objs = [
@@ -1145,6 +1394,27 @@ class HDFStore:
         track_times: bool = True,
         dropna: bool = False,
     ) -> None:
+        # [FUNCTION DOC]
+        # Stores a frame or series under a key, replacing any existing object at that key
+        # unless appending.
+        # Parameters: key is the node name; value is the frame or series; format is fixed,
+        # table or their short forms (default taken from the default-format option, else
+        # fixed); index (default true) creates table indexes after writing (or a list of
+        # column names); append (default false) adds to an existing table; complib and
+        # complevel configure compression for tables; min_itemsize sets minimum string
+        # widths; nan_rep is the text for missing strings; data_columns lists columns to
+        # store as queryable columns (true for all); encoding (default none, UTF-8 at the
+        # storer) and errors control string encoding; track_times (default true) is passed
+        # to PyTables table creation; dropna (default false) drops all-missing rows when
+        # writing tables.
+        # Behavior: resolves and validates the format (type error if invalid) and delegates
+        # to the shared group writer. See that writer for the checks: an empty object in
+        # table format is silently not written, appending requires a table, and a
+        # compression library with fixed format raises a value error.
+        # # KNOWN ISSUE: the docstring says appending forces the table format and that the
+        # compression library is not accepted. In the code, appending with the default fixed
+        # format raises a value error (only tables can be appended), and the compression
+        # library is accepted and used for table format (only rejected for fixed format).
         """
         Store object in HDFStore.
 
@@ -1233,6 +1503,21 @@ class HDFStore:
         )
 
     def remove(self, key: str, where=None, start=None, stop=None) -> int | None:
+        # [FUNCTION DOC]
+        # Removes a whole node or rows of a table.
+        # Parameters: key is the node; where is a query expression; start and stop are
+        # row bounds. Returns the number of rows removed for a partial removal, or none
+        # when the entire node was removed.
+        # Behavior: converts where; gets the storer. A key error from that propagates.
+        # For other failures to build a storer (for example a non-pandas group): if a
+        # where clause was given, raises a value error; else removes the node and its
+        # children and returns none. If no where, start or stop is given, removes the
+        # whole group recursively. Otherwise requires table format (value error if not)
+        # and deletes the matching rows via the table delete method.
+        # # KNOWN ISSUE: if building the storer fails and the node lookup then returns no
+        # node, execution continues with the storer variable unset, which would raise an
+        # unbound variable error; this path is effectively unreachable because the
+        # storer lookup would have raised a key error first.
         """
         Remove pandas object partially by specifying the where condition
 
@@ -1307,6 +1592,24 @@ class HDFStore:
         encoding=None,
         errors: str = "strict",
     ) -> None:
+        # [FUNCTION DOC]
+        # Appends a frame or series to a table, creating it if needed.
+        # Parameters: key is the node name; value is the data; format is fixed, table or
+        # short forms (default from the default-format option, else table); axes selects
+        # the index axes (default the first axis); index (default true) creates indexes after
+        # writing; append (default true) must stay true for appending semantics; complib and
+        # complevel configure compression of a new table; columns is not supported and any
+        # value raises a type error; min_itemsize sets minimum string widths; nan_rep is the
+        # text for missing strings; chunksize is the rows per write chunk; expectedrows is a
+        # size hint for creation; dropna (default from the drop-all-missing-rows option)
+        # drops rows with all values missing; data_columns lists columns stored as
+        # queryable columns (true for all); encoding and errors control string encoding.
+        # Behavior: validates the format and delegates to the shared group writer. Does not
+        # check whether appended rows overlap existing ones. A frame whose columns or dtypes
+        # do not match the existing table is rejected by the writer's validation.
+        # # KNOWN ISSUE: the docstring says the node must already exist, but the writer
+        # creates the node when it is missing. It also says the axes and compression library
+        # parameters are not accepted, while the code passes both through and uses them.
         """
         Append to Table in file.
 
@@ -1425,6 +1728,20 @@ class HDFStore:
         dropna: bool = False,
         **kwargs,
     ) -> None:
+        # [FUNCTION DOC]
+        # Splits a frame by columns into several tables and appends each, using the
+        # selector table as the indexable one.
+        # Parameters: d is a dictionary from table name to list of columns (at most one
+        # value may be none meaning all remaining columns; this entry is replaced
+        # in the passed dictionary by the computed remaining columns, so the caller's
+        # dictionary is mutated); value is the frame; selector is a key of d naming the
+        # table whose columns become data columns (unless data_columns is given); axes
+        # must be none; dropna (default false) drops, from all tables, rows where any
+        # table has all values missing; extra keyword arguments go to the append method
+        # (a min_itemsize mapping is filtered per table).
+        # Raises a type error if axes is given; value errors if d is not a dictionary,
+        # the selector is not in d, or more than one entry is none.
+        # Side effects: appends to each table.
         """
         Append to multiple tables
 
@@ -1519,6 +1836,14 @@ class HDFStore:
         optlevel: int | None = None,
         kind: str | None = None,
     ) -> None:
+        # [FUNCTION DOC]
+        # Creates PyTables indexes on a table-format object.
+        # Parameters: key is the table name; columns is false (no indexes), true or none
+        # (all indexable columns), or a list of column names; optlevel is the PyTables
+        # optimization level (none uses the library default); kind is the index kind
+        # (none uses the library default).
+        # Raises a type error if the object is in fixed format. Returns nothing; returns
+        # silently if no storer was found.
         """
         Create a pytables index on the table.
 
@@ -1553,6 +1878,11 @@ class HDFStore:
         s.create_index(columns=columns, optlevel=optlevel, kind=kind)
 
     def groups(self) -> list:
+        # [FUNCTION DOC]
+        # Returns the list of top-level nodes that hold pandas objects: groups that
+        # carry a pandas type attribute, or have a table child, or are tables not named
+        # table, and that are not links. Raises a closed-file error if closed.
+        # Returns the list of PyTables nodes (not pandas objects).
         """
         Return a list of all the top-level nodes.
 
@@ -1596,6 +1926,17 @@ class HDFStore:
         ]
 
     def walk(self, where: str = "/") -> Iterator[tuple[str, list[str], list[str]]]:
+        # [FUNCTION DOC]
+        # Generator that walks the group hierarchy for pandas objects, similar to a file
+        # system walk.
+        # Parameter where is the starting group path (default the root).
+        # For every PyTables group under where (pre-order, children alphabetically as the
+        # underlying walker provides) that is not itself a pandas object (no pandas type
+        # attribute), yields a triple: the group's absolute path without a trailing
+        # slash, the list of names of child groups that are not pandas objects, and the
+        # list of names of children that are pandas objects. Non-group, non-pandas
+        # children are ignored.
+        # Raises a closed-file error if the store is closed.
         """
         Walk the pytables group hierarchy for pandas objects.
 
@@ -1660,6 +2001,10 @@ class HDFStore:
             yield (g._v_pathname.rstrip("/"), groups, leaves)
 
     def get_node(self, key: str) -> Node | None:
+        # [FUNCTION DOC]
+        # Returns the PyTables node at the given key (a leading slash is added if
+        # missing), or none if no such node exists. Raises a closed-file error if the
+        # store is closed.
         """return the node with the key or None if it does not exist"""
         self._check_if_open()
         if not key.startswith("/"):
@@ -1676,6 +2021,10 @@ class HDFStore:
         return node
 
     def get_storer(self, key: str) -> GenericFixed | Table:
+        # [FUNCTION DOC]
+        # Returns the storer object (the fixed or table wrapper that knows how to read and
+        # write the data) for a key, with its axes inferred from the stored metadata.
+        # Raises a key error if the key does not exist.
         """return the storer object for a key, raise if not in the file"""
         group = self.get_node(key)
         if group is None:
@@ -1696,6 +2045,23 @@ class HDFStore:
         fletcher32: bool = False,
         overwrite: bool = True,
     ) -> HDFStore:
+        # [FUNCTION DOC]
+        # Copies the selected objects of this store into another file and returns the
+        # new (still open) store.
+        # Parameters: file is the destination path; mode (default write), complib,
+        # complevel and fletcher32 configure the new store as for the constructor; keys is
+        # a key, or list or tuple of keys, to copy (default all pandas keys);
+        # propindexes (default true) re-creates, for table objects, indexes on those axes
+        # that were indexed in the source; overwrite (default true) removes existing keys
+        # in the destination before copying.
+        # Behavior: for each key reads the whole object. Table-format objects are
+        # appended to the destination (preserving data columns and encoding, with index
+        # creation set to the indexed axes or disabled); fixed-format objects are put
+        # with their encoding. When overwrite is false and a key already exists in the
+        # destination, tables get the rows appended and fixed objects replace.
+        # Raises a key error for a missing key; the source must be open.
+        # # KNOWN ISSUE: the storer-is-none check is redundant because the storer lookup
+        # raises instead of returning none.
         """
         Copy the existing store to a new file, updating in place.
 
@@ -1745,6 +2111,13 @@ class HDFStore:
         return new_store
 
     def info(self) -> str:
+        # [FUNCTION DOC]
+        # Builds and returns (does not print) a text summary of the
+        # store: the class name and file path, then one line per sorted key giving the
+        # storer's description, aligned in columns. If the store has no keys the text is
+        # the word for empty; if the file is closed, a closed notice. A key whose storer
+        # cannot be created is listed with an invalid-node message containing the error
+        # text (assertion errors propagate).
         """
         Print detailed information on the store.
 
@@ -1807,10 +2180,16 @@ class HDFStore:
     # private methods
 
     def _check_if_open(self) -> None:
+        # [FUNCTION DOC]
+        # HELPER: raises a closed-file error naming the path if the store is not open.
         if not self.is_open:
             raise ClosedFileError(f"{self._path} file is not open!")
 
     def _validate_format(self, format: str) -> str:
+        # [FUNCTION DOC]
+        # HELPER: normalizes a format name. Accepts, case-insensitively, the short or long
+        # forms for fixed and table, and returns the long form. Raises a type error for
+        # anything else (including values without a lower-case method).
         """validate / deprecate formats"""
         # validate
         try:
@@ -1828,6 +2207,23 @@ class HDFStore:
         encoding: str = "UTF-8",
         errors: str = "strict",
     ) -> GenericFixed | Table:
+        # [FUNCTION DOC]
+        # HELPER: chooses and instantiates the storer class for a group.
+        # Parameters: group is the PyTables node; format is the requested format (only
+        # consulted when the node does not yet carry type information); value is an
+        # optional frame or series being written (must be one of those or none, else type
+        # error); encoding and errors are passed to the storer.
+        # Behavior: reads the pandas type and table type attributes of the group. If no
+        # pandas type: with no value, a node that is or has a table is treated as a
+        # generic frame table, otherwise raises a type error; with a value, the type is
+        # series or frame, with a table suffix when the format is table. For non-table
+        # types the class comes from a map of series and frame to the fixed storers (type
+        # error if unknown). For table types, if the table type attribute is missing and a
+        # value is given, it is chosen from the value being a series or frame and
+        # whether the index is single-level (appendable) or multi-level (appendable
+        # multi). The class comes from a map of table kinds (generic, appendable
+        # series, multi series, frame, multi frame, worm) and a missing entry raises a
+        # type error. Returns the new storer instance.
         """return a suitable class to operate"""
         cls: type[GenericFixed | Table]
 
@@ -1932,6 +2328,23 @@ class HDFStore:
         errors: str = "strict",
         track_times: bool = True,
     ) -> None:
+        # [FUNCTION DOC]
+        # HELPER: shared implementation of put and append: writes value under key.
+        # Parameters: key and value; format already validated (fixed or table); axes,
+        # complib, complevel, fletcher32, min_itemsize, chunksize, expectedrows, dropna,
+        # nan_rep, data_columns, track_times are passed to the storer write method;
+        # append says whether to add to an existing table; index is true, false or a list
+        # of column names for index creation after writing; encoding and errors are for
+        # string handling.
+        # Behavior: if the value reports empty and the format is table or append is set,
+        # returns without writing anything. Otherwise finds or creates the group (an
+        # existing group is deleted first unless appending), creates the storer for the
+        # value and format, and when appending requires a table storer (and disallows a
+        # fixed-format request on an existing node) else raises a value error; writes the
+        # object info for a new storer; raises a value error if compression library was
+        # specified for a non-table storer; calls the storer write; and for table storers
+        # with truthy index, creates the indexes for the given columns.
+        # Raises value errors as above. Side effects: modifies the file.
         # we don't want to store a table node at all if our object is 0-len
         # as there are not dtypes
         if getattr(value, "empty", None) and (format == "table" or append):
@@ -1974,11 +2387,19 @@ class HDFStore:
             s.create_index(columns=index)
 
     def _read_group(self, group: Node):
+        # [FUNCTION DOC]
+        # HELPER: reads an entire stored object from a group by creating its storer,
+        # inferring axes and reading everything. Returns the object.
         s = self._create_storer(group)
         s.infer_axes()
         return s.read()
 
     def _identify_group(self, key: str, append: bool) -> Node:
+        # [FUNCTION DOC]
+        # HELPER: returns the group for a key. If the node exists and append is false the
+        # node is removed recursively and re-created; if it does not exist it is created
+        # along with missing parent groups. Returns the (possibly new) group node.
+        # Side effect: removes existing data when not appending.
         """Identify HDF5 group based on key, delete/create group if needed."""
         group = self.get_node(key)
 
@@ -1997,6 +2418,11 @@ class HDFStore:
         return group
 
     def _create_nodes_and_group(self, key: str) -> Node:
+        # [FUNCTION DOC]
+        # HELPER: creates, one level at a time, any missing groups along a slash-separated
+        # key and returns the final group node. Empty path parts are skipped; existing
+        # groups are reused. Returns the last visited node (a group), not created again
+        # if it already existed.
         """Create nodes from key and return group name."""
         # assertion for mypy
         assert self._handle is not None
@@ -2019,6 +2445,16 @@ class HDFStore:
 
 
 class TableIterator:
+    # [CLASS DOC]
+    # Lazy-result wrapper used by select methods. Depending on the arguments, getting
+    # the result either performs a single read immediately or returns this object as
+    # an iterator of chunks.
+    # State: the owning store and storer, the read function (taking start, stop and
+    # where or coordinates), the where selection, total rows, start and stop bounds
+    # (defaulted for tables), the chunk size (none when not iterating; when
+    # iteration is requested without a size the default is one hundred thousand rows),
+    # the coordinates list (set when iterating), and the auto-close flag.
+    # Key methods: get_result, iteration, close.
     """
     Define the iteration interface on a table
 
@@ -2055,6 +2491,12 @@ class TableIterator:
         chunksize: int | None = None,
         auto_close: bool = False,
     ) -> None:
+        # [FUNCTION DOC]
+        # Stores the arguments. For table storers, normalizes the bounds: a missing row
+        # count becomes zero, start defaults to zero, stop defaults to the row count and is
+        # capped by it. Sets the chunk size to an integer: the given size, or the default
+        # of one hundred thousand rows when iterator is true without a size; none when
+        # neither iterator nor a chunk size is requested. The coordinates start out unset.
         self.store = store
         self.s = s
         self.func = func
@@ -2085,6 +2527,14 @@ class TableIterator:
         self.auto_close = auto_close
 
     def __iter__(self) -> Iterator:
+        # [FUNCTION DOC]
+        # Generator over chunks. Requires that get_result has been called (value error
+        # otherwise because the coordinates are unset). Walks the stored coordinates from
+        # start to stop in steps of the chunk size, calling the read function with the
+        # coordinate slice for each chunk and yielding non-empty results (empty or none
+        # chunks are skipped). When exhausted, closes the store if auto-close was set.
+        # Note that closing happens only after complete consumption, so a second
+        # iteration after an auto-closing run fails.
         # iterate
         current = self.start
         if self.coordinates is None:
@@ -2101,10 +2551,22 @@ class TableIterator:
         self.close()
 
     def close(self) -> None:
+        # [FUNCTION DOC]
+        # Closes the store if auto-close is enabled; otherwise does nothing.
         if self.auto_close:
             self.store.close()
 
     def get_result(self, coordinates: bool = False):
+        # [FUNCTION DOC]
+        # Produces the result of the selection.
+        # Parameter coordinates (default false): if true, evaluates where into row
+        # coordinates first (needed for multi-table reads).
+        # Behavior: if a chunk size is set, requires a table storer (type error
+        # otherwise), computes the coordinates of rows matching where over the whole table,
+        # stores them, and returns this iterator object without closing. Otherwise
+        # optionally converts where to coordinates over the start/stop range (type error
+        # if not a table), calls the read function once for the start and stop bounds,
+        # closes the store if auto-close, and returns the single result object.
         #  return the actual iterator
         if self.chunksize is not None:
             if not isinstance(self.s, Table):
@@ -2131,6 +2593,20 @@ class TableIterator:
 
 
 class IndexCol:
+    # [CLASS DOC]
+    # Description of one indexable axis (index) column of a table-format object:
+    # where its values, type and metadata are kept, and how to convert it to and from
+    # the stored form.
+    # State: converted values array, the kind text (such as string, integer,
+    # datetime64, period, and so on), the PyTables column type, the name and the
+    # column name in the table (defaults to the name), the axis number, the position in
+    # the table, optional frequency, time zone, index name, categorical ordering flag,
+    # the owning table, and the metadata and meta kind. Class attributes mark it as
+    # indexable and as a data-indexable column; the info fields persisted in table
+    # attributes are frequency, time zone and index name.
+    # Subclasses: GenericIndexCol and DataCol (itself the base of the indexable data
+    # column classes).
+    # Equality compares name, column name, axis and position only.
     """
     an index column description class
 
@@ -2165,6 +2641,11 @@ class IndexCol:
         meta=None,
         metadata=None,
     ) -> None:
+        # [FUNCTION DOC]
+        # Stores the arguments as attributes. The name is required to be text (value error
+        # otherwise); the column name defaults to the name. If a position is given, sets
+        # the position on the column type too. Parameters beyond the name are all optional
+        # and default to none.
         if not isinstance(name, str):
             raise ValueError("`name` must be a str.")
 
@@ -2193,20 +2674,32 @@ class IndexCol:
 
     @property
     def itemsize(self) -> int:
+        # [FUNCTION DOC]
+        # Property: the byte size of one element of the column type (assumes the type was
+        # set).
         # Assumes self.typ has already been initialized
         return self.typ.itemsize
 
     @property
     def kind_attr(self) -> str:
+        # [FUNCTION DOC]
+        # Property: name of the table attribute holding the kind of this column: the name
+        # followed by the kind suffix.
         return f"{self.name}_kind"
 
     def set_pos(self, pos: int) -> None:
+        # [FUNCTION DOC]
+        # Sets the column position and, if a column type exists, also sets the position on
+        # that type.
         """set the position of this column in the Table"""
         self.pos = pos
         if pos is not None and self.typ is not None:
             self.typ._v_pos = pos
 
     def __repr__(self) -> str:
+        # [FUNCTION DOC]
+        # Text representation: comma-separated name, column name, axis, position and kind,
+        # each formatted as a label arrow value.
         temp = tuple(
             map(pprint_thing, (self.name, self.cname, self.axis, self.pos, self.kind))
         )
@@ -2220,6 +2713,10 @@ class IndexCol:
         )
 
     def __eq__(self, other: object) -> bool:
+        # [FUNCTION DOC]
+        # Equality: true if the other object has the same name, column name, axis and
+        # position (missing attributes compare as none). Because equality is defined
+        # without a hash, instances are unhashable.
         """compare 2 col items"""
         return all(
             getattr(self, a, None) == getattr(other, a, None)
@@ -2227,10 +2724,15 @@ class IndexCol:
         )
 
     def __ne__(self, other) -> bool:
+        # [FUNCTION DOC]
+        # Inequality: the negation of equality.
         return not self.__eq__(other)
 
     @property
     def is_indexed(self) -> bool:
+        # [FUNCTION DOC]
+        # Property: true if the table column is indexed by PyTables. Returns false if the
+        # table is not yet set or has no columns attribute.
         """return whether I am an indexed column"""
         if not hasattr(self.table, "cols"):
             # e.g. if infer hasn't been called yet, self.table will be None.
@@ -2240,6 +2742,24 @@ class IndexCol:
     def convert(
         self, values: np.ndarray, nan_rep, encoding: str, errors: str
     ) -> tuple[np.ndarray, np.ndarray] | tuple[Index, Index]:
+        # [FUNCTION DOC]
+        # Converts the raw stored values of this index column into a pandas Index.
+        # Parameters: values is a numpy array (asserted), possibly a record array from
+        # which this column's field is copied; nan_rep and encoding/errors drive string
+        # decoding via the shared conversion helper using the column kind. Note nan_rep
+        # is accepted but not used here.
+        # Behavior: builds keyword arguments with the index name and the frequency if set.
+        # Chooses a datetime index when values are datetime64 or timezone-aware, a period
+        # index built from integer ordinals when the values are 64-bit integers and a
+        # frequency is known, else the generic index. If constructing raises a unicode
+        # encode error caused by surrogates when errors is surrogatepass, the string dtype
+        # option is on and PyArrow is installed, retries with a python-storage string
+        # dtype with NaN missing value; other encode errors propagate. If construction
+        # raises a value error, retries with the frequency cleared. Finally, for a
+        # datetime index with a stored time zone, localizes the values as UTC and converts
+        # to that zone.
+        # Returns a pair holding the same Index object twice (once as index, once as
+        # values).
         """
         Convert the data from this selection to the appropriate pandas type.
         """
@@ -2305,31 +2825,50 @@ class IndexCol:
         return final_pd_index, final_pd_index
 
     def take_data(self):
+        # [FUNCTION DOC]
+        # Returns the stored values array of this column.
         """return the values"""
         return self.values
 
     @property
     def attrs(self):
+        # [FUNCTION DOC]
+        # Property: the attribute set of the owning table.
         return self.table._v_attrs
 
     @property
     def description(self):
+        # [FUNCTION DOC]
+        # Property: the column description structure of the owning table.
         return self.table.description
 
     @property
     def col(self):
+        # [FUNCTION DOC]
+        # Property: this column's description entry from the table, or none if absent.
         """return my current col description"""
         return getattr(self.description, self.cname, None)
 
     @property
     def cvalues(self):
+        # [FUNCTION DOC]
+        # Property: the values to hand to the compiled layer; for this class simply the
+        # values array.
         """return my cython values"""
         return self.values
 
     def __iter__(self) -> Iterator:
+        # [FUNCTION DOC]
+        # Iterates over the values array.
         return iter(self.values)
 
     def maybe_set_size(self, min_itemsize=None) -> None:
+        # [FUNCTION DOC]
+        # Possibly enlarges the column type for string columns. Only acts when the kind is
+        # string. Parameter min_itemsize is an integer, or a dictionary keyed by column
+        # name (the entry for this column is used), or none. If the value is not none and
+        # bigger than the current size, replaces the type with a string column type of
+        # that size at the same position.
         """
         maybe set a string col itemsize:
             min_itemsize can be an integer or a dict with this columns name
@@ -2343,9 +2882,17 @@ class IndexCol:
                 self.typ = _tables().StringCol(itemsize=min_itemsize, pos=self.pos)
 
     def validate_names(self) -> None:
+        # [FUNCTION DOC]
+        # Placeholder for subclasses that need to validate names; does nothing here.
         pass
 
     def validate_and_set(self, handler: AppendableTable, append: bool) -> None:
+        # [FUNCTION DOC]
+        # Binds this column to the handler's table and runs, in order, the column
+        # validation (string size), attribute validation (kind compatibility on append),
+        # metadata validation and writing, and then writes the column attributes.
+        # Parameters: handler is the appendable table being written; append says whether
+        # appending to existing data.
         self.table = handler.table
         self.validate_col()
         self.validate_attr(append)
@@ -2354,6 +2901,13 @@ class IndexCol:
         self.set_attr()
 
     def validate_col(self, itemsize=None):
+        # [FUNCTION DOC]
+        # HELPER: validates string columns against the existing table column.
+        # Parameter itemsize is the width needed (defaults to this column's width). If the
+        # kind is string and the table already has this column and the existing column
+        # is narrower than needed, raises a value error advising the use of the minimum
+        # size option. Otherwise returns the existing column width for string columns,
+        # and none if not applicable.
         """validate this column: return the compared against itemsize"""
         # validate this column for string truncation (or reset to the max size)
         if self.kind == "string":
@@ -2373,6 +2927,10 @@ class IndexCol:
         return None
 
     def validate_attr(self, append: bool) -> None:
+        # [FUNCTION DOC]
+        # HELPER: when appending, checks that a previously stored kind attribute for this
+        # column equals the current kind; raises a type error on mismatch. Does nothing
+        # when not appending or no kind was stored.
         # check for backwards incompatibility
         if append:
             existing_kind = getattr(self.attrs, self.kind_attr, None)
@@ -2382,6 +2940,18 @@ class IndexCol:
                 )
 
     def update_info(self, info) -> None:
+        # [FUNCTION DOC]
+        # Records this column's metadata (the info fields listed on the class: for index
+        # columns the frequency, time zone and index name) into the shared info mapping
+        # that is stored on the table, detecting conflicts with what is already stored.
+        # Parameter info is a dictionary keyed by column name whose values are
+        # dictionaries of field to value; an entry for this column is created if absent.
+        # For each field: if the stored value exists, differs from the current one, and
+        # the current one is not none, then for frequency or index name emits an
+        # attribute-conflict warning and resets both the stored value and this column's
+        # attribute to none; for other fields raises a value error. Otherwise, if either
+        # side is not none, stores the current value.
+        # Side effects: mutates info, may mutate this column, may warn.
         """
         set/update the info for this indexable with the key/value
         if there is a conflict raise/warn as needed
@@ -2413,16 +2983,28 @@ class IndexCol:
                 idx[key] = value
 
     def set_info(self, info) -> None:
+        # [FUNCTION DOC]
+        # Restores this column's state from the info mapping: if there is an entry for
+        # this column's name, copies all its fields onto the instance attributes. Does
+        # nothing if there is no entry.
         """set my state from the passed info"""
         idx = info.get(self.name)
         if idx is not None:
             self.__dict__.update(idx)
 
     def set_attr(self) -> None:
+        # [FUNCTION DOC]
+        # Writes the kind of this column into the table attributes under the kind
+        # attribute name.
         """set the kind for this column"""
         setattr(self.attrs, self.kind_attr, self.kind)
 
     def validate_metadata(self, handler: AppendableTable) -> None:
+        # [FUNCTION DOC]
+        # For categorical columns (meta kind category), checks that the categories to
+        # append equal those already stored on the handler's table (compared with missing
+        # values treated strictly and dtypes assumed equal). Raises a value error if both
+        # exist and differ. Does nothing for other kinds.
         """validate that kind=category does not change the categories"""
         if self.meta == "category":
             new_metadata = self.metadata
@@ -2440,21 +3022,35 @@ class IndexCol:
                 )
 
     def write_metadata(self, handler: AppendableTable) -> None:
+        # [FUNCTION DOC]
+        # Writes this column's metadata (such as categorical categories) through the
+        # handler, under the column name, if any metadata exists.
         """set the meta data"""
         if self.metadata is not None:
             handler.write_metadata(self.cname, self.metadata)
 
 
 class GenericIndexCol(IndexCol):
+    # [CLASS DOC]
+    # Subclass of the index column for an index that is not stored in the table data;
+    # it is regenerated on read as a default integer range index of the same length.
+    # It is never indexed and writes no attributes.
     """an index which is not represented in the data of the table"""
 
     @property
     def is_indexed(self) -> bool:
+        # [FUNCTION DOC]
+        # Property: always false.
         return False
 
     def convert(
         self, values: np.ndarray, nan_rep, encoding: str, errors: str
     ) -> tuple[Index, Index]:
+        # [FUNCTION DOC]
+        # Builds a default range index with the same length as the values array and
+        # returns it twice (as index and as values). The other arguments (missing
+        # representation, encoding, errors) are unused. The values argument must be a
+        # numpy array (asserted).
         """
         Convert the data from this selection to the appropriate pandas type.
 
@@ -2471,10 +3067,26 @@ class GenericIndexCol(IndexCol):
         return index, index
 
     def set_attr(self) -> None:
+        # [FUNCTION DOC]
+        # Overrides the attribute writer to do nothing, since nothing about a generic
+        # index is stored.
         pass
 
 
 class DataCol(IndexCol):
+    # [CLASS DOC]
+    # Subclass of the index column describing a data-holding column (or block of
+    # columns) of a table; by definition not an indexable axis. The info fields it
+    # persists are time zone and the ordering flag of categoricals.
+    # State beyond the index column: the dtype name (text), and the data array
+    # (the values to be stored, or after reading the converted result). Inherited
+    # fields are reused with a different meaning: the values field holds the list of
+    # column labels in the block; the kind attribute name stores those labels on the
+    # table.
+    # Key behavior: setting data computes the stored dtype and kind; conversion
+    # reconstructs pandas arrays from the stored form; class methods create the
+    # PyTables column type (atom) for a given kind. Equality compares name, column
+    # name, dtype and position.
     """
     a data holding column, by definition this is not indexable
 
@@ -2507,6 +3119,10 @@ class DataCol(IndexCol):
         dtype: DtypeArg | None = None,
         data=None,
     ) -> None:
+        # [FUNCTION DOC]
+        # Stores the arguments by delegating the shared ones to the parent constructor
+        # (name, values, kind, type, column name, position, time zone, ordered flag, table,
+        # meta kind and metadata) and storing the dtype name and the data array.
         super().__init__(
             name=name,
             values=values,
@@ -2525,13 +3141,22 @@ class DataCol(IndexCol):
 
     @property
     def dtype_attr(self) -> str:
+        # [FUNCTION DOC]
+        # Property: name of the table attribute that stores this column's dtype name (the
+        # column name followed by the dtype suffix).
         return f"{self.name}_dtype"
 
     @property
     def meta_attr(self) -> str:
+        # [FUNCTION DOC]
+        # Property: name of the table attribute that stores the meta kind (the column
+        # name followed by the meta suffix).
         return f"{self.name}_meta"
 
     def __repr__(self) -> str:
+        # [FUNCTION DOC]
+        # Text representation: comma-separated name, column name, dtype, kind and data
+        # shape as label arrow value pairs.
         temp = tuple(
             map(
                 pprint_thing, (self.name, self.cname, self.dtype, self.kind, self.shape)
@@ -2547,6 +3172,10 @@ class DataCol(IndexCol):
         )
 
     def __eq__(self, other: object) -> bool:
+        # [FUNCTION DOC]
+        # Equality: true if the other object has the same name, column name, dtype and
+        # position (missing attributes compare as none). Defined without a hash, so
+        # instances are unhashable.
         """compare 2 col items"""
         return all(
             getattr(self, a, None) == getattr(other, a, None)
@@ -2554,6 +3183,11 @@ class DataCol(IndexCol):
         )
 
     def set_data(self, data: ArrayLike) -> None:
+        # [FUNCTION DOC]
+        # Sets the data to be stored. The argument must not be none, and the column must
+        # not already have a dtype (both asserted). Converts the array to its storable
+        # form together with a dtype name via the shared helper, then sets data, dtype
+        # name and the kind derived from the dtype name.
         assert data is not None
         assert self.dtype is None
 
@@ -2564,11 +3198,23 @@ class DataCol(IndexCol):
         self.kind = _dtype_to_kind(dtype_name)
 
     def take_data(self):
+        # [FUNCTION DOC]
+        # Returns the data array (rather than the values) of this column.
         """return the data"""
         return self.data
 
     @classmethod
     def _get_atom(cls, values: ArrayLike) -> Col:
+        # [FUNCTION DOC]
+        # HELPER: builds the PyTables column type description for an array of values.
+        # Class method; input values is a numpy or extension array (one-dimensional arrays
+        # are treated as a block of shape one by size). Chooses by the array type:
+        # categoricals use an integer type matching the codes dtype; datetimes and
+        # timedeltas use the 64-bit integer type; complex uses a complex column of the
+        # item size; string dtypes use a string column of the item size; everything else
+        # uses the numeric type named after the dtype. The shape of each column type is
+        # the first dimension of the block shape (number of items).
+        # Returns the column type object.
         """
         Get an appropriately typed and shaped pytables.Col object for values.
         """
@@ -2601,10 +3247,20 @@ class DataCol(IndexCol):
 
     @classmethod
     def get_atom_string(cls, shape, itemsize):
+        # [FUNCTION DOC]
+        # HELPER: class method creating a string column type of the given item size with
+        # shape given by the first dimension of the block shape. Overridden in the
+        # indexable subclass to omit the shape.
         return _tables().StringCol(itemsize=itemsize, shape=shape[0])
 
     @classmethod
     def get_atom_coltype(cls, kind: str) -> type[Col]:
+        # [FUNCTION DOC]
+        # HELPER: class method mapping a dtype kind text to a PyTables column class from
+        # the lazily imported tables module. Unsigned integer kinds map to the matching
+        # unsigned column of that bit width; period kinds map to the 64-bit integer
+        # column; every other kind maps to the column class named by capitalizing the kind
+        # text. A kind with no such class raises an attribute error.
         """return the PyTables column class for this column"""
         if kind.startswith("uint"):
             k4 = kind[4:]
@@ -2620,26 +3276,46 @@ class DataCol(IndexCol):
 
     @classmethod
     def get_atom_data(cls, shape, kind: str) -> Col:
+        # [FUNCTION DOC]
+        # HELPER: class method creating a numeric (non-string) column type for the kind,
+        # with shape given by the first dimension of the block shape. Overridden in the
+        # indexable subclass to omit the shape.
         return cls.get_atom_coltype(kind=kind)(shape=shape[0])
 
     @classmethod
     def get_atom_datetime64(cls, shape):
+        # [FUNCTION DOC]
+        # HELPER: class method returning a 64-bit integer column type with the first
+        # dimension of the shape, used to store datetime values as integers.
         return _tables().Int64Col(shape=shape[0])
 
     @classmethod
     def get_atom_timedelta64(cls, shape):
+        # [FUNCTION DOC]
+        # HELPER: class method returning a 64-bit integer column type with the first
+        # dimension of the shape, used to store timedelta values as integers.
         return _tables().Int64Col(shape=shape[0])
 
     @property
     def shape(self):
+        # [FUNCTION DOC]
+        # Property: the shape of the data array, or none if there is no data or it has no
+        # shape.
         return getattr(self.data, "shape", None)
 
     @property
     def cvalues(self):
+        # [FUNCTION DOC]
+        # Property: the data array (instead of the values) handed to the compiled layer.
         """return my cython values"""
         return self.data
 
     def validate_attr(self, append) -> None:
+        # [FUNCTION DOC]
+        # When appending, checks the new block against the stored one. Raises a value
+        # error if the stored column labels (kept under the kind attribute) differ from
+        # this block's labels in value or order, or if the stored dtype differs from this
+        # dtype. Does nothing when not appending or when nothing was stored.
         """validate that we have the same order as the existing & same dtype"""
         if append:
             existing_fields = getattr(self.attrs, self.kind_attr, None)
@@ -2653,6 +3329,25 @@ class DataCol(IndexCol):
                 )
 
     def convert(self, values: np.ndarray, nan_rep, encoding: str, errors: str):
+        # [FUNCTION DOC]
+        # Converts the raw stored array of this data block back to pandas form.
+        # Parameters: values is a numpy array (asserted), possibly a record array from
+        # which this column's field is taken; nan_rep is the string used for missing text
+        # values; encoding and errors control decoding of string data.
+        # Behavior: if no dtype is known, infers dtype and kind from the values; else uses
+        # the stored dtype and kind. Then reverses the storage conversion by dtype:
+        # datetime types are re-interpreted (with an old unitless name meaning nanoseconds)
+        # and localized to the stored time zone; timedelta types are viewed with their unit
+        # (unitless old storage means nanoseconds); a date dtype is rebuilt as an object
+        # array of dates, first assuming ordinals and falling back to timestamps on a
+        # value error; categorical blocks are rebuilt from the integer codes and the stored
+        # categories (a missing-value category is stripped and codes shifted, and a
+        # categorical with no categories gets an empty float category list), with the
+        # stored ordering flag and without validation; all other types are cast to the
+        # stored dtype, falling back to object on a type error. Finally, for string kind,
+        # the array is decoded and the missing representation converted back to missing
+        # values.
+        # Returns a pair: the column labels (the values field) and the converted array.
         """
         Convert the data from this selection to the appropriate pandas type.
 
@@ -2759,6 +3454,9 @@ class DataCol(IndexCol):
         return self.values, converted
 
     def set_attr(self) -> None:
+        # [FUNCTION DOC]
+        # Writes the column labels (under the kind attribute name), the meta kind and the
+        # dtype name into the table attributes. The dtype must have been set (asserted).
         """set the data for this column"""
         setattr(self.attrs, self.kind_attr, self.values)
         setattr(self.attrs, self.meta_attr, self.meta)
@@ -2767,37 +3465,69 @@ class DataCol(IndexCol):
 
 
 class DataIndexableCol(DataCol):
+    # [CLASS DOC]
+    # Subclass of the data column for a data column that can itself be indexed and
+    # queried (a user-selected data column, stored as its own table column). Differs
+    # from the plain data column in that the column types are created without the
+    # block shape (one value per row) and labels must be strings.
     """represent a data column that can be indexed"""
 
     is_data_indexable = True
 
     def validate_names(self) -> None:
+        # [FUNCTION DOC]
+        # Checks that the column labels are strings; raises a value error if they are not
+        # (for example integers).
         if not is_string_dtype(Index(self.values).dtype):
             # TODO: should the message here be more specifically non-str?
             raise ValueError("cannot have non-object label DataIndexableCol")
 
     @classmethod
     def get_atom_string(cls, shape, itemsize):
+        # [FUNCTION DOC]
+        # HELPER: class method returning a string column type of the given item size
+        # without a shape.
         return _tables().StringCol(itemsize=itemsize)
 
     @classmethod
     def get_atom_data(cls, shape, kind: str) -> Col:
+        # [FUNCTION DOC]
+        # HELPER: class method returning a column type for the kind without a shape.
         return cls.get_atom_coltype(kind=kind)()
 
     @classmethod
     def get_atom_datetime64(cls, shape):
+        # [FUNCTION DOC]
+        # HELPER: class method returning a 64-bit integer column type without a shape.
         return _tables().Int64Col()
 
     @classmethod
     def get_atom_timedelta64(cls, shape):
+        # [FUNCTION DOC]
+        # HELPER: class method returning a 64-bit integer column type without a shape.
         return _tables().Int64Col()
 
 
 class GenericDataIndexableCol(DataIndexableCol):
+    # [CLASS DOC]
+    # Subclass of the indexable data column used for data columns when reading a
+    # generic PyTables table that was not written by pandas. No extra state or behavior.
     """represent a generic pytables data column"""
 
 
 class Fixed:
+    # [CLASS DOC]
+    # Abstract base class for a storer: the object that knows how to read and write
+    # one pandas object (series or frame) located at a group node of the file.
+    # State: the owning store, the group node, the string encoding (default UTF-8) and
+    # the error handling mode. Class attributes: the pandas kind text (set by
+    # subclasses), the format type (fixed; needed by external library dask), the
+    # object type, the dimension count, and a flag saying whether it is a table.
+    # Derived properties expose the file handle, filters, compression level and
+    # checksum flag of the owning store, the group attributes and path, row count,
+    # shape and version tuple.
+    # Concrete methods here are mostly stubs: read and write raise a not-implemented
+    # error; delete only supports deleting the whole node.
     """
     represent an object in my store
     facilitate read/write of various types of objects
@@ -2824,6 +3554,11 @@ class Fixed:
         encoding: str | None = "UTF-8",
         errors: str = "strict",
     ) -> None:
+        # [FUNCTION DOC]
+        # Stores the arguments. The parent must be a store, the group must be a PyTables
+        # node, and the tables module must already be imported (all asserted). The
+        # encoding is normalized to the module default when none. The errors argument is
+        # the text error-handling mode.
         assert isinstance(parent, HDFStore), type(parent)
         assert _table_mod is not None  # needed for mypy
         assert isinstance(group, _table_mod.Node), type(group)
@@ -2834,10 +3569,19 @@ class Fixed:
 
     @property
     def is_old_version(self) -> bool:
+        # [FUNCTION DOC]
+        # Property: true if the stored pandas version tuple is below 0.10.1 (that is, an
+        # old file format), false otherwise.
         return self.version[0] <= 0 and self.version[1] <= 10 and self.version[2] < 1
 
     @property
     def version(self) -> tuple[int, int, int]:
+        # [FUNCTION DOC]
+        # Property: the pandas version recorded in the group attributes as a three-integer
+        # tuple. A two-part version gets a trailing zero. A missing or non-text version
+        # yields all zeros.
+        # # KNOWN ISSUE: the docstring says the version is computed and set, but the
+        # property only computes and returns it, without storing it.
         """compute and set our version"""
         version = getattr(self.group._v_attrs, "pandas_version", None)
         if isinstance(version, str):
@@ -2851,9 +3595,17 @@ class Fixed:
 
     @property
     def pandas_type(self):
+        # [FUNCTION DOC]
+        # Property: the pandas type text recorded in the group attributes, or none.
         return getattr(self.group._v_attrs, "pandas_type", None)
 
     def __repr__(self) -> str:
+        # [FUNCTION DOC]
+        # Pretty text of the storer: infers the axes first, then formats the pandas type
+        # padded and truncated to twelve characters followed by the shape (a list or tuple
+        # shape is shown as comma-separated items in brackets). If no shape, returns just
+        # the type.
+        # Side effect: calls the axes inference (reads attributes).
         """return a pretty representation of myself"""
         self.infer_axes()
         s = self.shape
@@ -2865,71 +3617,110 @@ class Fixed:
         return self.pandas_type
 
     def set_object_info(self) -> None:
+        # [FUNCTION DOC]
+        # Writes the pandas kind and module version text into the group attributes.
         """set my pandas type & version"""
         self.attrs.pandas_type = str(self.pandas_kind)
         self.attrs.pandas_version = str(_version)
 
     def copy(self) -> Fixed:
+        # [FUNCTION DOC]
+        # Returns a shallow copy of this storer.
         new_self = copy.copy(self)
         return new_self
 
     @property
     def shape(self):
+        # [FUNCTION DOC]
+        # Property: the shape of the stored object; in the base class just the row count.
         return self.nrows
 
     @property
     def pathname(self):
+        # [FUNCTION DOC]
+        # Property: the absolute path name of the group.
         return self.group._v_pathname
 
     @property
     def _handle(self):
+        # [FUNCTION DOC]
+        # Property: the PyTables file handle of the owning store.
         return self.parent._handle
 
     @property
     def _filters(self):
+        # [FUNCTION DOC]
+        # Property: the PyTables filters object of the owning store.
         return self.parent._filters
 
     @property
     def _complevel(self) -> int:
+        # [FUNCTION DOC]
+        # Property: the compression level of the owning store.
         return self.parent._complevel
 
     @property
     def _fletcher32(self) -> bool:
+        # [FUNCTION DOC]
+        # Property: the checksum flag of the owning store.
         return self.parent._fletcher32
 
     @property
     def attrs(self):
+        # [FUNCTION DOC]
+        # Property: the attribute set of the group node.
         return self.group._v_attrs
 
     def set_attrs(self) -> None:
+        # [FUNCTION DOC]
+        # Hook for subclasses to write their own attributes; does nothing here.
         """set our object attributes"""
 
     def get_attrs(self) -> None:
+        # [FUNCTION DOC]
+        # Hook for subclasses to read their own attributes; does nothing here.
         """get our object attributes"""
 
     @property
     def storable(self):
+        # [FUNCTION DOC]
+        # Property: the node holding the data; here the group itself.
         """return my storable"""
         return self.group
 
     @property
     def is_exists(self) -> bool:
+        # [FUNCTION DOC]
+        # Property: whether the storer refers to existing data; false in the base class.
         return False
 
     @property
     def nrows(self):
+        # [FUNCTION DOC]
+        # Property: the number of rows of the storable node, or none if it has no such
+        # attribute.
         return getattr(self.storable, "nrows", None)
 
     def validate(self, other) -> Literal[True] | None:
+        # [FUNCTION DOC]
+        # Validates against an existing storable: returns none if the argument is none,
+        # otherwise true. No other checks in the base class.
         """validate against an existing storable"""
         if other is None:
             return None
         return True
 
     def validate_version(self, where=None) -> None:
+        # [FUNCTION DOC]
+        # Hook to reject operating on an old file version; does nothing in the base class.
+        # Parameter where is accepted for subclass use.
         """are we trying to operate on an old version?"""
 
     def infer_axes(self) -> bool:
+        # [FUNCTION DOC]
+        # Infers the axes of the storer from stored attributes. Returns false if there is
+        # no storable node, otherwise reads the attributes (via the attribute hook) and
+        # returns true.
         """
         infer the axes of my storer
         return a boolean indicating if we have a valid storer or not
@@ -2947,11 +3738,17 @@ class Fixed:
         start: int | None = None,
         stop: int | None = None,
     ) -> Series | DataFrame:
+        # [FUNCTION DOC]
+        # Abstract read: always raises a not-implemented error. Subclasses implement it
+        # with the same parameters (where, columns, start, stop) and return a series or
+        # frame.
         raise NotImplementedError(
             "cannot read on an abstract storer: subclasses should implement"
         )
 
     def write(self, obj, **kwargs) -> None:
+        # [FUNCTION DOC]
+        # Abstract write: always raises a not-implemented error. Subclasses implement it.
         raise NotImplementedError(
             "cannot write on an abstract storer: subclasses should implement"
         )
@@ -2959,6 +3756,10 @@ class Fixed:
     def delete(
         self, where=None, start: int | None = None, stop: int | None = None
     ) -> int | None:
+        # [FUNCTION DOC]
+        # Deletes the stored node in its entirety. Only allowed when where, start and stop
+        # are all none: removes the group recursively and returns none. Otherwise raises a
+        # type error because partial deletes are not supported on an abstract storer.
         """
         support fully deleting the node in its entirety (only) - where
         specification must be None
@@ -2971,6 +3772,15 @@ class Fixed:
 
 
 class GenericFixed(Fixed):
+    # [CLASS DOC]
+    # Base class for the fixed-format storers. Stores whole objects as plain arrays
+    # under the group (not queryable, not appendable). Subclass of the abstract storer.
+    # Class state: a map between index classes and short alias texts (datetime and
+    # period) and its reverse, and the list of attribute names that subclasses
+    # persist and restore.
+    # Provides helpers to read and write arrays and indexes (regular and multi level)
+    # in this layout, a factory builder for index classes, and the validation that
+    # partial reads are not allowed.
     """a generified fixed version"""
 
     _index_type_map = {DatetimeIndex: "datetime", PeriodIndex: "period"}
@@ -2979,15 +3789,33 @@ class GenericFixed(Fixed):
 
     # indexer helpers
     def _class_to_alias(self, cls) -> str:
+        # [FUNCTION DOC]
+        # HELPER: maps an index class to its short alias (datetime or period) or an empty
+        # text if it has none.
         return self._index_type_map.get(cls, "")
 
     def _alias_to_class(self, alias):
+        # [FUNCTION DOC]
+        # HELPER: maps a stored alias back to an index class. If the alias is already a
+        # class (old compatibility behavior) it is returned unchanged; unknown aliases
+        # return the generic index class.
         if isinstance(alias, type):  # pragma: no cover
             # compat: for a short period of time master stored types
             return alias
         return self._reverse_index_map.get(alias, Index)
 
     def _get_index_factory(self, attrs):
+        # [FUNCTION DOC]
+        # HELPER: builds the way to create an index from stored data.
+        # Input attrs is the attribute set of the index node. Reads the stored index class
+        # alias, and returns a pair of a callable factory and a dictionary of keyword
+        # arguments. For datetime the factory wraps the stored UTC integer values into a
+        # datetime index and, when a time zone is given, localizes to UTC then converts to
+        # that zone. For period the factory builds a period index from the ordinals and the
+        # frequency. Otherwise the factory is the index class itself, with copying
+        # disabled. If a frequency attribute exists it is passed on, and when the class is
+        # the generic index the factory becomes a timedelta index. If a time zone attribute
+        # exists it is passed on (asserted to go with a datetime index).
         index_class = self._alias_to_class(getattr(attrs, "index_class", ""))
 
         factory: Callable
@@ -2996,6 +3824,12 @@ class GenericFixed(Fixed):
         if index_class == DatetimeIndex:
 
             def f(values, freq=None, tz=None):
+                # [FUNCTION DOC]
+                # HELPER: nested factory for datetime indexes. Takes the stored integer values
+                # object, an optional frequency and an optional time zone. Builds a datetime array
+                # without validation from the underlying values, using the values dtype and
+                # frequency, wraps it in an unnamed datetime index, and if a zone is given
+                # localizes to UTC and converts to the zone. Returns the index.
                 # data are already in UTC, localize and convert if tz present
                 dta = DatetimeArray._simple_new(
                     values.values, dtype=values.dtype, freq=freq
@@ -3009,6 +3843,11 @@ class GenericFixed(Fixed):
         elif index_class == PeriodIndex:
 
             def f(values, freq=None, tz=None):
+                # [FUNCTION DOC]
+                # HELPER: nested factory for period indexes. Takes the stored ordinal values, a
+                # frequency, and an unused time zone argument. Builds a period dtype from the
+                # frequency, an unnamed period array from the values and wraps it in a period
+                # index without validation. Returns the index.
                 dtype = PeriodDtype(freq)
                 parr = PeriodArray._simple_new(values, dtype=dtype)
                 return PeriodIndex._simple_new(parr, name=None)
@@ -3031,6 +3870,10 @@ class GenericFixed(Fixed):
         return factory, kwargs
 
     def validate_read(self, columns, where) -> None:
+        # [FUNCTION DOC]
+        # Raises a type error if a columns specification or a where selection is given,
+        # because fixed-format objects can only be read in their entirety. Both checks are
+        # for values that are not none.
         """
         raise if any keywords are passed which are not-None
         """
@@ -3047,14 +3890,22 @@ class GenericFixed(Fixed):
 
     @property
     def is_exists(self) -> bool:
+        # [FUNCTION DOC]
+        # Property: always true for fixed-format storers.
         return True
 
     def set_attrs(self) -> None:
+        # [FUNCTION DOC]
+        # Writes the encoding and error-handling mode into the group attributes.
         """set our object attributes"""
         self.attrs.encoding = self.encoding
         self.attrs.errors = self.errors
 
     def get_attrs(self) -> None:
+        # [FUNCTION DOC]
+        # Reads the encoding (default UTF-8) and error mode (default strict) from the
+        # group attributes, and loads every attribute named in the class attribute list
+        # onto this storer, using none for any that is absent.
         """retrieve our attributes"""
         self.encoding = _ensure_encoding(getattr(self.attrs, "encoding", None))
         self.errors = getattr(self.attrs, "errors", "strict")
@@ -3062,9 +3913,24 @@ class GenericFixed(Fixed):
             setattr(self, n, getattr(self.attrs, n, None))
 
     def write(self, obj, **kwargs) -> None:
+        # [FUNCTION DOC]
+        # Writes the object. At this level it only saves encoding and error attributes;
+        # the obj and keyword arguments are ignored. Subclasses extend it.
         self.set_attrs()
 
     def read_array(self, key: str, start: int | None = None, stop: int | None = None):
+        # [FUNCTION DOC]
+        # Reads the array stored under a child node name.
+        # Parameters: key is the child name; start and stop slice the rows.
+        # Behavior: imports the tables module. For a variable-length array node it takes
+        # the first element sliced, and if a value type attribute exists, converts to a
+        # pandas array with that dtype. For other nodes: if a shape attribute exists (the
+        # stored array had a zero-length axis) it creates an empty array of that shape
+        # and value type, otherwise slices the node; then for datetime value types
+        # (unitless old name meaning nanoseconds) rebuilds with the stored time zone, and
+        # for timedelta types converts to that unit (unitless meaning nanoseconds).
+        # If the node carries a transposed flag, returns the transpose.
+        # Returns a numpy or pandas array.
         """read an array for the specified node (off of group"""
         import tables
 
@@ -3111,6 +3977,11 @@ class GenericFixed(Fixed):
     def read_index(
         self, key: str, start: int | None = None, stop: int | None = None
     ) -> Index:
+        # [FUNCTION DOC]
+        # Reads an index stored under a child key. Parameters: key; start and stop slice.
+        # Looks up the variety attribute stored with the key: a multi variety dispatches
+        # to the multi level reader; a regular variety reads the node and builds the
+        # index. Any other variety raises a type error. Returns the Index.
         variety = getattr(self.attrs, f"{key}_variety")
 
         if variety == "multi":
@@ -3123,6 +3994,15 @@ class GenericFixed(Fixed):
             raise TypeError(f"unrecognized index variety: {variety}")
 
     def write_index(self, key: str, index: Index) -> None:
+        # [FUNCTION DOC]
+        # Writes an index under a child key.
+        # Parameters: key and index (any index).
+        # For a multi-level index, records variety as multi and writes the levels. For
+        # other indexes records variety as regular, converts the index with the shared
+        # helper, writes the resulting values as an array, and on that node records the
+        # kind and index name; datetime and period indexes record their alias; datetime,
+        # period and timedelta indexes record their frequency; timezone-aware datetime
+        # indexes record the time zone name.
         if isinstance(index, MultiIndex):
             setattr(self.attrs, f"{key}_variety", "multi")
             self.write_multi_index(key, index)
@@ -3146,6 +4026,14 @@ class GenericFixed(Fixed):
                 node._v_attrs.tz = _get_tz(index.tz)
 
     def write_multi_index(self, key: str, index: MultiIndex) -> None:
+        # [FUNCTION DOC]
+        # Writes a multi-level index under a key.
+        # Records the number of levels. For each level (levels, codes, names in parallel)
+        # raises a not-implemented error if the level has an extension dtype other than
+        # a string dtype. Converts the level values, writes them under a key built from
+        # the key and level number, records the kind and name on that node (and also an
+        # extra name attribute combining key and name), and writes the integer codes under
+        # a separate label key.
         setattr(self.attrs, f"{key}_nlevels", index.nlevels)
 
         for i, (lev, level_codes, name) in enumerate(
@@ -3175,6 +4063,12 @@ class GenericFixed(Fixed):
     def read_multi_index(
         self, key: str, start: int | None = None, stop: int | None = None
     ) -> MultiIndex:
+        # [FUNCTION DOC]
+        # Reads a multi-level index written by the multi-level writer.
+        # Parameters: key; start and stop slice every stored array.
+        # Reads the level count attribute, then for each level reads the level index node
+        # (taking its name from the node) and the integer codes array. Builds a MultiIndex
+        # with integrity verification and returns it.
         nlevels = getattr(self.attrs, f"{key}_nlevels")
 
         levels = []
@@ -3198,6 +4092,20 @@ class GenericFixed(Fixed):
     def read_index_node(
         self, node: Node, start: int | None = None, stop: int | None = None
     ) -> Index:
+        # [FUNCTION DOC]
+        # Builds an Index from a stored index node.
+        # Parameters: node is the PyTables array node; start and stop slice the rows.
+        # Behavior: reads the slice; if the node carries a shape attribute describing a
+        # zero-size array (written by the empty-array hack) the data is replaced by an
+        # empty array of that shape and stored value type. Reads the kind attribute and
+        # the optional name (normalized to a plain string). Gets the index factory and
+        # keyword arguments from the node attributes. The raw data is converted by the
+        # shared helper according to kind, then handed to the factory (for date and object
+        # kinds with an object dtype forced). For other kinds, a unicode encode error
+        # caused by surrogates under surrogatepass error mode, with the string dtype
+        # option on and PyArrow installed, is retried with a python-storage string dtype
+        # (NaN as missing); other encode errors propagate. Sets the name on the result and
+        # returns it.
         data = node[start:stop]
         # If the index was an empty array write_array_empty() will
         # have written a sentinel. Here we replace it with the original.
@@ -3250,6 +4158,11 @@ class GenericFixed(Fixed):
         return index
 
     def write_array_empty(self, key: str, value: ArrayLike) -> None:
+        # [FUNCTION DOC]
+        # Writes a placeholder for an array with zero size. Parameters: key (child name)
+        # and value (the empty array). Creates a one-element array with as many unit
+        # dimensions as the value, then records the real dtype (as text) and shape on
+        # the node attributes so the reader can recreate the empty array.
         """write a 0-len array"""
         # ugly hack for length 0 axes
         arr = np.empty((1,) * value.ndim)
@@ -3261,6 +4174,25 @@ class GenericFixed(Fixed):
     def write_array(
         self, key: str, obj: AnyArrayLike, items: Index | None = None
     ) -> None:
+        # [FUNCTION DOC]
+        # Writes an array (or the values of an index or series) under a child name.
+        # Parameters: key is the child node name (an existing node of that name is
+        # removed first); obj is the array-like to store (unwrapped to its array); items
+        # is an optional index only used in the performance warning message.
+        # Behavior: categorical dtype raises a not-implemented error (fixed format cannot
+        # store it). Non-empty arrays are transposed when they support it (flag recorded).
+        # Then by type: string extension arrays go to a variable-length array of objects
+        # (with filters) with the dtype name recorded; otherwise, if compression filters
+        # are configured and an atom type exists for the dtype, a chunked compressed array
+        # is created and filled (empty arrays use the placeholder writer); object dtype
+        # arrays are written as variable-length object arrays, with a performance warning
+        # when the inferred type is not string, the array is not empty and the
+        # performance-warnings option is on; naive datetimes and timedeltas are stored as
+        # 64-bit integers with the dtype recorded; time-zone-aware datetimes are stored as
+        # 64-bit UTC integers with zone name and unit-bearing dtype recorded; empty arrays
+        # use the placeholder; anything else is stored directly. Finally records the
+        # transposed flag on the node.
+        # Side effects: creates and removes nodes, may warn.
         value = extract_array(obj, extract_numpy=True)
 
         if key in self.group:
@@ -3359,6 +4291,10 @@ class GenericFixed(Fixed):
 
 
 class SeriesFixed(GenericFixed):
+    # [CLASS DOC]
+    # Fixed-format storer for a Series. Stores the index under the name index and the
+    # values under the name values, and the series name as a group attribute.
+    # Class state: pandas kind is series; persisted attribute list holds the name.
     pandas_kind = "series"
     attributes = ["name"]
 
@@ -3366,6 +4302,9 @@ class SeriesFixed(GenericFixed):
 
     @property
     def shape(self) -> tuple[int] | None:
+        # [FUNCTION DOC]
+        # Property: one-element tuple with the number of stored values, or none if the
+        # values node is missing or has no length.
         try:
             return (len(self.group.values),)
         except (TypeError, AttributeError):
@@ -3378,6 +4317,13 @@ class SeriesFixed(GenericFixed):
         start: int | None = None,
         stop: int | None = None,
     ) -> Series:
+        # [FUNCTION DOC]
+        # Reads the series. Where and columns must be none (validation raises a type
+        # error otherwise); start and stop slice rows. Reads the index and values arrays,
+        # builds a Series with the stored name without copying; a unicode encode error
+        # caused by surrogates under surrogatepass mode with the string dtype option and
+        # PyArrow installed is retried with a python-storage string dtype; other errors
+        # propagate. Returns the series.
         self.validate_read(columns, where)
         index = self.read_index("index", start=start, stop=stop)
         values = self.read_array("values", start=start, stop=stop)
@@ -3402,6 +4348,10 @@ class SeriesFixed(GenericFixed):
         return result
 
     def write(self, obj, **kwargs) -> None:
+        # [FUNCTION DOC]
+        # Writes the series: base attributes, the index, the values array, and the series
+        # name as a group attribute. Extra keyword arguments are passed to the base class
+        # and otherwise ignored.
         super().write(obj, **kwargs)
         self.write_index("index", obj.index)
         self.write_array("values", obj)
@@ -3409,12 +4359,22 @@ class SeriesFixed(GenericFixed):
 
 
 class BlockManagerFixed(GenericFixed):
+    # [CLASS DOC]
+    # Fixed-format storer for objects backed by a block manager (the base of the frame
+    # storer). Stores each axis as an index named by position (axis zero, axis one),
+    # and each block as a pair: block values and block items (the column labels of the
+    # block), plus the dimension count and number of blocks as attributes.
+    # Class state: persisted attributes are the dimension count and block count.
     attributes = ["ndim", "nblocks"]
 
     nblocks: int
 
     @property
     def shape(self) -> list[int] | None:
+        # [FUNCTION DOC]
+        # Property: the shape as a list: the leading data dimensions taken from the first
+        # block's values node followed by the total item count summed over all blocks'
+        # item nodes. Returns none if attributes are missing.
         try:
             ndim = self.ndim
 
@@ -3447,6 +4407,19 @@ class BlockManagerFixed(GenericFixed):
         start: int | None = None,
         stop: int | None = None,
     ) -> DataFrame:
+        # [FUNCTION DOC]
+        # Reads the whole frame (where and columns must be none, else a type error; start
+        # and stop select rows only).
+        # Behavior: finds the block manager axis that holds the rows, reads each axis
+        # index (slicing only the row axis), then for each block reads its items and its
+        # values (sliced by the row bounds), builds a frame from the transposed values
+        # with the block's columns (positions mapped through the full columns index), and
+        # for string-typed object arrays under the string dtype option casts to the string
+        # dtype. Concatenates the pieces column-wise, copies, and reorders to the full
+        # columns. With no blocks returns an empty frame with the stored axes.
+        # # KNOWN ISSUE: the row bounds used when reading block values are the loop
+        # variables left over from the preceding axis loop, which only works because the
+        # row axis is the last axis visited.
         # start, stop applied to rows, so 0th axis only
         self.validate_read(columns, where)
         select_axis = self.obj_type()._get_block_manager_axis(0)
@@ -3481,6 +4454,13 @@ class BlockManagerFixed(GenericFixed):
         return DataFrame(columns=axes[0], index=axes[1])
 
     def write(self, obj, **kwargs) -> None:
+        # [FUNCTION DOC]
+        # Writes the frame: base attributes, then consolidates the block manager if
+        # needed, records the dimension count, writes each axis index (raising a value
+        # error if the columns axis is not unique), records the number of blocks, and for
+        # each block writes the values array and then the items index. The values are
+        # written before the items on purpose, according to an inline comment about an old
+        # bug fix.
         super().write(obj, **kwargs)
 
         data = obj._mgr
@@ -3503,11 +4483,30 @@ class BlockManagerFixed(GenericFixed):
 
 
 class FrameFixed(BlockManagerFixed):
+    # [CLASS DOC]
+    # Fixed-format storer for a DataFrame: the block manager storer specialized with
+    # pandas kind frame and the frame object type. No other behavior.
     pandas_kind = "frame"
     obj_type = DataFrame
 
 
 class Table(Fixed):
+    # [CLASS DOC]
+    # Base class for table-format storers: row-oriented, appendable and queryable
+    # objects stored as a PyTables table.
+    # Table layout state (also persisted as group attributes): index axes (index
+    # column descriptions), non-index axes (pairs of axis number and labels), values
+    # axes (data column descriptions), data columns (names of columns stored
+    # separately so they can be queried), the string used for missing text, level
+    # names (a count of one, or a list for a multi-level index), metadata column
+    # names, an info mapping of per-axis metadata, plus the encoding and error mode
+    # inherited from the base storer.
+    # Class attributes: default pandas kind wide table, format type table, a table
+    # type text set by subclasses, and the table flag set to true.
+    # Methods cover validation against an existing table, queryable column
+    # discovery, metadata read and write, attribute persistence, index creation, and
+    # (in the next part of the class) reading axes, preparing and writing data. The
+    # class is a base of the appendable and worm tables.
     """
     represent a table:
         facilitate read/write of various types of tables
@@ -3552,6 +4551,11 @@ class Table(Fixed):
         info: dict | None = None,
         nan_rep=None,
     ) -> None:
+        # [FUNCTION DOC]
+        # Initializes the base storer with parent, group, encoding and errors, then stores
+        # the index axes, non-index axes, values axes and data columns (each defaulting to
+        # an empty list), the info mapping (default empty) and the missing-text
+        # representation (default none).
         super().__init__(parent, group, encoding=encoding, errors=errors)
         self.index_axes = index_axes or []
         self.non_index_axes = non_index_axes or []
@@ -3562,9 +4566,15 @@ class Table(Fixed):
 
     @property
     def table_type_short(self) -> str:
+        # [FUNCTION DOC]
+        # Property: the first underscore-separated part of the table type text.
         return self.table_type.split("_")[0]
 
     def __repr__(self) -> str:
+        # [FUNCTION DOC]
+        # Pretty text: first infers axes, then returns the padded pandas type, the version
+        # in brackets only for old versions, the short table type, the row count, the
+        # column count, the indexer names and the data column names.
         """return a pretty representation of myself"""
         self.infer_axes()
         jdc = ",".join(self.data_columns) if len(self.data_columns) else ""
@@ -3583,6 +4593,9 @@ class Table(Fixed):
         )
 
     def __getitem__(self, c: str):
+        # [FUNCTION DOC]
+        # Looks up an axis description (index or values) by name among all axes; returns
+        # none if absent.
         """return the axis for c"""
         for a in self.axes:
             if c == a.name:
@@ -3590,6 +4603,15 @@ class Table(Fixed):
         return None
 
     def validate(self, other) -> None:
+        # [FUNCTION DOC]
+        # Validates that data to be appended is compatible with an existing table.
+        # Parameter other is the existing table storer (none means nothing to check).
+        # Raises a type error if the table types differ. Then compares the index axes,
+        # non-index axes and values axes lists; on a difference it finds the first
+        # differing axis and raises a value error: for values axes whose kinds differ the
+        # message says the column cannot be serialized because its contents are not of the
+        # new kind; otherwise a message about an invalid combination. If lists differ but
+        # no differing axis is found, raises a generic exception (considered unreachable).
         """validate against an existing table"""
         if other is None:
             return
@@ -3630,12 +4652,20 @@ class Table(Fixed):
 
     @property
     def is_multi_index(self) -> bool:
+        # [FUNCTION DOC]
+        # Property: true when the levels attribute is a list (a multi-level index was
+        # stored); the attribute is a plain number one otherwise.
         """the levels attribute is 1 or a list in the case of a multi-index"""
         return isinstance(self.levels, list)
 
     def validate_multiindex(
         self, obj: DataFrame | Series
     ) -> tuple[DataFrame, list[Hashable]]:
+        # [FUNCTION DOC]
+        # Prepares an object with a multi-level index for table storage.
+        # Returns a pair: the object with its index reset into ordinary columns (a frame),
+        # and the list of level names with missing names filled with generated defaults.
+        # Raises a value error with a duplicate names message if resetting fails.
         """
         validate that we can store the multi-index; reset and return the
         new object
@@ -3652,46 +4682,72 @@ class Table(Fixed):
 
     @property
     def nrows_expected(self) -> int:
+        # [FUNCTION DOC]
+        # Property: the expected number of rows, computed as the product of the lengths of
+        # the values of all index axes.
         """based on our axes, compute the expected nrows"""
         return np.prod([i.cvalues.shape[0] for i in self.index_axes])
 
     @property
     def is_exists(self) -> bool:
+        # [FUNCTION DOC]
+        # Property: true if the group contains a child named table (the table has been
+        # created).
         """has this table been created"""
         return "table" in self.group
 
     @property
     def storable(self):
+        # [FUNCTION DOC]
+        # Property: the PyTables table node under the group, or none.
         return getattr(self.group, "table", None)
 
     @property
     def table(self):
+        # [FUNCTION DOC]
+        # Property: the PyTables table (same as the storable).
         """return the table group (this is my storable)"""
         return self.storable
 
     @property
     def dtype(self):
+        # [FUNCTION DOC]
+        # Property: the numpy structured dtype of the PyTables table.
         return self.table.dtype
 
     @property
     def description(self):
+        # [FUNCTION DOC]
+        # Property: the column description object of the PyTables table.
         return self.table.description
 
     @property
     def axes(self) -> itertools.chain[IndexCol]:
+        # [FUNCTION DOC]
+        # Property: an iterator chaining the index axes followed by the values axes. It is
+        # a one-shot iterator created on each access.
         return itertools.chain(self.index_axes, self.values_axes)
 
     @property
     def ncols(self) -> int:
+        # [FUNCTION DOC]
+        # Property: the total number of columns, the sum of the lengths of the values of
+        # all values axes.
         """the number of total columns in the values axes"""
         return sum(len(a.values) for a in self.values_axes)
 
     @property
     def is_transposed(self) -> bool:
+        # [FUNCTION DOC]
+        # Property: false in this class; overridden by subclasses that store transposed
+        # data.
         return False
 
     @property
     def data_orientation(self) -> tuple[int, ...]:
+        # [FUNCTION DOC]
+        # Property: tuple of axis numbers: first the axes of the non-index axes, then the
+        # axes of the index axes, each as integers.
         """return a tuple of my permutated axes, non_indexable at the front"""
         return tuple(
             itertools.chain(
@@ -3701,6 +4757,11 @@ class Table(Fixed):
         )
 
     def queryables(self) -> dict[str, Any]:
+        # [FUNCTION DOC]
+        # Returns the dictionary of names allowed in query expressions mapped to their
+        # column descriptions. Contains each index axis by column name, each non-index axis
+        # by its standard name (index for axis zero, columns for axis one) mapped to none,
+        # and each values axis whose name is in the data columns, by column name.
         """return a dict of the kinds allowable columns for this object"""
         # mypy doesn't recognize DataFrame._AXIS_NAMES, so we re-write it here
         axis_names = {0: "index", 1: "columns"}
@@ -3715,20 +4776,35 @@ class Table(Fixed):
         return dict(d1 + d2 + d3)
 
     def index_cols(self) -> list[tuple[Any, Any]]:
+        # [FUNCTION DOC]
+        # Returns a list of pairs (axis number, column name) for the index axes.
         """return a list of my index cols"""
         # Note: each `i.cname` below is assured to be a str.
         return [(i.axis, i.cname) for i in self.index_axes]
 
     def values_cols(self) -> list[str]:
+        # [FUNCTION DOC]
+        # Returns the list of column names of the values axes.
         """return a list of my values cols"""
         return [i.cname for i in self.values_axes]
 
     def _get_metadata_path(self, key: str) -> str:
+        # [FUNCTION DOC]
+        # HELPER: builds the path of the metadata table for a key: the group path, then
+        # the meta folder, the key, and a meta node.
         """return the metadata pathname for this key"""
         group = self.group._v_pathname
         return f"{group}/meta/{key}/meta"
 
     def write_metadata(self, key: str, values: np.ndarray) -> None:
+        # [FUNCTION DOC]
+        # Writes a metadata array (such as categories) for a key as its own object in the
+        # store, via the parent store put method.
+        # Parameters: key and the values array (wrapped in a series without copying).
+        # The object is written at the metadata path using table format, the storer's
+        # encoding, error mode and missing-text representation.
+        # # KNOWN ISSUE: the docstring says the array is written as a fixed-format series,
+        # but the code requests table format.
         """
         Write out a metadata array to the key as a fixed-format Series.
 
@@ -3747,12 +4823,20 @@ class Table(Fixed):
         )
 
     def read_metadata(self, key: str):
+        # [FUNCTION DOC]
+        # Reads the metadata array for a key: if the group has a meta folder with an entry
+        # for the key, selects the object at the metadata path from the parent store and
+        # returns it; otherwise returns none.
         """return the meta data array for this key"""
         if getattr(getattr(self.group, "meta", None), key, None) is not None:
             return self.parent.select(self._get_metadata_path(key))
         return None
 
     def set_attrs(self) -> None:
+        # [FUNCTION DOC]
+        # Persists the table description to the group attributes: table type text, index
+        # column list, values column list, non-index axes, data columns, missing-text
+        # representation, encoding, error mode, levels and the info mapping.
         """set our table type & indexables"""
         self.attrs.table_type = str(self.table_type)
         self.attrs.index_cols = self.index_cols()
@@ -3766,6 +4850,12 @@ class Table(Fixed):
         self.attrs.info = self.info
 
     def get_attrs(self) -> None:
+        # [FUNCTION DOC]
+        # Restores the table description from the group attributes, with defaults: empty
+        # non-index axes, data columns and info; none missing-text representation; UTF-8
+        # encoding; strict error mode; and an empty list for levels. Then derives the index
+        # axes (the indexables flagged as indexable axes) and values axes (the rest) from
+        # the cached list of indexables.
         """retrieve our attributes"""
         self.non_index_axes = getattr(self.attrs, "non_index_axes", None) or []
         self.data_columns = getattr(self.attrs, "data_columns", None) or []
@@ -3778,6 +4868,10 @@ class Table(Fixed):
         self.values_axes = [a for a in self.indexables if not a.is_an_indexable]
 
     def validate_version(self, where=None) -> None:
+        # [FUNCTION DOC]
+        # Warns about an old file format. Only when a where clause is given and the stored
+        # version is old, issues an incompatibility warning (attributed to the caller)
+        # saying the where criteria are ignored. Does not raise.
         """are we trying to operate on an old version?"""
         if where is not None:
             if self.is_old_version:
@@ -3789,6 +4883,11 @@ class Table(Fixed):
                 )
 
     def validate_min_itemsize(self, min_itemsize) -> None:
+        # [FUNCTION DOC]
+        # Validates a minimum size mapping for string columns. Returns without checking
+        # unless the argument is a dictionary. For every key other than the generic
+        # values key, the key must be among the queryable names (index axes, data
+        # columns); otherwise raises a value error.
         """
         validate the min_itemsize doesn't contain items that are not in the
         axes this needs data_columns to be defined
@@ -3811,6 +4910,18 @@ class Table(Fixed):
 
     @cache_readonly
     def indexables(self):
+        # [FUNCTION DOC]
+        # Cached property creating the list of column descriptions of the existing table
+        # from its stored attributes and the PyTables description.
+        # Index columns: for each stored (axis, name) pair, builds an index column with
+        # its position, the kind from the table attributes, the column type, the table and
+        # categorical metadata (when a metadata object exists the meta kind is category).
+        # Value columns: for each stored values column name, builds a data column
+        # (indexable data column when the name is in the data columns), using the version
+        # adjusted name, the labels stored under the kind attribute, the stored dtype and
+        # the kind derived from it, the metadata object, the stored meta kind attribute, and
+        # positions continuing after the index columns.
+        # Returns the combined list. Result is computed once per storer instance.
         """create/cache the indexables if they don't exist"""
         _indexables = []
 
@@ -3845,6 +4956,15 @@ class Table(Fixed):
         base_pos = len(_indexables)
 
         def f(i, c: str) -> DataCol:
+            # [FUNCTION DOC]
+            # HELPER: closure inside the indexables property. Builds a data column object for
+            # one stored values column. Parameters: i is its zero-based position among values
+            # columns; c is the column name (asserted to be a string). Chooses the indexable
+            # data column class if c is a data column, else the plain data column; fetches the
+            # PyTables column type; computes the version-adjusted name; reads the stored
+            # labels (kept under the kind attribute name), dtype and meta kind attributes of
+            # that name; derives the kind from the dtype; reads metadata; and constructs the
+            # column with position equal to the base position plus i. Returns it.
             assert isinstance(c, str)
             klass = DataCol
             if c in dc:
@@ -3888,6 +5008,23 @@ class Table(Fixed):
     def create_index(
         self, columns=None, optlevel=None, kind: str | None = None
     ) -> None:
+        # [FUNCTION DOC]
+        # Creates PyTables indexes on columns of the table.
+        # Parameters: columns is false (no indexing), true or none (all indexable axes and
+        # data columns), or a column name or list or tuple of names; optlevel is the
+        # optimization level and kind the index kind (none leaves the library default).
+        # Behavior: returns silently if the axes cannot be inferred or columns is false.
+        # For each requested column found on the table: if already indexed, an index with
+        # a different explicit kind or level is removed so it can be rebuilt, otherwise the
+        # existing kind and level are reused; if not indexed after that, creates the
+        # index, raising a type error for complex-valued columns. A requested column that
+        # is not on the table but is one of the non-index column labels raises an
+        # attribute error saying the column is not a data column and must be reloaded with
+        # data columns. Unknown names are silently ignored.
+        # Side effects: modifies the index state of the file.
+        # # KNOWN ISSUE: the options dictionary is shared across columns in the loop, so
+        # the kind and level of an already-indexed column leak into the options used for
+        # later columns.
         """
         Create a pytables index on the specified columns.
 
@@ -3974,6 +5111,17 @@ class Table(Fixed):
     def _read_axes(
         self, where, start: int | None = None, stop: int | None = None
     ) -> list[tuple[np.ndarray, np.ndarray] | tuple[Index, Index]]:
+        # [FUNCTION DOC]
+        # HELPER: reads and converts the axes of the table for a selection.
+        # Parameters: where is a selection (expression, term list or coordinates); start
+        # and stop are optional row bounds.
+        # Behavior: builds a selection object over this table, runs it to fetch the raw
+        # structured rows, then for every axis (index axes first, then values axes) loads
+        # the axis info from the stored info mapping and converts the raw rows with the
+        # axis's convert method using the table's missing-text representation, encoding and
+        # error mode.
+        # Returns a list with one pair per axis: for index axes the converted index (twice),
+        # for data blocks the column labels and the converted array.
         """
         Create the axes sniffed from the table.
 
@@ -4007,10 +5155,26 @@ class Table(Fixed):
 
     @classmethod
     def get_object(cls, obj, transposed: bool):
+        # [FUNCTION DOC]
+        # Class method hook returning the object to be stored for an orientation: here the
+        # object unchanged (the transposed flag is ignored). Subclasses may transpose.
         """return the data for this obj"""
         return obj
 
     def validate_data_columns(self, data_columns, min_itemsize, non_index_axes) -> list:
+        # [FUNCTION DOC]
+        # HELPER: computes the list of data column names (columns stored as separate,
+        # queryable table columns).
+        # Parameters: data_columns is true (all labels of the non-index axis), none (no
+        # columns) or a list of labels; min_itemsize is a size, or a mapping whose keys
+        # other than the generic values key are also added as data columns; non_index_axes
+        # is the list of pairs of axis number and labels (if empty, returns an empty list).
+        # Raises a value error if the non-index axis is a multi-level index and data
+        # columns were requested. Returns the requested data columns (plus any min size
+        # keys) that actually are labels of the non-index axis, keeping the order of the
+        # requested list. Does not mutate the argument list.
+        # # KNOWN ISSUE: an inline comment says the result follows the order of the axis,
+        # but the result keeps the order of the requested list.
         """
         take the input data_columns and min_itemize and create a data
         columns spec
@@ -4057,6 +5221,35 @@ class Table(Fixed):
         data_columns=None,
         min_itemsize=None,
     ):
+        # [FUNCTION DOC]
+        # HELPER: builds a new table description (index axes, non-index axes and values
+        # axes) for the object to be written, validated against the existing table if any.
+        # Parameters: axes is a list of axis names or numbers to use as index axes (default
+        # the first axis); obj is the frame (a type error is raised otherwise); validate
+        # says whether to validate against an existing table (default true); nan_rep is the
+        # missing-text representation (default the text nan); data_columns is true, a list
+        # of labels, or none; min_itemsize is the minimum string size spec.
+        # Behavior: converts axes to numbers; if the table already exists, its index axes,
+        # data columns and missing-text representation override the arguments. Only one
+        # index axis is supported (otherwise value error). Builds the non-index axis from
+        # the other axis labels, recording its names and type in the info mapping; when
+        # appending, if the new labels are a permutation of the existing ones they are
+        # reordered to the existing order. Builds the index column description (position
+        # zero, converted via the shared helper) and updates info and string sizes.
+        # Reindexes the object to the non-index labels, determines data columns, gets the
+        # consolidated (possibly transposed) frame, splits it into blocks and block items
+        # (matching the order of an existing table), and for each block builds a data
+        # column description: data columns of a single item become indexable data columns
+        # (name must be a string, else value error) and others get generated block names;
+        # when validating, the existing column at the same position must exist (value error
+        # on incompatible structure); the block values are prepared for string storage; the
+        # PyTables type, kind, time zone, categorical ordering and categories (or string
+        # dtype name as meta) are determined and the data stored in the description.
+        # Finally creates a new table storer of the same class with these descriptions,
+        # copies the levels attribute, validates the minimum size mapping, and when
+        # validating against an existing table checks compatibility (which may raise).
+        # Returns the new table storer (not yet written). Side effects: updates the info
+        # mapping of this table.
         """
         Create and return the axes.
 
@@ -4298,8 +5491,23 @@ class Table(Fixed):
         values_axes,
         data_columns,
     ):
+        # [FUNCTION DOC]
+        # HELPER: static method splitting a frame into its storage blocks.
+        # Parameters: frame is the consolidated frame; table_exists says whether to align
+        # with an existing table; new_non_index_axes is the pair list for the non-index
+        # axis; values_axes are the existing value columns; data_columns are labels to be
+        # stored separately.
+        # Behavior: takes the frame's blocks with their item labels. If data columns are
+        # given, the non-data columns are reindexed into blocks and each data column is
+        # reindexed separately and appended as its own block. If the table exists, blocks
+        # are reordered to the existing table's block structure, matching on item labels
+        # (value error if some existing block cannot be matched).
+        # Returns a pair of lists: blocks and their item indexes.
         # Helper to clarify non-state-altering parts of _create_axes
         def get_blk_items(mgr):
+            # [FUNCTION DOC]
+            # HELPER: nested function returning, for a block manager, the list of item labels
+            # of each of its blocks.
             return [mgr.items.take(blk.mgr_locs) for blk in mgr.blocks]
 
         mgr = frame._mgr
@@ -4351,6 +5559,18 @@ class Table(Fixed):
         return blocks, blk_items
 
     def process_axes(self, obj, selection: Selection, columns=None) -> DataFrame:
+        # [FUNCTION DOC]
+        # Applies post-read axis processing and filters to a frame.
+        # Parameters: obj is the frame read; selection is the selection object (its filter
+        # may hold filtering conditions); columns is an optional list of columns to keep
+        # (copied; for multi-level indexes the level names are added to the front).
+        # Behavior: reindexes by the stored non-index axes limited to the requested
+        # columns, then for each filter in the selection applies it via a local function,
+        # and returns the resulting frame.
+        # # KNOWN ISSUE: the local filter function is defined inside the loop over the
+        # non-index axes but used afterwards, so a table without non-index axes and with a
+        # filter would hit an unbound name. It also reads the current frame through a
+        # closure.
         """process axes filters"""
         # make a copy to avoid side effects
         if columns is not None:
@@ -4368,6 +5588,13 @@ class Table(Fixed):
             obj = _reindex_axis(obj, axis, labels, columns)
 
             def process_filter(field, filt, op):
+                # [FUNCTION DOC]
+                # HELPER: local filter function. Given a field name, a filter (values to match) and
+                # a comparison operator function, finds which axis the field refers to. If the field
+                # is the name of an axis, filters that axis's labels (adding level names for
+                # multi-level indexes). If it is a label on an axis, filters on that label's values
+                # (the axis number is swapped for frames). Returns the filtered object. Raises a
+                # value error if the field is not found.
                 for axis_name in obj._AXIS_ORDERS:
                     axis_number = obj._get_axis_number(axis_name)
                     axis_values = obj._get_axis(axis_name)
@@ -4412,6 +5639,14 @@ class Table(Fixed):
         fletcher32: bool,
         expectedrows: int | None,
     ) -> dict[str, Any]:
+        # [FUNCTION DOC]
+        # HELPER: builds the keyword options for creating the PyTables table.
+        # Parameters: complib and complevel (default the store's level or nine) and
+        # fletcher32 (or the store's flag) configure compression when complib is given;
+        # expectedrows defaults to the larger of the expected row count and ten thousand.
+        # Returns a dictionary with the table name (table), expected rows, the column
+        # description mapping each axis's column name to its type, and filters when a
+        # library was passed (or, otherwise, the store-wide filters if set).
         """create the description of the table from the axes & values"""
         # provided expected rows if its passed
         if expectedrows is None:
@@ -4439,6 +5674,14 @@ class Table(Fixed):
     def read_coordinates(
         self, where=None, start: int | None = None, stop: int | None = None
     ):
+        # [FUNCTION DOC]
+        # Returns the row positions matching a selection.
+        # Parameters: where is a selection; start and stop bound the rows.
+        # Behavior: warns if the file version is old and a where clause is present;
+        # returns false if the axes cannot be inferred; builds a selection and selects
+        # coordinates; when the selection has additional filters, evaluates each by reading
+        # the filtered column over the coordinate range and keeps matching coordinates.
+        # Returns an index of integer row positions (or false as above).
         """
         select coordinates (row numbers) from a table; return the
         coordinates object
@@ -4469,6 +5712,15 @@ class Table(Fixed):
         start: int | None = None,
         stop: int | None = None,
     ):
+        # [FUNCTION DOC]
+        # Returns one column of the table as a series.
+        # Parameters: column is the name; where must be none (type error if given); start
+        # and stop bound the rows.
+        # Behavior: returns false if axes cannot be inferred. Finds the axis of that name;
+        # it must be data indexable (value error otherwise). Reads the column slice from the
+        # table, converts it with the axis's convert method, and returns it as a series
+        # named after the column, using the stored meta text as its dtype.
+        # Raises a key error if no axis has that name.
         """
         return a single column from the table, generally only indexables
         are interesting
@@ -4509,6 +5761,9 @@ class Table(Fixed):
 
 
 class WORMTable(Table):
+    # [CLASS DOC]
+    # Placeholder table kind for write-once read-many tables (searchable but not
+    # appendable). Table type text is worm. Read and write are not implemented.
     """
     a write-once read-many table: this format DOES NOT ALLOW appending to a
     table. writing is a one-time operation the data are stored in a format
@@ -4524,12 +5779,16 @@ class WORMTable(Table):
         start: int | None = None,
         stop: int | None = None,
     ):
+        # [FUNCTION DOC]
+        # Not implemented: always raises a not-implemented error.
         """
         read the indices and the indexing array, calculate offset rows and return
         """
         raise NotImplementedError("WORMTable needs to implement read")
 
     def write(self, obj, **kwargs) -> None:
+        # [FUNCTION DOC]
+        # Not implemented: always raises a not-implemented error.
         """
         write in a format that we can search later on (but cannot append
         to): write out the indices and the values using _write_array
@@ -4539,6 +5798,11 @@ class WORMTable(Table):
 
 
 class AppendableTable(Table):
+    # [CLASS DOC]
+    # Base class of the appendable table storers; table type text is appendable.
+    # Adds the write path (creating the PyTables table, validating axes, and writing
+    # rows in chunks with optional dropping of all-missing rows), chunk writing, and
+    # partial deletion of rows.
     """support the new appendable table formats"""
 
     table_type = "appendable"
@@ -4560,6 +5824,23 @@ class AppendableTable(Table):
         data_columns=None,
         track_times: bool = True,
     ) -> None:
+        # [FUNCTION DOC]
+        # Writes (or appends) an object to the table.
+        # Parameters: obj is the frame; axes is the list of index axes (default the first);
+        # append says whether to add to an existing table (otherwise an existing table node
+        # is removed first); complib, complevel and fletcher32 configure compression of a
+        # newly created table; min_itemsize sets string widths; chunksize is rows per write
+        # chunk (default one hundred thousand); expectedrows hints the final size;
+        # dropna drops rows that are missing in all value columns; nan_rep is the
+        # missing-text representation; data_columns lists labels to store as separate
+        # columns; track_times is passed to the PyTables create call (false makes files
+        # reproducible).
+        # Behavior: builds the new table description (validating against the existing table
+        # when appending), validates axis names, creates the PyTables table with its
+        # description and attributes if it does not exist, stores the info mapping,
+        # validates each axis against stored attributes and writes the kind attributes, and
+        # finally writes the data in chunks.
+        # Raises value or type errors from the validation steps.
         if not append and self.is_exists:
             self._handle.remove_node(self.group, "table")
 
@@ -4604,6 +5885,18 @@ class AppendableTable(Table):
         table.write_data(chunksize, dropna=dropna)
 
     def write_data(self, chunksize: int | None, dropna: bool = False) -> None:
+        # [FUNCTION DOC]
+        # Writes all rows of this table's data to the file in chunks.
+        # Parameters: chunksize is the rows per chunk (default one hundred thousand);
+        # dropna (default false) skips rows where every value column is missing.
+        # Behavior: when dropping, computes for each value block a per-row flag saying
+        # whether all entries of that row are missing (only for blocks where this can be
+        # computed) and combines the flags across blocks with a logical and, so a flagged
+        # row is dropped by the chunk writer. Requires a
+        # single index axis (asserted). Moves the first dimension of each value block to
+        # the end, reshapes each to rows by the column shape of the table dtype, then
+        # for each chunk of rows calls the chunk writer with slices of the index values, the
+        # mask and the value blocks. The loop stops at the first empty chunk.
         """
         we form the data into a 2-d including indexes,values,mask write chunk-by-chunk
         """
@@ -4669,6 +5962,16 @@ class AppendableTable(Table):
         mask: npt.NDArray[np.bool_] | None,
         values: list[np.ndarray],
     ) -> None:
+        # [FUNCTION DOC]
+        # HELPER: writes one chunk of rows to the PyTables table.
+        # Parameters: rows is a preallocated structured buffer, reused if the chunk has the
+        # same length (otherwise a new one is made); indexes is the list of index value
+        # arrays for this chunk; mask is an optional flags array where true marks rows to
+        # drop; values is the list of value block arrays for this chunk.
+        # Behavior: returns without writing if any value block has no elements. Fills the
+        # structured buffer's fields in order (index fields first, then value fields),
+        # removes masked rows, and if any rows remain appends them to the table and
+        # flushes.
         """
         Parameters
         ----------
@@ -4709,6 +6012,16 @@ class AppendableTable(Table):
     def delete(
         self, where=None, start: int | None = None, stop: int | None = None
     ) -> int | None:
+        # [FUNCTION DOC]
+        # Deletes rows from the table.
+        # Parameters: where is a selection; start and stop bound the rows.
+        # Behavior: with no where (none or empty): with neither start nor stop removes the
+        # entire group and returns the previous number of rows; otherwise removes the row
+        # range (stop defaults to the end) and flushes, returning the count removed.
+        # With a where: returns none if axes cannot be inferred; selects the matching row
+        # coordinates, sorts them, splits them into runs of consecutive coordinates, and
+        # removes each run from the last to the first so earlier positions stay valid;
+        # flushes. Returns the number of matching rows.
         # delete all rows (and return the nrows)
         if where is None or not len(where):
             if start is None and stop is None:
@@ -4768,6 +6081,10 @@ class AppendableTable(Table):
 
 
 class AppendableFrameTable(AppendableTable):
+    # [CLASS DOC]
+    # Appendable table storer for DataFrames (table type appendable frame, pandas kind
+    # frame table, two dimensions, object type frame). Frames whose index axis is the
+    # second axis are stored transposed. The Series subclasses adapt this class.
     """support the new appendable table formats"""
 
     pandas_kind = "frame_table"
@@ -4777,10 +6094,15 @@ class AppendableFrameTable(AppendableTable):
 
     @property
     def is_transposed(self) -> bool:
+        # [FUNCTION DOC]
+        # Property: true if the first index axis is axis one (data stored transposed).
         return self.index_axes[0].axis == 1
 
     @classmethod
     def get_object(cls, obj, transposed: bool):
+        # [FUNCTION DOC]
+        # Class method returning the object to store: transposed if requested, otherwise
+        # unchanged.
         """these are written transposed"""
         if transposed:
             obj = obj.T
@@ -4793,6 +6115,25 @@ class AppendableFrameTable(AppendableTable):
         start: int | None = None,
         stop: int | None = None,
     ):
+        # [FUNCTION DOC]
+        # Reads the table into a frame.
+        # Parameters: where is a selection; columns restricts the returned columns; start
+        # and stop bound the rows.
+        # Behavior: warns if the version is old and a where is present; returns none if the
+        # axes cannot be inferred. Reads and converts the axes for the selection. For each
+        # data block builds the column labels (a multi-level index of tuples when the stored
+        # info says so; stored names are restored), then, depending on whether the table is
+        # stored transposed, builds a frame from the block values with the row index from
+        # the index axis; one-dimensional data-column arrays are reshaped to a single row;
+        # extension and datetime arrays and plain arrays are handled; categoricals are
+        # built from arrays. A unicode encode error caused by surrogates under surrogatepass
+        # mode with the string dtype option and PyArrow installed is retried with a
+        # python-storage string dtype. Asserts that the resulting dtypes equal the block
+        # dtype (skipped for object data under the string dtype option). Columns whose
+        # stored meta text is str or string are cast to that dtype. Frames of all blocks
+        # are concatenated column-wise (a single block is used as is). Finally applies the
+        # selection filters, axis ordering and column limit through the axis processing
+        # method and returns the frame.
         # validate the version
         self.validate_version(where)
 
@@ -4890,6 +6231,11 @@ class AppendableFrameTable(AppendableTable):
 
 
 class AppendableSeriesTable(AppendableFrameTable):
+    # [CLASS DOC]
+    # Appendable table storer for a Series, implemented on top of the frame table
+    # (table type appendable series, pandas kind series table, object type series). A
+    # series is stored as a frame with one column, which is named values when the
+    # series has no name; data is never transposed.
     """support the new appendable table formats"""
 
     pandas_kind = "series_table"
@@ -4899,14 +6245,27 @@ class AppendableSeriesTable(AppendableFrameTable):
 
     @property
     def is_transposed(self) -> bool:
+        # [FUNCTION DOC]
+        # Property: always false for series.
         return False
 
     @classmethod
     def get_object(cls, obj, transposed: bool):
+        # [FUNCTION DOC]
+        # Class method returning the object to store unchanged; the transposed flag is
+        # ignored.
         return obj
 
     # error: Signature of "write" incompatible with supertype "Fixed"
     def write(self, obj, data_columns=None, **kwargs) -> None:  # type: ignore[override]
+        # [FUNCTION DOC]
+        # Writes a series (or a frame) as a one-column frame table.
+        # Parameters: obj is the series (a non-frame input is converted to a frame whose
+        # single column is named after the series, or the generic name values); data_columns
+        # is accepted but ignored; extra keyword arguments go to the frame table write.
+        # All columns of the converted object are made data columns.
+        # # KNOWN ISSUE: the data_columns parameter is overridden with the list of all
+        # columns, so a caller supplied value has no effect.
         """we are going to write this as a frame table"""
         if not isinstance(obj, DataFrame):
             name = obj.name or "values"
@@ -4920,6 +6279,12 @@ class AppendableSeriesTable(AppendableFrameTable):
         start: int | None = None,
         stop: int | None = None,
     ) -> Series:
+        # [FUNCTION DOC]
+        # Reads the series. Parameters: where, columns, start, stop as for the frame table.
+        # For a multi-level index, the level names are added to the front of the columns
+        # list (mutating the caller's list), the frame is read, and the levels are set as
+        # the index. Returns the first column as a series, with the generic name values
+        # replaced by no name.
         is_multi_index = self.is_multi_index
         if columns is not None and is_multi_index:
             assert isinstance(self.levels, list)  # needed for mypy
@@ -4939,6 +6304,9 @@ class AppendableSeriesTable(AppendableFrameTable):
 
 
 class AppendableMultiSeriesTable(AppendableSeriesTable):
+    # [CLASS DOC]
+    # Appendable table storer for a Series with a multi-level index (table type
+    # appendable multiseries). Same pandas kind as the series storer.
     """support the new appendable table formats"""
 
     pandas_kind = "series_table"
@@ -4946,6 +6314,11 @@ class AppendableMultiSeriesTable(AppendableSeriesTable):
 
     #  error: Signature of "write" incompatible with supertype "Fixed"
     def write(self, obj, **kwargs) -> None:  # type: ignore[override]
+        # [FUNCTION DOC]
+        # Writes a series with a multi-level index. Resets the index into ordinary columns
+        # (via the multi-index validation, which also stores the level names on the storer
+        # and may raise a value error for duplicate names), names the value column after
+        # the series (or values), and writes the result through the series table writer.
         """we are going to write this as a frame table"""
         name = obj.name or "values"
         newobj, self.levels = self.validate_multiindex(obj)
@@ -4957,6 +6330,11 @@ class AppendableMultiSeriesTable(AppendableSeriesTable):
 
 
 class GenericTable(AppendableFrameTable):
+    # [CLASS DOC]
+    # Read-only table storer for a generic PyTables table not written by pandas (table
+    # type generic table, pandas kind frame table). The columns are described from the
+    # PyTables table description rather than from stored pandas attributes. Writing is
+    # not supported.
     """a table that read/writes the generic pytables table format"""
 
     pandas_kind = "frame_table"
@@ -4967,13 +6345,22 @@ class GenericTable(AppendableFrameTable):
 
     @property
     def pandas_type(self) -> str:
+        # [FUNCTION DOC]
+        # Property: the pandas type is the class pandas kind rather than a stored
+        # attribute.
         return self.pandas_kind
 
     @property
     def storable(self):
+        # [FUNCTION DOC]
+        # Property: the PyTables table node if present, otherwise the group.
         return getattr(self.group, "table", None) or self.group
 
     def get_attrs(self) -> None:
+        # [FUNCTION DOC]
+        # Sets up the table description without stored attributes: no non-index axes, no
+        # missing-text representation, no levels; index axes and values axes are derived from
+        # the indexables; all value columns are data columns.
         """retrieve our attributes"""
         self.non_index_axes = []
         self.nan_rep = None
@@ -4985,6 +6372,12 @@ class GenericTable(AppendableFrameTable):
 
     @cache_readonly
     def indexables(self):
+        # [FUNCTION DOC]
+        # Cached property creating the column descriptions from the PyTables description:
+        # one generic index column named index on axis zero (flagged categorical when a
+        # metadata object exists), followed by one generic data indexable column per name
+        # in the description, each holding its own name as the only label, with its column
+        # type, position and optional category metadata.
         """create the indexables from the table description"""
         d = self.description
 
@@ -5020,10 +6413,17 @@ class GenericTable(AppendableFrameTable):
 
     # error: Signature of "write" incompatible with supertype "AppendableTable"
     def write(self, **kwargs) -> None:  # type: ignore[override]
+        # [FUNCTION DOC]
+        # Not supported: always raises a not-implemented error.
         raise NotImplementedError("cannot write on a generic table")
 
 
 class AppendableMultiFrameTable(AppendableFrameTable):
+    # [CLASS DOC]
+    # Appendable table storer for a DataFrame with a multi-level index (table type
+    # appendable multiframe, short type appendable_multi). The index levels are stored
+    # as ordinary data columns named by their level names, and a class level pattern
+    # matches default names of the form level followed by digits.
     """a frame with a multi-index"""
 
     table_type = "appendable_multiframe"
@@ -5033,10 +6433,20 @@ class AppendableMultiFrameTable(AppendableFrameTable):
 
     @property
     def table_type_short(self) -> str:
+        # [FUNCTION DOC]
+        # Property: the short table type name, the fixed text appendable_multi.
         return "appendable_multi"
 
     # error: Signature of "write" incompatible with supertype "Fixed"
     def write(self, obj, data_columns=None, **kwargs) -> None:  # type: ignore[override]
+        # [FUNCTION DOC]
+        # Writes a frame with a multi-level index.
+        # Parameters: obj is the frame; data_columns is none, true (all columns) or a list
+        # of labels; extra keyword arguments go to the frame table write.
+        # Resets the index into columns (storing the level names on the storer), adds the
+        # level names to the front of the data columns (mutating a caller-supplied list)
+        # and writes through the frame table writer. May raise a value error for duplicate
+        # names.
         if data_columns is None:
             data_columns = []
         elif data_columns is True:
@@ -5055,6 +6465,10 @@ class AppendableMultiFrameTable(AppendableFrameTable):
         start: int | None = None,
         stop: int | None = None,
     ) -> DataFrame:
+        # [FUNCTION DOC]
+        # Reads the frame and restores the multi-level index: reads through the frame
+        # table reader, sets the stored level names as the index and clears level names that
+        # match the default level pattern. Parameters as for the frame table read.
         df = super().read(where=where, columns=columns, start=start, stop=stop)
         df = df.set_index(self.levels)
 
@@ -5069,6 +6483,15 @@ class AppendableMultiFrameTable(AppendableFrameTable):
 def _reindex_axis(
     obj: DataFrame, axis: AxisInt, labels: Index, other=None
 ) -> DataFrame:
+    # [FUNCTION DOC]
+    # HELPER: reindexes a frame along one axis to given labels.
+    # Parameters: obj is the frame; axis is the axis number; labels are the wanted
+    # labels; other is an optional second label set to restrict to.
+    # Behavior: returns the frame unchanged when the current axis already equals the
+    # labels (and the other set, if given). Otherwise de-duplicates the labels, when
+    # other is given keeps those of other that are among the labels (in the order of
+    # other), and selects them by label if they differ from the current axis. Returns
+    # the original or a new frame.
     ax = obj._get_axis(axis)
     labels = ensure_index(labels)
 
@@ -5093,6 +6516,9 @@ def _reindex_axis(
 
 
 def _get_tz(tz: tzinfo) -> str | tzinfo:
+    # [FUNCTION DOC]
+    # HELPER: for a time-zone-aware type, returns the zone encoded as a name text (or
+    # the time zone object when no name is available), via the timezone utility.
     """for a tz-aware type, return an encoded zone"""
     zone = timezones.get_timezone(tz)
     return zone
@@ -5101,6 +6527,13 @@ def _get_tz(tz: tzinfo) -> str | tzinfo:
 def _set_tz(
     values: npt.NDArray[np.int64], tz: str | tzinfo | None, datetime64_dtype: str
 ) -> DatetimeArray:
+    # [FUNCTION DOC]
+    # HELPER: converts stored 64-bit integers to a datetime array with a time zone.
+    # Parameters: values is an int64 array (asserted); tz is a zone name, zone object
+    # or none (naive); datetime64_dtype is the dtype name whose unit gives the
+    # resolution (any multiplier count in the dtype is ignored).
+    # Builds a datetime dtype from the zone and unit and constructs the array from the
+    # integers. Returns the datetime array.
     """
     Coerce the values to a DatetimeArray with appropriate tz.
 
@@ -5123,6 +6556,19 @@ def _set_tz(
 
 
 def _convert_index(name: str, index: Index, encoding: str, errors: str) -> IndexCol:
+    # [FUNCTION DOC]
+    # HELPER: converts a pandas index into an index column description for storage.
+    # Parameters: name is the column name (text, asserted); index is the pandas index;
+    # encoding and errors apply to string conversion.
+    # Behavior: converts the index to a storable array plus dtype name and derives kind
+    # and column type. Integer, unsigned, bool and datetime-like (including period and
+    # timedelta) indexes return an index column carrying the frequency and time zone.
+    # A multi-level index raises a type error. Otherwise by inferred type: dates are
+    # stored as 32-bit ordinals; strings as fixed-width encoded strings sized to the
+    # longest value; integer or floating object indexes with the converted array;
+    # anything else must be object dtype with kind object and is stored with the object
+    # atom.
+    # Returns the index column description (carrying the index name).
     assert isinstance(name, str)
 
     index_name = index.name
@@ -5187,6 +6633,21 @@ def _convert_index(name: str, index: Index, encoding: str, errors: str) -> Index
 
 
 def _unconvert_index(data, kind: str, encoding: str, errors: str) -> np.ndarray | Index:
+    # [FUNCTION DOC]
+    # HELPER: inverse of the index conversion for reading.
+    # Parameters: data is the stored array; kind is the stored kind text; encoding and
+    # errors for decoding strings.
+    # Behavior by kind: datetime and timedelta kinds produce datetime or timedelta
+    # indexes (a unitless old kind means nanoseconds; otherwise the data are
+    # reinterpreted with the stored unit); date builds an object array of dates, from
+    # ordinals with a fallback to timestamps; integer, float and bool become a plain
+    # array; string is decoded to an object array of text; object takes the first stored
+    # element (the stored variable-length object array). Any other kind raises a value
+    # error.
+    # Returns an array or index.
+    # # KNOWN ISSUE: the string branch tests membership in a parenthesized plain string
+    # rather than a tuple, so it does substring matching (for example an empty kind or a
+    # fragment of the word string would also match).
     index: Index | np.ndarray
 
     if kind.startswith("datetime64"):
@@ -5229,6 +6690,25 @@ def _maybe_convert_for_string_atom(
     errors,
     columns: list[str],
 ):
+    # [FUNCTION DOC]
+    # HELPER: prepares a block of values for storage as fixed-width strings.
+    # Parameters: name is the column/block name; bvalues is the block array; existing_col
+    # is the already-stored column description (or none); min_itemsize is a size, a
+    # mapping by column name or the generic values key, or none; nan_rep is the text used
+    # for missing entries; encoding and errors for encoding; columns are the labels of
+    # the block (used in error messages).
+    # Behavior: string extension dtypes are converted to numpy objects; non-object arrays
+    # are returned unchanged. For object arrays: raises a type error for dates or for
+    # mixed time zones (datetimes). Missing entries in a copy are replaced by the
+    # missing text, and a value error is raised if that text is longer than the existing
+    # column width. If the data are still not all strings, finds the first row that is
+    # not and raises a type error naming that column. Otherwise encodes to fixed-width
+    # byte strings, sizes the width as the largest of the encoded width, the requested
+    # minimum and the existing column width (validating against the existing column) and
+    # returns the array cast to that width.
+    # # KNOWN ISSUE: the check that returns the original values when the inferred type is
+    # not string and the dtype name is not object can never trigger, because only object
+    # arrays reach it (so the dtype name is always object).
     if isinstance(bvalues.dtype, StringDtype):
         bvalues = bvalues.to_numpy()
     if bvalues.dtype != object:
@@ -5298,6 +6778,11 @@ def _maybe_convert_for_string_atom(
 
 
 def _convert_string_array(data: np.ndarray, encoding: str, errors: str) -> np.ndarray:
+    # [FUNCTION DOC]
+    # HELPER: converts an object array of strings to a fixed-width byte string array.
+    # Parameters: data is the object array; encoding and errors define the text
+    # encoding. Non-empty data are encoded elementwise (shape preserved); the width is
+    # the longest encoded value (at least one). Returns the fixed-width array.
     """
     Take a string-like that is object dtype and coerce to a fixed size string type.
 
@@ -5331,6 +6816,13 @@ def _convert_string_array(data: np.ndarray, encoding: str, errors: str) -> np.nd
 def _unconvert_string_array(
     data: np.ndarray, nan_rep, encoding: str, errors: str
 ) -> np.ndarray:
+    # [FUNCTION DOC]
+    # HELPER: inverse of the string conversion. Parameters: data is a fixed-width string
+    # array; nan_rep is the stored missing text (default nan); encoding and errors for
+    # decoding. Flattens to objects, decodes byte strings with the encoding (or widens
+    # text), then replaces entries equal to the missing text with a missing value.
+    # Returns the object array in the original shape.
+    # Side effect: the replacement happens in the decoded array only.
     """
     Inverse of _convert_string_array.
 
@@ -5371,6 +6863,9 @@ def _unconvert_string_array(
 
 
 def _maybe_convert(values: np.ndarray, val_kind: str, encoding: str, errors: str):
+    # [FUNCTION DOC]
+    # HELPER: converts raw stored values if the kind requires it (datetime kinds and
+    # string); otherwise returns them unchanged. Asserts the kind is text.
     assert isinstance(val_kind, str), type(val_kind)
     if _need_convert(val_kind):
         conv = _get_converter(val_kind, encoding, errors)
@@ -5379,6 +6874,11 @@ def _maybe_convert(values: np.ndarray, val_kind: str, encoding: str, errors: str
 
 
 def _get_converter(kind: str, encoding: str, errors: str):
+    # [FUNCTION DOC]
+    # HELPER: returns a conversion function for a kind: unitless datetime64 kind gives a
+    # function casting to nanosecond datetimes; other datetime64 kinds cast to that
+    # dtype; string gives a function decoding fixed-width strings (no missing text).
+    # Any other kind raises a value error.
     if kind == "datetime64":
         return lambda x: np.asarray(x, dtype="M8[ns]")
     elif "datetime64" in kind:
@@ -5392,12 +6892,20 @@ def _get_converter(kind: str, encoding: str, errors: str):
 
 
 def _need_convert(kind: str) -> bool:
+    # [FUNCTION DOC]
+    # HELPER: returns true for the kinds needing conversion on read: string and any
+    # datetime64 kind; false otherwise.
     if kind in ("datetime64", "string") or "datetime64" in kind:
         return True
     return False
 
 
 def _maybe_adjust_name(name: str, version: Sequence[int]) -> str:
+    # [FUNCTION DOC]
+    # HELPER: adjusts a block name for files written before version 0.10.1. The version
+    # must be a sequence of at least three integers (a string or shorter sequence
+    # raises a value error). For versions 0.x.0 with x at most 10, a name of the form
+    # values_block_N becomes values_N; otherwise the name is returned unchanged.
     """
     Prior to 0.10.1, we named values blocks like: values_block_0 and the
     name values_0, adjust the given name if necessary.
@@ -5423,6 +6931,11 @@ def _maybe_adjust_name(name: str, version: Sequence[int]) -> str:
 
 
 def _dtype_to_kind(dtype_str: str) -> str:
+    # [FUNCTION DOC]
+    # HELPER: maps a dtype name text to a storage kind text: string/bytes to string,
+    # float, complex, int and uint to integer, datetime64 and timedelta kinds keep the
+    # full dtype text, bool, category, period to integer (the frequency is stored
+    # separately), object, and str. Raises a value error for any other name.
     """
     Find the "kind" string describing the given dtype name.
     """
@@ -5456,6 +6969,12 @@ def _dtype_to_kind(dtype_str: str) -> str:
 
 
 def _get_data_and_dtype_name(data: ArrayLike):
+    # [FUNCTION DOC]
+    # HELPER: converts an array into a storable numpy array plus a dtype name text.
+    # Categoricals are replaced by their integer codes. The dtype name of
+    # time-zone-aware datetimes is a naive datetime name with the unit; others use the
+    # array dtype name. Datetime and timedelta kinds are viewed as 64-bit integers and
+    # period indexes use their integer ordinals. Returns the pair (array, dtype name).
     """
     Convert the passed data into a storable form and a dtype string.
     """
@@ -5481,6 +7000,13 @@ def _get_data_and_dtype_name(data: ArrayLike):
 
 
 class Selection:
+    # [CLASS DOC]
+    # Evaluates a selection on a table: converts a where argument into either a list of
+    # row coordinates or a query condition plus post-read filter.
+    # State: the table, the where argument, start and stop bounds, and the computed
+    # condition, filter, parsed terms and coordinates (each none until set).
+    # Key methods: generate (parse where into terms), select (read rows), select_coords
+    # (return row positions).
     """
     Carries out a selection operation on a tables.Table object.
 
@@ -5499,6 +7025,15 @@ class Selection:
         start: int | None = None,
         stop: int | None = None,
     ) -> None:
+        # [FUNCTION DOC]
+        # Builds the selection. If where is list-like, tries to interpret it as coordinates:
+        # a boolean array selects positions within the start/stop range, an integer array is
+        # used as coordinates after checking that they lie within start and stop. Otherwise
+        # (or when no coordinates), parses the where into terms and evaluates them into a
+        # numexpr condition and a filter.
+        # # KNOWN ISSUE: the value error for coordinates outside start and stop is raised
+        # inside a block that suppresses value errors, so it is swallowed and the code falls
+        # back to parsing the array as an expression.
         self.table = table
         self.where = where
         self.start = start
@@ -5538,12 +7073,25 @@ class Selection:
                 self.condition, self.filter = self.terms.evaluate()
 
     @overload
-    def generate(self, where: dict | list | tuple | str) -> PyTablesExpr: ...
+    def generate(self, where: dict | list | tuple | str) -> PyTablesExpr:
+        # [FUNCTION DOC]
+        # Typing overload for a non-empty where: returns a parsed expression. See the
+        # implementation below.
+        ...
 
     @overload
-    def generate(self, where: None) -> None: ...
+    def generate(self, where: None) -> None:
+        # [FUNCTION DOC]
+        # Typing overload for a none where: returns none. See the implementation below.
+        ...
 
     def generate(self, where: dict | list | tuple | str | None) -> PyTablesExpr | None:
+        # [FUNCTION DOC]
+        # Parses a where into a query expression object.
+        # Parameter where is a dictionary, list, tuple, text or none. Returns none for none.
+        # Otherwise builds the expression using the table's queryable names and encoding. If
+        # the expression refers to unknown names, raises a value error saying the references
+        # must be axes or data columns and listing the defined ones.
         """where can be a : dict,list,tuple,string"""
         if where is None:
             return None
@@ -5567,6 +7115,9 @@ class Selection:
             raise ValueError(msg) from err
 
     def select(self):
+        # [FUNCTION DOC]
+        # Runs the selection and returns the raw rows: rows satisfying the condition within
+        # start and stop, else the given coordinates, else all rows within the bounds.
         """
         generate the selection
         """
@@ -5579,6 +7130,11 @@ class Selection:
         return self.table.table.read(start=self.start, stop=self.stop)
 
     def select_coords(self):
+        # [FUNCTION DOC]
+        # Returns the row positions: negative start or stop are shifted by the row count;
+        # with a condition returns the sorted matching positions within the bounds; with
+        # coordinates returns them unchanged (start and stop not applied); otherwise returns
+        # the full range of positions between start and stop.
         """
         generate the selection
         """

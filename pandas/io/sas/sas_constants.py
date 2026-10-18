@@ -1,3 +1,16 @@
+# [MODULE DOC]
+# HELPER: internal constants module for the sas7bdat reader (not public API).
+# Collects the magic bytes, byte offsets and lengths of header fields, page
+# layout masks and page type codes, subheader pointer sizes, column attribute
+# offsets, compression signature literals, a map from SAS encoding numbers to
+# Python codec names, a map from subheader signature bytes to subheader kinds,
+# and the lists of SAS date and datetime format names.
+# All values are annotated as final constants. Offsets are in bytes from the
+# start of the structure they describe (file header, page, or subheader);
+# the 64-bit variants of offsets are obtained by adding an alignment amount that
+# the reader computes itself.
+# Consumed only by the sas7bdat reader module. No import-time side effects
+# beyond defining names.
 from __future__ import annotations
 
 from typing import Final
@@ -106,6 +119,9 @@ rdc_compression: Final = b"SASYZCR2"
 
 compression_literals: Final = [rle_compression, rdc_compression]
 
+# KNOWN ISSUE: the codec table below is explicitly incomplete (several numbers
+# are commented out as not found), and the cp874 codec appears under two
+# different numbers (39 and 51).
 # Incomplete list of encodings, using SAS nomenclature:
 # https://support.sas.com/documentation/onlinedoc/dfdmstudio/2.6/dmpdmsug/Content/dfU_Encodings_SAS.html
 # corresponding to the Python documentation of standard encodings
@@ -169,6 +185,13 @@ encoding_names: Final = {
 
 
 class SASIndex:
+    # [CLASS DOC]
+    # HELPER: namespace class (no instances, no state) holding the integer
+    # identifiers of the nine kinds of sas7bdat subheader: row size, column
+    # size, subheader counts, column text, column name, column attributes,
+    # format and label, column list, and data. The identifiers are consecutive
+    # integers starting at zero in that order and are the values of the
+    # signature lookup table and indexes into the reader's subheader handlers.
     row_size_index: Final = 0
     column_size_index: Final = 1
     subheader_counts_index: Final = 2
@@ -214,6 +237,8 @@ subheader_signature_to_index: Final = {
 }
 
 
+# KNOWN ISSUE: the datetime format tuple further below lists two names twice
+# (the DTMONYY and DTWKDATX formats); harmless for membership tests.
 # List of frequently used SAS date and datetime formats
 # http://support.sas.com/documentation/cdl/en/etsug/60372/HTML/default/viewer.htm#etsug_intervals_sect009.htm
 # https://github.com/epam/parso/blob/master/src/main/java/com/epam/parso/impl/SasFileConstants.java

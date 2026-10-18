@@ -1,3 +1,11 @@
+# [MODULE DOC]
+# Reader for SPSS .sav files, a thin wrapper around the optional pyreadstat
+# dependency.
+# Public contents: the read_spss function (exposed as part of the top-level
+# pandas namespace).
+# Relationships: uses path stringification from the io common module, dtype
+# backend validation, and the data frame conversion of nullable dtypes.
+# Import-time side effects: none; pyreadstat is imported only when reading.
 from __future__ import annotations
 
 from typing import (
@@ -31,6 +39,19 @@ def read_spss(
     dtype_backend: DtypeBackend | lib.NoDefault = lib.no_default,
     **kwargs: Any,
 ) -> DataFrame:
+    # [FUNCTION DOC]
+    # Reads an SPSS file and returns a data frame.
+    # Parameters: path is a string or path object (converted to a string);
+    # usecols is an optional list-like of column names to load (default none
+    # meaning all columns); convert_categoricals (default true) asks pyreadstat
+    # to apply value labels so labelled columns become categorical-like;
+    # dtype_backend selects nullable or pyarrow dtypes (default: no conversion);
+    # extra keyword arguments are forwarded to the pyreadstat sav reader.
+    # Returns: a data frame whose attrs mapping is replaced by the attribute
+    # dictionary of the pyreadstat metadata object. When a dtype backend is
+    # given, the frame is converted using that backend.
+    # Raises: an import error if pyreadstat is missing; a type error if usecols
+    # is not list-like; validation errors for an invalid dtype_backend.
     """
     Load an SPSS file from the file path, returning a DataFrame.
 

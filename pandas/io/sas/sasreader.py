@@ -2,6 +2,14 @@
 Read SAS sas7bdat or xport files.
 """
 
+# [MODULE DOC]
+# Public entry point for reading SAS files. Defines the abstract reader base
+# class shared by the two concrete readers and the read_sas function, which
+# picks a reader by explicit format or by file name.
+# Relationships: the concrete readers live in the xport and sas7bdat modules and
+# are imported lazily inside read_sas; path normalization comes from the io
+# common module.
+# Import-time side effects: none.
 from __future__ import annotations
 
 from abc import (
@@ -34,17 +42,33 @@ if TYPE_CHECKING:
 
 @set_module("pandas.api.typing")
 class SASReader(Iterator["DataFrame"], ABC):
+    # [CLASS DOC]
+    # Abstract base for the concrete SAS readers (the xport reader and the
+    # sas7bdat reader). It is an iterator of data frames and an abstract base
+    # class, and also a context manager that closes the reader on exit.
+    # Subclasses must implement read (returns a data frame, optionally limited
+    # to a number of rows) and close (releases the underlying file handles).
+    # Holds no state of its own.
     """
     Abstract class for XportReader and SAS7BDATReader.
     """
 
     @abstractmethod
-    def read(self, nrows: int | None = None) -> DataFrame: ...
+    def read(self, nrows: int | None = None) -> DataFrame:
+        # [FUNCTION DOC]
+        # Abstract method: subclasses return up to nrows rows (all remaining
+        # rows when none) as a data frame.
+        ...
 
     @abstractmethod
-    def close(self) -> None: ...
+    def close(self) -> None:
+        # [FUNCTION DOC]
+        # Abstract method: subclasses release the underlying file handles.
+        ...
 
     def __enter__(self) -> Self:
+        # [FUNCTION DOC]
+        # Context manager entry; returns the reader itself.
         return self
 
     def __exit__(
@@ -53,6 +77,9 @@ class SASReader(Iterator["DataFrame"], ABC):
         exc_value: BaseException | None,
         traceback: TracebackType | None,
     ) -> None:
+        # [FUNCTION DOC]
+        # Context manager exit; closes the reader. The exception information
+        # arguments are ignored, and exceptions are not suppressed.
         self.close()
 
 
@@ -66,7 +93,11 @@ def read_sas(
     chunksize: int = ...,
     iterator: bool = ...,
     compression: CompressionOptions = ...,
-) -> SASReader: ...
+) -> SASReader:
+    # [FUNCTION DOC]
+    # Typing overload for a chunk size given: returns a reader. See the
+    # implementation below.
+    ...
 
 
 @overload
@@ -79,7 +110,11 @@ def read_sas(
     chunksize: None = ...,
     iterator: bool = ...,
     compression: CompressionOptions = ...,
-) -> DataFrame | SASReader: ...
+) -> DataFrame | SASReader:
+    # [FUNCTION DOC]
+    # Typing overload for no chunk size: returns a data frame or a reader. See
+    # the implementation below.
+    ...
 
 
 @set_module("pandas")
@@ -93,6 +128,26 @@ def read_sas(
     iterator: bool = False,
     compression: CompressionOptions = "infer",
 ) -> DataFrame | SASReader:
+    # [FUNCTION DOC]
+    # Reads a SAS XPORT or sas7bdat file.
+    # Parameters: filepath_or_buffer is a path, URL or binary file-like object;
+    # format is "xport" or "sas7bdat" (case-insensitive) or none to infer it
+    # from the file name; index is the column to use as index (default none);
+    # encoding decodes text (none leaves strings as raw bytes); chunksize is the
+    # number of rows per chunk (default none); iterator (default false) asks
+    # for a reader instead of a frame; compression defaults to inference from
+    # the file name.
+    # Behavior: when no format is given the argument is stringified and must be
+    # a string; names containing the transport extension select xport, names
+    # containing the sas7bdat extension select sas7bdat (checked in that
+    # order, case-insensitively). The matching reader is constructed with the
+    # index, encoding, chunksize and compression options.
+    # Returns: the reader itself if iterator is true or chunksize is truthy;
+    # otherwise the whole file is read inside a context manager (closing the
+    # reader) and the resulting data frame is returned.
+    # Raises: a value error if the format is none and the input is not a path
+    # string, if the format cannot be inferred from the name, or if the format
+    # name is not recognized.
     """
     Read SAS files stored as either XPORT or SAS7BDAT format files.
 

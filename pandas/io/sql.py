@@ -2,6 +2,26 @@
 Collection of query wrappers / abstractions to both facilitate data
 retrieval and to reduce dependency on DB-specific API.
 """
+# [MODULE DOC]
+# SQL input and output for data frames.
+# Public contents: the read_sql_table, read_sql_query and read_sql readers (exposed
+# at the top level of the library), the to_sql writer (called by the frame and series
+# write methods), has_table with the alias table_exists, get_schema (table creation
+# statement text), and pandasSQL_builder (chooses the database helper for a
+# connection).
+# Internal structure: a set of database helper classes sharing one abstract
+# interface: SQLDatabase (SQLAlchemy based, full featured), ADBCDatabase (Arrow
+# database connectivity, partial features) and SQLiteDatabase (plain sqlite3 fallback
+# without SQLAlchemy). SQLTable and its sqlite variant map a frame to a table
+# description, create it and move data in both directions. A small engine layer
+# (base engine, SQLAlchemy engine, get_engine) performs the row insertion. Helper
+# functions handle date parsing, conversion of row tuples to frames, and identifier
+# quoting; a dictionary maps inferred kinds to sqlite type names.
+# Relationships: uses the optional dependencies sqlalchemy and the ADBC driver manager
+# (plus pyarrow) imported lazily; uses date conversion, frame construction and
+# dtype backend validation from the core; reads the io.sql.engine option.
+# Import-time side effects: none (no global registration); sqlite adapters are
+# registered later, when a sqlite table object is created.
 
 from __future__ import annotations
 
@@ -99,6 +119,15 @@ if TYPE_CHECKING:
 
 
 def _process_parse_dates_argument(parse_dates):
+    # [FUNCTION DOC]
+    # HELPER: normalizes the date-parsing argument of the read functions into a
+    # container. A true, false or none value becomes an empty list; a value that is not
+    # iterable becomes a one-element list; any other value (list, dictionary, or even a
+    # string) is returned unchanged.
+    # # KNOWN ISSUE: a plain string is iterable so it is returned as is rather than
+    # wrapped in a list; later membership tests then do substring matching and the
+    # format lookup fails, so a single column name given as text is not handled
+    # gracefully despite the comment about non-list entries.
     """Process parse_dates argument for read_sql functions"""
     # handle non-list entries for parse_dates gracefully
     if parse_dates is True or parse_dates is None or parse_dates is False:
@@ -112,6 +141,19 @@ def _process_parse_dates_argument(parse_dates):
 def _handle_date_column(
     col, utc: bool = False, format: str | dict[str, Any] | None = None
 ):
+    # [FUNCTION DOC]
+    # HELPER: converts one column to datetimes.
+    # Parameters: col is a series; utc (default false) asks for UTC results; format is
+    # none, a format text, a unit code, or a dictionary of extra arguments for the
+    # general datetime conversion.
+    # Behavior: a dictionary format is passed directly to the datetime conversion as
+    # keyword arguments (the utc flag is then ignored). Otherwise, with no format, float
+    # and integer columns default to the seconds unit. A unit code (day, hour, minute,
+    # second, millisecond, microsecond, nanosecond) converts numbers since the epoch
+    # with invalid values coerced to missing. A time-zone-aware column (when no unit)
+    # is converted to UTC. Anything else is parsed with the format text, coercing
+    # invalid values.
+    # Returns the converted series.
     if isinstance(format, dict):
         # GH35185 Allow custom error values in parse_dates argument of
         # read_sql like functions.
@@ -137,6 +179,15 @@ def _handle_date_column(
 
 
 def _parse_date_columns(data_frame: DataFrame, parse_dates) -> DataFrame:
+    # [FUNCTION DOC]
+    # HELPER: forces selected columns of a result frame to datetimes, in place.
+    # Parameters: data_frame is the result; parse_dates is a list of column names or a
+    # dictionary mapping names to a format, unit code or argument dictionary (normalized
+    # first).
+    # For each column that is time-zone-aware (always converted, to UTC) or named in the
+    # date list, the format is looked up in the dictionary (none when the argument is a
+    # list), the column is converted and the converted column replaces the original by
+    # position. Returns the same frame object.
     """
     Force non-datetime columns to be read as such.
     Supports both string formatted and integer timestamp columns.
@@ -163,6 +214,17 @@ def _convert_arrays_to_dataframe(
     coerce_float: bool = True,
     dtype_backend: DtypeBackend | Literal["numpy"] = "numpy",
 ) -> DataFrame:
+    # [FUNCTION DOC]
+    # HELPER: builds a frame from a sequence of database rows.
+    # Parameters: data is a sequence of row tuples; columns are the column names;
+    # coerce_float (default true) converts decimal-like objects to floating point;
+    # dtype_backend is numpy (default) or a nullable/pyarrow backend name.
+    # Behavior: converts the rows to an object array, splits it into per-column arrays and
+    # infers column types. For the pyarrow backend each column is turned into an Arrow
+    # array (string-typed columns are cast to the regular, not large, string type) and
+    # wrapped in an Arrow-backed extension array. Builds a frame with a default integer
+    # index of the row count; with no columns at all returns an empty frame with the given
+    # column names.
     content = lib.to_object_array_tuples(data)
     idx_len = content.shape[0]
     arrays = convert_object_array(
@@ -201,6 +263,14 @@ def _wrap_result(
     dtype: DtypeArg | None = None,
     dtype_backend: DtypeBackend | Literal["numpy"] = "numpy",
 ) -> DataFrame:
+    # [FUNCTION DOC]
+    # HELPER: turns the rows of a query result into a finished frame.
+    # Parameters: data is the list of rows; columns are names; index_col is the optional
+    # column(s) to set as index; coerce_float, dtype_backend as for the row converter;
+    # parse_dates is the date-parsing argument; dtype is an optional dtype or mapping to
+    # cast the frame to.
+    # Steps in order: build the frame, cast to the dtype if given, parse date columns,
+    # set the index column if given. Returns the frame.
     """Wrap result set of a SQLAlchemy query in a DataFrame."""
     frame = _convert_arrays_to_dataframe(data, columns, coerce_float, dtype_backend)
 
@@ -223,6 +293,14 @@ def _wrap_result_adbc(
     dtype: DtypeArg | None = None,
     dtype_backend: DtypeBackend | Literal["numpy"] = "numpy",
 ) -> DataFrame:
+    # [FUNCTION DOC]
+    # HELPER: post-processes a frame already produced by an ADBC cursor: casts to the
+    # dtype if given, parses date columns, and sets the index column if given
+    # (keyword-only arguments index_col, parse_dates, dtype; dtype_backend is accepted
+    # but unused). Returns the frame.
+    # # KNOWN ISSUE: the docstring is a copy of the SQLAlchemy wrapper's and talks about
+    # a SQLAlchemy result set; the function actually receives an ADBC result frame, and
+    # the dtype backend argument is ignored.
     """Wrap result set of a SQLAlchemy query in a DataFrame."""
     if dtype:
         df = df.astype(dtype)
@@ -250,7 +328,11 @@ def read_sql_table(  # pyright: ignore[reportOverlappingOverload]
     columns: list[str] | None = ...,
     chunksize: None = ...,
     dtype_backend: DtypeBackend | lib.NoDefault = ...,
-) -> DataFrame: ...
+) -> DataFrame:
+    # [FUNCTION DOC]
+    # Typing overload for reading a table without chunking: returns one frame. See the
+    # implementation below.
+    ...
 
 
 @overload
@@ -264,7 +346,11 @@ def read_sql_table(
     columns: list[str] | None = ...,
     chunksize: int = ...,
     dtype_backend: DtypeBackend | lib.NoDefault = ...,
-) -> Iterator[DataFrame]: ...
+) -> Iterator[DataFrame]:
+    # [FUNCTION DOC]
+    # Typing overload for reading a table in chunks: returns an iterator of frames. See
+    # the implementation below.
+    ...
 
 
 @set_module("pandas")
@@ -279,6 +365,20 @@ def read_sql_table(
     chunksize: int | None = None,
     dtype_backend: DtypeBackend | lib.NoDefault = lib.no_default,
 ) -> DataFrame | Iterator[DataFrame]:
+    # [FUNCTION DOC]
+    # Reads a whole database table into a frame (or an iterator of frames).
+    # Parameters: table_name is the table; con is a SQLAlchemy connectable or URI text
+    # (plain DBAPI connections such as sqlite are not supported); schema is the schema
+    # name (default the connection's default); index_col is a column or list of columns
+    # to use as index; coerce_float (default true) converts decimal-like values to
+    # floats; parse_dates is a list of columns, or a mapping of column to format, unit or
+    # argument dictionary; columns restricts the columns selected; chunksize (default
+    # none) returns an iterator of frames of that many rows; dtype_backend selects
+    # nullable or pyarrow dtypes (default numpy).
+    # Behavior: validates the backend, opens a database helper within a transaction,
+    # raises a value error if the table does not exist, and delegates to the helper's
+    # table reader. Returns the result, or raises a value error (including the
+    # connection) if nothing came back.
     """
     Read SQL database table into a DataFrame.
 
@@ -382,7 +482,11 @@ def read_sql_query(  # pyright: ignore[reportOverlappingOverload]
     chunksize: None = ...,
     dtype: DtypeArg | None = ...,
     dtype_backend: DtypeBackend | lib.NoDefault = ...,
-) -> DataFrame: ...
+) -> DataFrame:
+    # [FUNCTION DOC]
+    # Typing overload for a query without chunking: returns one frame. See the
+    # implementation below.
+    ...
 
 
 @overload
@@ -396,7 +500,11 @@ def read_sql_query(
     chunksize: int = ...,
     dtype: DtypeArg | None = ...,
     dtype_backend: DtypeBackend | lib.NoDefault = ...,
-) -> Iterator[DataFrame]: ...
+) -> Iterator[DataFrame]:
+    # [FUNCTION DOC]
+    # Typing overload for a query in chunks: returns an iterator of frames. See the
+    # implementation below.
+    ...
 
 
 @set_module("pandas")
@@ -411,6 +519,17 @@ def read_sql_query(
     dtype: DtypeArg | None = None,
     dtype_backend: DtypeBackend | lib.NoDefault = lib.no_default,
 ) -> DataFrame | Iterator[DataFrame]:
+    # [FUNCTION DOC]
+    # Runs a SQL query and returns its result as a frame (or an iterator of frames).
+    # Parameters: sql is a query text or a SQLAlchemy selectable; con is a SQLAlchemy
+    # connectable, URI text or sqlite3 connection (other DBAPI connections trigger a
+    # warning and are treated like sqlite); index_col, coerce_float, parse_dates,
+    # chunksize, dtype_backend as in the table reader; params are query parameters in the
+    # driver's parameter style (list, tuple or mapping); dtype is a dtype or mapping to
+    # cast the result to.
+    # Behavior: validates the backend (default numpy), builds the database helper with
+    # the connection, and delegates to the helper's query reader. Returns the frame or
+    # iterator.
     """
     Read SQL query into a DataFrame.
 
@@ -518,7 +637,11 @@ def read_sql(  # pyright: ignore[reportOverlappingOverload]
     chunksize: None = ...,
     dtype_backend: DtypeBackend | lib.NoDefault = ...,
     dtype: DtypeArg | None = None,
-) -> DataFrame: ...
+) -> DataFrame:
+    # [FUNCTION DOC]
+    # Typing overload for the combined reader without chunking: returns one frame. See
+    # the implementation below.
+    ...
 
 
 @overload
@@ -533,7 +656,11 @@ def read_sql(
     chunksize: int = ...,
     dtype_backend: DtypeBackend | lib.NoDefault = ...,
     dtype: DtypeArg | None = None,
-) -> Iterator[DataFrame]: ...
+) -> Iterator[DataFrame]:
+    # [FUNCTION DOC]
+    # Typing overload for the combined reader in chunks: returns an iterator of frames.
+    # See the implementation below.
+    ...
 
 
 @set_module("pandas")
@@ -549,6 +676,17 @@ def read_sql(
     dtype_backend: DtypeBackend | lib.NoDefault = lib.no_default,
     dtype: DtypeArg | None = None,
 ) -> DataFrame | Iterator[DataFrame]:
+    # [FUNCTION DOC]
+    # Reads either a query or a whole table, choosing automatically.
+    # Parameters: sql is a query or a table name; con may be a SQLAlchemy connectable, URI
+    # text, sqlite3 connection or ADBC connection; index_col, coerce_float, params,
+    # parse_dates, chunksize, dtype_backend and dtype as in the query reader; columns
+    # restricts the columns when a table is read; dtype is ignored for tables.
+    # Behavior: validates the backend (default numpy) and builds the database helper. For
+    # a sqlite helper always runs the text as a query (table names are not accepted).
+    # Otherwise asks the helper whether the text is a table name, treating any error from
+    # the driver as no; if it is a table name reads the table, else runs it as a query.
+    # Returns the frame or iterator.
     """
     Read SQL query or database table into a DataFrame.
 
@@ -753,6 +891,21 @@ def to_sql(
     engine: str = "auto",
     **engine_kwargs,
 ) -> int | None:
+    # [FUNCTION DOC]
+    # Writes a frame (or series) to a database table and returns the number of rows
+    # affected.
+    # Parameters: frame is a frame or series (a series is converted to a one-column
+    # frame; anything else raises a not-implemented error); name is the table; con is a
+    # connection or URI as for the readers; schema is the schema; if_exists is fail,
+    # replace, append or delete_rows (a value error for anything else); index (default
+    # true) writes the index as columns; index_label names the index column(s);
+    # chunksize is rows per batch; dtype maps column names to database types (or a single
+    # type for all); method is none (one insert per row), the multi-value keyword, or a
+    # callable taking the table, connection, column names and a row iterator; engine is
+    # auto or sqlalchemy; extra keyword arguments go to the engine.
+    # Behavior: validates arguments, builds the database helper within a transaction and
+    # delegates to its writer. Returns the count, or none when a custom method returns no
+    # count.
     """
     Write records stored in a DataFrame to a SQL database.
 
@@ -854,6 +1007,11 @@ def to_sql(
 
 
 def has_table(table_name: str, con, schema: str | None = None) -> bool:
+    # [FUNCTION DOC]
+    # Returns true if the database has a table of the given name. Parameters: table_name;
+    # con as elsewhere; schema (default none) optionally restricts the lookup. Builds a
+    # database helper and asks it. Note: a module level alias with a different name
+    # refers to this function.
     """
     Check if DataBase has named table.
 
@@ -886,6 +1044,17 @@ def pandasSQL_builder(
     schema: str | None = None,
     need_transaction: bool = False,
 ) -> PandasSQL:
+    # [FUNCTION DOC]
+    # Chooses and creates the database helper object for a connection.
+    # Parameters: con is the connection; schema is the default schema; need_transaction
+    # says whether a transaction should be opened for the lifetime of the helper.
+    # Behavior in order: a sqlite3 connection (or none) gives the sqlite helper. If
+    # sqlalchemy is not installed and con is a URI text, raises an import error. If
+    # sqlalchemy is installed and con is URI text or a SQLAlchemy connectable, returns the
+    # SQLAlchemy helper. If the ADBC driver manager is installed and con is an ADBC
+    # connection, returns the ADBC helper. Otherwise warns that only SQLAlchemy, URI text
+    # and sqlite3 are supported and returns the sqlite helper for the object.
+    # Side effects: may open connections and transactions (via the helper), may warn.
     """
     Convenience function to return the correct PandasSQL subclass based on the
     provided parameters.  Also creates a sqlalchemy connection and transaction
@@ -922,6 +1091,20 @@ def pandasSQL_builder(
 
 
 class SQLTable(PandasObject):
+    # [CLASS DOC]
+    # Maps one pandas frame (or an existing database table) to a SQLAlchemy table.
+    # State: table name, owning database helper (called the pandas SQL engine), the frame
+    # being written or last read, the index column names (computed), the schema, the
+    # if-exists policy, optional primary key columns, an optional dtype mapping or
+    # single dtype, a prefix, and the SQLAlchemy table object. With a frame the table
+    # description is built from the frame (write mode); without a frame it is reflected
+    # from the database (read mode).
+    # Key methods: create (honoring if-exists), insert (batched, with pluggable insertion
+    # method), read (select into a frame, possibly chunked), conversion helpers between
+    # pandas and SQL types, and the column type harmonizer.
+    # # KNOWN ISSUE: a comment above the initializer says support for multi-level
+    # indexes is a to-do, but multi-level index labels are handled by the index
+    # naming code.
     """
     For mapping Pandas tables to SQL tables.
     Uses fact that table is reflected by SQLAlchemy to
@@ -945,6 +1128,18 @@ class SQLTable(PandasObject):
         keys=None,
         dtype: DtypeArg | None = None,
     ) -> None:
+        # [FUNCTION DOC]
+        # Builds the mapping. Parameters: name is the table name; pandas_sql_engine is the
+        # database helper; frame is the frame to write (none for read mode); index is true
+        # (write the frame index), a column name or list (read mode: the columns to use as
+        # index), or false or none; if_exists is fail, replace, append or delete_rows;
+        # prefix is stored but unused here; index_label overrides index column names when
+        # writing; schema is the schema; keys are primary key columns; dtype is a mapping or
+        # single SQL type.
+        # Behavior: stores the arguments, computes the index column names, and builds the
+        # table description from the frame or reflects it from the database. Raises a value
+        # error if no table could be obtained or the table name is empty (the name check
+        # happens after the table was set up).
         self.name = name
         self.pd_sql = pandas_sql_engine
         self.prefix = prefix
@@ -969,20 +1164,34 @@ class SQLTable(PandasObject):
             raise ValueError("Empty table name specified")
 
     def exists(self):
+        # [FUNCTION DOC]
+        # Returns whether the table already exists in the database (asks the helper with the
+        # name and schema).
         return self.pd_sql.has_table(self.name, self.schema)
 
     def sql_schema(self) -> str:
+        # [FUNCTION DOC]
+        # Returns the CREATE TABLE statement text for the table, compiled for the helper's
+        # connection.
         from sqlalchemy.schema import CreateTable
 
         return str(CreateTable(self.table).compile(self.pd_sql.con))
 
     def _execute_create(self) -> None:
+        # [FUNCTION DOC]
+        # HELPER: creates the table in the database. Re-attaches the table description to the
+        # helper's metadata and issues the create inside a transaction.
         # Inserting table into database, add to MetaData object
         self.table = self.table.to_metadata(self.pd_sql.meta)
         with self.pd_sql.run_transaction():
             self.table.create(bind=self.pd_sql.con)
 
     def create(self) -> None:
+        # [FUNCTION DOC]
+        # Prepares the database table according to the if-exists policy. If the table exists:
+        # fail raises a value error; replace drops it and creates it again; append does
+        # nothing; delete_rows removes all rows keeping the table; any other policy raises a
+        # value error. If the table does not exist, creates it.
         if self.exists():
             if self.if_exists == "fail":
                 raise ValueError(f"Table '{self.name}' already exists.")
@@ -999,6 +1208,11 @@ class SQLTable(PandasObject):
             self._execute_create()
 
     def _execute_insert(self, conn, keys: list[str], data_iter) -> int:
+        # [FUNCTION DOC]
+        # HELPER: default insertion method. Parameters: conn is unused (the helper executes on
+        # its own connection); keys are column names; data_iter yields row sequences. Builds a
+        # list of mappings from column names to values and executes one insert statement with
+        # all of them. Returns the reported number of rows affected.
         """
         Execute SQL statement inserting data
 
@@ -1015,6 +1229,11 @@ class SQLTable(PandasObject):
         return result.rowcount
 
     def _execute_insert_multi(self, conn, keys: list[str], data_iter) -> int:
+        # [FUNCTION DOC]
+        # HELPER: multi-value insertion method. Same parameters as the default method. Builds
+        # a single insert statement carrying all rows as values and executes it. Intended for
+        # databases where this is faster, with columns that are few. Returns the reported row
+        # count.
         """
         Alternative to _execute_insert for DBs support multi-value INSERT.
 
@@ -1032,6 +1251,17 @@ class SQLTable(PandasObject):
         return result.rowcount
 
     def insert_data(self) -> tuple[list[str], list[np.ndarray]]:
+        # [FUNCTION DOC]
+        # HELPER: prepares the frame content for insertion.
+        # Behavior: if an index is to be written, makes a shallow copy of the frame, assigns
+        # the index column names and resets the index into columns (raising a value error that
+        # mentions duplicate names if that fails); otherwise uses the frame as is. Column
+        # names are converted to text. Each column becomes an object array: datetime columns
+        # become arrays of Python datetime objects (Arrow date columns become object arrays of
+        # dates), timedelta columns become integers (nanoseconds, as objects), and everything
+        # else is converted to objects. Columns that can hold missing values get missing
+        # entries replaced by none.
+        # Returns a pair: the list of column names and the list of per-column object arrays.
         if self.index is not None:
             temp = self.frame.copy(deep=False)
             temp.index.names = self.index
@@ -1085,6 +1315,16 @@ class SQLTable(PandasObject):
         chunksize: int | None = None,
         method: Literal["multi"] | Callable | None = None,
     ) -> int | None:
+        # [FUNCTION DOC]
+        # Inserts the frame's rows into the table.
+        # Parameters: chunksize is the number of rows per batch (default all rows; zero raises
+        # a value error); method is none (one statement with many parameter sets), the
+        # multi-value keyword, or a callable which receives the table, connection, column names
+        # and row iterator; any other value raises a value error.
+        # Behavior: selects the insert function, prepares the data, returns zero if the frame is
+        # empty, then inside a transaction iterates over chunks, passing each to the insert
+        # function and summing the returned row counts.
+        # Returns the total rows reported, or none if the insert function never reports a count.
         # set insert method
         if method is None:
             exec_insert = self._execute_insert
@@ -1138,6 +1378,15 @@ class SQLTable(PandasObject):
         parse_dates=None,
         dtype_backend: DtypeBackend | Literal["numpy"] = "numpy",
     ) -> Generator[DataFrame]:
+        # [FUNCTION DOC]
+        # HELPER: generator that yields a table read in chunks.
+        # Parameters: result is the open result cursor; exit_stack is the stack of resources to
+        # release when finished; chunksize is the rows per chunk; columns are the column names;
+        # coerce_float, parse_dates, dtype_backend as in the reader.
+        # Behavior: inside the exit stack, repeatedly fetches a chunk; if the very first fetch is
+        # empty yields a single empty frame with the columns; for each chunk converts to a
+        # frame, stores it in the frame attribute, harmonizes column types with the table
+        # definition, sets the index if any, and yields it. Closes resources at the end.
         """Return generator through chunked result set."""
         has_read_data = False
         with exit_stack:
@@ -1173,6 +1422,15 @@ class SQLTable(PandasObject):
         chunksize: int | None = None,
         dtype_backend: DtypeBackend | Literal["numpy"] = "numpy",
     ) -> DataFrame | Iterator[DataFrame]:
+        # [FUNCTION DOC]
+        # Reads the table into a frame.
+        # Parameters: exit_stack holds resources closed after chunked iteration; coerce_float,
+        # parse_dates, dtype_backend as in the module readers; columns restricts the selection
+        # (index columns are prepended in order); chunksize (none means all rows).
+        # Behavior: builds a select of the chosen columns or the whole table, executes it, and
+        # takes the column names from the result. With a chunk size returns the chunk generator;
+        # otherwise fetches all rows, builds the frame, harmonizes types with the table
+        # definition, sets the index if any, and returns it (also stored in the frame attribute).
         from sqlalchemy import select
 
         if columns is not None and len(columns) > 0:
@@ -1212,6 +1470,14 @@ class SQLTable(PandasObject):
             return self.frame
 
     def _index_name(self, index, index_label):
+        # [FUNCTION DOC]
+        # HELPER: determines the list of index column names.
+        # When index is true (writing): with an index label, wraps a non-list label into a list
+        # and requires its length to equal the number of index levels (value error otherwise);
+        # without a label uses the single name index when there is one unnamed level and no
+        # column already named index, else the index level names with missing names filled with
+        # generated defaults. When index is a text it becomes a one-element list; a list is
+        # returned unchanged; anything else (including false and none) yields none.
         # for writing: index=True to include index in sql table
         if index is True:
             nlevels = self.frame.index.nlevels
@@ -1244,6 +1510,11 @@ class SQLTable(PandasObject):
             return None
 
     def _get_column_names_and_types(self, dtype_mapper):
+        # [FUNCTION DOC]
+        # HELPER: lists, for the table columns, triples of name text, mapped type and whether
+        # it is an index column. Parameter dtype_mapper maps an index level or a column to a
+        # database type. Index levels come first (named by the index labels), followed by the
+        # frame columns.
         column_names_and_types = []
         if self.index is not None:
             for i, idx_label in enumerate(self.index):
@@ -1258,6 +1529,13 @@ class SQLTable(PandasObject):
         return column_names_and_types
 
     def _create_table_setup(self):
+        # [FUNCTION DOC]
+        # HELPER: builds the SQLAlchemy table description from the frame. Maps each index
+        # level and column to a column type; index columns are flagged as indexed. If primary
+        # keys are given (a single name or list) adds a primary key constraint named after the
+        # table with a pk suffix. The schema is the table's schema or the helper's default.
+        # The table is attached to a fresh metadata object and only moved to the helper's
+        # metadata when it is actually created. Returns the table.
         from sqlalchemy import (
             Column,
             PrimaryKeyConstraint,
@@ -1292,6 +1570,16 @@ class SQLTable(PandasObject):
         parse_dates=None,
         dtype_backend: DtypeBackend | Literal["numpy"] = "numpy",
     ) -> None:
+        # [FUNCTION DOC]
+        # HELPER: aligns the types of the read frame columns with the SQL column types.
+        # Parameters: parse_dates is the date-parsing argument; dtype_backend is numpy or other.
+        # For each SQL column present in the frame: columns listed in the date argument are
+        # parsed (with their given format) and skipped otherwise; otherwise the SQL type is
+        # mapped to a pandas type, and datetime and date columns are parsed (time-zone-aware
+        # columns to UTC); with the numpy backend float columns are cast to float; under the
+        # string dtype option object columns of string SQL type are cast to the string dtype;
+        # with the numpy backend and no missing values, integer and boolean columns are cast. A
+        # column absent from the frame is skipped silently. Modifies the frame in place.
         """
         Make the DataFrame's column types align with the SQL table
         column types.
@@ -1348,6 +1636,18 @@ class SQLTable(PandasObject):
                 pass  # this column not in results
 
     def _sqlalchemy_type(self, col: Index | Series):
+        # [FUNCTION DOC]
+        # HELPER: chooses the SQL type for a pandas column or index level.
+        # Behavior: if the dtype argument given at construction is mapping-like and has an entry
+        # for the column name, that entry is returned. Otherwise infers the kind of data while
+        # ignoring missing values: datetimes give a timestamp-with-time-zone type when
+        # time-zone-aware, else the plain datetime type; timedeltas warn that they are not
+        # supported and are stored as big integers; floats give a float of precision 23 (32 bit)
+        # or 53; integers give small integer for 8-bit and signed 16-bit, integer for 32-bit and
+        # unsigned 16-bit, big integer otherwise, and unsigned 64-bit raises a value error;
+        # booleans, dates and times give the matching types; complex raises a value error;
+        # anything else is text.
+        # Note: a non-mapping dtype argument is not consulted here.
         dtype: DtypeArg = self.dtype or {}
         if is_dict_like(dtype):
             dtype = cast(dict, dtype)
@@ -1419,6 +1719,13 @@ class SQLTable(PandasObject):
         return Text
 
     def _get_dtype(self, sqltype):
+        # [FUNCTION DOC]
+        # HELPER: maps a SQLAlchemy column type to the pandas-side type used when reading.
+        # Float gives the float type; integer gives 64-bit integer (size refinement is a to-do);
+        # timestamp gives datetime, or the time-zone-aware dtype class when the type has a time
+        # zone; plain datetime gives datetime; date gives date; boolean gives bool; string gives
+        # the NaN-based string dtype when the string dtype option is on; everything else gives
+        # the object type. Returns the type object.
         from sqlalchemy.types import (
             TIMESTAMP,
             Boolean,
@@ -1454,14 +1761,23 @@ class SQLTable(PandasObject):
 
 
 class PandasSQL(PandasObject, ABC):
+    # [CLASS DOC]
+    # Abstract base class for the database helpers (SQLAlchemy, ADBC, sqlite). Defines the
+    # interface: read a table (not abstract; default raises not-implemented), run a query,
+    # write a frame, execute a statement, test table existence and create schema text. Is a
+    # context manager whose exit does nothing by default.
     """
     Subclasses Should define read_query and to_sql.
     """
 
     def __enter__(self) -> Self:
+        # [FUNCTION DOC]
+        # Context manager entry: returns the helper itself.
         return self
 
     def __exit__(self, *args) -> None:
+        # [FUNCTION DOC]
+        # Context manager exit: does nothing in the base class; arguments are ignored.
         pass
 
     def read_table(
@@ -1475,6 +1791,10 @@ class PandasSQL(PandasObject, ABC):
         chunksize: int | None = None,
         dtype_backend: DtypeBackend | Literal["numpy"] = "numpy",
     ) -> DataFrame | Iterator[DataFrame]:
+        # [FUNCTION DOC]
+        # Reads a table into a frame or iterator (parameters as for the module level table reader
+        # plus a schema). The base implementation always raises a not-implemented error;
+        # subclasses that support tables override it.
         raise NotImplementedError
 
     @abstractmethod
@@ -1489,6 +1809,9 @@ class PandasSQL(PandasObject, ABC):
         dtype: DtypeArg | None = None,
         dtype_backend: DtypeBackend | Literal["numpy"] = "numpy",
     ) -> DataFrame | Iterator[DataFrame]:
+        # [FUNCTION DOC]
+        # Abstract: runs a query and returns a frame or an iterator of frames (parameters as for
+        # the module level query reader).
         pass
 
     @abstractmethod
@@ -1506,14 +1829,22 @@ class PandasSQL(PandasObject, ABC):
         engine: str = "auto",
         **engine_kwargs,
     ) -> int | None:
+        # [FUNCTION DOC]
+        # Abstract: writes a frame to a table and returns the number of rows affected or none
+        # (parameters as for the module level writer).
         pass
 
     @abstractmethod
     def execute(self, sql: str | Select | TextClause, params=None):
+        # [FUNCTION DOC]
+        # Abstract: executes a statement (text or SQLAlchemy construct) with optional
+        # parameters and returns the driver's result.
         pass
 
     @abstractmethod
     def has_table(self, name: str, schema: str | None = None) -> bool:
+        # [FUNCTION DOC]
+        # Abstract: returns whether a table of the given name exists, optionally within a schema.
         pass
 
     @abstractmethod
@@ -1525,10 +1856,16 @@ class PandasSQL(PandasObject, ABC):
         dtype: DtypeArg | None = None,
         schema: str | None = None,
     ) -> str:
+        # [FUNCTION DOC]
+        # Abstract: returns the text of the table creation statement for a frame, with optional
+        # key columns, dtype mapping and schema.
         pass
 
 
 class BaseEngine:
+    # [CLASS DOC]
+    # Base class for write engines, objects that insert prepared rows into a table. Defines
+    # a single method that subclasses override.
     def insert_records(
         self,
         table: SQLTable,
@@ -1541,6 +1878,10 @@ class BaseEngine:
         method=None,
         **engine_kwargs,
     ) -> int | None:
+        # [FUNCTION DOC]
+        # Abstract: inserts records into an already prepared table. Parameters: table is the table
+        # mapping; con, frame, name, index, schema are for engine use; chunksize and method
+        # control the insertion. Always raises an abstract-method error in the base class.
         """
         Inserts data into already-prepared table
         """
@@ -1548,7 +1889,12 @@ class BaseEngine:
 
 
 class SQLAlchemyEngine(BaseEngine):
+    # [CLASS DOC]
+    # Write engine based on SQLAlchemy; the only engine implemented. Stateless.
     def __init__(self) -> None:
+        # [FUNCTION DOC]
+        # Checks that SQLAlchemy is importable, raising an import error with a message saying it
+        # is required for SQL support.
         import_optional_dependency(
             "sqlalchemy", extra="sqlalchemy is required for SQL support."
         )
@@ -1565,6 +1911,13 @@ class SQLAlchemyEngine(BaseEngine):
         method=None,
         **engine_kwargs,
     ) -> int | None:
+        # [FUNCTION DOC]
+        # Inserts the rows through the table mapping's insert method (parameters chunksize and
+        # method are forwarded; the connection, frame, name, index, schema and extra engine
+        # arguments are not used). If SQLAlchemy raises a statement error whose original text
+        # shows a MySQL infinity problem, re-raises it as a value error saying infinity cannot
+        # be used with MySQL; other statement errors propagate. Returns the number of rows
+        # inserted or none.
         from sqlalchemy import exc
 
         try:
@@ -1581,6 +1934,11 @@ class SQLAlchemyEngine(BaseEngine):
 
 
 def get_engine(engine: str) -> BaseEngine:
+    # [FUNCTION DOC]
+    # HELPER: returns a write engine object. The argument auto reads the sql engine option
+    # and, if that is also auto, tries the known engines in order (only SQLAlchemy), raising
+    # an import error listing the failures if none works; sqlalchemy returns the SQLAlchemy
+    # engine. Anything else raises a value error.
     """return our implementation"""
     if engine == "auto":
         engine = get_option("io.sql.engine")
@@ -1613,6 +1971,14 @@ def get_engine(engine: str) -> BaseEngine:
 
 
 class SQLDatabase(PandasSQL):
+    # [CLASS DOC]
+    # Database helper using SQLAlchemy (subclass of the abstract helper). Holds the
+    # connection, a metadata object carrying the default schema, an exit stack that releases
+    # any engine or connection and commits any transaction this helper created, and a flag
+    # saying whether a read returned a lazy generator (in which case the resources must
+    # outlive the context manager and are closed by the generator).
+    # Key methods: run_transaction, execute, read_table, read_query, to_sql, has_table,
+    # get_table, drop_table, delete_rows, schema creation text, and a case sensitivity check.
     """
     This class enables conversion between DataFrame and SQL databases
     using SQLAlchemy to handle DataBase abstraction.
@@ -1633,6 +1999,13 @@ class SQLDatabase(PandasSQL):
     def __init__(
         self, con, schema: str | None = None, need_transaction: bool = False
     ) -> None:
+        # [FUNCTION DOC]
+        # Parameters: con is a URI text, an engine or a connection; schema is the default schema;
+        # need_transaction (default false) opens a transaction held until the helper is closed.
+        # Behavior: a URI text creates an engine (disposed on close); an engine is replaced by a
+        # connection opened through the exit stack; if a transaction is needed and none is
+        # active on the connection, begins one through the exit stack. Stores the connection, a
+        # metadata object with the schema, and the generator flag set to false.
         from sqlalchemy import create_engine
         from sqlalchemy.engine import Engine
         from sqlalchemy.schema import MetaData
@@ -1654,11 +2027,19 @@ class SQLDatabase(PandasSQL):
         self.returns_generator = False
 
     def __exit__(self, *args) -> None:
+        # [FUNCTION DOC]
+        # Context manager exit: closes the exit stack (committing and releasing resources the
+        # helper created) unless a lazy generator took over responsibility for cleanup; arguments
+        # are ignored.
         if not self.returns_generator:
             self.exit_stack.close()
 
     @contextmanager
     def run_transaction(self):
+        # [FUNCTION DOC]
+        # Context manager yielding the connection. If no transaction is active starts one that
+        # commits at the end of the block (or rolls back on error); if one is already active just
+        # yields the connection and leaves it alone.
         if not self.con.in_transaction():
             with self.con.begin():
                 yield self.con
@@ -1666,6 +2047,11 @@ class SQLDatabase(PandasSQL):
             yield self.con
 
     def execute(self, sql: str | Select | TextClause | Delete, params=None):
+        # [FUNCTION DOC]
+        # Executes a statement and returns the result. A text statement is executed as raw driver
+        # SQL, a SQLAlchemy construct through the connection. Parameters, if given, are passed
+        # along. Any SQLAlchemy error is re-raised as the library's database error with a message
+        # that includes the statement.
         """Simple passthrough to SQLAlchemy connectable"""
         from sqlalchemy.exc import SQLAlchemyError
 
@@ -1691,6 +2077,16 @@ class SQLDatabase(PandasSQL):
         chunksize: int | None = None,
         dtype_backend: DtypeBackend | Literal["numpy"] = "numpy",
     ) -> DataFrame | Iterator[DataFrame]:
+        # [FUNCTION DOC]
+        # Reads a table through SQLAlchemy.
+        # Parameters: table_name; index_col (column or list); coerce_float; parse_dates;
+        # columns to select; schema (stored in the table mapping); chunksize (none means all
+        # rows); dtype_backend (numpy or other).
+        # Behavior: reflects the named table or view into the helper's metadata, builds a
+        # read-mode table mapping, flags that a lazy generator will be returned when
+        # chunksize is given (so the connection is kept open until iteration finishes), and
+        # delegates to the mapping's read method with the helper's exit stack.
+        # Returns a frame, or a generator of frames when chunked.
         """
         Read SQL database table into a DataFrame.
 
@@ -1769,6 +2165,14 @@ class SQLDatabase(PandasSQL):
         dtype: DtypeArg | None = None,
         dtype_backend: DtypeBackend | Literal["numpy"] = "numpy",
     ) -> Generator[DataFrame]:
+        # [FUNCTION DOC]
+        # HELPER: static generator yielding chunks of a query result.
+        # Parameters: result is the open result; exit_stack holds resources released at the end;
+        # chunksize is the rows per chunk; columns are column names; index_col, coerce_float,
+        # parse_dates, dtype, dtype_backend as in the module readers.
+        # Behavior: inside the exit stack, repeatedly fetches chunks; if the very first fetch is
+        # empty yields one empty finished frame; otherwise wraps each chunk into a frame (with
+        # dtype cast, date parsing and index). Resources are released when the generator ends.
         """Return generator through chunked result set"""
         has_read_data = False
         with exit_stack:
@@ -1809,6 +2213,14 @@ class SQLDatabase(PandasSQL):
         dtype: DtypeArg | None = None,
         dtype_backend: DtypeBackend | Literal["numpy"] = "numpy",
     ) -> DataFrame | Iterator[DataFrame]:
+        # [FUNCTION DOC]
+        # Runs a query through SQLAlchemy and returns frames.
+        # Parameters: sql is query text or a SQLAlchemy statement; index_col, coerce_float,
+        # parse_dates, params, chunksize, dtype, dtype_backend as in the module query reader.
+        # Behavior: executes the statement with the parameters, takes the column names from the
+        # result. With a chunk size sets the lazy generator flag and returns the chunk generator
+        # using the helper's exit stack. Otherwise fetches all rows and returns one finished
+        # frame. The class attribute alias read_sql refers to this method.
         """
         Read SQL query into a DataFrame.
 
@@ -1894,6 +2306,15 @@ class SQLDatabase(PandasSQL):
         schema=None,
         dtype: DtypeArg | None = None,
     ) -> SQLTable:
+        # [FUNCTION DOC]
+        # Prepares the database table for an upcoming insert and returns its mapping.
+        # Parameters: frame; name; if_exists (fail, replace, append, delete_rows); index (true or
+        # column names); index_label; schema; dtype (a single type, or a mapping).
+        # Behavior: if a dtype is given, a single (non-mapping) type is expanded into a mapping
+        # for all frame columns (index columns are not included); each mapped type must be a
+        # SQLAlchemy type class or instance, otherwise a value error names the column. Builds the
+        # table mapping and creates the table according to the if-exists policy. Returns the
+        # mapping.
         """
         Prepares table in the database for data insertion. Creates it if needed, etc.
         """
@@ -1937,6 +2358,11 @@ class SQLDatabase(PandasSQL):
         name: str,
         schema: str | None,
     ) -> None:
+        # [FUNCTION DOC]
+        # Warns if the table name might have been affected by case sensitivity. Parameters:
+        # name; schema. Runs only for names that are neither all digits nor all lower case: after
+        # writing, looks up the actual table names in the database (default schema if none) and
+        # issues a user warning if the exact name is not among them. Returns nothing.
         """
         Checks table name for issues with case-sensitivity.
         Method is called after data is inserted.
@@ -1975,6 +2401,14 @@ class SQLDatabase(PandasSQL):
         engine: str = "auto",
         **engine_kwargs,
     ) -> int | None:
+        # [FUNCTION DOC]
+        # Writes a frame to a table.
+        # Parameters: frame; name; if_exists; index; index_label; schema; chunksize; dtype; method;
+        # engine (auto or sqlalchemy); extra keyword arguments passed to the engine.
+        # Behavior: gets the write engine, prepares the table (creating or clearing it per the
+        # policy), inserts the records through the engine (with the connection and chunking
+        # options), then checks case sensitivity of the name. Returns the number of rows inserted,
+        # or none if the insertion method does not report a count.
         """
         Write records stored in a DataFrame to a SQL database.
 
@@ -2051,15 +2485,24 @@ class SQLDatabase(PandasSQL):
 
     @property
     def tables(self):
+        # [FUNCTION DOC]
+        # Property: the mapping of table names to table objects held in the helper's metadata.
         return self.meta.tables
 
     def has_table(self, name: str, schema: str | None = None) -> bool:
+        # [FUNCTION DOC]
+        # Returns whether the table (or view) exists, using a SQLAlchemy inspector on the
+        # connection, in the given schema or the helper's default schema.
         from sqlalchemy import inspect as sqlalchemy_inspect
 
         insp = sqlalchemy_inspect(self.con)
         return insp.has_table(name, schema or self.meta.schema)
 
     def get_table(self, table_name: str, schema: str | None = None) -> Table:
+        # [FUNCTION DOC]
+        # Reflects and returns the table object from the database in the given or default schema
+        # (registered in the helper's metadata). Numeric columns are set to return floating point
+        # instead of decimals.
         from sqlalchemy import (
             Numeric,
             Table,
@@ -2073,6 +2516,9 @@ class SQLDatabase(PandasSQL):
         return tbl
 
     def drop_table(self, table_name: str, schema: str | None = None) -> None:
+        # [FUNCTION DOC]
+        # Drops the table if it exists (given or default schema): reflects it, drops it inside a
+        # transaction and clears the metadata. Does nothing if it does not exist.
         schema = schema or self.meta.schema
         if self.has_table(table_name, schema):
             self.meta.reflect(
@@ -2083,6 +2529,10 @@ class SQLDatabase(PandasSQL):
             self.meta.clear()
 
     def delete_rows(self, table_name: str, schema: str | None = None) -> None:
+        # [FUNCTION DOC]
+        # Deletes all rows of the table if it exists (given or default schema): reflects it, runs
+        # a delete statement and closes the result, then clears the metadata. Does nothing if
+        # the table does not exist.
         schema = schema or self.meta.schema
         if self.has_table(table_name, schema):
             self.meta.reflect(
@@ -2100,6 +2550,10 @@ class SQLDatabase(PandasSQL):
         dtype: DtypeArg | None = None,
         schema: str | None = None,
     ) -> str:
+        # [FUNCTION DOC]
+        # Returns the table creation statement text for a frame. Parameters: frame; table_name;
+        # keys are primary key columns; dtype; schema. Builds a table mapping without index
+        # columns and returns its schema text.
         table = SQLTable(
             table_name,
             self,
@@ -2116,6 +2570,12 @@ class SQLDatabase(PandasSQL):
 
 
 class ADBCDatabase(PandasSQL):
+    # [CLASS DOC]
+    # Database helper for ADBC connections (subclass of the abstract helper). State: the ADBC
+    # connection. Supports raw SQL execution, whole-table and query reads through Arrow
+    # tables, writes through the ADBC bulk ingest call, table existence checks and row
+    # deletion. Many options (chunking, float coercion, query parameters, index labels, dtypes,
+    # insert methods, engines) are rejected with not-implemented errors.
     """
     This class enables conversion between DataFrame and SQL databases
     using ADBC to handle DataBase abstraction.
@@ -2126,10 +2586,16 @@ class ADBCDatabase(PandasSQL):
     """
 
     def __init__(self, con) -> None:
+        # [FUNCTION DOC]
+        # Stores the ADBC connection.
         self.con = con
 
     @contextmanager
     def run_transaction(self):
+        # [FUNCTION DOC]
+        # Context manager yielding a new cursor; rolls back and re-raises on any error in the
+        # block, and commits the connection if the block finishes normally. The cursor is
+        # closed on exit.
         with self.con.cursor() as cur:
             try:
                 yield cur
@@ -2139,6 +2605,11 @@ class ADBCDatabase(PandasSQL):
             self.con.commit()
 
     def execute(self, sql: str | Select | TextClause, params=None):
+        # [FUNCTION DOC]
+        # Executes a text statement and returns the open cursor (the caller must close it).
+        # Parameters: sql must be text (type error otherwise); params optional, passed to the
+        # cursor. On an ADBC error rolls back the connection and raises the library's database
+        # error naming the statement (with a different message if the rollback also fails).
         from adbc_driver_manager import Error
 
         if not isinstance(sql, str):
@@ -2171,6 +2642,14 @@ class ADBCDatabase(PandasSQL):
         chunksize: int | None = None,
         dtype_backend: DtypeBackend | Literal["numpy"] = "numpy",
     ) -> DataFrame | Iterator[DataFrame]:
+        # [FUNCTION DOC]
+        # Reads a whole table through ADBC.
+        # Parameters: table_name; index_col; coerce_float (must be true, else not-implemented
+        # error); parse_dates; columns to select (index columns are prepended); schema
+        # (optional); chunksize (non-zero raises not-implemented); dtype_backend.
+        # Behavior: builds a select statement with quoted identifiers, executes it, fetches the
+        # result as an Arrow table, converts it to a frame with the dtype backend, then
+        # finishes it (date parsing, index). Returns the frame.
         """
         Read SQL database table into a DataFrame.
 
@@ -2263,6 +2742,14 @@ class ADBCDatabase(PandasSQL):
         dtype: DtypeArg | None = None,
         dtype_backend: DtypeBackend | Literal["numpy"] = "numpy",
     ) -> DataFrame | Iterator[DataFrame]:
+        # [FUNCTION DOC]
+        # Runs a query through ADBC and returns a frame.
+        # Parameters: sql (text); index_col; coerce_float (must be true); parse_dates; params
+        # (any truthy value raises not-implemented); chunksize (non-zero raises not-implemented);
+        # dtype to cast to; dtype_backend.
+        # Behavior: executes the query, fetches an Arrow table, converts to a frame with the
+        # backend, applies dtype, date parsing and index. The class attribute alias read_sql
+        # refers to this method.
         """
         Read SQL query into a DataFrame.
 
@@ -2337,6 +2824,19 @@ class ADBCDatabase(PandasSQL):
         engine: str = "auto",
         **engine_kwargs,
     ) -> int | None:
+        # [FUNCTION DOC]
+        # Writes a frame to a table through the ADBC bulk ingest call.
+        # Parameters: frame; name; if_exists (fail, replace, append, delete_rows); index
+        # (whether to preserve the index); schema. The index label, chunksize, dtype and method
+        # parameters must be empty, and engine must be auto, else not-implemented errors.
+        # Behavior: requires pyarrow. If the table exists: fail raises a value error; replace
+        # drops it (ingest then creates); append ingests in append mode; delete_rows empties it
+        # and ingests in append mode. If it does not exist, ingests in create mode. Converts the
+        # frame to an Arrow table (value error if a data type is unsupported), ingests it, wraps
+        # ADBC errors in the library's database error, commits and returns the reported number of
+        # rows.
+        # # KNOWN ISSUE: the docstring lists the if_exists choices without the delete_rows
+        # choice in its heading, although the description below it and the code both support it.
         """
         Write records stored in a DataFrame to a SQL database.
 
@@ -2428,6 +2928,10 @@ class ADBCDatabase(PandasSQL):
         return total_inserted
 
     def has_table(self, name: str, schema: str | None = None) -> bool:
+        # [FUNCTION DOC]
+        # Returns whether the table exists, by asking the ADBC driver for the objects matching the
+        # schema and table name filters and scanning the nested catalog, schema and table records
+        # for the exact name.
         meta = self.con.adbc_get_objects(
             db_schema_filter=schema, table_name_filter=name
         ).read_all()
@@ -2446,6 +2950,9 @@ class ADBCDatabase(PandasSQL):
         return False
 
     def delete_rows(self, name: str, schema: str | None = None) -> None:
+        # [FUNCTION DOC]
+        # Deletes all rows of the table if it exists, with quoted names and optional schema, and
+        # closes the cursor.
         quoted_table_name = _quote_identifier(name)
         if schema:
             quoted_schema = _quote_identifier(schema)
@@ -2462,6 +2969,8 @@ class ADBCDatabase(PandasSQL):
         dtype: DtypeArg | None = None,
         schema: str | None = None,
     ) -> str:
+        # [FUNCTION DOC]
+        # Not supported for ADBC: always raises a not-implemented error.
         raise NotImplementedError("not implemented for adbc")
 
 
@@ -2479,6 +2988,9 @@ _SQL_TYPES = {
 
 
 def _get_unicode_name(name: object) -> str:
+    # [FUNCTION DOC]
+    # HELPER: converts any object to text and verifies it round-trips as UTF-8; raises a value
+    # error if it cannot be encoded.
     try:
         uname = str(name).encode("utf-8", "strict").decode("utf-8")
     except UnicodeError as err:
@@ -2487,6 +2999,10 @@ def _get_unicode_name(name: object) -> str:
 
 
 def _get_valid_sqlite_name(name: object) -> str:
+    # [FUNCTION DOC]
+    # HELPER: makes a name safe for use as a quoted identifier in sqlite statements: converts
+    # to valid UTF-8 text, rejects empty names and names containing a NUL character (value
+    # errors), doubles embedded double quotes and wraps the result in double quotes.
     # See https://stackoverflow.com/questions/6514274/how-do-you-escape-strings\
     # -for-sqlite-table-column-names-in-python
     # Ensure the string can be encoded as UTF-8.
@@ -2505,6 +3021,11 @@ def _get_valid_sqlite_name(name: object) -> str:
 
 
 def _quote_identifier(name: object) -> str:
+    # [FUNCTION DOC]
+    # HELPER: same quoting for statements built for ADBC drivers (see the docstring for the
+    # standard escaping rules): converts to UTF-8 text, rejects empty names and names with a NUL
+    # character with value errors, doubles embedded double quotes and wraps in double quotes.
+    # Behavior is identical to the sqlite quoting function apart from one error message.
     """
     Escape a SQL identifier (table name or schema name) for safe use in
     ADBC-generated SQL statements.
@@ -2540,17 +3061,35 @@ def _quote_identifier(name: object) -> str:
 
 
 class SQLiteTable(SQLTable):
+    # [CLASS DOC]
+    # Table mapping for the sqlite fallback (subclass of the SQLAlchemy based table mapping).
+    # Instead of a SQLAlchemy table object, its table attribute is the list of SQL statements
+    # (the create table statement followed by create index statements). Overrides schema text,
+    # table creation, the insert statement builders and the type mapping to produce raw sqlite
+    # SQL. Creating an instance registers global sqlite adapters.
     """
     Patch the SQLTable for fallback support.
     Instead of a table variable just use the Create Table statement.
     """
 
     def __init__(self, *args, **kwargs) -> None:
+        # [FUNCTION DOC]
+        # Passes all arguments to the parent initializer and then registers the sqlite date
+        # adapters and converters.
         super().__init__(*args, **kwargs)
 
         self._register_date_adapters()
 
     def _register_date_adapters(self) -> None:
+        # [FUNCTION DOC]
+        # HELPER: registers, with the sqlite library, adapters that convert Python time, date and
+        # datetime values to text (time as hour, minute, second and microseconds; date in ISO form;
+        # datetime in ISO form with a space separator) and converters that parse the declared types
+        # date and timestamp from ISO text back to date and datetime objects. Needed because newer
+        # Python versions no longer register these automatically.
+        # Side effects: modifies global sqlite adapter and converter registries each time a table
+        # object is created; takes no parameters and returns nothing. The adapters and converters
+        # are small lambdas assigned to local names.
         # GH 8341
         # register an adapter callable for datetime.time object
         import sqlite3
@@ -2558,6 +3097,9 @@ class SQLiteTable(SQLTable):
         # this will transform time(12,34,56,789) into '12:34:56.000789'
         # (this is what sqlalchemy does)
         def _adapt_time(t) -> str:
+            # [FUNCTION DOC]
+            # HELPER: nested adapter converting a time value to text with two-digit hour, minute and
+            # second and six-digit microseconds, separated by colons and a dot.
             # This is faster than strftime
             return f"{t.hour:02d}:{t.minute:02d}:{t.second:02d}.{t.microsecond:06d}"
 
@@ -2580,14 +3122,24 @@ class SQLiteTable(SQLTable):
         sqlite3.register_converter("timestamp", convert_timestamp)
 
     def sql_schema(self) -> str:
+        # [FUNCTION DOC]
+        # Returns the creation statements joined by a semicolon and newline.
         return str(";\n".join(self.table))
 
     def _execute_create(self) -> None:
+        # [FUNCTION DOC]
+        # HELPER: executes each statement in the table's list through the helper's transaction
+        # cursor, creating the table and its indexes.
         with self.pd_sql.run_transaction() as cur:
             for stmt in self.table:
                 cur.execute(stmt)
 
     def insert_statement(self, *, num_rows: int) -> str:
+        # [FUNCTION DOC]
+        # HELPER: builds the insert statement text. Keyword parameter num_rows is the number of rows
+        # to insert. Column names are the frame columns (as text) preceded by the index column names,
+        # each quoted safely. Produces an insert into the quoted table name with one parenthesized
+        # group of question mark placeholders per row.
         names = list(map(str, self.frame.columns))
         wld = "?"  # wildcard char
         escape = _get_valid_sqlite_name
@@ -2607,6 +3159,10 @@ class SQLiteTable(SQLTable):
         return insert_statement
 
     def _execute_insert(self, conn, keys, data_iter) -> int:
+        # [FUNCTION DOC]
+        # HELPER: default insertion method. Collects the rows, runs the single-row statement for
+        # all rows using the connection's bulk execute, wraps sqlite errors in the library's
+        # database error, and returns the connection's row count. The keys argument is unused.
         from sqlite3 import Error
 
         data_list = list(data_iter)
@@ -2617,12 +3173,23 @@ class SQLiteTable(SQLTable):
         return conn.rowcount
 
     def _execute_insert_multi(self, conn, keys, data_iter) -> int:
+        # [FUNCTION DOC]
+        # HELPER: multi-value insertion method. Collects the rows, flattens all values into one
+        # sequence, and runs one statement with a group of placeholders per row. Returns the
+        # connection's row count. The keys argument is unused; sqlite errors are not wrapped.
         data_list = list(data_iter)
         flattened_data = [x for row in data_list for x in row]
         conn.execute(self.insert_statement(num_rows=len(data_list)), flattened_data)
         return conn.rowcount
 
     def _create_table_setup(self):
+        # [FUNCTION DOC]
+        # HELPER: builds the list of statements that create the table.
+        # First statement: create table with the (optional unquoted) schema prefix, then each
+        # column as a quoted name with its sqlite type, and, if keys are given, a primary key
+        # constraint named from the table name. If any index columns exist, a second statement
+        # creates one index over them, named from the table and column names.
+        # Returns the list of statement texts.
         """
         Return a list of SQL statements that creates a table reflecting the
         structure of a DataFrame.  The first entry will be a CREATE TABLE
@@ -2674,6 +3241,12 @@ class SQLiteTable(SQLTable):
         return create_stmts
 
     def _sql_type_name(self, col):
+        # [FUNCTION DOC]
+        # HELPER: maps a column to a sqlite type name. A mapping dtype argument with an entry for the
+        # column name wins. Otherwise infers the data kind ignoring missing values: timedeltas warn
+        # and become integer, datetimes become the datetime kind, empty columns become string,
+        # complex raises a value error; kinds not in the module type table fall back to string.
+        # Returns the type name text (text, real, integer, timestamp, date, time).
         dtype: DtypeArg = self.dtype or {}
         if is_dict_like(dtype):
             dtype = cast(dict, dtype)
@@ -2709,6 +3282,12 @@ class SQLiteTable(SQLTable):
 
 
 class SQLiteDatabase(PandasSQL):
+    # [CLASS DOC]
+    # Database helper for the sqlite fallback (subclass of the abstract helper), used when
+    # SQLAlchemy is not installed or a sqlite3 connection is given. State: the connection
+    # object. Supports queries, writing through the sqlite table mapping, existence checks, drop
+    # and delete rows; table reads are not supported (inherited stub raises not-implemented).
+    # Intended for internal use.
     """
     Version of SQLDatabase to support SQLite connections (fallback without
     SQLAlchemy). This should only be used internally.
@@ -2720,10 +3299,15 @@ class SQLiteDatabase(PandasSQL):
     """
 
     def __init__(self, con) -> None:
+        # [FUNCTION DOC]
+        # Stores the connection.
         self.con = con
 
     @contextmanager
     def run_transaction(self):
+        # [FUNCTION DOC]
+        # Context manager yielding a new cursor; commits when the block ends normally, rolls back
+        # and re-raises on error, and always closes the cursor.
         cur = self.con.cursor()
         try:
             yield cur
@@ -2735,6 +3319,11 @@ class SQLiteDatabase(PandasSQL):
             cur.close()
 
     def execute(self, sql: str | Select | TextClause, params=None):
+        # [FUNCTION DOC]
+        # Executes a text statement and returns the open cursor (the caller must close it).
+        # Parameters: sql must be text (type error otherwise); params optional. On a sqlite error rolls
+        # back and raises the library's database error naming the statement (different message if
+        # rollback fails too).
         from sqlite3 import Error
 
         if not isinstance(sql, str):
@@ -2767,6 +3356,13 @@ class SQLiteDatabase(PandasSQL):
         dtype: DtypeArg | None = None,
         dtype_backend: DtypeBackend | Literal["numpy"] = "numpy",
     ) -> Generator[DataFrame]:
+        # [FUNCTION DOC]
+        # HELPER: static generator yielding chunks of a cursor result.
+        # Parameters: cursor; chunksize; columns; index_col, coerce_float, parse_dates, dtype,
+        # dtype_backend as for the module readers.
+        # Behavior: repeatedly fetches chunks (a tuple result is converted to a list). When no more
+        # rows, closes the cursor and, if no rows were ever read, yields one empty frame with the
+        # columns (cast to the dtype if given). Each non-empty chunk is turned into a finished frame.
         """Return generator through chunked result set"""
         has_read_data = False
         while True:
@@ -2806,6 +3402,12 @@ class SQLiteDatabase(PandasSQL):
         dtype: DtypeArg | None = None,
         dtype_backend: DtypeBackend | Literal["numpy"] = "numpy",
     ) -> DataFrame | Iterator[DataFrame]:
+        # [FUNCTION DOC]
+        # Runs a query on the sqlite connection.
+        # Parameters: sql; index_col; coerce_float; parse_dates; params; chunksize; dtype; dtype_backend.
+        # Behavior: executes the statement, takes the column names from the cursor description. With a
+        # chunk size returns the chunk generator (which closes the cursor at the end). Otherwise
+        # fetches all rows as a list, closes the cursor and returns one finished frame.
         cursor = self.execute(sql, params)
         columns = [col_desc[0] for col_desc in cursor.description]
 
@@ -2836,6 +3438,8 @@ class SQLiteDatabase(PandasSQL):
             return frame
 
     def _fetchall_as_list(self, cur):
+        # [FUNCTION DOC]
+        # HELPER: fetches all rows from a cursor and ensures they are returned as a list.
         result = cur.fetchall()
         if not isinstance(result, list):
             result = list(result)
@@ -2855,6 +3459,13 @@ class SQLiteDatabase(PandasSQL):
         engine: str = "auto",
         **engine_kwargs,
     ) -> int | None:
+        # [FUNCTION DOC]
+        # Writes a frame to a sqlite table.
+        # Parameters: frame; name; if_exists; index; index_label; chunksize; dtype (a type name text or a
+        # mapping to text; a single value is expanded to all frame columns; a non-text type raises a
+        # value error); method. The schema, engine and extra engine arguments are accepted but ignored.
+        # Behavior: builds the sqlite table mapping, creates the table according to the if-exists
+        # policy, and inserts the rows. Returns the number of rows inserted or none.
         """
         Write records stored in a DataFrame to a SQL database.
 
@@ -2923,6 +3534,9 @@ class SQLiteDatabase(PandasSQL):
         return table.insert(chunksize, method)
 
     def has_table(self, name: str, schema: str | None = None) -> bool:
+        # [FUNCTION DOC]
+        # Returns whether a table or view with the name exists, by querying sqlite's master table
+        # with a bound parameter. The schema argument is ignored.
         wld = "?"
         query = f"""
         SELECT
@@ -2937,13 +3551,19 @@ class SQLiteDatabase(PandasSQL):
         return len(self.execute(query, [name]).fetchall()) > 0
 
     def get_table(self, table_name: str, schema: str | None = None) -> None:
+        # [FUNCTION DOC]
+        # Returns none; table reflection is not supported in the fallback.
         return None  # not supported in fallback mode
 
     def drop_table(self, name: str, schema: str | None = None) -> None:
+        # [FUNCTION DOC]
+        # Drops the named table (quoted name) and closes the cursor. The schema argument is ignored.
         drop_sql = f"DROP TABLE {_get_valid_sqlite_name(name)}"
         self.execute(drop_sql).close()
 
     def delete_rows(self, name: str, schema: str | None = None) -> None:
+        # [FUNCTION DOC]
+        # Deletes all rows of the named table if it exists (quoted name) and closes the cursor.
         delete_sql = f"DELETE FROM {_get_valid_sqlite_name(name)}"
         if self.has_table(name, schema):
             self.execute(delete_sql).close()
@@ -2956,6 +3576,9 @@ class SQLiteDatabase(PandasSQL):
         dtype: DtypeArg | None = None,
         schema: str | None = None,
     ) -> str:
+        # [FUNCTION DOC]
+        # Returns the table creation statement text for a frame using the sqlite table mapping without
+        # index columns. Parameters: frame; table_name; keys; dtype; schema.
         table = SQLiteTable(
             table_name,
             self,
@@ -2976,6 +3599,13 @@ def get_schema(
     dtype: DtypeArg | None = None,
     schema: str | None = None,
 ) -> str:
+    # [FUNCTION DOC]
+    # Returns the SQL statements text that would create a table suited to the frame.
+    # Parameters: frame; name (table name); keys (primary key column(s)); con (connection, default
+    # none which selects the sqlite fallback); dtype (mapping of column to SQL type; type objects
+    # for SQLAlchemy, text for sqlite); schema.
+    # Behavior: builds the helper for the connection and asks it for the schema text. ADBC
+    # connections raise a not-implemented error. Returns the text.
     """
     Get the SQL db table schema for the given frame.
 

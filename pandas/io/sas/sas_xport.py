@@ -8,6 +8,16 @@ The file format is defined here:
 https://support.sas.com/content/dam/SAS/support/en/technical-papers/record-layout-of-a-sas-version-5-or-6-data-set-in-sas-transport-xport-format.pdf
 """
 
+# [MODULE DOC]
+# Reader for SAS version 5/6 transport (XPORT) files, producing data frames.
+# Public contents: the XportReader class (a SASReader subclass).
+# Also defines private module constants: the expected fixed-width header
+# records, the list of field descriptor keys, and unused documentation
+# template strings; plus private helpers to parse dates, split fixed-width
+# lines, pad truncated floats and convert IBM floating point to IEEE.
+# Relationships: subclasses the abstract reader in the sasreader module, which
+# creates it lazily; opens files through the io common handle helper.
+# Import-time side effects: none beyond importing pandas itself.
 from __future__ import annotations
 
 from datetime import datetime
@@ -31,6 +41,10 @@ if TYPE_CHECKING:
         FilePath,
         ReadBuffer,
     )
+# HELPER: module constants. The four expected header record strings (library
+# header, member header prefix, descriptor header, observation header) and the
+# ordered list of names for the 16 packed fields of a variable descriptor
+# (the last, named with an underscore, is padding that is discarded).
 _correct_line1 = (
     "HEADER RECORD*******LIBRARY HEADER RECORD!!!!!!!000000000000000000000000000000  "
 )
@@ -63,6 +77,11 @@ _fieldkeys = [
 ]
 
 
+# HELPER: the following string templates only build documentation text; they
+# are not referenced by any code in this module other than the class doc.
+# KNOWN ISSUE: the read function template is never used (the read_sas
+# docstring lives in the sasreader module), and it claims that only xport is
+# supported.
 _base_params_doc = """\
 Parameters
 ----------
@@ -127,6 +146,12 @@ fields : list
 
 
 def _parse_date(datestr: str) -> DatetimeNaTType:
+    # [FUNCTION DOC]
+    # HELPER: converts a date string from an xport header to a timestamp.
+    # Input is a text value in day, abbreviated month, two-digit year, then
+    # hour, minute, second form. Returns the parsed datetime, or the missing
+    # timestamp marker when the text does not match that format. Never raises
+    # for bad format.
     """Given a date in xport format, return Python date."""
     try:
         # e.g. "16FEB11:10:07:55"
@@ -136,6 +161,13 @@ def _parse_date(datestr: str) -> DatetimeNaTType:
 
 
 def _split_line(s: str, parts):
+    # [FUNCTION DOC]
+    # HELPER: slices a fixed-width string into consecutive named pieces.
+    # Input s is the text and parts is a sequence of name and length pairs.
+    # Each piece is stripped of surrounding whitespace and stored under its
+    # name (a repeated name overwrites). The piece named with a single
+    # underscore is removed from the result. Returns a dictionary. Raises a key
+    # error if no part is named with an underscore.
     """
     Parameters
     ----------
@@ -158,6 +190,13 @@ def _split_line(s: str, parts):
 
 
 def _handle_truncated_float_vec(vec, nbytes):
+    # [FUNCTION DOC]
+    # HELPER: widens truncated numeric fields to full 8-byte values.
+    # Input vec is an array of fixed-width byte strings of length nbytes
+    # (between 2 and 8). When nbytes is not 8, returns a structured array view
+    # of zero-filled 8-byte strings whose first member holds the data, which
+    # effectively pads each value with zero bytes on the right; otherwise
+    # returns the input unchanged.
     # This feature is not well documented, but some SAS XPORT files
     # have 2-7 byte "truncated" floats.  To read these truncated
     # floats, pad them with zeros on the right to make 8 byte floats.
@@ -177,6 +216,19 @@ def _handle_truncated_float_vec(vec, nbytes):
 
 
 def _parse_float_vec(vec):
+    # [FUNCTION DOC]
+    # HELPER: vectorized conversion of IBM mainframe floating point (hex
+    # exponent excess 64, fraction in the low bits, big-endian) to native
+    # double precision. Input vec is an array of 8-byte values.
+    # Steps: view each value as two big-endian 32-bit words; derive from the
+    # leading fraction bits how many places (0 to 3) to shift so the fraction
+    # is normalized to the IEEE form; shift the fraction words, carrying the
+    # low bits of the first word into the second; clear the implicit leading
+    # bit; recompute the exponent from the IBM exponent (adjusted by 65 and
+    # converted from base 16 to base 2) plus shift plus the IEEE bias, and keep
+    # the sign bit; finally reassemble and return a native-endian float64
+    # array. Precision may be lost relative to IBM format only in that IBM
+    # carries up to 3 extra fraction bits. Input is not modified.
     """
     Parse a vector of float values representing IBM 8 byte floats into
     native 8 byte floats.
@@ -234,6 +286,19 @@ def _parse_float_vec(vec):
 
 
 class XportReader(SASReader):
+    # [CLASS DOC]
+    # Reader for one SAS XPORT file (single member). Subclass of the abstract
+    # SAS reader; supports iteration (each step yields a chunk) and use as a
+    # context manager. The class documentation is assigned from a template.
+    # State: the text encoding for character columns, the count of rows read so
+    # far, the optional index column, the chunk size, the file handle bundle,
+    # the underlying binary stream, and after header parsing the file info and
+    # member info mappings, the list of field descriptors, the record length,
+    # the stream position where records start, the total observation count,
+    # the column names, and the structured dtype of one record.
+    # Key methods: read (return rows), get_chunk, close, and the header parser.
+    # Invariant: the stream is positioned at the next unread record between
+    # reads.
     __doc__ = _xport_reader_doc
 
     def __init__(
@@ -244,6 +309,16 @@ class XportReader(SASReader):
         chunksize: int | None = None,
         compression: CompressionOptions = "infer",
     ) -> None:
+        # [FUNCTION DOC]
+        # Opens the file in binary mode and parses its headers.
+        # Parameters: filepath_or_buffer is a path, URL or binary buffer;
+        # index is the optional column to set as index when reading; encoding
+        # (default ISO-8859-1) decodes character columns, and none keeps them
+        # as raw bytes; chunksize is the number of rows per iteration step
+        # (none means one row per step); compression defaults to inference.
+        # If header parsing raises, the handles are closed and the error
+        # propagates. Raises value errors for malformed headers (see the header
+        # parser).
         self._encoding = encoding
         self._lines_read = 0
         self._index = index
@@ -265,12 +340,41 @@ class XportReader(SASReader):
             raise
 
     def close(self) -> None:
+        # [FUNCTION DOC]
+        # Closes all file handles opened by this reader.
         self.handles.close()
 
     def _get_row(self):
+        # [FUNCTION DOC]
+        # HELPER: reads the next 80-byte card from the stream and returns it
+        # decoded to text using the default decoding. Raises a decode error for
+        # undecodable bytes; returns a shorter string at end of file.
         return self.filepath_or_buffer.read(80).decode()
 
     def _read_header(self) -> None:
+        # [FUNCTION DOC]
+        # HELPER: rewinds the stream and parses the file, member and variable
+        # descriptor headers, leaving the stream at the first observation.
+        # Reads, in order: the library header card; a card with prefix, version,
+        # operating system and created time; a card with the modified time; the
+        # member header and descriptor header cards (the first gives the
+        # length of each variable descriptor, normally 140, sometimes 135);
+        # two member info cards; the variable count card; the variable
+        # descriptors padded to a multiple of 80 bytes; and the observation
+        # header card.
+        # Each descriptor is unpacked from a fixed binary layout into a
+        # dictionary keyed by the field key list, its type code mapped to
+        # numeric or char, and string members stripped. The record length is the
+        # sum of the field lengths. Afterwards sets the file info, member info,
+        # fields, record length, record start, observation count (via the
+        # record counter), column names (decoded) and a structured dtype with
+        # one fixed-length byte string per field.
+        # Raises value errors when the first card is not the library header
+        # (with a special message for compressed CPORT files), when the prefix
+        # on the second card is wrong, when the member or observation headers
+        # are missing; raises a type error when a numeric field width is not
+        # between 2 and 8 (a value error would arguably fit better).
+        # Raises a key error for an unknown variable type code.
         self.filepath_or_buffer.seek(0)
 
         # read file header
@@ -381,9 +485,23 @@ class XportReader(SASReader):
         self._dtype = dtype
 
     def __next__(self) -> pd.DataFrame:
+        # [FUNCTION DOC]
+        # Iterator step: reads the next chunk, namely chunksize rows, or a
+        # single row when no chunk size was set. Stops iteration (and closes the
+        # reader) once all rows are consumed.
         return self.read(nrows=self._chunksize or 1)
 
     def _record_count(self) -> int:
+        # [FUNCTION DOC]
+        # HELPER: computes the number of observations from the file size.
+        # Moves the stream to the end, takes the bytes after the record start
+        # as the total record bytes, and warns (user-level warning attributed
+        # to the caller) if that total is not a multiple of 80. If the record
+        # length exceeds 80, returns total divided by record length (integer
+        # division). Otherwise inspects the final 80-byte card as eight-byte
+        # words, counts those that consist entirely of blanks, treats 8 bytes
+        # per such word as trailing padding, and returns total minus padding
+        # divided by the record length. Leaves the stream at the record start.
         """
         Get number of records in file.
 
@@ -422,6 +540,13 @@ class XportReader(SASReader):
         return (total_records_length - tail_pad) // self.record_length
 
     def get_chunk(self, size: int | None = None) -> pd.DataFrame:
+        # [FUNCTION DOC]
+        # Reads the next size rows as a data frame. When size is none the
+        # configured chunk size is used, and if that is also none all remaining
+        # rows are read. Delegates to the read method and so raises stop
+        # iteration when no rows remain.
+        # KNOWN ISSUE: the docstring says none reads the whole file, but the
+        # code falls back to the configured chunk size first.
         """
         Reads lines from Xport file and returns as dataframe
 
@@ -439,6 +564,12 @@ class XportReader(SASReader):
         return self.read(nrows=size)
 
     def _missing_double(self, vec):
+        # [FUNCTION DOC]
+        # HELPER: flags SAS missing-value encodings among 8-byte numeric
+        # values. Input vec is an array of 8-byte values. A value is missing
+        # when its first byte is an uppercase letter, an underscore or a period
+        # and all remaining seven bytes are zero. Returns a boolean array of the
+        # same length (true means missing).
         v = vec.view(dtype="u1,u1,u2,u4")
         miss = (v["f1"] == 0) & (v["f2"] == 0) & (v["f3"] == 0)
         miss1 = (
@@ -450,6 +581,24 @@ class XportReader(SASReader):
         return miss
 
     def read(self, nrows: int | None = None) -> pd.DataFrame:
+        # [FUNCTION DOC]
+        # Reads the next observations and returns them as a data frame.
+        # Parameter nrows is the maximum number of rows (none means all
+        # observations in the file). The count actually read is capped by the
+        # unread remainder.
+        # Numeric columns: truncated widths are padded, SAS missing codes are
+        # detected, IBM floats are converted to doubles and missing values set to
+        # not-a-number. Character columns: trailing whitespace is stripped from
+        # each value, and values are decoded with the configured encoding if one
+        # is set (otherwise they remain bytes).
+        # The index is a running integer range continuing from rows already read
+        # when no index column was configured; otherwise the configured column is
+        # made the index. Advances the rows-read counter.
+        # Side effect and exception: if nothing remains to read, the reader is
+        # closed and a stop iteration signal is raised.
+        # KNOWN ISSUE: raising the iteration-stop signal from a plain read call
+        # means reading an empty file or an exhausted reader fails with that
+        # signal instead of returning an empty frame.
         """Read observations from SAS Xport file, returning as data frame.
 
         Parameters
