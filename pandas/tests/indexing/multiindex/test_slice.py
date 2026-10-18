@@ -1,3 +1,8 @@
+# [MODULE DOC]
+# Tests for per-axis, per-level slicing of MultiIndex objects with loc (tuples of slices,
+# lists and scalars, IndexSlice, the axis-argument form), slicing with negative step, and
+# assignment through such slicers. Uses the label-maker helper from the shared indexing test
+# utilities.
 from datetime import (
     datetime,
     timedelta,
@@ -21,9 +26,20 @@ from pandas.tests.indexing.common import _mklbl
 
 
 class TestMultiIndexSlicers:
+    # [CLASS DOC]
+    # Test collection for MultiIndex slicers applied to rows and/or columns, both getting and
+    # setting.
     def test_per_axis_per_level_getitem(self):
         # GH6134
         # example test case
+        # [FUNCTION DOC]
+        # GH 6134. Verifies tuple-of-slice/list indexers on a four-level product index against a
+        # brute-force filter of the index values; on a small two-axis frame verifies identity
+        # slicers, list and scalar second-level selection, column selection, combined row/column,
+        # partial labels, boolean-mask indexers, and errors: a wrong-length boolean array raises a
+        # value error; a column list of absent integer raises a key error (no positional fallback);
+        # slicing a non-lexsorted index raises the unsorted-index error with the expected message,
+        # while a mask-only selection on an unsorted index works.
         ix = MultiIndex.from_product(
             [_mklbl("A", 5), _mklbl("B", 7), _mklbl("C", 4), _mklbl("D", 2)]
         )
@@ -166,6 +182,11 @@ class TestMultiIndexSlicers:
     def test_multiindex_slicers_non_unique(self):
         # GH 7106
         # non-unique mi index support
+        # [FUNCTION DOC]
+        # GH 7106, GH 12896. On a non-unique sorted three-level index, a slicer picking all rows with
+        # third level 1 equals the corresponding cross-section (kept levels) and keeps the index non
+        # unique; additionally a numpy-dependent bug case with repeated large integers: slicing up to
+        # 100000 on the second level returns all but the last two rows.
         df = (
             DataFrame(
                 {
@@ -250,6 +271,10 @@ class TestMultiIndexSlicers:
     def test_multiindex_slicers_datetimelike(self):
         # GH 7429
         # buggy/inconsistent behavior when slicing with datetime-like
+        # [FUNCTION DOC]
+        # GH 7429. Slicing with datetime bounds (timestamps, or strings, with slice objects or
+        # IndexSlice, second level as a slice or scalar) on a date/frequency index and a column label
+        # slice returns rows 0, 2, 4 and columns A, B, identical across the variants.
         dates = [datetime(2012, 1, 1, 12, 12, 12) + timedelta(days=i) for i in range(6)]
         freq = [1, 2]
         index = MultiIndex.from_product([dates, freq], names=["date", "frequency"])
@@ -311,6 +336,10 @@ class TestMultiIndexSlicers:
     def test_multiindex_slicers_edges(self):
         # GH 8132
         # various edge cases
+        # [FUNCTION DOC]
+        # GH 8132. Edge cases for slicers with open start / end on sorted three-level index (string
+        # levels and dates): each commented scenario (A1 to B4) compares loc results with the expected
+        # positional rows.
         df = DataFrame(
             {
                 "A": ["A0"] * 5 + ["A1"] * 5 + ["A2"] * 5,
@@ -384,6 +413,11 @@ class TestMultiIndexSlicers:
 
     def test_per_axis_per_level_doc_examples(self):
         # test index maker
+        # [FUNCTION DOC]
+        # Examples from the indexing documentation: slicers and IndexSlice give equal results; for an
+        # unsorted column axis a slicer requiring lexsort raises the unsorted-index error (depth 1) while
+        # a no-op slice works (GH 16734); after sorting columns the getitem forms and a setitem through
+        # the axis-argument form execute without error. The last statements make no assertions.
         idx = pd.IndexSlice
 
         # from indexing.rst / advanced
@@ -458,6 +492,11 @@ class TestMultiIndexSlicers:
         df.loc(axis=0)[:, :, ["C1", "C3"]] = -10
 
     def test_loc_axis_arguments(self):
+        # [FUNCTION DOC]
+        # The axis argument to loc (number-like names for axis 0/rows, "index", 1, "columns") gives
+        # the same result as an equivalent explicit slicer on sorted frames. An invalid axis value
+        # (negative, too large, or an unknown string) raises a value error saying no axis with that name
+        # exists for a frame.
         index = MultiIndex.from_product(
             [_mklbl("A", 4), _mklbl("B", 2), _mklbl("C", 4), _mklbl("D", 2)]
         )
@@ -525,6 +564,9 @@ class TestMultiIndexSlicers:
 
     def test_loc_axis_single_level_multi_col_indexing_multiindex_col_df(self):
         # GH29519
+        # [FUNCTION DOC]
+        # GH 29519. loc with axis=1 and a label slice on the first level of MultiIndex columns selects
+        # the columns of the matched first-level groups.
         df = DataFrame(
             np.arange(27).reshape(3, 9),
             columns=MultiIndex.from_product([["a1", "a2", "a3"], ["b1", "b2", "b3"]]),
@@ -536,6 +578,9 @@ class TestMultiIndexSlicers:
 
     def test_loc_axis_single_level_single_col_indexing_multiindex_col_df(self):
         # GH29519
+        # [FUNCTION DOC]
+        # GH 29519. loc with axis=1 and a single first-level label returns the sub-frame with the
+        # second-level labels as columns.
         df = DataFrame(
             np.arange(27).reshape(3, 9),
             columns=MultiIndex.from_product([["a1", "a2", "a3"], ["b1", "b2", "b3"]]),
@@ -549,6 +594,9 @@ class TestMultiIndexSlicers:
     def test_loc_ax_single_level_indexer_simple_df(self):
         # GH29519
         # test single level indexing on single index column data frame
+        # [FUNCTION DOC]
+        # GH 29519. For a frame with plain columns, loc with axis=1 and a single label returns that
+        # column as a series.
         df = DataFrame(np.arange(9).reshape(3, 3), columns=["a", "b", "c"])
         result = df.loc(axis=1)["a"]
         expected = Series(np.array([0, 3, 6]), name="a")
@@ -556,6 +604,14 @@ class TestMultiIndexSlicers:
 
     def test_per_axis_per_level_setitem(self):
         # test index maker
+        # [FUNCTION DOC]
+        # Setting scalar 100 through various slicers (identity, second-level lists and scalars,
+        # column slicers, both axes, IndexSlice, partial labels) on a frame with MultiIndex rows and
+        # columns assigns the same cells as positional assignment. Assigning a matching array works;
+        # a ragged array raises a value error (sequence element), a flat array of wrong length raises
+        # the unequal length error. Alignable right-hand sides (the same selection scaled or via
+        # augmented assignment) are aligned by label, and a rhs with an extra column leaves the
+        # result as if multiplied by itself.
         idx = pd.IndexSlice
 
         # test multi-index slicing with per axis and per index controls
@@ -692,6 +748,11 @@ class TestMultiIndexSlicers:
         tm.assert_frame_equal(df, expected)
 
     def test_multiindex_label_slicing_with_negative_step(self):
+        # [FUNCTION DOC]
+        # Uses the testing helper checking that label-based and positional slices give identical
+        # results: for a series on a letter/number product index, negative-step slices with single
+        # labels, tuples, and mixed bounds are equivalent to explicit integer-position slices; an
+        # empty selection for reversed order bounds.
         ser = Series(
             np.arange(20), MultiIndex.from_product([list("abcde"), np.arange(4)])
         )
@@ -721,6 +782,10 @@ class TestMultiIndexSlicers:
 
     def test_multiindex_slice_first_level(self):
         # GH 12697
+        # [FUNCTION DOC]
+        # GH 12697. Slicing the second level over a range on all first levels, then selecting a
+        # first-level label from the result, returns the expected consecutive values with the second
+        # level as index.
         freq = ["a", "b", "c", "d"]
         idx = MultiIndex.from_product([freq, range(500)])
         df = DataFrame(list(range(2000)), index=idx, columns=["Test"])
@@ -735,6 +800,9 @@ class TestMultiIndexSlicers:
         tm.assert_frame_equal(result, expected)
 
     def test_int_series_slicing(self, multiindex_year_month_day_dataframe_random_data):
+        # [FUNCTION DOC]
+        # Integer slicing from position 5 on series and frame gives the same results as reindexing by
+        # the sliced index; positional slice assignment of zero changes exactly those values.
         ymd = multiindex_year_month_day_dataframe_random_data
         s = ymd["A"]
         result = s[5:]
@@ -778,6 +846,11 @@ class TestMultiIndexSlicers:
     )
     def test_loc_slice_negative_stepsize(self, dtype, loc, iloc):
         # GH#38071
+        # [FUNCTION DOC]
+        # GH 38071. Parametrized over label type (integer or string), label slice and the equivalent
+        # positional slice (steps -1 and -2, with open or closed ends). On a two-level index built from
+        # the same labels, a loc slice on the full key, on level 0 with a trailing all-slice, and
+        # on level 1 give the frame equal to the positional slice.
         labels = {
             "str": list("abcde"),
             "int": range(5),

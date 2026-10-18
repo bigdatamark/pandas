@@ -1,3 +1,7 @@
+# [MODULE DOC]
+# Tests for position-based (iloc) indexing on frames and series that have a
+# MultiIndex on rows and/or columns. Uses the shared multiindex_dataframe_random_data
+# fixture from the test configuration plus one local fixture.
 import numpy as np
 import pytest
 
@@ -11,6 +15,11 @@ import pandas._testing as tm
 
 @pytest.fixture
 def simple_multiindex_dataframe():
+    # [FUNCTION DOC]
+    # HELPER: fixture for the tests in this module.
+    # Returns a 3 x 3 frame of seeded random normal values whose rows have the two-level
+    # index with first level 4, 4, 8 and second level 8, 10, 12, and whose columns have
+    # the two-level index with first level 2, 2, 4 and second level 6, 8, 10.
     """
     Factory function to create simple 3 x 3 dataframe with
     both columns and row MultiIndex using supplied data or
@@ -41,6 +50,11 @@ def simple_multiindex_dataframe():
     ],
 )
 def test_iloc_returns_series(indexer, expected, simple_multiindex_dataframe):
+    # [FUNCTION DOC]
+    # Parametrized over three (indexer, expected-builder) pairs: integer row 0, integer row 2,
+    # and all rows of integer column 2. The indexer is applied to the fixture frame and the
+    # result must equal a series built from the raw array, with the other axis' MultiIndex as
+    # the index and the selected row/column tuple as name.
     df = simple_multiindex_dataframe
     arr = df.values
     result = indexer(df)
@@ -49,6 +63,9 @@ def test_iloc_returns_series(indexer, expected, simple_multiindex_dataframe):
 
 
 def test_iloc_returns_dataframe(simple_multiindex_dataframe):
+    # [FUNCTION DOC]
+    # Selecting rows at positions 0 and 1 returns a frame equal to the cross-section on
+    # first-level label 4 with the level kept.
     df = simple_multiindex_dataframe
     result = df.iloc[[0, 1]]
     expected = df.xs(4, drop_level=False)
@@ -56,6 +73,8 @@ def test_iloc_returns_dataframe(simple_multiindex_dataframe):
 
 
 def test_iloc_returns_scalar(simple_multiindex_dataframe):
+    # [FUNCTION DOC]
+    # Selecting a single position pair on both axes returns the scalar from the raw array.
     df = simple_multiindex_dataframe
     arr = df.values
     result = df.iloc[2, 2]
@@ -65,6 +84,9 @@ def test_iloc_returns_scalar(simple_multiindex_dataframe):
 
 def test_iloc_getitem_multiple_items():
     # GH 5528
+    # [FUNCTION DOC]
+    # GH 5528. On a 4-row frame with a two-level index, selecting positions 2 and 3 equals
+    # the cross-section for first-level label b with the level kept.
     tup = zip(*[["a", "a", "b", "b"], ["x", "y", "x", "y"]])
     index = MultiIndex.from_tuples(tup)
     df = DataFrame(np.random.default_rng(2).standard_normal((4, 4)), index=index)
@@ -75,6 +97,9 @@ def test_iloc_getitem_multiple_items():
 
 def test_iloc_getitem_labels():
     # this is basically regular indexing
+    # [FUNCTION DOC]
+    # Positional scalar access on a frame with duplicated MultiIndex labels on both axes
+    # behaves like ordinary indexing: row 2, column 2 returns the matching raw array value.
     arr = np.random.default_rng(2).standard_normal((4, 3))
     df = DataFrame(
         arr,
@@ -87,6 +112,8 @@ def test_iloc_getitem_labels():
 
 
 def test_frame_getitem_slice(multiindex_dataframe_random_data):
+    # [FUNCTION DOC]
+    # A positional slice of the first four rows equals the plain slice of the frame.
     df = multiindex_dataframe_random_data
     result = df.iloc[:4]
     expected = df[:4]
@@ -94,6 +121,9 @@ def test_frame_getitem_slice(multiindex_dataframe_random_data):
 
 
 def test_frame_setitem_slice(multiindex_dataframe_random_data):
+    # [FUNCTION DOC]
+    # Assigning a scalar zero through a positional slice of the first four rows sets exactly
+    # those rows to zero in the underlying values and leaves all other values non-zero.
     df = multiindex_dataframe_random_data
     df.iloc[:4] = 0
 
@@ -103,6 +133,10 @@ def test_frame_setitem_slice(multiindex_dataframe_random_data):
 
 def test_indexing_ambiguity_bug_1678():
     # GH 1678
+    # [FUNCTION DOC]
+    # GH 1678. With a column MultiIndex, selecting the column at position 1 for all rows
+    # equals label-based selection of the matching tuple, so positional access is not
+    # confused by the MultiIndex.
     columns = MultiIndex.from_tuples(
         [("Ohio", "Green"), ("Ohio", "Red"), ("Colorado", "Green")]
     )
@@ -117,6 +151,10 @@ def test_indexing_ambiguity_bug_1678():
 
 def test_iloc_integer_locations():
     # GH 13797
+    # [FUNCTION DOC]
+    # GH 13797. For a frame with a MultiIndex containing duplicate labels, reading each
+    # cell by integer row and column positions reproduces the original data when
+    # reassembled into a frame.
     data = [
         ["str00", "str01"],
         ["str10", "str11"],
@@ -152,6 +190,12 @@ def test_iloc_integer_locations():
 )
 def test_iloc_setitem_int_multiindex_series(data, indexes, values, expected_k):
     # GH17148
+    # [FUNCTION DOC]
+    # GH 17148. Parametrized over frame data, positions (including a negative one), and
+    # increments. A series with a two-level integer MultiIndex has the increments added
+    # in place through positional augmented assignment; the result must equal the
+    # expected values column, so integer labels in the index do not cause label-based
+    # interpretation.
     df = DataFrame(data=data, columns=["i", "j", "k"])
     df = df.set_index(["i", "j"])
 
@@ -165,6 +209,9 @@ def test_iloc_setitem_int_multiindex_series(data, indexes, values, expected_k):
 
 
 def test_getitem_iloc(multiindex_dataframe_random_data):
+    # [FUNCTION DOC]
+    # Positional row selection at position 2 equals the cross-section taken with that
+    # row's full index label.
     df = multiindex_dataframe_random_data
     result = df.iloc[2]
     expected = df.xs(df.index[2])

@@ -1,3 +1,9 @@
+# [MODULE DOC]
+# Tests for scalar and slice indexing with float keys: float keys on non-numeric, integer and
+# float indexes, float slice bounds on label and positional accessors, error messages for
+# disallowed float slicing, and a float-index repr smoke test. Uses accessor-parametrizing
+# fixtures from the shared test configuration (loc-like, getitem-like, positional) and the
+# version flag for the minimum Python version affecting an error message.
 import numpy as np
 import pytest
 
@@ -16,6 +22,11 @@ import pandas._testing as tm
 
 
 def gen_obj(klass, index):
+    # [FUNCTION DOC]
+    # HELPER: builds the object under test from a container class and an index. If the class is
+    # the series class, returns a series of consecutive integers indexed by the index. Otherwise
+    # returns a square frame of seeded random normal values with the index used as both index and
+    # columns.
     if klass is Series:
         obj = Series(np.arange(len(index)), index=index)
     else:
@@ -28,7 +39,14 @@ def gen_obj(klass, index):
 
 
 class TestFloatIndexers:
+    # [CLASS DOC]
+    # Test collection for float scalar and slice indexers across index types.
     def check(self, result, original, indexer, getitem):
+        # [FUNCTION DOC]
+        # HELPER: compares result to the expectation derived from the original object and positional
+        # indexer using approximate equality. For a series (or frame with non-getitem access) expected
+        # is the positional row selection of the original; for a frame accessed via getitem
+        # (getitem true) expected is the positional column selection.
         """
         comparator for results
         we need to take care if we are indexing on a
@@ -58,6 +76,12 @@ class TestFloatIndexers:
         # float_indexers should raise exceptions
         # on appropriate Index types & accessors
 
+        # [FUNCTION DOC]
+        # GH 4892. Parametrized over five non-numeric index kinds (strings, categorical strings, dates,
+        # timedeltas, periods), plus frame-or-series and accessor fixtures. A float key raises a key
+        # error with the float in the message; the float is not contained in the object; assignment via
+        # float key enlarges (getitem-style: new column for frames, loc: new row) or, for the positional
+        # accessor, leaves axes unchanged.
         s = gen_obj(frame_or_series, index)
 
         # getting
@@ -91,6 +115,9 @@ class TestFloatIndexers:
     def test_scalar_non_numeric_series_fallback(self, index):
         # starting in 3.0, integer keys are always treated as labels, no longer
         #  fall back to positional.
+        # [FUNCTION DOC]
+        # Parametrized over the same five index kinds. As of version 3.0, integer and float keys on a
+        # series with a non-numeric index are labels only (no positional fallback) and raise key errors.
         s = Series(np.arange(len(index)), index=index)
 
         with pytest.raises(KeyError, match="3"):
@@ -99,6 +126,13 @@ class TestFloatIndexers:
             s[3.0]
 
     def test_scalar_with_mixed(self, indexer_sl):
+        # [FUNCTION DOC]
+        # Uses the accessor fixture. A float key on a string index raises a key error; string key works.
+        # On an index mixing strings and a float, an absent float key raises a key error, an integer key
+        # does not fall back to position (checked with plain getitem when the accessor is not label-based),
+        # and the existing float label returns the associated value.
+        # KNOWN ISSUE: the first two checks on the string-indexed series are the same assertion (the
+        # messages differ only in escaping), so one is redundant.
         s2 = Series([1, 2, 3], index=["a", "b", "c"])
         s3 = Series([1, 2, 3], index=["a", "b", 1.5])
 
@@ -135,6 +169,11 @@ class TestFloatIndexers:
         "index", [Index(np.arange(5), dtype=np.int64), RangeIndex(5)]
     )
     def test_scalar_integer(self, index, frame_or_series, indexer_sl):
+        # [FUNCTION DOC]
+        # Parametrized over a plain integer index and a range index. Float key equal to an integer is
+        # coerced to that label: reads return the same as the positional row/column; assigning 100 through
+        # a float key and reading back with a float or integer key gives the assigned value (a series with
+        # float or integer dtype for frames depending on the accessor).
         getitem = indexer_sl is not tm.loc
 
         # test how scalar float indexers work on int indexes
@@ -151,6 +190,10 @@ class TestFloatIndexers:
         if isinstance(obj, Series):
 
             def compare(x, y):
+                # [FUNCTION DOC]
+                # HELPER: comparison callback for the series case of this test.
+                # Takes two scalar values x and y and asserts they are equal;
+                # returns nothing.
                 assert x == y
 
             expected = 100
@@ -176,6 +219,9 @@ class TestFloatIndexers:
     def test_scalar_integer_contains_float(self, index, frame_or_series):
         # contains
         # integer index
+        # [FUNCTION DOC]
+        # Parametrized over integer and range index. A float equal to an integer label is contained
+        # in the object.
         obj = gen_obj(frame_or_series, index)
 
         # coerce to equal int
@@ -183,6 +229,12 @@ class TestFloatIndexers:
 
     def test_scalar_float(self, frame_or_series):
         # scalar float indexers work on a float index
+        # [FUNCTION DOC]
+        # On a float index, label and getitem-style reads with a float label match the positional
+        # selection; a non-existent float raises a key error; the float is contained; positional
+        # assignment and reading back of the same element works.
+        # KNOWN ISSUE: the block commented as "setting" only reads from the copy and never assigns, so
+        # no setting is exercised there.
         index = Index(np.arange(5.0))
         s = gen_obj(frame_or_series, index)
 
@@ -231,6 +283,12 @@ class TestFloatIndexers:
         # float_indexers should raise exceptions
         # on appropriate Index types & accessors
 
+        # [FUNCTION DOC]
+        # GH 4892. Parametrized over four non-numeric indexes and three float-bounded slices, with the
+        # slice-accessor fixture. Slicing raises a type error whose message differs for positional versus
+        # label accessors; setting through the slice raises the same type error, except for the
+        # positional accessor, which raises the python-level error about slice indices needing integers
+        # (wording depends on the Python version flag).
         s = gen_obj(frame_or_series, index)
 
         # getitem
@@ -268,6 +326,13 @@ class TestFloatIndexers:
         # these coerce to a like integer
         # oob indicates if we are out of bounds
         # of positional indexing
+        # [FUNCTION DOC]
+        # For an integer index, a range index and an out-of-range integer index (flag oob): label slices
+        # with float or integer bounds, including out-of-bounds ones, coerce to the like integers
+        # (empty when out-of-range); plain getitem with a float slice raises a type error; odd float
+        # bounds give inclusive label results and plain getitem raises a type error naming the float.
+        # KNOWN ISSUE: comments say these are label indexing "except getitem which is positional", but
+        # the code asserts that float slicing through getitem raises a type error.
         for index, oob in [
             (Index(np.arange(5, dtype=np.int64)), False),
             (RangeIndex(5), False),
@@ -336,6 +401,10 @@ class TestFloatIndexers:
 
     @pytest.mark.parametrize("idx", [slice(2, 4.0), slice(2.0, 4), slice(2.0, 4.0)])
     def test_integer_positional_indexing(self, idx):
+        # [FUNCTION DOC]
+        # Parametrized over three float-bound slices. Integer slice through getitem on an integer-indexed
+        # series equals positional slice; float-bounded slice through getitem and positional accessor
+        # raises a type error mentioning slice or positional indexing on the range index.
         """make sure that we are raising on positional indexing
         w.r.t. an integer index
         """
@@ -361,6 +430,12 @@ class TestFloatIndexers:
     )
     def test_slice_integer_frame_getitem(self, index):
         # similar to above, but on the getitem dim (of a DataFrame)
+        # [FUNCTION DOC]
+        # Parametrized over integer and range indexes. On a two-column frame, label slices with float
+        # bounds select the first two rows while plain getitem raises a type error; out-of-bounds slices
+        # select everything; odd float slices select the expected rows and plain getitem raises.
+        # KNOWN ISSUE: the out-of-bounds check passes getitem true to the comparison helper, so it compares
+        # against a column slice rather than a row slice; it passes only because the slice covers all.
         s = DataFrame(np.random.default_rng(2).standard_normal((5, 2)), index=index)
 
         # getitem
@@ -416,6 +491,10 @@ class TestFloatIndexers:
     )
     def test_float_slice_getitem_with_integer_index_raises(self, idx, index):
         # similar to above, but on the getitem dim (of a DataFrame)
+        # [FUNCTION DOC]
+        # Parametrized over slice and integer/range index. Setting zero through label-based float slice
+        # works and reads back all zeros; plain getitem and setitem with the float slice raise a type error
+        # about slice indexing.
         s = DataFrame(np.random.default_rng(2).standard_normal((5, 2)), index=index)
 
         # setitem
@@ -439,6 +518,10 @@ class TestFloatIndexers:
     @pytest.mark.parametrize("idx", [slice(3.0, 4), slice(3, 4.0), slice(3.0, 4.0)])
     def test_slice_float(self, idx, frame_or_series, indexer_sl):
         # same as above, but for floats
+        # [FUNCTION DOC]
+        # Parametrized over slices; uses frame-or-series and slice-accessor fixtures. On an index of
+        # floats offset by 0.1, slicing with integer-like bounds returns the fourth element, of the same
+        # container type; setting via the slice sets zero.
         index = Index(np.arange(5.0)) + 0.1
         s = gen_obj(frame_or_series, index)
 
@@ -456,6 +539,10 @@ class TestFloatIndexers:
         assert (result == 0).all()
 
     def test_floating_index_doc_example(self):
+        # [FUNCTION DOC]
+        # Doc example: a float index with a mix of integer-valued and non-integer floats; plain getitem
+        # and label access with integer 3 find the label (value 2) while the positional accessor returns
+        # the fourth element (value 3).
         index = Index([1.5, 2, 3, 4.5, 5])
         s = Series(range(5), index=index)
         assert s[3] == 2
@@ -465,6 +552,15 @@ class TestFloatIndexers:
     def test_floating_misc(self, indexer_sl):
         # related 236
         # scalar/slicing of a float index
+        # [FUNCTION DOC]
+        # Related to issue 236. Uses the label-style accessor fixture on a series with float index
+        # 0, 2.5, 5, ...: label slice with float bounds; integer or float exact keys; missing integer
+        # raises a key error; lists of floats or integers return elements in list order with float index;
+        # slices with different float bounds give equal results; list selection equals positional; lists
+        # with missing labels raise a key error saying not in index; selection of existing float labels
+        # works.
+        # KNOWN ISSUE: a comment says fancy lookup creates entries "as nan", but the assertions expect
+        # only the existing values (no missing values).
         s = Series(np.arange(5), index=np.arange(5) * 2.5, dtype=np.int64)
 
         # label based slicing
@@ -522,6 +618,10 @@ class TestFloatIndexers:
 
     def test_floatindex_slicing_bug(self, float_numpy_dtype):
         # GH 5557, related to slicing a float index
+        # [FUNCTION DOC]
+        # GH 5557. Parametrized over float dtypes. Builds a series from a large dictionary of integer
+        # keys, takes the value counts and asserts the resulting index dtype equals the requested float
+        # dtype; converting to string (repr) must not raise.
         dtype = float_numpy_dtype
         ser = {
             256: 2321.0,

@@ -1,3 +1,7 @@
+# [MODULE DOC]
+# Slow-marked tests checking MultiIndex key lookup against a brute-force boolean-mask
+# computation. Defines fixtures that build random five-column data (including datetimes),
+# keys, and duplicated / de-duplicated variants of the frame.
 import numpy as np
 import pytest
 
@@ -11,21 +15,30 @@ import pandas._testing as tm
 
 @pytest.fixture
 def m():
+    # [FUNCTION DOC]
+    # HELPER: fixture returning the number of random keys to generate (5).
     return 5
 
 
 @pytest.fixture
 def n():
+    # [FUNCTION DOC]
+    # HELPER: fixture returning the number of data rows (100).
     return 100
 
 
 @pytest.fixture
 def cols():
+    # [FUNCTION DOC]
+    # HELPER: fixture returning the five column names; the first four become index levels.
     return ["jim", "joe", "jolie", "joline", "jolia"]
 
 
 @pytest.fixture
 def vals(n):
+    # [FUNCTION DOC]
+    # HELPER: fixture building n row tuples from five seeded random columns (small integers,
+    # letters, dates, upper-case letters, normal floats). Returns a list of tuples.
     vals = [
         np.random.default_rng(2).integers(0, 10, n),
         np.random.default_rng(2).choice(list("abcdefghij"), n),
@@ -42,6 +55,10 @@ def vals(n):
 @pytest.fixture
 def keys(n, m, vals):
     # bunch of keys for testing
+    # [FUNCTION DOC]
+    # HELPER: fixture building lookup keys. Uses m random four-level tuples (values drawn from
+    # slightly wider ranges so some are absent) plus the first four elements of every
+    # (n divided by m)-th row tuple so some keys are guaranteed to exist.
     keys = [
         np.random.default_rng(2).integers(0, 11, m),
         np.random.default_rng(2).choice(list("abcdefghijk"), m),
@@ -58,16 +75,24 @@ def keys(n, m, vals):
 # covers both unique index and non-unique index
 @pytest.fixture
 def df(vals, cols):
+    # [FUNCTION DOC]
+    # HELPER: fixture creating a frame from vals and cols (unique or non-unique rows).
     return DataFrame(vals, columns=cols)
 
 
 @pytest.fixture
 def a(df):
+    # [FUNCTION DOC]
+    # HELPER: fixture returning the frame concatenated with itself, producing a non-unique index
+    # once the index levels are set.
     return pd.concat([df, df])
 
 
 @pytest.fixture
 def b(df, cols):
+    # [FUNCTION DOC]
+    # HELPER: fixture returning the frame with duplicates removed over the index columns,
+    # producing a unique index.
     return df.drop_duplicates(subset=cols[:-1])
 
 
@@ -78,6 +103,17 @@ def b(df, cols):
 def test_multiindex_get_loc(request, lexsort_depth, keys, frame_fixture, cols):
     # GH7724, GH2646
 
+    # [FUNCTION DOC]
+    # GH 7724, GH 2646. Slow test, performance warnings ignored. Parametrized over lexsort
+    # depth 0-4 and the duplicated / unique frame fixtures. The frame is sorted by the first
+    # lexsort_depth columns (or just shallow-copied for depth 0) and the first four columns
+    # become the index, asserting the lexsort depth is at least the requested depth. For every
+    # key and every prefix of it, a mask is built by progressive equality per column. If no row
+    # matches, the prefix must not be in the index. Otherwise it must be, and label lookup of
+    # the prefix must equal the masked rows: for a partial key the matched columns are dropped
+    # and the remaining index columns set (a frame); for a full key a single match gives a
+    # series over the value column, multiple matches a frame. The in-place operations are
+    # asserted to return None.
     frame = request.getfixturevalue(frame_fixture)
     if lexsort_depth == 0:
         df = frame.copy(deep=False)

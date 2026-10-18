@@ -1,3 +1,7 @@
+# [MODULE DOC]
+# Tests for indexing and sorting behavior of MultiIndex objects that are not lexicographically
+# sorted: label lookup, slicing, sort with a key function, and sorting with missing values in
+# nullable integer levels.
 import numpy as np
 import pytest
 
@@ -12,7 +16,12 @@ import pandas._testing as tm
 
 
 class TestMultiIndexSorted:
+    # [CLASS DOC]
+    # Test collection for MultiIndex objects whose entries are unsorted.
     def test_getitem_multilevel_index_tuple_not_sorted(self):
+        # [FUNCTION DOC]
+        # Selecting a column with an index object built from a slice of the frame's three-level
+        # unsorted index returns a series containing just the matching row, named for the column.
         index_columns = list("abc")
         df = DataFrame(
             [[0, 1, 0, "x"], [0, 0, 1, "y"]], columns=[*index_columns, "data"]
@@ -26,6 +35,10 @@ class TestMultiIndexSorted:
         tm.assert_series_equal(rs, xp)
 
     def test_getitem_slice_not_sorted(self, multiindex_dataframe_random_data):
+        # [FUNCTION DOC]
+        # On a transposed frame with unsorted MultiIndex columns, positional slicing with a numpy
+        # 32-bit integer bound (an int type-checking regression) equals reindexing to the first three
+        # columns.
         frame = multiindex_dataframe_random_data
         df = frame.sort_index(level=1).T
 
@@ -37,6 +50,10 @@ class TestMultiIndexSorted:
     @pytest.mark.parametrize("key", [None, lambda x: x])
     def test_frame_getitem_not_sorted2(self, key):
         # 13431
+        # [FUNCTION DOC]
+        # Issue 13431. Parametrized over no key function and an identity key. After changing the first
+        # level's levels and codes so that the index is unsorted but equal to the original, sorting by
+        # level 0 (with the key) gives a monotonic index equal to the whole-index sort.
         df = DataFrame(
             {
                 "col1": ["b", "d", "b", "a"],
@@ -61,6 +78,10 @@ class TestMultiIndexSorted:
         tm.assert_frame_equal(result, expected)
 
     def test_sort_values_key(self):
+        # [FUNCTION DOC]
+        # Sorting a MultiIndex with a key mapping each tuple entry to a selected element reorders the
+        # entries into the expected order; the frame built on the sorted index equals one built on the
+        # manually ordered index.
         arrays = [
             ["bar", "bar", "baz", "baz", "qux", "qux", "foo", "foo"],
             ["one", "two", "one", "two", "one", "two", "one", "two"],
@@ -84,6 +105,9 @@ class TestMultiIndexSorted:
 
     def test_argsort_with_na(self):
         # GH48495
+        # [FUNCTION DOC]
+        # GH 48495. Positions that would sort a MultiIndex of nullable integers place missing
+        # first-level entries last: positions 2, 0, 1 as platform-sized integers.
         arrays = [
             array([2, NA, 1], dtype="Int64"),
             array([1, 2, 3], dtype="Int64"),
@@ -95,6 +119,9 @@ class TestMultiIndexSorted:
 
     def test_sort_values_with_na(self):
         # GH48495
+        # [FUNCTION DOC]
+        # GH 48495. Sorting a MultiIndex of nullable integers puts the entry with missing first level
+        # last; a frame on it equals the one built on the expected index.
         arrays = [
             array([2, NA, 1], dtype="Int64"),
             array([1, 2, 3], dtype="Int64"),
@@ -113,6 +140,11 @@ class TestMultiIndexSorted:
         tm.assert_frame_equal(result, expected)
 
     def test_frame_getitem_not_sorted(self, multiindex_dataframe_random_data):
+        # [FUNCTION DOC]
+        # Plain getitem and label-based selection of one first-level column group on an unsorted
+        # MultiIndex (after adding a column in the group) equals reindexing to the matching columns
+        # with the group's level dropped; the same for row cross-section and loc on the transposed
+        # frame.
         frame = multiindex_dataframe_random_data
         df = frame.T
         df["foo", "four"] = "foo"
@@ -135,6 +167,9 @@ class TestMultiIndexSorted:
         tm.assert_frame_equal(result2, expected)
 
     def test_series_getitem_not_sorted(self):
+        # [FUNCTION DOC]
+        # On an unsorted MultiIndex series, getitem and loc with a first-level label equal the mask
+        # selection with that level dropped.
         arrays = [
             ["bar", "bar", "baz", "baz", "qux", "qux", "foo", "foo"],
             ["one", "two", "one", "two", "one", "two", "one", "two"],

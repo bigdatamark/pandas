@@ -1,3 +1,8 @@
+# [MODULE DOC]
+# Tests for cache invalidation after setitem and for chained assignment detection: with
+# copy-on-write semantics, chained assignments must not modify the original object and are
+# expected to raise / warn through the chained-assignment testing context. Contains a caching
+# class and a chaining class.
 from string import ascii_letters
 
 import numpy as np
@@ -17,8 +22,13 @@ import pandas._testing as tm
 
 class TestCaching:
     @pytest.mark.parametrize("do_ref", [True, False])
+    # [CLASS DOC]
+    # Test collection for cache updating after setting through loc.
     def test_setitem_cache_updating(self, do_ref):
         # GH 5424
+        # [FUNCTION DOC]
+        # GH 5424. Parametrized on whether a value is first read (referencing a cached element). Setting
+        # a new row label by loc must leave the existing value at row 0 and read back the new value.
         cont = ["one", "two", "three", "four", "five", "six", "seven"]
 
         df = DataFrame({"a": cont, "b": cont[3:] + cont[:3], "c": np.arange(7)})
@@ -36,6 +46,13 @@ class TestCaching:
     def test_setitem_cache_updating_slices(self):
         # GH 7084
         # not updating cache on series setting with slices
+        # [FUNCTION DOC]
+        # GH 7084. Looping to add values into a time-indexed column via label slices, both with loc
+        # assignment and loc augmented assignment, yields the expected totals (600 each); with the
+        # chained form assignment is rejected via the chained-assignment error context and the frame
+        # remains unchanged.
+        # KNOWN ISSUE: the comment says "this actually works" for the chained case, but the assertions
+        # verify that the chained assignment does not take effect.
         expected = DataFrame(
             {"A": [600, 600, 600]}, index=date_range("5/7/2014", "5/9/2014")
         )
@@ -72,8 +89,16 @@ class TestCaching:
 
 
 class TestChaining:
+    # [CLASS DOC]
+    # Test collection for chained assignment and getitem behavior.
     def test_setitem_chained_setfault(self):
         # GH6026
+        # [FUNCTION DOC]
+        # GH 6026, GH 6056. Chained setting through column attribute / getitem with a boolean mask or
+        # positional setter raises the chained-assignment error context and leaves the frame unchanged,
+        # for string columns, record-array-built frames and multi-column frames.
+        # KNOWN ISSUE: a first expected frame containing NaN is built but overwritten before use, so it
+        # is dead.
         data = ["right", "left", "left", "left", "right", "left", "timeout"]
 
         df = DataFrame({"response": np.array(data)})
@@ -113,6 +138,9 @@ class TestChaining:
 
     @pytest.mark.arm_slow
     def test_detect_chained_assignment(self):
+        # [FUNCTION DOC]
+        # Slow on arm. With the chained-assignment option set to raise, getitem-then-setitem on a column
+        # raises the error context and the frame remains equal to the original.
         with option_context("chained_assignment", "raise"):
             # work with the chain
             df = DataFrame(
@@ -129,6 +157,8 @@ class TestChaining:
     @pytest.mark.arm_slow
     def test_detect_chained_assignment_raises(self):
         # test with the chaining
+        # [FUNCTION DOC]
+        # Slow on arm. Same as above for a mixed int / float frame without setting the option.
         df = DataFrame(
             {
                 "A": Series(range(2), dtype="int64"),
@@ -145,6 +175,9 @@ class TestChaining:
     @pytest.mark.arm_slow
     def test_detect_chained_assignment_fails(self):
         # Using a copy (the chain), fails
+        # [FUNCTION DOC]
+        # Slow on arm. Assigning to a column of a row obtained by loc raises the chained-assignment error
+        # context.
         df = DataFrame(
             {
                 "A": Series(range(2), dtype="int64"),
@@ -158,6 +191,9 @@ class TestChaining:
     @pytest.mark.arm_slow
     def test_detect_chained_assignment_doc_example(self):
         # Doc example
+        # [FUNCTION DOC]
+        # Slow on arm. Example from the documentation: assigning into a column of a boolean-selected
+        # subset raises the chained-assignment error context.
         df = DataFrame(
             {
                 "a": ["one", "one", "two", "three", "two", "one", "six"],
@@ -171,6 +207,9 @@ class TestChaining:
 
     @pytest.mark.arm_slow
     def test_detect_chained_assignment_object_dtype(self):
+        # [FUNCTION DOC]
+        # Slow on arm. Chained assignment on an object-dtype column raises the error context and the frame
+        # equals the original.
         df = DataFrame(
             {"A": Series(["aaa", "bbb", "ccc"], dtype=object), "B": [1, 2, 3]}
         )
@@ -183,6 +222,12 @@ class TestChaining:
     @pytest.mark.arm_slow
     def test_detect_chained_assignment_is_copy_pickle(self, temp_file):
         # gh-5475: Make sure that is_copy is picked up reconstruction
+        # [FUNCTION DOC]
+        # GH 5475. Slow on arm. Uses the temporary-file fixture: round-trips a frame via pickle then
+        # assigns a new column twice from an existing column; verifies that reconstructed copy-tracking
+        # state does not cause an error.
+        # KNOWN ISSUE: the new column is assigned the same value twice and nothing is asserted; the
+        # test passes if no exception is raised.
         df = DataFrame({"A": [1, 2]})
 
         path = str(temp_file)
@@ -193,6 +238,9 @@ class TestChaining:
 
     @pytest.mark.arm_slow
     def test_detect_chained_assignment_str(self):
+        # [FUNCTION DOC]
+        # Slow on arm. Smoke test: assigning the lower-cased version of long strings selected by a
+        # mask through loc does not raise. Nothing is asserted.
         idxs = np.random.default_rng(2).integers(len(ascii_letters), size=(100, 2))
         idxs.sort(axis=1)
         strings = [ascii_letters[x[0] : x[1]] for x in idxs]
@@ -203,6 +251,9 @@ class TestChaining:
 
     @pytest.mark.arm_slow
     def test_detect_chained_assignment_sorting(self):
+        # [FUNCTION DOC]
+        # Slow on arm. Sorted series of a frame column obtained positionally equals that obtained by
+        # label.
         df = DataFrame(np.random.default_rng(2).standard_normal((10, 4)))
         ser = df.iloc[:, 0].sort_values()
 
@@ -212,6 +263,9 @@ class TestChaining:
     @pytest.mark.arm_slow
     def test_detect_chained_assignment_false_positives(self):
         # see gh-6025: false positives
+        # [FUNCTION DOC]
+        # GH 6025. Slow on arm. Smoke test: operations that create new frames (column reassignment,
+        # boolean filtering, string conversion) never trigger a spurious chained-assignment error.
         df = DataFrame({"column1": ["a", "a", "a"], "column2": [4, 8, 9]})
         str(df)
 
@@ -228,6 +282,9 @@ class TestChaining:
     def test_detect_chained_assignment_undefined_column(self):
         # from SO:
         # https://stackoverflow.com/questions/24054495/potential-bug-setting-value-for-undefined-column-using-iloc
+        # [FUNCTION DOC]
+        # From a StackOverflow question. Slow on arm. Chained positional-slice then setting an
+        # existing column raises the error context and the frame is unchanged.
         df = DataFrame(np.arange(0, 9), columns=["count"])
         df["group"] = "b"
         df_original = df.copy()
@@ -238,6 +295,13 @@ class TestChaining:
     @pytest.mark.arm_slow
     def test_detect_chained_assignment_changing_dtype(self):
         # Mixed type setting but same dtype & changing dtype
+        # [FUNCTION DOC]
+        # Slow on arm. Chained assignments through a row selection for string and integer columns raise
+        # the chained-assignment error context and leave the frame unchanged. A column-then-position
+        # assignment of a string to an integer column raises a type error about an invalid value
+        # (nested in the context).
+        # KNOWN ISSUE: a TODO notes the type-error expectation should be replaced by the context
+        # manager alone when PDEP-6 is enforced.
         df = DataFrame(
             {
                 "A": date_range("20130101", periods=5),
@@ -260,6 +324,9 @@ class TestChaining:
 
     def test_setting_with_copy_bug(self):
         # operating on a copy
+        # [FUNCTION DOC]
+        # Chained assignment into a column subset frame with a mask raises the chained-assignment error
+        # context; the original is unchanged.
         df = DataFrame(
             {"a": list(range(4)), "b": list("ab.."), "c": ["a", "b", np.nan, "d"]}
         )
@@ -272,6 +339,9 @@ class TestChaining:
     def test_setting_with_copy_bug_no_warning(self):
         # invalid warning as we are returning a new object
         # GH 8730
+        # [FUNCTION DOC]
+        # GH 8730. Assigning a new column on a frame obtained by selecting a list of columns does not
+        # raise or warn, since that is a new object. Nothing is asserted.
         df1 = DataFrame({"x": Series(["a", "b", "c"]), "y": Series(["d", "e", "f"])})
         df2 = df1[["x"]]
 
@@ -279,6 +349,8 @@ class TestChaining:
         df2["y"] = ["g", "h", "i"]
 
     def test_detect_chained_assignment_warnings_errors(self):
+        # [FUNCTION DOC]
+        # Assigning to a column of a row obtained by loc raises the chained-assignment error context.
         df = DataFrame({"A": ["aaa", "bbb", "ccc"], "B": [1, 2, 3]})
         with tm.raises_chained_assignment_error():
             df.loc[0]["A"] = 111
@@ -286,6 +358,11 @@ class TestChaining:
     @pytest.mark.parametrize("rhs", [3, DataFrame({0: [1, 2, 3, 4]})])
     def test_detect_chained_assignment_warning_stacklevel(self, rhs):
         # GH#42570
+        # [FUNCTION DOC]
+        # GH 42570. Parametrized over a scalar and a one-column frame as right-hand side. Setting a column
+        # on a frame sliced with loc must not modify the original.
+        # KNOWN ISSUE: the name refers to a warning stack level, but no warning behavior is checked;
+        # only that the original frame is unchanged.
         df = DataFrame(np.arange(25).reshape(5, 5))
         df_original = df.copy()
         chained = df.loc[:3]
@@ -297,6 +374,9 @@ class TestChaining:
         # Regression in chained getitem indexing with embedded list-like from
         # 0.12
 
+        # [FUNCTION DOC]
+        # GH 6394. Regression for objects holding arrays in cells: four equivalent chained getitem
+        # orders all return the same array element.
         df = DataFrame({"A": 5 * [np.zeros(3)], "B": 5 * [np.ones(3)]})
         expected = df["A"].iloc[2]
         result = df.loc[2, "A"]
@@ -311,6 +391,9 @@ class TestChaining:
     def test_cache_updating(self):
         # GH 4939, make sure to update the cache on setitem
 
+        # [FUNCTION DOC]
+        # GH 4939. After caching a column then enlarging the frame with a new row label by loc, the new
+        # label appears in the index of each column.
         df = DataFrame(
             np.zeros((10, 4)),
             columns=Index(list("ABCD"), dtype=object),
@@ -322,6 +405,9 @@ class TestChaining:
 
     def test_cache_updating2(self):
         # 10264
+        # [FUNCTION DOC]
+        # GH 10264. Writing into the values array of a column raises a value error about read-only data,
+        # and the frame is unchanged.
         df = DataFrame(
             np.zeros((5, 5), dtype="int64"),
             columns=["a", "b", "c", "d", "e"],
@@ -335,6 +421,10 @@ class TestChaining:
 
     def test_iloc_setitem_chained_assignment(self):
         # GH#3970
+        # [FUNCTION DOC]
+        # GH 3970. With the chained-assignment option disabled, chained positional setting on a column
+        # raises the error context, a boolean-list row selection in between does not break later
+        # behavior, and the original value 2.2 stays.
         with option_context("chained_assignment", None):
             df = DataFrame({"aa": range(5), "bb": [2.2] * 5})
             df["cc"] = 0.0
@@ -354,6 +444,9 @@ class TestChaining:
 
     def test_getitem_loc_assignment_slice_state(self):
         # GH 13569
+        # [FUNCTION DOC]
+        # GH 13569. Chained loc-enlargement on a column series raises the error context, leaving the
+        # frame and the column series unchanged.
         df = DataFrame({"a": [10, 20, 30]})
         with tm.raises_chained_assignment_error():
             df["a"].loc[4] = 40

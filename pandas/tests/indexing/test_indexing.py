@@ -1,4 +1,11 @@
 """test fancy indexing & misc"""
+# [MODULE DOC]
+# General fancy-indexing and miscellaneous indexing tests: setting with arrays and lists, dtype
+# upcast errors, duplicate-label selection and missing-label errors, multi-assignment, index
+# type coercion, label slices with negative steps, None coercion, datetime-like setitem
+# dispatch, extension-array cross sections, and nested-value scalar assignment. Imports the
+# object generator helper from the float indexing tests and the label maker from the shared
+# indexing test utilities.
 
 import array
 from datetime import datetime
@@ -35,12 +42,18 @@ from pandas.tests.indexing.test_floats import gen_obj
 
 
 class TestFancy:
+    # [CLASS DOC]
+    # Test collection for pure get/set item and fancy indexing behaviors.
     """pure get/set item & fancy indexing"""
 
     def test_setitem_ndarray_1d(self):
         # GH5508
 
         # len of indexer vs length of the 1d ndarray
+        # [FUNCTION DOC]
+        # GH 5508. On a frame with integer index, setting a complex column slice from an array of
+        # mismatching length raises a value error about equal lengths; a matching-length array sets values
+        # and reads back as a complex series.
         df = DataFrame(index=Index(np.arange(1, 11), dtype=np.int64))
         df["foo"] = np.zeros(10, dtype=np.float64)
         df["bar"] = np.zeros(10, dtype=complex)
@@ -63,6 +76,11 @@ class TestFancy:
         # GH5508
 
         # dtype getting changed?
+        # [FUNCTION DOC]
+        # GH 5508. Assigning a complex array of mismatching length to a row slice by plain setitem
+        # raises a value error about equal lengths.
+        # KNOWN ISSUE: a comment asks whether dtype is getting changed, but the test only checks that
+        # the length error is raised.
         df = DataFrame(index=Index(np.arange(1, 11)))
         df["foo"] = np.zeros(10, dtype=np.float64)
         df["bar"] = np.zeros(10, dtype=complex)
@@ -77,6 +95,12 @@ class TestFancy:
     )
     def test_getitem_ndarray_3d(self, index, frame_or_series, indexer_sli):
         # GH 25567
+        # [FUNCTION DOC]
+        # GH 25567. Parametrized over index fixture, frame-or-series and the accessor fixtures
+        # (getitem, loc, iloc). Indexing with a three-dimensional integer array must raise one of an
+        # index, value or not-implemented error whose message matches one of a set of messages that is
+        # built according to the object type, accessor and index kind. A deprecation warning about
+        # treating keys as positions is ignored.
         obj = gen_obj(frame_or_series, index)
         idxr = indexer_sli(obj)
         nd3 = np.random.default_rng(2).integers(5, size=(2, 2, 2))
@@ -117,6 +141,12 @@ class TestFancy:
     )
     def test_setitem_ndarray_3d(self, index, frame_or_series, indexer_sli):
         # GH 25567
+        # [FUNCTION DOC]
+        # GH 25567. Same parameters. Assigning zero with a three-dimensional array key raises a value
+        # error: for the positional accessor, the message says values cannot have more dimensions than
+        # the object; for others, any of several messages.
+        # KNOWN ISSUE: the error class is assigned the same value in both branches, so the branching only
+        # selects the message.
         obj = gen_obj(frame_or_series, index)
         idxr = indexer_sli(obj)
         nd3 = np.random.default_rng(2).integers(5, size=(2, 2, 2))
@@ -141,6 +171,8 @@ class TestFancy:
 
     def test_getitem_ndarray_0d(self):
         # GH#24924
+        # [FUNCTION DOC]
+        # GH 24924. A zero-dimensional array key picks a column on a frame and an element on a series.
         key = np.array(0)
 
         # dataframe __getitem__
@@ -160,6 +192,9 @@ class TestFancy:
         # np.inf should cause an index to convert to float
 
         # Test with np.inf in rows
+        # [FUNCTION DOC]
+        # GH 16957. Setting a row with infinity as label converts the integer index to float and
+        # permits lookup by infinity.
         df = DataFrame(columns=[0])
         df.loc[1] = 1
         df.loc[2] = 2
@@ -174,6 +209,9 @@ class TestFancy:
 
     def test_setitem_dtype_upcast(self):
         # GH3216
+        # [FUNCTION DOC]
+        # GH 3216. Assigning a string to an element of a float column raises a type error about an
+        # invalid value.
         df = DataFrame([{"a": 1}, {"a": 3, "b": 2}])
         df["c"] = np.nan
         assert df["c"].dtype == np.float64
@@ -184,6 +222,9 @@ class TestFancy:
     @pytest.mark.parametrize("val", [3.14, "wxyz"])
     def test_setitem_dtype_upcast2(self, val):
         # GH10280
+        # [FUNCTION DOC]
+        # GH 10280. Parametrized over a float and a string value. Assigning to an element of an
+        # integer column raises a type error about an invalid value.
         df = DataFrame(
             np.arange(6, dtype="int64").reshape(2, 3),
             index=list("ab"),
@@ -195,6 +236,8 @@ class TestFancy:
             left.loc["a", "bar"] = val
 
     def test_setitem_dtype_upcast3(self):
+        # [FUNCTION DOC]
+        # Assigning a string to a float frame element raises a type error about an invalid value.
         left = DataFrame(
             np.arange(6, dtype="int64").reshape(2, 3) / 10.0,
             index=list("ab"),
@@ -206,6 +249,9 @@ class TestFancy:
     def test_dups_fancy_indexing(self):
         # GH 3455
 
+        # [FUNCTION DOC]
+        # GH 3455. Selecting columns by a list on a frame with duplicate labels returns the columns in
+        # the order given with duplicates expanded.
         df = DataFrame(np.eye(3), columns=["a", "a", "b"])
         result = df[["b", "a"]].columns
         expected = Index(["b", "a", "a"])
@@ -213,6 +259,9 @@ class TestFancy:
 
     def test_dups_fancy_indexing_across_dtypes(self):
         # across dtypes
+        # [FUNCTION DOC]
+        # GH 3468, GH 3509. A mixed-dtype single-row frame constructed with duplicate column labels is
+        # equal to one built then relabelled; positional access of a column works (smoke).
         df = DataFrame([[1, 2, 1.0, 2.0, 3.0, "foo", "bar"]], columns=list("aaaaaaa"))
         result = DataFrame([[1, 2, 1.0, 2.0, 3.0, "foo", "bar"]])
         result.columns = list("aaaaaaa")  # GH#3468
@@ -225,6 +274,9 @@ class TestFancy:
 
     def test_dups_fancy_indexing_not_in_order(self):
         # GH 3561, dups not in selected order
+        # [FUNCTION DOC]
+        # GH 3561, GH 5553. Label lists on a frame with duplicate index selected in the list order (as list
+        # or index); lists with missing labels raise a key error saying not in index.
         df = DataFrame(
             {"test": [5, 7, 9, 11], "test1": [4.0, 5, 6, 7], "other": list("abcd")},
             index=["A", "A", "B", "C"],
@@ -250,6 +302,10 @@ class TestFancy:
 
     def test_dups_fancy_indexing_only_missing_label(self, using_infer_string):
         # List containing only missing label
+        # [FUNCTION DOC]
+        # Uses the infer-string fixture. A list that only contains a missing label raises a key error
+        # saying none of the labels are in the index, with the index dtype named as string or object
+        # depending on the option.
         dfnu = DataFrame(
             np.random.default_rng(2).standard_normal((5, 3)), index=list("AABCD")
         )
@@ -273,12 +329,17 @@ class TestFancy:
     @pytest.mark.parametrize("vals", [[0, 1, 2], list("abc")])
     def test_dups_fancy_indexing_missing_label(self, vals):
         # GH 4619; duplicate indexer with missing label
+        # [FUNCTION DOC]
+        # GH 4619. Parametrized over integer and string column values. A list with a repeated label and
+        # a missing label raises a key error.
         df = DataFrame({"A": vals})
         with pytest.raises(KeyError, match="not in index"):
             df.loc[[0, 8, 0]]
 
     def test_dups_fancy_indexing_non_unique(self):
         # non unique with non unique selector
+        # [FUNCTION DOC]
+        # Non-unique labels with a non-unique selector containing a missing label raise a key error.
         df = DataFrame({"test": [5, 7, 9, 11]}, index=["A", "A", "B", "C"])
         with pytest.raises(KeyError, match="not in index"):
             df.loc[["A", "A", "E"]]
@@ -286,6 +347,8 @@ class TestFancy:
     def test_dups_fancy_indexing2(self):
         # GH 5835
         # dups on index and missing values
+        # [FUNCTION DOC]
+        # GH 5835. Selecting duplicate columns plus a missing column raises a key error.
         df = DataFrame(
             np.random.default_rng(2).standard_normal((5, 5)),
             columns=["A", "B", "B", "B", "A"],
@@ -296,6 +359,9 @@ class TestFancy:
 
     def test_dups_fancy_indexing3(self):
         # GH 6504, multi-axis indexing
+        # [FUNCTION DOC]
+        # GH 6504. Multi-axis selection on a frame with duplicate row labels returns all rows for each
+        # requested label.
         df = DataFrame(
             np.random.default_rng(2).standard_normal((9, 2)),
             index=[1, 1, 1, 2, 2, 2, 3, 3, 3],
@@ -316,6 +382,9 @@ class TestFancy:
 
     def test_duplicate_int_indexing(self, indexer_sl):
         # GH 17347
+        # [FUNCTION DOC]
+        # GH 17347. Uses the series accessor fixture. A list selector with a duplicated integer label
+        # returns every matching element.
         ser = Series(range(3), index=[1, 1, 3])
         expected = Series(range(2), index=[1, 1])
         result = indexer_sl(ser)[[1]]
@@ -323,6 +392,11 @@ class TestFancy:
 
     def test_indexing_mixed_frame_bug(self):
         # GH3492
+        # [FUNCTION DOC]
+        # GH 3492. Applying a function creates a column; assigning transformed values via a mask
+        # updates only the masked cell.
+        # KNOWN ISSUE: a comment says this operation "does not work" (the column is not changed), but the
+        # assertion verifies that the value is changed.
         df = DataFrame(
             {"a": {1: "aaa", 2: "bbb", 3: "ccc"}, "b": {1: 111, 2: 222, 3: 333}}
         )
@@ -338,6 +412,9 @@ class TestFancy:
 
     def test_multitype_list_index_access(self):
         # GH 10610
+        # [FUNCTION DOC]
+        # GH 10610. Selecting columns with a list containing absent labels (including a negative one)
+        # raises a key error listing the missing; an existing label returns a full-length column.
         df = DataFrame(
             np.random.default_rng(2).random((10, 5)), columns=["a", 20, 21, 22, 23]
         )
@@ -348,6 +425,9 @@ class TestFancy:
 
     def test_set_index_nan(self):
         # GH 3586
+        # [FUNCTION DOC]
+        # GH 3586. Setting several columns as index (one with missing values) and resetting it round-trips
+        # to the original frame with its original column order.
         df = DataFrame(
             {
                 "PRuid": {
@@ -427,6 +507,9 @@ class TestFancy:
     def test_multi_assign(self):
         # GH 3626, an assignment of a sub-df to a df
         # set float64 to avoid upcast when setting nan
+        # [FUNCTION DOC]
+        # GH 3626, GH 14001. Assigning a sub-frame (or its raw values) selected by a non-missing mask over
+        # two columns into a copy gives the expected frame with missing preserved and float coercion.
         df = DataFrame(
             {
                 "FC": ["a", "b", "a", "b", "a", "b"],
@@ -474,6 +557,8 @@ class TestFancy:
 
     def test_multi_assign_broadcasting_rhs(self):
         # broadcasting on the rhs is required
+        # [FUNCTION DOC]
+        # Assigning a series to multiple columns for masked rows broadcasts it across the columns.
         df = DataFrame(
             {
                 "A": [1, 2, 0, 0, 0],
@@ -494,6 +579,9 @@ class TestFancy:
     def test_setitem_list(self):
         # GH 6043
         # iloc with a list
+        # [FUNCTION DOC]
+        # GH 6043. A list assigned to a single cell of an object frame, twice, equals assigning the final
+        # list once.
         df = DataFrame(index=[0, 1], columns=[0])
         df.iloc[1, 0] = [1, 2, 3]
         df.iloc[1, 0] = [1, 2]
@@ -507,6 +595,9 @@ class TestFancy:
         # GH 14424
         # string indexing against datetimelike with object
         # dtype should properly raises KeyError
+        # [FUNCTION DOC]
+        # GH 14424. A string key on a frame with an object index of timestamps raises key errors for plain
+        # getitem and loc.
         df = DataFrame([1], Index([pd.Timestamp("2011-01-01")], dtype=object))
         assert df.index._is_all_dates
         with pytest.raises(KeyError, match="'2011'"):
@@ -518,6 +609,9 @@ class TestFancy:
     def test_string_slice_empty(self):
         # GH 14424
 
+        # [FUNCTION DOC]
+        # GH 14424. A string key on an empty frame raises a key error naming the string for getitem;
+        # for loc with a row string and a column, the error names the column 0.
         df = DataFrame()
         assert not df.index._is_all_dates
         with pytest.raises(KeyError, match="'2011'"):
@@ -528,6 +622,11 @@ class TestFancy:
 
     def test_astype_assignment(self, using_infer_string):
         # GH4312 (iloc)
+        # [FUNCTION DOC]
+        # Uses the infer-string fixture. GH 4312, GH 5702. Assigning the integer-cast version of object
+        # string columns through positional or label setters writes in place, so object dtype is
+        # preserved; compared with the expected frames of object-typed columns.
+        # KNOWN ISSUE: the infer-string fixture parameter is accepted but not used.
         df_orig = DataFrame(
             [["1", "2", "3", ".4", 5, 6.0, "foo"]], columns=list("ABCDEFG")
         )
@@ -566,6 +665,9 @@ class TestFancy:
 
     def test_astype_assignment_full_replacements(self):
         # full replacements / no nans
+        # [FUNCTION DOC]
+        # Replacing a whole float column with its integer cast, by positional or label setter, writes in
+        # place and keeps float64.
         df = DataFrame({"A": [1.0, 2.0, 3.0, 4.0]})
 
         # With the enforcement of GH#45333 in 2.0, this assignment occurs inplace,
@@ -587,6 +689,11 @@ class TestFancy:
         # then we need to coerce to object
 
         # integer indexes
+        # [FUNCTION DOC]
+        # GH 11836. Parametrized over getitem and loc accessors. Enlarging a series by setting a float
+        # key converts an integer index to float; setting key 0.0 on an integer index appends or keeps the
+        # integer index as appropriate; a string key makes the index object. Float indexes stay float
+        # for float keys, and become object for a string key.
         for s in [Series(range(5)), Series(range(5), index=range(1, 6))]:
             assert is_integer_dtype(s.index)
 
@@ -624,7 +731,12 @@ class TestFancy:
 
 
 class TestMisc:
+    # [CLASS DOC]
+    # Test collection for miscellaneous indexing behaviors.
     def test_float_index_to_mixed(self):
+        # [FUNCTION DOC]
+        # A frame with float column labels accepts a new string column; the frame equals the expected
+        # one with mixed labels.
         df = DataFrame(
             {
                 0.0: np.random.default_rng(2).random(10),
@@ -637,12 +749,16 @@ class TestMisc:
         tm.assert_frame_equal(expected, df)
 
     def test_float_index_non_scalar_assignment(self):
+        # [FUNCTION DOC]
+        # Assigning a scalar through loc with a slice of the float index sets the first two rows.
         df = DataFrame({"a": [1, 2, 3], "b": [3, 4, 5]}, index=[1.0, 2.0, 3.0])
         df.loc[df.index[:2]] = 1
         expected = DataFrame({"a": [1, 1, 3], "b": [1, 1, 5]}, index=df.index)
         tm.assert_frame_equal(expected, df)
 
     def test_loc_setitem_fullindex_views(self):
+        # [FUNCTION DOC]
+        # Assigning a frame to itself through the full index leaves the frame unchanged.
         df = DataFrame({"a": [1, 2, 3], "b": [3, 4, 5]}, index=[1.0, 2.0, 3.0])
         df2 = df.copy()
         df.loc[df.index] = df.loc[df.index]
@@ -651,8 +767,17 @@ class TestMisc:
     def test_rhs_alignment(self):
         # GH8258, tests that both rows & columns are aligned to what is
         # assigned to. covers both uniform data-type & multi-type cases
+        # [FUNCTION DOC]
+        # GH 8258. Right-hand side frames are aligned on both rows and columns when assigned with label
+        # lists, but positional assignment uses the right-hand side's order. For uniform integer dtype, all
+        # three setters (label, position list, position slice) give the expected results. After turning two
+        # columns into float and string, the same run raises a type error about an invalid value.
         def run_tests(df, rhs, right_loc, right_iloc):
             # label, index, slice
+            # [FUNCTION DOC]
+            # HELPER: runs three assignments on copies of df of the right-hand side rhs into rows b-d and
+            # columns joe and jolie: label lists, integer position lists, and position slices. Compares the
+            # label result with right_loc and the two positional results with right_iloc. Returns nothing.
             lbl_one, idx_one, slice_one = list("bcd"), [1, 2, 3], slice(1, 4)
             lbl_two, idx_two, slice_two = ["joe", "jolie"], [1, 2], slice(1, 3)
 
@@ -699,6 +824,10 @@ class TestMisc:
         "idx", [_mklbl("A", 20), np.arange(20) + 100, np.linspace(100, 150, 20)]
     )
     def test_str_label_slicing_with_negative_step(self, idx):
+        # [FUNCTION DOC]
+        # Parametrized over string labels, shifted integers, and linearly spaced floats. Label slices
+        # with negative steps (open start, open stop, both, and reverse bounds that give an empty result)
+        # are equivalent to the matching integer slices (checked by a testing helper).
         SLC = pd.IndexSlice
 
         idx = Index(idx)
@@ -711,11 +840,17 @@ class TestMisc:
         tm.assert_indexing_slices_equivalent(ser, SLC[idx[9] : idx[13] : -1], SLC[:0])
 
     def test_slice_with_zero_step_raises(self, index, indexer_sl, frame_or_series):
+        # [FUNCTION DOC]
+        # Uses the index fixture, the series accessor fixture and frame-or-series. A slice with step
+        # zero raises a value error that the slice step cannot be zero.
         obj = frame_or_series(np.arange(len(index)), index=index)
         with pytest.raises(ValueError, match="slice step cannot be zero"):
             indexer_sl(obj)[::0]
 
     def test_loc_setitem_indexing_assignment_dict_already_exists(self):
+        # [FUNCTION DOC]
+        # Assigning a mapping to an existing row label sets values by column label; checked with all-integer
+        # and mixed dtypes (GH 38335).
         index = Index([-5, 0, 5], name="z")
         df = DataFrame({"x": [1, 2, 6], "y": [2, 2, 8]}, index=index)
         expected = df.copy()
@@ -732,6 +867,9 @@ class TestMisc:
 
     def test_iloc_getitem_indexing_dtypes_on_empty(self):
         # Check that .iloc returns correct dtypes GH9983
+        # [FUNCTION DOC]
+        # GH 9983. A positional empty row selection keeps column dtypes: label and positional column
+        # selections of the empty frame are equal and integer.
         df = DataFrame({"a": [1, 2, 3], "b": ["b", "b2", "b3"]})
         df2 = df.iloc[[], :]
 
@@ -742,6 +880,9 @@ class TestMisc:
     def test_loc_range_in_series_indexing(self, size):
         # range can cause an indexing error
         # GH 11652
+        # [FUNCTION DOC]
+        # GH 11652. Parametrized over sizes around one million. A range key for loc assignment and
+        # selection on a float series works.
         s = Series(index=range(size), dtype=np.float64)
         s.loc[range(1)] = 42
         tm.assert_series_equal(s.loc[range(1)], Series(42.0, index=range(1)))
@@ -751,6 +892,9 @@ class TestMisc:
 
     def test_partial_boolean_frame_indexing(self):
         # GH 17170
+        # [FUNCTION DOC]
+        # GH 17170. A boolean frame covering part of the rows and columns used as a key masks the rest as
+        # missing in the result.
         df = DataFrame(
             np.arange(9.0).reshape(3, 3), index=list("abc"), columns=list("ABC")
         )
@@ -766,6 +910,9 @@ class TestMisc:
     def test_period_column_slicing(self):
         # GH#60273 The transpose operation creates a single 5x1 block of PeriodDtype
         # Make sure it is reindexed correctly
+        # [FUNCTION DOC]
+        # GH 60273. A transposed frame holding a single period block selected with a list of column
+        # labels is reindexed properly.
         df = DataFrame(
             pd.period_range("2021-01-01", periods=5, freq="D"),
             columns=["A"],
@@ -785,6 +932,9 @@ class TestMisc:
         tm.assert_frame_equal(result, expected)
 
     def test_no_reference_cycle(self):
+        # [FUNCTION DOC]
+        # Accessing the label and position accessors on a frame creates no reference cycle: after deleting
+        # the frame, a weak reference to it is dead.
         df = DataFrame({"a": [0, 1], "b": [2, 3]})
         for name in ("loc", "iloc", "at", "iat"):
             getattr(df, name)
@@ -794,6 +944,9 @@ class TestMisc:
 
     def test_label_indexing_on_nan(self, nulls_fixture):
         # GH 32431
+        # [FUNCTION DOC]
+        # GH 32431. Uses the missing-values fixture. Value counts including missing values can be indexed
+        # by the missing value with loc and getitem, giving 1.
         df = Series([1, "{1,2}", 1, nulls_fixture])
         vc = df.value_counts(dropna=False)
         result1 = vc.loc[nulls_fixture]
@@ -805,6 +958,10 @@ class TestMisc:
 
 
 class TestDataframeNoneCoercion:
+    # [CLASS DOC]
+    # Test collection for setting None into frames: numeric coerces to NaN, datetime to NaT, object
+    # keeps None. A class-level table of (start data, expected data, expected warning) rows is
+    # shared.
     EXPECTED_SINGLE_ROW_RESULTS = [
         # For numeric series, we should coerce to NaN.
         ([1, 2, 3], [np.nan, 2, 3], FutureWarning),
@@ -821,6 +978,11 @@ class TestDataframeNoneCoercion:
 
     @pytest.mark.parametrize("expected", EXPECTED_SINGLE_ROW_RESULTS)
     def test_coercion_with_loc(self, expected):
+        # [FUNCTION DOC]
+        # Parametrized over the table rows. Setting None through loc at a position and a list of columns
+        # gives the expected coerced values.
+        # KNOWN ISSUE: the third element of each row (the expected warning class) is unpacked but never
+        # checked in this test.
         start_data, expected_result, warn = expected
 
         start_dataframe = DataFrame({"foo": start_data})
@@ -831,6 +993,10 @@ class TestDataframeNoneCoercion:
 
     @pytest.mark.parametrize("expected", EXPECTED_SINGLE_ROW_RESULTS)
     def test_coercion_with_setitem_and_dataframe(self, expected):
+        # [FUNCTION DOC]
+        # Parametrized over the table rows. Setting None where a boolean frame mask selects the first
+        # element gives the expected coerced values.
+        # KNOWN ISSUE: the expected warning in each row is unpacked but never checked.
         start_data, expected_result, warn = expected
 
         start_dataframe = DataFrame({"foo": start_data})
@@ -841,6 +1007,10 @@ class TestDataframeNoneCoercion:
 
     @pytest.mark.parametrize("expected", EXPECTED_SINGLE_ROW_RESULTS)
     def test_none_coercion_loc_and_dataframe(self, expected):
+        # [FUNCTION DOC]
+        # Parametrized over the table rows. Setting None through loc with a boolean frame mask gives the
+        # expected coerced values.
+        # KNOWN ISSUE: the expected warning in each row is unpacked but never checked.
         start_data, expected_result, warn = expected
 
         start_dataframe = DataFrame({"foo": start_data})
@@ -850,6 +1020,9 @@ class TestDataframeNoneCoercion:
         tm.assert_frame_equal(start_dataframe, expected_dataframe)
 
     def test_none_coercion_mixed_dtypes(self):
+        # [FUNCTION DOC]
+        # Setting None to the first row of a mixed-dtype frame yields NaN for numeric, NaT for datetime
+        # and None for object columns.
         start_dataframe = DataFrame(
             {
                 "a": [1, 2, 3],
@@ -872,8 +1045,17 @@ class TestDataframeNoneCoercion:
 
 
 class TestDatetimelikeCoercion:
+    # [CLASS DOC]
+    # Test collection for setting values into datetime-like series via accessors without changing the
+    # underlying array buffer (where possible), and validating that the value is acceptable to the
+    # array before assignment.
     def test_setitem_dt64_string_scalar(self, tz_naive_fixture, indexer_sli):
         # dispatching _can_hold_element to underlying DatetimeArray
+        # [FUNCTION DOC]
+        # Uses the timezone-naive fixture and the setter fixture. The array first validates that a date
+        # string is acceptable; setting that string at position 0 keeps the dtype; for naive data the
+        # underlying buffer is reused, for aware data the same array object is kept.
+        # KNOWN ISSUE: a TODO says the timezone-naive case could be made not to copy.
         tz = tz_naive_fixture
 
         dti = date_range("2016-01-01", periods=3, tz=tz)
@@ -899,6 +1081,12 @@ class TestDatetimelikeCoercion:
     )
     def test_setitem_dt64_string_values(self, tz_naive_fixture, indexer_sli, key, box):
         # dispatching _can_hold_element to underling DatetimeArray
+        # [FUNCTION DOC]
+        # Parametrized over several box types and keys (list, slice, boolean array), plus the timezone
+        # and setter fixtures. A slice key for the label setter is shortened to one element to account for
+        # inclusive bounds. String values (after validation) are set for the selected elements and the
+        # dtype and underlying buffer are retained, as for the scalar test.
+        # KNOWN ISSUE: a TODO says the timezone-naive case could be made not to copy.
         tz = tz_naive_fixture
 
         if isinstance(key, slice) and indexer_sli is tm.loc:
@@ -924,6 +1112,9 @@ class TestDatetimelikeCoercion:
     @pytest.mark.parametrize("scalar", ["3 Days", offsets.Hour(4)])
     def test_setitem_td64_scalar(self, indexer_sli, scalar):
         # dispatching _can_hold_element to underling TimedeltaArray
+        # [FUNCTION DOC]
+        # Parametrized over a string and an offset scalar. After validation by the array, setting at
+        # position 0 keeps the same underlying buffer.
         tdi = timedelta_range("1 Day", periods=3)
         ser = Series(tdi.copy(deep=True))
 
@@ -939,6 +1130,9 @@ class TestDatetimelikeCoercion:
     )
     def test_setitem_td64_string_values(self, indexer_sli, key, box):
         # dispatching _can_hold_element to underling TimedeltaArray
+        # [FUNCTION DOC]
+        # Parametrized over box types and keys. Setting duration strings keeps the same underlying buffer
+        # (slice key shortened for label setter).
         if isinstance(key, slice) and indexer_sli is tm.loc:
             key = slice(0, 1)
 
@@ -956,6 +1150,9 @@ class TestDatetimelikeCoercion:
 
 def test_extension_array_cross_section():
     # A cross-section of a homogeneous EA should be an EA
+    # [FUNCTION DOC]
+    # A row of a frame whose columns are all the same nullable integer dtype is a series of that
+    # extension dtype (via label and position).
     df = DataFrame(
         {
             "A": pd.array([1, 2], dtype="Int64"),
@@ -973,6 +1170,9 @@ def test_extension_array_cross_section():
 
 def test_extension_array_cross_section_converts():
     # all numeric columns -> numeric series
+    # [FUNCTION DOC]
+    # Mixed nullable and numpy integer columns give a nullable integer row; nullable integer with
+    # strings give an object row; both via label and position.
     df = DataFrame(
         {
             "A": pd.array([1, 2], dtype="Int64"),
@@ -1006,6 +1206,10 @@ def test_extension_array_cross_section_converts():
 )
 def test_ser_tup_indexer_exceeds_dimensions(ser, keys, indexer_li):
     # GH#13831
+    # [FUNCTION DOC]
+    # GH 13831. Parametrized over two series and tuple keys with too many entries, with the
+    # accessor fixture (label or position). Getting raises the indexing error about too many
+    # indexers; setting raises the same, except the positional accessor which raises numpy's index error.
     exp_err, exp_msg = IndexingError, "Too many indexers"
     with pytest.raises(exp_err, match=exp_msg):
         indexer_li(ser)[keys]
@@ -1022,6 +1226,9 @@ def test_ser_list_indexer_exceeds_dimensions(indexer_li):
     # GH#13831
     # Make sure an exception is raised when a tuple exceeds the dimension of the series,
     # but not list when a list is used.
+    # [FUNCTION DOC]
+    # GH 13831. A list of repeated positions or labels is allowed on a series, returning repeated
+    # elements.
     ser = Series([10])
     res = indexer_li(ser)[[0, 0]]
     exp = Series([10, 10], index=Index([0, 0]))
@@ -1033,6 +1240,12 @@ def test_ser_list_indexer_exceeds_dimensions(indexer_li):
 )
 def test_scalar_setitem_with_nested_value(value):
     # For numeric data, we try to unpack and thus raise for mismatching length
+    # [FUNCTION DOC]
+    # Parametrized over tuple, list, array and typed-array values. Assigning a two-element sequence to
+    # a single cell of a new numeric column, or an existing object column, raises a value error about
+    # length mismatch or about setting an element with a sequence.
+    # KNOWN ISSUE: a TODO asks whether nested data should be preserved for object dtype, and
+    # commented-out assertions at the end are dead code.
     df = DataFrame({"A": [1, 2, 3]})
     msg = "|".join(
         [
@@ -1059,6 +1272,10 @@ def test_scalar_setitem_with_nested_value(value):
 )
 def test_scalar_setitem_series_with_nested_value(value, indexer_sli):
     # For numeric data, we try to unpack and thus raise for mismatching length
+    # [FUNCTION DOC]
+    # Parametrized over the same values and the setter fixture. On a numeric series assignment to a
+    # position raises a value error about setting an element with a sequence; on an object series the
+    # nested value is stored as is.
     ser = Series([1, 2, 3])
     with pytest.raises(ValueError, match="setting an array element with a sequence"):
         indexer_sli(ser)[0] = value
@@ -1079,6 +1296,10 @@ def test_scalar_setitem_with_nested_value_length1(value):
     # https://github.com/pandas-dev/pandas/issues/46268
 
     # For numeric data, assigning length-1 array to scalar position gets unpacked
+    # [FUNCTION DOC]
+    # Issue 46268. Parametrized over one-element sequences. On a new numeric column, the single
+    # element is unpacked and set at the position with missing elsewhere; on an object column, the
+    # sequence is preserved.
     df = DataFrame({"A": [1, 2, 3]})
     df.loc[0, "B"] = value
     expected = DataFrame({"A": [1, 2, 3], "B": [0.0, np.nan, np.nan]})
@@ -1100,6 +1321,12 @@ def test_scalar_setitem_series_with_nested_value_length1(value, indexer_sli):
     # For numeric data, assigning length-1 array to scalar position gets unpacked
     # TODO this only happens in case of ndarray, should we make this consistent
     # for all list-likes? (as happens for DataFrame.(i)loc, see test above)
+    # [FUNCTION DOC]
+    # Parametrized over one-element sequences and the setter fixture. For a float series, a numpy
+    # array is unpacked and set, while other sequence types raise a value error; for an object
+    # series the nested value is preserved.
+    # KNOWN ISSUE: a TODO notes that unpacking only happens for arrays, which is inconsistent with
+    # the frame behavior.
     ser = Series([1.0, 2.0, 3.0])
     if isinstance(value, np.ndarray):
         indexer_sli(ser)[0] = value
@@ -1122,6 +1349,9 @@ def test_scalar_setitem_series_with_nested_value_length1(value, indexer_sli):
 
 def test_object_dtype_series_set_series_element():
     # GH 48933
+    # [FUNCTION DOC]
+    # GH 48933. An empty series can be stored as an element of an object series by getitem-style,
+    # label and positional setting, and read back as an empty series.
     s1 = Series(dtype="O", index=["a", "b"])
 
     s1["a"] = Series()

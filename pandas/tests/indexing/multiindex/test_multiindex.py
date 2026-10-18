@@ -1,3 +1,9 @@
+# [MODULE DOC]
+# Miscellaneous MultiIndex behavior tests collected in a single class: performance
+# warnings on unsorted lookups, hashtable size cutoff, NaN / NaT / complex levels,
+# frequency preservation, renaming, alignment with NaN, dtype preservation, constructing
+# from tuples with NaN, and column assignment rules. Imports the internal index extension
+# module to patch a module constant.
 import numpy as np
 import pytest
 
@@ -16,7 +22,12 @@ from pandas.core.arrays.boolean import BooleanDtype
 
 
 class TestMultiIndexBasic:
+    # [CLASS DOC]
+    # Test collection for assorted MultiIndex regression behaviors (see module doc).
     def test_multiindex_perf_warn(self, performance_warning):
+        # [FUNCTION DOC]
+        # Using the performance-warning fixture: a full-tuple lookup on an unsorted two-level frame
+        # and a one-element-tuple lookup on a reordered frame must each emit that warning.
         df = DataFrame(
             {
                 "jim": [0, 0, 1, 1],
@@ -34,6 +45,11 @@ class TestMultiIndexBasic:
 
     @pytest.mark.parametrize("offset", [-5, 5])
     def test_indexing_over_hashtable_size_cutoff(self, monkeypatch, offset):
+        # [FUNCTION DOC]
+        # Parametrized with an offset of -5 or 5 relative to a patched internal size cutoff of 20, so
+        # the index is below or above the point where the engine switches strategy. While the
+        # constant is patched (restored by the monkeypatch context), full-tuple getitem on a series
+        # with ("a", n) keys returns the correct values for positions 5, 6, 7.
         size_cutoff = 20
         n = size_cutoff + offset
 
@@ -48,6 +64,10 @@ class TestMultiIndexBasic:
 
     def test_multi_nan_indexing(self):
         # GH 3588
+        # [FUNCTION DOC]
+        # GH 3588. Setting two columns (one with a missing value) as index while keeping them as
+        # columns gives a frame whose index is a MultiIndex built from the two level indexes, with
+        # the NaN preserved.
         df = DataFrame(
             {
                 "a": ["R1", "R2", np.nan, "R4"],
@@ -72,6 +92,9 @@ class TestMultiIndexBasic:
     def test_exclusive_nat_column_indexing(self):
         # GH 38025
         # test multi indexing when one column exclusively contains NaT values
+        # [FUNCTION DOC]
+        # GH 38025. When one index column holds only NaT values, set_index still produces a frame
+        # equal to the expected one with that column as level.
         df = DataFrame(
             {
                 "a": [pd.NaT, pd.NaT, pd.NaT, pd.NaT],
@@ -94,6 +117,10 @@ class TestMultiIndexBasic:
     def test_nested_tuples_duplicates(self):
         # GH#30892
 
+        # [FUNCTION DOC]
+        # GH 30892. A date/string MultiIndex with duplicate first entries: assigning a scalar via loc
+        # with a tuple row key, and with a list holding one tuple, both set the matching row(s) of the
+        # second column, giving the same frame.
         dti = pd.to_datetime(["20190101", "20190101", "20190102"])
         idx = Index(["a", "a", "c"])
         mi = MultiIndex.from_arrays([dti, idx], names=["index1", "index2"])
@@ -112,6 +139,9 @@ class TestMultiIndexBasic:
 
     def test_multiindex_with_datatime_level_preserves_freq(self):
         # https://github.com/pandas-dev/pandas/issues/35563
+        # [FUNCTION DOC]
+        # Issue 35563. Selecting one first-level label from a product index with a daily date level
+        # returns an index equal to the date index and keeps its frequency.
         idx = Index(range(2), name="A")
         dti = pd.date_range("2020-01-01", periods=7, freq="D", name="B")
         mi = MultiIndex.from_product([idx, dti])
@@ -122,6 +152,9 @@ class TestMultiIndexBasic:
 
     def test_multiindex_complex(self):
         # GH#42145
+        # [FUNCTION DOC]
+        # GH 42145. Complex-valued and integer columns set as index in place give an index equal to a
+        # MultiIndex built from the arrays with the same names.
         complex_data = [1 + 2j, 4 - 3j, 10 - 1j]
         non_complex_data = [3, 4, 5]
         result = DataFrame(
@@ -143,6 +176,9 @@ class TestMultiIndexBasic:
 
     def test_rename_multiindex_with_duplicates(self):
         # GH 38015
+        # [FUNCTION DOC]
+        # GH 38015. Renaming a label in level 0 of a MultiIndex with duplicate entries in the second
+        # level replaces only matching labels and keeps duplicates.
         mi = MultiIndex.from_tuples([("A", "cat"), ("B", "cat"), ("B", "cat")])
         df = DataFrame(index=mi)
         df = df.rename(index={"A": "Apple"}, level=0)
@@ -153,6 +189,9 @@ class TestMultiIndexBasic:
 
     def test_series_align_multiindex_with_nan_overlap_only(self):
         # GH 38439
+        # [FUNCTION DOC]
+        # GH 38439. Aligning two series whose MultiIndexes only share NaN entries produces the union
+        # index (sorted with NaN last), with float values and NaN where one side is missing.
         mi1 = MultiIndex.from_arrays([[81.0, np.nan], [np.nan, np.nan]])
         mi2 = MultiIndex.from_arrays([[np.nan, 82.0], [np.nan, np.nan]])
         ser1 = Series([1, 2], index=mi1)
@@ -168,6 +207,9 @@ class TestMultiIndexBasic:
 
     def test_series_align_multiindex_with_nan(self):
         # GH 38439
+        # [FUNCTION DOC]
+        # GH 38439. Aligning two series with the same entries in different order (including NaN) gives
+        # both sides on the first's index order, with values reordered accordingly (dtype integer).
         mi1 = MultiIndex.from_arrays([[81.0, np.nan], [np.nan, np.nan]])
         mi2 = MultiIndex.from_arrays([[np.nan, 81.0], [np.nan, np.nan]])
         ser1 = Series([1, 2], index=mi1)
@@ -183,11 +225,17 @@ class TestMultiIndexBasic:
 
     def test_nunique_smoke(self):
         # GH 34019
+        # [FUNCTION DOC]
+        # GH 34019. Smoke test: the number of unique entries of a two-level index made of duplicated
+        # rows equals 1.
         n = DataFrame([[1, 2], [1, 2]]).set_index([0, 1]).index.nunique()
         assert n == 1
 
     def test_multiindex_repeated_keys(self):
         # GH19414
+        # [FUNCTION DOC]
+        # GH 19414. Selecting a single-level MultiIndex series by a list with repeated labels returns
+        # repeated entries in the list order.
         tm.assert_series_equal(
             Series([1, 2], MultiIndex.from_arrays([["a", "b"]])).loc[
                 ["a", "a", "b", "b"]
@@ -197,6 +245,9 @@ class TestMultiIndexBasic:
 
     def test_multiindex_with_na_missing_key(self):
         # GH46173
+        # [FUNCTION DOC]
+        # GH 46173. A list holding a one-tuple column key not in the columns (which contain a
+        # missing label) raises a key error mentioning the missing label.
         df = DataFrame.from_dict(
             {
                 ("foo",): [1, 2, 3],
@@ -209,6 +260,10 @@ class TestMultiIndexBasic:
 
     def test_multiindex_dtype_preservation(self):
         # GH51261
+        # [FUNCTION DOC]
+        # GH 51261. After converting to categorical, taking the first-level column from a MultiIndex
+        # keeps the categorical dtype; also a frame with MultiIndex columns assigned a nullable
+        # boolean column keeps that extension dtype (analogue of a geopandas issue).
         columns = MultiIndex.from_tuples([("A", "B")], names=["lvl1", "lvl2"])
         df = DataFrame(["value"], columns=columns).astype("category")
         df_no_multiindex = df["A"]
@@ -227,6 +282,9 @@ class TestMultiIndexBasic:
 
     def test_multiindex_from_tuples_with_nan(self):
         # GH#23578
+        # [FUNCTION DOC]
+        # GH 23578. Building a MultiIndex from tuples where one element is a bare NaN treats it as an
+        # all-NaN row of the same length as others.
         result = MultiIndex.from_tuples([("a", "b", "c"), np.nan, ("d", "", "")])
         expected = MultiIndex.from_tuples(
             [("a", "b", "c"), (np.nan, np.nan, np.nan), ("d", "", "")]
@@ -236,6 +294,11 @@ class TestMultiIndexBasic:
     @pytest.mark.parametrize("operation", ["div", "mul", "add", "sub"])
     def test_groupyby_rename_categories_operation_with_multiindex(self, operation):
         # GH#51500
+        # [FUNCTION DOC]
+        # GH 51500. Parametrized over four arithmetic method names. After renaming categories (swapping
+        # two) before grouping, an arithmetic op between the value-counts series and group-size series
+        # aligns by label, so the result equals the op with the second operand in reverse order.
+        # KNOWN ISSUE: the method name has a typo (groupyby instead of groupby); behavior is unaffected.
         data = DataFrame(
             [["C", "B", "B"], ["B", "A", "A"], ["B", "A", "B"]], columns=["0", "1", "2"]
         )
@@ -252,6 +315,10 @@ class TestMultiIndexBasic:
 
     def test_multiindex_assign_aligns_as_implicit_tuple(self):
         # GH 61841
+        # [FUNCTION DOC]
+        # GH 61841. For frames with two-level columns, assigning a series to a plain key behaves like
+        # assigning to a tuple key with an empty second element (equal frames), and a later
+        # reassignment of a scaled series is consistent with the earlier results.
         cols = MultiIndex.from_tuples([("A", "B")])
         df1 = DataFrame([[i] for i in range(3)], columns=cols)
         df2 = df1.copy()
@@ -273,6 +340,10 @@ class TestMultiIndexBasic:
 
     def test_multiindex_assign_alignment_with_non_string_dtype(self):
         # GH 62518
+        # [FUNCTION DOC]
+        # GH 62518. For a MultiIndex with categorical second level, converting a selected group of
+        # columns to integer yields a frame equal to one built with per-column series of the matching
+        # dtypes (empty frame with object and int64 columns).
         columns = MultiIndex.from_arrays(
             [["a", "a", "z", "z"], pd.Categorical([1, 2, 1, 2])]
         )
@@ -297,6 +368,10 @@ class TestMultiIndexBasic:
         # second level of the multiindex is object dtype, and the value of
         # that level is 0 for the single column we are setting
 
+        # [FUNCTION DOC]
+        # Issue 65118. With second level of mixed string and integer labels (object dtype), assigning
+        # a computed block back under each first-level key (including a key with a single column labeled
+        # zero) writes values into the right columns; result equals the data divided by 100.
         columns = MultiIndex.from_tuples(
             [("A", "M"), ("A", 0), ("B", 1), ("B", 2), ("C", 0)]
         )

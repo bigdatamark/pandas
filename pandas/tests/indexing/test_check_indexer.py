@@ -1,3 +1,7 @@
+# [MODULE DOC]
+# Tests for the public function that validates and converts an array-like indexer for use on
+# an array (check_array_indexer, imported from the public indexers API): valid inputs, missing
+# values, length mismatches, invalid dtypes and pass-through of non-array indexers.
 import numpy as np
 import pytest
 
@@ -26,6 +30,10 @@ from pandas.api.indexers import check_array_indexer
     ],
 )
 def test_valid_input(indexer, expected):
+    # [FUNCTION DOC]
+    # Parametrized over integer and boolean indexers (lists, numpy arrays, nullable arrays, index
+    # objects) and an empty list. The function returns a numpy array of platform integers or booleans
+    # with the same content.
     arr = np.array([1, 2, 3])
     result = check_array_indexer(arr, indexer)
     tm.assert_numpy_array_equal(result, expected)
@@ -36,6 +44,9 @@ def test_valid_input(indexer, expected):
 )
 def test_boolean_na_returns_indexer(indexer):
     # https://github.com/pandas-dev/pandas/issues/31503
+    # [FUNCTION DOC]
+    # Issue 31503. Parametrized over a list and a nullable boolean array containing missing values.
+    # Missing entries are treated as false in the returned boolean array.
     arr = np.array([1, 2, 3])
 
     result = check_array_indexer(arr, indexer)
@@ -53,6 +64,9 @@ def test_boolean_na_returns_indexer(indexer):
     ],
 )
 def test_bool_raise_length(indexer):
+    # [FUNCTION DOC]
+    # Parametrized over boolean list, nullable array, and numpy array shorter than the target array.
+    # Raises an index error saying the boolean index has the wrong length.
     arr = np.array([1, 2, 3])
 
     msg = "Boolean index has wrong length"
@@ -64,6 +78,9 @@ def test_bool_raise_length(indexer):
     "indexer", [[0, 1, None], pd.array([0, 1, pd.NA], dtype="Int64")]
 )
 def test_int_raise_missing_values(indexer):
+    # [FUNCTION DOC]
+    # Integer indexers containing missing values (list with None, nullable array with NA) raise a
+    # value error saying an integer indexer cannot contain NA values.
     arr = np.array([1, 2, 3])
 
     msg = "Cannot index with an integer indexer containing NA values"
@@ -81,6 +98,9 @@ def test_int_raise_missing_values(indexer):
     ],
 )
 def test_raise_invalid_array_dtypes(indexer):
+    # [FUNCTION DOC]
+    # Parametrized over float list, float array, object-dtype boolean array and index. Raises an
+    # index error saying arrays used as indices must be integer or boolean type.
     arr = np.array([1, 2, 3])
 
     msg = "arrays used as indices must be of integer or boolean type"
@@ -89,6 +109,9 @@ def test_raise_invalid_array_dtypes(indexer):
 
 
 def test_raise_nullable_string_dtype(nullable_string_dtype):
+    # [FUNCTION DOC]
+    # Uses the nullable string dtype fixture. A string array indexer raises the same index error
+    # about integer or boolean type.
     indexer = pd.array(["a", "b"], dtype=nullable_string_dtype)
     arr = np.array([1, 2, 3])
 
@@ -99,6 +122,9 @@ def test_raise_nullable_string_dtype(nullable_string_dtype):
 
 @pytest.mark.parametrize("indexer", [None, Ellipsis, slice(0, 3), (None,)])
 def test_pass_through_non_array_likes(indexer):
+    # [FUNCTION DOC]
+    # Parametrized over None, ellipsis, a slice and a tuple with None. These indexers are returned
+    # unchanged (equal to the input).
     arr = np.array([1, 2, 3])
 
     result = check_array_indexer(arr, indexer)

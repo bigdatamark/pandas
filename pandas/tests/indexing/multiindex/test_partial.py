@@ -1,3 +1,6 @@
+# [MODULE DOC]
+# Tests for partial indexing (supplying only leading levels of the key) of MultiIndex
+# frames: getitem, xs, slicing and partial setitem. Uses shared MultiIndex fixtures.
 import numpy as np
 import pytest
 
@@ -11,9 +14,16 @@ import pandas._testing as tm
 
 
 class TestMultiIndexPartial:
+    # [CLASS DOC]
+    # Test collection for partial-key indexing behaviors on MultiIndex.
     def test_getitem_partial_int(self):
         # GH 12416
         # with single item
+        # [FUNCTION DOC]
+        # GH 12416. On a frame with two-level columns of integer and string levels: getitem with a
+        # scalar first-level label returns the sub-frame with the level dropped; a list gives the
+        # selected frame with levels kept; missing scalar raises a key error and a missing list raises
+        # a key error saying the label is not in the index.
         l1 = [10, 20]
         l2 = ["a", "b"]
         df = DataFrame(index=range(2), columns=MultiIndex.from_product([l1, l2]))
@@ -35,6 +45,8 @@ class TestMultiIndexPartial:
             df[[1]]
 
     def test_series_slice_partial(self):
+        # [FUNCTION DOC]
+        # KNOWN ISSUE: empty placeholder test; the body does nothing and asserts nothing.
         pass
 
     def test_xs_partial(
@@ -42,6 +54,10 @@ class TestMultiIndexPartial:
         multiindex_dataframe_random_data,
         multiindex_year_month_day_dataframe_random_data,
     ):
+        # [FUNCTION DOC]
+        # Cross-section by partial key equals loc by the same partial key (and transposed getitem) for
+        # the standard frame and year/month/day frame; also an example from issue 1796 where a
+        # two-label cross-section equals loc with the same two labels.
         frame = multiindex_dataframe_random_data
         ymd = multiindex_year_month_day_dataframe_random_data
         result = frame.xs("foo")
@@ -74,6 +90,9 @@ class TestMultiIndexPartial:
         tm.assert_frame_equal(result, expected)
 
     def test_getitem_partial(self, multiindex_year_month_day_dataframe_random_data):
+        # [FUNCTION DOC]
+        # On a transposed frame (MultiIndex columns), getitem with a two-label partial key returns the
+        # columns with matching codes for the second level and drops the first two levels.
         ymd = multiindex_year_month_day_dataframe_random_data
         ymd = ymd.T
         result = ymd[2000, 2]
@@ -87,6 +106,9 @@ class TestMultiIndexPartial:
         multiindex_dataframe_random_data,
         multiindex_year_month_day_dataframe_random_data,
     ):
+        # [FUNCTION DOC]
+        # Label slicing over the first level and over (year, month) tuple bounds returns the same rows
+        # as boolean-mask or positional selection on the underlying codes.
         frame = multiindex_dataframe_random_data
         result = frame.loc["bar":"baz"]
         expected = frame[3:7]
@@ -99,6 +121,10 @@ class TestMultiIndexPartial:
         tm.assert_frame_equal(result, expected)
 
     def test_getitem_partial_column_select(self):
+        # [FUNCTION DOC]
+        # Row partial tuple with all columns and with a reordered integer column list equals indexing
+        # by the tuple alone and then selecting columns; a partial tuple with a missing label raises a
+        # key error showing it.
         idx = MultiIndex(
             codes=[[0, 0, 0], [0, 1, 1], [1, 0, 1]],
             levels=[["a", "b"], ["x", "y"], ["p", "q"]],
@@ -121,6 +147,11 @@ class TestMultiIndexPartial:
         multiindex_year_month_day_dataframe_random_data,
     ):
         # GH #397
+        # [FUNCTION DOC]
+        # GH 397. Setting values with partial keys (scalar year-month, single year) writes the same
+        # positions as positional slice assignment on a copy. Chained assignment through a series
+        # view raises the chained-assignment error context and doesn't change the frame; setting a
+        # column through a full tuple works.
         ymd = multiindex_year_month_day_dataframe_random_data
         df = ymd.copy()
         exp = ymd.copy()
@@ -148,6 +179,10 @@ class TestMultiIndexPartial:
         self, multiindex_year_month_day_dataframe_random_data, dtype
     ):
         # GH#33355 dont fall-back to positional when leading level is int
+        # [FUNCTION DOC]
+        # GH 33355. Parametrized over leading-level dtype (int, float). When the leading level is
+        # numeric, a missing integer key must not fall back to positional indexing: both the level and
+        # index report no positional fallback, and getitem with an absent key raises a key error.
         ymd = multiindex_year_month_day_dataframe_random_data
         levels = ymd.index.levels
         ymd.index = ymd.index.set_levels([levels[0].astype(dtype), *levels[1:]])
@@ -169,6 +204,9 @@ class TestMultiIndexPartial:
     # ---------------------------------------------------------------------
 
     def test_setitem_multiple_partial(self, multiindex_dataframe_random_data):
+        # [FUNCTION DOC]
+        # Setting zero through a list of first-level labels or a label slice, on a frame and a
+        # series, equals setting each label separately.
         frame = multiindex_dataframe_random_data
         expected = frame.copy()
         result = frame.copy()
@@ -215,6 +253,11 @@ class TestMultiIndexPartial:
     )
     def test_partial_getitem_loc_datetime(self, indexer, exp_idx, exp_values):
         # GH: 25165
+        # [FUNCTION DOC]
+        # GH 25165. Parametrized over a date-string slice (open start, or open end) with the expected
+        # index and values. Getitem, loc, loc with axis argument, and loc with trailing all-columns all
+        # give the expected partial range; after swapping levels and sorting, a three-part
+        # indexer on the second axis position gives the swapped expected frame.
         date_idx = date_range("2019", periods=2, freq="MS", unit="ns")
         df = DataFrame(
             list(range(4)),
@@ -244,6 +287,9 @@ class TestMultiIndexPartial:
 
 def test_loc_getitem_partial_both_axis():
     # gh-12660
+    # [FUNCTION DOC]
+    # GH 12660. A row label and a column label on frames with named two-level axes return the
+    # sub-block with those first levels dropped on both axes.
     iterables = [["a", "b"], [2, 1]]
     columns = MultiIndex.from_product(iterables, names=["col1", "col2"])
     rows = MultiIndex.from_product(iterables, names=["row1", "row2"])

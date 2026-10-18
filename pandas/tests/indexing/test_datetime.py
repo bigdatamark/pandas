@@ -1,3 +1,8 @@
+# [MODULE DOC]
+# Tests for indexing with datetime-like indexes and timezones: key errors for malformed
+# string keys, row access on timezone-aware columns, scalar access consistency, list-like
+# indexing on tz-aware indexes, nanosecond precision, millisecond-resolution string slicing, and
+# pyarrow-backed timestamp indexes.
 import re
 
 import pytest
@@ -14,8 +19,14 @@ import pandas._testing as tm
 
 
 class TestDatetimeIndex:
+    # [CLASS DOC]
+    # Test collection for indexing with datetime indexes and timezone-aware data.
     def test_get_loc_naive_dti_aware_str_deprecated(self):
         # GH#46903
+        # [FUNCTION DOC]
+        # GH 46903. A string key with a UTC offset on a timezone-naive nanosecond index raises a key error
+        # (message is the repr of the key) both for series getitem and for get_loc on the index.
+        # KNOWN ISSUE: the name suggests a deprecation, but the test asserts that a key error is raised.
         ts = Timestamp("20130101")._value
         dti = pd.DatetimeIndex([ts + 50 + i for i in range(100)])
         ser = Series(range(100), index=dti)
@@ -32,6 +43,9 @@ class TestDatetimeIndex:
         # GH#8260
         # support datetime64 with tz
 
+        # [FUNCTION DOC]
+        # GH 8260. A frame with timezone-aware columns where some entries are set to NaT: selecting a
+        # row by position or label gives an object series with a tz-aware timestamp and NaT values.
         idx = Index(date_range("20130101", periods=3, tz="US/Eastern"), name="foo")
         dr = date_range("20130110", periods=3)
         df = DataFrame({"A": idx, "B": dr})
@@ -54,6 +68,10 @@ class TestDatetimeIndex:
 
     def test_indexing_fast_xs(self):
         # indexing - fast_xs
+        # [FUNCTION DOC]
+        # Row selection on a frame with a single UTC datetime column by position or label returns a
+        # series with the tz-aware dtype and the row number as name; a boolean mask on the column gives
+        # the later rows.
         df = DataFrame({"a": date_range("2014-01-01", periods=10, tz="UTC", unit="ns")})
         result = df.iloc[5]
         expected = Series(
@@ -75,6 +93,9 @@ class TestDatetimeIndex:
     def test_consistency_with_tz_aware_scalar(self):
         # xef gh-12938
         # various ways of indexing the same tz-aware scalar
+        # [FUNCTION DOC]
+        # GH 12938. All of getitem, iloc, loc, iat, at on a frame (and the column series) return the same
+        # timezone-aware Brussels timestamp scalar.
         df = Series([Timestamp("2016-03-30 14:35:25", tz="Europe/Brussels")]).to_frame()
 
         df = pd.concat([df, df]).reset_index(drop=True)
@@ -104,6 +125,10 @@ class TestDatetimeIndex:
     def test_indexing_with_datetimeindex_tz(self, indexer_sl):
         # GH 12050
         # indexing on a series with a datetimeindex with tz
+        # [FUNCTION DOC]
+        # GH 12050. Uses the fixture that provides both loc and getitem-style accessors. A tz-aware
+        # index or list of its entries as selector returns the whole series (index frequency dropped for
+        # the list); setting through them assigns scalar everywhere; single-timestamp get and set work.
         index = date_range("2015-01-01", periods=2, tz="utc")
 
         ser = Series(range(2), index=index, dtype="int64")
@@ -137,6 +162,9 @@ class TestDatetimeIndex:
 
     def test_nanosecond_getitem_setitem_with_tz(self):
         # GH 11679
+        # [FUNCTION DOC]
+        # GH 11679. For a frame indexed by a tz-aware nanosecond timestamp, label lookup returns the row
+        # as a series named with that timestamp, and setting a value by label writes it.
         data = ["2016-06-28 08:30:00.123456789"]
         index = pd.DatetimeIndex(data, dtype="datetime64[ns, America/Chicago]")
         df = DataFrame({"a": [10]}, index=index)
@@ -152,6 +180,9 @@ class TestDatetimeIndex:
     def test_getitem_str_slice_millisecond_resolution(self, frame_or_series):
         # GH#33589
 
+        # [FUNCTION DOC]
+        # GH 33589. Parametrized over frame and series. A string slice whose bounds have millisecond
+        # resolution includes both bounds and returns the two middle rows.
         keys = [
             "2017-10-25T16:25:04.151",
             "2017-10-25T16:25:04.252",
@@ -174,6 +205,9 @@ class TestDatetimeIndex:
 
     def test_getitem_pyarrow_index(self, frame_or_series):
         # GH 53644
+        # [FUNCTION DOC]
+        # GH 53644. Parametrized over frame and series. Skipped if pyarrow is missing. Label selection with
+        # the first two entries of a pyarrow-timestamp index returns the first two rows.
         pytest.importorskip("pyarrow")
         obj = frame_or_series(
             range(5),
