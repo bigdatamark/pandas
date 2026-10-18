@@ -1,3 +1,17 @@
+# [MODULE DOC]
+# Implementation of JSON reading and writing for pandas (the frame/series JSON
+# writer and the top-level JSON reader).
+# Public contents: to_json (writer entry point used by the frame and series
+# methods), read_json (public reader, exposed at top level), JsonReader (iterator
+# and context manager returned for chunked reads, exposed in the public typing
+# namespace), plus re-exports of the C-level ujson encoder/decoder functions.
+# Internal contents: writer classes (an abstract Writer with series, frame and
+# Table Schema variants), parser classes (an abstract Parser with series and
+# frame variants that decode and then coerce types) and a date-column predicate.
+# Relationships: the C extension does the actual encoding/decoding; line-delimited
+# conversion and Table Schema logic come from sibling modules; file access comes
+# from the io common module. Optional dependency pyarrow is imported lazily.
+# Import-time side effects: none other than imports and defining a type variable.
 from __future__ import annotations
 
 from abc import (
@@ -115,6 +129,9 @@ def to_json(
     storage_options: StorageOptions = ...,
     mode: Literal["a", "w"] = ...,
 ) -> None: ...
+    # [FUNCTION DOC]
+    # Typing overload only: signature for writing to a path or buffer, returning
+    # nothing. See the implementation below for behavior.
 
 
 @overload
@@ -134,6 +151,9 @@ def to_json(
     storage_options: StorageOptions = ...,
     mode: Literal["a", "w"] = ...,
 ) -> str: ...
+    # [FUNCTION DOC]
+    # Typing overload only: signature for path_or_buf being none, returning the JSON
+    # text. See the implementation below for behavior.
 
 
 def to_json(
@@ -152,6 +172,32 @@ def to_json(
     storage_options: StorageOptions | None = None,
     mode: Literal["a", "w"] = "w",
 ) -> str | None:
+    # [FUNCTION DOC]
+    # Serializes a frame or series to JSON, writing to a target or returning text.
+    # Parameters: path_or_buf is a path, writable text/binary buffer, or none to
+    # return a string; obj is the series or frame; orient is the layout (none means
+    # the writer's default: index for series, columns for frame, records for table);
+    # date_format is epoch or iso (default epoch); double_precision is the number of
+    # decimals for floats (default 10); force_ascii escapes non-ASCII output (default
+    # true); date_unit is s, ms, us or ns (default ms); default_handler is a fallback
+    # for unserializable objects (default none); lines writes one record per line
+    # (default false); compression and storage_options are used when opening a
+    # target (defaults infer and none); index says whether to include the index
+    # (none means true, ignored for records and values orients); indent is the
+    # pretty-print indent width (default 0); mode is w or a (default w).
+    # Raises a value error for: index true with records or values orient, index
+    # false with index or columns orient, lines without records orient, a mode other
+    # than w or a, append mode unless lines is set with records orient, and an invalid
+    # date_unit when epoch dates are used. Raises a not-implemented error if obj is
+    # not a series or frame.
+    # Behavior: a series with the table orient becomes a one-column frame (named by
+    # the series name or "values"). With epoch dates, datetime-like data, index and
+    # columns are first converted (on shallow copies, never mutating the caller's
+    # object) to the requested unit. The writer class is chosen (table, series, or
+    # frame), the text is produced, optionally converted to line-delimited form, and
+    # then written to the target through a handle with the compression options (returns
+    # none) or returned as a string when no target is given.
+    # KNOWN ISSUE: the error message for an invalid mode runs two sentences together without a space between them.
     if orient in ["records", "values"] and index is True:
         raise ValueError(
             "'index=True' is only valid when 'orient' is 'split', 'table', "
@@ -255,6 +301,12 @@ def to_json(
 
 
 class Writer(ABC):
+    # [CLASS DOC]
+    # Abstract base for JSON writers. Subclasses set the default orient name as a
+    # class attribute and implement the axes validation and the property giving the
+    # object to serialize. State: obj, orient (default filled in when none), and the
+    # formatting options date_format, double_precision, ensure_ascii, date_unit,
+    # default_handler, index, indent. Key method: write.
     _default_orient: str
 
     def __init__(
@@ -269,6 +321,13 @@ class Writer(ABC):
         default_handler: Callable[[Any], JSONSerializable] | None = None,
         indent: int = 0,
     ) -> None:
+        # [FUNCTION DOC]
+        # Stores all arguments as attributes (a none orient is replaced by the class
+        # default orient), then calls the axes validation hook, which may raise.
+        # Parameters: obj is the object to write; orient the layout; date_format epoch or
+        # iso; double_precision float decimals; ensure_ascii escape non-ASCII;
+        # date_unit time unit; index whether to include the index; default_handler
+        # fallback for unsupported objects (default none); indent (default 0).
         self.obj = obj
 
         if orient is None:
@@ -285,9 +344,18 @@ class Writer(ABC):
         self._format_axes()
 
     def _format_axes(self) -> None:
+        # [FUNCTION DOC]
+        # HELPER: abstract validation hook run from the constructor; subclasses raise a
+        # value error for configurations that cannot be written. Base raises an
+        # abstract-method error.
         raise AbstractMethodError(self)
 
     def write(self) -> str:
+        # [FUNCTION DOC]
+        # Encodes the object given by the obj_to_write property with the C encoder,
+        # passing orient, float precision, ASCII escaping, date unit, an ISO-date flag
+        # (true when date_format is iso), the default handler and the indent. Returns the
+        # JSON text.
         iso_dates = self.date_format == "iso"
         return ujson_dumps(
             self.obj_to_write,
@@ -303,29 +371,49 @@ class Writer(ABC):
     @property
     @abstractmethod
     def obj_to_write(self) -> NDFrame | Mapping[IndexLabel, Any]:
+        # [FUNCTION DOC]
+        # Abstract property; subclasses return the object (or mapping) that is handed to
+        # the encoder.
         """Object to write in JSON format."""
 
 
 class SeriesWriter(Writer):
+    # [CLASS DOC]
+    # Writer for series. Default orient is index. Writes the series itself, except
+    # for the split orient without index, which writes a mapping of name and values.
     _default_orient = "index"
 
     @property
     def obj_to_write(self) -> NDFrame | Mapping[IndexLabel, Any]:
+        # [FUNCTION DOC]
+        # Returns a mapping with the series name and its values when the index is
+        # excluded and the orient is split; otherwise returns the series unchanged.
         if not self.index and self.orient == "split":
             return {"name": self.obj.name, "data": self.obj.values}
         else:
             return self.obj
 
     def _format_axes(self) -> None:
+        # [FUNCTION DOC]
+        # HELPER: validation hook. Raises a value error if the orient is index and the
+        # series index has duplicate labels. No return value.
         if not self.obj.index.is_unique and self.orient == "index":
             raise ValueError(f"Series index must be unique for orient='{self.orient}'")
 
 
 class FrameWriter(Writer):
+    # [CLASS DOC]
+    # Writer for frames. Default orient is columns. Writes the frame itself except
+    # for split orient without index, which writes the split-form mapping without its
+    # index entry.
     _default_orient = "columns"
 
     @property
     def obj_to_write(self) -> NDFrame | Mapping[IndexLabel, Any]:
+        # [FUNCTION DOC]
+        # Returns, when the index is excluded and the orient is split, the split-form
+        # dictionary of the frame with the index entry removed; otherwise returns the
+        # frame.
         if not self.index and self.orient == "split":
             obj_to_write = self.obj.to_dict(orient="split")
             del obj_to_write["index"]
@@ -334,6 +422,11 @@ class FrameWriter(Writer):
         return obj_to_write
 
     def _format_axes(self) -> None:
+        # [FUNCTION DOC]
+        # HELPER: validation hook. Raises a value error when the index has duplicates and
+        # the orient is index or columns, or when the columns have duplicates and the
+        # orient is index, columns or records.
+        # KNOWN ISSUE: the docstring says it tries to format axes that are datelike, but the code only checks uniqueness.
         """
         Try to format axes if they are datelike.
         """
@@ -352,6 +445,13 @@ class FrameWriter(Writer):
 
 
 class JSONTableWriter(FrameWriter):
+    # [CLASS DOC]
+    # Writer for the Table Schema layout. Extends the frame writer; default orient
+    # is records. State beyond the base: schema (Table Schema description built from
+    # the original object) and obj (the frame actually written, with index moved to
+    # columns, or dropped when index is false, and timedelta columns turned into
+    # ISO strings). The effective orient is forced to records and date_format to iso.
+    # The text written is a mapping with the schema and the data.
     _default_orient = "records"
 
     def __init__(
@@ -366,6 +466,18 @@ class JSONTableWriter(FrameWriter):
         default_handler: Callable[[Any], JSONSerializable] | None = None,
         indent: int = 0,
     ) -> None:
+        # [FUNCTION DOC]
+        # Builds a table-schema writer. Parameters match the base writer. Calls the base
+        # constructor, then requires date_format to be iso (raises a value error
+        # otherwise), builds the schema from the frame with the given index setting, gives
+        # default names to unnamed index levels when the index is included, and rejects
+        # column MultiIndex frames (not-implemented error) and overlapping names between
+        # index and columns (value error). Timedelta columns are converted to ISO duration
+        # strings on a copy. When the index is excluded the stored object is the frame
+        # with its index dropped; otherwise a period index is converted to timestamps
+        # (on a shallow copy if not already copied) and the index is reset into columns.
+        # Finally forces date_format to iso, orient to records and stores index.
+        # KNOWN ISSUE: the constructor docstring is an incomplete sentence (unbalanced parenthesis) and the base constructor has already stored the orient and date format before they are validated or overridden.
         """
         Adds a `schema` attribute with the Table Schema, resets
         the index (can't do in caller, because the schema inference needs
@@ -432,6 +544,8 @@ class JSONTableWriter(FrameWriter):
 
     @property
     def obj_to_write(self) -> NDFrame | Mapping[IndexLabel, Any]:
+        # [FUNCTION DOC]
+        # Returns a mapping with the entry for the schema and an entry for the data frame.
         return {"schema": self.schema, "data": self.obj}
 
 
@@ -457,6 +571,9 @@ def read_json(
     dtype_backend: DtypeBackend | lib.NoDefault = ...,
     engine: JSONEngine = ...,
 ) -> JsonReader[Literal["frame"]]: ...
+    # [FUNCTION DOC]
+    # Typing overload only: with chunksize given and frame type, returns a chunked
+    # reader. See the implementation.
 
 
 @overload
@@ -481,6 +598,9 @@ def read_json(
     dtype_backend: DtypeBackend | lib.NoDefault = ...,
     engine: JSONEngine = ...,
 ) -> JsonReader[Literal["series"]]: ...
+    # [FUNCTION DOC]
+    # Typing overload only: with chunksize given and series type, returns a chunked
+    # reader. See the implementation.
 
 
 @overload
@@ -505,6 +625,9 @@ def read_json(
     dtype_backend: DtypeBackend | lib.NoDefault = ...,
     engine: JSONEngine = ...,
 ) -> Series: ...
+    # [FUNCTION DOC]
+    # Typing overload only: series type without chunksize returns a series. See the
+    # implementation.
 
 
 @overload
@@ -529,6 +652,9 @@ def read_json(
     dtype_backend: DtypeBackend | lib.NoDefault = ...,
     engine: JSONEngine = ...,
 ) -> DataFrame: ...
+    # [FUNCTION DOC]
+    # Typing overload only: frame type without chunksize returns a frame. See the
+    # implementation.
 
 
 @set_module("pandas")
@@ -553,6 +679,26 @@ def read_json(
     dtype_backend: DtypeBackend | lib.NoDefault = lib.no_default,
     engine: JSONEngine = "ujson",
 ) -> DataFrame | Series | JsonReader:
+    # [FUNCTION DOC]
+    # Public JSON reader. All parameters except path_or_buf are keyword-only:
+    # path_or_buf is a path, URL or readable buffer; orient is the input layout
+    # (none uses the type's default); typ is frame (default) or series; dtype is true
+    # to infer, false for none, or a per-column mapping (none becomes true unless the
+    # orient is table); convert_axes tries to coerce index and columns (none becomes
+    # true unless table); convert_dates is true, false or a list of columns (default
+    # true); keep_default_dates enables conversion of conventionally named date
+    # columns (default true); precise_float uses the slower precise float decoder
+    # (default false); date_unit forces a time unit (default none, auto-detect);
+    # encoding and encoding_errors (default strict) control text decoding; lines reads
+    # one record per line (default false); chunksize returns an iterator of that many
+    # lines at a time (default none); compression, nrows (line limit), storage_options,
+    # dtype_backend and engine (ujson default, or pyarrow) as described in the public
+    # docstring.
+    # Raises a value error when the table orient is combined with a dtype or a
+    # truthy convert_axes; validates the dtype_backend argument.
+    # Builds a JsonReader; returns the reader itself when chunksize is truthy,
+    # otherwise reads everything and returns a frame or series.
+    # KNOWN ISSUE: the docstring says the encoding default is utf-8, but the code default is none (decided by the file-opening layer); it also lists the default datelike labels without the label datetime, which the code treats as datelike.
     """
     Convert a JSON string to pandas object.
 
@@ -855,6 +1001,19 @@ def read_json(
 
 @set_module("pandas.api.typing")
 class JsonReader(abc.Iterator, Generic[FrameSeriesStrT]):
+    # [CLASS DOC]
+    # Iterator and context manager for reading JSON input; the type returned by the
+    # reader when chunksize is given (exposed in the public typing namespace).
+    # Generic in whether it produces frames or series.
+    # State: the options passed to the constructor (orient, typ, dtype, convert_axes,
+    # convert_dates, keep_default_dates, precise_float, date_unit, encoding, engine,
+    # compression, storage_options, lines, chunksize, nrows, encoding_errors,
+    # dtype_backend); nrows_seen (rows yielded so far in chunk mode); handles (the
+    # opened file handles, or none when the caller supplied an open stream); data
+    # (for the ujson engine either the full text or the open stream when
+    # chunking or limiting rows; for pyarrow the raw input).
+    # Methods: read for whole-input reads; iteration yields chunks of the lines
+    # format; close releases handles opened here; enter/exit make it a context manager.
     """
     JsonReader provides an interface for reading in a JSON file.
 
@@ -884,6 +1043,16 @@ class JsonReader(abc.Iterator, Generic[FrameSeriesStrT]):
         dtype_backend: DtypeBackend | lib.NoDefault = lib.no_default,
         engine: JSONEngine = "ujson",
     ) -> None:
+        # [FUNCTION DOC]
+        # Stores options and prepares the data. Raises a value error for an engine other
+        # than ujson or pyarrow; for a chunksize that is not a positive integer (checked
+        # by an integer validator), or given without lines, or given with the pyarrow
+        # engine; for nrows that is negative or non-integer, or given without lines;
+        # and for the pyarrow engine without lines.
+        # The pyarrow engine stores the input untouched. The ujson engine opens the
+        # input via the file helper; when neither chunksize nor nrows is set the whole
+        # content is read immediately (and the handle closed), otherwise the open stream is
+        # kept for lazy line reading. Raises a file-not-found error if the path cannot be opened.
         self.orient = orient
         self.typ = typ
         self.dtype = dtype
@@ -938,6 +1107,12 @@ class JsonReader(abc.Iterator, Generic[FrameSeriesStrT]):
                 self.data = data
 
     def _get_data_from_filepath(self, filepath_or_buffer):
+        # [FUNCTION DOC]
+        # HELPER: opens the input. Converts path-like input to a string, opens a text
+        # handle with the configured encoding, compression, storage options and error
+        # handling, stores the handle set in the handles attribute and returns the
+        # underlying readable stream. An OS error becomes a file-not-found error.
+        # KNOWN ISSUE: the docstring claims three input types but lists two.
         """
         The function read_json accepts three input types:
             1. filepath (string-like)
@@ -961,6 +1136,10 @@ class JsonReader(abc.Iterator, Generic[FrameSeriesStrT]):
         return filepath_or_buffer
 
     def _combine_lines(self, lines) -> str:
+        # [FUNCTION DOC]
+        # HELPER: joins lines of line-delimited JSON into one JSON array text. Each line
+        # is stripped and blank lines are dropped; the rest are joined with commas inside
+        # square brackets. Returns the string.
         """
         Combines a list of JSON objects into one JSON object.
         """
@@ -970,14 +1149,25 @@ class JsonReader(abc.Iterator, Generic[FrameSeriesStrT]):
 
     @overload
     def read(self: JsonReader[Literal["frame"]]) -> DataFrame: ...
+        # [FUNCTION DOC]
+        # Typing overload only: reader of frames returns a frame. See the implementation.
 
     @overload
     def read(self: JsonReader[Literal["series"]]) -> Series: ...
+        # [FUNCTION DOC]
+        # Typing overload only: reader of series returns a series. See the implementation.
 
     @overload
     def read(self: JsonReader[Literal["frame", "series"]]) -> DataFrame | Series: ...
+        # [FUNCTION DOC]
+        # Typing overload only: reader of either returns a frame or series. See the
+        # implementation.
 
     def read(self) -> DataFrame | Series:
+        # [FUNCTION DOC]
+        # Reads the entire input into one frame or series. Runs inside the reader's
+        # context so handles are closed afterwards. Dispatches on the engine to the
+        # pyarrow or ujson implementation. Returns the object.
         """
         Read the whole JSON input into a pandas object.
         """
@@ -991,6 +1181,12 @@ class JsonReader(abc.Iterator, Generic[FrameSeriesStrT]):
         return obj
 
     def _read_pyarrow(self) -> DataFrame:
+        # [FUNCTION DOC]
+        # HELPER: reads with the pyarrow JSON reader. If dtype is a mapping, builds an
+        # explicit schema from the entries that map to arrow-backed dtypes (other
+        # entries are ignored) and lets unexpected fields be inferred. Converts the
+        # arrow table to a frame honoring dtype_backend. Raises an import error when
+        # pyarrow is missing. Returns a frame.
         """
         Read JSON using the pyarrow engine.
         """
@@ -1016,6 +1212,14 @@ class JsonReader(abc.Iterator, Generic[FrameSeriesStrT]):
         return df
 
     def _read_ujson(self) -> DataFrame | Series:
+        # [FUNCTION DOC]
+        # HELPER: reads with the ujson engine. For line-delimited input: with chunksize,
+        # concatenates all chunks from iterating the reader; with nrows, takes that many
+        # lines from the stream, combines them and parses; otherwise splits the full
+        # text on newlines, combines and parses. For regular JSON parses the whole text.
+        # If a dtype_backend is set, converts the result to nullable dtypes of that
+        # backend without distinguishing NaN from NA (temporary option change).
+        # Returns a frame or series.
         """
         Read JSON using the ujson engine.
         """
@@ -1042,6 +1246,12 @@ class JsonReader(abc.Iterator, Generic[FrameSeriesStrT]):
             return obj
 
     def _get_object_parser(self, json: str) -> DataFrame | Series:
+        # [FUNCTION DOC]
+        # HELPER: decodes one JSON text into a frame or series via the frame or series
+        # parser according to typ, passing the stored options (orient, dtype,
+        # convert_axes, convert_dates, keep_default_dates, precise_float, date_unit,
+        # dtype_backend). Raises a value error for any other typ.
+        # KNOWN ISSUE: in the series branch, the dtype is reassigned to the same value when it is not a boolean, which has no effect.
         """
         Parses a json document into a pandas object.
         """
@@ -1067,6 +1277,9 @@ class JsonReader(abc.Iterator, Generic[FrameSeriesStrT]):
             raise ValueError(f"{typ=} must be 'frame' or 'series'.")
 
     def close(self) -> None:
+        # [FUNCTION DOC]
+        # Closes the file handles if this reader opened them (handles is not none);
+        # streams passed in by the caller are left open. Safe to call repeatedly.
         """
         If we opened a stream earlier, in _get_data_from_filepath, we should
         close it.
@@ -1077,20 +1290,37 @@ class JsonReader(abc.Iterator, Generic[FrameSeriesStrT]):
             self.handles.close()
 
     def __iter__(self) -> Self:
+        # [FUNCTION DOC]
+        # Returns the reader itself so that it acts as its own iterator.
         return self
 
     @overload
     def __next__(self: JsonReader[Literal["frame"]]) -> DataFrame: ...
+        # [FUNCTION DOC]
+        # Typing overload only: frame reader yields a frame per chunk.
 
     @overload
     def __next__(self: JsonReader[Literal["series"]]) -> Series: ...
+        # [FUNCTION DOC]
+        # Typing overload only: series reader yields a series per chunk.
 
     @overload
     def __next__(
         self: JsonReader[Literal["frame", "series"]],
     ) -> DataFrame | Series: ...
+        # [FUNCTION DOC]
+        # Typing overload only: yields a frame or series per chunk.
 
     def __next__(self) -> DataFrame | Series:
+        # [FUNCTION DOC]
+        # Returns the next chunk of line-delimited input. Stops iteration (closing
+        # handles) when nrows is set and already reached, or when no more lines remain.
+        # Reads up to chunksize lines (all remaining when chunksize is none), combines and
+        # parses them, then replaces the index by consecutive integers continuing from
+        # the number of rows already returned and updates that counter. Any exception
+        # during parsing closes the handles and is re-raised. If a dtype_backend is set the
+        # chunk is converted to nullable dtypes.
+        # KNOWN ISSUE: when nrows is smaller than a chunk, the chunk is not truncated, so more than nrows rows can be returned in total.
         if self.nrows and self.nrows_seen >= self.nrows:
             self.close()
             raise StopIteration
@@ -1120,6 +1350,8 @@ class JsonReader(abc.Iterator, Generic[FrameSeriesStrT]):
             return obj
 
     def __enter__(self) -> Self:
+        # [FUNCTION DOC]
+        # Context manager entry; returns the reader itself.
         return self
 
     def __exit__(
@@ -1128,10 +1360,22 @@ class JsonReader(abc.Iterator, Generic[FrameSeriesStrT]):
         exc_value: BaseException | None,
         traceback: TracebackType | None,
     ) -> None:
+        # [FUNCTION DOC]
+        # Context manager exit; closes the handles regardless of any exception and returns
+        # nothing (exceptions propagate).
         self.close()
 
 
 class Parser:
+    # [CLASS DOC]
+    # Abstract base for decoding JSON text into frames or series and coercing types.
+    # Class constants: allowed time units, and a table of minimum plausible epoch
+    # values per unit, used to decide whether numbers could be timestamps.
+    # State: json (text), orient (default orient of the subclass when none),
+    # dtype, convert_axes, convert_dates, keep_default_dates, precise_float,
+    # date_unit (lower-cased), min_stamp (minimum epoch value for the chosen unit,
+    # seconds if no unit), dtype_backend. Subclasses supply the decode step, the
+    # split-key set, the default orient and the type conversion step.
     _split_keys: tuple[str, ...]
     _default_orient: str
 
@@ -1156,6 +1400,13 @@ class Parser:
         date_unit=None,
         dtype_backend: DtypeBackend | lib.NoDefault = lib.no_default,
     ) -> None:
+        # [FUNCTION DOC]
+        # Stores the options. A none orient becomes the class default. A date_unit,
+        # if provided, is lower-cased and must be one of s, ms, us, ns, otherwise a value
+        # error is raised; it sets the minimum epoch threshold (seconds threshold when no
+        # unit given). Defaults: dtype none, convert_axes true, convert_dates true,
+        # keep_default_dates false, precise_float false, date_unit none,
+        # dtype_backend unset.
         self.json = json
 
         if orient is None:
@@ -1182,6 +1433,9 @@ class Parser:
 
     @final
     def check_keys_split(self, decoded: dict) -> None:
+        # [FUNCTION DOC]
+        # Validates the keys of a split-orient mapping: raises a value error listing the
+        # keys that are not in the class's allowed split keys. Returns nothing.
         """
         Checks that dict has only the appropriate keys for orient='split'.
         """
@@ -1192,6 +1446,10 @@ class Parser:
 
     @final
     def parse(self) -> DataFrame | Series:
+        # [FUNCTION DOC]
+        # Main entry point. Decodes the text via the subclass decode step, converts axes
+        # when convert_axes is set, then converts value types via the subclass step.
+        # Returns the resulting frame or series.
         obj = self._parse()
 
         if self.convert_axes:
@@ -1200,10 +1458,19 @@ class Parser:
         return obj
 
     def _parse(self) -> DataFrame | Series:
+        # [FUNCTION DOC]
+        # HELPER: abstract decode step implemented by subclasses; base raises an
+        # abstract-method error.
         raise AbstractMethodError(self)
 
     @final
     def _convert_axes(self, obj: DataFrame | Series) -> DataFrame | Series:
+        # [FUNCTION DOC]
+        # HELPER: attempts to convert each axis of the object (in place) into better
+        # typed labels. Each axis is wrapped as a series and run through the data
+        # conversion helper without honoring dtype settings but allowing date
+        # conversion; if the helper reports a change, the axis is replaced with the
+        # converted labels. Returns the same object.
         """
         Try to convert axes.
         """
@@ -1223,6 +1490,9 @@ class Parser:
         return obj
 
     def _try_convert_types(self, obj):
+        # [FUNCTION DOC]
+        # HELPER: abstract hook to coerce value types of the decoded object; subclasses
+        # return the converted object. Base raises an abstract-method error.
         raise AbstractMethodError(self)
 
     @final
@@ -1234,6 +1504,21 @@ class Parser:
         convert_dates: bool | list[str] = True,
         is_axis: bool = False,
     ) -> tuple[Series, bool]:
+        # [FUNCTION DOC]
+        # HELPER: tries to coerce one series to a better dtype. Parameters: name is the
+        # column or axis name; data the series; use_dtypes says whether the dtype option
+        # applies; convert_dates says whether (or for which names) date parsing is
+        # allowed; is_axis says it is an axis being converted. Returns a pair of the
+        # resulting series and a flag telling whether it was changed.
+        # Behavior: when dtype use is on, a falsy dtype leaves fully non-missing data
+        # untouched and otherwise returns data with missing values normalized to NaN;
+        # a mapping or single dtype is applied through a cast (when the column is not
+        # a date column) and failure returns the original unchanged; a true dtype goes to
+        # inference. Then date parsing is attempted. With a dtype backend set and not an
+        # axis, data is returned changed so later conversion handles it. Otherwise string
+        # data is tried as float64, other floats are widened to float64, float or object
+        # data is tried as int64 when lossless, and smaller ints are widened to int64.
+        # For the index of a split orient with data, the result is reported as unchanged.
         """
         Try to parse a Series into a column by inferring dtype.
         """
@@ -1316,6 +1601,16 @@ class Parser:
 
     @final
     def _try_convert_to_date(self, data: Series) -> Series:
+        # [FUNCTION DOC]
+        # HELPER: attempts to parse a series into datetimes. Returns it unchanged if empty.
+        # Object or string data is first tried as int64 (overflow returns unchanged data).
+        # Numbers below the minimum timestamp threshold (ignoring missing values and the
+        # missing marker) leave the data unchanged. String data is tried with
+        # datetime parsing using default, ISO 8601 and mixed formats, ignoring format
+        # inference warnings, returning the first success. Other data is tried with each
+        # allowed unit (only date_unit when set), requiring the result to fit into
+        # nanosecond bounds; out-of-bounds moves to the next unit, other errors are
+        # ignored. Returns converted data or the (possibly integer-converted) original.
         """
         Try to parse an ndarray like into a date column.
 
@@ -1376,10 +1671,18 @@ class Parser:
 
 
 class SeriesParser(Parser):
+    # [CLASS DOC]
+    # Parser producing a series. Default orient is index; allowed split keys are
+    # name, index and data.
     _default_orient = "index"
     _split_keys = ("name", "index", "data")
 
     def _parse(self) -> Series:
+        # [FUNCTION DOC]
+        # HELPER: decodes the JSON text with the C decoder (honoring precise_float). For
+        # split orient, checks the keys and builds a series from name, index and data
+        # entries; otherwise builds a series from the decoded mapping or list. Returns
+        # a series. Raises a value error for unexpected split keys.
         data = ujson_loads(self.json, precise_float=self.precise_float)
 
         if self.orient == "split":
@@ -1390,15 +1693,29 @@ class SeriesParser(Parser):
             return Series(data)
 
     def _try_convert_types(self, obj: Series) -> Series:
+        # [FUNCTION DOC]
+        # HELPER: applies the data conversion helper to the whole series (labeled data,
+        # with the configured date conversion) and returns the converted series.
         obj, _ = self._try_convert_data("data", obj, convert_dates=self.convert_dates)
         return obj
 
 
 class FrameParser(Parser):
+    # [CLASS DOC]
+    # Parser producing a frame. Default orient is columns; allowed split keys are
+    # columns, index and data.
     _default_orient = "columns"
     _split_keys = ("columns", "index", "data")
 
     def _parse(self) -> DataFrame:
+        # [FUNCTION DOC]
+        # HELPER: decodes the text into a frame according to orient. Split: decodes,
+        # checks keys, turns list-valued column labels into tuples and de-duplicates
+        # column names (as a multi-level label set when applicable), then builds a
+        # frame without dtype inference. Index orient: builds from a mapping of rows.
+        # Table orient: delegates to the Table Schema parser. Any other orient (including
+        # columns) builds from a mapping of columns. Raises a value error for unexpected
+        # split keys.
         json = self.json
         orient = self.orient
 
@@ -1432,6 +1749,11 @@ class FrameParser(Parser):
             )
 
     def _try_convert_types(self, obj: DataFrame) -> DataFrame:
+        # [FUNCTION DOC]
+        # HELPER: converts the type of every column. For each column applies the data
+        # conversion helper with date conversion decided per column by the date-column
+        # predicate, collects the resulting arrays and rebuilds a frame with the same
+        # columns and index without integrity verification. Returns the new frame.
         arrays = []
         for col_label, series in obj.items():
             result, _ = self._try_convert_data(
@@ -1454,6 +1776,13 @@ def _should_convert_dates(
     keep_default_dates: bool,
     col: Hashable,
 ) -> bool:
+    # [FUNCTION DOC]
+    # HELPER: predicate for the parsers. Decides whether a column should be parsed
+    # as dates. convert_dates false: never. A list containing the column: yes.
+    # Otherwise requires keep_default_dates and a string label whose lower-cased
+    # form ends with an at or time suffix, equals modified, date or datetime, or starts
+    # with timestamp. Returns a boolean.
+    # KNOWN ISSUE: the comment in the first branch says that true follows the default-dates setting, which is misplaced since that branch handles the false case.
     """
     Return bool whether a DataFrame column should be cast to datetime.
     """

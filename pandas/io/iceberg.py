@@ -1,3 +1,10 @@
+# [MODULE DOC]
+# Apache Iceberg I/O for pandas. Public contents: read_iceberg (exposed as a
+# top-level pandas function) and to_iceberg (used by the frame writer method).
+# Both rely on the optional dependencies pyiceberg (and pyarrow for writing),
+# imported lazily inside the functions, so importing this module has no side
+# effects and does not require them. Depends on DataFrame from the top-level
+# package.
 from typing import (
     Any,
 )
@@ -21,6 +28,20 @@ def read_iceberg(
     limit: int | None = None,
     scan_properties: dict[str, Any] | None = None,
 ) -> DataFrame:
+    # [FUNCTION DOC]
+    # Reads an Apache Iceberg table into a new frame using PyIceberg (public
+    # as the top-level pandas reader; module name is set to pandas).
+    # Parameters: table_identifier names the table; catalog_name selects the
+    # catalog (None uses PyIceberg's default); catalog_properties (keyword-only,
+    # default none -> empty) are extra settings for loading the catalog;
+    # columns (default none -> all columns) restricts the selected fields;
+    # row_filter (default none -> match all rows) is a filter expression string;
+    # case_sensitive (default true) controls column-name matching; snapshot_id
+    # (default none -> current snapshot) enables time travel; limit (default
+    # none -> all rows) caps the number of rows; scan_properties (default none
+    # -> empty) are extra scan options.
+    # Returns the scan result converted to a frame. Raises an import error when
+    # pyiceberg is not installed. No writes; only catalog/table reads.
     """
     Read an Apache Iceberg table into a pandas DataFrame.
 
@@ -109,6 +130,20 @@ def to_iceberg(
     append: bool = False,
     snapshot_properties: dict[str, str] | None = None,
 ) -> None:
+    # [FUNCTION DOC]
+    # Writes a frame to an Apache Iceberg table through PyIceberg and pyarrow.
+    # Parameters: df is the frame to write; table_identifier names the target
+    # table; catalog_name is the catalog to load (None lets PyIceberg choose a
+    # default); catalog_properties (keyword-only, default none, treated as empty)
+    # are extra settings forwarded when loading the catalog; location (default
+    # none) is the storage location used only if the table must be created;
+    # append (default false) chooses between appending to the table and
+    # replacing its content; snapshot_properties (default none, treated as
+    # empty) are custom entries added to the snapshot summary.
+    # Returns nothing. Side effects: creates the table if it does not exist
+    # (schema derived from the converted arrow table) and commits a new
+    # snapshot. Raises an import error if pyarrow or pyiceberg is missing.
+    # KNOWN ISSUE: the docstring's Parameters section does not document df.
     """
     Write a DataFrame to an Apache Iceberg table.
 

@@ -1,6 +1,16 @@
 """
 :mod:`pandas.io.formats.xml` is a module for formatting data in XML.
 """
+# [MODULE DOC]
+# Formatting of a DataFrame as an XML document for the frame-to-xml writer.
+# Public contents: the abstract base formatter, the standard-library based
+# formatter (EtreeXMLFormatter) and the lxml based formatter (LxmlXMLFormatter,
+# which additionally supports XSLT stylesheets). All three classes live here;
+# the io-level writer chooses one by parser name and calls its output method.
+# Relationships: uses file-handle utilities from the io common module and the
+# stylesheet reader from the xml reader module. lxml and the xml standard
+# library modules are imported lazily inside methods, so import has no side
+# effects.
 
 from __future__ import annotations
 
@@ -34,6 +44,21 @@ if TYPE_CHECKING:
 
 
 class _BaseXMLFormatter:
+    # [CLASS DOC]
+    # Abstract base class holding the shared logic for XML formatters.
+    # State: all constructor arguments are stored as attributes of the same name;
+    # orig_cols is the original column labels of the frame; frame_dicts is a mapping
+    # from row position to a mapping of column to value (index included when
+    # requested, missing values filled when a replacement is given); prefix_uri is the
+    # brace-wrapped namespace URI for the chosen prefix (empty if none).
+    # Subclasses must implement the tree builder, the prefix URI lookup and the
+    # sub-element class property (all raise an abstract-method error here).
+    # Key public method: write_output. Invariant: the constructor validates
+    # columns, encoding, and computes prefix_uri before index columns are
+    # prepended to the attribute/element column lists.
+    # KNOWN ISSUE: the class docstring describes the arguments as row_name being the root
+    # element name and root_name being the row element name (swapped relative to the
+    # code), uses the name attrs_cols instead of attr_cols, and omits frame.
     """
     Subclass for formatting data in XML.
 
@@ -132,6 +157,26 @@ class _BaseXMLFormatter:
         compression: CompressionOptions = "infer",
         storage_options: StorageOptions | None = None,
     ) -> None:
+        # [FUNCTION DOC]
+        # Store the options and precompute derived state.
+        # Parameters: frame is the frame to serialize; path_or_buffer is a path or
+        # writable buffer, or none to return a string (default none); index says whether
+        # the index is written as extra columns (default true); root_name is the root
+        # element name (default "data"); row_name is the per-row element name (default
+        # "row"); na_rep is the replacement for missing values (default none, which
+        # leaves them as-is); attr_cols and elem_cols are lists of columns to write as
+        # attributes and child elements (default none); namespaces maps prefix to URI
+        # (default none); prefix selects the namespace prefix used for all elements
+        # (default none); encoding is the output encoding (default utf-8);
+        # xml_declaration says whether to emit the declaration (default true);
+        # pretty_print says whether to indent (default true); stylesheet is an XSLT
+        # source (default none); compression and storage_options are forwarded to file
+        # opening (defaults infer and none).
+        # Effects: records orig_cols, builds frame_dicts, validates the column lists and
+        # encoding (raising type error for non list-like column lists, lookup error for
+        # unknown encodings), computes prefix_uri, then prepends index column names to the
+        # attribute and element column lists when those are non-empty and the index is
+        # included.
         self.frame = frame
         self.path_or_buffer = path_or_buffer
         self.index = index
@@ -158,6 +203,10 @@ class _BaseXMLFormatter:
         self._handle_indexes()
 
     def _build_tree(self) -> bytes:
+        # [FUNCTION DOC]
+        # HELPER: abstract hook for write_output. Subclasses build the whole XML
+        # document and return it encoded as bytes. The base implementation always raises an
+        # abstract-method error.
         """
         Build tree from  data.
 
@@ -168,6 +217,11 @@ class _BaseXMLFormatter:
 
     @final
     def _validate_columns(self) -> None:
+        # [FUNCTION DOC]
+        # HELPER: constructor validation for the attribute and element column lists.
+        # Raises a type error when either list is truthy but not list-like; otherwise
+        # returns nothing.
+        # KNOWN ISSUE: the docstring says it raises a value error, but the code raises a type error.
         """
         Validate elems_cols and attrs_cols.
 
@@ -190,6 +244,9 @@ class _BaseXMLFormatter:
 
     @final
     def _validate_encoding(self) -> None:
+        # [FUNCTION DOC]
+        # HELPER: constructor validation of the encoding name. Looks the encoding up in
+        # the codec registry; an unknown name raises a lookup error. Returns nothing.
         """
         Validate encoding.
 
@@ -205,6 +262,10 @@ class _BaseXMLFormatter:
 
     @final
     def _process_dataframe(self) -> dict[int | str, dict[str, Any]]:
+        # [FUNCTION DOC]
+        # HELPER: prepares the frame for output. Resets the index into columns when
+        # index output is enabled, replaces missing values with na_rep when it is not
+        # none, and returns a mapping from row position to a dict of column to value.
         """
         Adjust Data Frame to fit xml output.
 
@@ -224,6 +285,13 @@ class _BaseXMLFormatter:
 
     @final
     def _handle_indexes(self) -> None:
+        # [FUNCTION DOC]
+        # HELPER: when the index is written, determines the index column names (keys of
+        # the first row mapping that are not among the original columns) and prepends
+        # them to the attribute and element column lists, each only if non-empty.
+        # Does nothing if the index is not written.
+        # Raises a stop-iteration error if the frame has no rows, since the first row
+        # is taken from the row mapping.
         """
         Handle indexes.
 
@@ -245,6 +313,11 @@ class _BaseXMLFormatter:
             self.elem_cols = indexes + self.elem_cols
 
     def _get_prefix_uri(self) -> str:
+        # [FUNCTION DOC]
+        # HELPER: abstract hook returning the namespace URI (wrapped in braces) matching
+        # the configured prefix. Subclasses implement it; the base raises an
+        # abstract-method error.
+        # KNOWN ISSUE: the docstring mentions a key error for a missing prefix, but this base version only raises the abstract-method error; the key error comes from subclasses.
         """
         Get uri of namespace prefix.
 
@@ -260,6 +333,11 @@ class _BaseXMLFormatter:
 
     @final
     def _other_namespaces(self) -> dict:
+        # [FUNCTION DOC]
+        # HELPER: builds the extra namespace declarations for the root element. Returns
+        # a mapping of declaration attribute names (default one for an empty prefix, or
+        # prefixed ones) to URIs, skipping the URI that is already used as the element
+        # prefix. Returns an empty mapping when no namespaces are configured.
         """
         Define other namespaces.
 
@@ -280,6 +358,13 @@ class _BaseXMLFormatter:
 
     @final
     def _build_attribs(self, d: dict[str, Any], elem_row: Any) -> Any:
+        # [FUNCTION DOC]
+        # HELPER: writes the attribute columns onto a row element. Parameters: d is the
+        # row mapping of column to value; elem_row is the row element. For every column
+        # in attr_cols, sets an attribute (name from the flattened column name) to the
+        # string form of the value unless it is missing. Returns the same element
+        # (unchanged if attr_cols is empty). Raises a key error naming the column when it
+        # is absent from the row mapping.
         """
         Create attributes of row.
 
@@ -301,6 +386,11 @@ class _BaseXMLFormatter:
 
     @final
     def _get_flat_col_name(self, col: str | tuple) -> str:
+        # [FUNCTION DOC]
+        # HELPER: converts a column label into an element/attribute name prefixed with
+        # prefix_uri. Tuple labels (multi-level columns) are joined by concatenation if
+        # any part is an empty string, otherwise joined with underscores, then stripped.
+        # Non-tuple labels are used as-is.
         flat_col = col
         if isinstance(col, tuple):
             flat_col = (
@@ -312,10 +402,20 @@ class _BaseXMLFormatter:
 
     @cache_readonly
     def _sub_element_cls(self):
+        # [FUNCTION DOC]
+        # HELPER: cached abstract property returning the sub-element factory of the
+        # backing XML library. The base raises an abstract-method error.
         raise AbstractMethodError(self)
 
     @final
     def _build_elems(self, d: dict[str, Any], elem_row: Any) -> None:
+        # [FUNCTION DOC]
+        # HELPER: writes the element columns as children of a row element. Parameters:
+        # d is the row mapping; elem_row is the row element. For each column in
+        # elem_cols creates a child named by the flattened column name whose text is the
+        # string form of the value, or no text when the value is missing or an empty
+        # string. Does nothing if elem_cols is empty; raises a key error naming the
+        # column if it is absent. Returns nothing.
         """
         Create child elements of row.
 
@@ -337,6 +437,11 @@ class _BaseXMLFormatter:
 
     @final
     def write_output(self) -> str | None:
+        # [FUNCTION DOC]
+        # Builds the XML document and emits it. If path_or_buffer is set, writes the
+        # bytes to it in binary mode using the configured compression and storage
+        # options and returns none. Otherwise returns the document decoded with the
+        # configured encoding with trailing whitespace removed.
         xml_doc = self._build_tree()
 
         if self.path_or_buffer is not None:
@@ -355,12 +460,28 @@ class _BaseXMLFormatter:
 
 
 class EtreeXMLFormatter(_BaseXMLFormatter):
+    # [CLASS DOC]
+    # Concrete formatter built on the standard library element tree and minidom
+    # modules. Implements the tree building, prefix lookup, sub-element class, and
+    # pretty printing hooks. Extra state: root (root element) and out_xml (the
+    # serialized bytes) set while building. Does not support stylesheets.
     """
     Class for formatting data in xml using Python standard library
     modules: `xml.etree.ElementTree` and `xml.dom.minidom`.
     """
 
     def _build_tree(self) -> bytes:
+        # [FUNCTION DOC]
+        # Builds the document using the standard library: creates the root element with
+        # the extra namespace declarations, adds one row element per entry in
+        # frame_dicts; if neither attribute nor element columns were given, all keys of
+        # the row mapping become element columns (this assignment persists on the
+        # instance) and are written, otherwise attributes and elements are written.
+        # Serializes with the configured encoding and declaration setting, optionally
+        # pretty-prints (reparsing with minidom), and returns the bytes.
+        # Raises a value error if a stylesheet was given (needs lxml). Sets root and
+        # out_xml.
+        # KNOWN ISSUE: the stylesheet error is raised only after the tree has been serialized and pretty-printed, so the work is wasted.
         from xml.etree.ElementTree import (
             Element,
             SubElement,
@@ -400,6 +521,12 @@ class EtreeXMLFormatter(_BaseXMLFormatter):
         return self.out_xml
 
     def _get_prefix_uri(self) -> str:
+        # [FUNCTION DOC]
+        # HELPER: returns the brace-wrapped URI for the prefix, or the empty string.
+        # When namespaces are given, registers every string prefix/URI pair with the
+        # library's global namespace registry (global side effect). If a prefix is set, uses
+        # its URI (raising a key error saying the prefix is not in namespaces if absent);
+        # else uses the default (empty-prefix) namespace if present; else empty.
         from xml.etree.ElementTree import register_namespace
 
         uri = ""
@@ -423,11 +550,16 @@ class EtreeXMLFormatter(_BaseXMLFormatter):
 
     @cache_readonly
     def _sub_element_cls(self):
+        # [FUNCTION DOC]
+        # HELPER: cached property returning the standard library sub-element factory.
         from xml.etree.ElementTree import SubElement
 
         return SubElement
 
     def _prettify_tree(self) -> bytes:
+        # [FUNCTION DOC]
+        # HELPER: reparses the serialized document with minidom and returns it as
+        # indented bytes (two spaces) in the configured encoding.
         """
         Output tree for pretty print format.
 
@@ -442,17 +574,34 @@ class EtreeXMLFormatter(_BaseXMLFormatter):
 
 
 class LxmlXMLFormatter(_BaseXMLFormatter):
+    # [CLASS DOC]
+    # Concrete formatter built on lxml. Implements tree building with native
+    # namespace map support and optional XSLT transformation of the result.
+    # State: root (lxml root element) and out_xml (serialized bytes) set while
+    # building. Replaces an empty-string namespace key by none at construction.
+    # KNOWN ISSUE: the class docstring is copied from the standard library formatter and wrongly says it uses the standard library modules.
     """
     Class for formatting data in xml using Python standard library
     modules: `xml.etree.ElementTree` and `xml.dom.minidom`.
     """
 
     def __init__(self, *args, **kwargs) -> None:
+        # [FUNCTION DOC]
+        # Runs the base constructor with all arguments, then converts an empty-string
+        # namespace prefix key into none (the form lxml requires). Arguments are
+        # passed through unchanged.
         super().__init__(*args, **kwargs)
 
         self._convert_empty_str_key()
 
     def _build_tree(self) -> bytes:
+        # [FUNCTION DOC]
+        # Builds the document using lxml: creates the root element with the namespace
+        # map as given, adds a row element per entry (same default-all-columns behavior
+        # as the base standard library formatter, which stores the column list on the
+        # instance), writes attributes/elements, and serializes with pretty printing,
+        # encoding, and declaration options. If a stylesheet is set, the result is
+        # transformed with it. Returns bytes; sets root and out_xml.
         """
         Build tree from  data.
 
@@ -492,6 +641,10 @@ class LxmlXMLFormatter(_BaseXMLFormatter):
         return self.out_xml
 
     def _convert_empty_str_key(self) -> None:
+        # [FUNCTION DOC]
+        # HELPER: if the namespaces mapping has an empty-string key, moves its value to a
+        # none key (default placeholder if popping fails). Mutates the caller's mapping in
+        # place. Returns nothing.
         """
         Replace zero-length string in `namespaces`.
 
@@ -503,6 +656,11 @@ class LxmlXMLFormatter(_BaseXMLFormatter):
             self.namespaces[None] = self.namespaces.pop("", "default")
 
     def _get_prefix_uri(self) -> str:
+        # [FUNCTION DOC]
+        # HELPER: returns the brace-wrapped URI for the configured prefix, else for
+        # the empty-prefix namespace, else the empty string. Raises a key error saying
+        # the prefix is not in namespaces if a prefix is set but absent. Unlike the
+        # standard library variant, does not register namespaces globally.
         uri = ""
         if self.namespaces:
             if self.prefix:
@@ -521,11 +679,20 @@ class LxmlXMLFormatter(_BaseXMLFormatter):
 
     @cache_readonly
     def _sub_element_cls(self):
+        # [FUNCTION DOC]
+        # HELPER: cached property returning the lxml sub-element factory.
         from lxml.etree import SubElement
 
         return SubElement
 
     def _transform_doc(self) -> bytes:
+        # [FUNCTION DOC]
+        # HELPER: applies the XSLT stylesheet to the built tree. Reads the stylesheet
+        # (path, URL, buffer or raw string) through the xml reader's data loader with the
+        # configured encoding, compression and storage options, parses it (from encoded
+        # text for string buffers, else directly), applies it to root, and returns the
+        # result as bytes. Raises parser or transform errors from lxml for invalid
+        # stylesheets.
         """
         Parse stylesheet from file or buffer and run it.
 

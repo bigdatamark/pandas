@@ -1,3 +1,18 @@
+# [MODULE DOC]
+# Rendering engine behind the table styler (the Styler class in the sibling
+# style module inherits from the renderer here). It converts a frame plus
+# accumulated style state into a dictionary consumed by jinja2 templates
+# (HTML, LaTeX, Typst, plain string), and holds the value-formatting machinery.
+# Contents: type aliases for style structures (CSS pairs, lists, dicts, subsets and
+# formatters); the CSSDict typed mapping; StylerRenderer (base class with
+# rendering, header/body translation, formatting of values, index, and index
+# names, and relabeling); the Tooltips helper class; and many helpers for trimming
+# large tables, computing sparsified index level lengths, default value
+# formatting, HTML/LaTeX escaping and LaTeX style parsing.
+# Import-time side effects: requires the optional dependency jinja2 (import error
+# with an explanatory message if absent) and markupsafe; the renderer class body
+# creates the template environment and loads all five template files from the
+# templates directory next to this module.
 from __future__ import annotations
 
 from collections import defaultdict
@@ -58,6 +73,9 @@ CSSProperties: TypeAlias = str | CSSList
 
 
 class CSSDict(TypedDict):
+    # [CLASS DOC]
+    # Typed dictionary describing one CSS rule: a selector string and its properties
+    # (either a CSS string or a list of property/value pairs).
     selector: str
     props: CSSProperties
 
@@ -67,6 +85,22 @@ Subset = slice | Sequence | Index
 
 
 class StylerRenderer:
+    # [CLASS DOC]
+    # Base class that turns a frame and style state into render dictionaries and
+    # template output.
+    # Class attributes: the directory of the module, the template directory, the
+    # jinja2 loader and environment (trim blocks on) and six loaded templates (html,
+    # html table, html style, latex, typst, string).
+    # Instance state: data, index, columns; uuid and uuid_len; table_styles,
+    # table_attributes, caption, cell_ids; css (map of logical element names to class
+    # names); concatenated (list of stylers appended below); hide flags for index and
+    # column levels and their names; hidden_rows and hidden_columns; style contexts
+    # for data cells (ctx), index (ctx_index) and columns (ctx_columns) mapping
+    # position to CSS pairs; cell_context (extra class per cell); _todo (deferred
+    # style functions as triples of callable, args, kwargs); tooltips; and
+    # per-element display functions (data, index, columns, index names, column
+    # names) defaulting to the default formatter with the configured precision.
+    # The cellstyle maps are created during translation.
     """
     Base class to process rendering a Styler with a specified jinja2 template.
     """
@@ -93,6 +127,17 @@ class StylerRenderer:
         cell_ids: bool = True,
         precision: int | None = None,
     ) -> None:
+        # [FUNCTION DOC]
+        # Initializes rendering state. Parameters: data is a frame or series (a series is
+        # converted to a one-column frame; anything else raises a type error);
+        # uuid is a table identifier (default none, a random hex string of at most
+        # 32 characters and of length uuid_len is generated); uuid_len (default 5) must be
+        # a non-negative integer or a type error is raised; table_styles, table_attributes
+        # and caption are stored as given; cell_ids (default true) controls whether cells
+        # get id attributes; precision (default none, taken from the styler precision
+        # option) is the default float precision of formatters.
+        # The stored uuid_len is the length of the final uuid.
+        # KNOWN ISSUE: the error message says uuid_len must be in the range 0 to 32 but only non-negativity and integer type are checked; larger values are silently capped at 32 when a uuid is generated.
         # validate ordered args
         if isinstance(data, Series):
             data = data.to_frame()
@@ -163,6 +208,18 @@ class StylerRenderer:
         max_cols: int | None = None,
         blank: str = "",
     ):
+        # [FUNCTION DOC]
+        # HELPER: computes styles and builds the generic render dictionary.
+        # Parameters: sparse_index and sparse_columns say whether to sparsify
+        # multi-level labels; max_rows and max_cols limit rendered size (default none,
+        # meaning options decide); blank is the filler text for blank header cells
+        # (default empty). Runs the deferred style functions, then recursively renders
+        # each concatenated styler (giving it this styler's hidden index levels and
+        # hidden columns, and its own css class names derived from a numbered footer
+        # prefix), and copies their data and index style contexts into this styler's
+        # contexts shifted by the row offset (this mutates the contexts). Finally
+        # translates this styler together with the concatenated render dictionaries.
+        # Returns the render dictionary.
         """
         Computes and applies styles and then generates the general render dicts.
 
@@ -208,6 +265,12 @@ class StylerRenderer:
         max_cols: int | None = None,
         **kwargs,
     ) -> str:
+        # [FUNCTION DOC]
+        # HELPER: renders to an HTML string. Parameters: sparse flags and optional
+        # max_rows and max_cols as for the generic render; extra keyword arguments are
+        # merged into the render dictionary (overriding entries) before templating.
+        # Uses a non-breaking space as the blank filler. Returns the HTML text produced by
+        # the html template, passing in the table and style subtemplates.
         """
         Renders the ``Styler`` including all applied styles to HTML.
         Generates a dict with necessary kwargs passed to jinja2 template.
@@ -223,6 +286,14 @@ class StylerRenderer:
     def _render_latex(
         self, sparse_index: bool, sparse_columns: bool, clines: str | None, **kwargs
     ) -> str:
+        # [FUNCTION DOC]
+        # HELPER: renders to LaTeX text. Parameters: sparse flags; clines is the cline
+        # mode (none or one of the allowed combined strings, validated by the LaTeX
+        # translation which raises a value error otherwise); extra keyword arguments are
+        # merged into the render dictionary. No row/column limits are applied. Post-processes the
+        # dictionary for LaTeX, registers the LaTeX style-parsing helper functions as
+        # globals of the shared LaTeX template (a side effect on the class-level
+        # template), and returns the rendered text.
         """
         Render a Styler in latex format
         """
@@ -243,6 +314,10 @@ class StylerRenderer:
         max_cols: int | None = None,
         **kwargs,
     ) -> str:
+        # [FUNCTION DOC]
+        # HELPER: renders to Typst text. Parameters: sparse flags, optional max_rows and
+        # max_cols, extra keyword arguments merged into the render dictionary. Uses an
+        # empty blank filler. Returns the text from the Typst template.
         """
         Render a Styler in typst format
         """
@@ -258,6 +333,11 @@ class StylerRenderer:
         max_cols: int | None = None,
         **kwargs,
     ) -> str:
+        # [FUNCTION DOC]
+        # HELPER: renders to plain string text. Parameters: sparse flags, optional
+        # max_rows and max_cols, extra keyword arguments merged into the render
+        # dictionary. Uses an empty blank filler. Returns the text from the string
+        # template.
         """
         Render a Styler in string format
         """
@@ -266,6 +346,12 @@ class StylerRenderer:
         return self.template_string.render(**d)
 
     def _compute(self):
+        # [FUNCTION DOC]
+        # HELPER: clears the three style contexts (data, index, columns) and then replays
+        # every deferred style function in order, each called with this styler to obtain
+        # a method that is invoked with the saved arguments. Returns the result of the last
+        # call (this styler itself if there are no deferred functions).
+        # KNOWN ISSUE: the docstring text about "the append styles to apply" is garbled and does not describe the actual triple structure clearly.
         """
         Execute the style functions built up in `self._todo`.
 
@@ -291,6 +377,21 @@ class StylerRenderer:
         blank: str = "&nbsp;",
         dxs: list[dict] | None = None,
     ):
+        # [FUNCTION DOC]
+        # HELPER: builds the dictionary given to the templates. Parameters: sparse_index
+        # and sparse_cols control sparsification; max_rows and max_cols are explicit
+        # limits (falsy values fall back to the render options); blank is the filler for
+        # blank header cells (default non-breaking space), recorded in the css map;
+        # dxs is the list of render dictionaries of concatenated stylers (default none).
+        # Resolves trimming maximums from options and frame size, creates fresh cell
+        # style maps (data, index, columns) as attributes, builds the head and body,
+        # computes index level lengths, and adds the style maps as lists of property and
+        # selector entries. Appends the body and cell style entries of the concatenated
+        # dictionaries. Unless the mathjax option is enabled, adds the ignore classes to
+        # the table attributes (merging into an existing class attribute or adding one).
+        # Lets the tooltips object extend the dictionary when present.
+        # Returns a dictionary with entries for uuid, table styles, caption, head, index
+        # lengths, body, the three cellstyle lists and table attributes (plus tooltip data).
         """
         Process Styler data and settings into a dict for template rendering.
 
@@ -397,6 +498,13 @@ class StylerRenderer:
         return d
 
     def _translate_header(self, sparsify_cols: bool, max_cols: int):
+        # [FUNCTION DOC]
+        # HELPER: builds the header rows of the table as lists of elements.
+        # Parameters: sparsify_cols says whether header cells get colspans; max_cols is
+        # the column limit with a trimming filler. Computes column level lengths, then
+        # emits one row per visible column level (skipping hidden levels or when there are no
+        # column labels) and, if the index has any non-none name and index names are not
+        # hidden or fully hidden, one extra row with index names. Returns the list of rows.
         """
         Build each <tr> within table <head> as a list
 
@@ -459,6 +567,18 @@ class StylerRenderer:
     def _generate_col_header_row(
         self, iter: Sequence, max_cols: int, col_lengths: dict
     ):
+        # [FUNCTION DOC]
+        # HELPER: builds one header row for column level r. The first argument is a pair
+        # of the level number and the list of per-level label tuples; max_cols is the
+        # column limit; col_lengths maps (level, column) to sparse span length.
+        # The row consists of blank cells for index levels (number of visible index
+        # levels less one), a cell with the column level name (blank-styled if the name
+        # is none, hidden when all index levels are hidden), and one header cell per column.
+        # Header cells get a colspan when the span is greater than one, an id when cell
+        # ids are on or a style exists for the cell (registering that style's selector in
+        # the column cell style map), and a trimming cell replaces the rest when the visible
+        # count exceeds max_cols. Returns the row as a list of elements.
+        # KNOWN ISSUE: the docstring's entry for col_lengths is a meaningless placeholder letter.
         """
         Generate the row containing column headers:
 
@@ -559,6 +679,15 @@ class StylerRenderer:
     def _generate_index_names_row(
         self, iter: Sequence, max_cols: int, col_lengths: dict
     ):
+        # [FUNCTION DOC]
+        # HELPER: builds the row of index names for the header. The first argument is the
+        # list of column label tuples per level (not a pair, despite its name); max_cols
+        # is the limit; col_lengths maps positions to sparse lengths.
+        # The row has one cell per index level showing the name (blank if none, formatted by
+        # the index-name display function), visible unless that level is hidden, then
+        # blank cells for the columns taken from the last column level (counting only
+        # visible columns and inserting a trimming cell when over max_cols).
+        # Returns the row as a list of elements.
         """
         Generate the row containing index names
 
@@ -623,6 +752,14 @@ class StylerRenderer:
         return index_names + column_blanks
 
     def _translate_body(self, idx_lengths: dict, max_rows: int, max_cols: int):
+        # [FUNCTION DOC]
+        # HELPER: builds the body rows. Parameters: idx_lengths maps index positions to
+        # sparse spans; max_rows and max_cols are the limits. Iterates rows not hidden;
+        # inserts a trimming row and stops once the visible count exceeds max_rows; each
+        # row is generated by the body row helper from the row number, the row tuple and the
+        # list of index label tuples. Also fills the cell style maps as a side effect.
+        # Returns the list of rows.
+        # KNOWN ISSUE: the docstring documents a parameter sparsify_index that does not exist, and omits the actual parameters.
         """
         Build each <tr> within table <body> as a list
 
@@ -677,6 +814,15 @@ class StylerRenderer:
         css: str | None = None,
         value: str = "...",
     ) -> bool:
+        # [FUNCTION DOC]
+        # HELPER: loop guard for trimming. Parameters: count is the number of visible
+        # items so far; max is the allowed number; obj is the list of rendered items to
+        # which the trimming element is appended; element is the element kind (the
+        # value row means a full trimming row, anything else is a single cell of that
+        # kind); css is the class string for a single trimming cell (default none);
+        # value is its text (default an ellipsis). If count exceeds max, appends the
+        # trimming item to obj and returns true, else returns false.
+        # KNOWN ISSUE: for a trimming row the limit passed in is the maximum number of rows, yet it is forwarded to the row builder as the maximum number of columns, so the trimming row shows a number of columns based on the row limit.
         """
         Indicates whether to break render loops and append a trimming indicator
 
@@ -709,6 +855,12 @@ class StylerRenderer:
         return False
 
     def _generate_trimmed_row(self, max_cols: int) -> list:
+        # [FUNCTION DOC]
+        # HELPER: builds the row of ellipsis cells shown when rows are trimmed.
+        # Parameter max_cols is the allowed column count. The row has one ellipsis
+        # header cell per index level (hidden per level) followed by one ellipsis data
+        # cell per column (hidden for hidden columns), ending early with a trimming cell
+        # once the visible count exceeds max_cols. Returns the row as a list of elements.
         """
         When a render has too many rows we generate a trimming row containing "..."
 
@@ -768,6 +920,18 @@ class StylerRenderer:
         max_cols: int,
         idx_lengths: dict,
     ):
+        # [FUNCTION DOC]
+        # HELPER: builds one regular body row. The first argument is a triple of row
+        # position, row tuple (leading index element then values) and the list of index
+        # label tuples; max_cols is the column limit; idx_lengths maps positions to span
+        # lengths.
+        # Creates index header cells (visible only where sparsification allows and the level is
+        # not hidden, with a rowspan when the span exceeds one, formatted by the index
+        # display function) followed by data cells (visible unless the row or column is
+        # hidden, with extra class from the cell context, formatted by the data display
+        # function), adding ids when enabled or required by a style and registering the
+        # cell's style in the matching cell style map. Trims columns with a trimming cell
+        # when the visible count exceeds max_cols. Returns the row as a list of elements.
         """
         Generate a regular row for the body section of appropriate format.
 
@@ -873,6 +1037,19 @@ class StylerRenderer:
         return index_headers + data
 
     def _translate_latex(self, d: dict, clines: str | None) -> None:
+        # [FUNCTION DOC]
+        # HELPER: post-processes the render dictionary for LaTeX (modifies d in place,
+        # returns nothing). Parameters: d is the dictionary from the generic render;
+        # clines is the cline mode (none, or "all" or "skip-last" combined with data or
+        # index after a semicolon).
+        # Header: keeps only visible cells and attaches the column style for each. Body:
+        # pairs each remaining row with its true row number (accounting for hidden rows
+        # and concatenated stylers), keeps visible index header cells (blanking hidden
+        # display values) and visible data cells, attaching cell styles directly.
+        # Raises a value error for an invalid clines value. When clines is given, builds
+        # a mapping from row positions to cline command strings for visible index levels
+        # (skipping the last level for the skip-last modes), based on index lengths, and
+        # stores it in the dictionary.
         r"""
         Post-process the default render dict for the LaTeX template format.
 
@@ -895,6 +1072,11 @@ class StylerRenderer:
         ]
 
         def _concatenated_visible_rows(obj, n, row_indices):
+            # [FUNCTION DOC]
+            # HELPER: recursive collector of visible row numbers across a styler and its
+            # concatenated stylers. Arguments: obj is a styler; n is the running offset;
+            # row_indices is the output list extended in place with offset positions of rows that
+            # are not hidden. Returns the updated offset (total rows so far).
             """
             Extract all visible row indices recursively from concatenated stylers.
             """
@@ -907,6 +1089,10 @@ class StylerRenderer:
             return n
 
         def concatenated_visible_rows(obj):
+            # [FUNCTION DOC]
+            # HELPER: returns the list of visible row numbers of a styler including all
+            # concatenated ones, using the recursive collector with offset zero.
+            # KNOWN ISSUE: a source comment notes that the two row-collecting helpers should be consolidated into one recursive function.
             row_indices: list[int] = []
             _concatenated_visible_rows(obj, 0, row_indices)
             # TODO try to consolidate the concat visible rows
@@ -986,6 +1172,21 @@ class StylerRenderer:
         escape: str | None = None,
         hyperlinks: str | None = None,
     ) -> StylerRenderer:
+        # [FUNCTION DOC]
+        # Assigns display formatting functions to data cells (public styler method,
+        # returns this object for chaining). Parameters: formatter is a format
+        # specification string, a callable, a mapping from column label to either, or none for
+        # the default formatter; subset limits the cells (default none: all cells); na_rep
+        # replaces missing values (default none: untouched); precision overrides float
+        # precision when no formatter is used; decimal and thousands are the separators
+        # (defaults "." and none); escape is html, latex or latex-math to escape strings
+        # before formatting; hyperlinks is html or latex to convert URL-like substrings.
+        # If every argument is at its default, clears all stored data display functions and
+        # returns immediately. Otherwise normalizes the subset to a 2-d selection of
+        # the data, expands a non-mapping formatter to all selected columns, and for every
+        # selected column builds a wrapped formatter and stores it for every selected row
+        # position. Errors from invalid formatter or escape types surface from the
+        # wrapping helper (type error or value error).
         r"""
         Format the text display value of cells.
 
@@ -1244,6 +1445,17 @@ class StylerRenderer:
         escape: str | None = None,
         hyperlinks: str | None = None,
     ) -> StylerRenderer:
+        # [FUNCTION DOC]
+        # Assigns display formatting functions to index labels or column headers (public
+        # method, returns this object). Parameters: formatter as for the data formatter but
+        # a mapping is keyed by level (number or name); axis selects the index (0) or
+        # columns (1), default 0; level is the level or levels to format (default
+        # none: all); na_rep, precision, decimal, thousands, escape and hyperlinks as in
+        # the data formatter.
+        # Resolves the axis and level numbers; if all arguments are at their defaults
+        # (including level none) clears the stored functions for that axis and returns.
+        # Otherwise builds a wrapped formatter for each selected level and stores it for
+        # every label position along that axis at that level.
         r"""
         Format the text display value of index labels or column headers.
 
@@ -1426,6 +1638,17 @@ class StylerRenderer:
         axis: Axis = 0,
         level: Level | list[Level] | None = None,
     ) -> StylerRenderer:
+        # [FUNCTION DOC]
+        # Replaces the displayed text of index labels or column headers by the supplied
+        # labels (public method, returns this object). Parameters: labels is a sequence or
+        # index with exactly one entry per visible label along the axis (for several
+        # levels, each entry is a sequence with one value per level); axis is 0 for
+        # index or 1 for columns (default 0); level is the level(s) to relabel (default
+        # none: all non-hidden levels).
+        # Raises a value error if the number of labels differs from the number of visible
+        # (non-hidden) labels. Display functions are stored per visible position; a string
+        # label is treated as a format template filled with the original label, any other
+        # value is shown as given.
         r"""
         Relabel the index, or column header, keys to display a set of specified values.
 
@@ -1564,6 +1787,10 @@ class StylerRenderer:
         levels_ = refactor_levels(level, obj)
 
         def alias_(x, value):
+            # [FUNCTION DOC]
+            # HELPER: display function builder used with a fixed replacement value. Takes the
+            # original label x and the replacement value; if the value is a string returns it
+            # formatted with x substituted, otherwise returns the value unchanged.
             if isinstance(value, str):
                 return value.format(x)
             return value
@@ -1591,6 +1818,15 @@ class StylerRenderer:
         escape: str | None = None,
         hyperlinks: str | None = None,
     ) -> StylerRenderer:
+        # [FUNCTION DOC]
+        # Assigns display formatting functions to index names or column names (public
+        # method, returns this object, added in version 3.0). Parameters as for formatting
+        # index labels: formatter (callable, format string or mapping keyed by level), axis
+        # (0 for index names, 1 for column names; default 0), level (default none: all),
+        # na_rep, precision, decimal, thousands, escape, hyperlinks.
+        # If all arguments are at their defaults, clears the stored name display functions
+        # for that axis and returns. Otherwise builds one wrapped formatter per selected
+        # level and stores it by level number.
         r"""
         Format the text display value of index names or column names.
 
@@ -1721,6 +1957,13 @@ def _element(
     is_visible: bool,
     **kwargs,
 ) -> dict:
+    # [FUNCTION DOC]
+    # HELPER: creates the dictionary describing one table cell for the templates.
+    # Parameters: html_element is the tag kind (td or th); html_class the class string;
+    # value the raw value; is_visible whether it is shown; extra keyword arguments
+    # (such as display value, attributes, id) are included. If no display value is given
+    # or it is none, the raw value is used. Returns a dictionary with entries for
+    # type, value, class and visibility plus the extras.
     """
     Template to return container with information for a <td></td> or <th></th> element.
     """
@@ -1743,6 +1986,15 @@ def _get_trimming_maximums(
     max_cols=None,
     scaling_factor: float = 0.8,
 ) -> tuple[int, int]:
+    # [FUNCTION DOC]
+    # HELPER: determines how many rows and columns to render. Parameters: rn and cn
+    # are the actual numbers of rows and columns; max_elements is the maximum number
+    # of cells; max_rows and max_cols are optional initial caps (default none);
+    # scaling_factor (default 0.8) is the shrink factor. First caps the counts at the
+    # given maxima, then repeatedly reduces the larger dimension (the column count
+    # when columns are at least as many as rows) by the factor, truncating to an integer,
+    # until the product of the two fits max_elements. Returns the pair of rows
+    # and columns.
     """
     Recursively reduce the number of rows and columns to satisfy max elements.
 
@@ -1764,6 +2016,10 @@ def _get_trimming_maximums(
     """
 
     def scale_down(rn, cn):
+        # [FUNCTION DOC]
+        # HELPER: nested step of the trimming loop. Given rn and cn returns a pair where
+        # the larger dimension (columns on ties) is multiplied by the scaling factor and
+        # truncated.
         if cn >= rn:
             return rn, int(cn * scaling_factor)
         else:
@@ -1786,6 +2042,19 @@ def _get_level_lengths(
     max_index: int,
     hidden_elements: Sequence[int] | None = None,
 ):
+    # [FUNCTION DOC]
+    # HELPER: computes spans for sparsified labels. Parameters: index is the index or
+    # column labels; sparsify says whether repeated higher-level labels are merged;
+    # max_index is the maximum number of visible elements to analyze (trimming);
+    # hidden_elements are positions to skip (default none).
+    # Returns a mapping from (level, start position) to span length. For a flat index
+    # every non-hidden position has a span of one at level zero. For a multi-level
+    # index, each level is scanned: without sparsification every non-hidden position
+    # has span one; with it, the first position of a run starts a span and
+    # following blank (sparsified) positions extend it, with special handling when the
+    # start of a run is hidden (the first visible later position starts the span instead)
+    # and stopping once more than max_index visible items were counted. Entries with
+    # a zero span are removed.
     """
     Given an index, find the level length for each element.
 
@@ -1862,6 +2131,11 @@ def _get_level_lengths(
 
 
 def _is_visible(idx_row, idx_col, lengths) -> bool:
+    # [FUNCTION DOC]
+    # HELPER: returns whether the cell at the given row and column is the start of a
+    # visible span, i.e. whether (column, row) is a key of the lengths mapping.
+    # Note the lookup key swaps the argument order.
+    # KNOWN ISSUE: the docstring is a meaningless fragment that does not describe the behavior.
     """
     Index -> {(idx_row, idx_col): bool}).
     """
@@ -1869,6 +2143,10 @@ def _is_visible(idx_row, idx_col, lengths) -> bool:
 
 
 def format_table_styles(styles: CSSStyles) -> CSSStyles:
+    # [FUNCTION DOC]
+    # HELPER: expands table styles whose selector holds a comma-separated list into
+    # one entry per selector, each with the same properties. Returns a new list.
+    # Selectors are not stripped of surrounding whitespace.
     """
     looks for multiple CSS selectors and separates them:
     [{'selector': 'td, th', 'props': 'a:v;'}]
@@ -1883,6 +2161,11 @@ def format_table_styles(styles: CSSStyles) -> CSSStyles:
 
 
 def _default_formatter(x: Any, precision: int, thousands: bool = False) -> Any:
+    # [FUNCTION DOC]
+    # HELPER: default value formatter. x is the value; precision is the number of
+    # decimals for floats and complex numbers; thousands (default false) enables
+    # comma digit grouping. Floats and complex numbers become fixed-point text,
+    # integers become text (grouped if requested), anything else is returned unchanged.
     """
     Format the display of a value
 
@@ -1910,6 +2193,13 @@ def _default_formatter(x: Any, precision: int, thousands: bool = False) -> Any:
 def _wrap_decimal_thousands(
     formatter: Callable, decimal: str, thousands: str | None
 ) -> Callable:
+    # [FUNCTION DOC]
+    # HELPER: wraps a formatter so decimal and thousands separators can be customized.
+    # Parameters: formatter is the base string formatter; decimal and thousands are the
+    # desired separators. Returns a function that applies the base formatter and, only for
+    # float, integer or complex inputs, swaps the standard separators for the
+    # requested ones (using a temporary placeholder to avoid collisions when both are
+    # changed). Other inputs are formatted but not altered.
     """
     Takes a string formatting function and wraps logic to deal with thousands and
     decimal parameters, in the case that they are non-standard and that the input
@@ -1917,6 +2207,9 @@ def _wrap_decimal_thousands(
     """
 
     def wrapper(x):
+        # [FUNCTION DOC]
+        # HELPER: the returned function; applies the formatter and, for numeric input,
+        # substitutes separators according to the combination of decimal and thousands.
         if is_float(x) or is_integer(x) or is_complex(x):
             if decimal != "." and thousands is not None and thousands != ",":
                 return (
@@ -1935,6 +2228,10 @@ def _wrap_decimal_thousands(
 
 
 def _str_escape(x, escape):
+    # [FUNCTION DOC]
+    # HELPER: escapes a value for the chosen target. Non-string values are returned
+    # unchanged. Strings are escaped for html, latex, or latex-math; any other escape
+    # name raises a value error.
     """if escaping: only use on str, else return input"""
     if isinstance(x, str):
         if escape == "html":
@@ -1952,6 +2249,12 @@ got {escape}"
 
 
 def _render_href(x, format):
+    # [FUNCTION DOC]
+    # HELPER: converts URL-like substrings of a string into links. Parameters: x is the
+    # value (non-strings are returned unchanged); format is html (anchor tag opening in
+    # a new window) or latex (hyperlink command), otherwise a value error is raised.
+    # Uses a regular expression to find http/ftp(s) or www style addresses.
+    # Returns the new string.
     """uses regex to detect a common URL pattern and converts to href tag in format."""
     if isinstance(x, str):
         if format == "html":
@@ -1974,6 +2277,15 @@ def _maybe_wrap_formatter(
     escape: str | None = None,
     hyperlinks: str | None = None,
 ) -> Callable:
+    # [FUNCTION DOC]
+    # HELPER: builds the final display function for a cell group. Parameters:
+    # formatter is a format string (applied as a template to the value), a callable, or
+    # none (default formatter using the given or configured precision, with thousands
+    # grouping when thousands is set); any other type raises a type error.
+    # Then layers wrappers in order: escaping (when escape is not none), decimal and
+    # thousands replacement (when non-default), hyperlink conversion (when hyperlinks
+    # is not none), and finally missing-value replacement by na_rep (when not none).
+    # Returns the composed function.
     """
     Allows formatters to be expressed as str, callable or None, where None returns
     a default formatting function. wraps with na_rep, and precision where they are
@@ -2020,6 +2332,13 @@ def _maybe_wrap_formatter(
 
 
 def non_reducing_slice(slice_: Subset):
+    # [FUNCTION DOC]
+    # Normalizes a user subset so it always selects a frame region and never reduces to
+    # a series or scalar. Sequences of string/array/index/list/series type are treated as
+    # a column selection (all rows). A scalar becomes a nested single-label selection,
+    # a slice becomes a single-element selection, and each element of a list-like
+    # is wrapped in a list unless it is already a slice, list-like or tuple containing
+    # those. Returns a tuple suitable for label-based indexing.
     """
     Ensure that a slice doesn't reduce to a Series or Scalar.
 
@@ -2033,6 +2352,11 @@ def non_reducing_slice(slice_: Subset):
         slice_ = IndexSlice[:, slice_]
 
     def pred(part) -> bool:
+        # [FUNCTION DOC]
+        # HELPER: predicate on one element of a selection. Returns true when it will not
+        # reduce dimensions (a slice or list-like; for a tuple, when any member is a
+        # slice or list-like), false otherwise.
+        # KNOWN ISSUE: the docstring says it is false when the part is a tuple, but a tuple containing a slice or list-like returns true.
         """
         Returns
         -------
@@ -2063,6 +2387,11 @@ def non_reducing_slice(slice_: Subset):
 
 
 def maybe_convert_css_to_tuples(style: CSSProperties) -> CSSList:
+    # [FUNCTION DOC]
+    # Converts a CSS declaration string into a list of (attribute, value) pairs by
+    # splitting on semicolons and the first colon of each part, trimming whitespace
+    # and skipping empty parts. A non-string input is returned unchanged. Raises a
+    # value error if a non-empty string contains no colon.
     """
     Convert css-string to sequence of tuples format if needed.
     'color:red; border:1px solid black;' -> [('color', 'red'),
@@ -2088,6 +2417,11 @@ def refactor_levels(
     level: Level | list[Level] | None,
     obj: Index,
 ) -> list[int]:
+    # [FUNCTION DOC]
+    # Normalizes a level argument into a list of level numbers for the given index
+    # object. none means all levels; an integer or string (name) becomes a single
+    # item; a list maps each element to a number (integers are passed through
+    # unchecked, other items resolved by name). Any other type raises a value error.
     """
     Returns a consistent levels arg for use in ``hide_index`` or ``hide_columns``.
 
@@ -2119,6 +2453,13 @@ def refactor_levels(
 
 
 class Tooltips:
+    # [CLASS DOC]
+    # Helper for the styler that adds hover tooltips to data cells. State:
+    # class_name (CSS class), class_properties (CSS declarations for the tooltip
+    # class), tt_data (frame of tooltip strings aligned with the data), table_styles
+    # (generated pseudo-class rules, filled on translation), as_title_attribute
+    # (use native title attributes instead of CSS spans). Rendering is done by a
+    # translate method that mutates the render dictionary.
     """
     An extension to ``Styler`` that allows for and manipulates tooltips on hover
     of ``<td>`` cells in the HTML result.
@@ -2167,6 +2508,13 @@ class Tooltips:
         tooltips: DataFrame = DataFrame(),
         as_title_attribute: bool = False,
     ) -> None:
+        # [FUNCTION DOC]
+        # Stores the options. css_props (default: hidden visibility, absolute position,
+        # z-index 1, black background, white text, small upward translation) are the
+        # declarations for the tooltip class; css_name (default "pd-t") its name;
+        # tooltips (default empty frame) the strings frame; as_title_attribute
+        # (default false) selects the title attribute mode.
+        # KNOWN ISSUE: the defaults for css_props (a list) and tooltips (a frame) are mutable objects created once at function definition and shared across all instances that use the defaults.
         self.class_name = css_name
         self.class_properties = css_props
         self.tt_data = tooltips
@@ -2175,6 +2523,10 @@ class Tooltips:
 
     @property
     def _class_styles(self):
+        # [FUNCTION DOC]
+        # HELPER: property returning the table-style rule list for the tooltip class: a
+        # single rule whose selector is the dot-prefixed class name and whose properties
+        # are the class properties converted from CSS text to pairs when necessary.
         """
         Combine the ``_Tooltips`` CSS class name and CSS properties to the format
         required to extend the underlying ``Styler`` `table_styles` to allow
@@ -2194,6 +2546,13 @@ class Tooltips:
     def _pseudo_css(
         self, uuid: str, name: str, row: int, col: int, text: str
     ) -> list[CSSDict]:
+        # [FUNCTION DOC]
+        # HELPER: builds two CSS rules for one cell's tooltip. Parameters: uuid of the
+        # styler, name of the tooltip class, row and col positions, text to show.
+        # Returns a list with a rule that makes the tooltip visible on hover over the cell
+        # (selected by an id composed from uuid, row and col) and a rule that sets the
+        # content of the after-pseudo-element to the text in double quotes (text is not
+        # escaped).
         """
         For every table data-cell that has a valid tooltip (not None, NaN or
         empty string) must create two pseudo CSS entries for the specific
@@ -2237,6 +2596,16 @@ class Tooltips:
         ]
 
     def _translate(self, styler: StylerRenderer, d: dict):
+        # [FUNCTION DOC]
+        # Mutates and returns the render dictionary d to add tooltips for the styler.
+        # Reindexes the tooltip frame like the styler data (stored back on this object);
+        # returns d untouched if it is empty. Cells with missing or empty tooltip text
+        # are masked. In span mode: builds pseudo-class rules for each unmasked, visible cell,
+        # and if any exist appends an empty span to the display value of every data cell
+        # and extends the table styles with the class rules and the cell rules.
+        # In title mode: appends a title attribute with the tooltip text to cells.
+        # KNOWN ISSUE: in title mode the condition adds a title when the cell is NOT masked or when the row or column is hidden, which includes hidden cells and masked-but-hidden ones, and the body is indexed by the raw row position even though hidden rows were removed from the body.
+        # KNOWN ISSUE: the docstring parameter list (underlying frame and uuid) does not match the real parameters (the styler and the dictionary).
         """
         Mutate the render dictionary to allow for tooltips:
 
@@ -2312,6 +2681,11 @@ class Tooltips:
 
 
 def _parse_latex_table_wrapping(table_styles: CSSStyles, caption: str | None) -> bool:
+    # [FUNCTION DOC]
+    # HELPER: decides if the LaTeX tabular must be wrapped in a table environment.
+    # Returns true when a caption exists, or when any table style has a selector that
+    # is not one of the ignored ones (top rule, mid rule, bottom rule, column format),
+    # provided table_styles is not none.
     """
     Indicate whether LaTeX {tabular} should be wrapped with a {table} environment.
 
@@ -2328,6 +2702,11 @@ def _parse_latex_table_wrapping(table_styles: CSSStyles, caption: str | None) ->
 
 
 def _parse_latex_table_styles(table_styles: CSSStyles, selector: str) -> str | None:
+    # [FUNCTION DOC]
+    # HELPER: finds the value for a LaTeX table style. Searches table_styles from the
+    # most recently added backwards for the selector and returns the first property's
+    # value as text with the section-sign placeholder replaced by a colon; returns
+    # none if no style matches.
     """
     Return the first 'props' 'value' from ``tables_styles`` identified by ``selector``.
 
@@ -2355,6 +2734,15 @@ def _parse_latex_table_styles(table_styles: CSSStyles, selector: str) -> str | N
 def _parse_latex_cell_styles(
     latex_styles: CSSList, display_value: str, convert_css: bool = False
 ) -> str:
+    # [FUNCTION DOC]
+    # HELPER: wraps a display string in nested LaTeX commands. Parameters:
+    # latex_styles is a list of (command, options) pairs; display_value is the text;
+    # convert_css (default false) first converts CSS pairs to LaTeX pairs. Processes
+    # pairs from last to first so the most recent style is innermost. Each pair becomes
+    # a backslash command followed by options and the text, unless the options
+    # carry a wrapping flag (no-wrap, wrap, left-wrap, right-wrap, double-wrap) in
+    # which case the corresponding brace layout is used with the flag and CSS comment
+    # markers removed from the options. Returns the final string.
     r"""
     Mutate the ``display_value`` string including LaTeX commands from ``latex_styles``.
 
@@ -2407,6 +2795,18 @@ def _parse_latex_header_span(
     wrap: bool = False,
     convert_css: bool = False,
 ) -> str:
+    # [FUNCTION DOC]
+    # HELPER: formats header-cell text with LaTeX spanning commands. Parameters: cell is
+    # the render dictionary of the cell (style list, display value, optional
+    # attributes); multirow_align is the vertical alignment for row spans, or "naive"
+    # to leave the text unspanned; multicol_align is the horizontal alignment for
+    # column spans, or "naive-l"/"naive-r" to pad with blank cells on the right/left;
+    # wrap (default false) encloses the text in braces; convert_css (default false)
+    # converts CSS styles to LaTeX first.
+    # Applies the cell styles; then if the attributes contain a column span, returns a
+    # multicolumn command (or padding for the naive modes); if a row span, a multirow
+    # command; otherwise the (optionally braced) text. Raises a value error if the
+    # span number is not an integer.
     r"""
     Refactor the cell `display_value` if a 'colspan' or 'rowspan' attribute is present.
 
@@ -2456,6 +2856,10 @@ def _parse_latex_header_span(
 
 
 def _parse_latex_options_strip(value: str | float, arg: str) -> str:
+    # [FUNCTION DOC]
+    # HELPER: cleans a style option string. Removes the given wrapping flag and CSS
+    # comment delimiters from the value (converted to text) and trims whitespace.
+    # Returns the cleaned text.
     """
     Strip a css_value which may have latex wrapping arguments, css comment identifiers,
     and whitespaces, to a valid string for latex options parsing.
@@ -2466,6 +2870,13 @@ def _parse_latex_options_strip(value: str | float, arg: str) -> str:
 
 
 def _parse_latex_css_conversion(styles: CSSList) -> CSSList:
+    # [FUNCTION DOC]
+    # HELPER: converts CSS (attribute, value) pairs into LaTeX (command, options)
+    # pairs. Pairs flagged for LaTeX are kept with the flag removed. Supported
+    # attributes: font weight (bold), font style (italic, oblique), color and
+    # background color. Wrapping flags in the value are detected and passed on.
+    # Unsupported attributes are skipped. Returns the converted list.
+    # KNOWN ISSUE: the docstring says conversion is ignored for pairs tagged for LaTeX, but the code keeps the tagged pair and then also converts it if its attribute is convertible, so both may be emitted.
     """
     Convert CSS (attribute,value) pairs to equivalent LaTeX (command,options) pairs.
 
@@ -2473,11 +2884,17 @@ def _parse_latex_css_conversion(styles: CSSList) -> CSSList:
     """
 
     def font_weight(value, arg) -> tuple[str, str] | None:
+        # [FUNCTION DOC]
+        # HELPER: maps bold or bolder to the bold-series command with the given flag;
+        # returns none for other values.
         if value in ("bold", "bolder"):
             return "bfseries", f"{arg}"
         return None
 
     def font_style(value, arg) -> tuple[str, str] | None:
+        # [FUNCTION DOC]
+        # HELPER: maps italic to the italic-shape command and oblique to the slanted-shape
+        # command, each with the given flag; returns none for other values.
         if value == "italic":
             return "itshape", f"{arg}"
         if value == "oblique":
@@ -2485,6 +2902,15 @@ def _parse_latex_css_conversion(styles: CSSList) -> CSSList:
         return None
 
     def color(value, user_arg, command, comm_arg):
+        # [FUNCTION DOC]
+        # HELPER: converts a CSS color to a LaTeX color command and option string.
+        # Parameters: value is the CSS color; user_arg is a wrapping flag from the user
+        # (overrides comm_arg when non-empty); command is the LaTeX command to use;
+        # comm_arg is the default wrapping flag. Handles six-digit hex, three-digit hex
+        # (digits doubled), rgb and rgba (integers or percentages; each channel scaled to
+        # 0..1 with three decimals) and falls back to a named color. Returns a pair of the
+        # command and the option string. Malformed rgb text raises an index error or
+        # value error from parsing.
         """
         CSS colors have 5 formats to process:
 
@@ -2542,6 +2968,12 @@ def _parse_latex_css_conversion(styles: CSSList) -> CSSList:
 
 
 def _escape_latex(s: str) -> str:
+    # [FUNCTION DOC]
+    # HELPER: escapes a string for LaTeX text mode. Replaces ampersand, percent,
+    # dollar, hash, underscore, braces, tilde, caret and backslash with LaTeX-safe
+    # sequences, adding an explicit space command where the replacement command would
+    # otherwise swallow a following space, and using a temporary placeholder so that
+    # backslash handling does not clash with other replacements. Returns the new string.
     r"""
     Replace the characters ``&``, ``%``, ``$``, ``#``, ``_``, ``{``, ``}``,
     ``~``, ``^``, and ``\`` in the string with LaTeX-safe sequences.
@@ -2577,6 +3009,11 @@ def _escape_latex(s: str) -> str:
 
 
 def _math_mode_with_dollar(s: str) -> str:
+    # [FUNCTION DOC]
+    # HELPER: LaTeX escaping that leaves dollar-delimited math segments untouched.
+    # Escaped dollar signs are protected by a placeholder and restored in the result.
+    # Text outside the matched math segments is escaped, segments are kept verbatim.
+    # Returns the combined string.
     r"""
     All characters in LaTeX math mode are preserved.
 
@@ -2610,6 +3047,12 @@ def _math_mode_with_dollar(s: str) -> str:
 
 
 def _math_mode_with_parentheses(s: str) -> str:
+    # [FUNCTION DOC]
+    # HELPER: LaTeX escaping that leaves segments between backslash-open-paren and
+    # backslash-close-paren untouched. Marker placeholders are inserted for the
+    # delimiters, the string is split on them, math segments are kept and restored,
+    # other text is escaped, and stray delimiters are rewritten as text backslash
+    # sequences. Returns the combined string.
     r"""
     All characters in LaTeX math mode are preserved.
 
@@ -2646,6 +3089,13 @@ def _math_mode_with_parentheses(s: str) -> str:
 
 
 def _escape_latex_math(s: str) -> str:
+    # [FUNCTION DOC]
+    # HELPER: LaTeX escaping that preserves math segments. Protects escaped dollars,
+    # searches for the first dollar-delimited and first parenthesis-delimited segment;
+    # with neither, escapes everything; otherwise dispatches to the dollar or the
+    # parenthesis variant, depending on the first listed match, and escapes everything
+    # if neither check matches. Returns the escaped string.
+    # KNOWN ISSUE: the mode is chosen from the first recorded match, which is the dollar match whenever one exists, even if a parenthesis segment appears earlier in the string.
     r"""
     All characters in LaTeX math mode are preserved.
 

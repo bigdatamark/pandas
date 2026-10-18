@@ -1,6 +1,20 @@
 """
 Module for applying conditional formatting to DataFrames and Series.
 """
+# [MODULE DOC]
+# Conditional formatting of frames and series: defines the public Styler class,
+# the object returned by the frame and series style accessors. Styler extends the
+# renderer base class from the style_render module with the user-facing API:
+# output methods (HTML, LaTeX, Typst, string, Excel), style application (apply,
+# map, and their index/header variants), table-level settings (attributes,
+# captions, uuid, sticky headers, table styles, hiding), export/use of settings,
+# built-in styles (gradients, bars, highlighting), subclass templating and a pipe
+# helper. Private module functions implement the built-in styles (gradient
+# coloring, between/quantile/extreme highlighting, in-cell bars) and argument
+# validation for them.
+# Dependencies: requires the optional package jinja2 (an import error with an
+# explanatory message is raised at import if it is missing); matplotlib is imported
+# lazily only when gradients or colormapped bars are used.
 
 from __future__ import annotations
 
@@ -80,6 +94,19 @@ if TYPE_CHECKING:
 
 
 class Styler(StylerRenderer):
+    # [CLASS DOC]
+    # User-facing styling object for a frame or series. Inherits all rendering state
+    # and machinery from the renderer base class (data, uuid, table styles, caption,
+    # cell style contexts, display functions, concatenated stylers, tooltips, hidden
+    # rows and columns) and adds the public API.
+    # Style functions are not run immediately: the apply and map families append a
+    # deferred call description to an internal list, and the styles are computed only
+    # when rendering (or exporting to Excel/LaTeX/HTML). Methods that configure the
+    # object return the object itself for chaining. Output methods work on a deep copy so
+    # the original is not modified by render-time table style changes.
+    # Constructor options mirror the renderer's and additionally apply default
+    # formatting (na representation, decimal, thousands, escape, formatter) taken from
+    # option settings when not given.
     r"""
     Helps style a DataFrame or Series according to the data with HTML and CSS.
 
@@ -226,6 +253,15 @@ class Styler(StylerRenderer):
         escape: str | None = None,
         formatter: ExtFormatter | None = None,
     ) -> None:
+        # [FUNCTION DOC]
+        # Builds the styler. Parameters: data (frame or series), precision, table_styles,
+        # uuid, caption, table_attributes, cell_ids, uuid_len are passed to the base
+        # class (see its documentation); na_rep, decimal, thousands, escape and formatter
+        # are formatting defaults (each falls back to the matching styler option when
+        # not given or falsy). Calls the base constructor, resolves the format option
+        # defaults, then applies a default display format to all cells using them (the
+        # precision is handled by the base class). Raises a type error for invalid data
+        # or uuid length.
         super().__init__(
             data=data,
             uuid=uuid,
@@ -255,6 +291,12 @@ class Styler(StylerRenderer):
         )
 
     def concat(self, other: Styler) -> Styler:
+        # [FUNCTION DOC]
+        # Appends another styler below this one in the rendered output (summary rows or
+        # similar). other must be a styler (type error otherwise), have columns equal to this
+        # one's (value error otherwise) and the same number of index levels (value error).
+        # Mutates this styler by adding other to its list of concatenated stylers and
+        # returns this styler. Does not copy other.
         """
         Append another Styler to combine the output into a single table.
 
@@ -366,6 +408,9 @@ class Styler(StylerRenderer):
         return self
 
     def _repr_html_(self) -> str | None:
+        # [FUNCTION DOC]
+        # Notebook display hook: returns the HTML rendering when the render representation
+        # option is html, otherwise none.
         """
         Hooks into Jupyter notebook rich display system, which calls _repr_html_ by
         default if an object is returned at the end of a cell.
@@ -375,6 +420,9 @@ class Styler(StylerRenderer):
         return None
 
     def _repr_latex_(self) -> str | None:
+        # [FUNCTION DOC]
+        # Notebook display hook: returns the LaTeX rendering when the render
+        # representation option is latex, otherwise none.
         if get_option("styler.render.repr") == "latex":
             return self.to_latex()
         return None
@@ -386,6 +434,18 @@ class Styler(StylerRenderer):
         css_class: str | None = None,
         as_title_attribute: bool = False,
     ) -> Styler:
+        # [FUNCTION DOC]
+        # Attaches hover tooltips to cells. Parameters: ttips is a frame of strings
+        # aligned with the styled data (missing or empty entries mean no tooltip); props
+        # sets CSS declarations for the tooltip class (default none: unchanged);
+        # css_class sets the tooltip class name (default none: unchanged);
+        # as_title_attribute (default false) uses the native title attribute instead of CSS
+        # rendering. Raises a not-implemented error if cell ids are disabled, and a key
+        # error if ttips has a non-unique index or columns. Creates a tooltips helper if
+        # none exists, stores ttips in it, and updates the class properties and name only
+        # when not in title mode; in title mode only the mode flag is set. Returns this
+        # styler.
+        # KNOWN ISSUE: calling it again with the title mode off does not turn the title mode flag back off if it was set earlier, since the flag is assigned only in title mode.
         """
         Set the DataFrame of strings on ``Styler`` generating ``:hover`` tooltips.
 
@@ -528,6 +588,16 @@ class Styler(StylerRenderer):
         storage_options: StorageOptions | None = None,
         autofilter: bool = False,
     ) -> None:
+        # [FUNCTION DOC]
+        # Writes the styled data to an Excel sheet. Parameters mirror the frame Excel
+        # writer: excel_writer (path, buffer or writer), sheet_name (default "Sheet1"),
+        # na_rep (default empty), float_format, columns, header, index, index_label,
+        # startrow, startcol, engine, merge_cells, encoding, inf_rep (default "inf"),
+        # verbose, freeze_panes, storage_options, autofilter (default false).
+        # Creates an Excel formatter bound to this styler (so CSS styles are converted
+        # to Excel styles) and writes through it. Returns nothing; the file/buffer is
+        # written as a side effect.
+        # KNOWN ISSUE: the encoding and verbose arguments are accepted but never passed on, so they have no effect.
         """
         Write Styler to an Excel sheet.
 
@@ -697,6 +767,9 @@ class Styler(StylerRenderer):
         encoding: str | None = ...,
         convert_css: bool = ...,
     ) -> None: ...
+        # [FUNCTION DOC]
+        # Typing overload only: with a target buffer, returns nothing. See the
+        # implementation below.
 
     @overload
     def to_latex(
@@ -719,6 +792,9 @@ class Styler(StylerRenderer):
         encoding: str | None = ...,
         convert_css: bool = ...,
     ) -> str: ...
+        # [FUNCTION DOC]
+        # Typing overload only: without a buffer, returns the LaTeX string. See the
+        # implementation below.
 
     def to_latex(
         self,
@@ -740,6 +816,25 @@ class Styler(StylerRenderer):
         encoding: str | None = None,
         convert_css: bool = False,
     ) -> str | None:
+        # [FUNCTION DOC]
+        # Renders as LaTeX. Works on a deep copy. Parameters (keyword-only except buf):
+        # buf is a path or writable buffer, or none to return text; column_format is the
+        # column specification (default none: reuse a previously set table style, else
+        # generate one with left alignment for index levels and text columns and right
+        # alignment, or the siunitx S type when enabled, for numeric columns, skipping
+        # hidden items); position and position_float (centering, raggedleft or
+        # raggedright; value error for others or when the longtable environment is
+        # used); hrules adds top/mid/bottom rules (default from option); clines
+        # selects horizontal line style; label (colons are protected from CSS parsing);
+        # caption; sparse_index and sparse_columns (default from options); multirow_align
+        # and multicol_align (default from options); siunitx; environment (default from
+        # option); encoding (only used when buf is a path string, default from option);
+        # convert_css converts CSS properties to LaTeX commands.
+        # Each setting is stored as a table style on the copy, the copy is rendered, and
+        # the text is written to buf or returned.
+        # Side effects: temporarily replaces the data's column labels with a plain range
+        # to find numeric columns and restores them (not exception safe).
+        # Returns the string when buf is none, else none.
         r"""
         Write Styler to a file, buffer or string in LaTeX format.
 
@@ -1293,6 +1388,9 @@ class Styler(StylerRenderer):
         max_rows: int | None = ...,
         max_columns: int | None = ...,
     ) -> None: ...
+        # [FUNCTION DOC]
+        # Typing overload only: with a target buffer, returns nothing. See the
+        # implementation below.
 
     @overload
     def to_typst(
@@ -1305,6 +1403,9 @@ class Styler(StylerRenderer):
         max_rows: int | None = ...,
         max_columns: int | None = ...,
     ) -> str: ...
+        # [FUNCTION DOC]
+        # Typing overload only: without a buffer, returns the Typst string. See the
+        # implementation below.
 
     def to_typst(
         self,
@@ -1316,6 +1417,12 @@ class Styler(StylerRenderer):
         max_rows: int | None = None,
         max_columns: int | None = None,
     ) -> str | None:
+        # [FUNCTION DOC]
+        # Renders as Typst markup. Parameters (keyword-only except buf): buf is a path or
+        # buffer (default none: return a string); encoding (used only when writing to
+        # buf); sparse_index and sparse_columns (default from options); max_rows and
+        # max_columns limit rendered size (default none: option-based). Works on a deep copy
+        # and returns the string when buf is none, else writes it and returns none.
         """
         Write Styler to a file, buffer or string in Typst format.
 
@@ -1409,6 +1516,9 @@ class Styler(StylerRenderer):
         exclude_styles: bool = ...,
         **kwargs,
     ) -> None: ...
+        # [FUNCTION DOC]
+        # Typing overload only: with a target buffer, returns nothing. See the
+        # implementation below.
 
     @overload
     def to_html(
@@ -1428,6 +1538,9 @@ class Styler(StylerRenderer):
         exclude_styles: bool = ...,
         **kwargs,
     ) -> str: ...
+        # [FUNCTION DOC]
+        # Typing overload only: without a buffer, returns the HTML string. See the
+        # implementation below.
 
     def to_html(
         self,
@@ -1446,6 +1559,17 @@ class Styler(StylerRenderer):
         exclude_styles: bool = False,
         **kwargs,
     ) -> str | None:
+        # [FUNCTION DOC]
+        # Renders as HTML. Works on a deep copy. Parameters (keyword-only except buf):
+        # buf (path, buffer or none to return text); table_uuid replaces the uuid (applied
+        # if truthy); table_attributes replaces table attributes (if truthy);
+        # sparse_index and sparse_columns (default from options); bold_headers adds a
+        # bold style for header cells (default false); caption overrides the caption if
+        # not none; max_rows and max_columns limit rendered size; encoding (the meta
+        # charset value, default from option, and the file encoding when buf is set);
+        # doctype_html emits a full document with doctype (default false); exclude_styles
+        # omits the style block (default false); extra keyword arguments are passed on to the
+        # HTML template. Returns the string when buf is none, else writes and returns none.
         """
         Write Styler to a file, buffer or string in HTML-CSS format.
 
@@ -1577,6 +1701,9 @@ class Styler(StylerRenderer):
         max_columns: int | None = ...,
         delimiter: str = ...,
     ) -> None: ...
+        # [FUNCTION DOC]
+        # Typing overload only: with a target buffer, returns nothing. See the
+        # implementation below.
 
     @overload
     def to_string(
@@ -1590,6 +1717,9 @@ class Styler(StylerRenderer):
         max_columns: int | None = ...,
         delimiter: str = ...,
     ) -> str: ...
+        # [FUNCTION DOC]
+        # Typing overload only: without a buffer, returns the text. See the
+        # implementation below.
 
     def to_string(
         self,
@@ -1602,6 +1732,12 @@ class Styler(StylerRenderer):
         max_columns: int | None = None,
         delimiter: str = " ",
     ) -> str | None:
+        # [FUNCTION DOC]
+        # Renders as plain text. Works on a deep copy. Parameters (keyword-only except
+        # buf): buf (path, buffer or none to return text); encoding (used only when
+        # writing to buf); sparse_index and sparse_columns (default from options);
+        # max_rows and max_columns limit size; delimiter separates columns (default one
+        # space). Returns the string when buf is none, else writes it and returns none.
         """
         Write Styler to a file, buffer or string in text format.
 
@@ -1669,6 +1805,13 @@ class Styler(StylerRenderer):
         )
 
     def set_td_classes(self, classes: DataFrame) -> Styler:
+        # [FUNCTION DOC]
+        # Assigns CSS classes to individual data cells. classes is a frame of class
+        # name strings (aligned to the data; missing or empty entries mean no class); its
+        # index and columns must be unique, otherwise a key error is raised. The frame is
+        # reindexed like the data and, for each non-empty entry, stored in the cell
+        # context keyed by integer position (replacing prior entries for the same cell).
+        # Returns this styler.
         """
         Set the ``class`` attribute of ``<td>`` HTML elements.
 
@@ -1752,6 +1895,12 @@ class Styler(StylerRenderer):
         return self
 
     def _update_ctx(self, attrs: DataFrame) -> None:
+        # [FUNCTION DOC]
+        # HELPER: records the CSS produced by a data-cell style function. attrs is a frame
+        # of CSS strings or pair lists. Raises a key error if this styler's index or
+        # columns are not unique. For each non-empty, non-missing entry converts the CSS
+        # to a list of pairs and appends it to the data cell's style context at the integer
+        # position located from the labels. Returns nothing.
         """
         Update the state of the ``Styler`` for data cells.
 
@@ -1781,6 +1930,12 @@ class Styler(StylerRenderer):
                 self.ctx[(i, j)].extend(css_list)
 
     def _update_ctx_header(self, attrs: DataFrame, axis: AxisInt) -> None:
+        # [FUNCTION DOC]
+        # HELPER: records the CSS produced by an index or column header style function.
+        # attrs is a frame whose columns are level numbers and whose rows are label
+        # positions; axis 0 stores into the index style context keyed by (position, level),
+        # otherwise into the columns style context keyed by (level, position). Skips
+        # empty or missing entries; converts text CSS to pairs. Returns nothing.
         """
         Update the state of the ``Styler`` for header cells.
 
@@ -1808,6 +1963,15 @@ class Styler(StylerRenderer):
                     self.ctx_columns[(j, i)].extend(css_list)
 
     def _copy(self, deepcopy: bool = False) -> Styler:
+        # [FUNCTION DOC]
+        # HELPER: creates a new styler of the same class over the same data and copies
+        # settings. Parameter deepcopy (default false) chooses whether the nested
+        # structures (css names, display functions, hidden rows/columns, style contexts,
+        # cell context, deferred functions, table styles, tooltips, concatenated stylers)
+        # are deep-copied or shared; simple attributes (hide flags, table attributes, cell
+        # ids, caption, uuid and the possibly customized html and latex templates) are
+        # shared directly. Returns the new styler.
+        # KNOWN ISSUE: the Typst and string templates are not copied even though the other templates are copied in case of customization.
         """
         Copies a Styler, allowing for deepcopy or shallow copy
 
@@ -1879,12 +2043,22 @@ class Styler(StylerRenderer):
         return styler
 
     def __copy__(self) -> Styler:
+        # [FUNCTION DOC]
+        # Copy-protocol hook: returns a shallow copy (nested state shared).
         return self._copy(deepcopy=False)
 
     def __deepcopy__(self, memo) -> Styler:
+        # [FUNCTION DOC]
+        # Deep-copy-protocol hook: returns a deep copy; the memo argument is unused.
         return self._copy(deepcopy=True)
 
     def clear(self) -> None:
+        # [FUNCTION DOC]
+        # Resets this styler to a clean default state (keeping data and uuid): builds a
+        # fresh styler over the same data and uuid, copies all its attributes onto this
+        # object and deletes any attributes this object has that the fresh one lacks.
+        # Mutates in place; returns nothing. Format settings revert to option defaults.
+        # KNOWN ISSUE: the attribute selection filters out callables by testing the attribute names, which are strings and never callable, so the filter does nothing.
         """
         Reset the ``Styler``, removing any previously applied styles.
 
@@ -1929,6 +2103,17 @@ class Styler(StylerRenderer):
         subset: Subset | None = None,
         **kwargs,
     ) -> Styler:
+        # [FUNCTION DOC]
+        # HELPER: runs a style function immediately (the deferred target of the apply
+        # method). Parameters: func is the style function; axis is 0 (per column), 1 (per
+        # row) or none (whole selection at once); subset limits cells; extra keyword
+        # arguments are forwarded to func. Normalizes the subset to a frame selection;
+        # with an empty selection uses an empty result. With axis none the function gets
+        # the selection and must return a frame or array of the same shape (type error,
+        # value error otherwise; arrays are wrapped with the selection's labels). Otherwise
+        # applies column-wise, or row-wise via the transposed data. Raises a value error if the
+        # result collapsed to a series or contains labels not in the selection. Stores the
+        # resulting CSS into the style context and returns this styler.
         subset = slice(None) if subset is None else subset
         subset = non_reducing_slice(subset)
         data = self.data.loc[subset]
@@ -1988,6 +2173,12 @@ class Styler(StylerRenderer):
         subset: Subset | None = None,
         **kwargs,
     ) -> Styler:
+        # [FUNCTION DOC]
+        # Queues a style function to be applied at render time (public). func takes a
+        # series (axis 0 or 1) or the whole selection (axis none) and returns CSS strings of
+        # the same shape; axis defaults to 0; subset limits cells (default all); extra
+        # keyword arguments are passed to func. Appends a deferred call for the private
+        # apply routine and returns this styler; nothing is computed now.
         """
         Apply a CSS-styling function column-wise, row-wise, or table-wise.
 
@@ -2080,6 +2271,14 @@ class Styler(StylerRenderer):
         method: str = "apply",
         **kwargs,
     ) -> Styler:
+        # [FUNCTION DOC]
+        # HELPER: runs an index or header style function immediately. Parameters: func is
+        # the function; axis is 0 (index) or 1 (columns); level selects levels (default none:
+        # all); method is apply or map selecting how func is applied to the label
+        # frame; extra keyword arguments go to func. Builds a frame of the labels for the
+        # selected levels, applies func column-wise or elementwise accordingly, and stores the
+        # CSS in the header style context. Returns this styler.
+        # KNOWN ISSUE: if method is neither apply nor map, no result is assigned and the following statement fails with an unbound-variable error; only the two internal callers exist.
         axis = self.data._get_axis_number(axis)
         obj = self.index if axis == 0 else self.columns
 
@@ -2101,6 +2300,11 @@ class Styler(StylerRenderer):
         level: Level | list[Level] | None = None,
         **kwargs,
     ) -> Styler:
+        # [FUNCTION DOC]
+        # Queues a style function for index or column header labels (public), applied
+        # column-wise on each selected level. Parameters: func, axis (0 index, 1 columns;
+        # default 0), level (default all), extra keyword arguments. Appends a deferred call
+        # and returns this styler.
         """
         Apply a CSS-styling function to the index or column headers, level-wise.
 
@@ -2178,6 +2382,10 @@ class Styler(StylerRenderer):
         level: Level | list[Level] | None = None,
         **kwargs,
     ) -> Styler:
+        # [FUNCTION DOC]
+        # Queues an elementwise style function for index or column header labels
+        # (public). Parameters: func, axis (default 0), level (default all), extra keyword
+        # arguments. Appends a deferred call and returns this styler.
         """
         Apply a CSS-styling function to the index or column headers, elementwise.
 
@@ -2248,6 +2456,11 @@ class Styler(StylerRenderer):
         return self
 
     def _map(self, func: Callable, subset: Subset | None = None, **kwargs) -> Styler:
+        # [FUNCTION DOC]
+        # HELPER: runs an elementwise style function immediately (deferred target of the
+        # map method). Binds extra keyword arguments to func, selects the subset (default
+        # all cells, normalized to a frame selection), maps the function over every cell,
+        # and stores the resulting CSS. Returns this styler.
         func = partial(func, **kwargs)  # map doesn't take kwargs?
         if subset is None:
             subset = IndexSlice[:]
@@ -2257,6 +2470,11 @@ class Styler(StylerRenderer):
         return self
 
     def map(self, func: Callable, subset: Subset | None = None, **kwargs) -> Styler:
+        # [FUNCTION DOC]
+        # Queues an elementwise style function (public). func takes a scalar and returns a
+        # CSS string; subset limits cells (default all); extra keyword arguments are
+        # passed to func. Appends a deferred call to the private map routine and returns
+        # this styler.
         """
         Apply a CSS-styling function elementwise.
 
@@ -2319,6 +2537,9 @@ class Styler(StylerRenderer):
         return self
 
     def set_table_attributes(self, attributes: str) -> Styler:
+        # [FUNCTION DOC]
+        # Sets the extra attributes string for the opening table tag (replacing any previous
+        # value). Returns this styler.
         """
         Set the table attributes added to the ``<table>`` HTML element.
 
@@ -2351,6 +2572,11 @@ class Styler(StylerRenderer):
         return self
 
     def export(self) -> dict[str, Any]:
+        # [FUNCTION DOC]
+        # Returns a dictionary of the reusable settings: copies of the deferred style
+        # functions, table attributes, table styles and css class names, plus booleans for
+        # whether the entire index and columns are hidden and the hide-names flags. Data,
+        # caption, uuid, formatting and tooltips are not exported.
         """
         Export the styles applied to the current Styler.
 
@@ -2410,6 +2636,13 @@ class Styler(StylerRenderer):
         }
 
     def use(self, styles: dict[str, Any]) -> Styler:
+        # [FUNCTION DOC]
+        # Applies an exported settings dictionary to this styler (appending, not
+        # replacing, where lists are involved). Adds the deferred functions; combines table
+        # attributes by concatenation with a space; adds table styles without overwriting;
+        # sets hide flags for index and columns (a boolean is expanded to all levels);
+        # sets the hide-names flags (defaulting to false when absent, i.e. resetting them);
+        # replaces css class names if present. Returns this styler.
         """
         Set the styles on the current Styler.
 
@@ -2478,6 +2711,8 @@ class Styler(StylerRenderer):
         return self
 
     def set_uuid(self, uuid: str) -> Styler:
+        # [FUNCTION DOC]
+        # Sets the table identifier used in cell ids and CSS selectors. Returns this styler.
         """
         Set the uuid applied to ``id`` attributes of HTML elements.
 
@@ -2524,6 +2759,10 @@ class Styler(StylerRenderer):
         return self
 
     def set_caption(self, caption: str | tuple | list) -> Styler:
+        # [FUNCTION DOC]
+        # Sets the caption. caption must be a string or a two-item tuple/list of strings
+        # (short and long caption for LaTeX); anything else raises a value error.
+        # Returns this styler.
         """
         Set the text added to a ``<caption>`` HTML element.
 
@@ -2573,6 +2812,15 @@ class Styler(StylerRenderer):
         pixel_size: int | None = None,
         levels: Level | list[Level] | None = None,
     ) -> Styler:
+        # [FUNCTION DOC]
+        # Makes index or column headers stick while scrolling by adding table styles
+        # (without overwriting existing ones). Parameters: axis (0 index, 1 columns;
+        # default 0); pixel_size is the width/height of each sticky header cell used
+        # for offsets of multi-level labels (default 75 for index, 25 for columns); levels
+        # selects which levels stick for multi-level labels (default all; value error
+        # from level lookup for invalid values). Single-level and multi-level labels use different
+        # CSS rules; when stickying columns and the index has names, the names row is also
+        # made sticky. Returns this styler.
         """
         Add CSS to permanently display the index or column headers in a scrolling frame.
 
@@ -2721,6 +2969,16 @@ class Styler(StylerRenderer):
         overwrite: bool = True,
         css_class_names: dict[str, str] | None = None,
     ) -> Styler:
+        # [FUNCTION DOC]
+        # Sets CSS table styles. Parameters: table_styles is none (no change), a list of
+        # rule dictionaries with a selector and properties, or a dictionary mapping a
+        # label to such a list (rules apply to that row (axis 1) or column (axis 0)
+        # positionally via class selectors); properties may be CSS text or pairs and are
+        # converted to pairs; comma-separated selectors in dictionary mode are split.
+        # axis (default 0) applies to the dictionary form; overwrite (default true) replaces
+        # the existing styles, otherwise appends; css_class_names optionally overrides the
+        # css class names used in rendering (merged into the existing mapping, even if
+        # table_styles is none). Returns this styler.
         """
         Set the table styles included within the ``<style>`` HTML element.
 
@@ -2865,6 +3123,16 @@ class Styler(StylerRenderer):
         level: Level | list[Level] | None = None,
         names: bool = False,
     ) -> Styler:
+        # [FUNCTION DOC]
+        # Hides index or columns (or their names) from the rendered output. Parameters:
+        # subset limits the labels to hide (default none); axis 0 for index/rows or 1 for
+        # columns (default 0); level selects hidden levels (default none); names hides the
+        # level names (default false). Raises a value error if both subset and level are
+        # given. With neither subset nor level and names true, only the names are hidden.
+        # With a subset, replaces the hidden row/column positions with the positions of the
+        # selected labels (replacing, not adding to, earlier ones). Otherwise the per-level
+        # hide flags are set so only the selected (or all) levels are hidden (replacing
+        # previous flags). Returns this styler.
         """
         Hide the entire index / column headers, or specific rows / columns from display.
 
@@ -3059,6 +3327,10 @@ class Styler(StylerRenderer):
     # -----------------------------------------------------------------------
 
     def _get_numeric_subset_default(self):
+        # [FUNCTION DOC]
+        # HELPER: returns the default subset of the built-in styles: a boolean mask over
+        # the columns that are numeric (using a mask rather than labels so that boolean
+        # labels work).
         # Returns a boolean mask indicating where `self.data` has numerical columns.
         # Choosing a mask as opposed to the column names also works for
         # boolean column labels (GH47838).
@@ -3076,6 +3348,16 @@ class Styler(StylerRenderer):
         vmax: float | None = None,
         gmap: Sequence | None = None,
     ) -> Styler:
+        # [FUNCTION DOC]
+        # Colors cell backgrounds (and chooses light or dark text) according to a colormap
+        # scaled by the values. Parameters: cmap (colormap name or object, default
+        # "PuBu"); low and high extend the scale ends as fractions of the range (default
+        # 0); axis (0 per column, 1 per row, none for the whole selection; default 0);
+        # subset (default none: numeric columns, unless gmap is given and then all);
+        # text_color_threshold (luminance cutoff for switching text to light, default 0.408);
+        # vmin and vmax override the scale limits; gmap is an alternative array of values
+        # to color by (shape must match). Queues the private gradient function through the
+        # apply method and returns this styler. Needs matplotlib at render time.
         """
         Color the background in a gradient style.
 
@@ -3233,6 +3515,11 @@ class Styler(StylerRenderer):
         vmax: float | None = None,
         gmap: Sequence | None = None,
     ) -> Styler:
+        # [FUNCTION DOC]
+        # Like the background gradient but colors the text instead of the background (no
+        # text color threshold). Parameters: cmap, low, high, axis, subset, vmin, vmax, gmap
+        # as for the background gradient. Queues the private gradient function in
+        # text-only mode and returns the styler.
         """
         Color the text in a gradient style.
 
@@ -3371,6 +3658,11 @@ class Styler(StylerRenderer):
         )
 
     def set_properties(self, subset: Subset | None = None, **kwargs) -> Styler:
+        # [FUNCTION DOC]
+        # Applies fixed CSS properties to cells. subset limits cells; keyword arguments
+        # are CSS property names and values (underscores are not converted, so names must
+        # already be valid CSS names). Builds one declaration string and queues an
+        # elementwise map returning it for every cell. Returns this styler.
         """
         Set defined CSS-properties to each ``<td>`` HTML element for the given subset.
 
@@ -3425,6 +3717,17 @@ class Styler(StylerRenderer):
         vmax: float | None = None,
         props: str = "width: 10em;",
     ) -> Styler:
+        # [FUNCTION DOC]
+        # Draws bars in cells. Parameters: subset (default numeric columns); axis (0, 1 or
+        # none; default 0); color (one color string or a list/tuple of two for negative and
+        # positive; default red-ish when neither color nor cmap is given); cmap
+        # (matplotlib colormap, alternative to color); width and height as percentages in
+        # 0..100 (default 100); align (left, right, mid, zero, mean, a number or a callable;
+        # default mid); vmin and vmax override the data window; props extra CSS (default a
+        # fixed width).
+        # Raises a value error when both color and cmap are given, when color has the wrong
+        # type or more than two entries, or when width or height lie outside 0..100.
+        # Queues the private bar function via the apply method. Returns this styler.
         """
         Draw bar chart in the cell backgrounds.
 
@@ -3544,6 +3847,10 @@ class Styler(StylerRenderer):
         subset: Subset | None = None,
         props: str | None = None,
     ) -> Styler:
+        # [FUNCTION DOC]
+        # Highlights missing values. color (default red) is used for a background
+        # declaration unless props (full CSS text) is given; subset limits cells.
+        # Queues a whole-selection style marking missing cells and returns this styler.
         """
         Highlight missing values with a style.
 
@@ -3581,6 +3888,10 @@ class Styler(StylerRenderer):
         """
 
         def f(data: DataFrame, props: str) -> np.ndarray:
+            # [FUNCTION DOC]
+            # HELPER: style function used by the null highlighter. Returns an array of the same
+            # shape as data with the CSS text where the value is missing and an empty string
+            # elsewhere.
             return np.where(pd.isna(data).to_numpy(), props, "")
 
         if props is None:
@@ -3594,6 +3905,11 @@ class Styler(StylerRenderer):
         axis: Axis | None = 0,
         props: str | None = None,
     ) -> Styler:
+        # [FUNCTION DOC]
+        # Highlights the maximum value. Parameters: subset; color (default yellow);
+        # axis (0 per column, 1 per row, none for the whole selection; default 0); props
+        # (full CSS text overriding the color). Queues the private value-highlight helper
+        # with the max operation via the apply method. Returns this styler.
         """
         Highlight the maximum with a style.
 
@@ -3650,6 +3966,9 @@ class Styler(StylerRenderer):
         axis: Axis | None = 0,
         props: str | None = None,
     ) -> Styler:
+        # [FUNCTION DOC]
+        # Highlights the minimum value; same parameters and behavior as the maximum
+        # highlighter but with the min operation.
         """
         Highlight the minimum with a style.
 
@@ -3709,6 +4028,13 @@ class Styler(StylerRenderer):
         inclusive: IntervalClosedType = "both",
         props: str | None = None,
     ) -> Styler:
+        # [FUNCTION DOC]
+        # Highlights values within a range. Parameters: subset; color (default yellow);
+        # axis (default 0, none for whole selection); left and right are the bounds
+        # (scalars, or sequences/frames matching the data shape; none means unbounded);
+        # inclusive is both (default), neither, left or right; props full CSS text.
+        # Queues the private range helper through the apply method and returns this styler.
+        # Invalid inclusive values raise a value error when the style is computed.
         """
         Highlight a defined range with a style.
 
@@ -3826,6 +4152,13 @@ class Styler(StylerRenderer):
         inclusive: IntervalClosedType = "both",
         props: str | None = None,
     ) -> Styler:
+        # [FUNCTION DOC]
+        # Highlights values within a quantile range. Parameters: subset; color (default
+        # yellow); axis (0 or 1 or none; default 0); q_left and q_right quantile bounds
+        # (defaults 0.0 and 1.0); interpolation (default linear); inclusive (default both);
+        # props. Computes the quantiles immediately over the selected subset (flattened when
+        # axis is none, else along the axis, non-numeric allowed), then queues the range
+        # helper with those bounds applied along the other axis. Returns this styler.
         """
         Highlight values defined by a quantile with a style.
 
@@ -3935,6 +4268,12 @@ class Styler(StylerRenderer):
         html_table: str | None = None,
         html_style: str | None = None,
     ) -> type[Styler]:
+        # [FUNCTION DOC]
+        # Class method that builds a Styler subclass with custom templates. Parameters:
+        # searchpath is a directory or list of directories searched (before the built-in
+        # templates) for template files; html_table and html_style are optional template
+        # file names overriding the table and style templates. Returns the new subclass
+        # (not an instance).
         """
         Factory function for creating a subclass of ``Styler``.
 
@@ -3979,6 +4318,10 @@ class Styler(StylerRenderer):
         # error: Variable "cls" is not valid as a type
         # error: Invalid base class "cls"
         class MyStyler(cls):  # type: ignore[valid-type,misc]
+            # [CLASS DOC]
+            # Dynamically created subclass of the invoking class, holding a template
+            # environment that searches the custom directories first and, when names were
+            # given, overriding the html table and html style templates.
             env = jinja2.Environment(loader=loader)
             if html_table:
                 template_html_table = env.get_template(html_table)
@@ -3994,6 +4337,9 @@ class Styler(StylerRenderer):
         *args: P.args,
         **kwargs: P.kwargs,
     ) -> T: ...
+        # [FUNCTION DOC]
+        # Typing overload only: function taking the styler first. See the implementation
+        # below.
 
     @overload
     def pipe(
@@ -4002,6 +4348,9 @@ class Styler(StylerRenderer):
         *args: Any,
         **kwargs: Any,
     ) -> T: ...
+        # [FUNCTION DOC]
+        # Typing overload only: function given as a pair of callable and keyword name for the
+        # styler. See the implementation below.
 
     def pipe(
         self,
@@ -4009,6 +4358,11 @@ class Styler(StylerRenderer):
         *args: Any,
         **kwargs: Any,
     ) -> T:
+        # [FUNCTION DOC]
+        # Applies a function to this styler for chaining. func is a callable taking the
+        # styler first, or a pair of callable and keyword name under which the styler
+        # is passed; extra positional and keyword arguments are passed along. Returns
+        # whatever the function returns; delegates to the shared pipe helper.
         """
         Apply ``func(self, *args, **kwargs)``, and return the result.
 
@@ -4133,6 +4487,14 @@ def _validate_apply_axis_arg(
     dtype: Any | None,
     data: NDFrame,
 ) -> np.ndarray:
+    # [FUNCTION DOC]
+    # HELPER: validates and converts a user-supplied argument (bounds or gradient map)
+    # for the built-in styles. Parameters: arg is a sequence, series or frame; arg_name
+    # is used in error messages; dtype optionally forces the array dtype; data is the
+    # selection being styled. Raises a value error if a series is given for frame data
+    # or a frame for series data. Series/frames are aligned to data by reindexing; other
+    # inputs are converted to an array and must have exactly the shape of data
+    # (value error otherwise). Returns the array.
     """
     For the apply-type methods, ``axis=None`` creates ``data`` as DataFrame, and for
     ``axis=[1,0]`` it creates a Series. Where ``arg`` is expected as an element
@@ -4191,6 +4553,16 @@ def _background_gradient(
     gmap: Sequence | np.ndarray | DataFrame | Series | None = None,
     text_only: bool = False,
 ) -> list[str] | DataFrame:
+    # [FUNCTION DOC]
+    # HELPER: computes CSS for the gradient styles. Parameters: data (series or frame
+    # selection); cmap (colormap name or object; none uses matplotlib's default);
+    # low and high widen the color range (defaults 0); text_color_threshold (default
+    # 0.408) is the luminance below which text turns light; vmin and vmax override
+    # limits; gmap an alternative array for color mapping (validated against data;
+    # default: the data converted to floating point); text_only colors the text only
+    # (default false). Requires matplotlib (import error otherwise). Normalizes the
+    # values, maps them to colors and returns a list of CSS strings for one-dimensional data or
+    # a frame of CSS strings.
     """
     Color background in a range according to the data or a gradient map
     """
@@ -4214,6 +4586,10 @@ def _background_gradient(
         rgbas = _matplotlib.colormaps.get_cmap(cmap)(norm(gmap))
 
     def relative_luminance(rgba) -> float:
+        # [FUNCTION DOC]
+        # HELPER: relative luminance of a color from its red, green and blue
+        # components (first three of an RGBA sequence) in the sRGB model: linearizes each
+        # channel with the standard threshold and returns the weighted sum.
         """
         Calculate relative luminance of a color.
 
@@ -4236,6 +4612,11 @@ def _background_gradient(
         return 0.2126 * r + 0.7152 * g + 0.0722 * b
 
     def css(rgba, text_only) -> str:
+        # [FUNCTION DOC]
+        # HELPER: builds the CSS for one color. rgba is the color; text_only says whether
+        # to color only the text. When coloring the background also sets text color to
+        # light or dark based on whether the relative luminance is below the threshold of
+        # the enclosing function. Returns the CSS string.
         if not text_only:
             dark = relative_luminance(rgba) < text_color_threshold
             text_color = "#f1f1f1" if dark else "#000000"
@@ -4263,6 +4644,14 @@ def _highlight_between(
     right: Scalar | Sequence | np.ndarray | NDFrame | None = None,
     inclusive: bool | str = True,
 ) -> np.ndarray:
+    # [FUNCTION DOC]
+    # HELPER: marks cells lying between bounds. Parameters: data; props (CSS text
+    # returned for matching cells); left and right bounds (none means unbounded; iterable
+    # bounds are validated to match data); inclusive (default true, meaning both;
+    # accepted values both, neither, left, right). Raises a value error for other
+    # inclusive values. Missing comparison results count as false. Returns an array of
+    # props text for matching cells and empty strings elsewhere.
+    # KNOWN ISSUE: the inclusive parameter is annotated as a boolean or text, but a boolean true is not an accepted value; only the four text values pass, so the default value would raise the error.
     """
     Return an array of css props based on condition of data values within given range.
     """
@@ -4313,6 +4702,11 @@ def _highlight_between(
 
 
 def _highlight_value(data: DataFrame | Series, op: str, props: str) -> np.ndarray:
+    # [FUNCTION DOC]
+    # HELPER: marks the cells equal to the extreme value. op names the reduction
+    # (max or min); props is the CSS text. The extreme is computed ignoring missing values
+    # (reduced twice for frames to obtain a scalar). Returns an array with props at
+    # matching cells and empty strings elsewhere (missing comparisons are false).
     """
     Return an array of css strings based on the condition of values matching an op.
     """
@@ -4335,6 +4729,18 @@ def _bar(
     vmax: float | None,
     base_css: str,
 ):
+    # [FUNCTION DOC]
+    # HELPER: computes bar CSS for the bar style. Parameters: data (series or frame
+    # selection); align (left, right, mid, zero, mean, a number or a callable giving
+    # the center value); colors (one color or two colors for negative and positive
+    # values); cmap (colormap name or object, overriding colors per cell); width and
+    # height as fractions of the cell; vmin and vmax window overrides; base_css text
+    # included in every cell. Determines the window from data or vmin/vmax. Alignment
+    # mid acts as left if all values are non-negative and as right if all are
+    # non-positive; mean, a callable or a number shifts the data to be centered on
+    # that value and aligns at zero; unknown alignments raise a value error.
+    # Optionally maps the values through the colormap (matplotlib required). Returns a
+    # list of CSS strings for one-dimensional data or a two-dimensional array.
     """
     Draw bar chart in data cells using HTML CSS linear gradient.
 
@@ -4360,6 +4766,10 @@ def _bar(
     """
 
     def css_bar(start: float, end: float, color: str) -> str:
+        # [FUNCTION DOC]
+        # HELPER: builds the CSS for one bar. start and end are fractions between 0 and 1
+        # of the cell width; color the bar color. Returns the base CSS followed, when end is
+        # greater than start, by a linear gradient with transparent parts outside the bar.
         """
         Generate CSS code to draw a bar from start to end in a table cell.
 
@@ -4393,6 +4803,14 @@ def _bar(
         return cell_css
 
     def css_calc(x, left: float, right: float, align: str, color: str | list | tuple):
+        # [FUNCTION DOC]
+        # HELPER: computes the CSS for one cell. x is the value (centered), left and right
+        # the window bounds, align the alignment mode, color one color or a pair for
+        # negative and positive values. Returns base CSS if x is missing. Clips x to the
+        # window, computes the start and end fractions from the alignment (left from the
+        # left, right to the right, zero symmetric around zero, mid around the window
+        # center), delegates to the bar drawer, and, when the height is below one, adds
+        # no-repeat centering and a background size for the bar height.
         """
         Return the correct CSS for bar placement based on calculated values.
 

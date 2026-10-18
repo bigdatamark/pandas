@@ -3,6 +3,16 @@
 HTML IO.
 
 """
+# [MODULE DOC]
+# Reading HTML tables into frames (the read_html function, exposed at top level).
+# Structure: a private parser class hierarchy (an abstract base _HtmlFrameParser
+# and two concrete parsers, one based on BeautifulSoup/html5lib and one based on
+# lxml) that extracts raw text rows from table elements; helper functions that
+# turn the raw rows into frames via the text parser used by the delimited-text
+# reader; flavor validation and dispatch; and the public reader.
+# Relationships: file/URL access comes from the io common module, frame
+# construction from the parsers package. bs4, html5lib and lxml are optional
+# dependencies imported lazily, so importing this module has no side effects.
 
 from __future__ import annotations
 
@@ -67,6 +77,11 @@ _RE_WHITESPACE = re.compile(r"[\r\n]+|\s{2,}")
 
 
 def _remove_whitespace(s: str, regex: Pattern = _RE_WHITESPACE) -> str:
+    # [FUNCTION DOC]
+    # HELPER: normalizes whitespace in cell text. Strips leading and trailing
+    # whitespace from s, then replaces every match of regex (default: any run of
+    # line breaks or two or more whitespace characters) with a single space.
+    # Returns the new string.
     """
     Replace extra whitespace inside of a string with a single space.
 
@@ -86,6 +101,12 @@ def _remove_whitespace(s: str, regex: Pattern = _RE_WHITESPACE) -> str:
 
 
 def _get_skiprows(skiprows: int | Sequence[int] | slice | None) -> int | Sequence[int]:
+    # [FUNCTION DOC]
+    # HELPER: normalizes the skiprows argument for the text parser. A slice becomes a
+    # list of integers built from start (default 0), stop and step (default 1);
+    # an integer or list-like is returned unchanged; none becomes zero.
+    # Raises a type error for any other type.
+    # KNOWN ISSUE: a slice without a stop value is not handled (a range cannot take a missing stop), so it fails with a type error from the range construction rather than the documented error.
     """
     Get an iterator given an integer, slice or container.
 
@@ -119,6 +140,11 @@ def _read(
     encoding: str | None,
     storage_options: StorageOptions | None,
 ) -> str | bytes:
+    # [FUNCTION DOC]
+    # HELPER: reads the full content of a path, URL or file-like object as text
+    # (or bytes, whatever the handle returns) with the given encoding and storage
+    # options. Converts an OS error for a non-URL source into a file-not-found error
+    # with the standard errno message; for URLs the original error propagates.
     """
     Try to read from a url, file or string.
 
@@ -144,6 +170,16 @@ def _read(
 
 
 class _HtmlFrameParser:
+    # [CLASS DOC]
+    # Abstract base for HTML-to-table parsers. State (all stored from the
+    # constructor): io (source: path, URL, buffer or raw text), match (compiled
+    # regular expression tables must contain), attrs (table attribute filter or none),
+    # encoding, displayed_only (drop elements styled as hidden), extract_links (which
+    # sections, or all, should return the link target along with the cell text, or
+    # none) and storage_options.
+    # Subclasses implement the DOM-specific accessors (document build, table
+    # search, row and cell lookup, text, href, tag comparison); this base supplies
+    # parse_tables, section splitting, span expansion and hidden-table filtering.
     """
     Base class for parsers that parse HTML into DataFrames.
 
@@ -218,6 +254,10 @@ class _HtmlFrameParser:
         extract_links: Literal["header", "footer", "body", "all"] | None,
         storage_options: StorageOptions = None,
     ) -> None:
+        # [FUNCTION DOC]
+        # Stores the arguments unchanged as attributes of the same names: io, match,
+        # attrs, encoding, displayed_only, extract_links, storage_options (default
+        # none). No validation or I/O happens here.
         self.io = io
         self.match = match
         self.attrs = attrs
@@ -227,6 +267,13 @@ class _HtmlFrameParser:
         self.storage_options = storage_options
 
     def parse_tables(self):
+        # [FUNCTION DOC]
+        # Public entry point. Builds the document, finds matching tables with the stored
+        # match and attrs, and returns a lazy generator yielding, for each table, a
+        # tuple of header rows, body rows and footer rows (each a list of rows of cell
+        # values). Errors from document building are raised on call; errors from the
+        # table search surface at call time too since the search is evaluated eagerly.
+        # KNOWN ISSUE: the docstring says a list is returned, but a generator is returned.
         """
         Parse and return all tables from the DOM.
 
@@ -238,6 +285,10 @@ class _HtmlFrameParser:
         return (self._parse_thead_tbody_tfoot(table) for table in tables)
 
     def _attr_getter(self, obj, attr):
+        # [FUNCTION DOC]
+        # HELPER: returns the value of the named attribute of a DOM node (obj), or none
+        # when absent. Shared by both parser backends because both node types offer the
+        # same getter.
         """
         Return the attribute value of an individual DOM node.
 
@@ -258,6 +309,9 @@ class _HtmlFrameParser:
         return obj.get(attr)
 
     def _href_getter(self, obj) -> str | None:
+        # [FUNCTION DOC]
+        # HELPER: abstract; subclasses return the link target of the first anchor within
+        # a node, or none. Base raises an abstract-method error.
         """
         Return an href if the DOM node contains a child <a> or None.
 
@@ -274,6 +328,9 @@ class _HtmlFrameParser:
         raise AbstractMethodError(self)
 
     def _text_getter(self, obj):
+        # [FUNCTION DOC]
+        # HELPER: abstract; subclasses return the text content of a DOM node. Base
+        # raises an abstract-method error.
         """
         Return the text of an individual DOM node.
 
@@ -290,6 +347,9 @@ class _HtmlFrameParser:
         raise AbstractMethodError(self)
 
     def _parse_td(self, obj):
+        # [FUNCTION DOC]
+        # HELPER: abstract; subclasses return the cell elements (data and header cells)
+        # of a row node. Base raises an abstract-method error.
         """
         Return the td elements from a row element.
 
@@ -306,6 +366,9 @@ class _HtmlFrameParser:
         raise AbstractMethodError(self)
 
     def _parse_thead_tr(self, table):
+        # [FUNCTION DOC]
+        # HELPER: abstract; subclasses return the header-section row elements of a table.
+        # Base raises an abstract-method error.
         """
         Return the list of thead row elements from the parsed table element.
 
@@ -321,6 +384,10 @@ class _HtmlFrameParser:
         raise AbstractMethodError(self)
 
     def _parse_tbody_tr(self, table):
+        # [FUNCTION DOC]
+        # HELPER: abstract; subclasses return the body row elements of a table (rows in
+        # body sections or directly under the table). Base raises an abstract-method
+        # error.
         """
         Return the list of tbody row elements from the parsed table element.
 
@@ -340,6 +407,9 @@ class _HtmlFrameParser:
         raise AbstractMethodError(self)
 
     def _parse_tfoot_tr(self, table):
+        # [FUNCTION DOC]
+        # HELPER: abstract; subclasses return the footer-section row elements of a table.
+        # Base raises an abstract-method error.
         """
         Return the list of tfoot row elements from the parsed table element.
 
@@ -355,6 +425,10 @@ class _HtmlFrameParser:
         raise AbstractMethodError(self)
 
     def _parse_tables(self, document, match, attrs):
+        # [FUNCTION DOC]
+        # HELPER: abstract; subclasses return the table elements in a parsed document that
+        # contain text matching the pattern and satisfy the attribute filter, raising a
+        # value error when none are found. Base raises an abstract-method error.
         """
         Return all tables from the parsed DOM.
 
@@ -381,6 +455,9 @@ class _HtmlFrameParser:
         raise AbstractMethodError(self)
 
     def _equals_tag(self, obj, tag) -> bool:
+        # [FUNCTION DOC]
+        # HELPER: abstract; subclasses return whether a node's tag name equals the
+        # given name. Base raises an abstract-method error.
         """
         Return whether an individual DOM node matches a tag
 
@@ -400,6 +477,9 @@ class _HtmlFrameParser:
         raise AbstractMethodError(self)
 
     def _build_doc(self):
+        # [FUNCTION DOC]
+        # HELPER: abstract; subclasses read the source and return the parsed document
+        # tree. Base raises an abstract-method error.
         """
         Return a tree-like object that can be used to iterate over the DOM.
 
@@ -411,6 +491,14 @@ class _HtmlFrameParser:
         raise AbstractMethodError(self)
 
     def _parse_thead_tbody_tfoot(self, table_html):
+        # [FUNCTION DOC]
+        # HELPER: splits a table element into header, body and footer text rows. Finds
+        # rows via the dedicated section accessors. When there are no header-section
+        # rows, leading body rows consisting only of header cells are moved to the header.
+        # Each section is then expanded with the span-expansion helper, passing leftover
+        # rowspan carry-over from one section to the next (the body keeps overflow only if
+        # there is a footer; the footer does not). Returns a tuple of header, body and
+        # footer, each a list of rows of cell values.
         """
         Given a table, return parsed header, body, and foot.
 
@@ -440,6 +528,9 @@ class _HtmlFrameParser:
         footer_rows = self._parse_tfoot_tr(table_html)
 
         def row_is_all_th(row):
+            # [FUNCTION DOC]
+            # HELPER: local predicate used when moving leading rows into the header. Returns
+            # true when every cell of the row is a header cell (true for a row with no cells).
             return all(self._equals_tag(t, "th") for t in self._parse_td(row))
 
         if not header_rows:
@@ -469,6 +560,19 @@ class _HtmlFrameParser:
         remainder: list[tuple[int, str | tuple, int]] | None = None,
         overflow: bool = True,
     ) -> tuple[list[list], list[tuple[int, str | tuple, int]]]:
+        # [FUNCTION DOC]
+        # HELPER: converts row elements into rows of cell values, replicating cells that
+        # span multiple columns or rows. Parameters: rows are the row nodes; section is
+        # which part of the table they come from (decides whether link extraction
+        # applies); remainder is carry-over of cells still spanning down from a previous
+        # section (list of column index, value, remaining row count; default none meaning
+        # empty); overflow says whether leftover spanned cells at the end are returned as
+        # remainder (true, default) or emitted as extra rows (false).
+        # Each cell value is whitespace-normalized text, or a pair of text and link target
+        # when extraction is enabled for the section or for all. Column and row spans
+        # are read from the cell attributes (default 1). Returns a tuple of the list of
+        # rows and the remaining carry-over (empty when overflow is false).
+        # Raises a value error if a span attribute is not an integer.
         """
         Given a list of <tr>s, return a list of text rows.
 
@@ -556,6 +660,11 @@ class _HtmlFrameParser:
         return all_texts, remainder
 
     def _handle_hidden_tables(self, tbl_list, attr_name: str):
+        # [FUNCTION DOC]
+        # HELPER: if displayed_only is false, returns the table list unchanged;
+        # otherwise returns a new list excluding tables whose style attribute (read from
+        # the attribute mapping named by attr_name on each node, spaces removed) contains
+        # the hidden-display declaration.
         """
         Return list of tables, potentially removing hidden elements
 
@@ -583,6 +692,9 @@ class _HtmlFrameParser:
 
 
 class _BeautifulSoupHtml5LibFrameParser(_HtmlFrameParser):
+    # [CLASS DOC]
+    # Concrete parser using BeautifulSoup with the html5lib tree builder.
+    # Implements every abstract accessor of the base class; see it for semantics.
     """
     HTML to DataFrame parser that uses BeautifulSoup under the hood.
 
@@ -598,6 +710,13 @@ class _BeautifulSoupHtml5LibFrameParser(_HtmlFrameParser):
     """
 
     def _parse_tables(self, document, match, attrs):
+        # [FUNCTION DOC]
+        # Finds all table elements (filtered by attrs) in a BeautifulSoup tree. Raises a
+        # value error if no table exists at all. Removes hidden tables when displayed_only
+        # is set, and also deletes style elements and hidden-styled descendants inside
+        # remaining tables (this mutates the tree). Keeps each distinct table whose text
+        # matches match. Raises a value error if no table matches the pattern.
+        # Returns a list of table nodes.
         element_name = "table"
         tables = document.find_all(element_name, attrs=attrs)
         if not tables:
@@ -623,37 +742,62 @@ class _BeautifulSoupHtml5LibFrameParser(_HtmlFrameParser):
         return result
 
     def _href_getter(self, obj) -> str | None:
+        # [FUNCTION DOC]
+        # Returns the link target of the first anchor with a target inside the node, or
+        # none if there is no such anchor.
         a = obj.find("a", href=True)
         return None if not a else a["href"]
 
     def _text_getter(self, obj):
+        # [FUNCTION DOC]
+        # Returns the node's text.
         return obj.text
 
     def _equals_tag(self, obj, tag) -> bool:
+        # [FUNCTION DOC]
+        # Returns whether the node's name equals tag.
         return obj.name == tag
 
     def _parse_td(self, row):
+        # [FUNCTION DOC]
+        # Returns the direct child cells (data or header) of a row node as a list.
         return row.find_all(("td", "th"), recursive=False)
 
     def _parse_thead_tr(self, table):
+        # [FUNCTION DOC]
+        # Returns all rows inside header sections of the table, via a selector.
         return table.select("thead tr")
 
     def _parse_tbody_tr(self, table):
+        # [FUNCTION DOC]
+        # Returns rows inside body sections followed by rows directly under the table
+        # (by the markup rules at most one of the two groups is non-empty).
         from_tbody = table.select("tbody tr")
         from_root = table.find_all("tr", recursive=False)
         # HTML spec: at most one of these lists has content
         return from_tbody + from_root
 
     def _parse_tfoot_tr(self, table):
+        # [FUNCTION DOC]
+        # Returns all rows inside footer sections of the table, via a selector.
         return table.select("tfoot tr")
 
     def _setup_build_doc(self):
+        # [FUNCTION DOC]
+        # HELPER: reads the source through the module's reader using the stored encoding
+        # and storage options and returns the raw content. Raises a value error if the
+        # content is empty.
         raw_text = _read(self.io, self.encoding, self.storage_options)
         if not raw_text:
             raise ValueError(f"No text parsed from document: {self.io}")
         return raw_text
 
     def _build_doc(self):
+        # [FUNCTION DOC]
+        # Reads the source, decodes bytes with the stored encoding when both exist (the
+        # parser then gets no encoding hint; otherwise the stored encoding is passed as a
+        # hint), parses with the html5lib builder, and replaces each line-break tag with a
+        # newline text node. Returns the soup tree. Requires bs4 to be importable.
         from bs4 import BeautifulSoup
 
         bdoc = self._setup_build_doc()
@@ -673,6 +817,13 @@ class _BeautifulSoupHtml5LibFrameParser(_HtmlFrameParser):
 
 
 def _build_xpath_expr(attrs) -> str:
+    # [FUNCTION DOC]
+    # HELPER: builds the attribute predicate appended to an XPath table query for the
+    # lxml parser. attrs is a mapping of attribute names to values (not validated);
+    # a key spelled with a trailing underscore for class is renamed to the real name.
+    # Returns a bracketed expression joining one equality test per attribute with
+    # logical and, using the repr of each value as a literal.
+    # KNOWN ISSUE: renaming the class key mutates the mapping passed in by the caller.
     """
     Build an xpath expression to simulate bs4's ability to pass in kwargs to
     search for attributes when using the lxml parser.
@@ -699,6 +850,9 @@ _re_namespace = {"re": "http://exslt.org/regular-expressions"}
 
 
 class _LxmlFrameParser(_HtmlFrameParser):
+    # [CLASS DOC]
+    # Concrete parser using lxml's HTML parser and XPath. Implements the abstract
+    # accessors of the base class. Only handles http, ftp and file URLs.
     """
     HTML to DataFrame parser that uses lxml under the hood.
 
@@ -718,18 +872,33 @@ class _LxmlFrameParser(_HtmlFrameParser):
     """
 
     def _href_getter(self, obj) -> str | None:
+        # [FUNCTION DOC]
+        # Returns the target of the first descendant anchor with a target, or none.
         href = obj.xpath(".//a/@href")
         return None if not href else href[0]
 
     def _text_getter(self, obj):
+        # [FUNCTION DOC]
+        # Returns the full text content of the node.
         return obj.text_content()
 
     def _parse_td(self, row):
+        # [FUNCTION DOC]
+        # Returns direct child data and header cells of a row-like node (which can be a
+        # header section node standing in for a row).
         # Look for direct children only: the "row" element here may be a
         # <thead> or <tfoot> (see _parse_thead_tr).
         return row.xpath("./td|./th")
 
     def _parse_tables(self, document, match, kwargs):
+        # [FUNCTION DOC]
+        # Finds tables via an XPath query containing a regular-expression text test for
+        # the pattern of match (searching all descendant text). The third argument is the
+        # attribute filter (named kwargs in the signature, though it is the attrs mapping);
+        # if non-empty, an attribute predicate is appended. Removes hidden tables when
+        # displayed_only is set and, in that case, also drops style elements and
+        # hidden-styled descendants from the remaining tables (mutating the tree). Raises
+        # a value error if no table remains. Returns a list of table nodes.
         pattern = match.pattern
 
         # 1. check all descendants for the given pattern and only search tables
@@ -759,9 +928,19 @@ class _LxmlFrameParser(_HtmlFrameParser):
         return tables
 
     def _equals_tag(self, obj, tag) -> bool:
+        # [FUNCTION DOC]
+        # Returns whether the node's tag equals tag.
         return obj.tag == tag
 
     def _build_doc(self):
+        # [FUNCTION DOC]
+        # Parses the source with a recovering lxml HTML parser using the stored encoding.
+        # URLs are opened through the common handle helper; other sources are parsed
+        # directly, converting an OS error into a file-not-found error. Takes the root if
+        # the result is a tree; raises an XML syntax error when the result has no text
+        # content. Replaces trailing text after each line-break tag with a newline plus
+        # that text. Returns the document root. Other exceptions from the library
+        # propagate (for example network failures).
         """
         Raises
         ------
@@ -810,6 +989,10 @@ class _LxmlFrameParser(_HtmlFrameParser):
         return r
 
     def _parse_thead_tr(self, table):
+        # [FUNCTION DOC]
+        # Returns row elements under header sections. Also, for header sections whose
+        # cells sit directly in the section without a row element (malformed markup),
+        # appends the section node itself so it is treated as a row.
         rows = []
 
         for thead in table.xpath(".//thead"):
@@ -828,16 +1011,24 @@ class _LxmlFrameParser(_HtmlFrameParser):
         return rows
 
     def _parse_tbody_tr(self, table):
+        # [FUNCTION DOC]
+        # Returns rows inside body sections followed by rows directly under the table.
         from_tbody = table.xpath(".//tbody//tr")
         from_root = table.xpath("./tr")
         # HTML spec: at most one of these lists has content
         return from_tbody + from_root
 
     def _parse_tfoot_tr(self, table):
+        # [FUNCTION DOC]
+        # Returns rows inside footer sections.
         return table.xpath(".//tfoot//tr")
 
 
 def _expand_elements(body) -> None:
+    # [FUNCTION DOC]
+    # HELPER: pads ragged rows in place. body is a list of row lists; every row
+    # shorter than the longest row gets empty strings appended to reach the
+    # maximum length. Mutates the rows; returns nothing.
     data = [len(elem) for elem in body]
     lens = Series(data)
     lens_max = lens.max()
@@ -849,6 +1040,15 @@ def _expand_elements(body) -> None:
 
 
 def _data_to_frame(**kwargs):
+    # [FUNCTION DOC]
+    # HELPER: converts one parsed table to a frame. Keyword arguments: data (tuple of
+    # head, body, foot rows), header (header spec or none) and the remaining options
+    # forwarded to the delimited-text parser (skiprows is normalized first).
+    # When head exists, it is prepended to the body; if header is none it is inferred
+    # as the first row when head has exactly one row, otherwise as the list of head
+    # row positions having any non-empty text. Footer rows are appended to the body
+    # (mutating the list). Rows are padded and parsed by the text parser, returning
+    # the resulting frame. Raises an empty-data error (from the parser) for empty tables.
     head, body, foot = kwargs.pop("data")
     header = kwargs.pop("header")
     kwargs["skiprows"] = _get_skiprows(kwargs["skiprows"])
@@ -881,6 +1081,12 @@ _valid_parsers = {
 
 
 def _parser_dispatch(flavor: HTMLFlavors | None) -> type[_HtmlFrameParser]:
+    # [FUNCTION DOC]
+    # HELPER: maps a flavor name to a parser class. flavor may be lxml, none (same
+    # as lxml), html5lib or bs4 (the latter two the same). Raises a value error for
+    # other names listing the valid ones; imports the needed optional dependencies
+    # (html5lib and bs4, or lxml) which raises an import error if missing.
+    # Returns the class (not an instance).
     """
     Choose the parser based on the input flavor.
 
@@ -916,11 +1122,21 @@ def _parser_dispatch(flavor: HTMLFlavors | None) -> type[_HtmlFrameParser]:
 
 
 def _print_as_set(s) -> str:
+    # [FUNCTION DOC]
+    # HELPER: formats an iterable as a set-like string of pretty-printed items
+    # inside braces, used in error messages.
     arg = ", ".join([pprint_thing(el) for el in s])
     return f"{{{arg}}}"
 
 
 def _validate_flavor(flavor):
+    # [FUNCTION DOC]
+    # HELPER: normalizes the flavor argument into a tuple of names. none becomes the
+    # default order (lxml then bs4); a string becomes a one-item tuple; any other
+    # iterable must contain only strings (otherwise a type error); anything else
+    # raises a value error. Also raises a value error if none of the names is a valid
+    # flavor. Returns the tuple.
+    # KNOWN ISSUE: the final fallback branch builds its message with a conditional on whether the object is a string, but a string never reaches that branch, so the first alternative is dead.
     if flavor is None:
         flavor = "lxml", "bs4"
     elif isinstance(flavor, str):
@@ -959,6 +1175,16 @@ def _parse(
     storage_options,
     **kwargs,
 ):
+    # [FUNCTION DOC]
+    # HELPER: engine of the reader. Validates flavors, compiles match, then tries
+    # each flavor's parser in order. A value error from a parser causes a rewind of
+    # a seekable source before trying the next flavor; a non-seekable source raises a
+    # value error explaining it cannot be rewound; the last failure is raised if all
+    # flavors fail. Each table found is converted to a frame using the remaining
+    # keyword options; empty-data errors skip that table. When links are extracted
+    # from headers and the columns are a multi-level index, columns become a flat
+    # index of tuples of text and link (missing link as none).
+    # Returns a list of frames.
     flavor = _validate_flavor(flavor)
     compiled_match = re.compile(match)  # you can pass a compiled regex here
 
@@ -1041,6 +1267,21 @@ def read_html(
     dtype_backend: DtypeBackend | lib.NoDefault = lib.no_default,
     storage_options: StorageOptions = None,
 ) -> list[DataFrame]:
+    # [FUNCTION DOC]
+    # Public reader. Parameters (all keyword-only except io): io is a path, URL or
+    # buffer; match is the regular expression a table must contain (default any
+    # non-empty text); flavor selects parser(s) (default lxml then bs4); header,
+    # index_col, skiprows (non-negative integer, sequence or slice), parse_dates,
+    # thousands (default comma), encoding, decimal, converters, na_values,
+    # keep_default_na are forwarded to the text parser; attrs filters tables by
+    # attributes; displayed_only (default true) skips elements hidden via styling;
+    # extract_links limits link extraction to a section or all; dtype_backend picks
+    # nullable/pyarrow dtypes; storage_options configures remote access.
+    # Raises a value error for a negative integer skiprows or an invalid
+    # extract_links value; validates header and dtype_backend arguments; converts
+    # the path-like io to a string. Returns a list of frames from the internal parse
+    # routine; raises parse errors (value error when no table matches).
+    # KNOWN ISSUE: the docstring describes displayed_only as controlling whether hidden elements "should be parsed", which reads inverted: true means hidden elements are dropped.
     r"""
     Read HTML tables into a ``list`` of ``DataFrame`` objects.
 
