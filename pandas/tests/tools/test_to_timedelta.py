@@ -1,3 +1,11 @@
+# [MODULE DOC]
+# Tests for the public timedelta conversion function (to_timedelta) and related
+# constructors. Covers string parsing (mixed units, deprecated and ambiguous unit
+# letters), unit and dtype handling, missing-value inputs, error modes, overflow,
+# float precision, zero-dimensional arrays, nullable and Arrow-backed dtypes.
+# Content is a single test class plus two module-level tests for Arrow dtypes.
+# Uses shared fixtures (writable, fixed_now_ts, any_numeric_ea_dtype) from the test configuration.
+# No import-time side effects.
 from datetime import (
     time,
     timedelta,
@@ -27,7 +35,13 @@ from pandas.core.arrays import TimedeltaArray
 
 
 class TestTimedeltas:
+    # [CLASS DOC]
+    # Test collection for timedelta conversion behavior; no state, one method per scenario.
     def test_to_timedelta_mixed_unit_strings(self):
+        # [FUNCTION DOC]
+        # Converting a list holding a long day/clock string with fractional seconds and a
+        # microsecond string yields a timedelta index in nanosecond resolution with the exact
+        # nanosecond integer values (108301000030000 and 15500).
         # https://github.com/pandas-dev/pandas/pull/63196#issuecomment-3595743721
         result = to_timedelta(["1 days 06:05:01.00003", "15.5us"])
 
@@ -35,6 +49,9 @@ class TestTimedeltas:
         tm.assert_index_equal(result, expected)
 
     def test_to_timedelta_all_nat_unit(self):
+        # [FUNCTION DOC]
+        # Verifies that converting a list containing only a missing value, or constructing a
+        # timedelta index from it, gives an index whose resolution unit is seconds.
         # With all-NaT entries, we get "s" unit
         result = to_timedelta([None])
         assert result.unit == "s"
@@ -43,6 +60,10 @@ class TestTimedeltas:
         assert result.unit == "s"
 
     def test_to_timedelta_month_raises(self):
+        # [FUNCTION DOC]
+        # Verifies a NumPy timedelta in month units is rejected with a value error saying the
+        # unit is not supported, for the conversion function (scalar and list), the Timedelta
+        # scalar constructor, and the timedelta index constructor.
         obj = np.timedelta64(1, "M")
 
         msg = "Unit M is not supported."
@@ -56,10 +77,16 @@ class TestTimedeltas:
             TimedeltaIndex([obj])
 
     def test_to_timedelta_none(self):
+        # [FUNCTION DOC]
+        # GH#23055. Converting None returns the NaT singleton.
         # GH#23055
         assert to_timedelta(None) is pd.NaT
 
     def test_to_timedelta_dt64_raises(self):
+        # [FUNCTION DOC]
+        # GH#29794. Passing datetime64 nanosecond data (a Series of NaT) raises a type error
+        # stating the dtype cannot be converted to timedelta64 nanoseconds; checked both directly and
+        # via applying the function over a one-column frame.
         # Passing datetime64-dtype data to TimedeltaIndex is no longer
         #  supported GH#29794
         msg = r"dtype datetime64\[ns\] cannot be converted to timedelta64\[ns\]"
@@ -71,6 +98,9 @@ class TestTimedeltas:
             ser.to_frame().apply(to_timedelta)
 
     def test_to_timedelta_readonly(self, writable):
+        # [FUNCTION DOC]
+        # GH#34857. Parametrized by the writable fixture. An empty object array whose
+        # write flag is set from the fixture converts to an index equal to converting an empty list.
         # GH#34857
         arr = np.array([], dtype=object)
         arr.setflags(write=writable)
@@ -79,16 +109,25 @@ class TestTimedeltas:
         tm.assert_index_equal(result, expected)
 
     def test_to_timedelta_null(self):
+        # [FUNCTION DOC]
+        # Converting a list of two empty strings gives all-missing results.
         result = to_timedelta(["", ""])
         assert isna(result).all()
 
     def test_to_timedelta_same_np_timedelta64(self):
+        # [FUNCTION DOC]
+        # Pass-through check: a NumPy array holding one one-second timedelta converts to an
+        # index equal to a generic Index built from the same array.
         # pass thru
         result = to_timedelta(np.array([np.timedelta64(1, "s")]))
         expected = pd.Index(np.array([np.timedelta64(1, "s")]))
         tm.assert_index_equal(result, expected)
 
     def test_to_timedelta_series(self):
+        # [FUNCTION DOC]
+        # Converting a Series of "1d" and "1days 00:00:01" returns a Series of timedelta values
+        # with microsecond resolution (one day and one day plus one second). The lowercase "d" unit
+        # spelling must emit a Pandas4Warning whose message says 'd' is deprecated.
         # Series
         expected = Series(
             [timedelta(days=1), timedelta(days=1, seconds=1)], dtype="m8[us]"
@@ -100,6 +139,9 @@ class TestTimedeltas:
         tm.assert_series_equal(result, expected)
 
     def test_to_timedelta_units(self):
+        # [FUNCTION DOC]
+        # Constructing a timedelta index from NumPy timedeltas (zero and ten seconds) matches
+        # converting integers 0 and 10 with unit seconds, cast to nanosecond resolution.
         # with units
         result = TimedeltaIndex(
             [np.timedelta64(0, "ns"), np.timedelta64(10, "s").astype("m8[ns]")]
@@ -108,6 +150,9 @@ class TestTimedeltas:
         tm.assert_index_equal(result, expected)
 
     def test_to_timedelta_mixed_dtype(self):
+        # [FUNCTION DOC]
+        # GH#64044. A float array of 0.5 and 2 with unit minutes converts to 30 seconds and
+        # 2 minutes, in a nanosecond-resolution index with no frequency.
         # https://github.com/pandas-dev/pandas/issues/64044
         result = to_timedelta(np.array([0.5, 2]), unit="m")
         expected = TimedeltaIndex(
@@ -126,6 +171,10 @@ class TestTimedeltas:
         ],
     )
     def test_to_timedelta_units_dtypes(self, dtype, unit):
+        # [FUNCTION DOC]
+        # Parametrized over (dtype, unit) pairs (integer arrays with s/m/h, timedelta arrays
+        # with s/D). Converting an array of five ones with the unit gives an index of five
+        # one-unit timedeltas whose resolution is seconds in every case.
         # arrays of various dtypes
         arr = np.array([1] * 5, dtype=dtype)
         result = to_timedelta(arr, unit=unit)
@@ -134,6 +183,11 @@ class TestTimedeltas:
         tm.assert_index_equal(result, expected)
 
     def test_to_timedelta_oob_non_nano(self):
+        # [FUNCTION DOC]
+        # Out-of-bounds check: a minute-resolution array holding the NaT sentinel plus one
+        # must raise OutOfBoundsTimedelta with a message about converting minutes to seconds
+        # without overflow, for the conversion function, the index constructor, and the array
+        # class sequence constructor with a seconds dtype.
         arr = np.array([pd.NaT._value + 1], dtype="timedelta64[m]")
 
         msg = (
@@ -152,12 +206,18 @@ class TestTimedeltas:
     @pytest.mark.parametrize("box", [lambda x: x, pd.DataFrame])
     @pytest.mark.parametrize("errors", ["raise", "coerce"])
     def test_to_timedelta_dataframe(self, box, errors):
+        # [FUNCTION DOC]
+        # GH 11776. Parametrized over errors mode (raise, coerce) and a box (identity, DataFrame).
+        # A 2-by-5 two-dimensional input must raise a type error mentioning a 1-d array requirement
+        # regardless of the errors mode.
         # GH 11776
         arg = box(np.arange(10).reshape(2, 5))
         with pytest.raises(TypeError, match="1-d array"):
             to_timedelta(arg, errors=errors)
 
     def test_to_timedelta_invalid_errors(self):
+        # [FUNCTION DOC]
+        # An invalid errors argument raises a value error "errors must be one of".
         # bad value for errors parameter
         msg = "errors must be one of"
         with pytest.raises(ValueError, match=msg):
@@ -165,12 +225,18 @@ class TestTimedeltas:
 
     @pytest.mark.parametrize("arg", [[1, 2], 1])
     def test_to_timedelta_invalid_unit(self, arg):
+        # [FUNCTION DOC]
+        # Parametrized over a list and a scalar. An unknown unit string raises a value error
+        # "invalid unit abbreviation: foo".
         # these will error
         msg = "invalid unit abbreviation: foo"
         with pytest.raises(ValueError, match=msg):
             to_timedelta(arg, unit="foo")
 
     def test_to_timedelta_time(self):
+        # [FUNCTION DOC]
+        # A datetime.time object is not convertible: raises a value error listing the supported
+        # input types in the default mode, and returns NaT in coerce mode.
         # time not supported ATM
         msg = (
             "Value must be Timedelta, string, integer, float, timedelta or convertible"
@@ -180,11 +246,16 @@ class TestTimedeltas:
         assert to_timedelta(time(second=1), errors="coerce") is pd.NaT
 
     def test_to_timedelta_bad_value(self):
+        # [FUNCTION DOC]
+        # A list of unparseable strings raises a value error "Could not convert 'foo' to NumPy timedelta".
         msg = "Could not convert 'foo' to NumPy timedelta"
         with pytest.raises(ValueError, match=msg):
             to_timedelta(["foo", "bar"])
 
     def test_to_timedelta_bad_value_coerce(self):
+        # [FUNCTION DOC]
+        # In coerce mode unparseable strings become NaT: all-bad input gives an all-NaT index;
+        # mixed input keeps parseable entries ("1 day", "1 min") and NaT for the bad one.
         tm.assert_index_equal(
             TimedeltaIndex([pd.NaT, pd.NaT]),
             to_timedelta(["foo", "bar"], errors="coerce"),
@@ -211,6 +282,10 @@ class TestTimedeltas:
         ],
     )
     def test_unambiguous_timedelta_values(self, val, errors):
+        # [FUNCTION DOC]
+        # GH36666. Parametrized over (string, whether an error is expected). Strings using the
+        # unit letters M, Y or y (with or without a space) must raise a value error that these
+        # units are not unambiguous; lowercase m and day spellings must convert without raising.
         # GH36666 Deprecate use of strings denoting units with 'M', 'Y', 'm' or 'y'
         # in pd.to_timedelta
         msg = "Units 'M', 'Y' and 'y' do not represent unambiguous timedelta"
@@ -222,6 +297,10 @@ class TestTimedeltas:
             to_timedelta(val)
 
     def test_to_timedelta_via_apply(self):
+        # [FUNCTION DOC]
+        # GH 5458. Applying the conversion element-wise to a Series with "00:00:01" yields a
+        # microsecond-resolution Series of one second; building a Series from the scalar
+        # conversion result gives the same.
         # GH 5458
         expected = Series([np.timedelta64(1, "s")], dtype="m8[us]")
         result = Series(["00:00:01"]).apply(to_timedelta)
@@ -231,6 +310,10 @@ class TestTimedeltas:
         tm.assert_series_equal(result, expected)
 
     def test_to_timedelta_inference_without_warning(self):
+        # [FUNCTION DOC]
+        # GH#41731. Converting a list with a clock string and NaT emits no warning (even
+        # though the Series constructor would) and gives a microsecond-resolution index of
+        # one second and NaT.
         # GH#41731 inference produces a warning in the Series constructor,
         #  but _not_ in to_timedelta
         vals = ["00:00:01", pd.NaT]
@@ -241,6 +324,10 @@ class TestTimedeltas:
         tm.assert_index_equal(result, expected)
 
     def test_to_timedelta_on_missing_values(self):
+        # [FUNCTION DOC]
+        # GH5438. A Series with a clock string and a float NaN converts to a microsecond
+        # timedelta Series of one second and NaT (endian-aware dtype); converting a
+        # timedelta Series with NaT gives the same result.
         # GH5438
         timedelta_NaT = np.timedelta64("NaT", "ns")
 
@@ -257,17 +344,26 @@ class TestTimedeltas:
 
     @pytest.mark.parametrize("val", [np.nan, pd.NaT, pd.NA])
     def test_to_timedelta_on_missing_values_scalar(self, val):
+        # [FUNCTION DOC]
+        # Parametrized over NaN, NaT, NA. Converting the scalar yields a NaT whose internal integer value equals the NumPy NaT sentinel.
         actual = to_timedelta(val)
         assert actual._value == np.timedelta64("NaT", "ns").astype("int64")
 
     @pytest.mark.parametrize("val", [np.nan, pd.NaT, pd.NA])
     def test_to_timedelta_on_missing_values_list(self, val):
+        # [FUNCTION DOC]
+        # Parametrized over NaN, NaT, NA. Converting a one-element list gives an element that is
+        # NaT with the NumPy NaT sentinel as internal integer value.
         actual = to_timedelta([val])
         assert actual[0]._value == np.timedelta64("NaT", "ns").astype("int64")
 
     @pytest.mark.skipif(WASM, reason="No fp exception support in WASM")
     @pytest.mark.xfail(not IS64, reason="Floating point error")
     def test_to_timedelta_float(self):
+        # [FUNCTION DOC]
+        # GH#25077. Skipped on WASM (no floating point exception support) and expected to fail on
+        # non-64-bit builds. Converting the last ten values of a microsecond-step float
+        # range in seconds must give exactly the expected integer nanosecond values (no float rounding drift).
         # https://github.com/pandas-dev/pandas/issues/25077
         arr = np.arange(0, 1, 1e-6)[-10:]
         result = to_timedelta(arr, unit="s")
@@ -275,6 +371,9 @@ class TestTimedeltas:
         tm.assert_numpy_array_equal(result.asi8, expected_asi8)
 
     def test_to_timedelta_coerce_strings_unit(self):
+        # [FUNCTION DOC]
+        # An object array holding two integers and a bad string, unit nanoseconds, coerce
+        # mode: result equals converting the integers with NaT in place of the bad entry.
         arr = np.array([1, 2, "error"], dtype=object)
         result = to_timedelta(arr, unit="ns", errors="coerce")
         expected = to_timedelta([1, 2, pd.NaT], unit="ns")
@@ -284,6 +383,10 @@ class TestTimedeltas:
         "expected_val, result_val", [[timedelta(days=2), 2], [None, None]]
     )
     def test_to_timedelta_nullable_int64_dtype(self, expected_val, result_val):
+        # [FUNCTION DOC]
+        # GH 35574. Parametrized over (expected second value, input second value): two days
+        # or a missing value. A nullable Int64 Series converted with unit days gives a seconds-resolution
+        # timedelta Series (1 day and the expected value, missing mapped to missing).
         # GH 35574
         expected = Series([timedelta(days=1), expected_val], dtype="m8[s]")
         result = to_timedelta(Series([1, result_val], dtype="Int64"), unit="days")
@@ -302,12 +405,20 @@ class TestTimedeltas:
     )
     @pytest.mark.parametrize("func", [pd.Timedelta, to_timedelta])
     def test_to_timedelta_precision_over_nanos(self, input, expected, func):
+        # [FUNCTION DOC]
+        # GH 36738. Parametrized over input strings with fractional seconds beyond nanosecond
+        # digits and the expected truncated string, and over the converter (Timedelta constructor or
+        # to_timedelta). Extra digits beyond nanoseconds are truncated, including for negative values.
         # GH: 36738
         expected = pd.Timedelta(expected)
         result = func(input)
         assert result == expected
 
     def test_to_timedelta_zerodim(self, fixed_now_ts):
+        # [FUNCTION DOC]
+        # Parametrized by fixed_now_ts. A zero-dimensional datetime64 array is rejected with a value
+        # error that a datetime64 value is not convertible; viewing the same data as a timedelta64
+        # zero-dimensional array returns a Timedelta scalar with identical integer value.
         # ndarray.item() incorrectly returns int for dt64[ns] and td64[ns]
         dt64 = fixed_now_ts.to_datetime64()
         arg = np.array(dt64)
@@ -325,6 +436,9 @@ class TestTimedeltas:
         assert result._value == dt64.view("i8")
 
     def test_to_timedelta_numeric_ea(self, any_numeric_ea_dtype):
+        # [FUNCTION DOC]
+        # GH#48796. Parametrized over every numeric extension dtype. A Series of one and NA converts
+        # to a Series of one nanosecond and NaT.
         # GH#48796
         ser = Series([1, pd.NA], dtype=any_numeric_ea_dtype)
         result = to_timedelta(ser)
@@ -332,11 +446,17 @@ class TestTimedeltas:
         tm.assert_series_equal(result, expected)
 
     def test_to_timedelta_fraction(self):
+        # [FUNCTION DOC]
+        # A third of an hour (float) converts to 19 minutes 59.999999998 seconds, showing
+        # nanosecond truncation.
         result = to_timedelta(1.0 / 3, unit="h")
         expected = pd.Timedelta("0 days 00:19:59.999999998")
         assert result == expected
 
     def test_to_timedelta_unit_round_floats(self):
+        # [FUNCTION DOC]
+        # Round floats (45.0) in object and float64 arrays with unit seconds convert to the
+        # same result as the integer 45 with unit seconds (requested unit kept).
         # When the float is round, we give the requested unit
         #  (or nearest-supported) like we do with integers
         arr = np.array([45.0], dtype=object)
@@ -349,6 +469,8 @@ class TestTimedeltas:
         tm.assert_index_equal(result2, expected)
 
     def test_to_timedelta_unit_non_round_floats(self):
+        # [FUNCTION DOC]
+        # Non-round floats (45.5 seconds) in object and float64 arrays convert to an index whose unit is nanoseconds.
         # With non-round floats, we have to give nanosecond
         arr = np.array([45.5], dtype=object)
         result = to_timedelta(arr, unit="s")
@@ -359,6 +481,10 @@ class TestTimedeltas:
         assert result2.unit == "ns"
 
     def test_to_timedelta_unit_mixed_round_and_non_round_floats(self):
+        # [FUNCTION DOC]
+        # GH#65150. A list mixing a round and a non-round float, or an integer with a non-round float,
+        # with unit seconds converts to the expected nanosecond-resolution index (one second and
+        # 1.01 seconds), i.e. the unit applies to every element.
         # GH#65150 - round floats mixed with non-round floats should
         # respect the unit for all values
         expected = to_timedelta(["0 days 00:00:01", "0 days 00:00:01.01"]).as_unit("ns")
@@ -372,6 +498,9 @@ class TestTimedeltas:
 
 
 def test_from_numeric_arrow_dtype(any_numeric_ea_dtype):
+    # [FUNCTION DOC]
+    # GH 52425. Skipped when pyarrow is missing. Parametrized by numeric extension dtype. A Series of 1 and 2
+    # with the pyarrow-backed version of the dtype converts to a nanosecond timedelta Series.
     # GH 52425
     pytest.importorskip("pyarrow")
     ser = Series([1, 2], dtype=f"{any_numeric_ea_dtype.lower()}[pyarrow]")
@@ -382,6 +511,9 @@ def test_from_numeric_arrow_dtype(any_numeric_ea_dtype):
 
 @pytest.mark.parametrize("unit", ["ns", "ms"])
 def test_from_timedelta_arrow_dtype(unit):
+    # [FUNCTION DOC]
+    # GH 54298. Skipped when pyarrow is missing. Parametrized over unit (ns, ms). A Series with a pyarrow duration dtype
+    # converts to a Series equal to itself (dtype preserved).
     # GH 54298
     pytest.importorskip("pyarrow")
     expected = Series([timedelta(1)], dtype=f"duration[{unit}][pyarrow]")

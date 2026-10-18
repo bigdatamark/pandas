@@ -1,3 +1,9 @@
+# [MODULE DOC]
+# Tests for frequency-offset parsing details: the period base used when converting to
+# timestamps, resolution bumping of fractional frequency strings, invalid fractional
+# frequencies, and compatibility of offsets with NumPy datetime values.
+# Uses the offset-parsing function and the Period class from the tslibs package.
+# No import-time side effects.
 import numpy as np
 import pytest
 
@@ -12,6 +18,11 @@ from pandas._libs.tslibs import (
     [("D", "D"), ("W", "D"), ("ME", "D"), ("s", "s"), ("min", "s"), ("h", "s")],
 )
 def test_get_to_timestamp_base(freqstr, exp_freqstr):
+    # [FUNCTION DOC]
+    # Parametrized over frequency strings and the expected base frequency string. Builds
+    # a Period from ordinal 1 with the parsed offset and checks that the period dtype's
+    # to-timestamp base lookup returns the period dtype code of the expected base offset
+    # (daily-or-coarser frequencies map to daily, intraday ones to seconds).
     off = to_offset(freqstr)
     per = Period._from_ordinal(1, off)
     exp_code = to_offset(exp_freqstr)._period_dtype_code
@@ -32,6 +43,11 @@ def test_get_to_timestamp_base(freqstr, exp_freqstr):
     ],
 )
 def test_resolution_bumping(args, expected):
+    # [FUNCTION DOC]
+    # GH#14378. Parametrized over a fractional count and unit (as a tuple) and the expected
+    # (count, prefix) pair. Parses the concatenated string and checks the offset's multiple
+    # and prefix equal the expected values, i.e. a fractional value is converted to a
+    # whole number of a smaller unit (for example 1.5 minutes becomes 90 seconds).
     # see gh-14378
     off = to_offset(str(args[0]) + args[1])
     assert off.n == expected[0]
@@ -47,6 +63,10 @@ def test_resolution_bumping(args, expected):
     ],
 )
 def test_cat(args):
+    # [FUNCTION DOC]
+    # Parametrized over a fractional nanosecond frequency and a fractional hour with excessive
+    # precision. Verifies that parsing raises a value error with message "Invalid frequency".
+    # KNOWN ISSUE: the name "cat" says nothing about the behavior; the test is about invalid fractional frequency strings.
     msg = "Invalid frequency"
 
     with pytest.raises(ValueError, match=msg):
@@ -64,6 +84,10 @@ def test_cat(args):
     ],
 )
 def test_compatibility(freqstr, expected):
+    # [FUNCTION DOC]
+    # Parametrized over a frequency string and the expected timestamp text. Adds the parsed
+    # offset to the NumPy datetime64 2021-01-01T08:00 (on the right) and checks the result
+    # equals the expected NumPy datetime64 (hour, day, week, month-end, year-end offsets).
     ts_np = np.datetime64("2021-01-01T08:00:00.00")
     do = to_offset(freqstr)
     assert ts_np + do == np.datetime64(expected)

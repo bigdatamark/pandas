@@ -3,6 +3,10 @@ Tests for the following offsets:
 - Easter
 """
 
+# [MODULE DOC]
+# Tests for the Easter offset, which moves a date to the next or previous Easter Sunday. Covers the default method and the
+# explicitly specified Western and Orthodox calendars, with positive and negative step counts. Uses the shared offsets assertion helper.
+# No import-time side effects.
 from __future__ import annotations
 
 from datetime import datetime
@@ -19,6 +23,8 @@ from pandas.tseries.offsets import Easter
 
 
 class TestEaster:
+    # [CLASS DOC]
+    # Test collection for the Easter offset; three parametrized tests with identical shape.
     @pytest.mark.parametrize(
         "offset,date,expected",
         [
@@ -35,6 +41,8 @@ class TestEaster:
         ],
     )
     def test_offset(self, offset, date, expected):
+        # [FUNCTION DOC]
+        # Parametrized over (offset, start date, expected date) for the default method (Western). Checks forward steps one and two, backward steps, and dates falling on or just after an Easter (April 4 2010 is Easter Sunday 2010, so adding one jumps to the 2011 Easter on April 24).
         assert_offset_equal(offset, date, expected)
 
     @pytest.mark.parametrize(
@@ -89,6 +97,8 @@ class TestEaster:
         ],
     )
     def test_western_easter_offset(self, offset, date, expected):
+        # [FUNCTION DOC]
+        # Same cases as the default test but with the Western method specified explicitly; results must be identical to the default (Easter dates 2008-03-23, 2009-04-12, 2010-04-04, 2011-04-24, 2012-04-08).
         assert_offset_equal(offset, date, expected)
 
     @pytest.mark.parametrize(
@@ -147,4 +157,6 @@ class TestEaster:
         ],
     )
     def test_orthodox_easter_offset(self, offset, date, expected):
+        # [FUNCTION DOC]
+        # Same shape with the Orthodox method. Easter dates differ from Western in some years: 2008-04-27, 2009-04-19, 2010-04-04, 2011-04-24, 2012-04-15.
         assert_offset_equal(offset, date, expected)

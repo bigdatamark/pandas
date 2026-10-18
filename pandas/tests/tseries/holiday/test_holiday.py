@@ -1,3 +1,10 @@
+# [MODULE DOC]
+# Tests for the Holiday rule class and holiday calendar utilities: computing dates
+# for predefined US and Easter-related rules (with timezone preservation), rules restricted to the query
+# window, argument types, special one-time and ranged holidays, calendar registry lookup, the
+# calendar factory, validation errors for offsets, observance, exclusions and weekdays,
+# half-open date intervals, and timezone handling when no occurrences exist.
+# No import-time side effects.
 from datetime import (
     datetime,
     timezone,
@@ -125,6 +132,11 @@ from pandas.tseries.holiday import (
     ],
 )
 def test_holiday_dates(holiday, start_date, end_date, expected):
+    # [FUNCTION DOC]
+    # Parametrized over (rule, start, end, expected list of dates): US Memorial Day, two custom
+    # July 3rd rules (the second restricted to weekdays Monday to Thursday), Easter Monday, Good Friday and
+    # Thanksgiving over multi-year ranges. Verifies the rule's date listing equals the expected list for
+    # naive inputs, and that with UTC-aware start and end the dates equal the expected values with UTC attached.
     assert list(holiday.dates(start_date, end_date)) == expected
 
     # Verify that timezone info is preserved.
@@ -183,6 +195,13 @@ def test_holiday_dates(holiday, start_date, end_date, expected):
     ],
 )
 def test_holidays_within_dates(holiday, start, expected):
+    # [FUNCTION DOC]
+    # see gh-11477. Parametrized over (rule or rule name, single start date, expected list). Strings are
+    # resolved to rules through the US federal calendar by name. The date listing for a window
+    # where start and end are the same day must equal the expected list: empty when the observed holiday does not fall on
+    # that day (for example the actual Saturday July 4th, since it is observed Friday), the day itself when it is the observed date. Cases include Juneteenth before
+    # and after it became a holiday (2021). Also checks UTC timezone preservation. Guards against dates returned outside the window or observance rules not
+    # applied when the unshifted holiday lies outside the window.
     # see gh-11477
     #
     # Fix holiday behavior where holiday.dates returned dates outside
@@ -206,6 +225,9 @@ def test_holidays_within_dates(holiday, start, expected):
     "transform", [lambda x: x.strftime("%Y-%m-%d"), lambda x: Timestamp(x)]
 )
 def test_argument_types(transform):
+    # [FUNCTION DOC]
+    # Parametrized over transforms to ISO string and Timestamp. Thanksgiving dates computed with
+    # transformed start and end arguments must give an index equal to the one computed with datetime arguments.
     start_date = datetime(2011, 1, 1)
     end_date = datetime(2020, 12, 31)
 
@@ -231,6 +253,10 @@ def test_argument_types(transform):
     ],
 )
 def test_special_holidays(name, kwargs):
+    # [FUNCTION DOC]
+    # Parametrized over (name, constructor keyword arguments): a one-time holiday with year, month and day,
+    # and a ranged rule with start and end dates plus a Monday weekday offset. Both must yield exactly the list containing 2012-05-28
+    # when queried for 2011 through 2020.
     base_date = [datetime(2012, 5, 28)]
     holiday = Holiday(name, **kwargs)
 
@@ -241,7 +267,12 @@ def test_special_holidays(name, kwargs):
 
 
 def test_get_calendar():
+    # [FUNCTION DOC]
+    # Defining a calendar subclass registers it by class name; looking it up by that name returns an
+    # instance whose type is that class.
     class TestCalendar(AbstractHolidayCalendar):
+        # [CLASS DOC]
+        # HELPER: local calendar subclass with an empty rule list, defined to check registration by name.
         rules = []
 
     calendar = get_calendar("TestCalendar")
@@ -249,6 +280,9 @@ def test_get_calendar():
 
 
 def test_factory():
+    # [FUNCTION DOC]
+    # Builds calendar classes through the calendar factory: one with the Memorial Day rule, one with the Thanksgiving rule,
+    # and one combining the two classes. The first two have one rule each; the combination has two.
     class_1 = HolidayCalendarFactory(
         "MemorialDay", AbstractHolidayCalendar, USMemorialDay
     )
@@ -263,6 +297,8 @@ def test_factory():
 
 
 def test_both_offset_observance_raises():
+    # [FUNCTION DOC]
+    # see gh-10217. Creating a Holiday with both an offset list and an observance function raises NotImplementedError "Cannot use both offset and observance".
     # see gh-10217
     msg = "Cannot use both offset and observance"
     with pytest.raises(NotImplementedError, match=msg):
@@ -276,6 +312,9 @@ def test_both_offset_observance_raises():
 
 
 def test_list_of_list_of_offsets_raises():
+    # [FUNCTION DOC]
+    # see gh-29049. A holiday created with a flat list of offsets is accepted, but using that holiday's offset list as an
+    # element of another offset list raises a value error "Only BaseOffsets and flat lists of them are supported for offset".
     # see gh-29049
     # Test that the offsets of offsets are forbidden
     holiday1 = Holiday(
@@ -295,6 +334,10 @@ def test_list_of_list_of_offsets_raises():
 
 
 def test_half_open_interval_with_observance():
+    # [FUNCTION DOC]
+    # Prompted by GH 49075. Builds two holidays with only a start date or only an end date plus an observance, in a custom calendar with
+    # Martin Luther King Jr. day and Labor Day. Queries August 2022 shifted five years earlier, as is, and five years later (no holidays in August for these rules):
+    # all three must equal an empty microsecond datetime index with no frequency, i.e. the empty result type is consistent either side of the interval edge.
     # Prompted by GH 49075
     # Check for holidays that have a half-open date interval where
     # they have either a start_date or end_date defined along
@@ -318,6 +361,8 @@ def test_half_open_interval_with_observance():
     )
 
     class TestHolidayCalendar(AbstractHolidayCalendar):
+        # [CLASS DOC]
+        # HELPER: local calendar subclass whose rules are Martin Luther King Jr. day, the two half-open holidays and Labor Day.
         rules = [
             USMartinLutherKingJr,
             holiday_1,
@@ -341,6 +386,9 @@ def test_half_open_interval_with_observance():
 
 
 def test_holidays_with_timezone_specified_but_no_occurrences():
+    # [FUNCTION DOC]
+    # GH 54580. Regression test: querying the US federal calendar with timezone-aware start and end (America/Chicago, January 1 to 11 2018) and the
+    # name flag returns a Series with value "New Year's Day" indexed by the (tz-aware) start; the timezone must not be dropped by the internal apply-rule step.
     # GH 54580
     # _apply_rule() in holiday.py was silently dropping timezones if you passed it
     # an empty list of holiday dates that had timezone information
@@ -355,6 +403,9 @@ def test_holidays_with_timezone_specified_but_no_occurrences():
 
 
 def test_holiday_with_exclusion():
+    # [FUNCTION DOC]
+    # GH 54382. A rule for the last Monday on or before May 31 with one excluded date (2022-05-30) yields the
+    # 2020 to 2025 dates except 2022, as a microsecond datetime index.
     # GH 54382
     start = Timestamp("2020-05-01")
     end = Timestamp("2025-05-31")
@@ -383,6 +434,8 @@ def test_holiday_with_exclusion():
 
 
 def test_holiday_with_multiple_exclusions():
+    # [FUNCTION DOC]
+    # A January 1 rule with three excluded dates (2025, 2042, 2061) queried from 2025 to 2065 returns every January 1 in 2026 through 2065 except 2042 and 2061, as a microsecond datetime index.
     start = Timestamp("2025-01-01")
     end = Timestamp("2065-12-31")
     exclude = DatetimeIndex(
@@ -445,6 +498,8 @@ def test_holiday_with_multiple_exclusions():
 
 
 def test_exclude_date_value_error():
+    # [FUNCTION DOC]
+    # Passing exclude dates as a plain list instead of a datetime index raises a value error "exclude_dates must be None or of type DatetimeIndex".
     msg = "exclude_dates must be None or of type DatetimeIndex."
 
     with pytest.raises(ValueError, match=msg):
@@ -456,6 +511,8 @@ def test_exclude_date_value_error():
 
 
 def test_days_of_week_value_error():
+    # [FUNCTION DOC]
+    # Passing days of week as a list instead of a tuple raises a value error "days_of_week must be None or tuple".
     msg = "days_of_week must be None or tuple."
 
     with pytest.raises(ValueError, match=msg):

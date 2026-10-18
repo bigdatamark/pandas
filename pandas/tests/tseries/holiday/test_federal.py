@@ -1,3 +1,7 @@
+# [MODULE DOC]
+# Tests for individual US federal holiday rules and calendar results: Martin Luther
+# King Jr. day start year, Memorial Day dates, and result type stability for empty
+# queries. No import-time side effects.
 from datetime import datetime
 
 from pandas import DatetimeIndex
@@ -12,8 +16,13 @@ from pandas.tseries.holiday import (
 
 
 def test_no_mlk_before_1986():
+    # [FUNCTION DOC]
+    # see gh-10278. A calendar holding only the MLK rule queried from 1984 to 1988 returns only
+    # 1986-01-20 and 1987-01-19, since the holiday is not observed before 1986.
     # see gh-10278
     class MLKCalendar(AbstractHolidayCalendar):
+        # [CLASS DOC]
+        # HELPER: local calendar subclass with the MLK rule as its only rule.
         rules = [USMartinLutherKingJr]
 
     holidays = MLKCalendar().holidays(start="1984", end="1988").to_pydatetime().tolist()
@@ -23,7 +32,12 @@ def test_no_mlk_before_1986():
 
 
 def test_memorial_day():
+    # [FUNCTION DOC]
+    # Memorial Day rule queried from 1971 to 1980 returns the last Monday of May for 1971 through
+    # 1979 as datetimes (the 1980 query end is the start of that year, so 1980 is excluded).
     class MemorialDay(AbstractHolidayCalendar):
+        # [CLASS DOC]
+        # HELPER: local calendar subclass with Memorial Day as its only rule.
         rules = [USMemorialDay]
 
     holidays = MemorialDay().holidays(start="1971", end="1980").to_pydatetime().tolist()
@@ -43,6 +57,9 @@ def test_memorial_day():
 
 
 def test_federal_holiday_inconsistent_returntype():
+    # [FUNCTION DOC]
+    # GH 49075. Uses two separate federal calendar instances (to avoid the shared cache) for August 2018 and
+    # August 2019, months without federal holidays. Both results must equal an empty microsecond datetime index with no frequency.
     # GH 49075 test case
     # Instantiate two calendars to rule out _cache
     cal1 = USFederalHolidayCalendar()

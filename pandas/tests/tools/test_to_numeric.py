@@ -1,3 +1,6 @@
+# [MODULE DOC]
+# Tests for the public numeric conversion function (to_numeric): Series, list, array, scalar and DataFrame-column inputs; error handling modes; very large integers; datetime-like, timedelta and period inputs; downcasting to the smallest integer, unsigned or float types including limits and nullable dtypes; nullable string input; and the dtype backend option (numpy-nullable and pyarrow).
+# Defines parametrized fixtures (errors mode, signedness, input transform, large integers, whether extra elements are present, and transform/assertion pairs for index, series and array containers). Pyarrow-dependent tests skip when it is missing. No import-time side effects.
 import decimal
 
 import numpy as np
@@ -20,26 +23,36 @@ import pandas._testing as tm
 
 @pytest.fixture(params=[None, "raise", "coerce"])
 def errors(request):
+    # [FUNCTION DOC]
+    # HELPER: fixture parametrized over the errors argument values: not given (None), "raise" and "coerce". Returns the current value.
     return request.param
 
 
 @pytest.fixture(params=[True, False])
 def signed(request):
+    # [FUNCTION DOC]
+    # HELPER: fixture parametrized over true and false, telling tests whether to negate the test value. Returns the current boolean.
     return request.param
 
 
 @pytest.fixture(params=[lambda x: x, str], ids=["identity", "str"])
 def transform(request):
+    # [FUNCTION DOC]
+    # HELPER: fixture parametrized over a function that returns its input unchanged and the string conversion function (ids identity and str). Returns the current function.
     return request.param
 
 
 @pytest.fixture(params=[47393996303418497800, 100000000000000000000])
 def large_val(request):
+    # [FUNCTION DOC]
+    # HELPER: fixture parametrized over two integers beyond the 64-bit unsigned range (47393996303418497800 and one hundred quintillion). Returns the current value.
     return request.param
 
 
 @pytest.fixture(params=[True, False])
 def multiple_elts(request):
+    # [FUNCTION DOC]
+    # HELPER: fixture parametrized over true and false, telling tests whether to add a second, unparseable element to an array. Returns the current boolean.
     return request.param
 
 
@@ -51,6 +64,8 @@ def multiple_elts(request):
     ]
 )
 def transform_assert_equal(request):
+    # [FUNCTION DOC]
+    # HELPER: fixture yielding (constructor, matching assertion function) pairs for three container kinds: a named Index, a named Series, and a plain NumPy array of the values. Returns the current pair.
     return request.param
 
 
@@ -62,6 +77,8 @@ def transform_assert_equal(request):
     ],
 )
 def test_empty(input_kwargs, result_kwargs):
+    # [FUNCTION DOC]
+    # see gh-16302. Parametrized over (keyword arguments, result dtype). An empty object Series converts to an empty Series with 64-bit integer dtype by default, and to an 8-bit integer dtype when coerce errors and integer downcast are requested.
     # see gh-16302
     ser = Series([], dtype=object)
     result = to_numeric(ser, **input_kwargs)
@@ -75,6 +92,8 @@ def test_empty(input_kwargs, result_kwargs):
 )
 @pytest.mark.parametrize("last_val", ["7", 7])
 def test_series(last_val, infer_string):
+    # [FUNCTION DOC]
+    # Parametrized over the final value ("7" or 7) and whether the future string-inference option is on (the on case requires pyarrow). A Series of "1", "-3.14" and the last value converts to float values 1, -3.14 and 7. The option is set only while the Series is built and converted.
     with option_context("future.infer_string", infer_string):
         ser = Series(["1", "-3.14", last_val])
         result = to_numeric(ser)
@@ -93,6 +112,8 @@ def test_series(last_val, infer_string):
     ],
 )
 def test_series_numeric(data):
+    # [FUNCTION DOC]
+    # Parametrized over integer, float and boolean data. A Series that is already numeric (booleans count as numeric) with a custom index and name is returned equal to the input.
     ser = Series(data, index=list("ABCD"), name="EFG")
 
     result = to_numeric(ser)
@@ -110,6 +131,8 @@ def test_series_numeric(data):
     ],
 )
 def test_error(data, msg):
+    # [FUNCTION DOC]
+    # Parametrized over (data, message). With errors set to raise, an unparseable string raises a value error that names the string and the position of the first failure (position 2 for the apple, position 0 for the orange).
     ser = Series(data)
 
     with pytest.raises(ValueError, match=msg):
@@ -117,6 +140,9 @@ def test_error(data, msg):
 
 
 def test_ignore_error():
+    # [FUNCTION DOC]
+    # A Series with an unparseable string converted in coerce mode gives floats with a missing value in place of the string.
+    # KNOWN ISSUE: the name says ignore error, but the test uses coerce mode; the ignore option is no longer exercised.
     ser = Series([1, -3.14, "apple"])
     result = to_numeric(ser, errors="coerce")
 
@@ -133,6 +159,8 @@ def test_ignore_error():
     ],
 )
 def test_bool_handling(errors, exp):
+    # [FUNCTION DOC]
+    # Parametrized over (errors mode, expected). A Series of two booleans and an unparseable string: raise mode raises a value error naming the string at position 2; coerce mode gives floats 1.0, 0.0 and a missing value.
     ser = Series([True, False, "apple"])
 
     if isinstance(exp, str):
@@ -146,6 +174,8 @@ def test_bool_handling(errors, exp):
 
 
 def test_list():
+    # [FUNCTION DOC]
+    # A list of numeric strings converts to a NumPy float array with the three values.
     ser = ["1", "-3.14", "7"]
     res = to_numeric(ser)
 
@@ -163,6 +193,8 @@ def test_list():
     ],
 )
 def test_list_numeric(data, arr_kwargs):
+    # [FUNCTION DOC]
+    # Parametrized over integer, float and boolean lists with the expected array keyword arguments. A list that is already numeric converts to the equivalent NumPy array (64-bit integers for integers; booleans kept as booleans).
     result = to_numeric(data)
     expected = np.array(data, **arr_kwargs)
     tm.assert_numpy_array_equal(result, expected)
@@ -170,6 +202,8 @@ def test_list_numeric(data, arr_kwargs):
 
 @pytest.mark.parametrize("kwargs", [{"dtype": "O"}, {}])
 def test_numeric(kwargs):
+    # [FUNCTION DOC]
+    # Parametrized over an object dtype and the default dtype. A Series of 1, -3.14, 7 converts to a Series equal to the plain float Series.
     data = [1, -3.14, 7]
 
     ser = Series(data, **kwargs)
@@ -189,6 +223,8 @@ def test_numeric(kwargs):
     ],
 )
 def test_numeric_df_columns(columns):
+    # [FUNCTION DOC]
+    # see gh-14827. Parametrized over a single column name or a list of both. Applies the conversion to column a, which mixes float, Decimal values (including infinity) and a numeric string, and optionally column b; the frame becomes all-float with values 1.2, 3.14, infinity, 0.1.
     # see gh-14827
     df = DataFrame(
         {
@@ -214,6 +250,8 @@ def test_numeric_df_columns(columns):
     ],
 )
 def test_numeric_embedded_arr_likes(data, exp_data):
+    # [FUNCTION DOC]
+    # Parametrized over data containing lists and arrays of Decimal values mixed with scalars. Applying the conversion element-wise to a column converts embedded Decimals to floats while keeping the nested structure.
     # Test to_numeric with embedded lists and arrays
     df = DataFrame({"a": data})
     df["a"] = df["a"].apply(to_numeric)
@@ -223,6 +261,8 @@ def test_numeric_embedded_arr_likes(data, exp_data):
 
 
 def test_all_nan():
+    # [FUNCTION DOC]
+    # In coerce mode, a Series of three non-numeric strings becomes all missing floats.
     ser = Series(["a", "b", "c"])
     result = to_numeric(ser, errors="coerce")
 
@@ -231,6 +271,8 @@ def test_all_nan():
 
 
 def test_type_check(errors):
+    # [FUNCTION DOC]
+    # see gh-11776. Uses the errors fixture. Passing a DataFrame raises a type error mentioning a 1-d array requirement, regardless of the errors argument (omitted when None).
     # see gh-11776
     df = DataFrame({"a": [1, -3.14, 7], "b": ["4", "5", "6"]})
     kwargs = {"errors": errors} if errors is not None else {}
@@ -240,11 +282,15 @@ def test_type_check(errors):
 
 @pytest.mark.parametrize("val", [1, 1.1, 20001])
 def test_scalar(val, signed, transform):
+    # [FUNCTION DOC]
+    # Parametrized over 1, 1.1, 20001, the signed and transform fixtures. Converting the (possibly negated, possibly stringified) scalar equals the float value.
     val = -val if signed else val
     assert to_numeric(transform(val)) == float(val)
 
 
 def test_really_large_scalar(large_val, signed, transform, errors):
+    # [FUNCTION DOC]
+    # see gh-24910. Uses the large value, sign, transform and errors fixtures. A scalar larger than the 64-bit unsigned range converts to an integer in raise or default mode and to a float in coerce mode (compared approximately).
     # see gh-24910
     kwargs = {"errors": errors} if errors is not None else {}
     val = -large_val if signed else large_val
@@ -256,6 +302,8 @@ def test_really_large_scalar(large_val, signed, transform, errors):
 
 
 def test_really_large_in_arr(large_val, signed, transform, multiple_elts, errors):
+    # [FUNCTION DOC]
+    # see gh-24910. Uses large value, sign, transform, multiple-elements and errors fixtures. Builds an array holding the large value and optionally an extra non-numeric string. In raise or default mode with the extra element, a value error naming the string at position 1 is expected. Otherwise the result is an array: floats (with a missing value for the extra string) in coerce mode; an object array of Python integers (plus the unparsed string) in the non-coerce case; for the single element case the dtype is float when the expected value is float, otherwise object.
     # see gh-24910
     kwargs = {"errors": errors} if errors is not None else {}
     val = -large_val if signed else large_val
@@ -291,6 +339,8 @@ def test_really_large_in_arr(large_val, signed, transform, multiple_elts, errors
 
 
 def test_really_large_in_arr_consistent(large_val, signed, multiple_elts, errors):
+    # [FUNCTION DOC]
+    # see gh-24910. Even after having to hold a float, later elements that fail to be integer must not be leniently accepted. Builds a list with the large value as a string, optionally preceded by the large value as an integer. Result is a float array in coerce mode and an object array of integers otherwise, compared approximately.
     # see gh-24910
     #
     # Even if we discover that we have to hold float, does not mean
@@ -316,6 +366,8 @@ def test_really_large_in_arr_consistent(large_val, signed, multiple_elts, errors
     ],
 )
 def test_scalar_fail(errors, checker):
+    # [FUNCTION DOC]
+    # Parametrized over (errors mode, checker). Scalar "fail" raises a value error naming the string at position 0 in raise mode, and returns a missing value in coerce mode.
     scalar = "fail"
 
     if isinstance(checker, str):
@@ -327,6 +379,8 @@ def test_scalar_fail(errors, checker):
 
 @pytest.mark.parametrize("data", [[1, 2, 3], [1.0, np.nan, 3, np.nan]])
 def test_numeric_dtypes(data, transform_assert_equal):
+    # [FUNCTION DOC]
+    # Parametrized over an integer list and a float list with missing values, and the container fixture. Already-numeric Index, Series or array input is returned equal to the input.
     transform, assert_equal = transform_assert_equal
     data = transform(data)
 
@@ -342,6 +396,8 @@ def test_numeric_dtypes(data, transform_assert_equal):
     ],
 )
 def test_str(data, exp, transform_assert_equal):
+    # [FUNCTION DOC]
+    # Parametrized over (strings, expected array), integer strings give 64-bit integers, decimal strings give floats, for each container type. The result equals the expected values wrapped in the same container.
     transform, assert_equal = transform_assert_equal
     result = to_numeric(transform(data))
 
@@ -350,6 +406,8 @@ def test_str(data, exp, transform_assert_equal):
 
 
 def test_datetime_like(tz_naive_fixture, transform_assert_equal):
+    # [FUNCTION DOC]
+    # Uses the time zone and container fixtures. Converting a three-element datetime range (in any container, naive or aware) returns the underlying integer values (nanosecond-based integer representation) in the same container type.
     transform, assert_equal = transform_assert_equal
     idx = pd.date_range("20130101", periods=3, tz=tz_naive_fixture)
 
@@ -359,6 +417,8 @@ def test_datetime_like(tz_naive_fixture, transform_assert_equal):
 
 
 def test_timedelta(transform_assert_equal):
+    # [FUNCTION DOC]
+    # Uses the container fixture. Converting a three-element daily timedelta range returns its underlying integers in the same container type.
     transform, assert_equal = transform_assert_equal
     idx = pd.timedelta_range("1 days", periods=3, freq="D")
 
@@ -376,6 +436,8 @@ def test_timedelta(transform_assert_equal):
     ],
 )
 def test_timedelta_timestamp_scalar(scalar):
+    # [FUNCTION DOC]
+    # GH#59944. Parametrized over a Timedelta, a naive Timestamp and a Pacific-time Timestamp. Converting the scalar gives the same value as converting a one-element Series of it and taking the first element.
     # GH#59944
     result = to_numeric(scalar)
     expected = to_numeric(Series(scalar))[0]
@@ -383,6 +445,8 @@ def test_timedelta_timestamp_scalar(scalar):
 
 
 def test_period(request, transform_assert_equal):
+    # [FUNCTION DOC]
+    # Uses the container fixture. An index of monthly periods converts to its underlying integers. For non-Index containers (Series, array) the test marks an expected failure because period dtype is not supported there.
     transform, assert_equal = transform_assert_equal
 
     idx = pd.period_range("2011-01", periods=3, freq="M", name="")
@@ -405,6 +469,8 @@ def test_period(request, transform_assert_equal):
     ],
 )
 def test_non_hashable(errors, expected):
+    # [FUNCTION DOC]
+    # see gh-13324. Parametrized over (errors mode, expected). A Series containing a list, a float and a string: raise mode raises a type error "Invalid object type at position 0"; coerce mode gives a missing value for the list and the string and keeps 1.0.
     # see gh-13324
     ser = Series([[10.0, 2], 1.0, "apple"])
 
@@ -417,6 +483,8 @@ def test_non_hashable(errors, expected):
 
 
 def test_downcast_invalid_cast():
+    # [FUNCTION DOC]
+    # see gh-13352. An unknown downcast option raises a value error "invalid downcasting method provided".
     # see gh-13352
     data = ["1", 2, 3]
     invalid_downcast = "unsigned-integer"
@@ -427,6 +495,8 @@ def test_downcast_invalid_cast():
 
 
 def test_errors_invalid_value():
+    # [FUNCTION DOC]
+    # see gh-26466. An unknown errors option raises a value error "invalid error value specified".
     # see gh-26466
     data = ["1", 2, 3]
     invalid_error_value = "invalid"
@@ -457,6 +527,8 @@ def test_errors_invalid_value():
     ],
 )
 def test_downcast_basic(data, kwargs, exp_dtype):
+    # [FUNCTION DOC]
+    # see gh-13352. Parametrized over inputs (strings and numbers, integers, an array of daily datetimes) and (keyword, expected dtype): default and downcast none give 64-bit integers; downcast float gives the 32-bit float; downcast unsigned gives the smallest unsigned integer type. The result equals an array of 1, 2, 3 of that dtype.
     # see gh-13352
     result = to_numeric(data, **kwargs)
     expected = np.array([1, 2, 3], dtype=exp_dtype)
@@ -473,6 +545,8 @@ def test_downcast_basic(data, kwargs, exp_dtype):
     ],
 )
 def test_signed_downcast(data, signed_downcast):
+    # [FUNCTION DOC]
+    # see gh-13352. Parametrized over the integer and signed options and three inputs. The result equals an array of 1, 2, 3 in the smallest signed integer dtype.
     # see gh-13352
     smallest_int_dtype = np.dtype(np.typecodes["Integer"][0])
     expected = np.array([1, 2, 3], dtype=smallest_int_dtype)
@@ -482,6 +556,8 @@ def test_signed_downcast(data, signed_downcast):
 
 
 def test_ignore_downcast_neg_to_unsigned():
+    # [FUNCTION DOC]
+    # Cannot cast to unsigned because a value is negative: an unsigned downcast request on data with -1 returns 64-bit integers.
     # Cannot cast to an unsigned integer
     # because we have a negative number.
     data = ["-1", 2, 3]
@@ -506,6 +582,8 @@ def test_ignore_downcast_neg_to_unsigned():
     ],
 )
 def test_ignore_downcast_cannot_convert_float(data, expected, downcast):
+    # [FUNCTION DOC]
+    # Parametrized over integer, signed and unsigned downcast options and two inputs with non-integer values. The result stays as a 64-bit float array (the downcast is ignored).
     # Cannot cast to an integer (signed or unsigned)
     # because we have a float number.
     res = to_numeric(data, downcast=downcast)
@@ -517,6 +595,8 @@ def test_ignore_downcast_cannot_convert_float(data, expected, downcast):
     [("integer", np.int16), ("signed", np.int16), ("unsigned", np.uint16)],
 )
 def test_downcast_not8bit(downcast, expected_dtype):
+    # [FUNCTION DOC]
+    # Parametrized over (option, dtype). Values 256, 257, 258 do not fit in 8 bits: integer and signed give 16-bit signed, unsigned gives 16-bit unsigned.
     # the smallest integer dtype need not be np.(u)int8
     data = ["256", 257, 258]
 
@@ -548,12 +628,16 @@ def test_downcast_not8bit(downcast, expected_dtype):
     ],
 )
 def test_downcast_limits(dtype, downcast, min_max):
+    # [FUNCTION DOC]
+    # see gh-14404. Parametrized over (target dtype, downcast option, [min, max] values). A Series of the two limit values downcasts to exactly the expected dtype, testing each integer width's bounds and values just beyond the narrower type's bounds.
     # see gh-14404: test the limits of each downcast.
     series = to_numeric(Series(min_max), downcast=downcast)
     assert series.dtype == dtype
 
 
 def test_downcast_float64_to_float32():
+    # [FUNCTION DOC]
+    # GH-43693. A float64 Series with a value above the 32-bit exact-integer limit (16777217), the largest float64 and a missing value, downcast to float, keeps its float64 dtype.
     # GH-43693: Check float64 preservation when >= 16,777,217
     series = Series([16777217.0, np.finfo(np.float64).max, np.nan], dtype=np.float64)
     result = to_numeric(series, downcast="float")
@@ -562,6 +646,8 @@ def test_downcast_float64_to_float32():
 
 
 def test_downcast_uint64():
+    # [FUNCTION DOC]
+    # see gh-14422. A Series with 0 and 9223372036854775808 downcast to unsigned gives unsigned 64-bit dtype.
     # see gh-14422:
     # BUG: to_numeric doesn't work uint64 numbers
     ser = Series([0, 9223372036854775808])
@@ -584,6 +670,8 @@ def test_downcast_uint64():
     ],
 )
 def test_coerce_uint64_conflict(data, exp_data):
+    # [FUNCTION DOC]
+    # see gh-17007 and gh-17125. Parametrized over two datasets mixing very large integers, empty and invalid strings. In coerce mode the result is float despite the conflict between unsigned 64-bit values and missing values (which would normally force object dtype).
     # see gh-17007 and gh-17125
     #
     # Still returns float despite the uint64-nan conflict,
@@ -594,6 +682,8 @@ def test_coerce_uint64_conflict(data, exp_data):
 
 
 def test_non_coerce_uint64_conflict():
+    # [FUNCTION DOC]
+    # see gh-17007 and gh-17125. For completeness: the same kind of data without coerce raises a value error "Unable to parse string".
     # see gh-17007 and gh-17125
     #
     # For completeness.
@@ -606,6 +696,8 @@ def test_non_coerce_uint64_conflict():
 @pytest.mark.parametrize("dc1", ["integer", "float", "unsigned"])
 @pytest.mark.parametrize("dc2", ["integer", "float", "unsigned"])
 def test_downcast_empty(dc1, dc2):
+    # [FUNCTION DOC]
+    # GH32493. Parametrized over pairs of downcast options (integer, float, unsigned) applied to an empty list; results are equal arrays regardless of option (dtype not checked).
     # GH32493
 
     tm.assert_numpy_array_equal(
@@ -616,6 +708,8 @@ def test_downcast_empty(dc1, dc2):
 
 
 def test_failure_to_convert_uint64_string_to_NaN():
+    # [FUNCTION DOC]
+    # GH 32394. The string "uint64" in coerce mode gives a missing value as a scalar and within a Series (result is the float Series 32, 64, missing).
     # GH 32394
     result = to_numeric("uint64", errors="coerce")
     assert np.isnan(result)
@@ -677,6 +771,8 @@ def test_failure_to_convert_uint64_string_to_NaN():
     ],
 )
 def test_precision_float_conversion(strrep):
+    # [FUNCTION DOC]
+    # GH 31364. Parametrized over many decimal strings. Converting the string gives exactly the value of the standard float conversion (no precision difference).
     # GH 31364
     result = to_numeric(strrep)
 
@@ -695,6 +791,8 @@ def test_precision_float_conversion(strrep):
     ],
 )
 def test_to_numeric_from_nullable_string(values, nullable_string_dtype, expected):
+    # [FUNCTION DOC]
+    # Issue 37262. Parametrized over (values, expected Series) and the nullable string dtype fixture. A nullable-string Series converts to a nullable Int64 Series when all values are integers (with missing allowed), and to nullable Float64 when any value is fractional.
     # https://github.com/pandas-dev/pandas/issues/37262
     s = Series(values, dtype=nullable_string_dtype)
     result = to_numeric(s)
@@ -702,6 +800,8 @@ def test_to_numeric_from_nullable_string(values, nullable_string_dtype, expected
 
 
 def test_to_numeric_from_nullable_string_coerce(nullable_string_dtype):
+    # [FUNCTION DOC]
+    # GH#52146. Uses the nullable string dtype fixture. A Series with "a" and "1" in coerce mode gives a nullable Int64 Series with a missing value and 1.
     # GH#52146
     values = ["a", "1"]
     ser = Series(values, dtype=nullable_string_dtype)
@@ -739,6 +839,8 @@ def test_to_numeric_from_nullable_string_coerce(nullable_string_dtype):
     ),
 )
 def test_downcast_nullable_numeric(data, input_dtype, downcast, expected_dtype):
+    # [FUNCTION DOC]
+    # Parametrized over (data, input nullable dtype, downcast option, expected nullable dtype). Builds an extension array and downcasts: integer/signed go to the smallest nullable signed type that fits (or stay if floats have fractional values or values exceed range); unsigned goes to the smallest unsigned or stays if a negative exists; float goes to 32-bit nullable float. Compares as extension arrays.
     arr = pd.array(data, dtype=input_dtype)
     result = to_numeric(arr, downcast=downcast)
     expected = pd.array(data, dtype=expected_dtype)
@@ -746,6 +848,8 @@ def test_downcast_nullable_numeric(data, input_dtype, downcast, expected_dtype):
 
 
 def test_downcast_nullable_mask_is_copied():
+    # [FUNCTION DOC]
+    # GH38974. Downcasting a nullable integer array with a missing value gives an Int8 array; setting an element of the input array to missing afterwards must not change the previously returned result (the mask is copied).
     # GH38974
 
     arr = pd.array([1, 2, pd.NA], dtype="Int64")
@@ -759,6 +863,8 @@ def test_downcast_nullable_mask_is_copied():
 
 
 def test_to_numeric_scientific_notation():
+    # [FUNCTION DOC]
+    # GH 15898. The string "1.7e+308" converts to the equal float64.
     # GH 15898
     result = to_numeric("1.7e+308")
     expected = np.float64(1.7e308)
@@ -767,6 +873,8 @@ def test_to_numeric_scientific_notation():
 
 @pytest.mark.parametrize("val", [9876543210.0, 2.0**128])
 def test_to_numeric_large_float_not_downcast_to_float_32(val):
+    # [FUNCTION DOC]
+    # GH 19729. Parametrized over 9876543210.0 and 2 to the 128th power. A float Series downcast to float keeps its original float64 dtype and values because float32 cannot represent them exactly.
     # GH 19729
     expected = Series([val])
     result = to_numeric(expected, downcast="float")
@@ -777,6 +885,8 @@ def test_to_numeric_large_float_not_downcast_to_float_32(val):
     "val, dtype", [(1, "Int64"), (1.5, "Float64"), (True, "boolean")]
 )
 def test_to_numeric_dtype_backend(val, dtype):
+    # [FUNCTION DOC]
+    # GH#50505. Parametrized over (value, expected nullable dtype): 1 gives Int64, 1.5 gives Float64, True gives boolean. An object Series converted with the numpy-nullable backend gives a Series of that dtype.
     # GH#50505
     ser = Series([val], dtype=object)
     result = to_numeric(ser, dtype_backend="numpy_nullable")
@@ -796,6 +906,8 @@ def test_to_numeric_dtype_backend(val, dtype):
     ],
 )
 def test_to_numeric_dtype_backend_na(val, dtype):
+    # [FUNCTION DOC]
+    # GH#50505. Parametrized over (value, dtype) for numpy-nullable and pyarrow types (pyarrow cases skip if missing). An object Series with the value and None converts with the matching backend to the expected dtype with a missing value.
     # GH#50505
     if "pyarrow" in dtype:
         pytest.importorskip("pyarrow")
@@ -820,6 +932,8 @@ def test_to_numeric_dtype_backend_na(val, dtype):
     ],
 )
 def test_to_numeric_dtype_backend_downcasting(val, dtype, downcast):
+    # [FUNCTION DOC]
+    # GH#50505. Parametrized over (value, dtype, downcast option) for nullable and pyarrow backends. An object Series with the value and None, converted with the backend and the downcast, has the smallest suitable dtype (8-bit integer or 32-bit float) with a missing value.
     # GH#50505
     if "pyarrow" in dtype:
         pytest.importorskip("pyarrow")
@@ -837,6 +951,8 @@ def test_to_numeric_dtype_backend_downcasting(val, dtype, downcast):
     [["UInt8", "numpy_nullable"], ["uint8[pyarrow]", "pyarrow"]],
 )
 def test_to_numeric_dtype_backend_downcasting_uint(smaller, dtype_backend):
+    # [FUNCTION DOC]
+    # GH#50505. Parametrized over (smaller dtype, backend). A nullable UInt64 Series with a missing value downcast to unsigned using the backend gives an 8-bit unsigned dtype of the corresponding family (pyarrow case skips if missing).
     # GH#50505
     if dtype_backend == "pyarrow":
         pytest.importorskip("pyarrow")
@@ -860,6 +976,8 @@ def test_to_numeric_dtype_backend_downcasting_uint(smaller, dtype_backend):
     ],
 )
 def test_to_numeric_dtype_backend_already_nullable(dtype):
+    # [FUNCTION DOC]
+    # GH#50505. Parametrized over nullable and pyarrow-backed dtypes (pyarrow ones skip if missing). A Series already of such a dtype converted with the numpy-nullable backend is returned with the same dtype and values.
     # GH#50505
     if "pyarrow" in dtype:
         pytest.importorskip("pyarrow")
@@ -870,6 +988,9 @@ def test_to_numeric_dtype_backend_already_nullable(dtype):
 
 
 def test_to_numeric_dtype_backend_error(dtype_backend):
+    # [FUNCTION DOC]
+    # GH#50505. Uses the dtype backend fixture. A Series of non-numeric strings and an empty string raises a value error "Unable to parse string" in default mode, and in coerce mode gives all-missing values with the double-precision pyarrow type or nullable Float64 depending on the backend.
+    # KNOWN ISSUE: an expected copy of the input is created at the top and then overwritten before use, so the first assignment is dead code.
     # GH#50505
     ser = Series(["a", "b", ""])
     expected = ser.copy()
@@ -886,6 +1007,8 @@ def test_to_numeric_dtype_backend_error(dtype_backend):
 
 
 def test_invalid_dtype_backend():
+    # [FUNCTION DOC]
+    # An invalid backend name raises a value error "dtype_backend numpy is invalid, only 'numpy_nullable' and 'pyarrow' are allowed".
     ser = Series([1, 2, 3])
     msg = (
         "dtype_backend numpy is invalid, only 'numpy_nullable' and "
@@ -896,6 +1019,8 @@ def test_invalid_dtype_backend():
 
 
 def test_coerce_pyarrow_backend():
+    # [FUNCTION DOC]
+    # GH 52588. Skipped without pyarrow. A pyarrow-string Series "1", "2", "x" in coerce mode with the pyarrow backend gives a pyarrow 64-bit integer Series with a missing value for the bad entry.
     # GH 52588
     pa = pytest.importorskip("pyarrow")
     ser = Series(list("12x"), dtype=ArrowDtype(pa.string()))

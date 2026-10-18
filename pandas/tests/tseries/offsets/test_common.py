@@ -1,3 +1,6 @@
+# [MODULE DOC]
+# Tests behavior shared by all offset classes, parametrized through a fixture listing 25 offset classes (business, custom business, month, semi-month, quarter, week, year, fiscal and generic date offset): out-of-range application with time zone preservation, equality of fresh instances, reflected subtraction and addition, subtraction errors, multiplication, and comparison with strings.
+# Defines a private factory helper to build an instance for any class. Uses the time zone fixtures from the test configuration. No import-time side effects.
 from datetime import datetime
 
 from dateutil.tz.tz import tzlocal
@@ -43,6 +46,9 @@ from pandas.tseries.offsets import (
 
 
 def _get_offset(klass, value=1, normalize=False):
+    # [FUNCTION DOC]
+    # HELPER: factory used by the shared tests. Parameters: klass is an offset class; value is the step count (default 1); normalize is the normalization flag (default false).
+    # Builds an instance with class-specific required arguments: the 52-53 week fiscal year and its quarter variant get starting month 1, weekday 1, variation "last" (the quarter also an extra-week quarter 1); last week of month gets weekday 5; week-of-month gets week 1 and weekday 5; week gets weekday 5; the generic date offset gets the value as its days argument; every other class receives the value positionally. Returns the new instance.
     # create instance from offset class
     if klass is FY5253:
         klass = klass(
@@ -104,11 +110,17 @@ def _get_offset(klass, value=1, normalize=False):
     ]
 )
 def _offset(request):
+    # [FUNCTION DOC]
+    # HELPER: parametrized fixture yielding each offset class in turn from the 25-class list. Returns the class (not an instance).
     return request.param
 
 
 @pytest.mark.skipif(WASM, reason="OverflowError received on WASM")
 def test_apply_out_of_range(request, tz_naive_fixture, _offset):
+    # [FUNCTION DOC]
+    # Skipped on WASM (overflow errors there). Parametrized by the time zone fixture (including naive) and offset class. Builds an offset with a very large step (100000 for the hour-based classes, 10000 otherwise), adds it to a naive 2008-01-01 timestamp (result must be a datetime without a timezone), then to a tz-aware timestamp (result must be a datetime), and finally checks the timezone string is preserved.
+    # Out-of-bounds results and invalid-offset errors (value, key, not implemented, overflow, os errors) are silently ignored, i.e. the test passes without asserting when the offset cannot be built or applied. Adds xfail markers for local-timezone cases past 2038 on 32-bit builds, and on Windows for quarter classes with local time zone.
+    # KNOWN ISSUE: the 32-bit xfail condition also tests the WASM flag, but the whole test is skipped on WASM, so that part is unreachable.
     tz = tz_naive_fixture
 
     # try to create an out-of-bounds result timestamp; if we can't create
@@ -165,6 +177,8 @@ def test_apply_out_of_range(request, tz_naive_fixture, _offset):
 
 
 def test_offsets_compare_equal(_offset):
+    # [FUNCTION DOC]
+    # Root cause of GH#456. Two default instances of each class compare equal and are not unequal.
     # root cause of GH#456: __ne__ was not implemented
     offset1 = _offset()
     offset2 = _offset()
@@ -191,6 +205,8 @@ def test_offsets_compare_equal(_offset):
     ],
 )
 def test_rsub(date, offset2):
+    # [FUNCTION DOC]
+    # Parametrized over (timestamp, offset) pairs for business day, business hour, custom business hour with holidays, semi-month end/begin, week, week-of-month and last-week-of-month offsets. Subtracting the offset from the date must equal applying the negated offset to the date.
     assert date - offset2 == (-offset2)._apply(date)
 
 
@@ -213,6 +229,8 @@ def test_rsub(date, offset2):
     ],
 )
 def test_radd(date, offset2):
+    # [FUNCTION DOC]
+    # Same parameter pairs as the reflected subtraction test. Adding date plus offset equals offset plus date.
     assert date + offset2 == offset2 + date
 
 
@@ -228,6 +246,8 @@ def test_radd(date, offset2):
     ],
 )
 def test_sub(date, offset_box, offset2):
+    # [FUNCTION DOC]
+    # Parametrized over (date, offset class, step-two instance) for six classes. Subtracting a date from an offset raises a type error "Cannot subtract datetime from offset". Also verifies two times the offset minus the offset equals the offset, the date minus the offset equals the date plus the class built with step -2, and equals the date minus (two times offset minus offset).
     off = offset2
     msg = "Cannot subtract datetime from offset"
     with pytest.raises(TypeError, match=msg):
@@ -252,12 +272,16 @@ def test_sub(date, offset_box, offset2):
     ],
 )
 def test_Mult1(offset_box, offset1):
+    # [FUNCTION DOC]
+    # Parametrized over (class, default instance) for eight classes. Multiplying an instance by 10 or 5 and adding to 2008-01-02 equals adding the class built with that step.
     dt = Timestamp(2008, 1, 2)
     assert dt + 10 * offset1 == dt + offset_box(10)
     assert dt + 5 * offset1 == dt + offset_box(5)
 
 
 def test_compare_str(_offset):
+    # [FUNCTION DOC]
+    # GH#23524. Each class's default instance is not equal to the string "infer" and is unequal to "foo"; comparing with strings that cannot be parsed as offsets must not raise. Ordering comparisons are tested elsewhere (ticks).
     # GH#23524
     # comparing to strings that cannot be cast to DateOffsets should
     #  not raise for __eq__ or __ne__

@@ -4,6 +4,8 @@ Tests for the following offsets:
 - BQuarterEnd
 """
 
+# [MODULE DOC]
+# Tests for the business quarter begin and business quarter end offsets: time-of-day preservation, agreement of the fast on-offset check with the add-then-subtract definition, repr, corner cases, application tables for several starting months and steps, and on-offset tables. Uses the shared offsets assertion helpers. No import-time side effects.
 from __future__ import annotations
 
 from datetime import datetime
@@ -22,6 +24,8 @@ from pandas.tseries.offsets import (
 
 
 def test_quarterly_dont_normalize():
+    # [FUNCTION DOC]
+    # For both classes, adding the default offset to a datetime with a time of day (2012-03-31 05:30) keeps the original time of day (no normalization by default).
     date = datetime(2012, 3, 31, 5, 30)
 
     offsets = (BQuarterEnd, BQuarterBegin)
@@ -33,6 +37,8 @@ def test_quarterly_dont_normalize():
 
 @pytest.mark.parametrize("offset", [BQuarterBegin(), BQuarterEnd()])
 def test_on_offset(offset):
+    # [FUNCTION DOC]
+    # Parametrized over both default offsets. For dates in Q4 2016 (first, second, third, and last few days of Oct, Nov, Dec, except the nonexistent Nov 31) the direct on-offset answer must equal the slow definition: date equals (date plus offset) minus offset.
     dates = [
         datetime(2016, m, d)
         for m in [10, 11, 12]
@@ -46,7 +52,11 @@ def test_on_offset(offset):
 
 
 class TestBQuarterBegin:
+    # [CLASS DOC]
+    # Test collection for the business quarter begin offset.
     def test_repr(self):
+        # [FUNCTION DOC]
+        # Default and explicit starting month 3 print as business quarter begin with starting month 3; starting month 1 prints with 1.
         expected = "<BusinessQuarterBegin: startingMonth=3>"
         assert repr(BQuarterBegin()) == expected
         expected = "<BusinessQuarterBegin: startingMonth=3>"
@@ -55,6 +65,8 @@ class TestBQuarterBegin:
         assert repr(BQuarterBegin(startingMonth=1)) == expected
 
     def test_offset_corner_case(self):
+        # [FUNCTION DOC]
+        # A step of -1 with starting month 1 applied to 2007-04-03 gives 2007-04-02 (the first business day of the same quarter).
         # corner
         offset = BQuarterBegin(n=-1, startingMonth=1)
         assert datetime(2007, 4, 3) + offset == datetime(2007, 4, 2)
@@ -158,13 +170,19 @@ class TestBQuarterBegin:
 
     @pytest.mark.parametrize("case", offset_cases)
     def test_offset(self, case):
+        # [FUNCTION DOC]
+        # Parametrized over offset_cases: starting months 1 and 2 with default step, step 0, step -1 and step 2; each base date maps to the expected first business day of a quarter.
         offset, cases = case
         for base, expected in cases.items():
             assert_offset_equal(offset, base, expected)
 
 
 class TestBQuarterEnd:
+    # [CLASS DOC]
+    # Test collection for the business quarter end offset.
     def test_repr(self):
+        # [FUNCTION DOC]
+        # Default and explicit starting month 3 print as business quarter end with starting month 3; starting month 1 prints with 1.
         expected = "<BusinessQuarterEnd: startingMonth=3>"
         assert repr(BQuarterEnd()) == expected
         expected = "<BusinessQuarterEnd: startingMonth=3>"
@@ -173,6 +191,8 @@ class TestBQuarterEnd:
         assert repr(BQuarterEnd(startingMonth=1)) == expected
 
     def test_offset_corner_case(self):
+        # [FUNCTION DOC]
+        # A step of -1 with starting month 1 applied to 2010-01-31 gives 2010-01-29 (the last business day of that same month, since the date itself falls on a Sunday).
         # corner
         offset = BQuarterEnd(n=-1, startingMonth=1)
         assert datetime(2010, 1, 31) + offset == datetime(2010, 1, 29)
@@ -259,6 +279,8 @@ class TestBQuarterEnd:
 
     @pytest.mark.parametrize("case", offset_cases)
     def test_offset(self, case):
+        # [FUNCTION DOC]
+        # Parametrized over offset_cases: starting months 1 and 2 with default step, step 0, -1 and 2; each base maps to the expected last business day of a quarter.
         offset, cases = case
         for base, expected in cases.items():
             assert_offset_equal(offset, base, expected)
@@ -295,5 +317,7 @@ class TestBQuarterEnd:
 
     @pytest.mark.parametrize("case", on_offset_cases)
     def test_is_on_offset(self, case):
+        # [FUNCTION DOC]
+        # Parametrized over on_offset_cases for starting months 1, 2 and 3: a date is on offset only when it is the last business day of a quarter-end month (for example 2008-01-31, 2008-04-30 for month 1; 2007-03-30 and 2007-06-29 for month 3).
         offset, dt, expected = case
         assert_is_on_offset(offset, dt, expected)

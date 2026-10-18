@@ -4,6 +4,9 @@ Tests for the following offsets:
 - BMonthEnd
 """
 
+# [MODULE DOC]
+# Tests for the business month begin and business month end offsets: vectorized application to indexes and series, equality, normalization, application
+# tables for steps -2 to 2 and zero, and on-offset checks. Uses the shared offsets assertion helpers. No import-time side effects.
 from __future__ import annotations
 
 from datetime import datetime
@@ -31,6 +34,8 @@ from pandas.tseries.offsets import (
     ],
 )
 def test_apply_index(cls, n):
+    # [FUNCTION DOC]
+    # Parametrized over both classes and steps -2 and 1. Adds the offset to a 100000-minute date range and to a series of it. The index result has no frequency; first and last elements equal the scalar sum of the offset with the corresponding input elements; the series result matches elementwise at first and last positions.
     offset = cls(n=n)
     rng = pd.date_range(start="1/1/2000", periods=100000, freq="min")
     ser = pd.Series(rng)
@@ -46,7 +51,11 @@ def test_apply_index(cls, n):
 
 
 class TestBMonthBegin:
+    # [CLASS DOC]
+    # Test collection for the business month begin offset; case tables are class attributes built at import (class definition) time.
     def test_offsets_compare_equal(self):
+        # [FUNCTION DOC]
+        # Root cause of #456: two default offsets are not unequal (the not-equal operator is false).
         # root cause of #456
         offset1 = BMonthBegin()
         offset2 = BMonthBegin()
@@ -114,6 +123,8 @@ class TestBMonthBegin:
 
     @pytest.mark.parametrize("case", offset_cases)
     def test_offset(self, case):
+        # [FUNCTION DOC]
+        # Parametrized over offset_cases, each (offset, mapping of start to expected). Checks each pair using the assertion helper for steps 1, 0, 2 and -1.
         offset, cases = case
         for base, expected in cases.items():
             assert_offset_equal(offset, base, expected)
@@ -127,12 +138,18 @@ class TestBMonthBegin:
 
     @pytest.mark.parametrize("case", on_offset_cases)
     def test_is_on_offset(self, case):
+        # [FUNCTION DOC]
+        # Parametrized over on_offset_cases: first business day of a month is on offset (2008-01-01, 2001-04-02, 2008-03-03), the last day of the previous month is not.
         offset, dt, expected = case
         assert_is_on_offset(offset, dt, expected)
 
 
 class TestBMonthEnd:
+    # [CLASS DOC]
+    # Test collection for the business month end offset; case tables are class attributes.
     def test_normalize(self):
+        # [FUNCTION DOC]
+        # A datetime at 03:00 plus an offset with normalization on equals the midnight-truncated datetime plus the default offset.
         dt = datetime(2007, 1, 1, 3)
 
         result = dt + BMonthEnd(normalize=True)
@@ -140,6 +157,8 @@ class TestBMonthEnd:
         assert result == expected
 
     def test_offsets_compare_equal(self):
+        # [FUNCTION DOC]
+        # Root cause of #456: two default offsets are not unequal.
         # root cause of #456
         offset1 = BMonthEnd()
         offset2 = BMonthEnd()
@@ -203,6 +222,8 @@ class TestBMonthEnd:
 
     @pytest.mark.parametrize("case", offset_cases)
     def test_offset(self, case):
+        # [FUNCTION DOC]
+        # Parametrized over offset_cases for steps 1, 0, 2 and -1; checks each start date against its expected last business day.
         offset, cases = case
         for base, expected in cases.items():
             assert_offset_equal(offset, base, expected)
@@ -214,5 +235,7 @@ class TestBMonthEnd:
 
     @pytest.mark.parametrize("case", on_offset_cases)
     def test_is_on_offset(self, case):
+        # [FUNCTION DOC]
+        # Parametrized over on_offset_cases: 2007-12-31 (a Monday, last business day) is on offset; 2008-01-01 is not.
         offset, dt, expected = case
         assert_is_on_offset(offset, dt, expected)
