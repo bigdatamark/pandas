@@ -1,6 +1,13 @@
 """
 Module containing utilities for NDFrame.sample() and .GroupBy.sample()
 """
+# [MODULE DOC]
+# Internal helpers shared by the object-level sample method and the groupby
+# sample method. Contents: preprocess_weights (validate and convert a weights
+# argument to a float64 array), process_sampling_size (validate the row-count
+# and fraction arguments), and sample (draw random integer positions, optionally
+# weighted). Depends on numpy, the C-level lib helpers and the generic ABCs;
+# NDFrame is imported only for type checking. No import-time side effects.
 
 from __future__ import annotations
 
@@ -22,6 +29,21 @@ if TYPE_CHECKING:
 
 
 def preprocess_weights(obj: NDFrame, weights, axis: AxisInt) -> np.ndarray:
+    # [FUNCTION DOC]
+    # Validates and converts the weights argument.
+    # Parameters: obj is the Series or DataFrame being sampled; weights is a
+    # Series (reindexed to the object's labels along the axis), a column name
+    # string (only valid for a DataFrame sampled along rows, axis zero), or any
+    # array-like of numbers; axis is the integer axis being sampled.
+    # Returns a float64 numpy array of weights with missing values replaced by
+    # zero (a copy is made, input is never modified in place). Not normalized.
+    # Raises: a key error if the string is not a column; a value error if a
+    # string is given for a Series or for column-wise sampling; a value error if
+    # the length differs from the sampled axis length; a value error if any
+    # weight is infinite or negative.
+    # The weights are converted through the object's constructor (or its sliced
+    # constructor for frames) with float64 dtype, so non-numeric input errors
+    # come from that conversion.
     """
     Process and validate the `weights` argument to `NDFrame.sample` and
     `.GroupBy.sample`.
@@ -81,6 +103,17 @@ def preprocess_weights(obj: NDFrame, weights, axis: AxisInt) -> np.ndarray:
 def process_sampling_size(
     n: int | None, frac: float | None, replace: bool
 ) -> int | None:
+    # [FUNCTION DOC]
+    # Validates the sample-size arguments.
+    # Parameters: n is the number of items or None; frac is the fraction of
+    # items or None; replace says whether sampling with replacement is allowed.
+    # Returns the integer n to use, or None when frac should be used (sizes vary
+    # per group). If both are None, n defaults to one.
+    # Raises a value error when: both n and frac are given; n is negative; n is
+    # not integral; frac exceeds one while replace is false; frac is negative.
+    # KNOWN ISSUE: the integrality check on n only tests the remainder modulo
+    # one, so a float with integral value such as 2.0 is accepted and returned
+    # unchanged as a float rather than being converted to an integer.
     """
     Process and validate the `n` and `frac` arguments to `NDFrame.sample` and
     `.GroupBy.sample`.
@@ -122,6 +155,17 @@ def sample(
     weights: np.ndarray | None,
     random_state: np.random.RandomState | np.random.Generator,
 ) -> np.ndarray:
+    # [FUNCTION DOC]
+    # Draws size random positions from the range of zero to obj_len (exclusive).
+    # Parameters: obj_len is the population size; size is the count to draw;
+    # replace allows repeats; weights is a non-negative float array or None;
+    # random_state is the numpy RandomState or Generator providing randomness
+    # (its state advances as a side effect).
+    # When weights are given they are normalized by their sum; a value error is
+    # raised if the sum is zero, and also if replace is false and the largest
+    # normalized weight times size exceeds one (weighted sampling without
+    # replacement infeasible).
+    # Returns an intp array of the chosen positions, in draw order.
     """
     Randomly sample `size` indices in `np.arange(obj_len)`.
 

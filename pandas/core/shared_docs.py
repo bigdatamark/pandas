@@ -1,3 +1,16 @@
+# [MODULE DOC]
+# Holds a single module-level registry mapping string keys to reusable
+# docstring templates, shared by several classes and functions via the
+# docstring-substitution decorators. Keys defined here: aggregate, compare,
+# groupby, transform, storage_options, compression_options,
+# decompression_options, and replace. The templates contain named
+# placeholders (for example the class name, axis text, see-also text, and
+# examples text) that are filled in by the consuming decorator with the
+# per-class text; templates without placeholders are inserted verbatim. The
+# module defines no functions or classes. Import-time side effect: only the
+# creation of the registry and its entries; nothing is imported besides the
+# future annotations feature.
+
 from __future__ import annotations
 
 _shared_docs: dict[str, str] = {}

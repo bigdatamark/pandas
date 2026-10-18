@@ -1,6 +1,20 @@
 """
 Quantilization functions and related stuff
 """
+# [MODULE DOC]
+# Implements the public binning functions cut (bin by explicit edges, an
+# equal-width count, or an interval index) and qcut (bin by quantiles), both
+# exported at the top level of the library, plus private helpers: converting an
+# integer bin count to edges, mapping values to bins and building the resulting
+# categorical (or integer codes), coercing dtypes (datetime-like kept as is,
+# boolean to int64, nullable numeric to float64), formatting interval labels
+# with a rounding precision, and pre/post processing so that a Series input
+# yields a Series output with the same index and name.
+# Relies on Index, IntervalIndex, Categorical, algorithms, and the column
+# expression class (qcut accepts an unevaluated column expression and defers
+# to it). Both public functions are registered under the top-level package
+# name via the module-setting decorator. No import-time side effects other than
+# importing from the top-level package (a circular-import-sensitive module).
 
 from __future__ import annotations
 
@@ -67,6 +81,22 @@ def cut(
     duplicates: str = "raise",
     ordered: bool = True,
 ):
+    # [FUNCTION DOC]
+    # Public binning entry point; see the docstring for the user-facing
+    # parameter semantics. Implementation flow: remember the original input;
+    # convert x to a one-dimensional Index (raising a value error if the input
+    # is not one-dimensional) and coerce its dtype; then resolve bins:
+    # a non-iterable bins value is treated as a bin count and converted to
+    # edges (extended by 0.1 percent of the range on the open side); an
+    # interval index is used as is but a value error is raised if it overlaps;
+    # any other sequence becomes an Index and a value error is raised if it is
+    # not monotonically increasing. Then the values are assigned to bins
+    # (forwarding right, labels, precision, include_lowest, duplicates, ordered)
+    # and the result is post-processed: for Series input the result is wrapped
+    # in a Series with the original index and name; if retbins is true a tuple
+    # of (result, bins) is returned, where numeric bins are returned as a raw
+    # ndarray and interval-index bins as is. Values outside the bins and
+    # missing values become missing in the result. No mutation of inputs.
     """
     Bin values into discrete intervals.
 
@@ -301,6 +331,25 @@ def qcut(
     precision: int = 3,
     duplicates: str = "raise",
 ):
+    # [FUNCTION DOC]
+    # Quantile-based binning. Parameters: x is the one-dimensional data (array,
+    # Series, or an unevaluated column expression, in which case the call is
+    # deferred to the expression and re-invoked on evaluation with the same
+    # arguments); q is an integer number of equal-probability quantiles or a
+    # list of quantile fractions; labels is None, False, or a list-like of
+    # labels; retbins says whether to also return the bin edges; precision is
+    # the digits used when formatting interval labels; duplicates is raise or
+    # drop for non-unique edges (any other value raises a value error).
+    # For an integer q the quantile fractions are evenly spaced from zero to
+    # one, nudged up by one floating-point step wherever q times the fraction is
+    # not exactly representable, so edges are not rounded down. The edges are
+    # the quantiles of the non-missing values. The binning always includes the
+    # lowest edge and is right-closed and ordered (the ordered option is not
+    # exposed). Returns a categorical (Series with category dtype for Series
+    # input, integer codes or floats with missing values when labels is false),
+    # or a tuple of the result and the edges when retbins is true.
+    # KNOWN ISSUE: the docstring describes the retbins return as (bins, labels)
+    # but the code returns the binned result together with the bin edges.
     """
     Quantile-based discretization function.
 
@@ -394,6 +443,21 @@ def qcut(
 
 
 def _nbins_to_bins(x_idx: Index, nbins: int, right: bool) -> Index:
+    # [FUNCTION DOC]
+    # HELPER: for cut, converts an integer bin count into an Index of
+    # nbins plus one equally spaced edges covering the data.
+    # Parameters: x_idx is the Index of values; nbins the number of bins; right
+    # says which side is closed (selects which end edge gets widened).
+    # Raises a value error for a scalar nbins below one, for empty data, and for
+    # numeric data containing infinity.
+    # If minimum equals maximum the range is widened symmetrically: by one
+    # second for datetime-like data, otherwise by 0.1 percent of the magnitude
+    # of each endpoint (an absolute 0.001 for a zero endpoint). Otherwise the
+    # edges span minimum to maximum and the outer edge on the open side (the
+    # lowest edge if right-closed, else the highest) is widened by 0.1 percent
+    # of the range, which includes the extreme value. Datetime-like edges are
+    # generated with the array range generator in the data's resolution unit;
+    # numeric edges use linear spacing.
     """
     If a user passed an integer N for bins, convert this to a sequence of N
     equal(ish)-sized bins.
@@ -464,6 +528,30 @@ def _bins_to_cuts(
     duplicates: str = "raise",
     ordered: bool = True,
 ):
+    # [FUNCTION DOC]
+    # HELPER: for cut and qcut, assigns each value to a bin and builds the
+    # labelled result.
+    # Parameters: x_idx values Index; bins Index of edges (or an interval
+    # index); right says bins are closed on the right; labels is None (use
+    # formatted intervals), False (return integer bin numbers), or a list-like
+    # of one label per bin; precision for label formatting; include_lowest makes
+    # the first bin include its lower edge; duplicates is raise or drop; ordered
+    # says whether the categorical result is ordered.
+    # Returns a tuple of (result, bins). The result is a categorical (or integer
+    # array, converted to float with missing markers if any value falls outside
+    # the bins or is missing, when labels is false). Bins may be reduced to the
+    # unique edges when duplicates is drop.
+    # Raises a value error when: ordered is false without labels; duplicates
+    # has an invalid value; edges repeat and duplicates is raise (unless there
+    # are exactly two edges); the edge dtype is incompatible with the values
+    # (timedelta, datetime, or time-zone mismatch messages); labels is neither
+    # false, None, nor list-like; labels are non-unique while ordered; the
+    # number of labels differs from the number of bins. Other type errors from
+    # the search are re-raised.
+    # Interval-index bins take a fast path: values are matched to intervals via
+    # an indexer into an ordered categorical with those intervals as categories.
+    # KNOWN ISSUE: a source comment notes that mismatched order between a
+    # categorical labels input and the bin order is not handled.
     if not ordered and labels is None:
         raise ValueError("'labels' must be provided if 'ordered = False'")
 
@@ -557,6 +645,14 @@ def _bins_to_cuts(
 
 
 def _coerce_to_type(x: Index) -> tuple[Index, DtypeObj | None]:
+    # [FUNCTION DOC]
+    # HELPER: for cut and qcut, normalizes the dtype of the input Index.
+    # Takes an Index x. Datetime-like (datetime64, timedelta64, tz-aware)
+    # indexes are left unchanged and their dtype is reported; boolean indexes
+    # are cast to int64; extension numeric (nullable) indexes are converted to
+    # float64 with missing values as NaN. Returns a tuple of (the resulting
+    # Index, the datetime-like dtype or None). Callers currently ignore the
+    # dtype element.
     """
     if the passed data is of datetime/timedelta, bool or nullable int type,
     this method converts it to numeric so that cut or qcut method can
@@ -581,6 +677,9 @@ def _coerce_to_type(x: Index) -> tuple[Index, DtypeObj | None]:
 
 
 def _is_dt_or_td(dtype: DtypeObj) -> bool:
+    # [FUNCTION DOC]
+    # HELPER: returns true if the dtype is a datetime64, timedelta64, or
+    # time-zone-aware datetime dtype, false otherwise.
     # Note: the dtype here comes from an Index.dtype, so we know that that any
     #  dt64/td64 dtype is of a supported unit.
     return isinstance(dtype, DatetimeTZDtype) or lib.is_np_dtype(dtype, "mM")
@@ -592,6 +691,18 @@ def _format_labels(
     right: bool = True,
     include_lowest: bool = False,
 ) -> IntervalIndex:
+    # [FUNCTION DOC]
+    # HELPER: for cut and qcut, builds the interval labels for the bins.
+    # Parameters: bins Index of edges; precision requested digits; right says
+    # whether intervals are closed right (else left); include_lowest says the
+    # first interval is extended. Returns an IntervalIndex from the edges,
+    # closed on the right or left accordingly.
+    # For datetime-like edges they are used unrounded, and when right-closed and
+    # include_lowest the first edge is moved down by one unit of the resolution.
+    # For other edges the precision is first increased as needed (see the
+    # precision inference helper) so rounded edges stay distinct, each edge is
+    # rounded to that precision, and when right-closed with include_lowest the
+    # first edge is lowered by ten to the minus precision.
     """based on the dtype, return our labels"""
     closed: IntervalLeftRight = "right" if right else "left"
 
@@ -622,6 +733,12 @@ def _format_labels(
 
 
 def _preprocess_for_cut(x) -> Index:
+    # [FUNCTION DOC]
+    # HELPER: for cut and qcut, turns the input into a one-dimensional Index.
+    # Objects without a dimension attribute are converted to a numpy array;
+    # pandas objects are kept so extension dtypes survive. Raises a value error
+    # if the result is not one-dimensional. Returns an Index without copying.
+    # Note the Index drops any Series index labels.
     """
     handles preprocessing for cut where we convert passed
     input to array, strip the index information and store it
@@ -639,6 +756,13 @@ def _preprocess_for_cut(x) -> Index:
 
 
 def _postprocess_for_cut(fac, bins, retbins: bool, original):
+    # [FUNCTION DOC]
+    # HELPER: for cut and qcut, finalizes the return value.
+    # Parameters: fac the binned result; bins the edges; retbins whether to
+    # return edges; original the user's input. If original is a Series, fac is
+    # wrapped in a Series of the same index and name. Returns fac alone when
+    # retbins is false; otherwise a tuple of fac and bins, where a numeric
+    # Index of bins is replaced by its underlying array.
     """
     handles post processing for the cut method where
     we combine the index information if the originally passed
@@ -657,6 +781,12 @@ def _postprocess_for_cut(fac, bins, retbins: bool, original):
 
 
 def _round_frac(x, precision: int):
+    # [FUNCTION DOC]
+    # HELPER: for label formatting, rounds a number to keep significant digits.
+    # Non-finite values and zero are returned unchanged. For numbers whose
+    # integer part is zero, rounds to precision significant digits after the
+    # leading zeros of the fraction; otherwise rounds to precision decimal
+    # places. Returns the rounded number.
     """
     Round the fractional part of the given number
     """
@@ -672,6 +802,11 @@ def _round_frac(x, precision: int):
 
 
 def _infer_precision(base_precision: int, bins: Index) -> int:
+    # [FUNCTION DOC]
+    # HELPER: for label formatting, finds the smallest precision, starting at
+    # base_precision and below twenty, at which rounding all edges leaves them
+    # all distinct (number of unique rounded values equals the number of edges).
+    # Returns that precision, or base_precision if none works.
     """
     Infer an appropriate precision for _round_frac
     """
