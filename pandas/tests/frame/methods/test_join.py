@@ -1,3 +1,7 @@
+# [MODULE DOC]
+# Tests for DataFrame join: index-based and key-based joins of several kinds, validation modes, suffixes, joining lists of frames or series, multi-index, timezone, period and categorical indexes.
+# Defines four fixtures with and without duplicated keys that build on one another.
+
 from datetime import datetime
 import re
 import zoneinfo
@@ -21,6 +25,8 @@ from pandas.core.reshape.concat import concat
 
 @pytest.fixture
 def left_no_dup():
+    # [FUNCTION DOC]
+    # HELPER: fixture returning the left frame without duplicate keys (columns a and b with four rows).
     return DataFrame(
         {"a": ["a", "b", "c", "d"], "b": ["cat", "dog", "weasel", "horse"]},
         index=range(4),
@@ -29,6 +35,8 @@ def left_no_dup():
 
 @pytest.fixture
 def right_no_dup():
+    # [FUNCTION DOC]
+    # HELPER: fixture returning the right frame without duplicate keys, indexed by column a (five rows, one column c).
     return DataFrame(
         {
             "a": ["a", "b", "c", "d", "e"],
@@ -40,6 +48,8 @@ def right_no_dup():
 
 @pytest.fixture
 def left_w_dups(left_no_dup):
+    # [FUNCTION DOC]
+    # HELPER: fixture returning the left frame with a repeated key a, made by concatenating an extra row (sorted columns).
     return concat(
         [left_no_dup, DataFrame({"a": ["a"], "b": ["cow"]}, index=[3])], sort=True
     )
@@ -47,6 +57,8 @@ def left_w_dups(left_no_dup):
 
 @pytest.fixture
 def right_w_dups(right_no_dup):
+    # [FUNCTION DOC]
+    # HELPER: fixture returning the right frame with a repeated key e in its a-index, made by concatenating an extra row and setting the index.
     return concat(
         [right_no_dup, DataFrame({"a": ["e"], "c": ["moo"]}, index=[3])]
     ).set_index("a")
@@ -96,6 +108,8 @@ def right_w_dups(right_no_dup):
     ],
 )
 def test_join(how, sort, expected):
+    # [FUNCTION DOC]
+    # Parametrized over join type (inner, left, right, outer), sort flag and expected frame. Joins two small integer-indexed frames with a one-to-one validation. Verifies the result rows and order: the order follows the left frame when not sorting and is sorted when sorting; for outer joins the result is sorted either way.
     left = DataFrame({"a": [20, 10, 0]}, index=[2, 1, 0])
     right = DataFrame({"b": [300, 100, 200]}, index=[3, 1, 2])
     result = left.join(right, how=how, sort=sort, validate="1:1")
@@ -103,6 +117,8 @@ def test_join(how, sort, expected):
 
 
 def test_suffix_on_list_join():
+    # [FUNCTION DOC]
+    # Verifies joining a list of frames with a left or right suffix raises a value error that suffixes are not supported for multiple frames; overlapping values among the list raise a value error about overlapping indexes; joining a one-element list equals joining the frame itself.
     first = DataFrame({"key": [1, 2, 3, 4, 5]})
     second = DataFrame({"key": [1, 8, 3, 2, 5], "v1": [1, 2, 3, 4, 5]})
     third = DataFrame({"keys": [5, 2, 3, 4, 1], "v2": [1, 2, 3, 4, 5]})
@@ -125,6 +141,8 @@ def test_suffix_on_list_join():
 
 
 def test_join_invalid_validate(left_no_dup, right_no_dup):
+    # [FUNCTION DOC]
+    # GH 46622. Verifies an invalid validate string raises a value error listing the valid argument names.
     # GH 46622
     # Check invalid arguments
     msg = (
@@ -145,6 +163,8 @@ def test_join_invalid_validate(left_no_dup, right_no_dup):
 
 @pytest.mark.parametrize("dtype", ["object", "string[pyarrow]"])
 def test_join_on_single_col_dup_on_right(left_no_dup, right_w_dups, dtype):
+    # [FUNCTION DOC]
+    # GH 46622. Parametrized over object and pyarrow string dtype. Verifies duplicates on the right are allowed with one-to-many validation and raise a merge error stating the right keys are not unique for one-to-one validation.
     # GH 46622
     # Dups on right allowed by one_to_many constraint
     if dtype == "string[pyarrow]":
@@ -168,6 +188,8 @@ def test_join_on_single_col_dup_on_right(left_no_dup, right_w_dups, dtype):
 
 
 def test_join_on_single_col_dup_on_left(left_w_dups, right_no_dup):
+    # [FUNCTION DOC]
+    # GH 46622. Verifies duplicates on the left are allowed with many-to-one validation and raise a merge error about the left dataset for one-to-one validation.
     # GH 46622
     # Dups on left allowed by many_to_one constraint
     left_w_dups.join(
@@ -187,6 +209,8 @@ def test_join_on_single_col_dup_on_left(left_w_dups, right_no_dup):
 
 
 def test_join_on_single_col_dup_on_both(left_w_dups, right_w_dups):
+    # [FUNCTION DOC]
+    # GH 46622. Verifies duplicates on both sides are allowed for many-to-many, and raise merge errors for many-to-one (message about the right dataset) and one-to-many (message about the left dataset).
     # GH 46622
     # Dups on both allowed by many_to_many constraint
     left_w_dups.join(right_w_dups, on="a", validate="many_to_many")
@@ -211,6 +235,8 @@ def test_join_on_single_col_dup_on_both(left_w_dups, right_w_dups):
 
 
 def test_join_on_multi_col_check_dup():
+    # [FUNCTION DOC]
+    # GH 46622. Two-key join where each single key has duplicates but the pair is unique. Verifies an inner join with one-to-one validation succeeds and gives the expected frame.
     # GH 46622
     # Two column join, dups in both, but jointly no dups
     left = DataFrame(
@@ -247,6 +273,8 @@ def test_join_on_multi_col_check_dup():
 
 
 def test_join_index(float_frame):
+    # [FUNCTION DOC]
+    # Uses float_frame split into overlapping row and column parts. Verifies the index of the result and columns for default (left), left, right, inner, outer, left-anti and right-anti joins; an unknown join type raises a value error listing valid merge types; joining a frame with itself without suffix raises a value error about overlapping columns.
     # left / right
 
     f = float_frame.loc[float_frame.index[:10], ["A", "B"]]
@@ -302,6 +330,8 @@ def test_join_index(float_frame):
 
 
 def test_join_index_more(float_frame):
+    # [FUNCTION DOC]
+    # Verifies joining two column subsets of the float frame where one has every second row: the default and right joins give the expected rows, and the right join with swapped operands gives the same data with swapped column order.
     af = float_frame.loc[:, ["A", "B"]]
     bf = float_frame.loc[::2, ["C", "D"]]
 
@@ -320,6 +350,8 @@ def test_join_index_more(float_frame):
 
 
 def test_join_index_series(float_frame):
+    # [FUNCTION DOC]
+    # Verifies joining a series (popped last column) back to its frame reproduces the frame, and that a series without a name raises a value error saying it must have a name.
     df = float_frame.copy()
     ser = df.pop(float_frame.columns[-1])
     joined = df.join(ser)
@@ -332,6 +364,8 @@ def test_join_index_series(float_frame):
 
 
 def test_join_overlap(float_frame):
+    # [FUNCTION DOC]
+    # Verifies overlapping columns with left and right suffixes: suffixed columns plus non-overlapping ones equal the expected frame (column order not enforced).
     df1 = float_frame.loc[:, ["A", "B", "C"]]
     df2 = float_frame.loc[:, ["B", "C", "D"]]
 
@@ -347,6 +381,8 @@ def test_join_overlap(float_frame):
 
 
 def test_join_period_index():
+    # [FUNCTION DOC]
+    # Verifies joining a frame with a period index to a version with renamed columns gives the combined columns and unchanged index.
     frame_with_period_index = DataFrame(
         data=np.arange(20).reshape(4, 5),
         columns=list("abcde"),
@@ -367,6 +403,8 @@ def test_join_period_index():
 
 
 def test_join_left_sequence_non_unique_index():
+    # [FUNCTION DOC]
+    # Issue 19607. Joins a list of two frames with left join where the right frames have duplicated or missing keys. Verifies the left rows are repeated for duplicate matches and missing values are filled.
     # https://github.com/pandas-dev/pandas/issues/19607
     df1 = DataFrame({"a": [0, 10, 20]}, index=[1, 2, 3])
     df2 = DataFrame({"b": [100, 200, 300]}, index=[4, 3, 2])
@@ -387,6 +425,8 @@ def test_join_left_sequence_non_unique_index():
 
 
 def test_join_list_series(float_frame):
+    # [FUNCTION DOC]
+    # GH#46850. Verifies a frame can be joined with a list containing both a series and a frame, restoring the original float frame.
     # GH#46850
     # Join a DataFrame with a list containing both a Series and a DataFrame
     left = float_frame.A.to_frame()
@@ -396,7 +436,11 @@ def test_join_list_series(float_frame):
 
 
 class TestDataFrameJoin:
+    # [CLASS DOC]
+    # Groups the join tests that were written as methods of a class.
     def test_join(self, multiindex_dataframe_random_data):
+        # [FUNCTION DOC]
+        # Uses the multiindex_dataframe_random_data fixture. Joins two partial column subsets of a multi-indexed frame with an outer join and reindexes. Verifies the values match the original with missing values where the partial pieces do not overlap, and that the result is not entirely missing.
         frame = multiindex_dataframe_random_data
 
         a = frame.loc[frame.index[:5], ["A"]]
@@ -412,6 +456,8 @@ class TestDataFrameJoin:
         tm.assert_frame_equal(joined, expected)
 
     def test_join_segfault(self):
+        # [FUNCTION DOC]
+        # GH#1532. Regression: joining two frames indexed by overlapping pairs with left, right and outer joins must not crash. Nothing is asserted.
         # GH#1532
         df1 = DataFrame({"a": [1, 1], "b": [1, 2], "x": [1, 2]})
         df2 = DataFrame({"a": [2, 2], "b": [1, 2], "y": [1, 2]})
@@ -422,6 +468,8 @@ class TestDataFrameJoin:
             df1.join(df2, how=how)
 
     def test_join_str_datetime(self):
+        # [FUNCTION DOC]
+        # Joins a frame whose column holds date strings to a frame whose index holds those strings and whose columns are datetimes, using the key column. Verifies only that the result has three columns.
         str_dates = ["20120209", "20120222"]
         dt_dates = [datetime(2012, 2, 9), datetime(2012, 2, 22)]
 
@@ -433,6 +481,8 @@ class TestDataFrameJoin:
         assert len(tst.columns) == 3
 
     def test_join_multiindex_leftright(self):
+        # [FUNCTION DOC]
+        # GH 10741. Joins a two-level index frame with a one-level frame in both directions and with left and right join types. Verifies the expected values, that results are identical up to column order between the two directions, and that the right join keeps only the shared first-level keys.
         # GH 10741
         df1 = DataFrame(
             [
@@ -493,6 +543,8 @@ class TestDataFrameJoin:
         tm.assert_frame_equal(df2.join(df1, how="left"), exp[["value2", "value1"]])
 
     def test_join_multiindex_dates(self):
+        # [FUNCTION DOC]
+        # GH 33692. Verifies joining a frame to a list of two others with a multi-index containing a date level gives a combined frame with all three columns.
         # GH 33692
         date = pd.Timestamp(2000, 1, 1).date()
 
@@ -513,6 +565,8 @@ class TestDataFrameJoin:
         tm.assert_equal(result, expected)
 
     def test_merge_join_different_levels_raises(self):
+        # [FUNCTION DOC]
+        # GH#9455 and GH 40993. Verifies merge and join on a column between flat columns and a two-level column frame raise a merge error that merging between different levels is not allowed.
         # GH#9455
         # GH 40993: For raising, enforced in 2.0
 
@@ -536,6 +590,8 @@ class TestDataFrameJoin:
             df1.join(df2, on="a")
 
     def test_frame_join_tzaware(self):
+        # [FUNCTION DOC]
+        # Verifies an outer join of two frames with timezone-aware indexes of different frequencies gives the union of the indexes with the timezone preserved (US/Central).
         tz = zoneinfo.ZoneInfo("US/Central")
         test1 = DataFrame(
             np.zeros((6, 3)),
@@ -554,6 +610,8 @@ class TestDataFrameJoin:
         assert result.index.tz.key == "US/Central"
 
     def test_frame_join_categorical_index(self):
+        # [FUNCTION DOC]
+        # GH 61675. Joins two frames with a categorical (ordered, nullable-integer categories) index and categorical columns. Verifies the result keeps the categorical index and combines the categorical columns of both frames.
         # GH 61675
         cat_data = pd.Categorical(
             [3, 4],

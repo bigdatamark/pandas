@@ -1,3 +1,6 @@
+# [MODULE DOC]
+# Tests for the internal DataFrame method that selects numeric columns, covering object, boolean, datetime, extension (nullable integer, categorical, interval) columns.
+
 import numpy as np
 
 import pandas as pd
@@ -13,7 +16,11 @@ from pandas.core.arrays import IntervalArray
 
 
 class TestGetNumericData:
+    # [CLASS DOC]
+    # Groups the tests of the numeric-data selection method on DataFrame.
     def test_get_numeric_data_preserve_dtype(self):
+        # [FUNCTION DOC]
+        # Verifies that an object-dtype column holding mixed numbers and strings is not treated as numeric: the result has no columns, keeps the row index, and keeps the object dtype for the empty column labels.
         # get the numeric data
         obj = DataFrame({"A": [1, "2", 3.0]}, columns=Index(["A"], dtype="object"))
         result = obj._get_numeric_data()
@@ -21,6 +28,9 @@ class TestGetNumericData:
         tm.assert_frame_equal(result, expected)
 
     def test_get_numeric_data(self, using_infer_string):
+        # [FUNCTION DOC]
+        # Using the infer-string fixture to pick the expected dtype of string columns, first checks the dtypes of a mixed frame (float, int, string or object, datetime in seconds).
+        # Then verifies the selection keeps float and integer columns of several widths, drops string and datetime columns, returns an empty-column frame when no column is numeric, works on frames from dict, and is idempotent on an already numeric frame.
         datetime64name = np.dtype("M8[s]").name
         objectname = np.dtype(np.object_).name
 
@@ -75,6 +85,8 @@ class TestGetNumericData:
         tm.assert_frame_equal(result, expected)
 
     def test_get_numeric_data_mixed_dtype(self):
+        # [FUNCTION DOC]
+        # Verifies a frame with integer, boolean, string, all-None and float columns yields only the integer, boolean and float column labels (booleans count as numeric).
         # numeric and object columns
 
         df = DataFrame(
@@ -90,6 +102,8 @@ class TestGetNumericData:
         tm.assert_index_equal(result.columns, Index(["a", "b", "e"]))
 
     def test_get_numeric_data_extension_dtype(self):
+        # [FUNCTION DOC]
+        # Verifies extension dtypes: nullable integer columns are kept, while categorical and interval columns are dropped (GH#22290).
         # GH#22290
         df = DataFrame(
             {

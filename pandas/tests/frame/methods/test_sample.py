@@ -1,3 +1,6 @@
+# [MODULE DOC]
+# Tests for sample on DataFrame and Series: seeding and random-state handling, sizes, weights (validation, alignment, normalization), axis handling, copy semantics and index handling.
+
 import numpy as np
 import pytest
 
@@ -11,8 +14,12 @@ import pandas.core.common as com
 
 
 class TestSample:
+    # [CLASS DOC]
+    # Groups sample tests that run for both frame and series (through the frame_or_series fixture and the shared obj fixture).
     @pytest.fixture
     def obj(self, frame_or_series):
+        # [FUNCTION DOC]
+        # HELPER: fixture building a ten-element random series or a ten-by-ten random frame depending on frame_or_series; used by the sample tests in this class.
         if frame_or_series is Series:
             arr = np.random.default_rng(2).standard_normal(10)
         else:
@@ -21,6 +28,8 @@ class TestSample:
 
     @pytest.mark.parametrize("test", list(range(10)))
     def test_sample(self, test, obj):
+        # [FUNCTION DOC]
+        # Issue 2419. Parametrized over ten seeds. Verifies sampling is reproducible: the same integer seed, or an equally-seeded generator, or the same integer state used twice gives equal results for a fixed count, for a fraction, and for oversampling with replacement.
         # Fixes issue: 2419
         # Check behavior of random_state argument
         # Check for stability when receives seed or random state -- run 10
@@ -67,12 +76,17 @@ class TestSample:
         tm.assert_equal(*os2)
 
     def test_sample_lengths(self, obj):
+        # [FUNCTION DOC]
+        # Intended to check result lengths for a count and for fractions.
+        # KNOWN ISSUE: each assertion compares the sampled object with a number inside the length call, so the length of a boolean-valued object is tested, which is always nonzero; the lengths are therefore never actually verified.
         # Check lengths are right
         assert len(obj.sample(n=4) == 4)
         assert len(obj.sample(frac=0.34) == 3)
         assert len(obj.sample(frac=0.36) == 4)
 
     def test_sample_invalid_random_state(self, obj):
+        # [FUNCTION DOC]
+        # Verifies an invalid random_state (a string) raises a value error listing the allowed kinds of state.
         # Check for error when random_state argument invalid.
         msg = (
             "random_state must be an integer, array-like, a BitGenerator, Generator, "
@@ -82,12 +96,16 @@ class TestSample:
             obj.sample(random_state="a_string")
 
     def test_sample_wont_accept_n_and_frac(self, obj):
+        # [FUNCTION DOC]
+        # Verifies supplying both n and frac raises a value error asking for one or the other.
         # Giving both frac and N throws error
         msg = "Please enter a value for `frac` OR `n`, not both"
         with pytest.raises(ValueError, match=msg):
             obj.sample(n=3, frac=0.3)
 
     def test_sample_requires_positive_n_frac(self, obj):
+        # [FUNCTION DOC]
+        # Verifies negative n or negative frac raise a value error saying a negative number of rows was requested.
         with pytest.raises(
             ValueError,
             match="A negative number of rows requested. Please provide `n` >= 0",
@@ -100,11 +118,15 @@ class TestSample:
             obj.sample(frac=-0.3)
 
     def test_sample_requires_integer_n(self, obj):
+        # [FUNCTION DOC]
+        # Verifies a non-integer float for n raises a value error saying only integers are accepted.
         # Make sure float values of `n` give error
         with pytest.raises(ValueError, match="Only integers accepted as `n` values"):
             obj.sample(n=3.2)
 
     def test_sample_invalid_weight_lengths(self, obj):
+        # [FUNCTION DOC]
+        # Verifies weights shorter or longer than the axis length raise a value error saying weights and the axis must have the same length.
         # Weight length must be right
         msg = "Weights and axis to be sampled must be of same length"
         with pytest.raises(ValueError, match=msg):
@@ -114,6 +136,8 @@ class TestSample:
             obj.sample(n=3, weights=[0.5] * 11)
 
     def test_sample_negative_weights(self, obj):
+        # [FUNCTION DOC]
+        # Verifies negative weights raise a value error about negative values.
         # Check won't accept negative weights
         bad_weights = [-0.1] * 10
         msg = "weight vector many not include negative values"
@@ -121,6 +145,8 @@ class TestSample:
             obj.sample(n=3, weights=bad_weights)
 
     def test_sample_inf_weights(self, obj):
+        # [FUNCTION DOC]
+        # Verifies weights containing positive or negative infinity raise a value error about infinite values.
         # Check inf and -inf throw errors:
 
         weights_with_inf = [0.1] * 10
@@ -135,6 +161,8 @@ class TestSample:
             obj.sample(n=3, weights=weights_with_ninf)
 
     def test_sample_unit_probabilities_raises(self, obj):
+        # [FUNCTION DOC]
+        # GH#61516. Verifies sampling without replacement with weights so unbalanced that one item's inclusion probability would exceed one raises a value error advising replacement or smaller weights.
         # GH#61516
         high_variance_weights = [1] * 10
         high_variance_weights[0] = 100
@@ -147,6 +175,8 @@ class TestSample:
             obj.sample(n=2, weights=high_variance_weights, replace=False)
 
     def test_sample_unit_probabilities_edge_case_do_not_raise(self, obj):
+        # [FUNCTION DOC]
+        # GH#61516. Edge case where n times the maximum weight over the weight sum equals exactly one: verifies sampling does not raise.
         # GH#61516
         # edge case, n*max(weights)/sum(weights) == 1
         edge_variance_weights = [1] * 10
@@ -155,6 +185,8 @@ class TestSample:
         obj.sample(n=2, weights=edge_variance_weights, replace=False)
 
     def test_sample_unit_normal_probabilities_do_not_raise(self, obj):
+        # [FUNCTION DOC]
+        # GH#61516. Weights with moderate variance: verifies sampling without replacement does not raise.
         # GH#61516
         low_variance_weights = [1] * 10
         low_variance_weights[0] = 8
@@ -162,6 +194,8 @@ class TestSample:
         obj.sample(n=2, weights=low_variance_weights, replace=False)
 
     def test_sample_zero_weights(self, obj):
+        # [FUNCTION DOC]
+        # Verifies all-zero weights raise a value error saying weights sum to zero.
         # All zeros raises errors
 
         zero_weights = [0] * 10
@@ -169,6 +203,8 @@ class TestSample:
             obj.sample(n=3, weights=zero_weights)
 
     def test_sample_missing_weights(self, obj):
+        # [FUNCTION DOC]
+        # Verifies all-missing weights raise the same value error as all-zero weights.
         # All missing weights
 
         nan_weights = [np.nan] * 10
@@ -176,6 +212,8 @@ class TestSample:
             obj.sample(n=3, weights=nan_weights)
 
     def test_sample_none_weights(self, obj):
+        # [FUNCTION DOC]
+        # Verifies missing entries in weights are treated as zero, so with a single positive weight at position five the sample of one row is that row.
         # Check None are also replaced by zeros.
         weights_with_None = [None] * 10
         weights_with_None[5] = 0.5
@@ -192,6 +230,8 @@ class TestSample:
         ],
     )
     def test_sample_random_state(self, func_str, arg, frame_or_series):
+        # [FUNCTION DOC]
+        # GH#32503. Parametrized over a random-state constructor name and its argument (array of seeds, MT19937, PCG64), for frame and series. Verifies sampling with the generator equals sampling with the state converted by the pandas internal random-state helper.
         # GH#32503
         obj = DataFrame({"col1": range(10, 20), "col2": range(20, 30)})
         obj = tm.get_obj(obj, frame_or_series)
@@ -200,6 +240,8 @@ class TestSample:
         tm.assert_equal(result, expected)
 
     def test_sample_generator(self, frame_or_series):
+        # [FUNCTION DOC]
+        # GH#38100. Verifies that successive samples from the same generator advance its state (different results), while two generators created with the same seed give equal samples.
         # GH#38100
         obj = frame_or_series(np.arange(100))
         rng = np.random.default_rng(2)
@@ -216,6 +258,8 @@ class TestSample:
         tm.assert_equal(result1, result2)
 
     def test_sample_upsampling_without_replacement(self, frame_or_series):
+        # [FUNCTION DOC]
+        # GH#27451. Verifies asking for a fraction above one without replacement raises a value error saying replacement must be enabled when upsampling.
         # GH#27451
 
         obj = DataFrame({"A": list("abc")})
@@ -229,10 +273,14 @@ class TestSample:
 
 
 class TestSampleDataFrame:
+    # [CLASS DOC]
+    # Groups sample tests specific to DataFrame: weights from column names, axis selection, weight alignment, copy and index options.
     # Tests which are relevant only for DataFrame, so these are
     #  as fully parametrized as they can get.
 
     def test_sample(self):
+        # [FUNCTION DOC]
+        # GH#2419. Verifies: a column name as weights with a single nonzero weight selects that row; passing a column name as weights for a series, or for a frame on the columns axis, raises value errors with specific messages; an unknown column name raises a key error; weights not summing to one are renormalized; sampling along the columns axis with weights by number or axis name (columns, rows, index); invalid axis numbers or names raise value errors naming the axis and object type; a weights length that does not match the sampled axis raises a value error.
         # GH#2419
         # additional specific object based tests
 
@@ -318,6 +366,8 @@ class TestSampleDataFrame:
             df.sample(n=1, axis=1, weights=[0.5] * 10)
 
     def test_sample_axis1(self):
+        # [FUNCTION DOC]
+        # Verifies weights along the columns axis choose the weighted column, and that the default axis equals the explicit row axis for the same seed.
         # Check weights with axis = 1
         easy_weight_list = [0] * 3
         easy_weight_list[2] = 1
@@ -334,6 +384,8 @@ class TestSampleDataFrame:
         )
 
     def test_sample_aligns_weights_with_frame(self):
+        # [FUNCTION DOC]
+        # Verifies series weights are aligned to the frame index: extra weight labels are dropped, missing ones count as zero, and no overlap at all raises a value error about weights summing to zero.
         # Test that function aligns weights with frame
         df = DataFrame({"col1": [5, 6, 7], "col2": ["a", "b", "c"]}, index=[9, 5, 3])
         ser = Series([1, 0, 0], index=[3, 5, 9])
@@ -355,6 +407,8 @@ class TestSampleDataFrame:
             df.sample(1, weights=ser4)
 
     def test_sample_is_copy(self):
+        # [FUNCTION DOC]
+        # GH#27357, GH#30784. Verifies the sampled frame is an independent copy: adding a column to it emits no warning.
         # GH#27357, GH#30784: ensure the result of sample is an actual copy and
         # doesn't track the parent dataframe
         df = DataFrame(
@@ -366,6 +420,8 @@ class TestSampleDataFrame:
             df2["d"] = 1
 
     def test_sample_does_not_modify_weights(self):
+        # [FUNCTION DOC]
+        # GH-42843. Verifies sampling does not modify numpy array weights or a weights column of the frame, even when they contain missing values.
         # GH-42843
         result = np.array([np.nan, 1, np.nan])
         expected = result.copy()
@@ -384,6 +440,8 @@ class TestSampleDataFrame:
         tm.assert_series_equal(result, expected)
 
     def test_sample_ignore_index(self):
+        # [FUNCTION DOC]
+        # GH 38581. Verifies sampling with ignore_index resets the index to a default range of the sample size.
         # GH 38581
         df = DataFrame(
             {"col1": range(10, 20), "col2": range(20, 30), "colString": ["a"] * 10}

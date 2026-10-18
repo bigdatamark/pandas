@@ -1,3 +1,7 @@
+# [MODULE DOC]
+# Tests for DataFrame rank (and Series rank where both are parametrized): methods, na_option, axis, pct, ascending, dtypes, infinities and missing values, compared against scipy when available.
+# Uses the rank_method fixture for the tie-breaking method.
+
 from datetime import (
     datetime,
     timedelta,
@@ -20,6 +24,8 @@ import pandas._testing as tm
 
 
 class TestRank:
+    # [CLASS DOC]
+    # Groups the rank tests. Class attributes: a shared series s with missing values and ties, a two-column frame df built from it, and a results mapping from rank method name to expected rank arrays for s.
     s = Series([1, 3, 4, 2, np.nan, 2, 1, 5, np.nan, 3])
     df = DataFrame({"A": s, "B": s})
 
@@ -32,6 +38,8 @@ class TestRank:
     }
 
     def test_rank(self, float_frame):
+        # [FUNCTION DOC]
+        # Requires scipy. Using float_frame with injected missing values, verifies rank along both axes against scipy rankdata with missing values filled by infinity and masked back to missing; integer frames rank the same as their float version.
         sp_stats = pytest.importorskip("scipy.stats")
 
         float_frame.loc[::2, "A"] = np.nan
@@ -68,6 +76,8 @@ class TestRank:
         tm.assert_frame_equal(result, exp)
 
     def test_rank2(self):
+        # [FUNCTION DOC]
+        # Verifies rank behavior in small cases: pct on rows and columns; string frames with numeric_only off, with and without missing values; datetime frames ascending and descending; and a case with very different magnitudes of floats.
         df = DataFrame([[1, 3, 2], [1, 2, 3]])
         expected = DataFrame([[1.0, 3.0, 2.0], [1, 2, 3]]) / 3.0
         result = df.rank(1, pct=True)
@@ -117,6 +127,8 @@ class TestRank:
         tm.assert_frame_equal(df.rank(), exp)
 
     def test_rank_does_not_mutate(self):
+        # [FUNCTION DOC]
+        # GH#18521. Verifies rank does not mutate the frame.
         # GH#18521
         # Check rank does not mutate DataFrame
         df = DataFrame(
@@ -128,6 +140,8 @@ class TestRank:
         tm.assert_frame_equal(result, expected)
 
     def test_rank_mixed_frame(self, float_string_frame):
+        # [FUNCTION DOC]
+        # Using float_string_frame with added datetime and timedelta columns. Verifies rank with numeric_only off works, and rank along the columns axis raises a type error saying comparison is not supported between instances.
         float_string_frame["datetime"] = datetime.now()
         float_string_frame["timedelta"] = timedelta(days=1, seconds=1)
 
@@ -136,6 +150,9 @@ class TestRank:
             float_string_frame.rank(axis=1)
 
     def test_rank_na_option(self, float_frame):
+        # [FUNCTION DOC]
+        # Requires scipy. Verifies na_option modes (bottom, top) with ascending and descending against scipy ranks computed on prepared filled data, and that invalid values (a bad string or a boolean) raise a value error saying na_option must be keep, top or bottom.
+        # KNOWN ISSUE: the comments inside the descending sections ("bottom" and "top") are swapped relative to the na_option actually passed (the first block passes top and the second passes bottom).
         sp_stats = pytest.importorskip("scipy.stats")
 
         float_frame.loc[::2, "A"] = np.nan
@@ -212,6 +229,8 @@ class TestRank:
             float_frame.rank(na_option=True, ascending=False)
 
     def test_rank_axis(self):
+        # [FUNCTION DOC]
+        # Verifies rank by axis name equals rank by axis number for both axes.
         # check if using axes' names gives the same result
         df = DataFrame([[2, 1], [4, 3]])
         tm.assert_frame_equal(df.rank(axis=0), df.rank(axis="index"))
@@ -219,6 +238,8 @@ class TestRank:
 
     @pytest.mark.parametrize("ax", [0, 1])
     def test_rank_methods_frame(self, ax, rank_method):
+        # [FUNCTION DOC]
+        # Requires scipy. Parametrized over axis and over the rank_method fixture. Random data at three scales (including very large offsets and tiny scaling). Verifies rank equals scipy rankdata, using the ordinal method for first.
         sp_stats = pytest.importorskip("scipy.stats")
 
         xs = np.random.default_rng(2).integers(0, 21, (100, 26))
@@ -241,6 +262,8 @@ class TestRank:
 
     @pytest.mark.parametrize("dtype", ["O", "f8", "i8"])
     def test_rank_descending(self, rank_method, dtype):
+        # [FUNCTION DOC]
+        # Parametrized over the rank method and dtypes object, float and integer. Verifies descending rank equals ascending rank of the max minus the values; numeric-only and not-numeric-only variants agree (numeric-only skipped for object).
         if "i" in dtype:
             df = self.df.dropna().astype(dtype)
         else:
@@ -262,9 +285,14 @@ class TestRank:
     @pytest.mark.parametrize("axis", [0, 1])
     @pytest.mark.parametrize("dtype", [None, object])
     def test_rank_2d_tie_methods(self, rank_method, axis, dtype):
+        # [FUNCTION DOC]
+        # Parametrized over rank method, axis and dtype (default or object). Uses the shared class frame; verifies rank by method matches the stored expected ranks on both axes.
         df = self.df
 
         def _check2d(df, expected, method="average", axis=0):
+            # [FUNCTION DOC]
+            # HELPER: builds a frame of the expected values repeated in two columns (transposing when axis is one), then ranks the given frame and compares.
+            # KNOWN ISSUE: the method argument is accepted but unused; the rank method fixture value from the enclosing test is used instead.
             exp_df = DataFrame({"A": expected, "B": expected})
 
             if axis == 1:
@@ -308,6 +336,8 @@ class TestRank:
         ],
     )
     def test_rank_pct_true(self, rank_method, exp):
+        # [FUNCTION DOC]
+        # See gh-15630. Parametrized over method and expected percentile ranks. Verifies rank with pct returns rank divided by the number of valid entries for each tie method.
         # see gh-15630.
 
         df = DataFrame([[2012, 66, 3], [2012, 65, 2], [2012, 65, 1]])
@@ -318,6 +348,8 @@ class TestRank:
 
     @pytest.mark.single_cpu
     def test_pct_max_many_rows(self):
+        # [FUNCTION DOC]
+        # GH 18271. Single-cpu test: frame with more than 16 million rows. Verifies the maximum percentile rank is exactly one.
         # GH 18271
         df = DataFrame({"A": np.arange(2**24 + 1), "B": np.arange(2**24 + 1, 0, -1)})
         result = df.rank(pct=True).max()
@@ -384,6 +416,8 @@ class TestRank:
         ],
     )
     def test_rank_inf_and_nan(self, contents, dtype, frame_or_series):
+        # [FUNCTION DOC]
+        # Parametrized over value lists and dtypes (float64, float32, uint8, int64, object with sentinels, datetime) and frame or series. Optionally inserts missing values at random positions, shuffles, and verifies rank returns increasing order positions with missing values staying missing.
         dtype_na_map = {
             "float64": np.nan,
             "float32": np.nan,
@@ -410,6 +444,8 @@ class TestRank:
         tm.assert_equal(result, expected)
 
     def test_df_series_inf_nan_consistency(self):
+        # [FUNCTION DOC]
+        # GH#32593. Verifies ranking a frame equals ranking each of its columns as series when there are missing values and infinities.
         # GH#32593
         index = [5, 4, 3, 2, 1, 6, 7, 8, 9, 10]
         col1 = [5, 4, 3, 5, 8, 5, 2, 1, 6, 6]
@@ -431,6 +467,8 @@ class TestRank:
         tm.assert_frame_equal(df_result, series_result)
 
     def test_rank_both_inf(self):
+        # [FUNCTION DOC]
+        # GH#32593. Verifies a column of negative infinity, zero and positive infinity ranks one, two, three.
         # GH#32593
         df = DataFrame({"a": [-np.inf, 0, np.inf]})
         expected = DataFrame({"a": [1.0, 2.0, 3.0]})
@@ -449,6 +487,8 @@ class TestRank:
     def test_rank_inf_nans_na_option(
         self, frame_or_series, rank_method, na_option, ascending, expected
     ):
+        # [FUNCTION DOC]
+        # Parametrized over na_option, ascending and expected ranks, plus frame or series and rank method. Data of positive infinity, missing and negative infinity. Verifies missing values rank first or last as requested, with infinities distinct from missing.
         obj = frame_or_series([np.inf, np.nan, -np.inf])
         result = obj.rank(method=rank_method, na_option=na_option, ascending=ascending)
         expected = frame_or_series(expected)
@@ -464,6 +504,8 @@ class TestRank:
         ],
     )
     def test_rank_object_first(self, frame_or_series, na_option, ascending, expected):
+        # [FUNCTION DOC]
+        # Parametrized over na_option, ascending and expected ranks, for frame or series. Object data of equal strings with one None, using the first method. Verifies ties are broken by position and the missing entry ranks first or last by na_option, regardless of ascending.
         obj = frame_or_series(["foo", "foo", None, "foo"])
         result = obj.rank(method="first", na_option=na_option, ascending=ascending)
         expected = frame_or_series(expected)
@@ -480,6 +522,8 @@ class TestRank:
         ],
     )
     def test_rank_mixed_axis_zero(self, data, expected):
+        # [FUNCTION DOC]
+        # Parametrized over data with a column mixing numbers and strings. Verifies rank raises a type error about unsupported comparison, and with numeric_only on it ranks only the numeric columns (an empty-column frame if none).
         df = DataFrame(data, columns=Index(list(data.keys()), dtype=object))
         with pytest.raises(TypeError, match="'<' not supported between instances of"):
             df.rank()
@@ -487,6 +531,9 @@ class TestRank:
         tm.assert_frame_equal(result, expected)
 
     def test_rank_string_dtype(self, string_dtype_no_object):
+        # [FUNCTION DOC]
+        # GH#55362. Series of equal strings with a missing value, in the string dtype fixture. Verifies rank with the first method returns positions with the missing value left missing; result dtype is nullable Float64 for pyarrow strings and float64 otherwise.
+        # KNOWN ISSUE: a TODO notes that the python-storage nullable string dtype should also return a nullable float result, and the test overrides the expectation to plain float64 for it.
         # GH#55362
         obj = Series(["foo", "foo", None, "foo"], dtype=string_dtype_no_object)
         result = obj.rank(method="first")

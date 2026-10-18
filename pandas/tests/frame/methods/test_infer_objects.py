@@ -1,3 +1,6 @@
+# [MODULE DOC]
+# Tests for DataFrame infer_objects, which converts object columns to a more specific dtype when all values allow it.
+
 from datetime import datetime
 
 from pandas import DataFrame
@@ -5,7 +8,11 @@ import pandas._testing as tm
 
 
 class TestInferObjects:
+    # [CLASS DOC]
+    # Groups the infer_objects tests.
     def test_infer_objects(self):
+        # [FUNCTION DOC]
+        # GH#11221. Builds a frame of object columns whose first row holds a string and later rows hold ints, floats, datetimes, and for the last column ints followed by a string. After dropping the first row and calling infer_objects, expects int64, float64, microsecond datetime, and object dtypes respectively, and that the result equals a frame constructed directly from the remaining values.
         # GH#11221
         df = DataFrame(
             {

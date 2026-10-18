@@ -1,3 +1,7 @@
+# [MODULE DOC]
+# Tests for reindex on DataFrame (and a few Series cases): fill values, fill methods and tolerance, levels of multi-indexes, categorical, datetime and timezone-aware indexes, axis keyword styles, duplicates and error handling.
+# Two groups: tests that combine reindex with set_index, and tests specific to reindex.
+
 from datetime import (
     datetime,
     timedelta,
@@ -31,9 +35,13 @@ from pandas.api.types import CategoricalDtype
 
 
 class TestReindexSetIndex:
+    # [CLASS DOC]
+    # Groups tests that combine reindex with set_index or reset_index.
     # Tests that check both reindex and set_index
 
     def test_dti_set_index_reindex_datetimeindex(self):
+        # [FUNCTION DOC]
+        # GH#6631. Sets a timezone-aware datetime index then reindexes to another timezone-aware index with a different timezone and frequency. Verifies the index after each step equals the given indexes.
         # GH#6631
         df = DataFrame(np.random.default_rng(2).random(6))
         idx1 = date_range("2011/01/01", periods=6, freq="ME", tz="US/Eastern")
@@ -45,6 +53,8 @@ class TestReindexSetIndex:
         tm.assert_index_equal(df.index, idx2)
 
     def test_dti_set_index_reindex_freq_with_tz(self):
+        # [FUNCTION DOC]
+        # GH#11314. Verifies set_index with a new timezone-aware hourly index keeps the frequency of the original index.
         # GH#11314 with tz
         index = date_range(
             datetime(2015, 10, 1), datetime(2015, 10, 1, 23), freq="h", tz="US/Eastern"
@@ -62,6 +72,8 @@ class TestReindexSetIndex:
         assert result.index.freq == index.freq
 
     def test_set_reset_index_intervalindex(self):
+        # [FUNCTION DOC]
+        # Smoke test: sets an interval index created by binning and resets it. Nothing is asserted.
         df = DataFrame({"A": range(10)})
         ser = pd.cut(df.A, 5)
         df["B"] = ser
@@ -70,6 +82,8 @@ class TestReindexSetIndex:
         df = df.reset_index()
 
     def test_setitem_reset_index_dtypes(self):
+        # [FUNCTION DOC]
+        # GH 22060. Empty typed frames, setting one or two index columns, adding an empty column and resetting. Verifies the datetime, integer and float dtypes are preserved in the result.
         # GH 22060
         df = DataFrame(columns=["a", "b", "c"]).astype(
             {"a": "datetime64[ns]", "b": np.int64, "c": np.float64}
@@ -92,6 +106,8 @@ class TestReindexSetIndex:
         [["America/Chicago", 2013, 11, 3, 1], ["America/Santiago", 2021, 4, 3, 23]],
     )
     def test_reindex_timestamp_with_fold(self, timezone, year, month, day, hour):
+        # [FUNCTION DOC]
+        # See gh-40817. Parametrized over timezone and the date of a daylight-saving transition. Index holds timestamps with fold zero and one. Verifies reindexing to unrelated string labels works and gives all-missing values.
         # see gh-40817
         test_timezone = gettz(timezone)
         transition_1 = pd.Timestamp(
@@ -128,6 +144,8 @@ class TestReindexSetIndex:
 
 
 class TestDataFrameSelectReindex:
+    # [CLASS DOC]
+    # Groups reindex-specific tests (other indexing tests belong elsewhere).
     # These are specific reindex-based tests; other indexing tests should go in
     # test_indexing
 
@@ -137,6 +155,8 @@ class TestDataFrameSelectReindex:
         "windows, 32bit linux builds",
     )
     def test_reindex_tzaware_fill_value(self):
+        # [FUNCTION DOC]
+        # GH#52586. Expected to fail on 32-bit or older numpy on Windows. Verifies a reindex adding a column with a fill value that is a timezone-aware timestamp, a period or an interval gives a column with the matching extension dtype.
         # GH#52586
         df = DataFrame([[1]])
 
@@ -161,6 +181,8 @@ class TestDataFrameSelectReindex:
         tm.assert_frame_equal(res, expected)
 
     def test_reindex_date_fill_value(self):
+        # [FUNCTION DOC]
+        # Verifies a plain date as fill value for datetime columns leads to object dtype (casting to datetime was removed); a datetime-castable string fill value is converted to a timestamp.
         # passing date to dt64 is deprecated; enforced in 2.0 to cast to object
         arr = date_range("2016-01-01", periods=6, unit="ns").values.reshape(3, 2)
         df = DataFrame(arr, columns=["A", "B"], index=range(3))
@@ -190,6 +212,8 @@ class TestDataFrameSelectReindex:
         tm.assert_frame_equal(res, expected)
 
     def test_reindex_with_multi_index(self):
+        # [FUNCTION DOC]
+        # Issue 29896. Verifies reindexing a multi-indexed frame with a new multi-index: no method gives missing for absent keys; backward fill (both names) and pad/forward fill (both names) fill from the neighbouring existing entries on the last level.
         # https://github.com/pandas-dev/pandas/issues/29896
         # tests for reindexing a multi-indexed DataFrame with a new MultiIndex
         #
@@ -273,6 +297,8 @@ class TestDataFrameSelectReindex:
         ],
     )
     def test_reindex_methods(self, method, expected_values):
+        # [FUNCTION DOC]
+        # Parametrized over method (nearest, pad, backfill) and expected values. Float target labels in an integer-indexed frame. Verifies the filled values, with scalar and list tolerance, with reversed and permuted targets, and that reversing the frame and switching pad and backfill gives the same result.
         df = DataFrame({"x": list(range(5))})
         target = np.array([-0.1, 0.9, 1.1, 1.5])
 
@@ -301,6 +327,8 @@ class TestDataFrameSelectReindex:
         tm.assert_frame_equal(expected, actual)
 
     def test_reindex_methods_nearest_special(self):
+        # [FUNCTION DOC]
+        # Verifies nearest with scalar tolerance and a list tolerance fills only labels within the tolerance, others missing.
         df = DataFrame({"x": list(range(5))})
         target = np.array([-0.1, 0.9, 1.1, 1.5])
 
@@ -313,6 +341,8 @@ class TestDataFrameSelectReindex:
         tm.assert_frame_equal(expected, actual)
 
     def test_reindex_nearest_tz(self, tz_aware_fixture):
+        # [FUNCTION DOC]
+        # GH26683. Uses tz_aware_fixture. Verifies nearest reindex on a timezone-aware datetime index returns matching rows.
         # GH26683
         tz = tz_aware_fixture
         idx = date_range("2019-01-01", periods=5, tz=tz)
@@ -323,6 +353,8 @@ class TestDataFrameSelectReindex:
         tm.assert_frame_equal(expected, actual)
 
     def test_reindex_nearest_tz_empty_frame(self):
+        # [FUNCTION DOC]
+        # Issue 31964. Verifies nearest reindex of a frame with an empty column set and a timezone-aware index to another timestamp returns a frame with the target index.
         # https://github.com/pandas-dev/pandas/issues/31964
         dti = pd.DatetimeIndex(["2016-06-26 14:27:26+00:00"])
         df = DataFrame(index=pd.DatetimeIndex(["2016-07-04 14:00:59+00:00"]))
@@ -331,6 +363,8 @@ class TestDataFrameSelectReindex:
         tm.assert_frame_equal(result, expected)
 
     def test_reindex_frame_add_nat(self):
+        # [FUNCTION DOC]
+        # Verifies reindexing a frame with a datetime column to longer index keeps datetime dtype with NaT for the added rows.
         rng = date_range("1/1/2000 00:00:00", periods=10, freq="10s")
         df = DataFrame(
             {"A": np.random.default_rng(2).standard_normal(len(rng)), "B": rng}
@@ -348,6 +382,8 @@ class TestDataFrameSelectReindex:
         [("ffill", [0, 1, 2, 3]), ("bfill", [1.0, 2.0, 3.0, np.nan])],
     )
     def test_reindex_frame_tz_ffill_bfill(self, frame_or_series, method, exp_values):
+        # [FUNCTION DOC]
+        # GH#38566. Parametrized over forward fill and backward fill and over frame and series. Verifies reindex with a timezone-aware index shifted by one minute and a tolerance of one hour fills the expected values (the last one is missing for backward fill).
         # GH#38566
         obj = frame_or_series(
             [0, 1, 2, 3],
@@ -359,6 +395,8 @@ class TestDataFrameSelectReindex:
         tm.assert_equal(result, expected)
 
     def test_reindex_limit(self):
+        # [FUNCTION DOC]
+        # GH 28631. Verifies forward fill with a limit of one fills one added row and leaves the next missing.
         # GH 28631
         data = [["A", "A", "A"], ["B", "B", "B"], ["C", "C", "C"], ["D", "D", "D"]]
         exp_data = [
@@ -392,6 +430,8 @@ class TestDataFrameSelectReindex:
         ],
     )
     def test_reindex_level_verify_first_level(self, idx, check_index_type):
+        # [FUNCTION DOC]
+        # Parametrized over lists of first-level labels and whether to check index type. Verifies reindexing a multi-index frame by the first level returns the groups in the order given, skipping labels not present. The helper finds positions of rows with a label; the case with different levels does not check the index type.
         df = DataFrame(
             {
                 "jim": list("B" * 4 + "A" * 2 + "C" * 3),
@@ -403,6 +443,8 @@ class TestDataFrameSelectReindex:
         icol = ["jim", "joe", "jolie"]
 
         def f(val):
+            # [FUNCTION DOC]
+            # HELPER: returns the integer positions of rows whose first-level column equals the given label; used to build the expected row order.
             return np.nonzero((df["jim"] == val).to_numpy())[0]
 
         i = np.concatenate(list(map(f, idx)))
@@ -431,6 +473,8 @@ class TestDataFrameSelectReindex:
         ],
     )
     def test_reindex_level_verify_first_level_repeats(self, idx):
+        # [FUNCTION DOC]
+        # Parametrized over orderings of first-level labels repeated in the data. Verifies reindexing by the first level orders the groups as listed with the full multi-index rows.
         df = DataFrame(
             {
                 "jim": ["mid"] * 5 + ["btm"] * 8 + ["top"] * 7,
@@ -457,6 +501,8 @@ class TestDataFrameSelectReindex:
         icol = ["jim", "joe", "jolie"]
 
         def f(val):
+            # [FUNCTION DOC]
+            # HELPER: returns the integer positions of rows whose first-level column equals the given label; used to build the expected row order.
             return np.nonzero((df["jim"] == val).to_numpy())[0]
 
         i = np.concatenate(list(map(f, idx)))
@@ -480,6 +526,8 @@ class TestDataFrameSelectReindex:
         ],
     )
     def test_reindex_level_verify_repeats(self, idx, indexer):
+        # [FUNCTION DOC]
+        # Parametrized over second-level label lists and the expected row positions. Verifies reindexing by the second level (with repeated entries) orders rows accordingly.
         df = DataFrame(
             {
                 "jim": ["mid"] * 5 + ["btm"] * 8 + ["top"] * 7,
@@ -522,6 +570,8 @@ class TestDataFrameSelectReindex:
         ],
     )
     def test_reindex_level_verify(self, idx, indexer, check_index_type):
+        # [FUNCTION DOC]
+        # Parametrized over second-level label lists, expected positions and a flag for index type checks. Verifies reindexing by the joe level yields the expected rows, including labels not present (dropped), reorderings and an empty result.
         df = DataFrame(
             {
                 "jim": list("B" * 4 + "A" * 2 + "C" * 3),
@@ -536,6 +586,8 @@ class TestDataFrameSelectReindex:
         tm.assert_frame_equal(left, right, check_index_type=check_index_type)
 
     def test_non_monotonic_reindex_methods(self):
+        # [FUNCTION DOC]
+        # Verifies reindexing a frame whose datetime index is neither increasing nor decreasing with pad, forward fill, backward fill or nearest raises a value error saying the index must be monotonic increasing or decreasing.
         dr = date_range("2013-08-01", periods=6, freq="B")
         data = np.random.default_rng(2).standard_normal((6, 1))
         df = DataFrame(data, index=dr, columns=list("A"))
@@ -552,6 +604,8 @@ class TestDataFrameSelectReindex:
             df_rev.reindex(df.index, method="nearest")
 
     def test_reindex_sparse(self):
+        # [FUNCTION DOC]
+        # Issue 35286. Verifies reindexing a frame with a sparse integer column to an index with a new label gives a sparse float column and missing value.
         # https://github.com/pandas-dev/pandas/issues/35286
         df = DataFrame(
             {"A": [0, 1], "B": pd.array([0, 1], dtype=pd.SparseDtype("int64", 0))}
@@ -567,6 +621,8 @@ class TestDataFrameSelectReindex:
         tm.assert_frame_equal(result, expected)
 
     def test_reindex(self, float_frame):
+        # [FUNCTION DOC]
+        # Using float_frame reindexed with a longer index: verifies values at shared labels are preserved and others missing; series within the result share the new index; reindexing with an empty index gives empty; a non-contiguous index; reindexing with the same index returns the same index object; empty list gives empty frame with the columns; a plain list yields an index without frequency; no arguments gives an equal but new frame.
         datetime_series = Series(
             np.arange(30, dtype=np.float64), index=date_range("2020-01-01", periods=30)
         )
@@ -630,6 +686,8 @@ class TestDataFrameSelectReindex:
         assert result is not float_frame
 
     def test_reindex_nan(self):
+        # [FUNCTION DOC]
+        # Verifies reindexing with missing values in the index (float and object), and GH10388 that set_index followed by reset_index with missing values in datetime, timedelta and string columns equals the column reordering.
         df = DataFrame(
             [[1, 2], [3, 5], [7, 11], [9, 23]],
             index=[2, np.nan, 1, 5],
@@ -659,6 +717,8 @@ class TestDataFrameSelectReindex:
         tm.assert_frame_equal(left, right)
 
     def test_reindex_name_remains(self):
+        # [FUNCTION DOC]
+        # Verifies reindex takes the index name from a named series or index passed as target, for rows and for columns.
         s = Series(np.random.default_rng(2).random(10))
         df = DataFrame(s, index=np.arange(len(s)))
         i = Series(np.arange(10), name="iname")
@@ -676,6 +736,8 @@ class TestDataFrameSelectReindex:
         assert df.columns.name == "iname"
 
     def test_reindex_int(self, int_frame):
+        # [FUNCTION DOC]
+        # Verifies integer columns remain integer when reindexing to a subset, become float when new rows are introduced, and remain integer when reindexing columns.
         smaller = int_frame.reindex(int_frame.index[::2])
 
         assert smaller["A"].dtype == np.int64
@@ -687,6 +749,8 @@ class TestDataFrameSelectReindex:
         assert smaller["A"].dtype == np.int64
 
     def test_reindex_columns(self, float_frame):
+        # [FUNCTION DOC]
+        # Verifies reindexing columns keeps existing columns, gives all-missing for new ones, drops others, and an empty list gives an empty frame.
         new_frame = float_frame.reindex(columns=["A", "B", "E"])
 
         tm.assert_series_equal(new_frame["B"], float_frame["B"])
@@ -698,6 +762,8 @@ class TestDataFrameSelectReindex:
         assert new_frame.empty
 
     def test_reindex_columns_method(self):
+        # [FUNCTION DOC]
+        # GH 14992. Verifies reindexing columns honors the fill method: default gives missing, forward fill and backward fill fill from neighbouring columns.
         # GH 14992, reindexing over columns ignored method
         df = DataFrame(
             data=[[11, 12, 13], [21, 22, 23], [31, 32, 33]],
@@ -749,6 +815,8 @@ class TestDataFrameSelectReindex:
         tm.assert_frame_equal(result, expected)
 
     def test_reindex_axes(self):
+        # [FUNCTION DOC]
+        # GH 3317. Verifies reindexing by both axes keeps the frequency of the index, equal to the result of two successive reindexes. A deprecation warning is expected for the lowercase day frequency alias.
         # GH 3317, reindexing by both axes loses freq of the index
         df = DataFrame(
             np.ones((3, 3)),
@@ -768,6 +836,8 @@ class TestDataFrameSelectReindex:
         assert index_freq == seq_freq
 
     def test_reindex_fill_value(self):
+        # [FUNCTION DOC]
+        # Verifies fill_value for rows and for columns (float, integer, string), and the string fill value on a frame with an extra string column.
         df = DataFrame(np.random.default_rng(2).standard_normal((10, 4)))
 
         # axis=0
@@ -801,6 +871,8 @@ class TestDataFrameSelectReindex:
         tm.assert_frame_equal(result, expected)
 
     def test_reindex_uint_dtypes_fill_value(self, any_unsigned_int_numpy_dtype):
+        # [FUNCTION DOC]
+        # GH#48184. Uses all unsigned integer numpy dtypes. Verifies the unsigned dtype is kept when reindexing with an integer fill value on both axes.
         # GH#48184
         df = DataFrame({"a": [1, 2], "b": [1, 2]}, dtype=any_unsigned_int_numpy_dtype)
         result = df.reindex(columns=list("abcd"), index=[0, 1, 2, 3], fill_value=10)
@@ -811,6 +883,8 @@ class TestDataFrameSelectReindex:
         tm.assert_frame_equal(result, expected)
 
     def test_reindex_single_column_ea_index_and_columns(self, any_numeric_ea_dtype):
+        # [FUNCTION DOC]
+        # GH#48190. Uses all numeric extension dtypes. Verifies reindexing a single-column frame on both axes with a fill value keeps the extension dtype for the existing column and gives the new column the value.
         # GH#48190
         df = DataFrame({"a": [1, 2]}, dtype=any_numeric_ea_dtype)
         result = df.reindex(columns=list("ab"), index=[0, 1, 2], fill_value=10)
@@ -820,6 +894,8 @@ class TestDataFrameSelectReindex:
         tm.assert_frame_equal(result, expected)
 
     def test_reindex_with_string_fill_value(self):
+        # [FUNCTION DOC]
+        # GH#63993. Verifies reindexing columns with a string fill value creates new columns holding that string.
         # GH#63993
         df = DataFrame({"a": [0]})
         result = df.reindex(columns=["a", "b", "c"], fill_value="missing")
@@ -827,6 +903,8 @@ class TestDataFrameSelectReindex:
         tm.assert_frame_equal(result, expected)
 
     def test_reindex_dups(self):
+        # [FUNCTION DOC]
+        # GH4746. Verifies setting a new index on duplicate labels works, while reindexing on an axis with duplicate labels raises a value error about duplicate labels.
         # GH4746, reindex on duplicate index error messages
         arr = np.random.default_rng(2).standard_normal(10)
         df = DataFrame(arr, index=[1, 2, 3, 4, 5, 1, 2, 3, 4, 5])
@@ -843,6 +921,8 @@ class TestDataFrameSelectReindex:
             df.reindex(index=list(range(len(df))))
 
     def test_reindex_with_duplicate_columns(self):
+        # [FUNCTION DOC]
+        # Verifies reindex columns on a frame with duplicate column labels raises a value error about duplicate labels.
         # reindex is invalid!
         df = DataFrame(
             [[1, 5, 7.0], [1, 5, 7.0], [1, 5, 7.0]], columns=["bar", "a", "a"]
@@ -854,6 +934,8 @@ class TestDataFrameSelectReindex:
             df.reindex(columns=["bar", "foo"])
 
     def test_reindex_axis_style(self):
+        # [FUNCTION DOC]
+        # Issue 12392. Verifies reindexing rows with a positional argument, an axis number and the axis name index gives the same result.
         # https://github.com/pandas-dev/pandas/issues/12392
         df = DataFrame({"A": [1, 2, 3], "B": [4, 5, 6]})
         expected = DataFrame(
@@ -869,6 +951,8 @@ class TestDataFrameSelectReindex:
         tm.assert_frame_equal(result, expected)
 
     def test_reindex_positional_raises(self):
+        # [FUNCTION DOC]
+        # Issue 12392. Verifies passing a second positional argument raises a type error about positional arguments (from 1 to 2 allowed).
         # https://github.com/pandas-dev/pandas/issues/12392
         # Enforced in 2.0
         df = DataFrame({"A": [1, 2, 3], "B": [4, 5, 6]})
@@ -877,6 +961,9 @@ class TestDataFrameSelectReindex:
             df.reindex([0, 1], ["A", "B", "C"])
 
     def test_reindex_axis_style_raises(self):
+        # [FUNCTION DOC]
+        # Issue 12392. Verifies combining the axis keyword with index or columns keywords raises a type error saying both cannot be specified, giving all of labels, index and columns raises a type error, and giving both a positional and the labels keyword raises a type error about multiple values.
+        # KNOWN ISSUE: two of the checks (index with axis set to index, and index with axis set to columns) are repeated twice in the test under the comment about mixing styles.
         # https://github.com/pandas-dev/pandas/issues/12392
         df = DataFrame({"A": [1, 2, 3], "B": [4, 5, 6]})
         with pytest.raises(TypeError, match="Cannot specify both 'axis'"):
@@ -912,6 +999,8 @@ class TestDataFrameSelectReindex:
             df.reindex([0, 1], labels=[0, 1])
 
     def test_reindex_single_named_indexer(self):
+        # [FUNCTION DOC]
+        # Issue 12392. Verifies a positional row selection together with a columns keyword reindexes both.
         # https://github.com/pandas-dev/pandas/issues/12392
         df = DataFrame({"A": [1, 2, 3], "B": [1, 2, 3]})
         result = df.reindex([0, 1], columns=["A"])
@@ -919,6 +1008,8 @@ class TestDataFrameSelectReindex:
         tm.assert_frame_equal(result, expected)
 
     def test_reindex_api_equivalence(self):
+        # [FUNCTION DOC]
+        # Issue 12392. Verifies the labels and axis spelling is equivalent to the index and columns keywords for rows, columns and both.
         # https://github.com/pandas-dev/pandas/issues/12392
         # equivalence of the labels/axis and index/columns API's
         df = DataFrame(
@@ -948,6 +1039,8 @@ class TestDataFrameSelectReindex:
             tm.assert_frame_equal(res1, res)
 
     def test_reindex_boolean(self):
+        # [FUNCTION DOC]
+        # Verifies reindexing a boolean frame with new labels converts to object dtype with missing entries for added rows or columns.
         frame = DataFrame(
             np.ones((10, 2), dtype=bool), index=np.arange(0, 20, 2), columns=[0, 2]
         )
@@ -961,6 +1054,8 @@ class TestDataFrameSelectReindex:
         assert isna(reindexed[1]).all()
 
     def test_reindex_objects(self, float_string_frame):
+        # [FUNCTION DOC]
+        # Using float_string_frame, verifies reindexing columns can add or drop the string column.
         reindexed = float_string_frame.reindex(columns=["foo", "A", "B"])
         assert "foo" in reindexed
 
@@ -968,6 +1063,8 @@ class TestDataFrameSelectReindex:
         assert "foo" not in reindexed
 
     def test_reindex_corner(self, int_frame):
+        # [FUNCTION DOC]
+        # Verifies reindexing an empty frame creates the requested columns, and an integer frame given a new column gets float dtype for it.
         index = Index(["a", "b", "c"])
         dm = DataFrame({}).reindex(index=[1, 2, 3])
         reindexed = dm.reindex(columns=index)
@@ -978,6 +1075,8 @@ class TestDataFrameSelectReindex:
         assert smaller["E"].dtype == np.float64
 
     def test_reindex_with_nans(self):
+        # [FUNCTION DOC]
+        # Verifies reindexing a frame whose index has a missing value selects the matching labels and preserves their rows.
         df = DataFrame(
             [[1, 2], [3, 4], [np.nan, np.nan], [7, 8], [9, 10]],
             columns=["a", "b"],
@@ -997,12 +1096,16 @@ class TestDataFrameSelectReindex:
         tm.assert_frame_equal(result, expected)
 
     def test_reindex_without_upcasting(self):
+        # [FUNCTION DOC]
+        # GH45857. Verifies reindexing columns on a float32 frame with new columns keeps float32 for all columns.
         # GH45857
         df = DataFrame(np.zeros((10, 10), dtype=np.float32))
         result = df.reindex(columns=np.arange(5, 15))
         assert result.dtypes.eq(np.float32).all()
 
     def test_reindex_multi(self):
+        # [FUNCTION DOC]
+        # Verifies reindexing both axes at once equals reindexing the axes in sequence, for float, integer, subset and complex data.
         df = DataFrame(np.random.default_rng(2).standard_normal((3, 3)))
 
         result = df.reindex(index=range(4), columns=range(4))
@@ -1035,6 +1138,8 @@ class TestDataFrameSelectReindex:
         tm.assert_frame_equal(result, expected)
 
     def test_reindex_multi_categorical_time(self):
+        # [FUNCTION DOC]
+        # Issue 21390. Multi-index of categoricals including datetimes with a missing row. Verifies reindexing to the full multi-index restores the missing row with a missing value.
         # https://github.com/pandas-dev/pandas/issues/21390
         midx = MultiIndex.from_product(
             [
@@ -1050,6 +1155,9 @@ class TestDataFrameSelectReindex:
         tm.assert_frame_equal(result, expected)
 
     def test_reindex_with_categoricalindex(self):
+        # [FUNCTION DOC]
+        # Verifies reindexing a frame with a categorical index: a list of labels gives a plain index; a categorical target gives a categorical index keeping order flag and categories; a duplicate index raises a value error; the arguments method, level and limit raise not-implemented errors naming the argument.
+        # KNOWN ISSUE: the checks for the list-based reindexes (labels a, b, e; a, b; e) appear twice in the test with identical inputs and expectations.
         df = DataFrame(
             {
                 "A": np.arange(3, dtype="int64"),
@@ -1151,6 +1259,8 @@ class TestDataFrameSelectReindex:
             df.reindex(["a"], limit=2)
 
     def test_reindex_signature(self):
+        # [FUNCTION DOC]
+        # Verifies the public reindex method accepts exactly the parameters self, labels, index, columns, axis, limit, copy, level, method, fill_value and tolerance.
         sig = inspect.signature(DataFrame.reindex)
         parameters = set(sig.parameters)
         assert parameters == {
@@ -1168,6 +1278,8 @@ class TestDataFrameSelectReindex:
         }
 
     def test_reindex_multiindex_ffill_added_rows(self):
+        # [FUNCTION DOC]
+        # GH#23693. Verifies a forward-fill reindex on a multi-index adds rows filled from the previous row instead of missing.
         # GH#23693
         # reindex added rows with nan values even when fill method was specified
         mi = MultiIndex.from_tuples([("a", "b"), ("d", "e")])
@@ -1187,6 +1299,8 @@ class TestDataFrameSelectReindex:
         ],
     )
     def test_reindex_empty_frame(self, kwargs):
+        # [FUNCTION DOC]
+        # GH#27315. Parametrized over method and tolerance combinations. Verifies reindexing an empty frame to a datetime index produces an object frame of missing values.
         # GH#27315
         idx = date_range(start="2020", freq="30s", periods=3)
         df = DataFrame([], index=Index([], name="time"), columns=["a"])
@@ -1209,6 +1323,8 @@ class TestDataFrameSelectReindex:
         ],
     )
     def test_reindex_empty(self, src_idx, cat_idx):
+        # [FUNCTION DOC]
+        # Parametrized over the source index class (plain or categorical) and various target indexes including duplicates (GH#38906). Verifies reindexing columns of an empty float frame yields float columns with the target column index.
         df = DataFrame(columns=src_idx([]), index=["K"], dtype="f8")
 
         result = df.reindex(columns=cat_idx)
@@ -1217,6 +1333,8 @@ class TestDataFrameSelectReindex:
 
     @pytest.mark.parametrize("dtype", ["m8[ns]", "M8[ns]"])
     def test_reindex_datetimelike_to_object(self, dtype):
+        # [FUNCTION DOC]
+        # GH#39755. Parametrized over datetime and timedelta dtypes. Verifies reindexing with a not-a-time fill value of the other kind gives object columns holding NaT objects and the fill value, not integers.
         # GH#39755 dont cast dt64/td64 to ints
         mi = MultiIndex.from_product([list("ABCDE"), range(2)])
 
@@ -1253,6 +1371,8 @@ class TestDataFrameSelectReindex:
     @pytest.mark.parametrize("klass", [Index, CategoricalIndex])
     @pytest.mark.parametrize("data", ["A", "B"])
     def test_reindex_not_category(self, klass, data):
+        # [FUNCTION DOC]
+        # GH#28690. Parametrized over index class and label. Verifies reindexing an empty categorical index to a label (in or outside the categories) gives an index of that class.
         # GH#28690
         df = DataFrame(index=CategoricalIndex([], categories=["A"]))
         idx = klass([data])
@@ -1261,6 +1381,8 @@ class TestDataFrameSelectReindex:
         tm.assert_frame_equal(result, expected)
 
     def test_invalid_method(self):
+        # [FUNCTION DOC]
+        # Verifies an unsupported fill method name raises a value error saying the fill method is invalid.
         df = DataFrame({"A": [1, np.nan, 2]})
 
         msg = "Invalid fill method"
@@ -1268,6 +1390,8 @@ class TestDataFrameSelectReindex:
             df.reindex([1, 0, 2], method="asfreq")
 
     def test_reindex_index_name_matches_multiindex_level(self):
+        # [FUNCTION DOC]
+        # Verifies a frame with a named index reindexed to a multi-index with a level of the same name broadcasts the existing values over the other level.
         df = DataFrame(
             {"value": [1, 2], "other": ["A", "B"]},
             index=Index([10, 20], name="a"),
@@ -1285,6 +1409,8 @@ class TestDataFrameSelectReindex:
         tm.assert_frame_equal(result, expected)
 
     def test_reindex_index_name_no_match_multiindex_level(self):
+        # [FUNCTION DOC]
+        # Verifies a frame whose index name does not match any multi-index level name produces all-missing values when reindexed to that multi-index.
         df = DataFrame({"value": [1, 2]}, index=Index([10, 20], name="different_name"))
         target = MultiIndex.from_product([[10, 20], ["x", "y"]], names=["a", "b"])
 

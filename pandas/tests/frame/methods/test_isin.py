@@ -1,3 +1,6 @@
+# [MODULE DOC]
+# Tests for DataFrame isin: membership checks against list-likes, dicts, series, frames, multi-indexed frames, with error cases for strings and duplicate axes.
+
 import numpy as np
 import pytest
 
@@ -11,7 +14,11 @@ import pandas._testing as tm
 
 
 class TestDataFrameIsIn:
+    # [CLASS DOC]
+    # Groups the DataFrame isin tests.
     def test_isin(self):
+        # [FUNCTION DOC]
+        # GH#4211. Mixed frame checked against a list of strings. Verifies the result is a boolean frame equal to applying row-wise membership on each row.
         # GH#4211
         df = DataFrame(
             {
@@ -29,6 +36,8 @@ class TestDataFrameIsIn:
 
     @pytest.mark.parametrize("empty", [[], Series(dtype=object), np.array([])])
     def test_isin_empty(self, empty):
+        # [FUNCTION DOC]
+        # GH#16991. Parametrized over empty values (empty list, empty object series, empty array). Verifies the result is an all-False frame with the same index and columns.
         # GH#16991
         df = DataFrame({"A": ["a", "b", "c"], "B": ["a", "e", "f"]})
         expected = DataFrame(False, df.index, df.columns)
@@ -37,6 +46,8 @@ class TestDataFrameIsIn:
         tm.assert_frame_equal(result, expected)
 
     def test_isin_dict(self):
+        # [FUNCTION DOC]
+        # Verifies a dict argument restricts membership to the columns named by the keys (other columns all False), including when the frame has duplicate column labels.
         df = DataFrame({"A": ["a", "b", "c"], "B": ["a", "e", "f"]})
         d = {"A": ["a"]}
 
@@ -55,6 +66,8 @@ class TestDataFrameIsIn:
         tm.assert_frame_equal(result, expected)
 
     def test_isin_with_string_scalar(self):
+        # [FUNCTION DOC]
+        # GH#4763. Verifies passing a string scalar raises a type error saying only list-like or dict-like objects are allowed for isin and naming the type str, for both a short and a long string.
         # GH#4763
         df = DataFrame(
             {
@@ -75,6 +88,8 @@ class TestDataFrameIsIn:
             df.isin("aaa")
 
     def test_isin_df(self):
+        # [FUNCTION DOC]
+        # Compares two frames of equal shape: True only where the values match at the same row and column label, with missing values matching each other. When the second frame only partially shares column labels, the non-shared column is entirely False.
         df1 = DataFrame({"A": [1, 2, 3, 4], "B": [2, np.nan, 4, 4]})
         df2 = DataFrame({"A": [0, 2, 12, 4], "B": [2, np.nan, 4, 5]})
         expected = DataFrame(False, df1.index, df1.columns)
@@ -90,6 +105,8 @@ class TestDataFrameIsIn:
         tm.assert_frame_equal(result, expected)
 
     def test_isin_tuples(self):
+        # [FUNCTION DOC]
+        # GH#16394. A column of tuples checked with a list holding one tuple. Verifies the result is a boolean series, named like the column, True only for the matching tuple.
         # GH#16394
         df = DataFrame({"A": [1, 2, 3], "B": ["a", "b", "f"]})
         df["C"] = list(zip(df["A"], df["B"]))
@@ -97,6 +114,8 @@ class TestDataFrameIsIn:
         tm.assert_series_equal(result, Series([True, False, False], name="C"))
 
     def test_isin_df_dupe_values(self):
+        # [FUNCTION DOC]
+        # Verifies that isin against a frame with duplicate column labels, duplicate index labels, or both raises a value error saying isin cannot be computed with a duplicate axis.
         df1 = DataFrame({"A": [1, 2, 3, 4], "B": [2, np.nan, 4, 4]})
         # just cols duped
         df2 = DataFrame([[0, 2], [12, 4], [2, np.nan], [4, 5]], columns=["B", "B"])
@@ -119,6 +138,8 @@ class TestDataFrameIsIn:
             df1.isin(df2)
 
     def test_isin_dupe_self(self):
+        # [FUNCTION DOC]
+        # Verifies a frame whose own columns are duplicated can be checked against another frame: matching is by position of label alignment, giving the expected boolean frame.
         other = DataFrame({"A": [1, 0, 1, 0], "B": [1, 1, 0, 0]})
         df = DataFrame([[1, 1], [1, 0], [0, 0]], columns=["A", "A"])
         result = df.isin(other)
@@ -128,6 +149,8 @@ class TestDataFrameIsIn:
         tm.assert_frame_equal(result, expected)
 
     def test_isin_against_series(self):
+        # [FUNCTION DOC]
+        # Verifies isin against a series aligns on the frame index: each row is compared to the series value at the same index label across all columns.
         df = DataFrame(
             {"A": [1, 2, 3, 4], "B": [2, np.nan, 4, 4]}, index=["a", "b", "c", "d"]
         )
@@ -139,6 +162,8 @@ class TestDataFrameIsIn:
         tm.assert_frame_equal(result, expected)
 
     def test_isin_multiIndex(self):
+        # [FUNCTION DOC]
+        # Verifies isin with a multi-index frame: against a frame with a plain integer index the result is all False (no alignment), and against a frame with the same multi-index the result is elementwise equality.
         idx = MultiIndex.from_tuples(
             [
                 (0, "a", "foo"),
@@ -176,6 +201,8 @@ class TestDataFrameIsIn:
         tm.assert_frame_equal(result, expected)
 
     def test_isin_empty_datetimelike(self):
+        # [FUNCTION DOC]
+        # GH#15473. Datetime and timedelta frames checked against an empty frame with a column and a fully empty frame. Verifies all results are False frames.
         # GH#15473
         df1_ts = DataFrame({"date": pd.to_datetime(["2014-01-01", "2014-01-02"])})
         df1_td = DataFrame({"date": [pd.Timedelta(1, "s"), pd.Timedelta(2, "s")]})
@@ -202,6 +229,8 @@ class TestDataFrameIsIn:
         ],
     )
     def test_isin_category_frame(self, values):
+        # [FUNCTION DOC]
+        # GH#34256. Parametrized over a categorical frame and a categorical series. Verifies membership works against categorical values: the matching column is all True, the other all False.
         # GH#34256
         df = DataFrame({"a": [1, 2, 3], "b": [4, 5, 6]})
         expected = DataFrame({"a": [True, True, True], "b": [False, False, False]})
@@ -210,6 +239,8 @@ class TestDataFrameIsIn:
         tm.assert_frame_equal(result, expected)
 
     def test_isin_read_only(self):
+        # [FUNCTION DOC]
+        # Regression test (issue 37174): the values array is flagged read-only. Verifies isin does not fail and returns all True.
         # https://github.com/pandas-dev/pandas/issues/37174
         arr = np.array([1, 2, 3])
         arr.setflags(write=False)
@@ -219,6 +250,8 @@ class TestDataFrameIsIn:
         tm.assert_frame_equal(result, expected)
 
     def test_isin_not_lossy(self):
+        # [FUNCTION DOC]
+        # GH 53514. Verifies isin on a large 64-bit integer value is exact (not lossy through float conversion): the integer column matches and the float column does not.
         # GH 53514
         val = 1666880195890293744
         df = DataFrame({"a": [val], "b": [1.0]})

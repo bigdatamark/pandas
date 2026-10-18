@@ -1,3 +1,6 @@
+# [MODULE DOC]
+# Tests for rename_axis on DataFrame: setting or clearing the names of the index and column axes, in-place behavior, mappers, and errors.
+
 import numpy as np
 import pytest
 
@@ -10,7 +13,11 @@ import pandas._testing as tm
 
 
 class TestDataFrameRenameAxis:
+    # [CLASS DOC]
+    # Groups the DataFrame rename_axis tests.
     def test_rename_axis_inplace(self, float_frame):
+        # [FUNCTION DOC]
+        # GH#15704. Using float_frame, verifies rename_axis with inplace set returns nothing and mutates the copy to equal the non-inplace result, both for the index (default) and for the columns axis.
         # GH#15704
         expected = float_frame.rename_axis("foo")
         result = float_frame.copy()
@@ -29,6 +36,8 @@ class TestDataFrameRenameAxis:
         tm.assert_frame_equal(result, expected)
 
     def test_rename_axis_with_allows_duplicate_labels_false(self):
+        # [FUNCTION DOC]
+        # GH#44958. Frame flagged to disallow duplicate labels. Verifies renaming the index axis works and gives the expected frame with a named index (flags are not compared).
         # GH#44958
         df = DataFrame([[1, 2], [3, 4]], columns=["a", "b"]).set_flags(
             allows_duplicate_labels=False
@@ -41,6 +50,8 @@ class TestDataFrameRenameAxis:
         tm.assert_frame_equal(result, expected, check_flags=False)
 
     def test_rename_axis_raises(self):
+        # [FUNCTION DOC]
+        # GH#17833. Verifies passing a callable or a dict-like as the new axis name (instead of a name) raises a value error telling the user to use rename, for both axes of a frame and for a series.
         # GH#17833
         df = DataFrame({"A": [1, 2], "B": [1, 2]})
         with pytest.raises(ValueError, match="Use `.rename`"):
@@ -56,6 +67,8 @@ class TestDataFrameRenameAxis:
             df["A"].rename_axis(id)
 
     def test_rename_axis_mapper(self):
+        # [FUNCTION DOC]
+        # GH#19978. Two-level index frame. Verifies: a scalar name for the columns axis; renaming columns with a dict mapper; renaming index levels with a dict, with a function, and with a full list; renaming both axes together. Error cases: a scalar given for a multi-level index raises a type error saying a mapping or list is needed; a list of wrong length raises a value error about the length of names; an unknown keyword raises a type error naming it.
         # GH#19978
         mi = MultiIndex.from_product([["a", "b", "c"], [1, 2]], names=["ll", "nn"])
         df = DataFrame(
@@ -110,6 +123,8 @@ class TestDataFrameRenameAxis:
         ],
     )
     def test_rename_axis_none(self, kwargs, rename_index, rename_columns):
+        # [FUNCTION DOC]
+        # GH 25034. Parametrized over keyword argument sets and flags telling whether the index and/or columns names are expected to be cleared. Setting a name of none for an axis (by mapper plus axis, or by index or columns keyword) clears that axis name only; no arguments leaves both names unchanged.
         # GH 25034
         index = Index(list("abc"), name="foo")
         columns = Index(["col1", "col2"], name="bar")

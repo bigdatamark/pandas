@@ -1,3 +1,7 @@
+# [MODULE DOC]
+# Tests for DataFrame select_dtypes: include and exclude as scalars and lists, numpy and pandas dtype aliases, duplicate columns, strings and object, extension dtypes, datetime specificity, errors and copy semantics.
+# Defines a minimal extension dtype and array pair for numeric-ness tests.
+
 import numpy as np
 import pytest
 
@@ -15,47 +19,75 @@ from pandas.core.arrays import ExtensionArray
 
 
 class DummyDtype(ExtensionDtype):
+    # [CLASS DOC]
+    # HELPER: minimal extension dtype used to test whether select_dtypes honors the numeric flag of extension dtypes. Stores a numeric boolean given at construction; its name is always Dummy and its type is int.
     type = int
 
     def __init__(self, numeric) -> None:
+        # [FUNCTION DOC]
+        # HELPER: stores whether the dtype is considered numeric.
         self._numeric = numeric
 
     @property
     def name(self):
+        # [FUNCTION DOC]
+        # HELPER: property returning the constant name of the dummy dtype.
         return "Dummy"
 
     @property
     def _is_numeric(self):
+        # [FUNCTION DOC]
+        # HELPER: property returning the numeric flag given at construction.
         return self._numeric
 
 
 class DummyArray(ExtensionArray):
+    # [CLASS DOC]
+    # HELPER: minimal extension array wrapping a sequence and a given dtype, used to test numeric selection of extension arrays. Only length, array conversion, dtype, copy and view are implemented; element access is a stub.
     def __init__(self, data, dtype) -> None:
+        # [FUNCTION DOC]
+        # HELPER: stores the data and dtype.
         self.data = data
         self._dtype = dtype
 
     def __array__(self, dtype=None, copy=None):
+        # [FUNCTION DOC]
+        # HELPER: converts the stored data to a numpy array with the optionally requested dtype; the copy argument is ignored.
         return np.asarray(self.data, dtype=dtype)
 
     @property
     def dtype(self):
+        # [FUNCTION DOC]
+        # HELPER: property returning the dtype given at construction.
         return self._dtype
 
     def __len__(self) -> int:
+        # [FUNCTION DOC]
+        # HELPER: returns the number of stored elements.
         return len(self.data)
 
     def __getitem__(self, item):
+        # [FUNCTION DOC]
+        # HELPER: stub that ignores its argument and returns nothing; only present to satisfy the abstract interface.
         pass
 
     def copy(self):
+        # [FUNCTION DOC]
+        # HELPER: returns the array itself without copying.
         return self
 
     def view(self):
+        # [FUNCTION DOC]
+        # HELPER: returns the array itself.
         return self
 
 
 class TestSelectDtypes:
+    # [CLASS DOC]
+    # Groups the select_dtypes tests.
     def test_select_dtypes_include_using_list_like(self, using_infer_string):
+        # [FUNCTION DOC]
+        # Frame with columns of many dtypes (string, int, unsigned, float, bool, categorical, naive and timezone-aware datetime, period, timedelta). Verifies include lists: numbers (including timedelta) , numbers excluding timedelta, numbers plus categorical, datetime, datetime64 and datetimetz selections; period raises a not-implemented error with an empty message; with inferred strings, str and the str type select the string column; selecting object emits a deprecation warning (Pandas4Warning) about str inclusion under inferred strings and selects the string column.
         df = DataFrame(
             {
                 "a": list("abc"),
@@ -117,6 +149,8 @@ class TestSelectDtypes:
         tm.assert_frame_equal(ri, ei)
 
     def test_select_dtypes_exclude_using_list_like(self):
+        # [FUNCTION DOC]
+        # Verifies excluding numbers from a frame with strings, ints, floats and bools keeps the string and bool columns (bool is not numeric here).
         df = DataFrame(
             {
                 "a": list("abc"),
@@ -131,6 +165,8 @@ class TestSelectDtypes:
         tm.assert_frame_equal(re, ee)
 
     def test_select_dtypes_exclude_include_using_list_like(self):
+        # [FUNCTION DOC]
+        # Verifies combining include (bool and integer) with exclude (datetime64) selects the integer and bool columns, also when given as tuples of names.
         df = DataFrame(
             {
                 "a": list("abc"),
@@ -157,6 +193,8 @@ class TestSelectDtypes:
         "include", [(np.bool_, "int"), (np.bool_, "integer"), ("bool", int)]
     )
     def test_select_dtypes_exclude_include_int(self, include):
+        # [FUNCTION DOC]
+        # Fix for #36596. Parametrized over include tuples mixing bool with int, integer or the int type. Verifies integer columns of different widths and booleans are selected while datetimes are excluded.
         # Fix select_dtypes(include='int') for Windows, FYI #36596
         df = DataFrame(
             {
@@ -174,6 +212,8 @@ class TestSelectDtypes:
         tm.assert_frame_equal(result, expected)
 
     def test_select_dtypes_include_using_scalars(self, using_infer_string):
+        # [FUNCTION DOC]
+        # Same wide frame as the list test but passing scalar includes: number, datetime, datetime64, category; period raises not-implemented; with inferred strings, str selects the string column.
         df = DataFrame(
             {
                 "a": list("abc"),
@@ -215,6 +255,8 @@ class TestSelectDtypes:
             tm.assert_frame_equal(ri, ei)
 
     def test_select_dtypes_exclude_using_scalars(self):
+        # [FUNCTION DOC]
+        # Verifies scalar exclude: excluding numbers, excluding category, and excluding period raising a not-implemented error.
         df = DataFrame(
             {
                 "a": list("abc"),
@@ -243,6 +285,8 @@ class TestSelectDtypes:
             df.select_dtypes(exclude="period")
 
     def test_select_dtypes_include_exclude_using_scalars(self):
+        # [FUNCTION DOC]
+        # Verifies scalar include of numbers together with scalar exclude of floating selects integer, unsigned and timedelta columns.
         df = DataFrame(
             {
                 "a": list("abc"),
@@ -264,6 +308,8 @@ class TestSelectDtypes:
         tm.assert_frame_equal(ri, ei)
 
     def test_select_dtypes_include_exclude_mixed_scalars_lists(self):
+        # [FUNCTION DOC]
+        # Verifies mixing scalar and list arguments: numbers excluding floating and timedelta, and numbers plus category excluding floating.
         df = DataFrame(
             {
                 "a": list("abc"),
@@ -289,6 +335,8 @@ class TestSelectDtypes:
         tm.assert_frame_equal(ri, ei)
 
     def test_select_dtypes_duplicate_columns(self):
+        # [FUNCTION DOC]
+        # GH20839. Frame with duplicated column labels. Verifies selection works with duplicates, returning every column of the selected dtypes under their repeated labels.
         # GH20839
         df = DataFrame(
             {
@@ -310,6 +358,8 @@ class TestSelectDtypes:
         tm.assert_frame_equal(result, expected)
 
     def test_select_dtypes_not_an_attr_but_still_valid_dtype(self, using_infer_string):
+        # [FUNCTION DOC]
+        # Checks short numpy dtype codes work even if not attributes of numpy (i8, O, timedelta). Verifies the selected columns, and under inferred strings that the object code emits the deprecation warning about str inclusion.
         df = DataFrame(
             {
                 "a": list("abc"),
@@ -338,12 +388,16 @@ class TestSelectDtypes:
         tm.assert_frame_equal(r, e)
 
     def test_select_dtypes_empty(self):
+        # [FUNCTION DOC]
+        # Verifies calling with neither include nor exclude raises a value error saying at least one must be nonempty.
         df = DataFrame({"a": list("abc"), "b": list(range(1, 4))})
         msg = "at least one of include or exclude must be nonempty"
         with pytest.raises(ValueError, match=msg):
             df.select_dtypes()
 
     def test_select_dtypes_bad_datetime64(self):
+        # [FUNCTION DOC]
+        # Verifies datetime64 dtypes with a specific unit (days or attoseconds) raise a value error saying the dtype is too specific.
         df = DataFrame(
             {
                 "a": list("abc"),
@@ -361,6 +415,8 @@ class TestSelectDtypes:
             df.select_dtypes(exclude=["datetime64[as]"])
 
     def test_select_dtypes_datetime_with_tz(self):
+        # [FUNCTION DOC]
+        # Verifies selecting datetime64 of nanoseconds does not select timezone-aware columns (empty-column result with the same index).
         df2 = DataFrame(
             {
                 "A": Timestamp("20130102", tz="US/Eastern"),
@@ -376,6 +432,8 @@ class TestSelectDtypes:
     @pytest.mark.parametrize("dtype", [str, "str", np.bytes_, "S1", np.str_, "U1"])
     @pytest.mark.parametrize("arg", ["include", "exclude"])
     def test_select_dtypes_str_raises(self, dtype, arg, using_infer_string):
+        # [FUNCTION DOC]
+        # Parametrized over string-like dtypes (str, bytes and unicode types and codes) and include versus exclude. Verifies a type error saying string dtypes are not allowed; skipped for str and "str" when inferred strings are active because those work then.
         if using_infer_string and (dtype == "str" or dtype is str):
             # this is tested below
             pytest.skip("Selecting string columns works with future strings")
@@ -397,6 +455,8 @@ class TestSelectDtypes:
             df.select_dtypes(**kwargs)
 
     def test_select_dtypes_bad_arg_raises(self):
+        # [FUNCTION DOC]
+        # Verifies an unrecognized dtype string raises a type error saying the data type was not understood.
         df = DataFrame(
             {
                 "a": list("abc"),
@@ -414,6 +474,8 @@ class TestSelectDtypes:
             df.select_dtypes(["blargy, blarg, blarg"])
 
     def test_select_dtypes_typecodes(self):
+        # [FUNCTION DOC]
+        # GH 11990. Verifies selecting by the list of all float type codes returns the whole float frame.
         # GH 11990
         df = DataFrame(np.random.default_rng(2).random((5, 3)))
         FLOAT_TYPES = list(np.typecodes["AllFloat"])
@@ -429,6 +491,8 @@ class TestSelectDtypes:
         ),
     )
     def test_select_dtypes_numeric(self, arr, expected):
+        # [FUNCTION DOC]
+        # GH 35340. Parametrized over arrays (numpy int32, nullable Int32, numeric dummy extension array, non-numeric dummy extension array) and expected selection flag. Verifies selecting numbers keeps the column exactly when the dtype is numeric.
         # GH 35340
 
         df = DataFrame(arr)
@@ -436,6 +500,8 @@ class TestSelectDtypes:
         assert is_selected == expected
 
     def test_select_dtypes_numeric_nullable_string(self, nullable_string_dtype):
+        # [FUNCTION DOC]
+        # Uses the nullable_string_dtype fixture. Verifies selecting numbers does not select a nullable string column.
         arr = pd.array(["a", "b"], dtype=nullable_string_dtype)
         df = DataFrame(arr)
         is_selected = df.select_dtypes(np.number).shape == df.shape
@@ -466,6 +532,8 @@ class TestSelectDtypes:
         ],
     )
     def test_select_dtypes_float_dtype(self, expected, float_dtypes):
+        # [FUNCTION DOC]
+        # GH#42452. Parametrized over expected frames and float dtype specifiers (float type, float string, 32-bit and 64-bit numpy floats). Verifies including a float specifier selects the columns of exactly that dtype (the generic float means 64-bit).
         # GH#42452
         dtype_dict = {"A": float, "B": np.float64, "C": np.float32}
         df = DataFrame(
@@ -476,6 +544,8 @@ class TestSelectDtypes:
         tm.assert_frame_equal(result, expected)
 
     def test_np_bool_ea_boolean_include_number(self):
+        # [FUNCTION DOC]
+        # GH 46870. Verifies including numbers selects only the integer column, not boolean (numpy, nullable, categorical or sparse boolean) columns.
         # GH 46870
         df = DataFrame(
             {
@@ -491,6 +561,8 @@ class TestSelectDtypes:
         tm.assert_frame_equal(result, expected)
 
     def test_select_dtypes_no_view(self):
+        # [FUNCTION DOC]
+        # Issue 48090. Verifies the selection result is not a view: changing it leaves the original frame unchanged.
         # https://github.com/pandas-dev/pandas/issues/48090
         # result of this method is not a view on the original dataframe
         df = DataFrame({"a": [1, 2, 3], "b": [4, 5, 6]})
@@ -500,6 +572,8 @@ class TestSelectDtypes:
         tm.assert_frame_equal(df, df_orig)
 
     def test_select_dtype_object_and_str(self, using_infer_string):
+        # [FUNCTION DOC]
+        # Issue 61916. Frame with default string, integer and nullable string columns. Verifies including object selects only the default string column (warning under inferred strings), and including string selects the nullable string column, plus the default string column when inferred strings are active.
         # https://github.com/pandas-dev/pandas/issues/61916
         df = DataFrame(
             {

@@ -1,3 +1,6 @@
+# [MODULE DOC]
+# Tests for reorder_levels on DataFrame and Series with multi-level indexes.
+
 import numpy as np
 import pytest
 
@@ -9,7 +12,11 @@ import pandas._testing as tm
 
 
 class TestReorderLevels:
+    # [CLASS DOC]
+    # Groups the reorder_levels tests.
     def test_reorder_levels(self, frame_or_series):
+        # [FUNCTION DOC]
+        # Parametrized over frame and series with a three-level index named L0, L1, L2. Verifies reordering by position or by name with the identity order returns an equal object, a rotated order gives the rotated levels and names, and repeating a level (by position or name) gives an index with the same level repeated and repeated names.
         index = MultiIndex(
             levels=[["bar"], ["one", "two", "three"], [0, 1]],
             codes=[[0, 0, 0, 0, 0, 0], [0, 1, 2, 0, 1, 2], [0, 1, 0, 1, 0, 1]],
@@ -53,6 +60,8 @@ class TestReorderLevels:
     def test_reorder_levels_swaplevel_equivalence(
         self, multiindex_year_month_day_dataframe_random_data
     ):
+        # [FUNCTION DOC]
+        # Uses the year-month-day multi-index fixture. Verifies reorder_levels equals the equivalent chained swaplevel calls for a frame, a series and a transposed frame on the columns axis. Also verifies a type error mentioning a hierarchical axis when the axis is not a multi-index, and an index error mentioning too many levels when an index reorders with more level positions than it has.
         ymd = multiindex_year_month_day_dataframe_random_data
 
         result = ymd.reorder_levels(["month", "day", "year"])

@@ -1,3 +1,6 @@
+# [MODULE DOC]
+# Tests for DataFrame round: scalar, dict and series decimals, error handling, numpy interoperation, mixed dtypes, duplicate columns and categorical axes.
+
 import numpy as np
 import pytest
 
@@ -11,7 +14,12 @@ import pandas._testing as tm
 
 
 class TestDataFrameRound:
+    # [CLASS DOC]
+    # Groups the DataFrame round tests.
     def test_round(self):
+        # [FUNCTION DOC]
+        # GH#2665. Main behavior test. Verifies: rounding an empty frame changes nothing; default rounds to integers; an integer decimals works, also through the numpy round function; a list raises a type error saying decimals must be an integer, dict-like or series; a dict rounds per column, with missing columns left unrounded and unknown keys ignored; non-integer, string, list or missing-value decimals (in dict or series form) raise a type error saying values must be integers; negative decimals round to tens and hundreds; series rounding is unaffected; column axis name is preserved (GH#11986).
+        # KNOWN ISSUE: the checks for series built from non-integer values are repeated several times with identical inputs, so some of them are redundant.
         # GH#2665
 
         # Test that rounding an empty DataFrame does nothing
@@ -125,6 +133,8 @@ class TestDataFrameRound:
         tm.assert_series_equal(df.round(decimals)["col1"], expected_rounded["col1"])
 
     def test_round_numpy(self):
+        # [FUNCTION DOC]
+        # GH#12600. Verifies the numpy round function with decimals works on a frame and that supplying the out parameter raises a value error saying out is not supported.
         # GH#12600
         df = DataFrame([[1.53, 1.36], [0.06, 7.01]])
         out = np.round(df, decimals=0)
@@ -136,6 +146,8 @@ class TestDataFrameRound:
             np.round(df, decimals=0, out=df)
 
     def test_round_numpy_with_nan(self):
+        # [FUNCTION DOC]
+        # GH#14197. A single-column frame with a missing value. Verifies round gives the expected rounded values with the missing value kept, and emits no warning.
         # See GH#14197
         df = Series([1.53, np.nan, 0.06]).to_frame()
         with tm.assert_produces_warning(None):
@@ -144,6 +156,8 @@ class TestDataFrameRound:
         tm.assert_frame_equal(result, expected)
 
     def test_round_mixed_type(self):
+        # [FUNCTION DOC]
+        # GH#11885. Frame with float, string and datetime columns. Verifies string columns are left as they are, float columns are rounded, and rounding a datetime column (directly or through a global decimals) emits a user warning that round has no effect on datetime, timedelta or period dtypes. Dict forms rounding only the float column emit no warning.
         # GH#11885
         df = DataFrame(
             {
@@ -171,6 +185,8 @@ class TestDataFrameRound:
             tm.assert_frame_equal(df.round({"col3": 1}), df)
 
     def test_round_with_duplicate_columns(self):
+        # [FUNCTION DOC]
+        # GH#11611. Verifies round works on a frame with duplicate column labels and keeps the index, and that a decimals series with duplicate labels raises a value error saying the index of decimals must be unique.
         # GH#11611
 
         df = DataFrame(
@@ -189,6 +205,8 @@ class TestDataFrameRound:
             df.round(decimals)
 
     def test_round_builtin(self):
+        # [FUNCTION DOC]
+        # GH#11763. Verifies the builtin round function on a frame equals rounding to zero decimals.
         # GH#11763
         # Here's the test frame we'll be working with
         df = DataFrame({"col1": [1.123, 2.123, 3.123], "col2": [1.234, 2.234, 3.234]})
@@ -198,6 +216,8 @@ class TestDataFrameRound:
         tm.assert_frame_equal(round(df), expected_rounded)
 
     def test_round_nonunique_categorical(self):
+        # [FUNCTION DOC]
+        # GH#21809. Frame with a non-unique categorical index. Verifies the shape is unchanged and the result equals the rounded values with that index.
         # See GH#21809
         idx = pd.CategoricalIndex(["low"] * 3 + ["hi"] * 3)
         df = DataFrame(np.random.default_rng(2).random((6, 3)), columns=list("abc"))
@@ -213,6 +233,8 @@ class TestDataFrameRound:
         tm.assert_frame_equal(result, expected)
 
     def test_round_interval_category_columns(self):
+        # [FUNCTION DOC]
+        # GH#30063. Columns are a categorical index of intervals. Verifies round works and keeps the columns.
         # GH#30063
         columns = pd.CategoricalIndex(pd.interval_range(0, 2))
         df = DataFrame([[0.66, 1.1], [0.3, 0.25]], columns=columns)
@@ -222,6 +244,8 @@ class TestDataFrameRound:
         tm.assert_frame_equal(result, expected)
 
     def test_round_empty_not_input(self):
+        # [FUNCTION DOC]
+        # GH#51032. Verifies rounding an empty frame returns an equal frame that is a new object, not the input.
         # GH#51032
         df = DataFrame()
         result = df.round()

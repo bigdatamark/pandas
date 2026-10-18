@@ -1,3 +1,6 @@
+# [MODULE DOC]
+# Tests for DataFrame interpolate: dtypes (complex, datetimelike, extension, object), methods (including scipy-backed), axis handling, inplace behavior and errors.
+
 import numpy as np
 import pytest
 
@@ -15,7 +18,11 @@ import pandas._testing as tm
 
 
 class TestDataFrameInterpolate:
+    # [CLASS DOC]
+    # Groups the DataFrame interpolate tests.
     def test_interpolate_complex(self):
+        # [FUNCTION DOC]
+        # GH#53635. Complex series with a missing value in the middle. Verifies interpolation fills it with the linear midpoint, for series and for the frame made from it.
         # GH#53635
         ser = Series([complex("1+1j"), float("nan"), complex("2+2j")])
         assert ser.dtype.kind == "c"
@@ -30,6 +37,8 @@ class TestDataFrameInterpolate:
         tm.assert_frame_equal(res, expected)
 
     def test_interpolate_datetimelike_values(self, frame_or_series):
+        # [FUNCTION DOC]
+        # GH#11312, GH#51005. Parametrized over frame and series. Datetime, timezone-aware datetime and timedelta values with one missing entry are interpolated to the evenly-spaced missing value.
         # GH#11312, GH#51005
         orig = Series(date_range("2012-01-01", periods=5))
         ser = orig.copy()
@@ -52,6 +61,9 @@ class TestDataFrameInterpolate:
         tm.assert_equal(res_td, expected_td)
 
     def test_interpolate_inplace(self, frame_or_series, request):
+        # [FUNCTION DOC]
+        # GH#44749. Parametrized over frame and series. Verifies inplace interpolation returns the same object, fills the value, and writes into the original memory buffer.
+        # KNOWN ISSUE: the request fixture parameter is accepted but never used.
         # GH#44749
         obj = frame_or_series([1, np.nan, 2])
         orig = obj.values
@@ -66,6 +78,8 @@ class TestDataFrameInterpolate:
         assert orig.squeeze()[1] == 1.5
 
     def test_interp_basic(self, using_infer_string):
+        # [FUNCTION DOC]
+        # Frame with numeric and string columns, using the infer-string fixture to select the message. Verifies interpolate raises a type error saying it cannot interpolate with object or string dtype, also with inplace set, and that the failed inplace call did not replace the existing column data.
         df = DataFrame(
             {
                 "A": [1, 2, np.nan, 4],
@@ -92,6 +106,8 @@ class TestDataFrameInterpolate:
         using_string_dtype(), reason="interpolate doesn't work for string"
     )
     def test_interp_basic_with_non_range_index(self, using_infer_string):
+        # [FUNCTION DOC]
+        # Marked as an expected failure when the string dtype option is on. Same frame indexed by a numeric column. Verifies a type error about object dtype when strings are object; with inferred string dtype the interpolation succeeds, using the index values for interpolation, giving the expected filled numbers.
         df = DataFrame(
             {
                 "A": [1, 2, np.nan, 4],
@@ -113,6 +129,8 @@ class TestDataFrameInterpolate:
             tm.assert_frame_equal(result, expected)
 
     def test_interp_empty(self):
+        # [FUNCTION DOC]
+        # Issue 35598. Verifies interpolating an empty frame returns an equal but new frame.
         # https://github.com/pandas-dev/pandas/issues/35598
         df = DataFrame()
         result = df.interpolate()
@@ -121,6 +139,8 @@ class TestDataFrameInterpolate:
         tm.assert_frame_equal(result, expected)
 
     def test_interp_bad_method(self):
+        # [FUNCTION DOC]
+        # Verifies an unknown interpolation method raises a value error saying it cannot interpolate with that method.
         df = DataFrame(
             {
                 "A": [1, 2, np.nan, 4],
@@ -133,6 +153,8 @@ class TestDataFrameInterpolate:
             df.interpolate(method="not_a_method")
 
     def test_interp_combo(self):
+        # [FUNCTION DOC]
+        # Verifies interpolating the single float column of a frame that also has other columns gives the expected linear fill. Only the series is used; other columns are not checked.
         df = DataFrame(
             {
                 "A": [1.0, 2.0, np.nan, 4.0],
@@ -147,6 +169,8 @@ class TestDataFrameInterpolate:
         tm.assert_series_equal(result, expected)
 
     def test_interp_nan_idx(self):
+        # [FUNCTION DOC]
+        # Verifies interpolating by the values method when the index contains a missing value raises a not-implemented error asking to fill those missing index values first.
         df = DataFrame({"A": [1, 2, np.nan, 4], "B": [np.nan, 2, 3, 4]})
         df = df.set_index("A")
         msg = (
@@ -157,6 +181,8 @@ class TestDataFrameInterpolate:
             df.interpolate(method="values")
 
     def test_interp_various(self):
+        # [FUNCTION DOC]
+        # Skipped without scipy. Frame indexed by a numeric column with gaps. Verifies results for the polynomial (order one), cubic (GH #15662), nearest, quadratic, slinear and zero methods against fixed expected values (dtype not checked for nearest and zero).
         pytest.importorskip("scipy")
         df = DataFrame(
             {"A": [1, 2, np.nan, 4, 5, np.nan, 7], "C": [1, 2, 3, 5, 8, 13, 21]}
@@ -196,6 +222,8 @@ class TestDataFrameInterpolate:
         tm.assert_frame_equal(result, expected, check_dtype=False)
 
     def test_interp_alt_scipy(self):
+        # [FUNCTION DOC]
+        # Skipped without scipy. Verifies barycentric, krogh and pchip interpolation fill the gaps with the expected values.
         pytest.importorskip("scipy")
         df = DataFrame(
             {"A": [1, 2, np.nan, 4, 5, np.nan, 7], "C": [1, 2, 3, 5, 8, 13, 21]}
@@ -218,6 +246,8 @@ class TestDataFrameInterpolate:
         tm.assert_frame_equal(result, expected)
 
     def test_interp_rowwise(self):
+        # [FUNCTION DOC]
+        # Verifies interpolation along axis one (rows), with the default and the values method, fills across columns and converts an integer column to float; axis zero equals the default.
         df = DataFrame(
             {
                 0: [1, 2, np.nan, 4],
@@ -251,6 +281,8 @@ class TestDataFrameInterpolate:
         ],
     )
     def test_interp_axis_names(self, axis_name, axis_number):
+        # [FUNCTION DOC]
+        # GH 29132. Parametrized over axis names rows, index and columns with their numbers. Verifies the string axis names give the same result as the numbers.
         # GH 29132: test axis names
         data = {0: [0, np.nan, 6], 1: [1, np.nan, 7], 2: [2, 5, 8]}
 
@@ -260,6 +292,9 @@ class TestDataFrameInterpolate:
         tm.assert_frame_equal(result, expected)
 
     def test_rowwise_alt(self):
+        # [FUNCTION DOC]
+        # Smoke test: interpolating a frame with gaps along axis zero. Verifies only that no error occurs.
+        # KNOWN ISSUE: the test contains a TODO and makes no assertion about the result.
         df = DataFrame(
             {
                 0: [0, 0.5, 1.0, np.nan, 4, 8, np.nan, np.nan, 64],
@@ -273,6 +308,8 @@ class TestDataFrameInterpolate:
         "check_scipy", [False, pytest.param(True, marks=td.skip_if_no("scipy"))]
     )
     def test_interp_leading_nans(self, check_scipy):
+        # [FUNCTION DOC]
+        # Parametrized over whether scipy is also used (skipped when unavailable). Frame with leading missing values. Verifies the default linear fill leaves leading values missing and fills the interior gap, and the polynomial method gives the same result when scipy is checked.
         df = DataFrame(
             {"A": [np.nan, np.nan, 0.5, 0.25, 0], "B": [np.nan, -3, -3.5, np.nan, -4]}
         )
@@ -286,6 +323,8 @@ class TestDataFrameInterpolate:
             tm.assert_frame_equal(result, expected)
 
     def test_interp_raise_on_only_mixed(self, axis):
+        # [FUNCTION DOC]
+        # Uses the axis fixture. Converting a mixed frame wholly to object dtype and interpolating raises a type error saying a frame cannot interpolate with object dtype, for either axis.
         df = DataFrame(
             {
                 "A": [1, 2, np.nan, 4],
@@ -300,6 +339,8 @@ class TestDataFrameInterpolate:
             df.astype("object").interpolate(axis=axis)
 
     def test_interp_raise_on_all_object_dtype(self):
+        # [FUNCTION DOC]
+        # GH 22985. Verifies an all-object-dtype frame of numbers raises a type error about object dtype.
         # GH 22985
         df = DataFrame({"A": [1, 2, 3], "B": [4, 5, 6]}, dtype="object")
         msg = "DataFrame cannot interpolate with object dtype"
@@ -307,6 +348,8 @@ class TestDataFrameInterpolate:
             df.interpolate()
 
     def test_interp_inplace(self):
+        # [FUNCTION DOC]
+        # Verifies interpolating a column series inplace through chained indexing raises the chained assignment warning/error, returns the filled series, and leaves the frame unchanged.
         df = DataFrame({"a": [1.0, 2.0, np.nan, 4.0]})
         df_orig = df.copy()
         expected = df.copy().interpolate()
@@ -317,6 +360,8 @@ class TestDataFrameInterpolate:
         tm.assert_frame_equal(df, df_orig)
 
     def test_interp_inplace_row(self):
+        # [FUNCTION DOC]
+        # GH 10395. Verifies inplace interpolation along axis one returns the frame itself with the same values as the non-inplace result.
         # GH 10395
         df = DataFrame(
             {"a": [1.0, 2.0, 3.0, 4.0], "b": [np.nan, 2.0, 3.0, 4.0], "c": [3, 2, 2, 2]}
@@ -327,6 +372,9 @@ class TestDataFrameInterpolate:
         tm.assert_frame_equal(result, expected)
 
     def test_interp_ignore_all_good(self):
+        # [FUNCTION DOC]
+        # Frame with a mix of float and integer columns, some complete. Verifies only columns with gaps are filled (becoming float), integer columns keep their dtype, and a frame without gaps is returned unchanged.
+        # KNOWN ISSUE: the comment naming the issue number is incomplete (only the letters GH are present).
         # GH
         df = DataFrame(
             {
@@ -352,6 +400,8 @@ class TestDataFrameInterpolate:
         tm.assert_frame_equal(result, df[["B", "D"]])
 
     def test_interp_time_inplace_axis(self):
+        # [FUNCTION DOC]
+        # GH 9687. Square frame with datetime index and columns. Verifies inplace time interpolation along axis zero returns the same frame object with the same values as the non-inplace result.
         # GH 9687
         periods = 5
         idx = date_range(start="2014-01-01", periods=periods)
@@ -366,6 +416,8 @@ class TestDataFrameInterpolate:
 
     @pytest.mark.parametrize("axis_name, axis_number", [("index", 0), ("columns", 1)])
     def test_interp_string_axis(self, axis_name, axis_number):
+        # [FUNCTION DOC]
+        # Issue 25190. Parametrized over string axis name and number. Verifies the string name gives the same linear interpolation as the number on a frame with float labels.
         # https://github.com/pandas-dev/pandas/issues/25190
         x = np.linspace(0, 100, 3)
         y = np.sin(x)
@@ -379,6 +431,8 @@ class TestDataFrameInterpolate:
     @pytest.mark.parametrize("multiblock", [True, False])
     @pytest.mark.parametrize("method", ["ffill", "bfill", "pad"])
     def test_interp_fillna_methods(self, axis, multiblock, method):
+        # [FUNCTION DOC]
+        # GH 12918. Parametrized over axis, whether the frame has several blocks, and fill method names (forward fill, backward fill, pad). Verifies interpolate rejects these as methods, raising a value error saying it cannot interpolate with that method.
         # GH 12918
         df = DataFrame(
             {
@@ -396,6 +450,8 @@ class TestDataFrameInterpolate:
             df.interpolate(method=method, axis=axis)
 
     def test_interpolate_empty_df(self):
+        # [FUNCTION DOC]
+        # GH#53199. Verifies inplace interpolation on an empty frame returns the same object, unchanged.
         # GH#53199
         df = DataFrame()
         expected = df.copy()
@@ -404,6 +460,8 @@ class TestDataFrameInterpolate:
         tm.assert_frame_equal(result, expected)
 
     def test_interpolate_ea(self, any_int_ea_dtype):
+        # [FUNCTION DOC]
+        # GH#55347. Parametrized over nullable integer dtypes. A column with a gap larger than the limit. Verifies the result is Float64 with only the first two missing positions filled (limit of two), and the original is unchanged.
         # GH#55347
         df = DataFrame({"a": [1, None, None, None, 3]}, dtype=any_int_ea_dtype)
         orig = df.copy()
@@ -422,6 +480,8 @@ class TestDataFrameInterpolate:
         ],
     )
     def test_interpolate_ea_float(self, dtype):
+        # [FUNCTION DOC]
+        # GH#55347. Parametrized over nullable and pyarrow float dtypes (pyarrow ones skipped when unavailable). Verifies the interpolated result keeps the same dtype, fills up to the limit, and leaves the original unchanged.
         # GH#55347
         df = DataFrame({"a": [1, None, None, None, 3]}, dtype=dtype)
         orig = df.copy()
@@ -435,6 +495,8 @@ class TestDataFrameInterpolate:
         ["int64", "uint64", "int32", "int16", "int8", "uint32", "uint16", "uint8"],
     )
     def test_interpolate_arrow(self, dtype):
+        # [FUNCTION DOC]
+        # Parametrized over integer dtypes of pyarrow (skipped without pyarrow). Verifies interpolation with a limit of two returns a double-precision pyarrow float column with the gap partially filled.
         # GH#55347
         pytest.importorskip("pyarrow")
         df = DataFrame({"a": [1, None, None, None, 3]}, dtype=dtype + "[pyarrow]")

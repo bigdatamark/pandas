@@ -1,3 +1,6 @@
+# [MODULE DOC]
+# Tests for pct_change on DataFrame and Series: missing-value handling, axis, periods versus frequency, duplicate index labels.
+
 import numpy as np
 import pytest
 
@@ -9,6 +12,8 @@ import pandas._testing as tm
 
 
 class TestDataFramePctChange:
+    # [CLASS DOC]
+    # Groups the pct_change tests that use DataFrame fixtures.
     @pytest.mark.parametrize(
         "periods, exp",
         [
@@ -17,6 +22,8 @@ class TestDataFramePctChange:
         ],
     )
     def test_pct_change_with_nas(self, periods, exp, frame_or_series):
+        # [FUNCTION DOC]
+        # Parametrized over periods (1 or -1), the expected output list, and frame versus series. Input has missing values at the edges. Verifies the default forward-fill handling of missing values: gaps at the edges stay missing, and the changes are computed relative to the value periods steps away.
         vals = [np.nan, np.nan, 1, 2, 4, 10, np.nan, np.nan]
         obj = frame_or_series(vals)
 
@@ -24,6 +31,8 @@ class TestDataFramePctChange:
         tm.assert_equal(res, frame_or_series(exp))
 
     def test_pct_change_numeric(self):
+        # [FUNCTION DOC]
+        # GH#11150. Float frame with a few missing and changed values. For each axis, verifies pct_change equals the frame divided by its shift along that axis minus one.
         # GH#11150
         pnl = DataFrame(
             [np.arange(0, 40, 10), np.arange(0, 40, 10), np.arange(0, 40, 10)]
@@ -38,6 +47,8 @@ class TestDataFramePctChange:
             tm.assert_frame_equal(result, expected)
 
     def test_pct_change(self, datetime_frame):
+        # [FUNCTION DOC]
+        # Using the datetime_frame fixture, verifies pct_change with the default one period, with two periods (computed on the forward-filled frame), and with a five-day frequency (computed from a frequency shift, reindexed to the original index).
         rs = datetime_frame.pct_change()
         tm.assert_frame_equal(rs, datetime_frame / datetime_frame.shift(1) - 1)
 
@@ -57,6 +68,8 @@ class TestDataFramePctChange:
         )
 
     def test_pct_change_shift_over_nas(self):
+        # [FUNCTION DOC]
+        # Verifies the percent change skips over missing values by filling forward first, so the value after a gap is compared with the last valid value and the gap rows themselves stay missing.
         s = Series([1.0, 1.5, np.nan, 2.5, 3.0])
 
         df = DataFrame({"a": s, "b": s})
@@ -80,6 +93,8 @@ class TestDataFramePctChange:
         freq,
         periods,
     ):
+        # [FUNCTION DOC]
+        # GH#7292. Parametrized over business-day frequency strings and the equivalent number of periods. Verifies pct_change with the frequency equals pct_change with the matching number of periods, for the frame and for an all-missing frame of the same shape.
         # GH#7292
         rs_freq = datetime_frame.pct_change(freq=freq)
         rs_periods = datetime_frame.pct_change(periods)
@@ -92,6 +107,8 @@ class TestDataFramePctChange:
 
 
 def test_pct_change_with_duplicated_indices():
+    # [FUNCTION DOC]
+    # GH30463. Frame with duplicated index labels and missing values. Verifies the result keeps the duplicate index and gives infinity where a change from zero occurs.
     # GH30463
     data = DataFrame(
         {0: [np.nan, 1, 2, 3, 9, 18], 1: [0, 1, np.nan, 3, 9, 18]}, index=["a", "b"] * 3
@@ -108,6 +125,8 @@ def test_pct_change_with_duplicated_indices():
 
 
 def test_pct_change_none_beginning():
+    # [FUNCTION DOC]
+    # GH#54481. Frame whose second column starts with a missing value. Verifies leading missing values stay missing and later changes are computed normally.
     # GH#54481
     df = DataFrame(
         [

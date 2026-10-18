@@ -1,3 +1,7 @@
+# [MODULE DOC]
+# Tests for DataFrame info (the text summary written to a buffer) and the related memory_usage method: layout, verbose and column-limit selection, count display, memory estimates (including deep and qualified lower-bound markers), and special index types.
+# Most tests capture output in an in-memory text buffer. Some depend on platform (pypy, 32-bit, arm), optional libraries (pyarrow, numba) and the infer-string option.
+
 from io import StringIO
 import re
 from string import ascii_uppercase
@@ -29,6 +33,8 @@ from pandas.util.version import Version
 
 @pytest.fixture
 def duplicate_columns_frame():
+    # [FUNCTION DOC]
+    # HELPER: fixture returning a frame of 1500 rows of random numbers with duplicate column labels (two a and two b), used by the info smoke test.
     """Dataframe with duplicate column names."""
     return DataFrame(
         np.random.default_rng(2).standard_normal((1500, 4)),
@@ -37,6 +43,8 @@ def duplicate_columns_frame():
 
 
 def test_info_empty():
+    # [FUNCTION DOC]
+    # GH #45494. Verifies info on an empty frame writes the class line, a range index of zero entries, and the empty-frame line, exactly.
     # GH #45494
     df = DataFrame()
     buf = StringIO()
@@ -52,6 +60,8 @@ def test_info_empty():
 
 
 def test_info_categorical_column_smoke_test():
+    # [FUNCTION DOC]
+    # Smoke test with an integer column and a categorical column of 2500 rows, then a filtered subset. Verifies only that info runs without error on categorical data.
     n = 2500
     df = DataFrame({"int64": np.random.default_rng(2).integers(100, size=n, dtype=int)})
     df["category"] = Series(
@@ -79,6 +89,8 @@ def test_info_categorical_column_smoke_test():
     ],
 )
 def test_info_smoke_test(fixture_func_name, request):
+    # [FUNCTION DOC]
+    # Parametrized over fixture names (int, float, datetime, duplicate-columns and mixed string frames), fetched via the request object. Verifies info writes more than ten lines and also runs in non-verbose mode.
     frame = request.getfixturevalue(fixture_func_name)
     buf = StringIO()
     frame.info(buf=buf)
@@ -90,6 +102,8 @@ def test_info_smoke_test(fixture_func_name, request):
 
 
 def test_info_smoke_test2(float_frame):
+    # [FUNCTION DOC]
+    # Smoke test (described in its comment as nearly useless): info in non-verbose mode on one- and two-column frames and on an empty frame, writing into one shared buffer. Nothing is asserted.
     # pretty useless test, used to be mixed into the repr tests
     buf = StringIO()
     float_frame.reindex(columns=["A"]).info(verbose=False, buf=buf)
@@ -110,6 +124,8 @@ def test_info_smoke_test2(float_frame):
     ],
 )
 def test_info_default_verbose_selection(num_columns, max_info_columns, verbose):
+    # [FUNCTION DOC]
+    # Parametrized over column count, the max_info_columns option value and the expected verbose flag. Verifies that the default output with the option set equals the explicit output with the expected verbose choice: the detailed listing is used only when the number of columns does not exceed the option.
     frame = DataFrame(np.random.default_rng(2).standard_normal((5, num_columns)))
     with option_context("display.max_info_columns", max_info_columns):
         io_default = StringIO()
@@ -124,6 +140,8 @@ def test_info_default_verbose_selection(num_columns, max_info_columns, verbose):
 
 
 def test_info_verbose_check_header_separator_body():
+    # [FUNCTION DOC]
+    # Frame with 1001 columns. Verifies the verbose output contains the expected header and separator for the layout without counts-width issues, and that each column line starts with its zero-based number following the header lines.
     buf = StringIO()
     size = 1001
     start = 5
@@ -188,6 +206,8 @@ def test_info_verbose_check_header_separator_body():
 def test_info_verbose_with_counts_spacing(
     size, header_exp, separator_exp, first_line_exp, last_line_exp
 ):
+    # [FUNCTION DOC]
+    # Parametrized over frame width (4 to 10001 columns) with expected header, separator, first and last table lines. Verifies the column table is aligned and the first and last row text widths adapt to the number of digits, with counts shown, using only the table lines between the header summary and the dtype and memory summary.
     """Test header column, spacer, first line and last line in verbose mode."""
     frame = DataFrame(np.random.default_rng(2).standard_normal((3, size)))
     with StringIO() as buf:
@@ -204,6 +224,8 @@ def test_info_verbose_with_counts_spacing(
 
 
 def test_info_memory():
+    # [FUNCTION DOC]
+    # Issue 21056. Verifies the exact info text of a one-column frame, including the memory usage in bytes matching the frame memory usage sum (no plus sign, as the index is a range).
     # https://github.com/pandas-dev/pandas/issues/21056
     df = DataFrame({"a": Series([1, 2], dtype="i8")})
     buf = StringIO()
@@ -226,6 +248,8 @@ def test_info_memory():
 
 
 def test_info_wide():
+    # [FUNCTION DOC]
+    # Frame with 101 columns. Verifies the max_cols argument set to 101 gives the long detailed listing (more than 100 lines), and the display option for the maximum info columns set to 101 gives identical output.
     io = StringIO()
     df = DataFrame(np.random.default_rng(2).standard_normal((5, 101)))
     df.info(buf=io)
@@ -244,6 +268,8 @@ def test_info_wide():
 
 
 def test_info_duplicate_columns_shows_correct_dtypes():
+    # [FUNCTION DOC]
+    # GH11761. Verifies info lists duplicate column labels separately with their own dtypes (integer, then float) at fixed lines.
     # GH11761
     io = StringIO()
     frame = DataFrame([[1, 2.0]], columns=["a", "a"])
@@ -254,6 +280,8 @@ def test_info_duplicate_columns_shows_correct_dtypes():
 
 
 def test_info_shows_column_dtypes():
+    # [FUNCTION DOC]
+    # Verifies the dtype names of columns made from a range of dtypes (int, float, datetime, timedelta, complex, object, bool) appear in the verbose table, with the expected header.
     dtypes = [
         "int64",
         "float64",
@@ -282,6 +310,8 @@ def test_info_shows_column_dtypes():
 
 
 def test_info_max_cols():
+    # [FUNCTION DOC]
+    # Frame with five columns. With the info columns option set to four or five, verifies the output has 5 lines when summarizing (verbose false, or none while columns exceed the option) and 12 lines when full output is produced (verbose true, or none when the option is not exceeded); an explicit max_cols argument overrides the option in the same way. Counts lines in the output.
     df = DataFrame(np.random.default_rng(2).standard_normal((10, 5)))
     for len_, verbose in [(5, None), (5, False), (12, True)]:
         # For verbose always      ^ setting  ^ summarize ^ full output
@@ -316,6 +346,9 @@ def test_info_max_cols():
 
 
 def test_info_memory_usage():
+    # [FUNCTION DOC]
+    # Large test of memory-usage reporting in info and the frame memory_usage method. Verifies: the last line shows memory usage when requested and not when disabled; a lower-bound marker (plus sign) appears when object columns make the estimate shallow, and not when object columns are excluded or when deep mode is used; object index also produces the marker; the total memory usage equals columns times rows times 8 bytes plus the index size; the memory_usage length equals the column count plus one for the index; deep equals shallow for numeric data; and calls on a multi-index frame produce positive sizes.
+    # The statements that merely access index byte counts or call memory_usage without checking the result only check that they do not fail.
     # Ensure memory usage is displayed, when asserted, on the last line
     dtypes = [
         "int64",
@@ -402,6 +435,8 @@ def test_info_memory_usage():
 
 @pytest.mark.skipif(PYPY, reason="on PyPy deep=True doesn't change result")
 def test_info_memory_usage_deep_not_pypy():
+    # [FUNCTION DOC]
+    # Skipped on pypy. Verifies deep memory usage is larger than shallow for a frame with an object index and for an object column.
     df_with_object_index = DataFrame({"a": [1]}, index=Index(["foo"], dtype=object))
     assert (
         df_with_object_index.memory_usage(index=True, deep=True).sum()
@@ -414,6 +449,8 @@ def test_info_memory_usage_deep_not_pypy():
 
 @pytest.mark.xfail(not PYPY, reason="on PyPy deep=True does not change result")
 def test_info_memory_usage_deep_pypy():
+    # [FUNCTION DOC]
+    # Expected to fail unless running on pypy. Verifies on pypy that deep memory usage equals shallow memory usage for object columns and an object index.
     df_with_object_index = DataFrame({"a": [1]}, index=Index(["foo"], dtype=object))
     assert (
         df_with_object_index.memory_usage(index=True, deep=True).sum()
@@ -426,6 +463,8 @@ def test_info_memory_usage_deep_pypy():
 
 @pytest.mark.skipif(PYPY, reason="PyPy getsizeof() fails by design")
 def test_usage_via_getsizeof():
+    # [FUNCTION DOC]
+    # Skipped on pypy. Verifies the system size-of function on a frame is close (within 100 bytes) to the deep memory usage sum, which it uses plus garbage-collector overhead.
     df = DataFrame(
         data=1, index=MultiIndex.from_product([["a"], range(1000)]), columns=["A"]
     )
@@ -437,6 +476,8 @@ def test_usage_via_getsizeof():
 
 
 def test_info_memory_usage_qualified(using_infer_string):
+    # [FUNCTION DOC]
+    # Uses the infer-string fixture. Verifies the lower-bound plus sign appears in info output for an object index, for a string index (unless inferred strings with pyarrow are active, where it is exact), and for a multi-index with a string level (same exception); it does not appear for integer index or an integer multi-index.
     buf = StringIO()
     df = DataFrame(1, columns=list("ab"), index=[1, 2, 3])
     df.info(buf=buf)
@@ -474,10 +515,14 @@ def test_info_memory_usage_qualified(using_infer_string):
 
 
 def test_info_memory_usage_bug_on_multiindex():
+    # [FUNCTION DOC]
+    # GH 14308. Verifies memory usage introspection on a multi-index frame does not materialize the values: the unstacked frame has equal values size but less deep memory usage than the stacked frame, and the difference is under 2000 bytes.
     # GH 14308
     # memory usage introspection should not materialize .values
 
     def memory_usage(f):
+        # [FUNCTION DOC]
+        # HELPER: returns the deep memory usage total of a frame; used for the multi-index comparison in the enclosing test.
         return f.memory_usage(deep=True).sum()
 
     N = 100
@@ -499,6 +544,8 @@ def test_info_memory_usage_bug_on_multiindex():
 
 
 def test_info_categorical():
+    # [FUNCTION DOC]
+    # GH14298. Smoke test: info on a frame with a categorical index and categorical columns runs without error.
     # GH14298
     idx = CategoricalIndex(["a", "b"])
     df = DataFrame(np.zeros((2, 2)), index=idx, columns=idx)
@@ -509,6 +556,8 @@ def test_info_categorical():
 
 @pytest.mark.xfail(not IS64, reason="GH 36579: fail on 32-bit system")
 def test_info_int_columns(using_infer_string):
+    # [FUNCTION DOC]
+    # GH#37245. Expected to fail on 32-bit platforms. Verifies the exact info text for a frame with integer column labels and string index, where the memory line is 50.0 (exact) with inferred strings and pyarrow, otherwise 48.0 with a plus sign.
     # GH#37245
     df = DataFrame({1: [1, 2], 2: [2, 3]}, index=["A", "B"])
     buf = StringIO()
@@ -531,6 +580,8 @@ def test_info_int_columns(using_infer_string):
 
 
 def test_memory_usage_empty_no_warning(using_infer_string):
+    # [FUNCTION DOC]
+    # GH#50066. Verifies memory_usage on a frame with only an index (no columns) emits no warning and returns a series with the single Index entry, sized 18 with inferred strings and pyarrow, otherwise 16 (8 on 32-bit).
     # GH#50066
     df = DataFrame(index=["a", "b"])
     with tm.assert_produces_warning(None):
@@ -545,6 +596,8 @@ def test_memory_usage_empty_no_warning(using_infer_string):
 
 @pytest.mark.single_cpu
 def test_info_compute_numba():
+    # [FUNCTION DOC]
+    # GH#51922. Single-cpu test, skipped without numba and on arm with a specific numba version. Verifies info output is identical with the numba compute option enabled and disabled.
     # GH#51922
     numba = pytest.importorskip("numba")
     if Version(numba.__version__) == Version("0.61") and is_platform_arm():
@@ -574,6 +627,8 @@ def test_info_compute_numba():
     ],
 )
 def test_info_show_counts(row, columns, show_counts, result):
+    # [FUNCTION DOC]
+    # Parametrized over max_info_rows, max_info_columns, show_counts and the expected presence of non-null counts. Frame of 10 by 10 with one missing value. Verifies counts are shown when show_counts is true, or when it is not set and the frame is within both option limits; they are not shown when it is false or when it is unset and the limits are exceeded.
     # Explicit cast to float to avoid implicit cast when setting nan
     df = DataFrame(1, columns=range(10), index=range(10)).astype({1: "float"})
     df.iloc[1, 1] = np.nan

@@ -1,3 +1,6 @@
+# [MODULE DOC]
+# Tests for the DataFrame private property that reports whether all columns share one dtype.
+
 import numpy as np
 import pytest
 
@@ -50,4 +53,6 @@ from pandas import (
     ],
 )
 def test_is_homogeneous_type(data, expected):
+    # [FUNCTION DOC]
+    # Parametrized over frames and expected booleans: empty, same-dtype numeric, object, and identical categorical frames are homogeneous; mixed int and float, int32 and int64, and categoricals with different categories are not. Verifies the property is exactly the expected boolean.
     assert data._is_homogeneous_type is expected

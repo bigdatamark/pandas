@@ -3,6 +3,10 @@ Note: for naming purposes, most tests are title with as e.g. "test_nlargest_foo"
 but are implicitly also testing nsmallest_foo.
 """
 
+# [MODULE DOC]
+# Tests for DataFrame nlargest and nsmallest. Most tests are named after nlargest but exercise both via the nselect_method fixture.
+# Contains one fixture providing a frame with many dtypes.
+
 from string import ascii_lowercase
 
 import numpy as np
@@ -14,6 +18,8 @@ import pandas._testing as tm
 
 @pytest.fixture
 def df_main_dtypes():
+    # [FUNCTION DOC]
+    # HELPER: fixture supplying a three-row frame with integer group, int, float, string, categorical (string and int), datetime, timezone-aware datetime and timedelta columns, in a fixed column order; used by the nlargest error and dtype tests.
     return pd.DataFrame(
         {
             "group": [1, 1, 2],
@@ -41,6 +47,8 @@ def df_main_dtypes():
 
 
 class TestNLargestNSmallest:
+    # [CLASS DOC]
+    # Groups the nlargest and nsmallest tests, run for both methods through the nselect_method fixture where applicable.
     # ----------------------------------------------------------------------
     # Top / bottom
     @pytest.mark.parametrize(
@@ -63,6 +71,8 @@ class TestNLargestNSmallest:
     )
     @pytest.mark.parametrize("n", range(1, 11))
     def test_nlargest_n(self, nselect_method, n, order):
+        # [FUNCTION DOC]
+        # GH#10393. Parametrized over many column orders and n from 1 to 10, for each method. A frame with a permuted integer column a, a string column b and a permuted float column c. When the order includes the string column, expects a type error saying the column has an object or string dtype so the method cannot be used. Otherwise the result must equal a sort by those columns (ascending for the smallest method, descending otherwise) cut to n rows, ignoring index type.
         # GH#10393
         df = pd.DataFrame(
             {
@@ -89,6 +99,8 @@ class TestNLargestNSmallest:
         "columns", [["group", "category_string"], ["group", "string"]]
     )
     def test_nlargest_error(self, df_main_dtypes, nselect_method, columns):
+        # [FUNCTION DOC]
+        # Parametrized over column lists whose second column is categorical or string. Verifies the methods raise a type error naming the column, its dtype, and the method that cannot be used with it (message special characters escaped).
         df = df_main_dtypes
         col = columns[1]
         error_msg = (
@@ -106,11 +118,15 @@ class TestNLargestNSmallest:
             getattr(df, nselect_method)(2, columns)
 
     def test_nlargest_all_dtypes(self, df_main_dtypes):
+        # [FUNCTION DOC]
+        # Smoke test: calls nsmallest and nlargest with two rows over all columns except the categorical-string and string ones, on the many-dtype frame. Verifies only that no error is raised (nothing is asserted on the result).
         df = df_main_dtypes
         df.nsmallest(2, list(set(df) - {"category_string", "string"}))
         df.nlargest(2, list(set(df) - {"category_string", "string"}))
 
     def test_nlargest_duplicates_on_starter_columns(self):
+        # [FUNCTION DOC]
+        # Regression test for GH#22752. With heavy ties in the first column, verifies nlargest and nsmallest on two columns return the expected rows and index order for four rows.
         # regression test for GH#22752
 
         df = pd.DataFrame({"a": [2, 2, 2, 1, 1, 1], "b": [1, 2, 3, 3, 2, 1]})
@@ -128,6 +144,8 @@ class TestNLargestNSmallest:
         tm.assert_frame_equal(result, expected)
 
     def test_nlargest_n_identical_values(self):
+        # [FUNCTION DOC]
+        # GH#15297. All values in the sort column identical. Verifies both methods keep the first rows in original order (index 0 to 2).
         # GH#15297
         df = pd.DataFrame({"a": [1] * 5, "b": [1, 2, 3, 4, 5]})
 
@@ -145,6 +163,8 @@ class TestNLargestNSmallest:
     )
     @pytest.mark.parametrize("n", range(1, 6))
     def test_nlargest_n_duplicate_index(self, n, order, request):
+        # [FUNCTION DOC]
+        # GH#13412. Parametrized over several column orders and n from 1 to 5, with a duplicated index. Verifies nsmallest equals a stable ascending sort cut to n, and nlargest equals a stable descending sort cut to n. For some combinations (the single column a with n 1 to 4, or columns a and b with n 5), applies a non-strict expected-failure marker because of unstable duplicate sorting with some numpy versions.
         # GH#13412
 
         df = pd.DataFrame(
@@ -170,6 +190,8 @@ class TestNLargestNSmallest:
         tm.assert_frame_equal(result, expected)
 
     def test_nlargest_duplicate_keep_all_ties(self):
+        # [FUNCTION DOC]
+        # GH#16818. With keep set to all, verifies ties at the cut-off are all retained, so more than n rows can be returned, for both methods.
         # GH#16818
         df = pd.DataFrame(
             {"a": [5, 4, 4, 2, 3, 3, 3, 3], "b": [10, 9, 8, 7, 5, 50, 10, 20]}
@@ -195,6 +217,8 @@ class TestNLargestNSmallest:
         tm.assert_frame_equal(result, expected)
 
     def test_nlargest_multiindex_column_lookup(self):
+        # [FUNCTION DOC]
+        # GH#23033. Frame with two-level columns. Verifies a tuple is treated as a multi-level column key for nsmallest and nlargest, selecting the expected rows in the expected order.
         # Check whether tuples are correctly treated as multi-level lookups.
         # GH#23033
         df = pd.DataFrame(
@@ -213,6 +237,8 @@ class TestNLargestNSmallest:
         tm.assert_frame_equal(result, expected)
 
     def test_nlargest_nan(self):
+        # [FUNCTION DOC]
+        # GH#43060. Single column with leading missing values. Verifies nlargest skips missing values and equals a descending sort cut to five rows.
         # GH#43060
         df = pd.DataFrame([np.nan, np.nan, 0, 1, 2, 3])
         result = df.nlargest(5, 0)
@@ -220,6 +246,8 @@ class TestNLargestNSmallest:
         tm.assert_frame_equal(result, expected)
 
     def test_nsmallest_nan_after_n_element(self):
+        # [FUNCTION DOC]
+        # GH#46589. Verifies nsmallest over two columns, with a missing value in the first column beyond the n-th element, returns the five smallest complete rows; the first column becomes float.
         # GH#46589
         df = pd.DataFrame(
             {

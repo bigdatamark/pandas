@@ -1,3 +1,7 @@
+# [MODULE DOC]
+# Tests for DataFrame replace (and some Series replace): scalar, list, dict, nested dict and series arguments, regular-expression replacement (including list and dict regexes, compiled patterns and the regex keyword), dtype handling and upcasting, categorical, datetime, timezone-aware and nullable data, in-place behavior and argument errors.
+# Defines two fixtures with mixed integer and string data.
+
 from __future__ import annotations
 
 from datetime import datetime
@@ -21,16 +25,24 @@ import pandas._testing as tm
 
 @pytest.fixture
 def mix_ab() -> dict[str, list[int | str]]:
+    # [FUNCTION DOC]
+    # HELPER: fixture returning a column dictionary with an integer column a (0 to 3) and a string column b holding a, b and two dots.
     return {"a": list(range(4)), "b": list("ab..")}
 
 
 @pytest.fixture
 def mix_abc() -> dict[str, list[float | str]]:
+    # [FUNCTION DOC]
+    # HELPER: fixture returning a column dictionary like the mixed fixture with an extra string column c containing a missing value.
     return {"a": list(range(4)), "b": list("ab.."), "c": ["a", "b", np.nan, "d"]}
 
 
 class TestDataFrameReplace:
+    # [CLASS DOC]
+    # Groups most DataFrame replace tests, including regular-expression variants.
     def test_replace_inplace(self, datetime_frame, float_string_frame):
+        # [FUNCTION DOC]
+        # Using datetime_frame and float_string_frame with missing values. Verifies inplace replace of missing with zero returns the same frame and matches fillna; replacing missing in a mixed frame matches fillna with the string column cast to object; list forms inplace behave the same.
         datetime_frame.loc[datetime_frame.index[:5], "A"] = np.nan
         datetime_frame.loc[datetime_frame.index[-5:], "A"] = np.nan
 
@@ -97,6 +109,8 @@ class TestDataFrameReplace:
     def test_regex_replace_list_obj(
         self, to_replace, values, expected, inplace, use_value_regex_args
     ):
+        # [FUNCTION DOC]
+        # Parametrized over three sets of regex lists with value lists or regex-substitution templates, inplace flag, and whether to pass the regexes using the regex keyword with value. Verifies results on a string frame, and that inplace returns the same frame.
         df = DataFrame({"a": list("ab.."), "b": list("efgh"), "c": list("helo")})
 
         if use_value_regex_args:
@@ -111,6 +125,8 @@ class TestDataFrameReplace:
         tm.assert_frame_equal(result, expected)
 
     def test_regex_replace_list_mixed(self, mix_ab):
+        # [FUNCTION DOC]
+        # Mixed frame (integer and string columns). Verifies lists of regexes replaced by lists of values or capture-group templates give the expected strings, including both argument styles (positional and regex keyword).
         # mixed frame to make sure this doesn't break things
         dfmix = DataFrame(mix_ab)
 
@@ -152,6 +168,8 @@ class TestDataFrameReplace:
         tm.assert_frame_equal(res, expec)
 
     def test_regex_replace_list_mixed_inplace(self, mix_ab):
+        # [FUNCTION DOC]
+        # Same scenarios as the mixed list test, done in place. Verifies each inplace call returns the same frame and produces the expected contents.
         dfmix = DataFrame(mix_ab)
         # the same inplace
         # lists of regexes and values
@@ -192,6 +210,9 @@ class TestDataFrameReplace:
         tm.assert_frame_equal(res, expec)
 
     def test_regex_replace_dict_mixed(self, mix_abc):
+        # [FUNCTION DOC]
+        # Mixed frame with a missing value. Verifies dict forms: dict of regex to replacement, restricted to a column, in both normal and inplace modes, with capture groups, using the regex keyword, and a scalar regex with a dict of replacement per column.
+        # KNOWN ISSUE: a comment says a test is needed for a single dict of regex to value, but no such test exists.
         dfmix = DataFrame(mix_abc)
 
         # dicts
@@ -261,6 +282,8 @@ class TestDataFrameReplace:
         tm.assert_frame_equal(res2, expec)
 
     def test_regex_replace_dict_nested(self, mix_abc):
+        # [FUNCTION DOC]
+        # Verifies a nested dict {column: {regex: value}} works with and without inplace, with the regex flag or the regex keyword.
         # nested dicts will not work until this is implemented for Series
         dfmix = DataFrame(mix_abc)
         res = dfmix.replace({"b": {r"\s*\.\s*": np.nan}}, regex=True)
@@ -282,6 +305,9 @@ class TestDataFrameReplace:
     def test_regex_replace_dict_nested_non_first_character(
         self, any_string_dtype, using_infer_string
     ):
+        # [FUNCTION DOC]
+        # GH 25259. Parametrized over all string dtypes. Verifies a dict regex replacing a letter anywhere in the string (not only the first character) works and keeps the dtype.
+        # KNOWN ISSUE: the using_infer_string fixture argument is accepted but never used.
         # GH 25259
         dtype = any_string_dtype
         df = DataFrame({"first": ["abc", "bca", "cab"]}, dtype=dtype)
@@ -290,6 +316,8 @@ class TestDataFrameReplace:
         tm.assert_frame_equal(result, expected)
 
     def test_regex_replace_dict_nested_gh4115(self):
+        # [FUNCTION DOC]
+        # GH4115. Verifies nested dict replacement of strings by integers on an object column with no regex gives object integers.
         df = DataFrame(
             {"Type": Series(["Q", "T", "Q", "Q", "T"], dtype=object), "tmp": 2}
         )
@@ -298,6 +326,8 @@ class TestDataFrameReplace:
         tm.assert_frame_equal(result, expected)
 
     def test_regex_replace_list_to_scalar(self, mix_abc):
+        # [FUNCTION DOC]
+        # Verifies a list of regexes replaced by a single missing value, normal and inplace (positional and regex keyword), yielding missing values in the matching entries and string dtype for the all-missing column.
         df = DataFrame(mix_abc)
         expec = DataFrame(
             {
@@ -319,6 +349,8 @@ class TestDataFrameReplace:
         tm.assert_frame_equal(res3, expec)
 
     def test_regex_replace_str_to_numeric(self, mix_abc):
+        # [FUNCTION DOC]
+        # Verifies replacing a regex with the integer 0 in a mixed frame replaces matching strings in the string column, leaving the numeric column, and gives an object column for the one with a missing value.
         # what happens when you try to replace a numeric value with a regex?
         df = DataFrame(mix_abc)
         res = df.replace(r"\s*\.\s*", 0, regex=True)
@@ -335,6 +367,8 @@ class TestDataFrameReplace:
         tm.assert_frame_equal(res3, expec)
 
     def test_regex_replace_regex_list_to_numeric(self, mix_abc):
+        # [FUNCTION DOC]
+        # Verifies a list of regexes replaced by the scalar 0 works in normal and inplace modes and via the regex keyword.
         df = DataFrame(mix_abc)
         res = df.replace([r"\s*\.\s*", "b"], 0, regex=True)
         res2 = df.copy()
@@ -351,6 +385,8 @@ class TestDataFrameReplace:
         tm.assert_frame_equal(res3, expec)
 
     def test_regex_replace_series_of_regexes(self, mix_abc):
+        # [FUNCTION DOC]
+        # Verifies series arguments for regex and replacement (series of regex keyed by column) work in normal and inplace modes.
         df = DataFrame(mix_abc)
         s1 = Series({"b": r"\s*\.\s*"})
         s2 = Series({"b": np.nan})
@@ -369,6 +405,8 @@ class TestDataFrameReplace:
         tm.assert_frame_equal(res3, expec)
 
     def test_regex_replace_numeric_to_object_conversion(self, mix_abc):
+        # [FUNCTION DOC]
+        # Verifies replacing integer 0 by a string in a mixed frame changes the integer column to object dtype.
         df = DataFrame(mix_abc)
         expec = DataFrame({"a": ["a", 1, 2, 3], "b": mix_abc["b"], "c": mix_abc["c"]})
         res = df.replace(0, "a")
@@ -379,6 +417,8 @@ class TestDataFrameReplace:
         "to_replace", [{"": np.nan, ",": ""}, {",": "", "": np.nan}]
     )
     def test_joint_simple_replace_and_regex_replace(self, to_replace):
+        # [FUNCTION DOC]
+        # GH-39338. Parametrized over two orders of a dict mixing a plain-string replacement and a regex-based one via the regex keyword. Verifies both replacements apply regardless of order (commas removed, empty replaced by missing).
         # GH-39338
         df = DataFrame(
             {
@@ -399,6 +439,8 @@ class TestDataFrameReplace:
 
     @pytest.mark.parametrize("metachar", ["[]", "()", r"\d", r"\w", r"\s"])
     def test_replace_regex_metachar(self, metachar):
+        # [FUNCTION DOC]
+        # Parametrized over regex metacharacter strings. Verifies a dict replacement of a literal metacharacter value (not regex) replaces exact matches only.
         df = DataFrame({"a": [metachar, "else"]})
         result = df.replace({"a": {metachar: "paren"}})
         expected = DataFrame({"a": ["paren", "else"]})
@@ -421,6 +463,9 @@ class TestDataFrameReplace:
         using_infer_string,
         request,
     ):
+        # [FUNCTION DOC]
+        # GH-41333, GH-35977. Parametrized over data/dict/expected pairs, frame or series, and every string dtype. Verifies regex replacement on string data keeps the dtype, including replacing whitespace-only strings with the missing marker.
+        # KNOWN ISSUE: the using_infer_string and request fixture arguments are accepted but never used.
         # GH-41333, GH-35977
         dtype = any_string_dtype
         obj = frame_or_series(data, dtype=dtype)
@@ -430,6 +475,8 @@ class TestDataFrameReplace:
         tm.assert_equal(result, expected)
 
     def test_replace(self, datetime_frame):
+        # [FUNCTION DOC]
+        # Verifies replacing missing with a number and back round-trips, replacing in an empty frame is a no-op, and (GH 11698) a mixed frame with datetimes replaces a string with missing in the string column only.
         datetime_frame.loc[datetime_frame.index[:5], "A"] = np.nan
         datetime_frame.loc[datetime_frame.index[-5:], "A"] = np.nan
 
@@ -457,6 +504,8 @@ class TestDataFrameReplace:
         tm.assert_frame_equal(df1, expected_df)
 
     def test_replace_list(self):
+        # [FUNCTION DOC]
+        # Verifies lists of values (non-regex) replaced by lists of replacement values on an object frame.
         obj = {"a": list("ab.."), "b": list("efgh"), "c": list("helo")}
         dfobj = DataFrame(obj)
 
@@ -488,6 +537,8 @@ class TestDataFrameReplace:
         tm.assert_frame_equal(res, expec)
 
     def test_replace_with_empty_list(self, frame_or_series):
+        # [FUNCTION DOC]
+        # GH 21977 and GH 19266. Parametrized over frame and series. Verifies replacing with an empty to_replace list is a no-op, and that dict replacement with an empty list or a list of two values for a missing value raises a value error about the size of the assigned values.
         # GH 21977
         ser = Series([["a", "b"], [], np.nan, [1]])
         obj = DataFrame({"col": ser})
@@ -507,6 +558,8 @@ class TestDataFrameReplace:
             obj.replace({np.nan: ["dummy", "alt"]})
 
     def test_replace_series_dict(self):
+        # [FUNCTION DOC]
+        # GH 3064. Verifies a scalar replaced by a per-column dict or series of means, and a series to_replace with a dict or means value.
         # from GH 3064
         df = DataFrame({"zero": {"a": 0.0, "b": 1}, "one": {"a": 2.0, "b": 0}})
         result = df.replace(0, {"zero": 0.5, "one": 1.0})
@@ -527,6 +580,8 @@ class TestDataFrameReplace:
         tm.assert_frame_equal(result, expected)
 
     def test_replace_convert(self, any_string_dtype):
+        # [FUNCTION DOC]
+        # Gh 3907, with a note that dtypes are no longer converted. Parametrized over string dtypes. Verifies replacing strings by integers via a dict gives object dtype for all columns.
         # gh 3907 (pandas >= 3.0 no longer converts dtypes)
         df = DataFrame(
             [["foo", "bar", "bah"], ["bar", "foo", "bah"]], dtype=any_string_dtype
@@ -536,6 +591,8 @@ class TestDataFrameReplace:
         assert (rep.dtypes == object).all()
 
     def test_replace_mixed(self, float_string_frame):
+        # [FUNCTION DOC]
+        # Mixed float and string frame with missing values. Verifies replace of missing with a number matches fillna with the string column as object, and replacing back gives the original shape and object dtype for the string column.
         mf = float_string_frame
         mf.iloc[5:20, mf.columns.get_loc("foo")] = np.nan
         mf.iloc[-10:, mf.columns.get_loc("A")] = np.nan
@@ -559,6 +616,8 @@ class TestDataFrameReplace:
         tm.assert_frame_equal(result.replace(-1e8, np.nan), expected2)
 
     def test_replace_mixed_int_block_upcasting(self):
+        # [FUNCTION DOC]
+        # Verifies replacing a number in an integer column by a float upcasts that column to float and leaves float columns; inplace returns the same frame with the same result.
         # int block upcasting
         df = DataFrame(
             {
@@ -580,6 +639,8 @@ class TestDataFrameReplace:
         tm.assert_frame_equal(df, expected)
 
     def test_replace_mixed_int_block_splitting(self):
+        # [FUNCTION DOC]
+        # Verifies integer block splitting: only the column where the value is replaced by a float is upcast, other integer columns keep their dtype.
         # int block splitting
         df = DataFrame(
             {
@@ -599,6 +660,8 @@ class TestDataFrameReplace:
         tm.assert_frame_equal(result, expected)
 
     def test_replace_mixed2(self):
+        # [FUNCTION DOC]
+        # Verifies replacing numbers with strings upcasts affected columns to object (single value or lists) while untouched columns keep their dtype.
         # to object block upcasting
         df = DataFrame(
             {
@@ -625,6 +688,8 @@ class TestDataFrameReplace:
         tm.assert_frame_equal(result, expected)
 
     def test_replace_mixed3(self):
+        # [FUNCTION DOC]
+        # Verifies replacing an integer by a dict of column means produces float columns with the mean at the replaced positions.
         # test case from
         df = DataFrame(
             {"A": Series([3, 0], dtype="int64"), "B": Series([0, 3], dtype="int64")}
@@ -637,6 +702,8 @@ class TestDataFrameReplace:
         tm.assert_frame_equal(result, expected)
 
     def test_replace_nullable_int_with_string_doesnt_cast(self):
+        # [FUNCTION DOC]
+        # GH#25438. Verifies replacing an empty string by missing in a frame with a nullable integer column does not cast that column to float.
         # GH#25438 don't cast df['a'] to float64
         df = DataFrame({"a": [1, 2, 3, pd.NA], "b": ["some", "strings", "here", "he"]})
         df["a"] = df["a"].astype("Int64")
@@ -646,6 +713,8 @@ class TestDataFrameReplace:
 
     @pytest.mark.parametrize("dtype", ["boolean", "Int64", "Float64"])
     def test_replace_with_nullable_column(self, dtype):
+        # [FUNCTION DOC]
+        # GH-44499. Parametrized over boolean, Int64 and Float64. Verifies replacing a string elsewhere in the frame leaves a nullable extension column unchanged.
         # GH-44499
         nullable_ser = Series([1, 0, 1], dtype=dtype)
         df = DataFrame({"A": ["A", "B", "x"], "B": nullable_ser})
@@ -654,6 +723,8 @@ class TestDataFrameReplace:
         tm.assert_frame_equal(result, expected)
 
     def test_replace_simple_nested_dict(self):
+        # [FUNCTION DOC]
+        # Verifies a nested dict {column: {old: new}} equals the non-nested dict for a single column.
         df = DataFrame({"col": range(1, 5)})
         expected = DataFrame({"col": ["a", 2, 3, "b"]})
 
@@ -665,6 +736,8 @@ class TestDataFrameReplace:
         tm.assert_frame_equal(expected, result)
 
     def test_replace_simple_nested_dict_with_nonexistent_value(self):
+        # [FUNCTION DOC]
+        # Verifies a dict containing a value that does not occur is ignored, in nested and non-nested forms.
         df = DataFrame({"col": range(1, 5)})
         expected = DataFrame({"col": ["a", 2, 3, "b"]})
 
@@ -675,6 +748,8 @@ class TestDataFrameReplace:
         tm.assert_frame_equal(expected, result)
 
     def test_replace_NA_with_None(self):
+        # [FUNCTION DOC]
+        # gh-45601. Verifies replacing the nullable missing marker by None in Int64 gives an object column with None.
         # gh-45601
         df = DataFrame({"value": [42, pd.NA]}, dtype="Int64")
         result = df.replace({pd.NA: None})
@@ -682,6 +757,8 @@ class TestDataFrameReplace:
         tm.assert_frame_equal(result, expected)
 
     def test_replace_NAT_with_None(self):
+        # [FUNCTION DOC]
+        # gh-45836. Verifies replacing NaT and nan by None in an all-NaT frame gives None objects.
         # gh-45836
         df = DataFrame([pd.NaT, pd.NaT])
         result = df.replace({pd.NaT: None, np.nan: None})
@@ -689,6 +766,8 @@ class TestDataFrameReplace:
         tm.assert_frame_equal(result, expected)
 
     def test_replace_with_None_keeps_categorical(self):
+        # [FUNCTION DOC]
+        # gh-46634. Verifies replacing a number by None in a float column with a categorical column converts the float column to object and leaves the categorical unchanged.
         # gh-46634
         cat_series = Series(["b", "b", "b", "d"], dtype="category")
         df = DataFrame(
@@ -708,6 +787,8 @@ class TestDataFrameReplace:
         tm.assert_frame_equal(result, expected)
 
     def test_replace_all_NA(self):
+        # [FUNCTION DOC]
+        # GH#60688. Verifies a dict of per-column regexes replaces text in a string column and leaves an all-missing column unchanged.
         # GH#60688
         df = DataFrame({"ticker": ["#1234#"], "name": [None]})
         result = df.replace({col: {r"^#": "$"} for col in df.columns}, regex=True)
@@ -715,6 +796,8 @@ class TestDataFrameReplace:
         tm.assert_frame_equal(result, expected)
 
     def test_replace_value_is_none(self, datetime_frame):
+        # [FUNCTION DOC]
+        # Verifies replace with a dict of values given as the to_replace keyword equals replacing on the transposed frame, and the dict with several entries replaces each.
         orig_value = datetime_frame.iloc[0, 0]
         orig2 = datetime_frame.iloc[1, 0]
 
@@ -735,6 +818,9 @@ class TestDataFrameReplace:
         datetime_frame.iloc[1, 0] = orig2
 
     def test_replace_for_new_dtypes(self, datetime_frame):
+        # [FUNCTION DOC]
+        # Float32 frame. Verifies replacing missing by a large negative number equals fillna and replacing back restores the frame.
+        # KNOWN ISSUE: the last three statements only set values to missing again and nothing is asserted afterwards, so they are dead code.
         # dtypes
         tsframe = datetime_frame.copy().astype(np.float32)
         tsframe.loc[tsframe.index[:5], "A"] = np.nan
@@ -851,10 +937,15 @@ class TestDataFrameReplace:
         ],
     )
     def test_replace_dtypes(self, frame, to_replace, value, expected):
+        # [FUNCTION DOC]
+        # Parametrized over frames, values to replace, replacement and the expected frame (integer widths, bool, complex, datetime, timezone-aware datetime, and mixed integer/float cases from GH 35376 and GH 20380). Verifies replace keeps dtypes and gives the expected frame.
         result = frame.replace(to_replace, value)
         tm.assert_frame_equal(result, expected)
 
     def test_replace_input_formats_listlike(self):
+        # [FUNCTION DOC]
+        # Verifies replace with dict to dict, list to list, scalar to dict and list to list inplace; a replacement list of different length raises a value error that replacement lists must match in length.
+        # KNOWN ISSUE: for the list-to-list case the non-inplace result is overwritten by the return value of the inplace calls, which is the expected frame itself, so the final comparison checks the frame against itself.
         # both dicts
         to_rep = {"A": np.nan, "B": 0, "C": ""}
         values = {"A": 0, "B": -1, "C": "missing"}
@@ -895,6 +986,9 @@ class TestDataFrameReplace:
             df.replace(to_rep, values[1:])
 
     def test_replace_input_formats_scalar(self):
+        # [FUNCTION DOC]
+        # Verifies dict to scalar, a list value with a dict raising a type error that value must be scalar, dict or series, and a list to scalar done inplace.
+        # KNOWN ISSUE: for the list-to-scalar case the non-inplace result is overwritten by the inplace return value (the expected frame), so the final comparison checks the frame against itself.
         df = DataFrame(
             {"A": [np.nan, 0, np.inf], "B": [0, 2, 5], "C": ["", "asdf", "fd"]}
         )
@@ -919,10 +1013,15 @@ class TestDataFrameReplace:
         tm.assert_frame_equal(result, expected)
 
     def test_replace_limit(self):
+        # [FUNCTION DOC]
+        # Placeholder with a TODO and no body (just pass); nothing is tested.
+        # KNOWN ISSUE: the test is an empty stub.
         # TODO
         pass
 
     def test_replace_dict_no_regex(self, any_string_dtype):
+        # [FUNCTION DOC]
+        # Parametrized over string dtypes. Verifies a dict replacing whole strings by numbers (no regex) in a series gives object dtype.
         answer = Series(
             {
                 0: "Strongly Agree",
@@ -945,6 +1044,8 @@ class TestDataFrameReplace:
         tm.assert_series_equal(result, expected)
 
     def test_replace_series_no_regex(self, any_string_dtype):
+        # [FUNCTION DOC]
+        # Parametrized over string dtypes. Verifies a series mapping replacing whole strings by numbers gives object dtype.
         answer = Series(
             {
                 0: "Strongly Agree",
@@ -969,6 +1070,8 @@ class TestDataFrameReplace:
         tm.assert_series_equal(result, expected)
 
     def test_replace_dict_tuple_list_ordering_remains_the_same(self):
+        # [FUNCTION DOC]
+        # Verifies the order of entries of a dict, tuple or list to_replace does not matter for the result.
         df = DataFrame({"A": [np.nan, 1]})
         res1 = df.replace(to_replace={np.nan: 0, 1: -1e8})
         res2 = df.replace(to_replace=(1, np.nan), value=[-1e8, 0])
@@ -980,6 +1083,8 @@ class TestDataFrameReplace:
         tm.assert_frame_equal(res3, expected)
 
     def test_replace_doesnt_replace_without_regex(self):
+        # [FUNCTION DOC]
+        # Verifies a dict with a regex-like key without the regex flag leaves the frame unchanged.
         df = DataFrame(
             {
                 "fol": [1, 2, 2, 3],
@@ -992,29 +1097,39 @@ class TestDataFrameReplace:
         tm.assert_frame_equal(df, res)
 
     def test_replace_bool_with_string(self):
+        # [FUNCTION DOC]
+        # Verifies replacing True with a string in a frame with a boolean column and a string column gives an object column.
         df = DataFrame({"a": [True, False], "b": list("ab")})
         result = df.replace(True, "a")
         expected = DataFrame({"a": ["a", False], "b": df.b})
         tm.assert_frame_equal(result, expected)
 
     def test_replace_pure_bool_with_string_no_op(self):
+        # [FUNCTION DOC]
+        # Verifies replacing a string in a pure boolean frame is a no-op.
         df = DataFrame(np.random.default_rng(2).random((2, 2)) > 0.5)
         result = df.replace("asdf", "fdsa")
         tm.assert_frame_equal(df, result)
 
     def test_replace_bool_with_bool(self):
+        # [FUNCTION DOC]
+        # Verifies replacing false with true in a boolean frame gives all true.
         df = DataFrame(np.random.default_rng(2).random((2, 2)) > 0.5)
         result = df.replace(False, True)
         expected = DataFrame(np.ones((2, 2), dtype=bool))
         tm.assert_frame_equal(result, expected)
 
     def test_replace_with_dict_with_bool_keys(self):
+        # [FUNCTION DOC]
+        # Verifies a dict with both boolean and string keys replaces matching entries of boolean columns.
         df = DataFrame({0: [True, False], 1: [False, True]})
         result = df.replace({"asdf": "asdb", True: "yes"})
         expected = DataFrame({0: ["yes", False], 1: [False, "yes"]})
         tm.assert_frame_equal(result, expected)
 
     def test_replace_dict_strings_vs_ints(self):
+        # [FUNCTION DOC]
+        # GH#34789. Verifies replacing a string key in integer frame or series leaves them unchanged.
         # GH#34789
         df = DataFrame({"Y0": [1, 2], "Y1": [3, 4]})
         result = df.replace({"replace_string": "test"})
@@ -1025,12 +1140,16 @@ class TestDataFrameReplace:
         tm.assert_series_equal(result, df["Y0"])
 
     def test_replace_truthy(self):
+        # [FUNCTION DOC]
+        # Verifies replacing infinities by missing in a boolean frame leaves it unchanged.
         df = DataFrame({"a": [True, True]})
         r = df.replace([np.inf, -np.inf], np.nan)
         e = df
         tm.assert_frame_equal(r, e)
 
     def test_nested_dict_overlapping_keys_replace_int(self):
+        # [FUNCTION DOC]
+        # GH 27660. Verifies overlapping integer keys in a nested dict give the same result as the non-nested dict (no chained replacement).
         # GH 27660 keep behaviour consistent for simple dictionary and
         # nested dictionary replacement
         df = DataFrame({"a": list(range(1, 5))})
@@ -1040,6 +1159,8 @@ class TestDataFrameReplace:
         tm.assert_frame_equal(result, expected)
 
     def test_nested_dict_overlapping_keys_replace_str(self):
+        # [FUNCTION DOC]
+        # GH 27660. Verifies overlapping string keys in a nested dict give the same result as the non-nested dict.
         # GH 27660
         a = np.arange(1, 5)
         astr = a.astype(str)
@@ -1050,6 +1171,8 @@ class TestDataFrameReplace:
         tm.assert_frame_equal(result, expected)
 
     def test_replace_swapping_bug(self):
+        # [FUNCTION DOC]
+        # Verifies swapping values with a nested dict (true and false, or 0 and 1) swaps correctly without applying one replacement to the result of the other.
         df = DataFrame({"a": [True, False, True]})
         res = df.replace({"a": {True: "Y", False: "N"}})
         expect = DataFrame({"a": ["Y", "N", "Y"]}, dtype=object)
@@ -1061,6 +1184,8 @@ class TestDataFrameReplace:
         tm.assert_frame_equal(res, expect)
 
     def test_replace_datetimetz(self):
+        # [FUNCTION DOC]
+        # GH 11326. Timezone-aware datetime column plus a float column. Verifies: replacing missing by a number only affects the float column and equals fillna; replacing a number with missing; replacing a timestamp with another; replacing NaT through a dict with a timestamp of the same or a different timezone (converted to the column timezone); and replacing missing with a naive timestamp gives a mixed object result.
         # GH 11326
         # behaving poorly when presented with a datetime64[ns, tz]
         df = DataFrame(
@@ -1145,6 +1270,8 @@ class TestDataFrameReplace:
         tm.assert_frame_equal(result, expected)
 
     def test_replace_with_empty_dictlike(self, mix_abc):
+        # [FUNCTION DOC]
+        # GH 15289. Verifies empty dict or empty series arguments (also nested empty) leave the frame unchanged.
         # GH 15289
         df = DataFrame(mix_abc)
         tm.assert_frame_equal(df, df.replace({}))
@@ -1169,6 +1296,8 @@ class TestDataFrameReplace:
         ],
     )
     def test_replace_commutative(self, df, to_replace, exp):
+        # [FUNCTION DOC]
+        # GH 16051. Parametrized over numeric and string dictionaries. Verifies chain-like dictionaries (value 4 to 5, 5 to 6, ...) are applied simultaneously, not sequentially.
         # GH 16051
         # DataFrame.replace() overwrites when values are non-numeric
         # also added to data frame whilst issue was for series
@@ -1190,6 +1319,8 @@ class TestDataFrameReplace:
         ],
     )
     def test_replace_replacer_dtype(self, replacer):
+        # [FUNCTION DOC]
+        # GH26632. Parametrized over scalar replacement types (timestamp, numpy integer and float types). Verifies a dict replace on an object frame accepts them as replacement and keeps the replacement object type.
         # GH26632
         df = DataFrame(["a"], dtype=object)
         result = df.replace({"a": replacer, "b": replacer})
@@ -1197,6 +1328,8 @@ class TestDataFrameReplace:
         tm.assert_frame_equal(result, expected)
 
     def test_replace_after_convert_dtypes(self):
+        # [FUNCTION DOC]
+        # GH31517. Verifies replace on an Int64 column keeps the nullable dtype.
         # GH31517
         df = DataFrame({"grp": [1, 2, 3, 4, 5]}, dtype="Int64")
         result = df.replace(1, 10)
@@ -1204,6 +1337,8 @@ class TestDataFrameReplace:
         tm.assert_frame_equal(result, expected)
 
     def test_replace_invalid_to_replace(self):
+        # [FUNCTION DOC]
+        # GH 18634. Verifies a function passed as to_replace raises a type error saying to_replace must be a scalar, array-like, dict or none.
         # GH 18634
         # API: replace() should raise an exception if invalid argument is given
         df = DataFrame({"one": ["a", "b ", "c"], "two": ["d ", "e ", "f "]})
@@ -1217,6 +1352,8 @@ class TestDataFrameReplace:
     @pytest.mark.parametrize("dtype", ["float", "float64", "int64", "Int64", "boolean"])
     @pytest.mark.parametrize("value", [np.nan, pd.NA])
     def test_replace_no_replacement_dtypes(self, dtype, value):
+        # [FUNCTION DOC]
+        # Issue 32988. Parametrized over dtypes and missing markers. Verifies replacing none and infinities with a missing value on a frame that has none of them returns an equal frame (no dtype change).
         # https://github.com/pandas-dev/pandas/issues/32988
         df = DataFrame(np.eye(2), dtype=dtype)
         result = df.replace(to_replace=[None, -np.inf, np.inf], value=value)
@@ -1224,6 +1361,8 @@ class TestDataFrameReplace:
 
     @pytest.mark.parametrize("replacement", [np.nan, 5])
     def test_replace_with_duplicate_columns(self, replacement):
+        # [FUNCTION DOC]
+        # GH 24798. Parametrized over replacement. Verifies replacing a value in a single column of a frame with duplicate column labels, assigned back, works.
         # GH 24798
         result = DataFrame({"A": [1, 2, 3], "A1": [4, 5, 6], "B": [7, 8, 9]})
         result.columns = list("AAB")
@@ -1239,6 +1378,8 @@ class TestDataFrameReplace:
 
     @pytest.mark.parametrize("value", [pd.Period("2020-01"), pd.Interval(0, 5)])
     def test_replace_ea_ignore_float(self, frame_or_series, value):
+        # [FUNCTION DOC]
+        # GH#34871. Parametrized over a period and an interval value, frame or series. Verifies replacing a float in an extension-dtype column is a no-op.
         # GH#34871
         obj = DataFrame({"Per": [value] * 3})
         obj = tm.get_obj(obj, frame_or_series)
@@ -1252,6 +1393,8 @@ class TestDataFrameReplace:
         [({"a": 1, "b": 1}, [[2, 2], [2, 2]]), ({"a": 1, "b": 2}, [[2, 1], [2, 2]])],
     )
     def test_categorical_replace_with_dict(self, replace_dict, final_data):
+        # [FUNCTION DOC]
+        # GH 26988. Parametrized over replace dicts and the final data. Categorical columns. Verifies dict replacement with a scalar updates categories; the non-inplace call leaves the original unchanged, and inplace returns the same frame with the expected content.
         # GH 26988
         df = DataFrame([[1, 1], [2, 2]], columns=["a", "b"], dtype="category")
 
@@ -1272,6 +1415,9 @@ class TestDataFrameReplace:
         tm.assert_frame_equal(df, expected)
 
     def test_replace_value_category_type(self):
+        # [FUNCTION DOC]
+        # Test for #23305, which concerns category dtypes being maintained after replace with direct values.
+        # KNOWN ISSUE: despite the docstring, the test never calls replace; it renames categories through the category accessor on each column and compares with the expected frame with ordered categories.
         """
         Test for #23305: to ensure category dtypes are maintained
         after replace with direct values
@@ -1330,6 +1476,9 @@ class TestDataFrameReplace:
         tm.assert_frame_equal(result, expected)
 
     def test_replace_dict_category_type(self):
+        # [FUNCTION DOC]
+        # Test for GH#35268 and GH#44940 about category dtypes after replace with dict values.
+        # KNOWN ISSUE: despite the docstring, the test never calls replace; it renames categories through the category accessor with a dict mapping.
         """
         Test to ensure category dtypes are maintained
         after replace with dict values
@@ -1360,6 +1509,8 @@ class TestDataFrameReplace:
         tm.assert_frame_equal(result, expected)
 
     def test_replace_with_compiled_regex(self):
+        # [FUNCTION DOC]
+        # Issue 35680. Verifies a dict whose key is a compiled regex works with the regex flag.
         # https://github.com/pandas-dev/pandas/issues/35680
         df = DataFrame(["a", "b", "c"])
         regex = re.compile("^a$")
@@ -1368,6 +1519,8 @@ class TestDataFrameReplace:
         tm.assert_frame_equal(result, expected)
 
     def test_replace_intervals(self):
+        # [FUNCTION DOC]
+        # Issue 35931. Verifies replacing an interval value inside a nested dict works, giving an object column.
         # https://github.com/pandas-dev/pandas/issues/35931
         df = DataFrame({"a": [pd.Interval(0, 1), pd.Interval(0, 1)]})
         result = df.replace({"a": {pd.Interval(0, 1): "x"}})
@@ -1375,6 +1528,8 @@ class TestDataFrameReplace:
         tm.assert_frame_equal(result, expected)
 
     def test_replace_unicode(self):
+        # [FUNCTION DOC]
+        # GH 16784. Verifies a dict with non-ascii string keys does not fail and leaves float data unchanged.
         # GH: 16784
         columns_values_map = {"positive": {"正面": 1, "中立": 1, "负面": 0}}
         df1 = DataFrame({"positive": np.ones(3)})
@@ -1383,6 +1538,8 @@ class TestDataFrameReplace:
         tm.assert_frame_equal(result, expected)
 
     def test_replace_bytes(self, frame_or_series):
+        # [FUNCTION DOC]
+        # GH#38900. Parametrized over frame and series. Verifies replacing none by a missing value in a bytes-dtype object leaves it unchanged.
         # GH#38900
         obj = frame_or_series(["o"]).astype("|S")
         expected = obj.copy()
@@ -1402,6 +1559,8 @@ class TestDataFrameReplace:
     def test_replace_list_with_mixed_type(
         self, data, to_replace, value, expected, box, frame_or_series
     ):
+        # [FUNCTION DOC]
+        # GH#40371. Parametrized over data, to_replace, replacement and expected values; box type of the to_replace (list, tuple, array); frame or series. Verifies replacing with a list in mixed integer/float forms gives the expected values and dtype.
         # GH#40371
         obj = frame_or_series(data)
         expected = frame_or_series(expected)
@@ -1410,6 +1569,8 @@ class TestDataFrameReplace:
 
     @pytest.mark.parametrize("val", [2, np.nan, 2.0])
     def test_replace_value_none_dtype_numeric(self, val):
+        # [FUNCTION DOC]
+        # GH#48231. Parametrized over a value (integer, nan, float). Verifies replacing that value with none gives an object column with none, using both the positional form and the dict form.
         # GH#48231
         df = DataFrame({"a": [1, val]})
         result = df.replace(val, None)
@@ -1421,6 +1582,8 @@ class TestDataFrameReplace:
         tm.assert_frame_equal(result, expected)
 
     def test_replace_with_nil_na(self):
+        # [FUNCTION DOC]
+        # GH 32075. Verifies replacing a string where the data has a missing marker keeps the missing marker.
         # GH 32075
         ser = DataFrame({"a": ["nil", pd.NA]})
         expected = DataFrame({"a": ["anything else", pd.NA]}, index=[0, 1])
@@ -1435,6 +1598,9 @@ class TestDataFrameReplace:
         ],
     )
     def test_replace_na_to_nan_nullable_floats(self, dtype, using_nan_is_na):
+        # [FUNCTION DOC]
+        # GH#55127. Parametrized over nullable float dtypes and the nan-is-na option. Verifies replacing the nullable missing marker with NaN converts it to NaN when the option is off.
+        # KNOWN ISSUE: when the nan-is-na option is on, the expected frame is set to the result itself, so the comparison is trivial.
         # GH#55127
         df = DataFrame({0: [1, np.nan, 1], 1: Series([0, pd.NA, 1], dtype=dtype)})
 
@@ -1458,6 +1624,8 @@ class TestDataFrameReplace:
         ],
     )
     def test_replace_nan_nullable_ints(self, dtype, using_nan_is_na):
+        # [FUNCTION DOC]
+        # GH#51237. Parametrized over nullable integer dtypes and the nan-is-na option. Verifies replacing NaN with a number fills the missing value when NaN equals NA, and is a no-op otherwise.
         # GH#51237 with nan_is_na=False, replacing NaN should be a no-op here
         ser = Series([1, 2, None], dtype=dtype)
 
@@ -1472,6 +1640,8 @@ class TestDataFrameReplace:
 
 
 class TestDataFrameReplaceRegex:
+    # [CLASS DOC]
+    # Groups DataFrame replace tests concentrated on regular expression behavior and related object-splitting behavior.
     @pytest.mark.parametrize(
         "data",
         [
@@ -1488,6 +1658,8 @@ class TestDataFrameReplaceRegex:
     def test_regex_replace_scalar(
         self, data, to_replace, value, compile_regex, regex_kwarg, inplace
     ):
+        # [FUNCTION DOC]
+        # Parametrized over data, regex pattern with value, whether the pattern is compiled, whether the regex keyword is used, and inplace. Verifies a regex replaces matching dots with a missing value or a repeated string equal to a direct assignment, and inplace returns the same frame.
         df = DataFrame(data)
         expected = df.copy()
 
@@ -1517,6 +1689,8 @@ class TestDataFrameReplaceRegex:
     @pytest.mark.parametrize("regex", [False, True])
     @pytest.mark.parametrize("value", [1, "1"])
     def test_replace_regex_dtype_frame(self, regex, value):
+        # [FUNCTION DOC]
+        # GH-48644. Parametrized over the regex flag and an integer or string replacement. Verifies the result dtype: object when an integer replaces strings, otherwise string dtype; frames partly matching also behave consistently.
         # GH-48644
         df1 = DataFrame({"A": ["0"], "B": ["0"]})
         # When value is an integer, coerce result to object.
@@ -1536,6 +1710,8 @@ class TestDataFrameReplaceRegex:
         tm.assert_frame_equal(result_df2, expected_df2)
 
     def test_replace_with_value_also_being_replaced(self):
+        # [FUNCTION DOC]
+        # GH46306. Verifies replace with a dict where a replacement value is also a key is applied simultaneously (no chaining).
         # GH46306
         df = DataFrame({"A": [0, 1, 2], "B": [1, 0, 2]})
         result = df.replace({0: 1, 1: np.nan})
@@ -1543,6 +1719,8 @@ class TestDataFrameReplaceRegex:
         tm.assert_frame_equal(result, expected)
 
     def test_replace_categorical_no_replacement(self):
+        # [FUNCTION DOC]
+        # GH#46672. Verifies replacing values absent from categorical columns leaves them unchanged.
         # GH#46672
         df = DataFrame(
             {
@@ -1557,6 +1735,8 @@ class TestDataFrameReplaceRegex:
         tm.assert_frame_equal(result, expected)
 
     def test_replace_object_splitting(self, using_infer_string):
+        # [FUNCTION DOC]
+        # GH#53977. Verifies an in-place regex replacement on a string column does not split the object block: block count stays one (or two with inferred strings) before and after.
         # GH#53977
         df = DataFrame({"a": ["a"], "b": "b"})
         if using_infer_string:

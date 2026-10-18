@@ -1,3 +1,7 @@
+# [MODULE DOC]
+# Tests for DataFrame (and some Series) quantile: interpolation and method options, axes, numeric_only, sparse and datetime-like data, extension dtypes, missing values, empty inputs and invalid arguments.
+# Most tests are parametrized through a fixture providing the pair of interpolation and method arguments.
+
 import numpy as np
 import pytest
 
@@ -15,11 +19,15 @@ import pandas._testing as tm
     params=[["linear", "single"], ["nearest", "table"]], ids=lambda x: "-".join(x)
 )
 def interp_method(request):
+    # [FUNCTION DOC]
+    # HELPER: fixture parametrized over two combinations of arguments for quantile, linear interpolation with the single method, and nearest interpolation with the table method; returns the pair of interpolation and method.
     """(interpolation, method) arguments for quantile"""
     return request.param
 
 
 class TestDataFrameQuantile:
+    # [CLASS DOC]
+    # Groups the DataFrame quantile tests for ordinary numeric and datetime data.
     @pytest.mark.parametrize(
         "df,expected",
         [
@@ -39,6 +47,8 @@ class TestDataFrameQuantile:
         ],
     )
     def test_quantile_sparse(self, df, expected):
+        # [FUNCTION DOC]
+        # GH#17198, GH#24600. Parametrized over sparse frames. Verifies the default quantile returns a series named 0.5 with sparse float dtype holding the quantile of each column.
         # GH#17198
         # GH#24600
         result = df.quantile()
@@ -46,6 +56,9 @@ class TestDataFrameQuantile:
         tm.assert_series_equal(result, expected)
 
     def test_quantile(self, datetime_frame, interp_method, request):
+        # [FUNCTION DOC]
+        # Compares quantile of random data (on both axes, numeric only) with numpy percentile results. For linear interpolation the values must match exactly; for the nearest/table option only the index and name are compared.
+        # KNOWN ISSUE: the request fixture argument is accepted but never used.
         interpolation, method = interp_method
         df = datetime_frame
         result = df.quantile(
@@ -79,6 +92,8 @@ class TestDataFrameQuantile:
             assert result.name == expected.name
 
     def test_empty(self, interp_method):
+        # [FUNCTION DOC]
+        # Verifies quantile on a frame with empty columns gives missing values for every column.
         interpolation, method = interp_method
         q = DataFrame({"x": [], "y": []}).quantile(
             0.1, axis=0, numeric_only=True, interpolation=interpolation, method=method
@@ -86,6 +101,9 @@ class TestDataFrameQuantile:
         assert np.isnan(q["x"]) and np.isnan(q["y"])
 
     def test_non_numeric_exclusion(self, interp_method, request):
+        # [FUNCTION DOC]
+        # Verifies numeric_only excludes the string column and matches the median of the numeric column (adjusted to an integer for nearest interpolation).
+        # KNOWN ISSUE: the request fixture argument is accepted but never used.
         interpolation, method = interp_method
         df = DataFrame({"col1": ["A", "A", "B", "B"], "col2": [1, 2, 3, 4]})
         rs = df.quantile(
@@ -97,6 +115,8 @@ class TestDataFrameQuantile:
         tm.assert_series_equal(rs, xp)
 
     def test_axis(self, interp_method):
+        # [FUNCTION DOC]
+        # Verifies quantile along rows for a scalar and for a list of quantiles, with frame result for lists; for nearest interpolation the expected values are shifted to the nearest observed integers.
         # axis
         interpolation, method = interp_method
         df = DataFrame({"A": [1, 2, 3], "B": [2, 3, 4]}, index=[1, 2, 3])
@@ -119,6 +139,8 @@ class TestDataFrameQuantile:
         tm.assert_frame_equal(result, expected, check_index_type=True)
 
     def test_axis_numeric_only_true(self, interp_method):
+        # [FUNCTION DOC]
+        # GH #7312. Frame with mixed numbers and strings. Verifies that with numeric_only on and axis one, the calculation still includes the numeric columns of that frame row-wise (the comment says the API might change to exclude non-numeric along the same axis).
         # We may want to break API in the future to change this
         # so that we exclude non-numeric along the same axis
         # See GH #7312
@@ -133,6 +155,8 @@ class TestDataFrameQuantile:
         tm.assert_series_equal(result, expected)
 
     def test_quantile_date_range(self, interp_method):
+        # [FUNCTION DOC]
+        # GH 2460. Timezone-aware datetime column. Verifies quantile with numeric_only off returns the middle timestamp with the same timezone dtype.
         # GH 2460
         interpolation, method = interp_method
         dti = pd.date_range("2016-01-01", periods=3, tz="US/Pacific", unit="ns")
@@ -149,6 +173,8 @@ class TestDataFrameQuantile:
         tm.assert_series_equal(result, expected)
 
     def test_quantile_axis_mixed(self, interp_method):
+        # [FUNCTION DOC]
+        # Frame with int, float, datetime and string columns. Verifies row-wise quantile with numeric_only on uses only numeric columns (adjusted for nearest), and with numeric_only off raises a type error about comparing a timestamp with a float.
         # mixed on axis=1
         interpolation, method = interp_method
         df = DataFrame(
@@ -173,6 +199,8 @@ class TestDataFrameQuantile:
             df.quantile(0.5, axis=1, numeric_only=False)
 
     def test_quantile_axis_parameter(self, interp_method):
+        # [FUNCTION DOC]
+        # GH 9543/9544. Verifies axis can be given as number or name (index, columns), the results agree, and invalid axis values (minus one, or the misspelled name column) raise value errors naming the axis.
         # GH 9543/9544
         interpolation, method = interp_method
         df = DataFrame({"A": [1, 2, 3], "B": [2, 3, 4]}, index=[1, 2, 3])
@@ -211,6 +239,8 @@ class TestDataFrameQuantile:
             df.quantile(0.1, axis="column")
 
     def test_quantile_interpolation(self):
+        # [FUNCTION DOC]
+        # See gh-10174. Verifies nearest, lower, higher and midpoint interpolation results, including cross-checks with numpy percentile for integer and float data, a list of quantiles on rows, and a frame with no rows (missing results).
         # see gh-10174
 
         # interpolation method other than default linear
@@ -268,6 +298,8 @@ class TestDataFrameQuantile:
         tm.assert_frame_equal(result, expected)
 
     def test_quantile_interpolation_datetime(self, datetime_frame):
+        # [FUNCTION DOC]
+        # See gh-10174. Verifies the explicit linear interpolation on datetime_frame equals numpy percentile.
         # see gh-10174
 
         # interpolation = linear (default case)
@@ -276,6 +308,8 @@ class TestDataFrameQuantile:
         assert q["A"] == np.percentile(df["A"], 10)
 
     def test_quantile_interpolation_int(self, int_frame):
+        # [FUNCTION DOC]
+        # See gh-10174. Verifies quantile of an integer frame, with and without the interpolation argument, equals numpy percentile and is identical in both forms.
         # see gh-10174
 
         df = int_frame
@@ -289,6 +323,8 @@ class TestDataFrameQuantile:
         tm.assert_series_equal(q, q1)
 
     def test_quantile_multi(self, interp_method):
+        # [FUNCTION DOC]
+        # Verifies a list of quantiles on columns gives a frame indexed by the quantiles; nearest results are integer typed.
         interpolation, method = interp_method
         df = DataFrame([[1, 1, 1], [2, 2, 2], [3, 3, 3]], columns=["a", "b", "c"])
         result = df.quantile([0.25, 0.5], interpolation=interpolation, method=method)
@@ -302,6 +338,8 @@ class TestDataFrameQuantile:
         tm.assert_frame_equal(result, expected)
 
     def test_quantile_multi_axis_1(self, interp_method):
+        # [FUNCTION DOC]
+        # Verifies a list of quantiles along rows gives a frame indexed by quantiles with a column for each row; nearest results are integer typed.
         interpolation, method = interp_method
         df = DataFrame([[1, 1, 1], [2, 2, 2], [3, 3, 3]], columns=["a", "b", "c"])
         result = df.quantile(
@@ -315,6 +353,8 @@ class TestDataFrameQuantile:
         tm.assert_frame_equal(result, expected)
 
     def test_quantile_multi_empty(self, interp_method):
+        # [FUNCTION DOC]
+        # Verifies a list of quantiles on a frame with empty columns gives all-missing results indexed by the quantiles.
         interpolation, method = interp_method
         result = DataFrame({"x": [], "y": []}).quantile(
             [0.1, 0.9], axis=0, interpolation=interpolation, method=method
@@ -325,6 +365,8 @@ class TestDataFrameQuantile:
         tm.assert_frame_equal(result, expected)
 
     def test_quantile_datetime(self, unit):
+        # [FUNCTION DOC]
+        # Parametrized by datetime unit. Verifies datetime columns are excluded with numeric_only on, included with it off (scalar, list, and along rows with datetime unit preserved), and that an all-datetime frame with numeric_only on gives empty results (series or frame).
         dti = pd.to_datetime(["2010", "2011"]).as_unit(unit)
         df = DataFrame({"a": dti, "b": [0, 5]})
 
@@ -387,6 +429,8 @@ class TestDataFrameQuantile:
         ],
     )
     def test_quantile_dt64_empty(self, dtype, interp_method):
+        # [FUNCTION DOC]
+        # GH#41544. Parametrized over datetime, timezone-aware datetime, timedelta and period dtypes, with an empty frame of two columns. Verifies row-wise quantile gives an empty series of that dtype for a scalar and a frame without columns for a list of quantiles.
         # GH#41544
         interpolation, method = interp_method
         df = DataFrame(columns=["a", "b"], dtype=dtype)
@@ -410,12 +454,16 @@ class TestDataFrameQuantile:
 
     @pytest.mark.parametrize("invalid", [-1, 2, [0.5, -1], [0.5, 2]])
     def test_quantile_invalid(self, invalid, datetime_frame, interp_method):
+        # [FUNCTION DOC]
+        # Parametrized over out-of-range quantiles (scalar and in lists). Verifies a value error saying percentiles should all be between zero and one.
         msg = "percentiles should all be in the interval \\[0, 1\\]"
         interpolation, method = interp_method
         with pytest.raises(ValueError, match=msg):
             datetime_frame.quantile(invalid, interpolation=interpolation, method=method)
 
     def test_quantile_box(self, interp_method):
+        # [FUNCTION DOC]
+        # Frame of timestamps, timezone-aware timestamps and timedeltas. Verifies quantile with numeric_only off returns the middle value of each column with the scalar types preserved, as series and as frame for a list of quantiles.
         interpolation, method = interp_method
         df = DataFrame(
             {
@@ -469,6 +517,8 @@ class TestDataFrameQuantile:
         tm.assert_frame_equal(res, exp)
 
     def test_quantile_box_nat(self):
+        # [FUNCTION DOC]
+        # Frame with datetime-like columns holding missing values at different positions. Verifies quantile ignores NaT and returns the middle valid value for each column, for scalar and list quantiles.
         # DatetimeLikeBlock may be consolidated and contain NaT in different loc
         df = DataFrame(
             {
@@ -545,6 +595,8 @@ class TestDataFrameQuantile:
         tm.assert_frame_equal(res, exp)
 
     def test_quantile_nan(self, interp_method):
+        # [FUNCTION DOC]
+        # GH 14357. Float columns, one with a trailing missing value. Verifies missing values are skipped in column-wise and row-wise quantiles (for list quantiles with nearest interpolation a position stays missing), and a fully missing column gives missing results.
         interpolation, method = interp_method
         # GH 14357 - float block where some cols have missing values
         df = DataFrame({"a": np.arange(1, 6.0), "b": np.arange(1, 6.0)})
@@ -590,6 +642,8 @@ class TestDataFrameQuantile:
         tm.assert_frame_equal(res, exp)
 
     def test_quantile_nat(self, interp_method, unit):
+        # [FUNCTION DOC]
+        # Parametrized over datetime units. Verifies quantile of a column of only NaT is NaT, and of a column with valid values next to a fully NaT column returns the middle valid value and NaT.
         interpolation, method = interp_method
         # full NaT column
         df = DataFrame({"a": [pd.NaT, pd.NaT, pd.NaT]}, dtype=f"M8[{unit}]")
@@ -642,6 +696,8 @@ class TestDataFrameQuantile:
         tm.assert_frame_equal(res, exp)
 
     def test_quantile_empty_no_rows_floats(self, interp_method):
+        # [FUNCTION DOC]
+        # Verifies quantile of a float frame without rows gives missing values per column, an empty series along rows, and the matching shapes for list quantiles.
         interpolation, method = interp_method
 
         df = DataFrame(columns=["a", "b"], dtype="float64")
@@ -663,6 +719,8 @@ class TestDataFrameQuantile:
         tm.assert_frame_equal(res, exp)
 
     def test_quantile_empty_no_rows_ints(self, interp_method):
+        # [FUNCTION DOC]
+        # Verifies quantile of an integer frame without rows gives float missing values per column.
         interpolation, method = interp_method
         df = DataFrame(columns=["a", "b"], dtype="int64")
 
@@ -671,6 +729,9 @@ class TestDataFrameQuantile:
         tm.assert_series_equal(res, exp)
 
     def test_quantile_empty_no_rows_dt64(self, interp_method):
+        # [FUNCTION DOC]
+        # Verifies quantile with numeric_only off of an empty datetime frame gives NaT; if one column is timezone-aware the result is object dtype (missing floats for nearest, see GH#18463); with both timezone-aware the dtype is that timezone dtype.
+        # KNOWN ISSUE: a TODO notes that NaT might be preferred over a float missing value in the nearest-interpolation object result.
         interpolation, method = interp_method
         # datetimes
         df = DataFrame(columns=["a", "b"], dtype="datetime64[ns]")
@@ -703,6 +764,8 @@ class TestDataFrameQuantile:
         tm.assert_series_equal(res, exp)
 
     def test_quantile_empty_no_columns(self, interp_method):
+        # [FUNCTION DOC]
+        # GH#23925. Frame whose only column is datetime, with a named columns axis. Verifies numeric_only quantile drops all columns, returning an empty series or frame that retains the columns axis name.
         # GH#23925 _get_numeric_data may drop all columns
         interpolation, method = interp_method
         df = DataFrame(pd.date_range("1/1/18", periods=5))
@@ -722,15 +785,21 @@ class TestDataFrameQuantile:
         tm.assert_frame_equal(result, expected)
 
     def test_invalid_method(self):
+        # [FUNCTION DOC]
+        # Verifies an unknown method value raises a value error saying the method is invalid.
         with pytest.raises(ValueError, match="Invalid method: foo"):
             DataFrame(range(1)).quantile(0.5, method="foo")
 
     def test_table_invalid_interpolation(self):
+        # [FUNCTION DOC]
+        # Verifies an unknown interpolation value with the table method raises a value error saying the interpolation is invalid.
         with pytest.raises(ValueError, match="Invalid interpolation: foo"):
             DataFrame(range(1)).quantile(0.5, method="table", interpolation="foo")
 
 
 class TestQuantileExtensionDtype:
+    # [CLASS DOC]
+    # Groups quantile tests for extension dtypes (period, timezone datetime, timedelta, nullable integers and floats), using the index fixture and obj fixture to build series or frames. The comments list todo items for axis one and empty cases.
     # TODO: tests for axis=1?
     # TODO: empty case?
 
@@ -749,6 +818,8 @@ class TestQuantileExtensionDtype:
         ids=lambda x: str(x.dtype),
     )
     def index(self, request):
+        # [FUNCTION DOC]
+        # HELPER: fixture parametrized over arrays of nine values of different extension dtypes (the interval variant is marked expected to fail); sets the name to A on the array and returns it. It is not an actual index object in every case.
         # NB: not actually an Index object
         idx = request.param
         idx.name = "A"
@@ -756,6 +827,8 @@ class TestQuantileExtensionDtype:
 
     @pytest.fixture
     def obj(self, index, frame_or_series):
+        # [FUNCTION DOC]
+        # HELPER: fixture wrapping the index values in a series named A or a one-column frame with column A, depending on frame_or_series.
         # bc index is not always an Index (yet), we need to re-patch .name
         obj = frame_or_series(index).copy()
 
@@ -766,6 +839,8 @@ class TestQuantileExtensionDtype:
         return obj
 
     def compute_quantile(self, obj, qs):
+        # [FUNCTION DOC]
+        # HELPER: computes the quantile of obj for the given quantile or quantiles: series quantile directly, frame quantile with numeric_only off. Returns the result.
         if isinstance(obj, Series):
             result = obj.quantile(qs)
         else:
@@ -773,6 +848,9 @@ class TestQuantileExtensionDtype:
         return result
 
     def test_quantile_ea(self, request, obj, index):
+        # [FUNCTION DOC]
+        # Verifies quantiles (middle, minimum, maximum) of shuffled extension data equal the middle, first and last elements; nullable integers produce nullable floats.
+        # KNOWN ISSUE: the request fixture argument is accepted but never used.
         # result should be invariant to shuffling
         indexer = np.arange(len(index), dtype=np.intp)
         np.random.default_rng(2).shuffle(indexer)
@@ -795,6 +873,8 @@ class TestQuantileExtensionDtype:
         tm.assert_equal(result, expected)
 
     def test_quantile_ea_with_na(self, obj, index):
+        # [FUNCTION DOC]
+        # Verifies missing values at both ends are ignored: the quantiles equal the middle, second and second-to-last original elements, independent of shuffling.
         obj.iloc[0] = index._na_value
         obj.iloc[-1] = index._na_value
 
@@ -814,6 +894,9 @@ class TestQuantileExtensionDtype:
         tm.assert_equal(result, expected)
 
     def test_quantile_ea_all_na(self, request, obj, index):
+        # [FUNCTION DOC]
+        # GH#39763. Verifies all-missing extension data keeps its dtype in the object and that quantiles are all missing with that dtype.
+        # KNOWN ISSUE: the request fixture argument is accepted but never used.
         obj.iloc[:] = index._na_value
         # Check dtypes were preserved; this was once a problem see GH#39763
         assert np.all(obj.dtypes == index.dtype)
@@ -832,6 +915,9 @@ class TestQuantileExtensionDtype:
         tm.assert_equal(result, expected)
 
     def test_quantile_ea_scalar(self, request, obj, index):
+        # [FUNCTION DOC]
+        # Verifies a scalar quantile of shuffled extension data returns the middle element (a scalar for series, a series named 0.5 for frames; nullable integers produce floats).
+        # KNOWN ISSUE: the request fixture argument is accepted but never used.
         # scalar qs
 
         # result should be invariant to shuffling
@@ -863,6 +949,8 @@ class TestQuantileExtensionDtype:
         ],
     )
     def test_empty_numeric(self, dtype, expected_data, expected_index, axis):
+        # [FUNCTION DOC]
+        # GH 14564. Parametrized over float and integer dtype, axis and expected data. Verifies quantile on a frame without rows: axis zero gives missing floats per column, axis one gives an empty float series.
         # GH 14564
         df = DataFrame(columns=["a", "b"], dtype=dtype)
         result = df.quantile(0.5, axis=axis)
@@ -884,6 +972,8 @@ class TestQuantileExtensionDtype:
     def test_empty_datelike(
         self, dtype, expected_data, expected_index, axis, expected_dtype
     ):
+        # [FUNCTION DOC]
+        # GH 14564. Parametrized over datetime dtype and axis. Verifies empty datetime frames give NaT per column along axis zero and an empty datetime series along axis one, with numeric_only off.
         # GH 14564
         df = DataFrame(columns=["a", "b"], dtype=dtype)
         result = df.quantile(0.5, axis=axis, numeric_only=False)
@@ -903,6 +993,8 @@ class TestQuantileExtensionDtype:
         ],
     )
     def test_datelike_numeric_only(self, expected_data, expected_index, axis):
+        # [FUNCTION DOC]
+        # GH 14564. Parametrized over axis. Verifies numeric_only on a datetime-only frame gives missing floats per row along axis one, and an empty float series along axis zero.
         # GH 14564
         df = DataFrame(
             {
@@ -922,6 +1014,8 @@ class TestQuantileExtensionDtype:
 
 
 def test_multi_quantile_numeric_only_retains_columns():
+    # [FUNCTION DOC]
+    # Verifies quantile with a list of quantiles and numeric_only on a string-only frame returns a frame with the quantile index and no columns.
     df = DataFrame(list("abc"))
     result = df.quantile([0.5, 0.7], numeric_only=True)
     expected = DataFrame(index=[0.5, 0.7])
@@ -932,6 +1026,8 @@ def test_multi_quantile_numeric_only_retains_columns():
 
 @pytest.mark.parametrize("typ", ["datetime64", "timedelta64"])
 def test_quantile_empty_datetimelike(typ, unit):
+    # [FUNCTION DOC]
+    # Parametrized over datetime and timedelta, with unit. Verifies quantile of an empty single-column frame gives NaT of that dtype named 0.5.
     dtype = f"{typ}[{unit}]"
     df = DataFrame(np.array([], dtype=dtype))
     result = df.quantile()

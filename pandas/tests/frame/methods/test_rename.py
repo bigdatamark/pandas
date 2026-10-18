@@ -1,3 +1,6 @@
+# [MODULE DOC]
+# Tests for DataFrame (and some Series) rename: mappers, dicts, ChainMap, multi-level indexes, argument validation, errors modes and non-unique series mappers.
+
 from collections import ChainMap
 import inspect
 
@@ -15,7 +18,11 @@ import pandas._testing as tm
 
 
 class TestRename:
+    # [CLASS DOC]
+    # Groups the rename tests.
     def test_rename_signature(self):
+        # [FUNCTION DOC]
+        # Verifies the public rename method on DataFrame accepts exactly the parameters self, mapper, index, columns, axis, inplace, copy, level and errors.
         sig = inspect.signature(DataFrame.rename)
         parameters = set(sig.parameters)
         assert parameters == {
@@ -31,6 +38,8 @@ class TestRename:
         }
 
     def test_rename_mi(self, frame_or_series):
+        # [FUNCTION DOC]
+        # Parametrized over frame and series with a multi-level index. Smoke test that renaming with a string function on a multi-index runs without error (the result is not checked).
         obj = frame_or_series(
             [11, 21, 31],
             index=MultiIndex.from_tuples([("A", x) for x in ["a", "B", "c"]]),
@@ -38,6 +47,8 @@ class TestRename:
         obj.rename(str.lower)
 
     def test_rename(self, float_frame):
+        # [FUNCTION DOC]
+        # Using float_frame: columns renamed by dict and by function give equal results and round-trip back (names not checked); renaming index by dict and function; calling with no mapping raises a type error saying one must pass an index to rename; partial column mapping leaves other labels; renaming on the transposed frame; the index name is preserved after renaming labels.
         mapping = {"A": "a", "B": "b", "C": "c", "D": "d"}
 
         renamed = float_frame.rename(columns=mapping)
@@ -85,6 +96,8 @@ class TestRename:
         ],
     )
     def test_rename_chainmap(self, args, kwargs):
+        # [FUNCTION DOC]
+        # Parametrized over positional mapping with an axis keyword and the columns keyword, both using a ChainMap (see gh-23859). Verifies the chain map renames columns like an ordinary dict.
         # see gh-23859
         colAData = range(1, 11)
         colBdata = np.random.default_rng(2).standard_normal(10)
@@ -96,6 +109,8 @@ class TestRename:
         tm.assert_frame_equal(result, expected)
 
     def test_rename_multiindex(self):
+        # [FUNCTION DOC]
+        # Two-level index and columns with named levels. Without a level, mappings are applied across all levels and names are kept. With a level (by number or name, GH13766) only that level is renamed, for dict mappers and for a function mapper; same for the index.
         tuples_index = [("foo1", "bar1"), ("foo2", "bar2")]
         tuples_columns = [("fizz1", "buzz1"), ("fizz2", "buzz2")]
         index = MultiIndex.from_tuples(tuples_index, names=["foo", "bar"])
@@ -166,6 +181,8 @@ class TestRename:
         tm.assert_index_equal(renamed.index, new_index)
 
     def test_rename_nocopy(self, float_frame):
+        # [FUNCTION DOC]
+        # Verifies renaming does not copy data (renamed column shares memory with the original), yet assigning to the renamed frame does not modify the original frame.
         renamed = float_frame.rename(columns={"C": "foo"})
 
         assert np.shares_memory(renamed["foo"]._values, float_frame["C"]._values)
@@ -174,6 +191,8 @@ class TestRename:
         assert not (float_frame["C"] == 1.0).all()
 
     def test_rename_inplace(self, float_frame):
+        # [FUNCTION DOC]
+        # Verifies non-inplace rename leaves the original untouched, while inplace rename returns nothing, updates the labels, and replaces the column object (GH 44153).
         float_frame.rename(columns={"C": "foo"})
         assert "C" in float_frame
         assert "foo" not in float_frame
@@ -190,6 +209,8 @@ class TestRename:
         assert float_frame["foo"] is not c_values
 
     def test_rename_bug(self):
+        # [FUNCTION DOC]
+        # GH 5344. Regression for rename followed by set_index and assigning new columns. Verifies the result has the expected multi-index and column label.
         # GH 5344
         # rename set ref_locs, and set_index was not resetting
         df = DataFrame({0: ["foo", "bar"], 1: ["bah", "bas"], 2: [1, 2]})
@@ -207,6 +228,8 @@ class TestRename:
         tm.assert_frame_equal(df, expected)
 
     def test_rename_bug2(self):
+        # [FUNCTION DOC]
+        # GH 19497. Index of tuples stays a plain index of tuples (not converted to a multi-index) when a tuple label is renamed.
         # GH 19497
         # rename was changing Index to MultiIndex if Index contained tuples
 
@@ -218,6 +241,8 @@ class TestRename:
         tm.assert_frame_equal(df, expected)
 
     def test_rename_errors_raises(self):
+        # [FUNCTION DOC]
+        # Verifies rename with errors set to raise raises a key error stating that the missing label is not found in the axis.
         df = DataFrame(columns=["A", "B", "C", "D"])
         with pytest.raises(KeyError, match="'E'] not found in axis"):
             df.rename(columns={"A": "a", "E": "e"}, errors="raise")
@@ -231,6 +256,8 @@ class TestRename:
         ],
     )
     def test_rename_errors(self, mapper, errors, expected_columns):
+        # [FUNCTION DOC]
+        # GH 13473. Parametrized over a mapper, errors mode and expected columns: unknown keys are ignored in ignore mode; a mapping covering existing keys works in raise mode; a function mapper works in raise mode.
         # GH 13473
         # rename now works with errors parameter
         df = DataFrame(columns=["A", "B", "C", "D"])
@@ -239,12 +266,16 @@ class TestRename:
         tm.assert_frame_equal(result, expected)
 
     def test_rename_objects(self, float_string_frame):
+        # [FUNCTION DOC]
+        # Using float_string_frame, verifies columns can be renamed with an uppercase function on a frame with object columns.
         renamed = float_string_frame.rename(columns=str.upper)
 
         assert "FOO" in renamed
         assert "foo" not in renamed
 
     def test_rename_axis_style(self):
+        # [FUNCTION DOC]
+        # Issue 12392. Verifies the axis-style call forms (positional mapper with axis as number or name for columns and for index, dict or function, or the mapper keyword) all give the same expected result.
         # https://github.com/pandas-dev/pandas/issues/12392
         df = DataFrame({"A": [1, 2], "B": [1, 2]}, index=["X", "Y"])
         expected = DataFrame({"a": [1, 2], "b": [1, 2]}, index=["X", "Y"])
@@ -279,6 +310,8 @@ class TestRename:
         tm.assert_frame_equal(result, expected)
 
     def test_rename_mapper_multi(self):
+        # [FUNCTION DOC]
+        # Frame with a two-level index. Verifies a positional mapper applies to the index and equals the index keyword form, renaming both levels.
         df = DataFrame({"A": ["a", "b"], "B": ["c", "d"], "C": [1, 2]}).set_index(
             ["A", "B"]
         )
@@ -287,6 +320,8 @@ class TestRename:
         tm.assert_frame_equal(result, expected)
 
     def test_rename_positional_named(self):
+        # [FUNCTION DOC]
+        # Issue 12392. Verifies the index and columns keywords can be given together with different functions.
         # https://github.com/pandas-dev/pandas/issues/12392
         df = DataFrame({"a": [1, 2], "b": [1, 2]}, index=["X", "Y"])
         result = df.rename(index=str.lower, columns=str.upper)
@@ -294,6 +329,8 @@ class TestRename:
         tm.assert_frame_equal(result, expected)
 
     def test_rename_axis_style_raises(self):
+        # [FUNCTION DOC]
+        # Issue 12392. Verifies type errors: axis together with index or columns raises an error that axis cannot be combined with index or columns; mapper together with index and columns raises an error about mapper and index or columns; giving the mapper both positionally and by keyword raises an error about multiple values.
         # see gh-12392
         df = DataFrame({"A": [1, 2], "B": [1, 2]}, index=["0", "1"])
 
@@ -325,6 +362,8 @@ class TestRename:
             df.rename(id, mapper=id)
 
     def test_rename_positional_raises(self):
+        # [FUNCTION DOC]
+        # GH 29136. Verifies passing two positional arguments raises a type error saying rename takes from one to two positional arguments.
         # GH 29136
         df = DataFrame(columns=["A", "B"])
         msg = r"rename\(\) takes from 1 to 2 positional arguments"
@@ -333,6 +372,8 @@ class TestRename:
             df.rename(None, str.lower)
 
     def test_rename_no_mappings_raises(self):
+        # [FUNCTION DOC]
+        # GH 29136. Verifies calls with no mapping at all (nothing given, or only none values for mapper, index or columns) raise a type error saying an index must be passed to rename.
         # GH 29136
         df = DataFrame([[1]])
         msg = "must pass an index to rename"
@@ -349,6 +390,8 @@ class TestRename:
             df.rename(None, columns=None, index=None)
 
     def test_rename_mapper_and_positional_arguments_raises(self):
+        # [FUNCTION DOC]
+        # GH 29136. Verifies a positional mapper together with the index or columns keyword raises a type error about specifying both mapper and index or columns.
         # GH 29136
         df = DataFrame([[1]])
         msg = "Cannot specify both 'mapper' and any of 'index' or 'columns'"
@@ -362,6 +405,8 @@ class TestRename:
             df.rename({}, columns={}, index={})
 
     def test_rename_with_duplicate_columns(self):
+        # [FUNCTION DOC]
+        # GH#4403. Merges two frames to obtain duplicated column names with suffixes, then renames the suffixed labels. Verifies the result has the expected unique columns and index (the test notes a TODO to construct the merged frame without the merge).
         # GH#4403
         df4 = DataFrame(
             {"RT": [0.0454], "TClose": [22.02], "TExg": [0.0422]},
@@ -401,6 +446,8 @@ class TestRename:
         tm.assert_frame_equal(result, expected)
 
     def test_rename_boolean_index(self):
+        # [FUNCTION DOC]
+        # Frame with boolean and integer column labels. Verifies renaming the index with an integer-key dict works and does not confuse the boolean column labels.
         df = DataFrame(np.arange(15).reshape(3, 5), columns=[False, True, 2, 3, 4])
         mapper = {0: "foo", 1: "bar", 2: "bah"}
         res = df.rename(index=mapper)
@@ -412,6 +459,8 @@ class TestRename:
         tm.assert_frame_equal(res, exp)
 
     def test_rename_non_unique_index_series(self):
+        # [FUNCTION DOC]
+        # GH#58621. Verifies rename with a series mapper that has a non-unique index raises a value error about non-unique index, for the frame (positional, columns keyword, inplace) and for a row series (positional, index keyword, inplace), and leaves the originals unchanged.
         # GH#58621
         df = DataFrame({"A": [1, 2, 3], "B": [4, 5, 6], "C": [7, 8, 9]})
         orig = df.copy(deep=True)
