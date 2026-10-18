@@ -1,6 +1,11 @@
 """
 Series.__getitem__ test classes are organized by the type of key passed.
 """
+# [MODULE DOC]
+# Tests for Series direct indexing (get item), organized in classes by the kind of key:
+# scalars, slices, list-likes, boolean masks and callables, followed by module-level
+# tests for generators, unsupported keys, name preservation and duplicate labels. As of
+# version 3.0 integer keys are always treated as labels, never as positions.
 
 from datetime import (
     date,
@@ -39,13 +44,22 @@ from pandas.tseries.offsets import BDay
 
 
 class TestSeriesGetitemScalars:
+    # [CLASS DOC]
+    # Groups getitem tests that pass a scalar key. Stateless.
     def test_getitem_object_index_float_string(self):
+        # [FUNCTION DOC]
+        # Regression test (GH 17286). On a mixed object index with a string and float
+        # labels, both a string key and the float key one find the element.
         # GH#17286
         ser = Series([1] * 4, index=Index(["a", "b", "c", 1.0]))
         assert ser["a"] == 1
         assert ser[1.0] == 1
 
     def test_getitem_float_keys_tuple_values(self):
+        # [FUNCTION DOC]
+        # Regression test (GH 13509). With tuple values, a unique float index returns
+        # the tuple; a non-unique index with duplicate float labels returns a series of
+        # both tuples with name kept.
         # see GH#13509
 
         # unique Index
@@ -61,6 +75,9 @@ class TestSeriesGetitemScalars:
         tm.assert_series_equal(result, expected)
 
     def test_getitem_unrecognized_scalar(self):
+        # [FUNCTION DOC]
+        # Regression test (GH 32684). Using a dtype object as a label (index built from
+        # numpy dtypes) works as a scalar key.
         # GH#32684 a scalar key that is not recognized by lib.is_scalar
 
         # a series that might be produced via `frame.dtypes`
@@ -72,18 +89,29 @@ class TestSeriesGetitemScalars:
         assert result == 2
 
     def test_getitem_negative_out_of_bounds(self):
+        # [FUNCTION DOC]
+        # Verifies a negative out-of-range integer key on a string index raises a key
+        # error with the key.
         ser = Series(["a"] * 10, index=["a"] * 10)
 
         with pytest.raises(KeyError, match="^-11$"):
             ser[-11]
 
     def test_getitem_out_of_bounds_indexerror(self, datetime_series):
+        # [FUNCTION DOC]
+        # Regression test (GH 495). An integer key equal to the length of a
+        # datetime-indexed series raises a key error (not a crash or index error).
+        # KNOWN ISSUE: the test name mentions an index error but the test expects a key
+        # error.
         # don't segfault, GH#495
         N = len(datetime_series)
         with pytest.raises(KeyError, match=str(N)):
             datetime_series[N]
 
     def test_getitem_out_of_bounds_empty_rangeindex_keyerror(self):
+        # [FUNCTION DOC]
+        # Regression test (GH 917). Looking up minus one in an empty object series
+        # raises a key error.
         # GH#917
         # With a RangeIndex, an int key gives a KeyError
         ser = Series([], dtype=object)
@@ -91,6 +119,10 @@ class TestSeriesGetitemScalars:
             ser[-1]
 
     def test_getitem_keyerror_with_integer_index(self, any_int_numpy_dtype):
+        # [FUNCTION DOC]
+        # Parametrized over integer dtypes. Missing integer or string keys raise key
+        # errors with the key as message, for a sorted-duplicate and an unsorted integer
+        # index.
         dtype = any_int_numpy_dtype
         ser = Series(
             np.random.default_rng(2).standard_normal(6),
@@ -115,6 +147,10 @@ class TestSeriesGetitemScalars:
             ser["c"]
 
     def test_getitem_int64(self, datetime_series):
+        # [FUNCTION DOC]
+        # Verifies a numpy int64 key that is not in a datetime index raises a key error;
+        # the expected message includes the numpy scalar wrapper repr for numpy 2 and
+        # later, and plain number otherwise.
         if np_version_gt2:
             msg = r"^np.int64\(5\)$"
         else:
@@ -124,6 +160,8 @@ class TestSeriesGetitemScalars:
             datetime_series[idx]
 
     def test_getitem_full_range(self):
+        # [FUNCTION DOC]
+        # Verifies selecting by a list of all labels returns the full series unchanged.
         # github.com/pandas-dev/pandas/commit/4f433773141d2eb384325714a2776bcc5b2e20f7
         ser = Series(range(5), index=list(range(5)))
         result = ser[list(range(5))]
@@ -134,6 +172,10 @@ class TestSeriesGetitemScalars:
 
     @pytest.mark.parametrize("tzstr", ["Europe/Berlin", "dateutil/Europe/Berlin"])
     def test_getitem_pydatetime_tz(self, tzstr):
+        # [FUNCTION DOC]
+        # Parametrized over a pytz-style and a dateutil timezone string. A series
+        # indexed by Berlin timestamps returns the same value for a pandas Timestamp key
+        # and for a localized python datetime key.
         tz = timezones.maybe_get_tz(tzstr)
 
         index = date_range(
@@ -148,6 +190,9 @@ class TestSeriesGetitemScalars:
 
     @pytest.mark.parametrize("tz", ["US/Eastern", "dateutil/US/Eastern"])
     def test_string_index_alias_tz_aware(self, tz):
+        # [FUNCTION DOC]
+        # Parametrized over two Eastern timezone spellings. A date string without
+        # timezone selects the matching element of a tz-aware daily index.
         rng = date_range("1/1/2000", periods=10, tz=tz)
         ser = Series(np.random.default_rng(2).standard_normal(len(rng)), index=rng)
 
@@ -155,6 +200,9 @@ class TestSeriesGetitemScalars:
         tm.assert_almost_equal(result, ser.iloc[2])
 
     def test_getitem_time_object(self):
+        # [FUNCTION DOC]
+        # Verifies a time-of-day key selects all rows at that time, equal to boolean
+        # selection with the index frequency removed.
         rng = date_range("1/1/2000", "1/5/2000", freq="5min")
         ts = Series(np.random.default_rng(2).standard_normal(len(rng)), index=rng)
 
@@ -168,6 +216,9 @@ class TestSeriesGetitemScalars:
     # Series with CategoricalIndex
 
     def test_getitem_scalar_categorical_index(self):
+        # [FUNCTION DOC]
+        # Verifies a categorical index holding timestamps can be indexed with one of its
+        # categorical elements.
         cats = Categorical([Timestamp("12-31-1999"), Timestamp("12-31-2000")])
 
         ser = Series([1, 2], index=cats)
@@ -177,6 +228,10 @@ class TestSeriesGetitemScalars:
         assert result == expected
 
     def test_getitem_numeric_categorical_listlike_matches_scalar(self):
+        # [FUNCTION DOC]
+        # Regression test (GH 15470). On a numeric categorical index, an integer key is
+        # a label (not position), and the list-like analogues also use labels, giving
+        # the expected reversed selections.
         # GH#15470
         ser = Series(["a", "b", "c"], index=pd.CategoricalIndex([2, 1, 0]))
 
@@ -192,12 +247,19 @@ class TestSeriesGetitemScalars:
         tm.assert_series_equal(res2, ser.iloc[::-1])
 
     def test_getitem_integer_categorical_not_positional(self):
+        # [FUNCTION DOC]
+        # Regression test (GH 14865). With an integer categorical index, both get and
+        # direct indexing by label return the element, not by position.
         # GH#14865
         ser = Series(["a", "b", "c"], index=Index([1, 2, 3], dtype="category"))
         assert ser.get(3) == "c"
         assert ser[3] == "c"
 
     def test_getitem_str_with_timedeltaindex(self):
+        # [FUNCTION DOC]
+        # Verifies string keys on a timedelta index: the full string finds the position
+        # (133 for the given string), a missing string raises a key error with the
+        # timedelta repr for both the index lookup and the series.
         rng = timedelta_range("1 day 10:11:12", freq="h", periods=500)
         ser = Series(np.arange(len(rng)), index=rng)
 
@@ -215,6 +277,9 @@ class TestSeriesGetitemScalars:
             ser["50 days"]
 
     def test_getitem_bool_index_positional(self):
+        # [FUNCTION DOC]
+        # Regression test (GH 48653). For a series indexed by booleans, an integer key
+        # zero raises a key error.
         # GH#48653
         ser = Series({True: 1, False: 0})
         with pytest.raises(KeyError, match="^0$"):
@@ -222,7 +287,12 @@ class TestSeriesGetitemScalars:
 
 
 class TestSeriesGetitemSlices:
+    # [CLASS DOC]
+    # Groups getitem tests with slice keys. Stateless.
     def test_getitem_partial_str_slice_with_datetimeindex(self):
+        # [FUNCTION DOC]
+        # Regression test (GH 34860). A year string selects all entries of that year
+        # from a daily datetime-indexed series.
         # GH#34860
         arr = date_range("1/1/2008", "1/1/2009")
         ser = arr.to_series()
@@ -234,6 +304,9 @@ class TestSeriesGetitemSlices:
         tm.assert_series_equal(result, expected)
 
     def test_getitem_slice_strings_with_datetimeindex(self):
+        # [FUNCTION DOC]
+        # Verifies string slice bounds with a duplicate in the datetime index:
+        # open-ended and closed ranges include both duplicates.
         idx = DatetimeIndex(
             ["1/1/2000", "1/2/2000", "1/2/2000", "1/3/2000", "1/4/2000"]
         )
@@ -249,6 +322,9 @@ class TestSeriesGetitemSlices:
         tm.assert_series_equal(result, expected)
 
     def test_getitem_partial_str_slice_with_timedeltaindex(self):
+        # [FUNCTION DOC]
+        # Verifies partial string slices on a timedelta index (days only, open ends)
+        # equal the corresponding positional slices.
         rng = timedelta_range("1 day 10:11:12", freq="h", periods=500)
         ser = Series(np.arange(len(rng)), index=rng)
 
@@ -265,6 +341,9 @@ class TestSeriesGetitemSlices:
         tm.assert_series_equal(result, expected)
 
     def test_getitem_partial_str_slice_high_reso_with_timedeltaindex(self):
+        # [FUNCTION DOC]
+        # Verifies string slices and a scalar string key with microsecond-level
+        # resolution on a microsecond-frequency timedelta index.
         # higher reso
         rng = timedelta_range("1 day 10:11:12", freq="us", periods=2000)
         ser = Series(np.arange(len(rng)), index=rng)
@@ -281,11 +360,17 @@ class TestSeriesGetitemSlices:
         assert result == ser.iloc[1001]
 
     def test_getitem_slice_2d(self, datetime_series):
+        # [FUNCTION DOC]
+        # Regression test (GH 30588). Indexing with a slice and a new axis raises a
+        # value error about multi-dimensional indexing.
         # GH#30588 multi-dimensional indexing deprecated
         with pytest.raises(ValueError, match="Multi-dimensional indexing"):
             datetime_series[:, np.newaxis]
 
     def test_getitem_median_slice_bug(self):
+        # [FUNCTION DOC]
+        # Verifies a one-item list containing a slice raises a value error (GH 31299)
+        # while a one-element tuple with the slice equals the slice.
         index = date_range("20090415", "20090519", freq="2B")
         ser = Series(np.random.default_rng(2).standard_normal(13), index=index)
 
@@ -310,6 +395,10 @@ class TestSeriesGetitemSlices:
         ],
     )
     def test_getitem_slice_date(self, slc, positions):
+        # [FUNCTION DOC]
+        # Parametrized over date-object slices and the expected positions. Slicing a
+        # datetime-indexed series with python date objects emits a Pandas4 deprecation
+        # warning and selects the expected elements.
         # https://github.com/pandas-dev/pandas/issues/31501
         ser = Series(
             [0, 1, 2],
@@ -322,6 +411,10 @@ class TestSeriesGetitemSlices:
         tm.assert_series_equal(result, expected)
 
     def test_getitem_slice_float_raises(self, datetime_series):
+        # [FUNCTION DOC]
+        # Verifies a float slice on a datetime index raises a type error saying slice
+        # indexing is not possible with floats, with the offending bound in the message
+        # (whole and fractional).
         msg = (
             "cannot do slice indexing on DatetimeIndex with these indexers "
             r"\[{key}\] of type float"
@@ -333,6 +426,10 @@ class TestSeriesGetitemSlices:
             datetime_series[4.5:10.0]
 
     def test_getitem_slice_bug(self):
+        # [FUNCTION DOC]
+        # Verifies out-of-range negative slice bounds clamp: start beyond the length
+        # gives the whole series, a negative start of seven gives the last three, a stop
+        # beyond the beginning gives empty.
         ser = Series(range(10), index=list(range(10)))
         result = ser[-12:]
         tm.assert_series_equal(result, ser)
@@ -344,6 +441,9 @@ class TestSeriesGetitemSlices:
         tm.assert_series_equal(result, ser[:0])
 
     def test_getitem_slice_integers(self):
+        # [FUNCTION DOC]
+        # Verifies a positional slice on an even-integer index selects the first four
+        # rows (integer slice bounds are positional for slices).
         ser = Series(
             np.random.default_rng(2).standard_normal(8),
             index=[2, 4, 6, 8, 10, 12, 14, 16],
@@ -355,8 +455,14 @@ class TestSeriesGetitemSlices:
 
 
 class TestSeriesGetitemListLike:
+    # [CLASS DOC]
+    # Groups getitem tests with list-like keys. Stateless.
     @pytest.mark.parametrize("box", [list, np.array, Index, Series])
     def test_getitem_no_matches(self, box):
+        # [FUNCTION DOC]
+        # Regression test (GH 33462). Parametrized over list, array, index and series
+        # keys. A key with no matches raises a key error saying none of the labels are
+        # in the index.
         # GH#33462 we expect the same behavior for list/ndarray/Index/Series
         ser = Series(["A", "B"])
 
@@ -368,6 +474,9 @@ class TestSeriesGetitemListLike:
             ser[key]
 
     def test_getitem_intlist_intindex_periodvalues(self):
+        # [FUNCTION DOC]
+        # Verifies selecting from a period series by an integer list returns those
+        # labels with period dtype retained.
         ser = Series(period_range("2000-01-01", periods=10, freq="D"))
 
         result = ser[[2, 4]]
@@ -381,6 +490,10 @@ class TestSeriesGetitemListLike:
 
     @pytest.mark.parametrize("box", [list, np.array, Index])
     def test_getitem_intlist_intervalindex_non_int(self, box):
+        # [FUNCTION DOC]
+        # Regression test (GH 33404). Parametrized over list, array and index. Integer
+        # list keys on an interval index of timestamps raise a key error saying none are
+        # in the index (no positional fallback as of 3.0).
         # GH#33404 fall back to positional since ints are unambiguous;
         #  changed in 3.0 to never fallback
         dti = date_range("2000-01-03", periods=3)._with_freq(None)
@@ -395,6 +508,10 @@ class TestSeriesGetitemListLike:
     @pytest.mark.parametrize("box", [list, np.array, Index])
     @pytest.mark.parametrize("dtype", [np.int64, np.float64, np.uint64])
     def test_getitem_intlist_multiindex_numeric_level(self, dtype, box):
+        # [FUNCTION DOC]
+        # Regression test (GH 33404). Parametrized over container and numeric dtypes.
+        # Integer keys on a multi-index with a numeric first level that are missing
+        # raise a key error (no positional fallback).
         # GH#33404 do _not_ fall back to positional since ints are ambiguous
         idx = Index(range(4)).astype(dtype)
         dti = date_range("2000-01-03", periods=3)
@@ -406,6 +523,10 @@ class TestSeriesGetitemListLike:
             ser[key]
 
     def test_getitem_uint_array_key(self, any_unsigned_int_numpy_dtype):
+        # [FUNCTION DOC]
+        # Regression test (GH 37218). Parametrized over unsigned integer dtypes. An
+        # array key of unsigned integers that are not in the index raises a key error
+        # for both direct indexing and loc.
         # GH #37218
         ser = Series([1, 2, 3])
         key = np.array([4], dtype=any_unsigned_int_numpy_dtype)
@@ -417,7 +538,12 @@ class TestSeriesGetitemListLike:
 
 
 class TestGetitemBooleanMask:
+    # [CLASS DOC]
+    # Groups getitem tests with boolean mask keys. Stateless.
     def test_getitem_boolean(self, string_series):
+        # [FUNCTION DOC]
+        # Verifies a boolean list gives the same selection as the boolean series, and
+        # the resulting index equals the masked index.
         ser = string_series
         mask = ser > ser.median()
 
@@ -428,6 +554,11 @@ class TestGetitemBooleanMask:
         tm.assert_index_equal(result.index, ser.index[mask])
 
     def test_getitem_boolean_empty(self):
+        # [FUNCTION DOC]
+        # Verifies an empty mask on an integer series keeps the index name and dtype; an
+        # empty object series as a key gives an empty series with an integer index (GH
+        # 5877); an empty boolean series or a boolean series of length one that does not
+        # align raises an indexing error about an unalignable boolean series.
         ser = Series([], dtype=np.int64)
         ser.index.name = "index_name"
         ser = ser[ser.isna()]
@@ -454,6 +585,12 @@ class TestGetitemBooleanMask:
             ser[Series([True], dtype=bool)]
 
     def test_getitem_boolean_object(self, string_series):
+        # [FUNCTION DOC]
+        # Verifies an object-dtype boolean mask works for get and set the same as a
+        # boolean mask; a mask containing NaN raises a value error about NA values in
+        # the mask, for get and set.
+        # KNOWN ISSUE: the comment about using a column from a frame is stale; the
+        # series comes from a fixture.
         # using column from DataFrame
 
         ser = string_series
@@ -481,6 +618,10 @@ class TestGetitemBooleanMask:
             ser[omask] = 5
 
     def test_getitem_boolean_dt64_copies(self):
+        # [FUNCTION DOC]
+        # Regression test (GH 36210). Boolean selection of a tz-aware array-backed
+        # series returns a copy that does not share base memory, consistent with the
+        # numeric case.
         # GH#36210
         dti = date_range("2016-01-01", periods=4, tz="US/Pacific")
         key = np.array([True, True, False, False])
@@ -496,6 +637,10 @@ class TestGetitemBooleanMask:
         assert res2._values.base is None
 
     def test_getitem_boolean_corner(self, datetime_series):
+        # [FUNCTION DOC]
+        # Verifies a boolean series that is shifted so its index does not match raises
+        # an indexing error about unalignable boolean series for direct indexing and
+        # loc.
         ts = datetime_series
         mask_shifted = ts.shift(1, freq=BDay()) > ts.median()
 
@@ -510,6 +655,10 @@ class TestGetitemBooleanMask:
             ts.loc[mask_shifted]
 
     def test_getitem_boolean_different_order(self, string_series):
+        # [FUNCTION DOC]
+        # Verifies selecting by a boolean series that was computed from a sorted version
+        # of the data (a different order) aligns and gives the same selection as the
+        # original-order mask.
         ordered = string_series.sort_values()
 
         sel = string_series[ordered > 0]
@@ -517,6 +666,9 @@ class TestGetitemBooleanMask:
         tm.assert_series_equal(sel, exp)
 
     def test_getitem_boolean_contiguous_preserve_freq(self):
+        # [FUNCTION DOC]
+        # Verifies boolean masks on a business-day datetime index: a contiguous block
+        # keeps the frequency, a non-contiguous mask drops it.
         rng = date_range("1/1/2000", "3/1/2000", freq="B")
 
         mask = np.zeros(len(rng), dtype=bool)
@@ -533,7 +685,13 @@ class TestGetitemBooleanMask:
 
 
 class TestGetitemCallable:
+    # [CLASS DOC]
+    # Groups getitem tests that pass a callable. Stateless.
     def test_getitem_callable(self):
+        # [FUNCTION DOC]
+        # Regression test (GH 12533). A function key that returns a label, a list of
+        # labels or a boolean list is evaluated with the series and the result used as
+        # the key.
         # GH#12533
         ser = Series(4, index=list("ABCD"))
         result = ser[lambda x: "A"]
@@ -549,6 +707,9 @@ class TestGetitemCallable:
 
 
 def test_getitem_generator(string_series):
+    # [FUNCTION DOC]
+    # Verifies indexing by a generator of booleans and by an iterator of booleans
+    # selects the same as the equivalent boolean series.
     gen = (x > 0 for x in string_series)
     result = string_series[gen]
     result2 = string_series[iter(string_series > 0)]
@@ -566,6 +727,10 @@ def test_getitem_generator(string_series):
     ],
 )
 def test_getitem_ndim_deprecated(data):
+    # [FUNCTION DOC]
+    # Parametrized over integer, datetime and tz-aware datetime data. Indexing with a
+    # slice and a new axis raises a value error about multi-dimensional indexing.
+    # KNOWN ISSUE: the name says deprecated but the behavior is an error.
     series = Series(data)
     with pytest.raises(ValueError, match="Multi-dimensional indexing"):
         series[:, None]
@@ -574,6 +739,9 @@ def test_getitem_ndim_deprecated(data):
 def test_getitem_multilevel_scalar_slice_not_implemented(
     multiindex_year_month_day_dataframe_random_data,
 ):
+    # [FUNCTION DOC]
+    # Verifies a tuple of a scalar and a slice on a multi-index series is not
+    # implemented and raises a type error mentioning the key.
     # not implementing this for now
     df = multiindex_year_month_day_dataframe_random_data
     ser = df["A"]
@@ -584,6 +752,9 @@ def test_getitem_multilevel_scalar_slice_not_implemented(
 
 
 def test_getitem_dataframe_raises():
+    # [FUNCTION DOC]
+    # Verifies indexing a series with a frame raises a type error saying this is not
+    # supported and suggesting a column.
     rng = list(range(10))
     ser = Series(10, index=rng)
     df = DataFrame(rng, index=rng)
@@ -596,6 +767,9 @@ def test_getitem_dataframe_raises():
 
 
 def test_getitem_assignment_series_alignment():
+    # [FUNCTION DOC]
+    # Regression test for issue 37427. Assigning a series through an integer array key
+    # writes the values by position and does not align the series first.
     # https://github.com/pandas-dev/pandas/issues/37427
     # with getitem, when assigning with a Series, it is not first aligned
     ser = Series(range(10))
@@ -606,6 +780,9 @@ def test_getitem_assignment_series_alignment():
 
 
 def test_getitem_duplicate_index_mistyped_key_raises_keyerror():
+    # [FUNCTION DOC]
+    # Regression test (GH 29189). On a float index with duplicates, none as a key raises
+    # a key error, as does the index lookup and the engine lookup.
     # GH#29189 float_index.get_loc(None) should raise KeyError, not TypeError
     ser = Series([2, 5, 6, 8], index=[2.0, 4.0, 4.0, 5.0])
     with pytest.raises(KeyError, match="None"):
@@ -619,6 +796,9 @@ def test_getitem_duplicate_index_mistyped_key_raises_keyerror():
 
 
 def test_getitem_1tuple_slice_without_multiindex():
+    # [FUNCTION DOC]
+    # Verifies a one-element tuple containing a slice on a non-multi-index series equals
+    # the slice.
     ser = Series(range(5))
     key = (slice(3),)
 
@@ -628,6 +808,8 @@ def test_getitem_1tuple_slice_without_multiindex():
 
 
 def test_getitem_preserve_name(datetime_series):
+    # [FUNCTION DOC]
+    # Verifies the series name is kept by boolean and slice selection.
     result = datetime_series[datetime_series > 0]
     assert result.name == datetime_series.name
 
@@ -636,6 +818,9 @@ def test_getitem_preserve_name(datetime_series):
 
 
 def test_getitem_with_integer_labels():
+    # [FUNCTION DOC]
+    # Verifies integer lists and arrays with labels missing from an even-integer index
+    # raise a key error mentioning that labels are not in the index.
     # integer indexes, be careful
     ser = Series(
         np.random.default_rng(2).standard_normal(10), index=list(range(0, 20, 2))
@@ -650,6 +835,9 @@ def test_getitem_with_integer_labels():
 
 
 def test_getitem_missing(datetime_series):
+    # [FUNCTION DOC]
+    # Verifies looking up a date before the first business day raises a key error with
+    # the timestamp repr.
     # missing
     d = datetime_series.index[0] - BDay()
     msg = r"Timestamp\('1999-12-31 00:00:00'\)"
@@ -658,6 +846,9 @@ def test_getitem_missing(datetime_series):
 
 
 def test_getitem_fancy(string_series, object_series):
+    # [FUNCTION DOC]
+    # Verifies list keys of integers on string and object-indexed series raise a key
+    # error saying none of the labels are in the index.
     msg = r"None of \[Index\(\[1, 2, 3\], dtype='int(32|64)'\)\] are in the \[index\]"
     with pytest.raises(KeyError, match=msg):
         string_series[[1, 2, 3]]
@@ -666,17 +857,26 @@ def test_getitem_fancy(string_series, object_series):
 
 
 def test_getitem_box_float64(datetime_series):
+    # [FUNCTION DOC]
+    # Verifies an integer key on a float-valued datetime-indexed series raises a key
+    # error.
+    # KNOWN ISSUE: the name refers to float boxing but the test only checks for a key
+    # error.
     with pytest.raises(KeyError, match="^5$"):
         datetime_series[5]
 
 
 def test_getitem_unordered_dup():
+    # [FUNCTION DOC]
+    # Verifies a unique label in an unordered duplicated string index returns a scalar.
     obj = Series(range(5), index=["c", "a", "a", "b", "b"])
     assert is_scalar(obj["c"])
     assert obj["c"] == 0
 
 
 def test_getitem_dups():
+    # [FUNCTION DOC]
+    # Verifies a duplicated label returns a series of both entries preserving dtype.
     ser = Series(range(5), index=["A", "A", "B", "C", "C"], dtype=np.int64)
     expected = Series([3, 4], index=["C", "C"], dtype=np.int64)
     result = ser["C"]
@@ -684,6 +884,9 @@ def test_getitem_dups():
 
 
 def test_getitem_categorical_str():
+    # [FUNCTION DOC]
+    # Regression test (GH 31765). A string key on a categorical index returns the
+    # matching positions.
     # GH#31765
     ser = Series(range(5), index=Categorical(["a", "b", "c", "a", "b"]))
     result = ser["a"]
@@ -692,12 +895,18 @@ def test_getitem_categorical_str():
 
 
 def test_slice_can_reorder_not_uniquely_indexed():
+    # [FUNCTION DOC]
+    # Verifies reversing a non-unique index by slice with step works (no check of the
+    # result).
     ser = Series(1, index=["a", "a", "b", "b", "c"])
     ser[::-1]  # it works!
 
 
 @pytest.mark.parametrize("index_vals", ["aabcd", "aadcb"])
 def test_duplicated_index_getitem_positional_indexer(index_vals):
+    # [FUNCTION DOC]
+    # Regression test (GH 11747). Parametrized over index orderings. An integer key on a
+    # duplicated string index raises a key error (integers are labels as of 3.0).
     # GH 11747; changed in 3.0 integers are treated as always-labels
     s = Series(range(5), index=list(index_vals))
 
@@ -706,8 +915,15 @@ def test_duplicated_index_getitem_positional_indexer(index_vals):
 
 
 class TestGetitemDeprecatedIndexers:
+    # [CLASS DOC]
+    # Groups tests of rejected dict and set keys in getitem and setitem (formerly
+    # deprecated, enforced since 2.0). Stateless.
     @pytest.mark.parametrize("key", [{1}, {1: 1}])
     def test_getitem_dict_and_set_deprecated(self, key):
+        # [FUNCTION DOC]
+        # Regression test (GH 42825). Parametrized over a set and a dict. Indexing a
+        # series with such a key raises a type error saying it is not supported.
+        # KNOWN ISSUE: the name says deprecated but the behavior is an error.
         # GH#42825 enforced in 2.0
         ser = Series([1, 2, 3])
         with pytest.raises(TypeError, match="as an indexer is not supported"):
@@ -715,6 +931,9 @@ class TestGetitemDeprecatedIndexers:
 
     @pytest.mark.parametrize("key", [{1}, {1: 1}])
     def test_setitem_dict_and_set_disallowed(self, key):
+        # [FUNCTION DOC]
+        # Regression test (GH 42825). Setting with a set or dict key raises a type error
+        # saying it is not supported.
         # GH#42825 enforced in 2.0
         ser = Series([1, 2, 3])
         with pytest.raises(TypeError, match="as an indexer is not supported"):

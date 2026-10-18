@@ -1,4 +1,12 @@
 """test the scalar Timestamp"""
+# [MODULE DOC]
+# General tests of the scalar Timestamp: calendar properties, timezone attributes,
+# class-level constructors, nanosecond handling, conversions, hashing, and a block of
+# tests for non-nanosecond resolutions (seconds, milliseconds, microseconds) that
+# compare against the nanosecond implementation. Also has module-level tests of
+# class-level min/max/resolution, delimited date parsing, the UTC time tuple and
+# unsupported calls for negative years. Some tests rely on hypothesis and locale
+# support.
 
 import calendar
 from datetime import (
@@ -48,7 +56,16 @@ from pandas.tseries.frequencies import to_offset
 
 
 class TestTimestampProperties:
+    # [CLASS DOC]
+    # Groups tests of Timestamp calendar and field properties. Stateless.
     def test_properties_business(self):
+        # [FUNCTION DOC]
+        # Verifies business-day frequency checks of month/quarter start and end against
+        # Timestamp properties. For a Sunday on 2017-10-01 the Timestamp says month
+        # start and day of week six while the business offset does not (it does one day
+        # later, as it does for the quarter start); for Saturday 2017-09-30 (day of week
+        # five) the Timestamp says month end and quarter end while the business offset
+        # says so one day earlier.
         freq = to_offset("B")
 
         ts = Timestamp("2017-10-01")
@@ -92,6 +109,11 @@ class TestTimestampProperties:
     )
     @pytest.mark.parametrize("tz", [None, "US/Eastern"])
     def test_fields(self, attr, expected, tz):
+        # [FUNCTION DOC]
+        # GH 10050, GH 13303. Parametrized over a field name with the expected value and
+        # over naive or US/Eastern timezone, for 2014-12-31 23:59. Each field (year
+        # through week and days in month, including aliases of day of week and day of
+        # year) is a plain int equal to the expected value.
         # GH 10050
         # GH 13303
         ts = Timestamp("2014-12-31 23:59:00", tz=tz)
@@ -102,6 +124,9 @@ class TestTimestampProperties:
 
     @pytest.mark.parametrize("tz", [None, "US/Eastern"])
     def test_millisecond_raises(self, tz):
+        # [FUNCTION DOC]
+        # Parametrized over naive or US/Eastern. Accessing a millisecond attribute
+        # raises an attribute error saying Timestamp has no such attribute.
         ts = Timestamp("2014-12-31 23:59:00", tz=tz)
         msg = "'Timestamp' object has no attribute 'millisecond'"
         with pytest.raises(AttributeError, match=msg):
@@ -112,12 +137,18 @@ class TestTimestampProperties:
     )
     @pytest.mark.parametrize("tz", [None, "US/Eastern"])
     def test_is_start(self, start, tz):
+        # [FUNCTION DOC]
+        # Parametrized over start property names (month, quarter, year) and timezone.
+        # For 2014-01-01 midnight the property is true.
         ts = Timestamp("2014-01-01 00:00:00", tz=tz)
         assert getattr(ts, start)
 
     @pytest.mark.parametrize("end", ["is_month_end", "is_year_end", "is_quarter_end"])
     @pytest.mark.parametrize("tz", [None, "US/Eastern"])
     def test_is_end(self, end, tz):
+        # [FUNCTION DOC]
+        # Parametrized over end property names (month, year, quarter) and timezone. For
+        # 2014-12-31 23:59:59 the property is true.
         ts = Timestamp("2014-12-31 23:59:59", tz=tz)
         assert getattr(ts, end)
 
@@ -128,6 +159,13 @@ class TestTimestampProperties:
         [None, *tm.get_locales()],
     )
     def test_names(self, tz, time_locale):
+        # [FUNCTION DOC]
+        # GH 12806, GH 17354. Parametrized over timezone (none or EST) and over none
+        # plus all locales available on the machine. The day name and month name methods
+        # with that locale equal the weekday and month from the calendar module for
+        # Monday 2017-08-28, compared after Unicode normalization (to avoid GH 22342
+        # differences); for NaT both methods return NaN. With no locale, the English
+        # names are expected.
         # GH 17354
         # Test .day_name(), .month_name
         data = Timestamp("2017-08-28 23:00:00", tz=tz)
@@ -159,6 +197,10 @@ class TestTimestampProperties:
         assert np.isnan(nan_ts.month_name(time_locale))
 
     def test_is_leap_year(self, tz_naive_fixture):
+        # [FUNCTION DOC]
+        # GH 13727. Over the timezone fixture; skipped for the local timezone on 32-bit
+        # platforms (overflow). The leap year property is a bool and is true for 2000
+        # and 2004 and false for 1999 and 2100.
         tz = tz_naive_fixture
         if not IS64 and tz == tzlocal():
             # https://github.com/dateutil/dateutil/issues/197
@@ -180,6 +222,10 @@ class TestTimestampProperties:
         assert not dt.is_leap_year
 
     def test_woy_boundary(self):
+        # [FUNCTION DOC]
+        # Verifies ISO week numbers at year boundaries: several single dates (end of
+        # 2013, end of 2008, end of 2009, start of 2010) and an array of four dates in
+        # 2000 and 2005 giving 52, 52, 53, 53.
         # make sure weeks at year boundaries are correct
         d = datetime(2013, 12, 31)
         result = Timestamp(d).week
@@ -215,6 +261,10 @@ class TestTimestampProperties:
         assert (result == [52, 52, 53, 53]).all()
 
     def test_resolution(self):
+        # [FUNCTION DOC]
+        # GH 21336, GH 21365. The resolution property of a nanosecond timestamp is one
+        # nanosecond and is also available on the class; converted to microsecond,
+        # millisecond and second units it equals one of that unit.
         # GH#21336, GH#21365
         dt = Timestamp("2100-01-01 00:00:00.000000000")
         assert dt.resolution == Timedelta(nanoseconds=1)
@@ -238,6 +288,9 @@ class TestTimestampProperties:
         ],
     )
     def test_dow_historic(self, date_string, expected):
+        # [FUNCTION DOC]
+        # GH 53738. Parametrized over date strings from year zero through 2023. The
+        # weekday method gives the expected number (Monday is zero).
         # GH 53738
         ts = Timestamp(date_string)
         dow = ts.weekday()
@@ -249,6 +302,11 @@ class TestTimestampProperties:
         sign=st.sampled_from(["-", ""]),
     )
     def test_dow_parametric(self, ts, sign):
+        # [FUNCTION DOC]
+        # GH 53738. Slow hypothesis test over any datetime and an optional minus sign.
+        # The date is formatted as a zero-padded year-month-day string, possibly
+        # negative, and the weekday method must equal the result from numpy date
+        # arithmetic relative to 1970-01-01 (a Thursday) using modulo seven.
         # GH 53738
         ts = (
             f"{sign}{str(ts.year).zfill(4)}"
@@ -263,8 +321,15 @@ class TestTimestampProperties:
 
 
 class TestTimestamp:
+    # [CLASS DOC]
+    # Groups general tests of Timestamp behavior (timezone setting, class methods,
+    # nanoseconds, hashing). Stateless.
     @pytest.mark.parametrize("tz", [None, zoneinfo.ZoneInfo("US/Pacific")])
     def test_disallow_setting_tz(self, tz):
+        # [FUNCTION DOC]
+        # GH 3746. Parametrized over no timezone and a zoneinfo timezone. Assigning the
+        # timezone attribute raises an attribute error saying the timezone cannot be set
+        # directly.
         # GH#3746
         ts = Timestamp("2010")
         msg = "Cannot directly set timezone"
@@ -272,6 +337,10 @@ class TestTimestamp:
             ts.tz = tz
 
     def test_default_to_stdlib_utc(self):
+        # [FUNCTION DOC]
+        # Verifies the default UTC object is the standard library UTC: the deprecated
+        # utc now method (emits a Pandas4 warning), now with the string UTC, and
+        # construction with the string UTC all give the standard library singleton.
         msg = "Timestamp.utcnow is deprecated"
         with tm.assert_produces_warning(Pandas4Warning, match=msg):
             assert Timestamp.utcnow().tz is timezone.utc
@@ -279,6 +348,9 @@ class TestTimestamp:
         assert Timestamp("2016-01-01", tz="UTC").tz is timezone.utc
 
     def test_tz(self):
+        # [FUNCTION DOC]
+        # Verifies localizing 09:00 to Tokyo keeps hour 9, converting to US/Eastern
+        # gives 19:00 the previous day; also nanoseconds survive both operations.
         tstr = "2014-02-01 09:00"
         ts = Timestamp(tstr)
         local = ts.tz_localize("Asia/Tokyo")
@@ -298,9 +370,14 @@ class TestTimestamp:
         assert conv.hour == 19
 
     def test_utc_z_designator(self):
+        # [FUNCTION DOC]
+        # Verifies a string ending in Z yields the standard library UTC as the timezone.
         assert get_timezone(Timestamp("2014-11-02 01:00Z").tzinfo) is timezone.utc
 
     def test_asm8(self):
+        # [FUNCTION DOC]
+        # Verifies the datetime64 form: the integer view equals the original integer for
+        # the minimum, maximum and 1000 nanoseconds, and for NaT.
         ns = [Timestamp.min._value, Timestamp.max._value, 1000]
 
         for n in ns:
@@ -311,7 +388,17 @@ class TestTimestamp:
         assert Timestamp("nat").asm8.view("i8") == np.datetime64("nat", "ns").view("i8")
 
     def test_class_ops(self):
+        # [FUNCTION DOC]
+        # Verifies class-level constructors (now, UTC now, today, from timestamp, UTC
+        # from timestamp, combine) are within one second of the standard library
+        # equivalents, including a timezone argument both positional and keyword for
+        # from timestamp; the deprecated ones emit Pandas4 warnings.
         def compare(x, y):
+            # [FUNCTION DOC]
+            # HELPER: inner comparison used by the class operations test. Inputs: two
+            # timestamp-like objects x and y. Asserts the difference of their nanosecond
+            # integer values is under one second (after division by a billion and
+            # truncation to int).
             assert int((Timestamp(x)._value - Timestamp(y)._value) / 1e9) == 0
 
         compare(Timestamp.now(), datetime.now())
@@ -349,6 +436,11 @@ class TestTimestamp:
         )
 
     def test_basics_nanos(self):
+        # [FUNCTION DOC]
+        # Verifies nanosecond fields: a timestamp of the year 2000 plus 500 nanoseconds
+        # has microsecond zero and nanosecond 500, and a value near the int64 minimum
+        # (GH 14415) gives the expected 1677 date, microsecond 145224 and nanosecond
+        # 192.
         val = np.int64(946_684_800_000_000_000).view("M8[ns]")
         stamp = Timestamp(val.view("i8") + 500)
         assert stamp.year == 2000
@@ -366,6 +458,10 @@ class TestTimestamp:
         assert stamp.nanosecond == 192
 
     def test_roundtrip(self):
+        # [FUNCTION DOC]
+        # Verifies adding millisecond, microsecond, nanosecond and combined components
+        # to a base nanosecond timestamp matches the same instant parsed from a string
+        # with fractional seconds, with the expected microsecond and nanosecond fields.
         # test value to string and back conversions
         # further test accessors
         base = Timestamp("20140101 00:00:00").as_unit("ns")
@@ -392,6 +488,9 @@ class TestTimestamp:
         assert result.microsecond == 5 + 200 * 1000
 
     def test_hash_equivalent(self):
+        # [FUNCTION DOC]
+        # Verifies a Timestamp can be used to look up a key stored as the equal python
+        # datetime in a dictionary.
         d = {datetime(2011, 1, 1): 5}
         stamp = Timestamp(datetime(2011, 1, 1))
         assert d[stamp] == 5
@@ -401,6 +500,9 @@ class TestTimestamp:
         [["America/Chicago", 2013, 11, 3, 1], ["America/Santiago", 2021, 4, 3, 23]],
     )
     def test_hash_timestamp_with_fold(self, timezone, year, month, day, hour):
+        # [FUNCTION DOC]
+        # Regression test (gh-33931). Parametrized over Chicago and Santiago ambiguous
+        # times. The two timestamps differing only by the fold have the same hash.
         # see gh-33931
         test_timezone = gettz(timezone)
         transition_1 = Timestamp(
@@ -425,7 +527,14 @@ class TestTimestamp:
 
 
 class TestTimestampNsOperations:
+    # [CLASS DOC]
+    # Groups tests of nanosecond-precision behavior. Stateless.
     def test_nanosecond_string_parsing(self):
+        # [FUNCTION DOC]
+        # Regression tests (GH 7878, GH 10041). Parsing strings with nine fractional
+        # digits (naive, with offset and timezone, UTC, US/Eastern, compact ISO format)
+        # gives the expected stored integer shifted for the timezone and the repr
+        # contains the fractional string.
         ts = Timestamp("2013-05-01 07:15:45.123456789")
         # GH 7878
         expected_repr = "2013-05-01 07:15:45.123456789"
@@ -451,6 +560,11 @@ class TestTimestampNsOperations:
         assert expected_repr in repr(ts)
 
     def test_nanosecond_timestamp(self):
+        # [FUNCTION DOC]
+        # Regression test (GH 7610). A date plus five nanoseconds, a rebuilt Timestamp,
+        # and a string with five nanoseconds all have the same repr, value and
+        # nanosecond field; then repeated after adding five more nanoseconds (value
+        # ten).
         # GH 7610
         expected = 1_293_840_000_000_000_005
         t = Timestamp("2011-01-01") + offsets.Nano(5)
@@ -486,7 +600,13 @@ class TestTimestampNsOperations:
 
 
 class TestTimestampConversion:
+    # [CLASS DOC]
+    # Groups tests of Timestamp conversions to other types. Stateless.
     def test_conversion(self):
+        # [FUNCTION DOC]
+        # Regression test (GH 9255). Converting to python datetime gives an equal
+        # datetime of the exact standard library type; converting to numpy datetime64
+        # gives an equal value of the same numpy type and dtype.
         # GH#9255
         ts = Timestamp("2000-01-01").as_unit("ns")
 
@@ -502,6 +622,9 @@ class TestTimestampConversion:
         assert result.dtype == expected.dtype
 
     def test_to_period_tz_warning(self):
+        # [FUNCTION DOC]
+        # Regression test (GH 21333). Converting an aware timestamp to a period emits a
+        # user warning that timezone information will be dropped.
         # GH#21333 make sure a warning is issued when timezone
         # info is lost
         ts = Timestamp("2009-04-15 16:17:18", tz="US/Eastern")
@@ -509,6 +632,10 @@ class TestTimestampConversion:
             ts.to_period("D")
 
     def test_to_numpy_alias(self):
+        # [FUNCTION DOC]
+        # GH 24653, GH 44460. The to numpy method equals the datetime64 conversion;
+        # passing a dtype or a copy request raises a value error saying those arguments
+        # are ignored.
         # GH 24653: alias .to_numpy() for scalars
         ts = Timestamp(datetime.now())
         assert ts.to_datetime64() == ts.to_numpy()
@@ -522,26 +649,47 @@ class TestTimestampConversion:
 
 
 class TestNonNano:
+    # [CLASS DOC]
+    # Groups tests of Timestamp objects with non-nanosecond resolution. Uses fixtures to
+    # build a datetime64 value of 2016-01-01 in each resolution (second, millisecond,
+    # microsecond), the matching Timestamp, and an aware version. Stateless.
     @pytest.fixture(params=["s", "ms", "us"])
     def reso(self, request):
+        # [FUNCTION DOC]
+        # HELPER: fixture parametrized over the resolutions s, ms and us; returns the
+        # resolution string.
         return request.param
 
     @pytest.fixture
     def dt64(self, reso):
+        # [FUNCTION DOC]
+        # HELPER: fixture returning the numpy datetime64 for 2016-01-01 at the requested
+        # resolution, all in-bounds for nanoseconds so results can be compared against
+        # the nanosecond implementation.
         # cases that are in-bounds for nanosecond, so we can compare against
         #  the existing implementation.
         return np.datetime64("2016-01-01", reso)
 
     @pytest.fixture
     def ts(self, dt64):
+        # [FUNCTION DOC]
+        # HELPER: fixture returning a Timestamp built from the datetime64 through the
+        # private constructor so it keeps the non-nanosecond resolution.
         return Timestamp._from_dt64(dt64)
 
     @pytest.fixture
     def ts_tz(self, ts, tz_aware_fixture):
+        # [FUNCTION DOC]
+        # HELPER: fixture returning the same instant as the plain Timestamp fixture but
+        # with the timezone from the aware timezone fixture, built through the private
+        # value-and-resolution constructor so the resolution is kept.
         tz = maybe_get_tz(tz_aware_fixture)
         return Timestamp._from_value_and_reso(ts._value, ts._creso, tz)
 
     def test_non_nano_construction(self, dt64, ts, reso):
+        # [FUNCTION DOC]
+        # Verifies the stored integer equals the datetime64 integer view and the
+        # resolution code matches the resolution fixture.
         assert ts._value == dt64.view("i8")
 
         if reso == "s":
@@ -552,6 +700,10 @@ class TestNonNano:
             assert ts._creso == NpyDatetimeUnit.NPY_FR_us.value
 
     def test_non_nano_fields(self, dt64, ts):
+        # [FUNCTION DOC]
+        # Verifies date and time fields, Julian date, weekday and ISO weekday match
+        # those of the Timestamp built from the datetime64 with default resolution; all
+        # sub-day fields are zero.
         alt = Timestamp(dt64)
 
         assert ts.year == alt.year
@@ -565,6 +717,13 @@ class TestNonNano:
         assert ts.isoweekday() == alt.isoweekday()
 
     def test_start_end_fields(self, ts):
+        # [FUNCTION DOC]
+        # Verifies start and end properties for 2016-01-01 with non-nanosecond
+        # resolution: year, quarter and month start are true; year end and month end are
+        # false.
+        # KNOWN ISSUE: the assertion block is repeated twice verbatim (and the month-end
+        # assertion is repeated within each block), and the comment about a Friday with
+        # this freq is stale since no frequency is involved.
         assert ts.is_year_start
         assert ts.is_quarter_start
         assert ts.is_month_start
@@ -581,14 +740,23 @@ class TestNonNano:
         assert not ts.is_month_end
 
     def test_day_name(self, dt64, ts):
+        # [FUNCTION DOC]
+        # Verifies the day name matches the one from the equivalent default-resolution
+        # Timestamp.
         alt = Timestamp(dt64)
         assert ts.day_name() == alt.day_name()
 
     def test_month_name(self, dt64, ts):
+        # [FUNCTION DOC]
+        # Verifies the month name matches the one from the equivalent default-resolution
+        # Timestamp.
         alt = Timestamp(dt64)
         assert ts.month_name() == alt.month_name()
 
     def test_tz_convert(self, ts):
+        # [FUNCTION DOC]
+        # Verifies converting a UTC timestamp to a zoneinfo US/Pacific timezone returns
+        # a Timestamp that keeps the resolution and has the new timezone.
         ts = Timestamp._from_value_and_reso(ts._value, ts._creso, timezone.utc)
 
         tz = zoneinfo.ZoneInfo("US/Pacific")
@@ -599,12 +767,19 @@ class TestNonNano:
         assert tz_compare(result.tz, tz)
 
     def test_repr(self, dt64, ts):
+        # [FUNCTION DOC]
+        # Verifies string and repr forms equal those of the default-resolution
+        # Timestamp.
         alt = Timestamp(dt64)
 
         assert str(ts) == str(alt)
         assert repr(ts) == repr(alt)
 
     def test_comparison(self, dt64, ts):
+        # [FUNCTION DOC]
+        # Verifies all six comparison operators between the non-nano Timestamp and the
+        # datetime64, and with the default-resolution Timestamp, in both operand orders,
+        # indicate equality.
         alt = Timestamp(dt64)
 
         assert ts == dt64
@@ -638,6 +813,12 @@ class TestNonNano:
         assert alt <= ts
 
     def test_cmp_cross_reso(self):
+        # [FUNCTION DOC]
+        # Verifies comparison across resolutions for a second-resolution value that does
+        # not fit in nanoseconds against a nanosecond timestamp one day earlier:
+        # ordering and equality are right for Timestamps; numpy's own comparison of the
+        # raw values is checked too but only on numpy versions not known to have fixed
+        # it.
         # numpy gets this wrong because of silent overflow
         dt64 = np.datetime64(9223372800, "s")  # won't fit in M8[ns]
         ts = Timestamp._from_dt64(dt64)
@@ -656,6 +837,10 @@ class TestNonNano:
 
     @pytest.mark.xfail(reason="Dispatches to np.datetime64 which is wrong")
     def test_cmp_cross_reso_reversed_dt64(self):
+        # [FUNCTION DOC]
+        # Expected-failure test (reason: dispatches to numpy datetime64, which is
+        # wrong). Compares a numpy datetime64 on the left with a non-nano Timestamp on
+        # the right and expects less-than, documenting a known unfixed limitation.
         dt64 = np.datetime64(106752, "D")  # won't fit in M8[ns]
         ts = Timestamp._from_dt64(dt64)
         other = Timestamp(dt64 - 1)
@@ -663,6 +848,9 @@ class TestNonNano:
         assert other.asm8 < ts
 
     def test_pickle(self, ts, tz_aware_fixture, temp_file):
+        # [FUNCTION DOC]
+        # Verifies pickling round trip (using the temp file fixture and the round-trip
+        # helper) of an aware non-nano Timestamp preserves resolution and equality.
         tz = tz_aware_fixture
         tz = maybe_get_tz(tz)
         ts = Timestamp._from_value_and_reso(ts._value, ts._creso, tz)
@@ -671,31 +859,47 @@ class TestNonNano:
         assert rt == ts
 
     def test_normalize(self, dt64, ts):
+        # [FUNCTION DOC]
+        # Verifies normalizing keeps the resolution and equals the normalized
+        # default-resolution Timestamp.
         alt = Timestamp(dt64)
         result = ts.normalize()
         assert result._creso == ts._creso
         assert result == alt.normalize()
 
     def test_asm8(self, dt64, ts):
+        # [FUNCTION DOC]
+        # Verifies the numpy view equals the datetime64 and has the same dtype
+        # (preserving the unit).
         rt = ts.asm8
         assert rt == dt64
         assert rt.dtype == dt64.dtype
 
     def test_to_numpy(self, dt64, ts):
+        # [FUNCTION DOC]
+        # Verifies the to numpy method equals the datetime64 and keeps its dtype.
         res = ts.to_numpy()
         assert res == dt64
         assert res.dtype == dt64.dtype
 
     def test_to_datetime64(self, dt64, ts):
+        # [FUNCTION DOC]
+        # Verifies the datetime64 conversion method equals the datetime64 and keeps its
+        # dtype.
         res = ts.to_datetime64()
         assert res == dt64
         assert res.dtype == dt64.dtype
 
     def test_timestamp(self, dt64, ts):
+        # [FUNCTION DOC]
+        # Verifies POSIX seconds equals that of the default-resolution Timestamp.
         alt = Timestamp(dt64)
         assert ts.timestamp() == alt.timestamp()
 
     def test_to_period(self, dt64, ts):
+        # [FUNCTION DOC]
+        # Verifies conversion to a daily period equals that of the default-resolution
+        # Timestamp.
         alt = Timestamp(dt64)
         assert ts.to_period("D") == alt.to_period("D")
 
@@ -703,6 +907,11 @@ class TestNonNano:
         "td", [timedelta(days=4), Timedelta(days=4), np.timedelta64(4, "D")]
     )
     def test_addsub_timedeltalike_non_nano(self, dt64, ts, td):
+        # [FUNCTION DOC]
+        # Parametrized over python, pandas and numpy day timedeltas of four days. Adding
+        # (both orders) and subtracting give Timestamps equal to the default-resolution
+        # result, with resolution equal to the finer of the Timestamp and timedelta
+        # resolutions.
         exp_reso = max(ts._creso, Timedelta(td)._creso)
 
         result = ts - td
@@ -724,6 +933,11 @@ class TestNonNano:
         assert result == expected
 
     def test_addsub_offset(self, ts_tz):
+        # [FUNCTION DOC]
+        # Verifies a year-end (non-tick) offset added to and subtracted from an aware
+        # non-nano Timestamp keeps type, resolution and timezone and gives December 31
+        # of the proper year (the same year unless already on December 31, in which case
+        # next year; subtraction gives the previous year).
         # specifically non-Tick offset
         off = offsets.YearEnd(1)
         result = ts_tz + off
@@ -748,6 +962,12 @@ class TestNonNano:
         assert tz_compare(result.tz, ts_tz.tz)
 
     def test_sub_datetimelike_mismatched_reso(self, ts_tz):
+        # [FUNCTION DOC]
+        # Verifies subtraction of two Timestamps with different resolutions (other has a
+        # different unit from the one chosen by a mapping): when equal the result is a
+        # zero Timedelta of the finer resolution in both orders; when the coarser one is
+        # incremented by one unit the result matches the difference computed in a common
+        # unit, with the finer resolution.
         # case with non-lossy rounding
         ts = ts_tz
 
@@ -796,6 +1016,12 @@ class TestNonNano:
             assert res._creso == max(ts._creso, other._creso)
 
     def test_sub_timedeltalike_mismatched_reso(self, ts_tz):
+        # [FUNCTION DOC]
+        # Verifies addition of a zero Timedelta of a different resolution (the name says
+        # subtraction but the test adds) returns an equal Timestamp with the finer
+        # resolution in both orders, and that adding a one-unit timedelta to the coarser
+        # operand gives the common-unit result with the finer resolution.
+        # KNOWN ISSUE: the name says subtract but the test exercises addition only.
         # case with non-lossy rounding
         ts = ts_tz
 
@@ -842,6 +1068,9 @@ class TestNonNano:
             assert res._creso == max(ts._creso, other._creso)
 
     def test_addition_doesnt_downcast_reso(self):
+        # [FUNCTION DOC]
+        # Verifies adding a microsecond timedelta to a microsecond Timestamp keeps
+        # microsecond resolution (does not downcast).
         # https://github.com/pandas-dev/pandas/pull/48748#pullrequestreview-1122635413
         ts = Timestamp(year=2022, month=1, day=1, microsecond=999999).as_unit("us")
         td = Timedelta(microseconds=1).as_unit("us")
@@ -849,6 +1078,10 @@ class TestNonNano:
         assert res._creso == ts._creso
 
     def test_sub_timedelta64_mismatched_reso(self, ts_tz):
+        # [FUNCTION DOC]
+        # Verifies adding a nanosecond numpy timedelta64 to a non-nano aware Timestamp
+        # gives the same value as doing it in nanoseconds and resolution nanoseconds.
+        # KNOWN ISSUE: the name says subtract but the test exercises addition only.
         ts = ts_tz
 
         res = ts + np.timedelta64(1, "ns")
@@ -857,22 +1090,36 @@ class TestNonNano:
         assert exp._creso == NpyDatetimeUnit.NPY_FR_ns.value
 
     def test_min(self, ts):
+        # [FUNCTION DOC]
+        # Verifies the min attribute on an instance keeps its resolution, is not above
+        # the timestamp, and has the smallest representable integer (one above the NaT
+        # sentinel).
         assert ts.min <= ts
         assert ts.min._creso == ts._creso
         assert ts.min._value == NaT._value + 1
 
     def test_max(self, ts):
+        # [FUNCTION DOC]
+        # Verifies the max attribute on an instance keeps its resolution, is not below
+        # the timestamp, and has the largest 64-bit integer value.
         assert ts.max >= ts
         assert ts.max._creso == ts._creso
         assert ts.max._value == np.iinfo(np.int64).max
 
     def test_resolution(self, ts):
+        # [FUNCTION DOC]
+        # Verifies the resolution property on an instance is a one-unit Timedelta in the
+        # timestamp's own resolution.
         expected = Timedelta._from_value_and_reso(1, ts._creso)
         result = ts.resolution
         assert result == expected
         assert result._creso == expected._creso
 
     def test_out_of_ns_bounds(self):
+        # [FUNCTION DOC]
+        # Regression test (GH 51060). Constructing from seconds past the nanosecond
+        # bounds with unit seconds equals the string for year 300, and its numpy form
+        # equals the datetime64 in seconds.
         # https://github.com/pandas-dev/pandas/issues/51060
         result = Timestamp(-52700112000, unit="s")
         assert result == Timestamp("0300-01-01")
@@ -880,6 +1127,10 @@ class TestNonNano:
 
 
 def test_timestamp_class_min_max_resolution():
+    # [FUNCTION DOC]
+    # Verifies the min, max and resolution accessed on the class (not an instance) are
+    # in nanoseconds: min is one above the NaT sentinel, max is the largest 64-bit
+    # integer, and resolution is one nanosecond.
     # when accessed on the class (as opposed to an instance), we default
     #  to nanoseconds
     assert Timestamp.min == Timestamp(NaT._value + 1)
@@ -893,6 +1144,9 @@ def test_timestamp_class_min_max_resolution():
 
 
 def test_delimited_date():
+    # [FUNCTION DOC]
+    # Regression test (GH 50231). Parsing a day-first delimited date string emits no
+    # warning and equals the matching Timestamp for 13 January 2000.
     # https://github.com/pandas-dev/pandas/issues/50231
     with tm.assert_produces_warning(None):
         result = Timestamp("13-01-2000")
@@ -901,6 +1155,9 @@ def test_delimited_date():
 
 
 def test_utctimetuple():
+    # [FUNCTION DOC]
+    # Regression test (GH 32174). The UTC time tuple of midnight 2000-01-01 UTC equals
+    # the structure with weekday five (Saturday) and day of year one.
     # GH 32174
     ts = Timestamp("2000-01-01", tz="UTC")
     result = ts.utctimetuple()
@@ -909,6 +1166,11 @@ def test_utctimetuple():
 
 
 def test_negative_dates():
+    # [FUNCTION DOC]
+    # Regression test (GH 50787). For a Timestamp in year minus 2000, string formatting,
+    # date, ISO calendar, time tuple and ordinal calls raise a not-implemented error
+    # whose message starts with the method name and explains that the range is outside
+    # the standard library.
     # https://github.com/pandas-dev/pandas/issues/50787
     ts = Timestamp("-2000-01-01")
     msg = (

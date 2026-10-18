@@ -1,3 +1,9 @@
+# [MODULE DOC]
+# Tests for Series where and related masked assignment: unsafe casting on boolean-mask
+# setitem, alignment of the condition, error messages for invalid conditions, list-like
+# assignment length errors, broadcasting, in-place use, duplicates in the index, mixed
+# numeric and string replacement, and extension dtypes (datetime with timezone, sparse,
+# categorical).
 import numpy as np
 import pytest
 
@@ -14,6 +20,10 @@ import pandas._testing as tm
 
 
 def test_where_unsafe_int(any_signed_int_numpy_dtype):
+    # [FUNCTION DOC]
+    # Parametrized over signed integer dtypes. Assigning a range of the right length
+    # through a boolean mask on an integer series keeps the dtype and writes the values.
+    # KNOWN ISSUE: the name says where but the test uses mask-based item assignment.
     s = Series(np.arange(10), dtype=any_signed_int_numpy_dtype)
     mask = s < 5
 
@@ -27,6 +37,10 @@ def test_where_unsafe_int(any_signed_int_numpy_dtype):
 
 
 def test_where_unsafe_float(float_numpy_dtype):
+    # [FUNCTION DOC]
+    # Parametrized over float dtypes. Assigning a range through a boolean mask on a
+    # float series keeps the dtype and writes the values.
+    # KNOWN ISSUE: the name says where but the test uses mask-based item assignment.
     s = Series(np.arange(10), dtype=float_numpy_dtype)
     mask = s < 5
 
@@ -49,6 +63,11 @@ def test_where_unsafe_float(float_numpy_dtype):
     ],
 )
 def test_where_unsafe_upcast(dtype, expected_dtype):
+    # [FUNCTION DOC]
+    # Regression test (gh-9743). Parametrized over integer and float dtypes. When both
+    # the source and the expected dtype are floats, assigning float values through the
+    # mask works and keeps the dtype; for integer dtypes, assigning non-integral floats
+    # raises a type error saying the value is invalid for the dtype.
     # see gh-9743
     s = Series(np.arange(10), dtype=dtype)
     values = [2.5, 3.5, 4.5, 5.5, 6.5]
@@ -63,6 +82,14 @@ def test_where_unsafe_upcast(dtype, expected_dtype):
 
 
 def test_where_unsafe():
+    # [FUNCTION DOC]
+    # Regression test (gh-9731, gh-3235, GH 4667). Assigning non-integral floats through
+    # a mask on integers raises a type error; the same on float series works. Range and
+    # list assignments with equal length work; value lists of a different length raise a
+    # value error about the list-like indexer length. A where on integers with NaN
+    # replacement produces floats. Setting None into a float series gives missing.
+    # KNOWN ISSUE: the expected series built right after the first mask is never used
+    # and the assignment on the float series is not checked; both are dead code.
     # see gh-9731
     s = Series(np.arange(10), dtype="int64")
     values = [2.5, 3.5, 4.5, 5.5]
@@ -120,6 +147,12 @@ def test_where_unsafe():
 
 
 def test_where():
+    # [FUNCTION DOC]
+    # Compares where against boolean selection plus drop of missing; with a replacement
+    # series equals absolute value; the result is a new object of the same shape; a
+    # condition series shorter than the data is aligned (missing positions become false,
+    # giving NaN) and with a replacement series the unaligned positions take the
+    # replacement.
     s = Series(np.random.default_rng(2).standard_normal(5))
     cond = s > 0
 
@@ -149,6 +182,11 @@ def test_where():
 
 
 def test_where_error():
+    # [FUNCTION DOC]
+    # Verifies a scalar or mismatched-length array condition raises a value error about
+    # the shape. Also (GH 2745) setting through a boolean list works, and a boolean list
+    # with a value list of wrong length or an empty value list raises a value error
+    # about the list-like indexer length.
     s = Series(np.random.default_rng(2).standard_normal(5))
     cond = s > 0
 
@@ -175,6 +213,9 @@ def test_where_error():
 
 @pytest.mark.parametrize("klass", [list, tuple, np.array, Series])
 def test_where_array_like(klass):
+    # [FUNCTION DOC]
+    # Regression test (gh-15414). Parametrized over list, tuple, numpy array and Series
+    # conditions of booleans; where gives NaN at false positions.
     # see gh-15414
     s = Series([1, 2, 3])
     cond = [False, True, True]
@@ -194,6 +235,10 @@ def test_where_array_like(klass):
     ],
 )
 def test_where_invalid_input(cond):
+    # [FUNCTION DOC]
+    # Regression test (gh-15414). Parametrized over non-boolean conditions (integers, an
+    # integer series, strings, timestamps). where raises a type error saying a boolean
+    # array is expected; a one-element list raises a value error about the shape.
     # see gh-15414: only boolean arrays accepted
     s = Series([1, 2, 3])
     msg = "Boolean array expected for the condition"
@@ -207,6 +252,10 @@ def test_where_invalid_input(cond):
 
 
 def test_where_ndframe_align():
+    # [FUNCTION DOC]
+    # Verifies conditions: a shorter list or longer array raises a value error about the
+    # shape, but wrapping the same condition in a series aligns on the index (missing
+    # become false) and gives NaN at the other positions.
     msg = "Array conditional must be same shape as self"
     s = Series([1, 2, 3])
 
@@ -230,6 +279,11 @@ def test_where_ndframe_align():
 
 
 def test_where_setitem_invalid():
+    # [FUNCTION DOC]
+    # Regression test (GH 2702). Assigning list values of the wrong length through a
+    # slice (also with a step and negative slice) or a list indexer raises a value error
+    # whose message names the indexer kind (slice or list-like); correct length
+    # assignments work on object series; a scalar position can hold a list.
     # GH 2702
     # make sure correct exceptions are raised on invalid list assignment
 
@@ -294,6 +348,13 @@ def test_where_setitem_invalid():
 )
 @pytest.mark.parametrize("box", [np.array, list, tuple])
 def test_broadcast(size, mask, item, box):
+    # [FUNCTION DOC]
+    # Regression test (GH 8801, GH 4195). Parametrized over series size, boolean mask
+    # pattern (resized to the size), a float item (including NaN and the float extremes)
+    # and the container for the replacement (numpy array, list, tuple). Boolean-mask
+    # assignment of the scalar, where with the inverted mask and a one-element
+    # container, and mask with the mask and a one-element container all give the
+    # expected series.
     # GH#8801, GH#4195
     selection = np.resize(mask, size)
 
@@ -320,6 +381,11 @@ def test_broadcast(size, mask, item, box):
 
 
 def test_where_inplace():
+    # [FUNCTION DOC]
+    # Verifies in-place where returns the series itself; with default replacement the
+    # missing-dropped result equals the selection and the full result equals the
+    # non-in-place; with a replacement series the in-place result equals the
+    # non-in-place result.
     s = Series(np.random.default_rng(2).standard_normal(5))
     cond = s > 0
 
@@ -337,6 +403,11 @@ def test_where_inplace():
 
 
 def test_where_dups():
+    # [FUNCTION DOC]
+    # Regression test (GH 4550, GH 4548). On a duplicated index (concatenation of two
+    # series), where gives NaN where the condition is false; setting by condition works
+    # on all duplicates; augmented assignment with a condition adds ten at matching
+    # positions.
     # GH 4550
     # where crashes with dups in index
     s1 = Series(list(range(3)))
@@ -358,6 +429,10 @@ def test_where_dups():
 
 
 def test_where_numeric_with_string():
+    # [FUNCTION DOC]
+    # Regression test (GH 9280). Replacing with the string X (scalar, list or array)
+    # turns an integer series into an object series where only the replaced element is a
+    # string and the others remain integers.
     # GH 9280
     s = Series([1, 2, 3])
     w = s.where(s > 1, "X")
@@ -384,6 +459,9 @@ def test_where_numeric_with_string():
 
 
 def test_where_datetimetz():
+    # [FUNCTION DOC]
+    # Regression test (GH 15701). Where on a UTC datetime series with a false condition
+    # gives NaT in that position and keeps the dtype.
     # GH 15701
     timestamps = ["2016-12-31 12:00:04+00:00", "2016-12-31 12:00:04.010000+00:00"]
     ser = Series([Timestamp(t) for t in timestamps], dtype="datetime64[ns, UTC]")
@@ -393,6 +471,9 @@ def test_where_datetimetz():
 
 
 def test_where_sparse():
+    # [FUNCTION DOC]
+    # Regression test (GH 17198). Where with replacement zero on a sparse series gives
+    # the expected sparse series, without an attribute error for the sparse index.
     # GH#17198 make sure we dont get an AttributeError for sp_index
     ser = Series(pd.arrays.SparseArray([1, 2]))
     result = ser.where(ser >= 2, 0)
@@ -401,6 +482,9 @@ def test_where_sparse():
 
 
 def test_where_empty_series_and_empty_cond_having_non_bool_dtypes():
+    # [FUNCTION DOC]
+    # Regression test (GH 34592). An empty float series with an empty list condition
+    # returns an equal empty series.
     # https://github.com/pandas-dev/pandas/issues/34592
     ser = Series([], dtype=float)
     result = ser.where([])
@@ -408,6 +492,10 @@ def test_where_empty_series_and_empty_cond_having_non_bool_dtypes():
 
 
 def test_where_categorical(frame_or_series):
+    # [FUNCTION DOC]
+    # Regression test (GH 18888). Parametrized over series and frame. Masking out one
+    # category value gives a categorical with that element missing and unchanged
+    # categories.
     # https://github.com/pandas-dev/pandas/issues/18888
     exp = frame_or_series(
         pd.Categorical(["A", "A", "B", "B", np.nan], categories=["A", "B", "C"]),
@@ -419,6 +507,10 @@ def test_where_categorical(frame_or_series):
 
 
 def test_where_datetimelike_categorical(tz_naive_fixture):
+    # [FUNCTION DOC]
+    # Regression test (GH 37682). Over the naive/timezone fixture, where with a
+    # categorical replacement and a boolean mask gives the expected datetimes in four
+    # containers: datetime index, datetime array (private method), series and frame.
     # GH#37682
     tz = tz_naive_fixture
 

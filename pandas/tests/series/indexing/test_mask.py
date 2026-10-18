@@ -1,3 +1,6 @@
+# [MODULE DOC]
+# Tests for Series mask, compared against where with an inverted condition, including
+# dtype casting, array conditions and in-place use.
 import numpy as np
 import pytest
 
@@ -6,6 +9,12 @@ import pandas._testing as tm
 
 
 def test_mask():
+    # [FUNCTION DOC]
+    # Compares mask to where with an inverted condition on random data: default
+    # replacement, explicit NaN, a replacement series, and a partial condition series
+    # that is shorter than the series. Passing a scalar or a mismatched-length array as
+    # the condition raises a value error saying an array condition must be the same
+    # shape as the series.
     # compare with tested results in test_where
     s = Series(np.random.default_rng(2).standard_normal(5))
     cond = s > 0
@@ -39,6 +48,9 @@ def test_mask():
 
 
 def test_mask_casts():
+    # [FUNCTION DOC]
+    # Verifies masking integers with NaN as replacement converts the dtype to float with
+    # NaN at masked positions.
     # dtype changes
     ser = Series([1, 2, 3, 4])
     result = ser.mask(ser > 2, np.nan)
@@ -47,6 +59,9 @@ def test_mask_casts():
 
 
 def test_mask_casts2():
+    # [FUNCTION DOC]
+    # Regression test (gh-21891). Masking an integer series with a boolean list
+    # condition gives float with NaN at the first position.
     # see gh-21891
     ser = Series([1, 2])
     res = ser.mask([True, False])
@@ -56,6 +71,10 @@ def test_mask_casts2():
 
 
 def test_mask_inplace():
+    # [FUNCTION DOC]
+    # Verifies in-place masking (default fill, then replacement series) modifies the
+    # series in place to equal the non-in-place result; the in-place default result with
+    # missing dropped equals the non-masked values.
     s = Series(np.random.default_rng(2).standard_normal(5))
     cond = s > 0
 

@@ -1,3 +1,8 @@
+# [MODULE DOC]
+# Tests for the categorical accessor of Series and related accessor delegation: name
+# propagation, accessor construction and errors, delegation of categories, codes,
+# ordering and category-editing methods, the datetime accessor on categorical series,
+# and category renaming in frames.
 import numpy as np
 import pytest
 
@@ -19,6 +24,8 @@ from pandas.core.indexes.accessors import Properties
 
 
 class TestCatAccessor:
+    # [CLASS DOC]
+    # Groups the Series categorical accessor tests. Stateless.
     @pytest.mark.parametrize(
         "method",
         [
@@ -33,6 +40,11 @@ class TestCatAccessor:
         ],
     )
     def test_getname_categorical_accessor(self, method):
+        # [FUNCTION DOC]
+        # Regression test (GH 17509). Parametrized over eight category-editing accessor
+        # operations (set, reorder, rename, remove unused, remove, add, ordered,
+        # unordered), each given as a function of the series. The result keeps the
+        # series name A.
         # GH#17509
         ser = Series([1, 2, 3], name="A").astype("category")
         expected = "A"
@@ -40,6 +52,11 @@ class TestCatAccessor:
         assert result == expected
 
     def test_cat_accessor(self):
+        # [FUNCTION DOC]
+        # Verifies the accessor on a categorical series with a missing value: categories
+        # index is a and b, ordering is off, setting categories to b and a gives the
+        # expected categorical, and after assigning a to all elements removing unused
+        # categories leaves only a.
         ser = Series(Categorical(["a", "b", np.nan, "a"]))
         tm.assert_index_equal(ser.cat.categories, Index(["a", "b"]))
         assert not ser.cat.ordered
@@ -54,6 +71,11 @@ class TestCatAccessor:
         tm.assert_index_equal(ser.cat.categories, Index(["a"]))
 
     def test_cat_accessor_api(self):
+        # [FUNCTION DOC]
+        # Regression test (GH 9322). The class attribute is the categorical accessor
+        # class; an instance is created for a categorical series; for a non-categorical
+        # series, accessing it raises an attribute error saying only the accessor can be
+        # used with categorical data, and the attribute check reports it absent.
         # GH#9322
 
         assert Series.cat is CategoricalAccessor
@@ -66,12 +88,25 @@ class TestCatAccessor:
         assert not hasattr(invalid, "cat")
 
     def test_cat_accessor_no_new_attributes(self):
+        # [FUNCTION DOC]
+        # Regression test for GH 10673. Setting a new attribute on the accessor object
+        # raises an attribute error saying new attributes cannot be added.
         # https://github.com/pandas-dev/pandas/issues/10673
         cat = Series(list("aabbcde")).astype("category")
         with pytest.raises(AttributeError, match="You cannot add any new attribute"):
             cat.cat.xlabel = "a"
 
     def test_categorical_delegations(self):
+        # [FUNCTION DOC]
+        # Verifies delegation to the categorical. The accessor on non-categorical dtypes
+        # (integers, strings, floats, timestamps), also when called, raises an attribute
+        # error about the category dtype requirement. For an ordered categorical:
+        # categories, renaming categories, codes (int8 series), ordered flag and
+        # switching ordering behave right; setting categories reorders and values/array
+        # conversion remain as object arrays; removing unused categories works; the set
+        # categories method directly on the Series raises an attribute error (it exists
+        # only on the accessor); renaming categories with a callable (GH 18862)
+        # uppercases categories.
         # invalid accessor
         msg = r"Can only use \.cat accessor with a 'category' dtype"
         with pytest.raises(AttributeError, match=msg):
@@ -149,6 +184,18 @@ class TestCatAccessor:
         ],
     )
     def test_dt_accessor_api_for_categorical(self, idx):
+        # [FUNCTION DOC]
+        # Regression test (GH 10661). Parametrized over four datetime-like indexes
+        # (datetime with and without timezone, period, timedelta). The datetime accessor
+        # on a categorical series is the properties accessor; every public method (with
+        # default arguments, or special arguments for format, round, floor, ceil,
+        # frequency, unit, localization or conversion) and every field attribute gives
+        # results equal to the same call on the non-categorical series, with the
+        # expected warnings (user warning when converting an aware index to period, a
+        # Pandas4 warning for python timedelta conversion, GH 57463).
+        # KNOWN ISSUE: the unit special case is written with parentheses around a single
+        # string rather than a one-element tuple, so the argument list is the string
+        # itself; it only works because the string has a single character.
         # https://github.com/pandas-dev/pandas/issues/10661
 
         ser = Series(idx)
@@ -222,6 +269,12 @@ class TestCatAccessor:
             tm.assert_equal(res, exp)
 
     def test_dt_accessor_api_for_categorical_invalid(self):
+        # [FUNCTION DOC]
+        # Verifies the datetime accessor on a categorical series of integers raises an
+        # attribute error about needing datetime-like values.
+        # KNOWN ISSUE: the final assertion checks the absence of the string accessor
+        # rather than the datetime accessor, which seems unrelated to what the test is
+        # named for.
         invalid = Series([1, 2, 3]).astype("category")
         msg = "Can only use .dt accessor with datetimelike"
 
@@ -230,6 +283,10 @@ class TestCatAccessor:
         assert not hasattr(invalid, "str")
 
     def test_set_categories_setitem(self):
+        # [FUNCTION DOC]
+        # Regression test (GH 43334). Renaming categories of integer categorical columns
+        # to labels and recreating them as categoricals with explicit categories keeps
+        # the values as labels, without turning them into NaN.
         # GH#43334
 
         df = DataFrame({"Survived": [1, 0, 1], "Sex": [0, 1, 1]}, dtype="category")
@@ -251,6 +308,9 @@ class TestCatAccessor:
         assert list(df["Survived"]) == ["Yes", "No", "Yes"]
 
     def test_categorical_of_booleans_is_boolean(self):
+        # [FUNCTION DOC]
+        # Regression test for GH 46313. The category dtype of a boolean categorical
+        # column is the numpy boolean dtype object.
         # https://github.com/pandas-dev/pandas/issues/46313
         df = DataFrame(
             {"int_cat": [1, 2, 3], "bool_cat": [True, False, False]}, dtype="category"

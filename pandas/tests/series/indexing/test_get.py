@@ -1,3 +1,7 @@
+# [MODULE DOC]
+# Tests for Series get, which returns the value for a label or a default when it is
+# absent. Covers integer and float indexes, missing values as keys, list keys,
+# extension-array-backed series, slices and none.
 import numpy as np
 import pytest
 
@@ -12,6 +16,11 @@ import pandas._testing as tm
 
 
 def test_get():
+    # [FUNCTION DOC]
+    # Regression test (GH 6383, GH 7407). For a series with a default integer index, a
+    # missing label gives the default. With a float index, label 25 returns the first
+    # value. With a value-count series, a missing label gives the default; boolean
+    # labels work (False returns three, True gives the default).
     # GH 6383
     s = Series(
         np.array(
@@ -116,6 +125,9 @@ def test_get():
 
 
 def test_get_nan(float_numpy_dtype):
+    # [FUNCTION DOC]
+    # Regression test (GH 8569). For a float-indexed series (each float dtype fixture),
+    # looking up NaN returns none or the given default.
     # GH 8569
     s = Index(range(10), dtype=float_numpy_dtype).to_series()
     assert s.get(np.nan) is None
@@ -123,6 +135,9 @@ def test_get_nan(float_numpy_dtype):
 
 
 def test_get_nan_multiple(float_numpy_dtype):
+    # [FUNCTION DOC]
+    # Regression test (GH 8569, GH 17295). For list keys with some or all missing values
+    # (including NaN), the result is none.
     # GH 8569
     # ensure that fixing "test_get_nan" above hasn't broken get
     # with multiple elements
@@ -143,6 +158,10 @@ def test_get_nan_multiple(float_numpy_dtype):
 
 
 def test_get_with_default():
+    # [FUNCTION DOC]
+    # Regression test (GH 7725). For both an integer-index with string values and a
+    # string-index with integer values, an existing label returns its value regardless
+    # of the default; missing labels return the supplied default.
     # GH#7725
     d0 = ["a", "b", "c", "d"]
     d1 = np.arange(4, dtype="int64")
@@ -171,6 +190,13 @@ def test_get_with_default():
     ],
 )
 def test_get_with_ea(arr):
+    # [FUNCTION DOC]
+    # Regression test (GH 21260). Parametrized over a float array and a tz-aware
+    # datetime index (extension array). With integer labels, get returns the value, a
+    # list returns the selected series, a slice selects by position, missing labels give
+    # none; with a string index, label lookups and a label slice work; integers are
+    # treated as labels since version 3.0 and return none; with a stepped selection, a
+    # position that is not a label returns none (GH 21257).
     # GH#21260
     ser = Series(arr, index=[2 * i for i in range(len(arr))])
     assert ser.get(4) == ser.iloc[2]
@@ -208,6 +234,10 @@ def test_get_with_ea(arr):
 
 
 def test_getitem_get(string_series, object_series):
+    # [FUNCTION DOC]
+    # Verifies label lookup by index and positional selection agree for the string and
+    # object fixtures; minus one is treated as a label (as of version 3.0) and returns
+    # none.
     for obj in [string_series, object_series]:
         idx = obj.index[5]
 
@@ -220,6 +250,9 @@ def test_getitem_get(string_series, object_series):
 
 
 def test_get_none():
+    # [FUNCTION DOC]
+    # Regression test (GH 5652). Getting with none as the key on empty series (with and
+    # without an index) returns none.
     # GH#5652
     s1 = Series(dtype=object)
     s2 = Series(dtype=object, index=list("abc"))

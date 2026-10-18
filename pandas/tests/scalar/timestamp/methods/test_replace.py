@@ -1,3 +1,9 @@
+# [MODULE DOC]
+# Tests for the Timestamp replace method, which returns a new timestamp with selected
+# calendar, clock, timezone or fold fields substituted. Covers out-of-bounds years for
+# different units, non-nanosecond resolution, naive and aware timestamps, nanosecond
+# preservation, invalid arguments, daylight-saving transitions, fold handling and unit
+# promotion.
 from datetime import datetime
 import zoneinfo
 
@@ -18,7 +24,15 @@ import pandas._testing as tm
 
 
 class TestTimestampReplace:
+    # [CLASS DOC]
+    # Groups the tests of the Timestamp replace method. Stateless.
     def test_replace_out_of_pydatetime_bounds(self):
+        # [FUNCTION DOC]
+        # Regression test (GH 50348). Replacing the year with a value beyond what
+        # nanosecond resolution can hold raises an out-of-bounds datetime error with a
+        # message naming the value and frequency. After converting to millisecond
+        # resolution, the same replacement succeeds, giving the requested year and the
+        # same integer as a millisecond datetime64 for that date.
         # GH#50348
         ts = Timestamp("2016-01-01").as_unit("ns")
 
@@ -32,6 +46,11 @@ class TestTimestampReplace:
         assert result._value == Timestamp(np.datetime64("99999-01-01", "ms"))._value
 
     def test_replace_non_nano(self):
+        # [FUNCTION DOC]
+        # Verifies replace on a microsecond-resolution timestamp far in the future (year
+        # 4869 built through the private constructor). The result keeps the same
+        # resolution code and converts to the python datetime with the year replaced by
+        # 4900 and same month and day.
         ts = Timestamp._from_value_and_reso(
             91514880000000000, NpyDatetimeUnit.NPY_FR_us.value, None
         )
@@ -42,6 +61,9 @@ class TestTimestampReplace:
         assert result.to_pydatetime() == datetime(4900, 12, 28)
 
     def test_replace_naive(self):
+        # [FUNCTION DOC]
+        # Verifies replacing the hour on a tz-naive timestamp gives the expected
+        # timestamp with the hour set to zero (GH 14621, GH 7825).
         # GH#14621, GH#7825
         ts = Timestamp("2016-01-01 09:00:00")
         result = ts.replace(hour=0)
@@ -49,6 +71,9 @@ class TestTimestampReplace:
         assert result == expected
 
     def test_replace_aware(self, tz_aware_fixture):
+        # [FUNCTION DOC]
+        # Verifies replacing the hour on a tz-aware timestamp (for each aware timezone
+        # fixture) gives the expected timestamp with zero hour in the same timezone.
         tz = tz_aware_fixture
         # GH#14621, GH#7825
         # replacing datetime components with and w/o presence of a timezone
@@ -58,6 +83,9 @@ class TestTimestampReplace:
         assert result == expected
 
     def test_replace_preserves_nanos(self, tz_aware_fixture):
+        # [FUNCTION DOC]
+        # Verifies replacing the hour on an aware timestamp that has nonzero nanoseconds
+        # keeps the nanoseconds.
         tz = tz_aware_fixture
         # GH#14621, GH#7825
         ts = Timestamp("2016-01-01 09:00:00.000000123", tz=tz)
@@ -66,6 +94,10 @@ class TestTimestampReplace:
         assert result == expected
 
     def test_replace_multiple(self, tz_aware_fixture):
+        # [FUNCTION DOC]
+        # Verifies replacing all of year, month, day, hour, minute, second, microsecond
+        # and nanosecond at once on an aware timestamp gives the fully replaced
+        # timestamp.
         tz = tz_aware_fixture
         # GH#14621, GH#7825
         # replacing datetime components with and w/o presence of a timezone
@@ -85,6 +117,9 @@ class TestTimestampReplace:
         assert result == expected
 
     def test_replace_invalid_kwarg(self, tz_aware_fixture):
+        # [FUNCTION DOC]
+        # Verifies that an unknown keyword argument to replace raises a type error whose
+        # message says replace got an unexpected keyword argument.
         tz = tz_aware_fixture
         # GH#14621, GH#7825
         ts = Timestamp("2016-01-01 09:00:00.000000123", tz=tz)
@@ -93,6 +128,10 @@ class TestTimestampReplace:
             ts.replace(foo=5)
 
     def test_replace_integer_args(self, tz_aware_fixture):
+        # [FUNCTION DOC]
+        # Verifies that a non-integer (float) value for the hour raises a value error
+        # saying the value must be an integer and naming the received type and the
+        # field.
         tz = tz_aware_fixture
         # GH#14621, GH#7825
         ts = Timestamp("2016-01-01 09:00:00.000000123", tz=tz)
@@ -102,6 +141,10 @@ class TestTimestampReplace:
 
     @pytest.mark.skipif(WASM, reason="tzset is not available on WASM")
     def test_replace_tzinfo_equiv_tz_localize_none(self):
+        # [FUNCTION DOC]
+        # Verifies that replacing the timezone info with none gives the same result as
+        # localizing to none, for a time near a daylight-saving boundary in US/Eastern.
+        # Skipped on WASM (timezone reset not available).
         # GH#14621, GH#7825
         # assert conversion to naive is the same as replacing tzinfo with None
         ts = Timestamp("2013-11-03 01:59:59.999999-0400", tz="US/Eastern")
@@ -110,6 +153,13 @@ class TestTimestampReplace:
     @td.skip_if_windows
     @pytest.mark.skipif(WASM, reason="tzset is not available on WASM")
     def test_replace_tzinfo(self):
+        # [FUNCTION DOC]
+        # Regression test (GH 15683). Skipped on Windows and WASM. A datetime with fold
+        # set in the Berlin spring-forward gap has its tzinfo replaced by a Berlin
+        # tzinfo object, and the same is done to the equivalent Timestamp. Expected:
+        # with the process timezone set to UTC both give the same POSIX seconds; both
+        # are equal to each other and to the python datetime of the Timestamp. The same
+        # checks are repeated after replacing tzinfo again with none.
         # GH#15683
         dt = datetime(2016, 3, 27, 1, fold=1)
         tzinfo = dt.astimezone(zoneinfo.ZoneInfo("Europe/Berlin")).tzinfo
@@ -142,6 +192,13 @@ class TestTimestampReplace:
         ],
     )
     def test_replace_across_dst(self, tz, normalize):
+        # [FUNCTION DOC]
+        # Regression test (GH 18319). Parametrized over a pytz zone (with a normalize
+        # function) and a dateutil zone (identity normalize). A naive timestamp is
+        # localized with the low-level helper, the sanity check confirms the normalize
+        # function does not change it, then the month is replaced with June (across the
+        # daylight-saving boundary). Expected: hour and minute stay the same and the
+        # result is unchanged by normalization.
         # GH#18319 check that 1) timezone is correctly normalized and
         # 2) that hour is not incorrectly changed by this normalization
         if isinstance(tz, str) and tz.startswith("pytz/"):
@@ -164,6 +221,10 @@ class TestTimestampReplace:
         assert ts2 == ts2b
 
     def test_replace_dst_border(self, unit):
+        # [FUNCTION DOC]
+        # Regression test (GH 7825). Replacing the hour with 3 on a midnight Chicago
+        # timestamp on the day of a fall-back transition, for each unit fixture, gives
+        # the expected 03:00 timestamp in Chicago and keeps the unit's resolution code.
         # Gh 7825
         t = Timestamp("2013-11-3", tz="America/Chicago").as_unit(unit)
         result = t.replace(hour=3)
@@ -174,6 +235,12 @@ class TestTimestampReplace:
     @pytest.mark.parametrize("fold", [0, 1])
     @pytest.mark.parametrize("tz", ["dateutil/Europe/London", "Europe/London"])
     def test_replace_dst_fold(self, fold, tz, unit):
+        # [FUNCTION DOC]
+        # Regression test (GH 25017). Parametrized over fold zero/one, timezone
+        # (dateutil or default London zone) and unit. Replacing the hour with 1 and the
+        # fold on an ambiguous London time must equal the naive 01:30 localized with the
+        # ambiguous flag set to the opposite truth value of fold; the resolution code is
+        # preserved.
         # GH 25017
         d = datetime(2019, 10, 27, 2, 30)
         ts = Timestamp(d, tz=tz).as_unit(unit)
@@ -186,6 +253,10 @@ class TestTimestampReplace:
 
     @pytest.mark.parametrize("fold", [0, 1])
     def test_replace_preserves_fold(self, fold):
+        # [FUNCTION DOC]
+        # Regression test (GH 37610). Parametrized over fold zero/one. Replacing the
+        # second on a Moscow timestamp that has a given fold must leave the fold
+        # unchanged.
         # GH#37610. Check that replace preserves Timestamp fold property
         tz = gettz("Europe/Moscow")
 
@@ -197,6 +268,12 @@ class TestTimestampReplace:
         assert ts_replaced.fold == fold
 
     def test_replace_updates_unit(self):
+        # [FUNCTION DOC]
+        # Regression test (GH 57749): replace promotes the unit when the new value needs
+        # finer resolution. A microsecond-resolution timestamp replaced with the
+        # microsecond and nanosecond of a nanosecond timestamp becomes nanosecond unit
+        # and equals it. A second-resolution timestamp replaced with a microsecond value
+        # becomes microsecond unit and equals the microsecond reference.
         # GH#57749
         ts = Timestamp("2023-07-15 23:08:12.134567123")
         ts2 = Timestamp("2023-07-15 23:08:12.000000")

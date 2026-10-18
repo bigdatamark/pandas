@@ -1,3 +1,10 @@
+# [MODULE DOC]
+# Tests for the datetime-like accessor of Series: properties and methods for datetime,
+# timezone-aware, timedelta and period values, rounding, name accessors with locales,
+# string formatting, missing values, categorical delegation, ISO calendar and period end
+# time. Defines module-level lists of the allowed properties and methods per dtype
+# (taken from the array classes for properties) and a helper to list the public accessor
+# names.
 import calendar
 from datetime import (
     date,
@@ -70,17 +77,37 @@ ok_for_td_methods = [
 
 
 def get_dir(ser):
+    # [FUNCTION DOC]
+    # HELPER: returns the sorted unique list of public (not underscore-prefixed) names
+    # in the accessor namespace of the given series, used to check the limited display
+    # API. Input: ser (a series with a datetime-like dtype).
     # check limited display api
     results = [r for r in ser.dt.__dir__() if not r.startswith("_")]
     return sorted(set(results))
 
 
 class TestSeriesDatetimeValues:
+    # [CLASS DOC]
+    # Groups tests of the datetime accessor of Series. Stateless apart from a comparison
+    # helper method.
     def _compare(self, ser, name):
+        # [FUNCTION DOC]
+        # HELPER: compares the accessor property of the given name on a series with the
+        # same property on an index built from the same values. Input: ser (series with
+        # datetime-like values), name (property name). The expected value is the index
+        # property, wrapped in a series with the original index and name when it is
+        # array-like (integer arrays converted to int64), a frame stays a frame, and
+        # scalars stay scalars. Scalars are compared with equality, frames and series
+        # with the testing comparison helpers.
         # GH 7207, 11128
         # test .dt namespace accessor
 
         def get_expected(ser, prop):
+            # [FUNCTION DOC]
+            # HELPER: computes the expected property value from the index equivalent of
+            # the series values. Input: ser, prop (name). Arrays become series with the
+            # same index and name (integer arrays as int64); frames and scalars are
+            # returned as they are.
             result = getattr(Index(ser._values), prop)
             if isinstance(result, np.ndarray):
                 if is_integer_dtype(result):
@@ -100,6 +127,14 @@ class TestSeriesDatetimeValues:
 
     @pytest.mark.parametrize("freq", ["D", "s", "ms"])
     def test_dt_namespace_accessor_datetime64(self, freq):
+        # [FUNCTION DOC]
+        # Regression test (GH 7207, GH 11128). Parametrized over daily, second and
+        # millisecond frequencies. For a datetime series: every property (except
+        # frequency) matches the index equivalent; every method name is reachable;
+        # python datetime conversion gives an object-dtype series; tz localize gives the
+        # expected tz-aware series and the timezone is US/Eastern; the frequency matches
+        # an inferred one; localize to UTC then convert to US/Eastern gives the expected
+        # series.
         # GH#7207, GH#11128
         # test .dt namespace accessor
 
@@ -138,6 +173,11 @@ class TestSeriesDatetimeValues:
         tm.assert_series_equal(result, expected)
 
     def test_dt_namespace_accessor_datetime64tz(self):
+        # [FUNCTION DOC]
+        # Regression test (GH 7207, GH 11128). Same checks for a tz-aware US/Eastern
+        # series: properties match, methods reachable, python datetime conversion gives
+        # objects, converting to CET gives the expected series with a CET timezone, and
+        # the frequency is inferred.
         # GH#7207, GH#11128
         # test .dt namespace accessor
 
@@ -166,6 +206,13 @@ class TestSeriesDatetimeValues:
         assert freq_result == DatetimeIndex(ser.values, freq="infer").freq
 
     def test_dt_namespace_accessor_timedelta(self):
+        # [FUNCTION DOC]
+        # Regression test (GH 7207, GH 11128). Three timedelta series (day, second and
+        # millisecond spacing, one with string index): properties match the index
+        # versions, methods reachable, components is a frame with the series index,
+        # conversion to python timedelta emits a Pandas4 deprecation warning and gives
+        # an object array, total seconds is a float64 series, and frequency matches the
+        # inferred frequency.
         # GH#7207, GH#11128
         # test .dt namespace accessor
 
@@ -207,6 +254,9 @@ class TestSeriesDatetimeValues:
             assert freq_result == TimedeltaIndex(ser.values, freq="infer").freq
 
     def test_dt_namespace_accessor_period(self):
+        # [FUNCTION DOC]
+        # Regression test (GH 7207, GH 11128). For a daily period series: properties
+        # match, methods reachable, and the frequency equals that of the period index.
         # GH#7207, GH#11128
         # test .dt namespace accessor
 
@@ -226,6 +276,10 @@ class TestSeriesDatetimeValues:
         assert freq_result == PeriodIndex(ser.values).freq
 
     def test_dt_namespace_accessor_index_and_values(self):
+        # [FUNCTION DOC]
+        # Verifies that with a datetime series having a different index than its values,
+        # year, month and second properties return series with the series index, name
+        # and int32 dtype, and normalizing keeps the index.
         # both
         index = date_range("20130101", periods=3, freq="D")
         dti = date_range("20140204", periods=3, freq="s")
@@ -245,6 +299,10 @@ class TestSeriesDatetimeValues:
         tm.assert_series_equal(ser.dt.normalize(), exp)
 
     def test_dt_accessor_limited_display_api(self):
+        # [FUNCTION DOC]
+        # Verifies the namespace listing (public names) of the accessor equals the union
+        # of the allowed properties and methods for tz-naive, tz-aware (UTC converted to
+        # Chicago, over a year at minute frequency) and period series.
         # tznaive
         ser = Series(date_range("20130101", periods=5, freq="D"), name="xxx")
         results = get_dir(ser)
@@ -265,6 +323,10 @@ class TestSeriesDatetimeValues:
         )
 
     def test_dt_accessor_ambiguous_freq_conversions(self):
+        # [FUNCTION DOC]
+        # Regression test (GH 11295). Localizing to UTC and converting to Chicago on a
+        # minute-frequency series for a year gives the same values as converting the
+        # index (with the frequency removed), with no ambiguous time errors.
         # GH#11295
         # ambiguous time error on the conversions
         ser = Series(date_range("2015-01-01", "2016-01-01", freq="min"), name="xxx")
@@ -279,6 +341,10 @@ class TestSeriesDatetimeValues:
         tm.assert_series_equal(ser, expected)
 
     def test_dt_accessor_not_writeable(self):
+        # [FUNCTION DOC]
+        # Verifies setting an accessor property raises a value error saying
+        # modifications are not allowed, and setting an element of the returned copy
+        # raises the chained assignment error.
         # no setting allowed
         ser = Series(date_range("20130101", periods=5, freq="D"), name="xxx")
         with pytest.raises(ValueError, match="modifications"):
@@ -297,6 +363,10 @@ class TestSeriesDatetimeValues:
         ],
     )
     def test_dt_round(self, method, dates):
+        # [FUNCTION DOC]
+        # Parametrized over round, floor and ceil with expected dates. Applying the
+        # daily rounding to three times on 2012-01-01 gives the expected dates in a
+        # series that keeps the name.
         # round
         ser = Series(
             pd.to_datetime(
@@ -309,6 +379,9 @@ class TestSeriesDatetimeValues:
         tm.assert_series_equal(result, expected)
 
     def test_dt_round_tz(self):
+        # [FUNCTION DOC]
+        # Verifies daily rounding of a series localized to UTC, converted to US/Eastern
+        # gives the expected aware series (all on 2012-01-01 midnight US/Eastern).
         ser = Series(
             pd.to_datetime(
                 ["2012-01-01 13:00:00", "2012-01-01 12:01:00", "2012-01-01 08:00:00"]
@@ -325,6 +398,12 @@ class TestSeriesDatetimeValues:
 
     @pytest.mark.parametrize("method", ["ceil", "round", "floor"])
     def test_dt_round_tz_ambiguous(self, method):
+        # [FUNCTION DOC]
+        # Regression test (GH 18946). Parametrized over ceil, round, floor with hourly
+        # rounding on Madrid times around the fall-back transition: ambiguous inference
+        # and an explicit bool array leave the series unchanged; the NaT option turns
+        # the first two (ambiguous) elements into NaT; the raise option raises a value
+        # error from the external library.
         # GH 18946 round near "fall back" DST
         df1 = DataFrame(
             [
@@ -363,6 +442,11 @@ class TestSeriesDatetimeValues:
         ],
     )
     def test_dt_round_tz_nonexistent(self, method, ts_str, freq):
+        # [FUNCTION DOC]
+        # Regression test (GH 23324). Parametrized over method, input time and frequency
+        # near the Chicago spring-forward gap. The shift-forward option gives 03:00
+        # Chicago (second unit), the NaT option gives NaT with the timezone kept, and
+        # the raise option raises a value error mentioning the nonexistent time.
         # GH 23324 round near "spring forward" DST
         ser = Series([pd.Timestamp(ts_str, tz="America/Chicago").as_unit("s")])
         result = getattr(ser.dt, method)(freq, nonexistent="shift_forward")
@@ -380,6 +464,10 @@ class TestSeriesDatetimeValues:
 
     @pytest.mark.parametrize("freq", ["ns", "us", "1000us"])
     def test_dt_round_nonnano_higher_resolution_no_op(self, freq):
+        # [FUNCTION DOC]
+        # Regression test (GH 52761). Parametrized over nanosecond and microsecond
+        # frequencies on a millisecond series. Rounding to a finer unit returns an equal
+        # series that does not share memory with the original.
         # GH 52761
         ser = Series(
             ["2020-05-31 08:00:00", "2000-12-31 04:00:05", "1800-03-14 07:30:20"],
@@ -392,6 +480,9 @@ class TestSeriesDatetimeValues:
         assert not np.shares_memory(ser.array._ndarray, result.array._ndarray)
 
     def test_dt_namespace_accessor_categorical(self):
+        # [FUNCTION DOC]
+        # Regression test (GH 19468). Year property of a categorical series of repeated
+        # dates gives int32 values with the series name.
         # GH 19468
         dti = DatetimeIndex(["20171111", "20181212"]).repeat(2)
         ser = Series(pd.Categorical(dti), name="foo")
@@ -400,6 +491,9 @@ class TestSeriesDatetimeValues:
         tm.assert_series_equal(result, expected)
 
     def test_dt_tz_localize_categorical(self, tz_aware_fixture):
+        # [FUNCTION DOC]
+        # Regression test (GH 27952). Localizing a categorical series of datetimes to
+        # each aware timezone fixture equals localizing the original.
         # GH 27952
         tz = tz_aware_fixture
         datetimes = Series(
@@ -411,6 +505,9 @@ class TestSeriesDatetimeValues:
         tm.assert_series_equal(result, expected)
 
     def test_dt_tz_convert_categorical(self, tz_aware_fixture):
+        # [FUNCTION DOC]
+        # Regression test (GH 27952). Converting a categorical series of datetimes with
+        # a MET timezone to each aware timezone fixture equals converting the original.
         # GH 27952
         tz = tz_aware_fixture
         datetimes = Series(
@@ -423,6 +520,9 @@ class TestSeriesDatetimeValues:
 
     @pytest.mark.parametrize("accessor", ["year", "month", "day"])
     def test_dt_other_accessors_categorical(self, accessor):
+        # [FUNCTION DOC]
+        # Regression test (GH 27952). Parametrized over year, month and day. The
+        # property on a categorical datetime series equals the property on the original.
         # GH 27952
         datetimes = Series(
             ["2018-01-01", "2018-01-01", "2019-01-02"], dtype="datetime64[ns]"
@@ -433,6 +533,9 @@ class TestSeriesDatetimeValues:
         tm.assert_series_equal(result, expected)
 
     def test_dt_accessor_no_new_attributes(self):
+        # [FUNCTION DOC]
+        # Regression test for GH 10673. Setting a new attribute on the datetime accessor
+        # raises an attribute error saying new attributes cannot be added.
         # https://github.com/pandas-dev/pandas/issues/10673
         ser = Series(date_range("20130101", periods=5, freq="D"))
         with pytest.raises(AttributeError, match="You cannot add any new attribute"):
@@ -443,6 +546,13 @@ class TestSeriesDatetimeValues:
         [None, *tm.get_locales()],
     )
     def test_dt_accessor_datetime_name_accessors(self, time_locale):
+        # [FUNCTION DOC]
+        # Parametrized over no locale plus all available system locales. For a year of
+        # daily dates, the day names for seven days equal the locale's (capitalized)
+        # names and the default locale gives English names; a missing date gives NaN.
+        # For monthly dates, month names (normalized to NFD form to work around GH
+        # 22342) equal the locale's names, both in the accessor and on each scalar
+        # timestamp; a missing date gives NaN.
         # Test Monday -> Sunday and January -> December, in that sequence
         if time_locale is None:
             # If the time_locale is None, day-name and month_name should
@@ -515,6 +625,10 @@ class TestSeriesDatetimeValues:
         assert np.isnan(ser.dt.month_name(locale=time_locale).iloc[-1])
 
     def test_strftime(self):
+        # [FUNCTION DOC]
+        # Regression test (GH 10086). String formatting with a pattern gives the
+        # expected strings for datetime series (date only, and time with the fraction
+        # dropped) and for period series (daily and seconds).
         # GH 10086
         ser = Series(date_range("20130101", periods=5))
         result = ser.dt.strftime("%Y/%m/%d")
@@ -557,6 +671,12 @@ class TestSeriesDatetimeValues:
         tm.assert_series_equal(result, expected)
 
     def test_strftime_dt64_days(self):
+        # [FUNCTION DOC]
+        # Verifies string formatting of a day-resolution datetime series with a missing
+        # first element gives NaN there and the formatted dates elsewhere, and the index
+        # version gives the expected index of formatted strings.
+        # KNOWN ISSUE: the comment about the dtype being S10 or U10 depending on python
+        # version is stale; no dtype is asserted.
         ser = Series(date_range("20130101", periods=5))
         ser.iloc[0] = pd.NaT
         result = ser.dt.strftime("%Y/%m/%d")
@@ -575,6 +695,10 @@ class TestSeriesDatetimeValues:
         tm.assert_index_equal(result, expected)
 
     def test_strftime_period_days(self, using_infer_string):
+        # [FUNCTION DOC]
+        # Verifies string formatting of a daily period index returns an index of
+        # formatted dates with fixed-width unicode dtype, or the string dtype with NaN
+        # as missing when the infer-string option is on.
         period_index = period_range("20150301", periods=5)
         result = period_index.strftime("%Y/%m/%d")
         expected = Index(
@@ -586,12 +710,18 @@ class TestSeriesDatetimeValues:
         tm.assert_index_equal(result, expected)
 
     def test_strftime_dt64_microsecond_resolution(self):
+        # [FUNCTION DOC]
+        # Verifies string formatting of a series of python datetimes (microsecond
+        # resolution) with a time pattern.
         ser = Series([datetime(2013, 1, 1, 2, 32, 59), datetime(2013, 1, 2, 14, 32, 1)])
         result = ser.dt.strftime("%Y-%m-%d %H:%M:%S")
         expected = Series(["2013-01-01 02:32:59", "2013-01-02 14:32:01"])
         tm.assert_series_equal(result, expected)
 
     def test_strftime_period_hours(self):
+        # [FUNCTION DOC]
+        # Verifies string formatting of an hourly period series with date and time
+        # pattern gives hour-aligned strings.
         ser = Series(period_range("20130101", periods=4, freq="h"))
         result = ser.dt.strftime("%Y/%m/%d %H:%M:%S")
         expected = Series(
@@ -605,6 +735,11 @@ class TestSeriesDatetimeValues:
         tm.assert_series_equal(result, expected)
 
     def test_strftime_period_minutes(self):
+        # [FUNCTION DOC]
+        # Verifies string formatting with the milliseconds directive on a
+        # millisecond-frequency period series.
+        # KNOWN ISSUE: the name says minutes but the period frequency is milliseconds
+        # and the pattern shows milliseconds.
         ser = Series(period_range("20130101", periods=4, freq="ms"))
         result = ser.dt.strftime("%Y/%m/%d %H:%M:%S.%l")
         expected = Series(
@@ -625,6 +760,10 @@ class TestSeriesDatetimeValues:
         ],
     )
     def test_strftime_nat(self, data):
+        # [FUNCTION DOC]
+        # Regression test (GH 29578). Parametrized over a datetime index and a period
+        # index each with one missing value. Formatting gives the formatted date and NaN
+        # for the missing one.
         # GH 29578
         ser = Series(data)
         result = ser.dt.strftime("%Y-%m-%d")
@@ -635,6 +774,10 @@ class TestSeriesDatetimeValues:
         "data", [DatetimeIndex([pd.NaT]), PeriodIndex([pd.NaT], dtype="period[D]")]
     )
     def test_strftime_all_nat(self, data):
+        # [FUNCTION DOC]
+        # Regression test (GH 45858). Parametrized over datetime and period indexes made
+        # entirely of NaT. Formatting emits no warning and gives a string-dtype series
+        # of NaN.
         # https://github.com/pandas-dev/pandas/issues/45858
         ser = Series(data)
         with tm.assert_produces_warning(None):
@@ -643,6 +786,11 @@ class TestSeriesDatetimeValues:
         tm.assert_series_equal(result, expected)
 
     def test_valid_dt_with_missing_values(self):
+        # [FUNCTION DOC]
+        # Regression test (GH 8689). With a missing element, the microsecond,
+        # nanosecond, second, minute, hour and day properties give the same values with
+        # NaN at the missing position; date gives python dates with NaT at that position
+        # (object dtype) and time gives times with NaT (object dtype).
         # GH 8689
         ser = Series(date_range("20130101", periods=5, freq="D"))
         ser.iloc[2] = pd.NaT
@@ -671,6 +819,10 @@ class TestSeriesDatetimeValues:
         tm.assert_series_equal(result, expected)
 
     def test_dt_accessor_api(self):
+        # [FUNCTION DOC]
+        # Regression test (GH 9322). The class attribute is the combined datetime-like
+        # properties class and an instance on a datetime series is the datetime
+        # properties class.
         # GH 9322
         from pandas.core.indexes.accessors import (
             CombinedDatetimelikeProperties,
@@ -691,6 +843,10 @@ class TestSeriesDatetimeValues:
         ],
     )
     def test_dt_accessor_invalid(self, data):
+        # [FUNCTION DOC]
+        # Regression test (GH 9322). Parametrized over integers, strings and floats. The
+        # accessor raises an attribute error saying only datetime-like values are
+        # allowed, and the attribute is reported absent.
         # GH#9322 check that series with incorrect dtypes don't have attr
         ser = Series(data)
         with pytest.raises(AttributeError, match="only use .dt accessor"):
@@ -698,6 +854,10 @@ class TestSeriesDatetimeValues:
         assert not hasattr(ser, "dt")
 
     def test_dt_accessor_updates_on_inplace(self):
+        # [FUNCTION DOC]
+        # Verifies the accessor reflects an in-place fill: after setting an element to
+        # missing and filling in place with a timestamp (which returns the series
+        # itself), the first and third dates are equal.
         ser = Series(date_range("2018-01-01", periods=10))
         ser[2] = None
         result = ser.fillna(pd.Timestamp("2018-01-01"), inplace=True)
@@ -706,6 +866,9 @@ class TestSeriesDatetimeValues:
         assert result[0] == result[2]
 
     def test_date_tz(self):
+        # [FUNCTION DOC]
+        # Regression test (GH 11757). The date property of an aware series equals the
+        # expected python dates and the apply of a date function gives the same series.
         # GH11757
         rng = DatetimeIndex(
             ["2014-04-04 23:56", "2014-07-18 21:24", "2015-11-22 22:14"],
@@ -717,6 +880,9 @@ class TestSeriesDatetimeValues:
         tm.assert_series_equal(ser.apply(lambda x: x.date()), expected)
 
     def test_dt_timetz_accessor(self, tz_naive_fixture):
+        # [FUNCTION DOC]
+        # Regression test (GH 21358). Over the naive/timezone fixture, the timetz
+        # property of a series gives python times with the timezone attached.
         # GH21358
         tz = maybe_get_tz(tz_naive_fixture)
 
@@ -743,6 +909,11 @@ class TestSeriesDatetimeValues:
         ],
     )
     def test_isocalendar(self, input_series, expected_output):
+        # [FUNCTION DOC]
+        # Parametrized over inputs (including NaT) with expected year, week and day
+        # triples (GH 36032 for year edges). The ISO calendar frame has unsigned 32-bit
+        # integer columns year, week and day with missing values where the input is
+        # missing.
         result = pd.to_datetime(Series(input_series)).dt.isocalendar()
         expected_frame = DataFrame(
             expected_output, columns=["year", "week", "day"], dtype="UInt32"
@@ -750,6 +921,9 @@ class TestSeriesDatetimeValues:
         tm.assert_frame_equal(result, expected_frame)
 
     def test_hour_index(self):
+        # [FUNCTION DOC]
+        # Verifies the hour property of a categorical hourly series with a non-default
+        # index returns an int32 series with the same index.
         dt_series = Series(
             date_range(start="2021-01-01", periods=5, freq="h"),
             index=[2, 6, 7, 8, 11],
@@ -765,6 +939,8 @@ class TestSeriesDatetimeValues:
 
 
 class TestSeriesPeriodValuesDtAccessor:
+    # [CLASS DOC]
+    # Groups tests of the datetime accessor on period series. Stateless.
     @pytest.mark.parametrize(
         "input_vals",
         [
@@ -785,6 +961,10 @@ class TestSeriesPeriodValuesDtAccessor:
         ],
     )
     def test_end_time_timevalues(self, input_vals):
+        # [FUNCTION DOC]
+        # Regression test (GH 17157). Parametrized over period arrays with several
+        # frequencies. The end time property equals the end time computed per element by
+        # apply.
         # GH#17157
         # Check that the time part of the Period is adjusted by end_time
         # when using the dt accessor on a Series
@@ -798,6 +978,10 @@ class TestSeriesPeriodValuesDtAccessor:
 
     @pytest.mark.parametrize("input_vals", [("2001"), ("NaT")])
     def test_to_period(self, input_vals):
+        # [FUNCTION DOC]
+        # Regression test (GH 21205). Parametrized over a year string and NaT.
+        # Converting a datetime series to a daily period series equals the expected
+        # period series.
         # GH#21205
         expected = Series([input_vals], dtype="Period[D]")
         result = Series([input_vals], dtype="datetime64[ns]").dt.to_period("D")
@@ -805,6 +989,9 @@ class TestSeriesPeriodValuesDtAccessor:
 
 
 def test_normalize_pre_epoch_dates():
+    # [FUNCTION DOC]
+    # Regression test (GH 36294). Normalizing a series with a pre-epoch date and a
+    # current date gives midnights of the same days.
     # GH: 36294
     ser = pd.to_datetime(Series(["1969-01-01 09:00:00", "2016-01-01 09:00:00"]))
     result = ser.dt.normalize()
@@ -813,6 +1000,9 @@ def test_normalize_pre_epoch_dates():
 
 
 def test_day_attribute_non_nano_beyond_int32():
+    # [FUNCTION DOC]
+    # Regression test (GH 52386). A timedelta series with second resolution and very
+    # large values gives day counts beyond the 32-bit range correctly.
     # GH 52386
     data = np.array(
         [

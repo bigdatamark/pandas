@@ -1,3 +1,8 @@
+# [MODULE DOC]
+# Tests for the struct accessor of Series with pyarrow struct dtypes: field dtypes,
+# field selection by name or position or compute expression, explode into a frame, and
+# errors for invalid input. Skipped entirely when pyarrow (and its compute module) is
+# not installed (checked at import time).
 import re
 
 import pytest
@@ -15,6 +20,10 @@ pc = pytest.importorskip("pyarrow.compute")
 
 
 def test_struct_accessor_dtypes():
+    # [FUNCTION DOC]
+    # Verifies the dtypes property of an empty series with a nested struct type returns
+    # a series of arrow dtypes, indexed by the field names (int_col, string_col,
+    # struct_col), with the nested struct field keeping its own struct dtype.
     ser = Series(
         [],
         dtype=ArrowDtype(
@@ -55,6 +64,11 @@ def test_struct_accessor_dtypes():
 
 
 def test_struct_accessor_field():
+    # [FUNCTION DOC]
+    # Verifies the field method on a three-field struct series with a custom index:
+    # selecting by name returns a series with that field's arrow dtype, same index and
+    # the field name; selecting by integer position two returns the third field with its
+    # own name.
     index = Index([-100, 42, 123])
     ser = Series(
         [
@@ -93,6 +107,9 @@ def test_struct_accessor_field():
 
 
 def test_struct_accessor_field_with_invalid_name_or_index():
+    # [FUNCTION DOC]
+    # Verifies passing a float to the field method raises a value error saying the name
+    # or index must be an integer, string or similar.
     ser = Series([], dtype=ArrowDtype(pa.struct([("field", pa.int64())])))
 
     with pytest.raises(ValueError, match="name_or_index must be an int, str,"):
@@ -100,6 +117,10 @@ def test_struct_accessor_field_with_invalid_name_or_index():
 
 
 def test_struct_accessor_explode():
+    # [FUNCTION DOC]
+    # Verifies the explode method returns a frame with one column per top-level field
+    # (keeping the nested struct field as a struct-typed column), arrow dtypes and the
+    # original index.
     index = Index([-100, 42, 123])
     ser = Series(
         [
@@ -141,6 +162,10 @@ def test_struct_accessor_explode():
     ],
 )
 def test_struct_accessor_api_for_invalid(invalid):
+    # [FUNCTION DOC]
+    # Parametrized over an integer series and a pyarrow string series. Accessing the
+    # struct accessor on them raises an attribute error saying it requires the struct
+    # dtype and naming the actual dtype.
     with pytest.raises(
         AttributeError,
         match=re.escape(
@@ -163,6 +188,13 @@ def test_struct_accessor_api_for_invalid(invalid):
     ],
 )
 def test_struct_accessor_field_expanded(indices, name):
+    # [FUNCTION DOC]
+    # Parametrized over several field specifiers (integer, list of positions for a
+    # nested field, compute field expression, string, bytes name, list with bytes name)
+    # and the expected result name. On an empty struct series, selecting with the
+    # specifier gives a result whose underlying arrow array equals what the arrow
+    # compute function returns for the same specifier, and whose name is the expected
+    # field name.
     arrow_type = pa.struct(
         [
             ("int_col", pa.int64()),

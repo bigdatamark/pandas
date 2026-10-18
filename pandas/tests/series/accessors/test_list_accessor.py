@@ -1,3 +1,8 @@
+# [MODULE DOC]
+# Tests for the list accessor of Series with pyarrow list dtypes (variable, fixed-size
+# and large lists): element selection by integer position or slice, length, flattening,
+# and error handling. Skipped entirely when pyarrow is not installed (checked at import
+# time).
 import re
 
 import pytest
@@ -20,6 +25,10 @@ pa = pytest.importorskip("pyarrow")
     ),
 )
 def test_list_getitem(list_dtype):
+    # [FUNCTION DOC]
+    # Parametrized over three arrow list dtypes. Selecting position one from each list
+    # gives an int64 arrow series with the second element, missing for the shorter list
+    # and for the missing list; the name is kept.
     ser = Series(
         [[1, 2, 3], [4, None, 5], None],
         dtype=ArrowDtype(list_dtype),
@@ -31,6 +40,9 @@ def test_list_getitem(list_dtype):
 
 
 def test_list_getitem_index():
+    # [FUNCTION DOC]
+    # Regression test (GH 58425). Same selection as above with a custom index; the index
+    # is kept in the result.
     # GH 58425
     ser = Series(
         [[1, 2, 3], [4, None, 5], None],
@@ -49,6 +61,9 @@ def test_list_getitem_index():
 
 
 def test_list_getitem_slice():
+    # [FUNCTION DOC]
+    # Verifies slicing from position one with no stop or step returns list-typed results
+    # (remaining elements), missing for a missing list; index and name are kept.
     ser = Series(
         [[1, 2, 3], [4, None, 5], None],
         dtype=ArrowDtype(pa.list_(pa.int64())),
@@ -66,6 +81,9 @@ def test_list_getitem_slice():
 
 
 def test_list_len():
+    # [FUNCTION DOC]
+    # Verifies the list length method returns an arrow int32 series with counts and
+    # missing for the missing list; name kept.
     ser = Series(
         [[1, 2, 3], [4, None], None],
         dtype=ArrowDtype(pa.list_(pa.int64())),
@@ -77,6 +95,10 @@ def test_list_len():
 
 
 def test_list_flatten():
+    # [FUNCTION DOC]
+    # Verifies flattening produces one row per inner element (including a missing inner
+    # element), skips empty and missing lists, and repeats the original index label for
+    # each element, with arrow int64 dtype and the series name.
     ser = Series(
         [[1, 2, 3], None, [4, None], [], [7, 8]],
         dtype=ArrowDtype(pa.list_(pa.int64())),
@@ -93,6 +115,9 @@ def test_list_flatten():
 
 
 def test_list_getitem_slice_invalid():
+    # [FUNCTION DOC]
+    # Verifies a slice with step zero raises the arrow invalid error, passed through
+    # from the external library.
     ser = Series(
         [[1, 2, 3], [4, None, 5], None],
         dtype=ArrowDtype(pa.list_(pa.int64())),
@@ -102,6 +127,11 @@ def test_list_getitem_slice_invalid():
 
 
 def test_list_accessor_non_list_dtype():
+    # [FUNCTION DOC]
+    # Verifies the list accessor on an arrow integer series raises an attribute error
+    # saying the accessor needs a list dtype and naming the actual dtype.
+    # KNOWN ISSUE: the expression inside the raises block indexes with a slice but the
+    # error comes from accessing the accessor itself, so the slice is irrelevant.
     ser = Series(
         [1, 2, 4],
         dtype=ArrowDtype(pa.int64()),
@@ -125,6 +155,10 @@ def test_list_accessor_non_list_dtype():
     ),
 )
 def test_list_getitem_invalid_index(list_dtype):
+    # [FUNCTION DOC]
+    # Parametrized over three arrow list dtypes. Negative and out-of-range positions
+    # raise the arrow invalid error; a string key raises a value error saying the key
+    # must be an int or slice.
     ser = Series(
         [[1, 2, 3], [4, None, 5], None],
         dtype=ArrowDtype(list_dtype),
@@ -138,6 +172,9 @@ def test_list_getitem_invalid_index(list_dtype):
 
 
 def test_list_accessor_not_iterable():
+    # [FUNCTION DOC]
+    # Verifies iterating over the list accessor raises a type error saying the accessor
+    # is not iterable.
     ser = Series(
         [[1, 2, 3], [4, None], None],
         dtype=ArrowDtype(pa.list_(pa.int64())),

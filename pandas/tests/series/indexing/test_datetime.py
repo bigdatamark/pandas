@@ -1,6 +1,11 @@
 """
 Also test support for datetime64[ns] in Series / DataFrame
 """
+# [MODULE DOC]
+# Tests for indexing a Series with datetime-like indexes: string, datetime and timestamp
+# keys; timezone-aware and naive handling; partial-string slicing; period indexes;
+# duplicate and non-monotonic indexes; and large indexes that exceed the engine size
+# cutoff.
 
 from datetime import (
     datetime,
@@ -29,6 +34,10 @@ import pandas._testing as tm
 
 
 def test_fancy_getitem():
+    # [FUNCTION DOC]
+    # Verifies lookups on a first-Friday-of-month datetime index: several equivalent
+    # date spellings and objects return the same value; a date not in the index raises a
+    # key error with the string; slicing by strings equals slicing by datetimes.
     dti = date_range(
         freq="WOM-1FRI", start=datetime(2005, 1, 1), end=datetime(2010, 1, 1)
     )
@@ -47,6 +56,9 @@ def test_fancy_getitem():
 
 
 def test_fancy_setitem():
+    # [FUNCTION DOC]
+    # Verifies setting by a date string changes the matching element and setting by a
+    # string slice changes all elements in the range.
     dti = date_range(
         freq="WOM-1FRI", start=datetime(2005, 1, 1), end=datetime(2010, 1, 1)
     )
@@ -61,6 +73,12 @@ def test_fancy_setitem():
 
 @pytest.mark.parametrize("tz_source", ["pytz", "dateutil"])
 def test_getitem_setitem_datetime_tz(tz_source):
+    # [FUNCTION DOC]
+    # Parametrized over timezone library (pytz skipped if missing, or dateutil with a
+    # special case for UTC). On an hourly series localized to US/Eastern (GH 2785, GH
+    # 2789): setting then restoring the value through string keys with UTC and Central
+    # offsets, python datetimes with UTC and Central timezones leaves the series
+    # unchanged.
     if tz_source == "pytz":
         pytz = pytest.importorskip(tz_source)
         tzget = pytz.timezone
@@ -99,6 +117,18 @@ def test_getitem_setitem_datetime_tz(tz_source):
 
 
 def test_getitem_setitem_datetimeindex():
+    # [FUNCTION DOC]
+    # Broad test of a tz-aware nanosecond hourly series. Lookups, assignments and string
+    # slices by wall time work; boolean masks from comparing the index to strings pass
+    # without timezone compatibility checks (GH 18435); naive datetime keys raise key
+    # errors (GH 36148); setting with a naive key casts the index to object and appends
+    # the key; naive slices raise type errors for reads and writes and leave the series
+    # unchanged; comparing the index to naive datetimes raises a type error about
+    # invalid comparison; localized bounds select the right range; indexing by index
+    # values works; partial date strings select or set a full day.
+    # KNOWN ISSUE: the first message variable about comparing naive and aware objects is
+    # assigned before the loop but only used much later after being overwritten, so that
+    # first assignment is dead.
     N = 50
     # testing with timezone, GH #2785
     rng = date_range("1/1/1990", periods=N, freq="h", tz="US/Eastern", unit="ns")
@@ -206,6 +236,10 @@ def test_getitem_setitem_datetimeindex():
 
 
 def test_getitem_setitem_periodindex():
+    # [FUNCTION DOC]
+    # Same as the previous test for an hourly period index: lookups, assignments, string
+    # slices, boolean mask from comparing the index to strings, indexing with index
+    # values (GH 2782), assignment through index values.
     N = 50
     rng = period_range("1/1/1990", periods=N, freq="h")
     ts = Series(np.random.default_rng(2).standard_normal(N), index=rng)
@@ -250,6 +284,10 @@ def test_getitem_setitem_periodindex():
 
 
 def test_datetime_indexing():
+    # [FUNCTION DOC]
+    # Verifies a duplicated daily datetime index: looking up a missing timestamp raises
+    # a key error with its repr; setting it enlarges the series; same on the reversed
+    # (non-monotonic) series.
     index = date_range("1/1/2000", "1/7/2000")
     index = index.repeat(3)
 
@@ -277,6 +315,11 @@ def test_datetime_indexing():
 def test_indexing_with_duplicate_datetimeindex(
     rand_series_with_duplicate_datetimeindex,
 ):
+    # [FUNCTION DOC]
+    # Uses the fixture series with a duplicated datetime index. For every unique date,
+    # lookup returns a series when duplicated or a scalar otherwise, and assignment sets
+    # all matching positions; a missing date raises a key error and a new date can be
+    # added by assignment.
     ts = rand_series_with_duplicate_datetimeindex
 
     uniques = ts.index.unique()
@@ -306,6 +349,11 @@ def test_indexing_with_duplicate_datetimeindex(
 
 
 def test_loc_getitem_over_size_cutoff(monkeypatch):
+    # [FUNCTION DOC]
+    # Regression test (issue 1821). With the engine size cutoff patched down to 1000, a
+    # large frame with a non-periodic datetime index (with some duplicated values) can
+    # be looked up by timestamp with loc, scalar and list forms. Uses the monkeypatch
+    # fixture.
     # #1821
 
     monkeypatch.setattr(libindex, "_SIZE_CUTOFF", 1000)
@@ -344,6 +392,10 @@ def test_loc_getitem_over_size_cutoff(monkeypatch):
 
 
 def test_indexing_over_size_cutoff_period_index(monkeypatch):
+    # [FUNCTION DOC]
+    # Regression test (GH 27136). With the size cutoff patched to 1000 and a
+    # minute-frequency period index of 1100 entries, the engine reports it is over the
+    # threshold, and lookups by period with direct indexing and loc list work.
     # GH 27136
 
     monkeypatch.setattr(libindex, "_SIZE_CUTOFF", 1000)
@@ -364,6 +416,11 @@ def test_indexing_over_size_cutoff_period_index(monkeypatch):
 
 
 def test_indexing_unordered():
+    # [FUNCTION DOC]
+    # Regression test (GH 2437, GH 3448). A datetime series reordered by concatenation:
+    # scalar lookup by each date works; string slices on the non-monotonic index raise a
+    # key error about value-based partial slicing; selecting a whole year then sorting
+    # equals the ordered selection with frequency removed.
     # GH 2437
     rng = date_range(start="2011-01-01", end="2011-01-15")
     ts = Series(np.random.default_rng(2).random(len(rng)), index=rng)
@@ -376,6 +433,10 @@ def test_indexing_unordered():
 
     # GH 3448 (ranges)
     def compare(slobj):
+        # [FUNCTION DOC]
+        # HELPER: nested comparison for the unordered test. Input: slobj (a slice).
+        # Slices the shuffled series, sorts by index and compares with the same slice of
+        # the ordered series with its index frequency cleared.
         result = ts2[slobj].copy()
         result = result.sort_index()
         expected = ts[slobj]
@@ -404,6 +465,9 @@ def test_indexing_unordered():
 
 
 def test_indexing_unordered2():
+    # [FUNCTION DOC]
+    # Verifies selecting a year string from a shuffled monthly series returns only
+    # entries from that year.
     # diff freq
     rng = date_range(datetime(2005, 1, 1), periods=20, freq="ME")
     ts = Series(np.arange(len(rng)), index=rng)
@@ -415,6 +479,10 @@ def test_indexing_unordered2():
 
 
 def test_indexing():
+    # [FUNCTION DOC]
+    # Regression test (GH 3070, GH 36179). Selecting by year string returns the first
+    # twelve entries; on a frame the same key raises a key error (as of 2.0); setting by
+    # year string on a series and with loc on a frame sets the first twelve entries.
     idx = date_range("2001-1-1", periods=20, freq="ME")
     ts = Series(np.random.default_rng(2).random(len(idx)), index=idx)
 
@@ -445,6 +513,9 @@ def test_indexing():
 
 
 def test_getitem_str_month_with_datetimeindex():
+    # [FUNCTION DOC]
+    # Regression test (GH 3546). Selecting a month string where all data lie on the last
+    # day of the month returns all elements, for hourly and for per-second frequency.
     # GH3546 (not including times on the last day)
     idx = date_range(start="2013-05-31 00:00", end="2013-05-31 23:00", freq="h")
     ts = Series(range(len(idx)), index=idx)
@@ -458,6 +529,9 @@ def test_getitem_str_month_with_datetimeindex():
 
 
 def test_getitem_str_year_with_datetimeindex():
+    # [FUNCTION DOC]
+    # Verifies selecting a year string for a list of timestamps including one at the
+    # very end of a day returns the whole series.
     idx = [
         Timestamp("2013-05-31 00:00"),
         Timestamp(datetime(2013, 5, 31, 23, 59, 59, 999999)),
@@ -468,6 +542,10 @@ def test_getitem_str_year_with_datetimeindex():
 
 
 def test_getitem_str_second_with_datetimeindex():
+    # [FUNCTION DOC]
+    # Regression test (GH 14826). On a frame with a second-frequency Central index,
+    # indexing by a string at second resolution or by a timestamp as a column key both
+    # raise key errors (it is a single date, not a slice).
     # GH14826, indexing with a seconds resolution string / datetime object
     df = DataFrame(
         np.random.default_rng(2).random((5, 5)),
@@ -485,6 +563,9 @@ def test_getitem_str_second_with_datetimeindex():
 
 
 def test_compare_datetime_with_all_none():
+    # [FUNCTION DOC]
+    # Regression test (GH 54870). Comparing a datetime series with an all-missing object
+    # series with greater-than gives all false.
     # GH#54870
     ser = Series(["2020-01-01", "2020-01-02"], dtype="datetime64[ns]")
     ser2 = Series([None, None])

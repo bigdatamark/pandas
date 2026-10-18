@@ -1,3 +1,9 @@
+# [MODULE DOC]
+# Tests for the Timestamp rounding methods (round to nearest, floor, ceil) to a
+# frequency. Covers zero and invalid frequencies, ordinary and sub-second frequencies,
+# timezone-aware inputs, daylight-saving ambiguous and nonexistent handling,
+# integer-precision accuracy, implementation bounds with out-of-bounds errors, and a
+# property-based sanity test.
 from hypothesis import (
     given,
     strategies as st,
@@ -21,7 +27,12 @@ import pandas._testing as tm
 
 
 class TestTimestampRound:
+    # [CLASS DOC]
+    # Groups the Timestamp rounding tests. Stateless.
     def test_round_division_by_zero_raises(self):
+        # [FUNCTION DOC]
+        # Verifies that rounding to a zero-length frequency raises a value error saying
+        # there was a division by zero in rounding.
         ts = Timestamp("2016-01-01")
 
         msg = "Division by zero in rounding"
@@ -41,12 +52,20 @@ class TestTimestampRound:
         ],
     )
     def test_round_frequencies(self, timestamp, freq, expected):
+        # [FUNCTION DOC]
+        # Parametrized over timestamp, frequency (daily, hourly, per-second) and
+        # expected result. Rounding to nearest gives the expected timestamp (the half-day
+        # cases listed round to the later day).
         dt = Timestamp(timestamp)
         result = dt.round(freq)
         expected = Timestamp(expected)
         assert result == expected
 
     def test_round_tzaware(self):
+        # [FUNCTION DOC]
+        # Verifies rounding a US/Eastern aware timestamp to a day gives midnight of that
+        # date in the same zone, and rounding to seconds when there is no sub-second
+        # part returns an equal timestamp.
         dt = Timestamp("20130101 09:10:11", tz="US/Eastern")
         result = dt.round("D")
         expected = Timestamp("20130101", tz="US/Eastern")
@@ -57,6 +76,8 @@ class TestTimestampRound:
         assert result == dt
 
     def test_round_30min(self):
+        # [FUNCTION DOC]
+        # Verifies rounding 12:32 to a thirty-minute frequency gives 12:30.
         # round
         dt = Timestamp("20130104 12:32:00")
         result = dt.round("30Min")
@@ -64,6 +85,11 @@ class TestTimestampRound:
         assert result == expected
 
     def test_round_subsecond(self):
+        # [FUNCTION DOC]
+        # Regression test (GH 14440, GH 15578). Rounding to milliseconds rounds up at
+        # exactly half and down below half; rounding a millisecond-precision value to
+        # microsecond or nanosecond leaves it unchanged; rounding to ten nanoseconds
+        # works on a nanosecond-precision value.
         # GH#14440 & GH#15578
         result = Timestamp("2016-10-17 12:00:00.0015").round("ms")
         expected = Timestamp("2016-10-17 12:00:00.002000")
@@ -82,10 +108,16 @@ class TestTimestampRound:
         assert result == expected
 
     def test_round_nonstandard_freq(self):
+        # [FUNCTION DOC]
+        # Verifies rounding to a frequency that is not a divisor of a larger unit (1010
+        # nanoseconds) completes without emitting any warning.
         with tm.assert_produces_warning(False):
             Timestamp("2016-10-17 12:00:00.001501031").round("1010ns")
 
     def test_round_invalid_arg(self):
+        # [FUNCTION DOC]
+        # Verifies an unrecognized frequency string raises a value error with the
+        # invalid-frequency message.
         stamp = Timestamp("2000-01-05 05:09:15.13")
         with pytest.raises(ValueError, match=INVALID_FREQ_ERR_MSG):
             stamp.round("foo")
@@ -114,6 +146,10 @@ class TestTimestampRound:
         ],
     )
     def test_ceil_floor_edge(self, test_input, rounder, freq, expected):
+        # [FUNCTION DOC]
+        # Parametrized over input, rounder (floor or ceil), frequency and expected
+        # value, including edge cases of values already on the grid and NaT. Floor or
+        # ceil gives the expected timestamp, and NaT input gives NaT.
         dt = Timestamp(test_input)
         func = getattr(dt, rounder)
         result = func(freq)
@@ -137,6 +173,10 @@ class TestTimestampRound:
     )
     @pytest.mark.parametrize("rounder", ["ceil", "floor", "round"])
     def test_round_minute_freq(self, test_input, freq, expected, rounder):
+        # [FUNCTION DOC]
+        # Regression test (GH 21262). Parametrized over inputs that are already exact
+        # multiples of minute-like frequencies and over the three rounders (ceil, floor,
+        # round). Expected: the timestamp is returned unchanged for every combination.
         # Ensure timestamps that shouldn't round dont!
         # GH#21262
 
@@ -147,6 +187,9 @@ class TestTimestampRound:
         assert result == expected
 
     def test_ceil(self, unit):
+        # [FUNCTION DOC]
+        # Verifies ceiling a timestamp to a day for each unit fixture gives the next
+        # midnight and preserves the resolution code.
         dt = Timestamp("20130101 09:10:11").as_unit(unit)
         result = dt.ceil("D")
         expected = Timestamp("20130102")
@@ -154,6 +197,9 @@ class TestTimestampRound:
         assert result._creso == dt._creso
 
     def test_floor(self, unit):
+        # [FUNCTION DOC]
+        # Verifies flooring a timestamp to a day for each unit fixture gives the
+        # same-day midnight and preserves the resolution code.
         dt = Timestamp("20130101 09:10:11").as_unit(unit)
         result = dt.floor("D")
         expected = Timestamp("20130101")
@@ -162,6 +208,12 @@ class TestTimestampRound:
 
     @pytest.mark.parametrize("method", ["ceil", "round", "floor"])
     def test_round_dst_border_ambiguous(self, method, unit):
+        # [FUNCTION DOC]
+        # Regression test (GH 18946) for rounding near a fall-back transition in Madrid.
+        # Parametrized over method (ceil, round, floor) and unit. With ambiguous true
+        # the result equals the input and keeps the resolution; with false it equals the
+        # next hour as UTC converted to Madrid; with the NaT option it returns NaT; with
+        # the raise option a value error saying dst cannot be inferred is raised.
         # GH 18946 round near "fall back" DST
         ts = Timestamp("2017-10-29 00:00:00", tz="UTC").tz_convert("Europe/Madrid")
         ts = ts.as_unit(unit)
@@ -192,6 +244,12 @@ class TestTimestampRound:
         ],
     )
     def test_round_dst_border_nonexistent(self, method, ts_str, freq, unit):
+        # [FUNCTION DOC]
+        # Regression test (GH 23324) for rounding near a spring-forward gap in Chicago.
+        # Parametrized over method, input string and frequency, and unit. The
+        # shift-forward option returns 03:00 local time and keeps the resolution; the
+        # NaT option returns NaT; the raise option raises a value error mentioning the
+        # nonexistent 02:00 time.
         # GH 23324 round near "spring forward" DST
         ts = Timestamp(ts_str, tz="America/Chicago").as_unit(unit)
         result = getattr(ts, method)(freq, nonexistent="shift_forward")
@@ -241,6 +299,13 @@ class TestTimestampRound:
         ],
     )
     def test_round_int64(self, timestamp, freq):
+        # [FUNCTION DOC]
+        # Regression test (GH 22591). Parametrized over several timestamps (including
+        # ones with fine sub-second parts) and many frequencies from nanoseconds to a
+        # day. Checks on the nanosecond integer: floor lies on the grid and is within
+        # one step below; ceil lies on the grid and within one step above; round lies on
+        # the grid and within half a step; when the step is even and the distance is
+        # exactly half a step, the result's multiple index is even (round half to even).
         # check that all rounding modes are accurate to int64 precision
         # see GH#22591
         dt = Timestamp(timestamp).as_unit("ns")
@@ -265,6 +330,12 @@ class TestTimestampRound:
             assert result._value // unit % 2 == 0, "round half to even error"
 
     def test_round_implementation_bounds(self):
+        # [FUNCTION DOC]
+        # Verifies the boundaries of what can be rounded. Ceil of the minimum timestamp
+        # to seconds and floor of the maximum succeed with known values (the maximum
+        # floor equals the maximum minus the leftover nanoseconds). Floor and round of
+        # the minimum, and ceil and round of the maximum, raise an out-of-bounds
+        # datetime error saying the value cannot be rounded to a second frequency.
         # See also: analogous test for Timedelta
         result = Timestamp.min.ceil("s")
         expected = Timestamp(1677, 9, 21, 0, 12, 44)
@@ -294,6 +365,14 @@ class TestTimestampRound:
         "method", [Timestamp.round, Timestamp.floor, Timestamp.ceil]
     )
     def test_round_sanity(self, val, method):
+        # [FUNCTION DOC]
+        # Property-based test (marked slow) over any valid 64-bit integer and each of
+        # round, floor and ceil. A nested checker is run for units from nanoseconds to a
+        # day. Expected: where the exact result would leave the supported range the
+        # method raises an out-of-bounds datetime error mentioning overflow; otherwise
+        # the result is a multiple of the step, within one step of the input, within
+        # half a step for round, not above the input for floor, and not below it for
+        # ceil.
         cls = Timestamp
         err_cls = OutOfBoundsDatetime
 
@@ -301,6 +380,16 @@ class TestTimestampRound:
         ts = cls(val)
 
         def checker(ts, nanos, unit):
+            # [FUNCTION DOC]
+            # HELPER: checker used by the sanity test for a single unit. Inputs: ts
+            # (timestamp), nanos (step size in nanoseconds), unit (frequency string).
+            # Closes over the method under test and the error class. For steps larger
+            # than one nanosecond it computes the remainder, the lower and upper
+            # multiples with unbounded integers and, when the method would have to go
+            # outside the representable bounds, asserts the overflow error is raised and
+            # returns. Otherwise it applies the method and asserts the result is a
+            # multiple of the step, within one step of the input, and satisfies the
+            # method-specific ordering or half-step bound. Returns nothing.
             # First check that we do raise in cases where we should
             if nanos == 1:
                 pass

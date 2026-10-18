@@ -1,3 +1,9 @@
+# [MODULE DOC]
+# Tests for the Timestamp timezone localization method (attach a timezone to a naive
+# timestamp). Covers bounds overflow, ambiguous and nonexistent local times (raise,
+# flag, NaT, shift forward/backward, timedelta shifts), invalid arguments, round trips,
+# and equivalence across pytz, dateutil and zoneinfo timezones. Several tests use years
+# beyond 2200 where only zoneinfo supports transitions.
 from datetime import timedelta
 import re
 import zoneinfo
@@ -15,6 +21,13 @@ from pandas import (
 
 
 def _distant_date_only_for_zoneinfo(year, tz):
+    # [FUNCTION DOC]
+    # HELPER: guard for the tests that parametrize over a distant year. Inputs: year
+    # (string or integer) and tz (a timezone object or string). If the year is 2200 or
+    # later, then a zoneinfo object or a plain string naming a zoneinfo zone passes
+    # (returns nothing); anything else skips the test since only zoneinfo supports
+    # transitions that far out. For earlier years nothing happens. Never raises other
+    # than the skip.
     if int(year) >= 2200:
         if isinstance(tz, zoneinfo.ZoneInfo):
             return
@@ -26,7 +39,15 @@ def _distant_date_only_for_zoneinfo(year, tz):
 
 
 class TestTimestampTZLocalize:
+    # [CLASS DOC]
+    # Groups the tests of tz_localize on Timestamp. Stateless.
     def test_tz_localize_pushes_out_of_bounds(self):
+        # [FUNCTION DOC]
+        # Regression test (GH 12677). Needs pytz. Localizing the minimum timestamp to
+        # US/Pacific (which moves it later) works, and converting that to Tokyo works;
+        # localizing the minimum to Tokyo raises an out-of-bounds datetime error saying
+        # the conversion underflows past the minimum. Symmetrically for the maximum:
+        # Tokyo works, US/Pacific raises an overflow error.
         # GH#12677
         # tz_localize that pushes away from the boundary is OK
         pytz = pytest.importorskip("pytz")
@@ -56,6 +77,13 @@ class TestTimestampTZLocalize:
         [zoneinfo.ZoneInfo("US/Central"), "dateutil/US/Central", "pytz/US/Central"],
     )
     def test_tz_localize_ambiguous_bool(self, unit, tz):
+        # [FUNCTION DOC]
+        # Regression test (GH 14402). Parametrized over unit and three timezones
+        # (zoneinfo, dateutil, pytz; pytz skipped if missing). An ambiguous Chicago
+        # fall-back time raises a value error saying dst cannot be inferred by default.
+        # With the ambiguous argument true the result equals the first (-0500)
+        # occurrence, and with false the second (-0600); the resolution code matches the
+        # unit in both.
         # make sure that we are correctly accepting bool values as ambiguous
         # GH#14402
         if isinstance(tz, str) and tz.startswith("pytz/"):
@@ -79,6 +107,11 @@ class TestTimestampTZLocalize:
 
     @pytest.mark.parametrize("year", ["2014", "2200"])
     def test_tz_localize_ambiguous(self, year):
+        # [FUNCTION DOC]
+        # Parametrized over a year (2014 and 2200). Localizing an ambiguous fall-back
+        # time to US/Eastern with ambiguous true and false gives results one hour (3600
+        # seconds) apart in stored value. Passing the inference option is not allowed
+        # for a single timestamp and raises a value error listing the allowed choices.
         ts = Timestamp(f"{year}-11-02 01:00").as_unit("s")
         ts_dst = ts.tz_localize("US/Eastern", ambiguous=True)
         ts_no_dst = ts.tz_localize("US/Eastern", ambiguous=False)
@@ -92,6 +125,10 @@ class TestTimestampTZLocalize:
             ts.tz_localize("US/Eastern", ambiguous="infer")
 
     def test_tz_localize_invalid(self):
+        # [FUNCTION DOC]
+        # Regression test (GH 8025). Localizing an already aware timestamp raises a type
+        # error telling the user to use the conversion method; converting a naive
+        # timestamp raises a type error telling the user to localize.
         # GH#8025
         msg = "Cannot localize tz-aware Timestamp, use tz_convert for conversions"
         with pytest.raises(TypeError, match=msg):
@@ -112,6 +149,11 @@ class TestTimestampTZLocalize:
         ],
     )
     def test_tz_localize_nonexistent(self, stamp, tz, year):
+        # [FUNCTION DOC]
+        # Regression test (GH 13057, GH 22644). Parametrized over year (2015, 2201) and
+        # daylight-saving gap times in four zones. Localizing a nonexistent local time
+        # raises a value error mentioning the stamp, both by default and with the raise
+        # option; with the NaT option it returns NaT.
         # GH#13057
         stamp = stamp.replace("2015", year)
         ts = Timestamp(stamp)
@@ -154,6 +196,11 @@ class TestTimestampTZLocalize:
     def test_tz_localize_nonexistent_shift(
         self, stamp, tz, forward_expected, backward_expected
     ):
+        # [FUNCTION DOC]
+        # Parametrized over starting time, zone and expected forward/backward results
+        # around spring-forward gaps in four zones. Shifting forward gives the first
+        # valid instant after the gap and shifting backward gives the last microsecond
+        # before it; both compared with the same expected timestamps built in that zone.
         ts = Timestamp(stamp)
         forward_ts = ts.tz_localize(tz, nonexistent="shift_forward")
         assert forward_ts == Timestamp(forward_expected, tz=tz)
@@ -161,6 +208,10 @@ class TestTimestampTZLocalize:
         assert backward_ts == Timestamp(backward_expected, tz=tz)
 
     def test_tz_localize_ambiguous_raise(self):
+        # [FUNCTION DOC]
+        # Regression test (GH 13057). Localizing an ambiguous time to US/Pacific with
+        # ambiguous set to raise raises a value error saying dst time cannot be inferred
+        # from that time.
         # GH#13057
         ts = Timestamp("2015-11-1 01:00")
         msg = "Cannot infer dst time from 2015-11-01 01:00:00,"
@@ -168,6 +219,11 @@ class TestTimestampTZLocalize:
             ts.tz_localize("US/Pacific", ambiguous="raise")
 
     def test_tz_localize_nonexistent_invalid_arg(self, warsaw):
+        # [FUNCTION DOC]
+        # Regression test (GH 22644). With the warsaw zone fixture, passing an
+        # unrecognized string for the nonexistent argument raises a value error listing
+        # the allowed options (raise, NaT, shift_forward, shift_backward or a
+        # timedelta).
         # GH 22644
         tz = warsaw
         ts = Timestamp("2015-03-29 02:00:00")
@@ -188,6 +244,10 @@ class TestTimestampTZLocalize:
         ],
     )
     def test_tz_localize_roundtrip(self, stamp, tz_aware_fixture):
+        # [FUNCTION DOC]
+        # Round-trip test over several dates and each aware timezone fixture. Localizing
+        # equals constructing with that timezone; localizing again raises a type error;
+        # localizing to none returns the original naive timestamp with no timezone.
         tz = tz_aware_fixture
         ts = Timestamp(stamp)
         localized = ts.tz_localize(tz)
@@ -202,6 +262,13 @@ class TestTimestampTZLocalize:
         assert reset.tzinfo is None
 
     def test_tz_localize_ambiguous_compat(self):
+        # [FUNCTION DOC]
+        # Verifies pytz and dateutil agree on ambiguous time handling in London (needs
+        # pytz). The naive timestamp has microsecond unit. With ambiguous false both
+        # give identical stored values equal to the known number of microseconds and the
+        # zone name GMT with equal string forms; with ambiguous true both are one hour
+        # earlier (known stored value) with equal strings and equal zone names (GH
+        # 14621, GH 45087).
         # validate that pytz and dateutil are compat for dst
         # when the transition happens
         pytz = pytest.importorskip("pytz")
@@ -244,6 +311,11 @@ class TestTimestampTZLocalize:
         ],
     )
     def test_timestamp_tz_localize(self, tz):
+        # [FUNCTION DOC]
+        # Parametrized over four Eastern timezone representations (pytz, dateutil
+        # object, zoneinfo, dateutil string; pytz skipped if missing). Localizing a
+        # naive timestamp matches constructing it directly with the timezone, including
+        # the hour field.
         if isinstance(tz, str) and tz.startswith("pytz/"):
             pytz = pytest.importorskip("pytz")
             tz = pytz.timezone(tz.removeprefix("pytz/"))
@@ -302,6 +374,16 @@ class TestTimestampTZLocalize:
     def test_timestamp_tz_localize_nonexistent_shift(
         self, start_ts, tz, end_ts, shift, year, tz_type, unit
     ):
+        # [FUNCTION DOC]
+        # Regression test (GH 8917, GH 24466). Parametrized over year, start/expected
+        # pairs for shifts (forward, backward, one hour, minus one hour) in Warsaw and
+        # US/Pacific, timezone type prefix (default or dateutil) and unit. Skips
+        # dateutil with year 2204. The year is substituted into the strings, a
+        # nonexistent time at the given unit is localized with the shift option, and
+        # compared to the expected time localized; for coarser units the expected value
+        # is truncated to the unit before comparing (microseconds zero the nanoseconds,
+        # milliseconds truncate to a multiple of 1000 microseconds, seconds zero both).
+        # The resolution code must match the unit.
         # GH 8917, 24466
         if year == "2204" and tz_type == "dateutil/":
             pytest.skip("ZoneInfo required for year >= 2200")
@@ -330,6 +412,11 @@ class TestTimestampTZLocalize:
     def test_timestamp_tz_localize_nonexistent_shift_invalid(
         self, offset, year, warsaw
     ):
+        # [FUNCTION DOC]
+        # Regression test (GH 8917, GH 24466). Parametrized over year and offset of
+        # minus or plus one second. A timedelta shift that lands on another nonexistent
+        # time raises a value error saying the provided timedelta will relocalize on a
+        # nonexistent time. Uses the warsaw fixture and the distant-year helper.
         # GH 8917, 24466
         tz = warsaw
         _distant_date_only_for_zoneinfo(year, tz)
@@ -340,6 +427,9 @@ class TestTimestampTZLocalize:
 
     @pytest.mark.parametrize("year", ["2015", "2201"])
     def test_timestamp_tz_localize_nonexistent_NaT(self, year, warsaw, unit):
+        # [FUNCTION DOC]
+        # Regression test (GH 8917). For a nonexistent Warsaw time with each year and
+        # unit, the NaT option returns NaT.
         # GH 8917
         tz = warsaw
         _distant_date_only_for_zoneinfo(year, tz)
@@ -349,6 +439,10 @@ class TestTimestampTZLocalize:
 
     @pytest.mark.parametrize("year", ["2015", "2201"])
     def test_timestamp_tz_localize_nonexistent_raise(self, year, warsaw, unit):
+        # [FUNCTION DOC]
+        # Regression test (GH 8917). For a nonexistent Warsaw time with each year and
+        # unit, the raise option raises a value error mentioning the time, and an
+        # unrecognized option string raises a value error listing the allowed options.
         # GH 8917
         tz = warsaw
         _distant_date_only_for_zoneinfo(year, tz)

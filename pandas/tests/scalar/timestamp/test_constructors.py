@@ -1,3 +1,11 @@
+# [MODULE DOC]
+# Tests for the Timestamp constructor and its alternate constructors. Organized in
+# classes covering the unit keyword, the fold keyword, positional versus keyword
+# arguments, class-method constructors (now, today, utcnow, strptime, fromisocalendar,
+# fromordinal), resolution inference from strings, and the general constructor
+# (timezones, string offsets, bounds, error messages, daylight-saving edge cases),
+# followed by module-level tests of identity, nanosecond range, the nanosecond value
+# property and missing values.
 import calendar
 from datetime import (
     date,
@@ -37,8 +45,15 @@ import pandas._testing as tm
 
 
 class TestTimestampConstructorUnitKeyword:
+    # [CLASS DOC]
+    # Groups tests of the unit keyword when constructing a Timestamp from numbers.
+    # Stateless.
     @pytest.mark.parametrize("typ", [int, float])
     def test_constructor_int_float_with_YM_unit(self, typ):
+        # [FUNCTION DOC]
+        # Regression test (GH 47266). Parametrized over int and float. The value 150
+        # with unit year gives January 1, 2120 and with unit month gives July 1, 1982,
+        # with no lossy float conversions.
         # GH#47266 avoid the conversions in cast_from_unit
         val = typ(150)
 
@@ -52,6 +67,10 @@ class TestTimestampConstructorUnitKeyword:
 
     @pytest.mark.parametrize("typ", [int, float])
     def test_construct_from_int_float_with_unit_out_of_bound_raises(self, typ):
+        # [FUNCTION DOC]
+        # Regression test (GH 50870). Parametrized over int and float. A huge number of
+        # days raises an out-of-bounds datetime error naming the integer input and the
+        # unit, rather than a raw overflow error.
         # GH#50870  make sure we get an OutOfBoundsDatetime instead of OverflowError
         val = typ(150000000000000)
 
@@ -60,6 +79,9 @@ class TestTimestampConstructorUnitKeyword:
             Timestamp(val, unit="D")
 
     def test_constructor_float_not_round_with_YM_unit_raises(self):
+        # [FUNCTION DOC]
+        # Regression test (GH 47267). A non-round float with year or month units raises
+        # a value error saying the conversion is ambiguous.
         # GH#47267 avoid the conversions in cast_from-unit
 
         msg = "Conversion of non-round float with unit=[MY] is ambiguous"
@@ -97,7 +119,22 @@ class TestTimestampConstructorUnitKeyword:
         ],
     )
     def test_construct_with_unit(self, value, check_kwargs):
+        # [FUNCTION DOC]
+        # Parametrized over numeric value and expected-field keywords covering
+        # nanosecond integers and floats with units of microseconds, milliseconds,
+        # seconds and days (including fractional parts that yield microsecond,
+        # nanosecond or hour parts). Delegates to the nested checker with the keyword
+        # dictionary.
         def check(value, unit=None, h=1, s=1, us=0, ns=0):
+            # [FUNCTION DOC]
+            # HELPER: checker for the unit test. Inputs: value (number), unit (string or
+            # none, default none), and the expected hour (default 1), second (default
+            # 1), microsecond (default 0) and nanosecond (default 0). Builds a Timestamp
+            # from the value and unit, asserts the date is January 1, 2000, the hour
+            # equals the expected hour, and, unless the unit is days, that minute is 1
+            # and second and microsecond match; for the day unit minute, second and
+            # microsecond must be zero. The nanosecond field must match the expected
+            # value.
             stamp = Timestamp(value, unit=unit)
             assert stamp.year == 2000
             assert stamp.month == 1
@@ -117,7 +154,12 @@ class TestTimestampConstructorUnitKeyword:
 
 
 class TestTimestampConstructorFoldKeyword:
+    # [CLASS DOC]
+    # Groups tests of the fold keyword (GH 25057). Stateless.
     def test_timestamp_constructor_invalid_fold_raise(self):
+        # [FUNCTION DOC]
+        # Verifies a fold value outside the allowed set (none, zero, one) raises a value
+        # error stating the valid values.
         # Test for GH#25057
         # Valid fold values are only [None, 0, 1]
         msg = "Valid values for the fold argument are None, 0, or 1."
@@ -125,6 +167,10 @@ class TestTimestampConstructorFoldKeyword:
             Timestamp(123, fold=2)
 
     def test_timestamp_constructor_pytz_fold_raise(self):
+        # [FUNCTION DOC]
+        # Verifies passing the fold keyword together with a pytz timezone raises a value
+        # error stating pytz timezones do not support fold. Skipped if pytz is not
+        # installed.
         # Test for GH#25057
         # pytz doesn't support fold. Check that we raise
         # if fold is passed with pytz
@@ -146,6 +192,11 @@ class TestTimestampConstructorFoldKeyword:
         ],
     )
     def test_timestamp_constructor_fold_conflict(self, ts_input, fold):
+        # [FUNCTION DOC]
+        # Parametrized over fold values zero and one and inputs that are unambiguous
+        # (integer, float, datetime64, string with offset, aware datetime). Passing a
+        # fold with any of these raises a value error explaining that fold is not
+        # allowed with possibly unambiguous input.
         # Test for GH#25057
         # Check that we raise on fold conflict
         msg = (
@@ -159,6 +210,9 @@ class TestTimestampConstructorFoldKeyword:
     @pytest.mark.parametrize("tz", ["dateutil/Europe/London", None])
     @pytest.mark.parametrize("fold", [0, 1])
     def test_timestamp_constructor_retain_fold(self, tz, fold):
+        # [FUNCTION DOC]
+        # Parametrized over a dateutil timezone or none and fold zero/one. A Timestamp
+        # built from components with a fold has the same fold attribute.
         # Test for GH#25057
         # Check that we retain fold
         ts = Timestamp(year=2019, month=10, day=27, hour=1, minute=30, tz=tz, fold=fold)
@@ -185,6 +239,11 @@ class TestTimestampConstructorFoldKeyword:
         ],
     )
     def test_timestamp_constructor_infer_fold_from_value(self, tz, ts_input, fold_out):
+        # [FUNCTION DOC]
+        # Parametrized over timezone (dateutil or zoneinfo London) and inputs (integers
+        # for the two occurrences of the ambiguous time, strings with offsets, datetimes
+        # with fold). The fold inferred by the constructor equals the expected zero or
+        # one.
         # Test for GH#25057
         # Check that we infer fold correctly based on timestamps since utc
         # or strings
@@ -202,6 +261,10 @@ class TestTimestampConstructorFoldKeyword:
         ],
     )
     def test_timestamp_constructor_adjust_value_for_fold(self, tz, fold, value_out):
+        # [FUNCTION DOC]
+        # Parametrized over fold values with a dateutil London timezone. A naive
+        # datetime at an ambiguous time localized with the fold gives the expected
+        # stored microsecond integer (one hour apart for fold zero and one).
         # Test for GH#25057
         # Check that we adjust value for fold correctly
         # based on timestamps since utc
@@ -213,7 +276,15 @@ class TestTimestampConstructorFoldKeyword:
 
 
 class TestTimestampConstructorPositionalAndKeywordSupport:
+    # [CLASS DOC]
+    # Groups tests of positional and keyword calling conventions. Stateless.
     def test_constructor_positional(self):
+        # [FUNCTION DOC]
+        # Regression test (GH 10758, gh-11630). Positional year and month only raises a
+        # type error because day is missing; month zero or thirteen raises a value
+        # error; day zero or 32 raises a value error (message depends on python
+        # version); the repr of positional construction equals that of the equivalent
+        # string construction, with and without microseconds.
         # see GH#10758
         msg = "'NoneType' object cannot be interpreted as an integer"
         with pytest.raises(TypeError, match=msg):
@@ -241,6 +312,10 @@ class TestTimestampConstructorPositionalAndKeywordSupport:
         )
 
     def test_constructor_keyword(self):
+        # [FUNCTION DOC]
+        # Same checks as the positional test but using keywords (GH 10758): missing day
+        # raises a type error (message varies by python version), invalid month or day
+        # raise value errors, and keyword construction reprs match string construction.
         # GH#10758
         msg = "|".join(
             [
@@ -297,6 +372,10 @@ class TestTimestampConstructorPositionalAndKeywordSupport:
         ],
     )
     def test_invalid_date_kwarg_with_string_input(self, arg):
+        # [FUNCTION DOC]
+        # Parametrized over each date or time field name. Passing a string together with
+        # any such keyword raises a value error saying a date attribute keyword cannot
+        # be passed with a string.
         kwarg = {arg: 1}
         msg = "Cannot pass a date attribute keyword argument"
         with pytest.raises(ValueError, match=msg):
@@ -304,6 +383,11 @@ class TestTimestampConstructorPositionalAndKeywordSupport:
 
     @pytest.mark.parametrize("kwargs", [{}, {"year": 2020}, {"year": 2020, "month": 1}])
     def test_constructor_missing_keyword(self, kwargs):
+        # [FUNCTION DOC]
+        # Regression test (GH 31200). Parametrized over empty, only year and year plus
+        # month keyword sets. Constructing without all of year, month and day raises a
+        # type error; the accepted message is a union of the variants used by different
+        # python versions.
         # GH#31200
 
         # The exact error message of datetime() depends on its version
@@ -323,6 +407,9 @@ class TestTimestampConstructorPositionalAndKeywordSupport:
             Timestamp(**kwargs)
 
     def test_constructor_positional_with_tzinfo(self):
+        # [FUNCTION DOC]
+        # Regression test (GH 31929). A positional date with the tzinfo keyword equals
+        # the string-built UTC timestamp.
         # GH#31929
         ts = Timestamp(2020, 12, 31, tzinfo=timezone.utc)
         expected = Timestamp("2020-12-31", tzinfo=timezone.utc)
@@ -330,6 +417,14 @@ class TestTimestampConstructorPositionalAndKeywordSupport:
 
     @pytest.mark.parametrize("kwd", ["nanosecond", "microsecond", "second", "minute"])
     def test_constructor_positional_keyword_mixed_with_tzinfo(self, kwd, request):
+        # [FUNCTION DOC]
+        # Parametrized over nanosecond, microsecond, second and minute keywords combined
+        # with positional date and tzinfo. The result equals the midnight UTC timestamp
+        # plus that many of the unit. Only nanosecond is expected to pass; the others
+        # are marked as expected failures (GH 45307) through the request object.
+        # KNOWN ISSUE: the code comment says a TODO about passing microsecond by keyword
+        # messing up; the xfail marks for second, microsecond and minute document a
+        # known unfixed bug rather than intended behavior.
         # TODO: if we passed microsecond with a keyword we would mess up
         #  xref GH#45307
         if kwd != "nanosecond":
@@ -347,21 +442,33 @@ class TestTimestampConstructorPositionalAndKeywordSupport:
 
 
 class TestTimestampClassMethodConstructors:
+    # [CLASS DOC]
+    # Groups tests of alternate class-method constructors (anything other than the main
+    # constructor). Stateless.
     # Timestamp constructors other than __new__
 
     def test_utcnow_deprecated(self):
+        # [FUNCTION DOC]
+        # Regression test (GH 56680). Calling the utc now class method emits a Pandas4
+        # deprecation warning with the matching message.
         # GH#56680
         msg = "Timestamp.utcnow is deprecated"
         with tm.assert_produces_warning(Pandas4Warning, match=msg):
             Timestamp.utcnow()
 
     def test_utcfromtimestamp_deprecated(self):
+        # [FUNCTION DOC]
+        # Regression test (GH 56680). Calling the UTC from-timestamp class method emits
+        # a Pandas4 deprecation warning with the matching message.
         # GH#56680
         msg = "Timestamp.utcfromtimestamp is deprecated"
         with tm.assert_produces_warning(Pandas4Warning, match=msg):
             Timestamp.utcfromtimestamp(43)
 
     def test_constructor_strptime(self):
+        # [FUNCTION DOC]
+        # Regression test (GH 25016). The strptime class method is not implemented and
+        # raises a not-implemented error with a message saying so.
         # GH#25016
         # Test support for Timestamp.strptime
         fmt = "%Y%m%d-%H%M%S-%f%z"
@@ -371,6 +478,10 @@ class TestTimestampClassMethodConstructors:
             Timestamp.strptime(ts, fmt)
 
     def test_constructor_fromisocalendar(self):
+        # [FUNCTION DOC]
+        # Regression test (GH 30395). The from-ISO-calendar class method returns a
+        # Timestamp equal to both the expected Timestamp and the standard library
+        # result.
         # GH#30395
         expected_timestamp = Timestamp("2000-01-03 00:00:00")
         expected_stdlib = datetime.fromisocalendar(2000, 1, 1)
@@ -380,6 +491,10 @@ class TestTimestampClassMethodConstructors:
         assert isinstance(result, Timestamp)
 
     def test_constructor_fromordinal(self):
+        # [FUNCTION DOC]
+        # Verifies the from-ordinal class method round trips the ordinal of a datetime,
+        # supports a timezone argument (US/Eastern) and equals the python datetime
+        # conversion (GH 3042) with and without tzinfo.
         base = datetime(2000, 1, 1)
 
         ts = Timestamp.fromordinal(base.toordinal())
@@ -402,6 +517,10 @@ class TestTimestampClassMethodConstructors:
         assert ts.to_pydatetime() == dt_tz
 
     def test_now(self):
+        # [FUNCTION DOC]
+        # Regression test (GH 9000). The now class method, the now string and the
+        # current datetime all differ by less than one second, naive and for US/Eastern
+        # (also after dropping timezone for the aware pair).
         # GH#9000
         ts_from_string = Timestamp("now")
         ts_from_method = Timestamp.now()
@@ -425,6 +544,8 @@ class TestTimestampClassMethodConstructors:
         )
 
     def test_today(self):
+        # [FUNCTION DOC]
+        # Same as the now test but for the today class method and the today string.
         ts_from_string = Timestamp("today")
         ts_from_method = Timestamp.today()
         ts_datetime = datetime.today()
@@ -448,12 +569,24 @@ class TestTimestampClassMethodConstructors:
 
 
 class TestTimestampResolutionInference:
+    # [CLASS DOC]
+    # Groups tests of the resolution (unit) the constructor infers from inputs.
+    # Stateless.
     def test_construct_from_time_unit(self):
+        # [FUNCTION DOC]
+        # Regression test (GH 54097). A time-only string yields microsecond unit.
         # GH#54097 only passing a time component, no date
         ts = Timestamp("01:01:01.111")
         assert ts.unit == "us"
 
     def test_constructor_str_infer_reso(self):
+        # [FUNCTION DOC]
+        # Verifies the resolution inferred from many string forms: delimited dates,
+        # quarter abbreviations, dateutil-parsed formats, years under 1000, and strings
+        # with a timezone yield microseconds; a string with nine fractional digits or
+        # UTC offset keeps nanoseconds without dropping trailing zeros; digits beyond
+        # nanosecond precision are truncated and the unit is nanoseconds;
+        # minute-resolution strings with timezone offsets give microseconds (GH 56208).
         # non-iso8601 path
 
         # _parse_delimited_date path
@@ -498,6 +631,9 @@ class TestTimestampResolutionInference:
 
     @pytest.mark.parametrize("method", ["now", "today"])
     def test_now_today_unit(self, method):
+        # [FUNCTION DOC]
+        # Regression test (GH 55879). Parametrized over now and today. The class method
+        # and the equivalent string both yield microsecond unit.
         # GH#55879
         ts_from_method = getattr(Timestamp, method)()
         ts_from_string = Timestamp(method)
@@ -505,7 +641,12 @@ class TestTimestampResolutionInference:
 
 
 class TestTimestampConstructors:
+    # [CLASS DOC]
+    # Groups tests of the general behavior of the Timestamp constructor. Stateless.
     def test_disallow_dt64_with_weird_unit(self):
+        # [FUNCTION DOC]
+        # Regression test (GH 25611). A datetime64 with a unit that has a multiplier
+        # (like 500 minutes) raises a value error saying multipliers are not supported.
         # GH#25611
         dt64 = np.datetime64(1, "500m")
         msg = "np.datetime64 objects with units containing a multiplier"
@@ -513,12 +654,19 @@ class TestTimestampConstructors:
             Timestamp(dt64)
 
     def test_weekday_but_no_day_raises(self):
+        # [FUNCTION DOC]
+        # Regression test (GH 52659). A string with a weekday but no day raises a value
+        # error saying that parsing weekday without day is not supported.
         # GH#52659
         msg = "Parsing datetimes with weekday but no day information is not supported"
         with pytest.raises(ValueError, match=msg):
             Timestamp("2023 Sept Thu")
 
     def test_construct_from_string_invalid_raises(self):
+        # [FUNCTION DOC]
+        # Verifies a malformed string that dateutil mis-parses into an unusable timezone
+        # offset raises a value error mentioning an invalid offset in the constructor,
+        # instead of later during string conversion.
         # dateutil (weirdly) parses "200622-12-31" as
         #  datetime(2022, 6, 20, 12, 0, tzinfo=tzoffset(None, -111600)
         #  which besides being mis-parsed, is a tzoffset that will cause
@@ -529,6 +677,10 @@ class TestTimestampConstructors:
             Timestamp("200622-12-31")
 
     def test_constructor_from_iso8601_str_with_offset_reso(self):
+        # [FUNCTION DOC]
+        # Regression test (GH 49737). ISO strings with an offset: no fraction,
+        # millisecond or microsecond precision gives microsecond unit; nine digits gives
+        # nanosecond unit.
         # GH#49737
         ts = Timestamp("2016-01-01 04:05:06-01:00")
         assert ts.unit == "us"
@@ -543,6 +695,8 @@ class TestTimestampConstructors:
         assert ts.unit == "ns"
 
     def test_constructor_from_date_second_reso(self):
+        # [FUNCTION DOC]
+        # Regression test (GH 49034). A plain date object gives second unit.
         # GH#49034 constructing from a pydate object gets lowest supported
         #  reso, i.e. seconds
         obj = date(2012, 9, 1)
@@ -550,6 +704,10 @@ class TestTimestampConstructors:
         assert ts.unit == "s"
 
     def test_constructor_datetime64_with_tz(self):
+        # [FUNCTION DOC]
+        # Regression test (GH 42288, GH 24559). A naive datetime64 with a timezone
+        # string argument is treated as wall time (as of version 2.0), equal to
+        # localizing the naive timestamp, with hour five.
         # GH#42288, GH#24559
         dt = np.datetime64("1970-01-01 05:00:00")
         tzstr = "UTC+05:00"
@@ -563,6 +721,12 @@ class TestTimestampConstructors:
         assert ts.hour == 5
 
     def test_constructor(self):
+        # [FUNCTION DOC]
+        # Broad check of integer values. For four string and datetime inputs, with no
+        # timezone and seven timezone representations, converting to nanoseconds yields
+        # the base number shifted by the offset hours; re-wrapping a Timestamp preserves
+        # the value; converting to UTC (or localizing naive ones to UTC) keeps the
+        # expected value.
         base_str = "2014-07-01 09:00"
         base_dt = datetime(2014, 7, 1, 9)
         base_expected = 1_404_205_200_000_000_000
@@ -632,6 +796,11 @@ class TestTimestampConstructors:
                     assert result.as_unit("ns")._value == expected_utc
 
     def test_constructor_with_stringoffset(self):
+        # [FUNCTION DOC]
+        # Regression test (GH 7833, GH 11708). Strings with an explicit offset give the
+        # expected nanosecond value regardless of the timezone argument; re-wrapping and
+        # converting to UTC preserve it. Then checks reprs and eval round trips for
+        # strings with offsets converted to Chicago, Tokyo, Katmandu and Kolkata.
         # GH 7833
         base_str = "2014-07-01 11:00:00+02:00"
         base_dt = datetime(2014, 7, 1, 9)
@@ -715,6 +884,9 @@ class TestTimestampConstructors:
         assert result == eval(repr(result))
 
     def test_constructor_invalid(self):
+        # [FUNCTION DOC]
+        # Verifies a slice raises a type error saying the input cannot be converted, and
+        # a Period raises a value error saying a Period cannot be converted.
         msg = "Cannot convert input"
         with pytest.raises(TypeError, match=msg):
             Timestamp(slice(2))
@@ -723,6 +895,11 @@ class TestTimestampConstructors:
             Timestamp(Period("1000-01-01"))
 
     def test_constructor_invalid_tz(self):
+        # [FUNCTION DOC]
+        # Regression test (GH 17690, GH 5168). A string tzinfo raises a type error about
+        # the expected type; passing both timezone and tzinfo raises a value error
+        # saying at most one is allowed; passing a timezone positionally after a date
+        # string is interpreted as a year and raises the date-attribute value error.
         # GH#17690
         msg = (
             "Argument 'tzinfo' has incorrect type "
@@ -743,6 +920,10 @@ class TestTimestampConstructors:
             Timestamp("2012-01-01", "US/Pacific")
 
     def test_constructor_tz_or_tzinfo(self):
+        # [FUNCTION DOC]
+        # Regression test (GH 17943, GH 17690, GH 5168). Six ways of building the same
+        # UTC midnight (components or datetime, with the timezone or tzinfo keyword,
+        # string or object UTC) all compare equal.
         # GH#17943, GH#17690, GH#5168
         stamps = [
             Timestamp(year=2017, month=10, day=22, tz="UTC"),
@@ -784,6 +965,12 @@ class TestTimestampConstructors:
         ],
     )
     def test_constructor_nanosecond(self, result):
+        # [FUNCTION DOC]
+        # Regression test (GH 18898). Parametrized over several ways of giving a
+        # nanosecond component (datetime plus keyword, components, positional with
+        # keyword, with and without timezone). Each equals the microsecond-resolution
+        # datetime plus one nanosecond; the nanosecond is keyword-only since version
+        # 2.0.
         # GH 18898
         # As of 2.0 (GH 49416), nanosecond should not be accepted positionally
         expected = Timestamp(datetime(2000, 1, 2, 3, 4, 5, 6), tz=result.tz)
@@ -792,12 +979,19 @@ class TestTimestampConstructors:
 
     @pytest.mark.parametrize("z", ["Z0", "Z00"])
     def test_constructor_invalid_Z0_isostring(self, z):
+        # [FUNCTION DOC]
+        # Regression test (GH 8910). Strings ending with an invalid zulu-like suffix
+        # raise a value error saying the format is unknown and cannot be parsed.
         # GH 8910
         msg = f"Unknown datetime string format, unable to parse: 2014-11-02 01:00{z}"
         with pytest.raises(ValueError, match=msg):
             Timestamp(f"2014-11-02 01:00{z}")
 
     def test_out_of_bounds_integer_value(self):
+        # [FUNCTION DOC]
+        # Regression test (GH 26651). Integer values double the bounds (maximum and
+        # minimum) raise an out-of-bounds datetime error that mentions the number, not
+        # an overflow error.
         # GH#26651 check that we raise OutOfBoundsDatetime, not OverflowError
         msg = str(Timestamp.max._value * 2)
         with pytest.raises(OutOfBoundsDatetime, match=msg):
@@ -807,6 +1001,14 @@ class TestTimestampConstructors:
             Timestamp(Timestamp.min._value * 2)
 
     def test_out_of_bounds_value(self):
+        # [FUNCTION DOC]
+        # Verifies behavior just past the bounds. Values at the bounds (as microsecond
+        # datetime64) are accepted; one microsecond beyond gives microsecond resolution
+        # (no longer an error); values beyond the second-based range raise a value error
+        # mentioning out of bounds.
+        # KNOWN ISSUE: the comments for the too-low and too-high cases say they are one
+        # microsecond outside the range, but those values are minute-resolution values
+        # just outside the second-resolution range, as an earlier comment says.
         one_us = np.timedelta64(1, "ns").astype("timedelta64[us]")
 
         # By definition we can't go out of bounds in [ns], so we
@@ -840,6 +1042,10 @@ class TestTimestampConstructors:
             Timestamp(too_high)
 
     def test_out_of_bounds_string(self):
+        # [FUNCTION DOC]
+        # Verifies strings outside nanosecond bounds (years 1676 and 2263) give
+        # microsecond unit, but converting to nanoseconds raises a value error about
+        # overflow.
         msg = "Cannot cast .* to unit='ns' without overflow"
         with pytest.raises(ValueError, match=msg):
             Timestamp("1676-01-01").as_unit("ns")
@@ -853,6 +1059,10 @@ class TestTimestampConstructors:
         assert ts.unit == "us"
 
     def test_barely_out_of_bounds(self):
+        # [FUNCTION DOC]
+        # Regression test (GH 19529, GH 19382). A string a fraction of a nanosecond past
+        # the maximum raises an out-of-bounds datetime error naming the nanosecond
+        # timestamp.
         # GH#19529
         # GH#19382 close enough to bounds that dropping nanos would result
         # in an in-bounds datetime
@@ -861,6 +1071,12 @@ class TestTimestampConstructors:
             Timestamp("2262-04-11 23:47:16.854775808")
 
     def test_bounds_with_different_units(self):
+        # [FUNCTION DOC]
+        # Verifies datetime64 values just beyond the nanosecond bounds with units from
+        # days to microseconds: seconds, milliseconds and microseconds keep their unit
+        # and stored value, coarser units are converted to second resolution; extreme
+        # integer values with coarse units raise an out-of-bounds datetime error about
+        # seconds; in-bounds dates always construct.
         out_of_bounds_dates = ("1677-09-21", "2262-04-12")
 
         time_units = ("D", "h", "m", "s", "ms", "us")
@@ -894,6 +1110,11 @@ class TestTimestampConstructors:
 
     @pytest.mark.parametrize("arg", ["001-01-01", "0001-01-01"])
     def test_out_of_bounds_string_consistency(self, arg):
+        # [FUNCTION DOC]
+        # Regression test (GH 15829). Parametrized over two spellings of year one.
+        # Converting to nanoseconds raises an out-of-bounds datetime error about
+        # overflow; the timestamp itself has microsecond unit and the date of January 1
+        # of year 1.
         # GH 15829
         msg = "Cannot cast 0001-01-01 00:00:00 to unit='ns' without overflow"
         with pytest.raises(OutOfBoundsDatetime, match=msg):
@@ -904,15 +1125,23 @@ class TestTimestampConstructors:
         assert ts.year == ts.month == ts.day == 1
 
     def test_min_valid(self):
+        # [FUNCTION DOC]
+        # Verifies the minimum Timestamp can be used to construct a Timestamp.
         # Ensure that Timestamp.min is a valid Timestamp
         Timestamp(Timestamp.min)
 
     def test_max_valid(self):
+        # [FUNCTION DOC]
+        # Verifies the maximum Timestamp can be used to construct a Timestamp.
         # Ensure that Timestamp.max is a valid Timestamp
         Timestamp(Timestamp.max)
 
     @pytest.mark.parametrize("offset", ["+0300", "+0200"])
     def test_construct_timestamp_near_dst(self, offset):
+        # [FUNCTION DOC]
+        # Regression test (GH 20854), parametrized over the two Helsinki offsets at the
+        # fall-back hour. Rebuilding a timestamp and converting to the same timezone
+        # keeps equality.
         # GH 20854
         expected = Timestamp(f"2016-10-30 03:00:00{offset}", tz="Europe/Helsinki")
         result = Timestamp(expected).tz_convert("Europe/Helsinki")
@@ -922,6 +1151,10 @@ class TestTimestampConstructors:
         "arg", ["2013/01/01 00:00:00+09:00", "2013-01-01 00:00:00+09:00"]
     )
     def test_construct_with_different_string_format(self, arg):
+        # [FUNCTION DOC]
+        # Regression test (GH 12064), parametrized over slash and dash date strings with
+        # a plus nine hour offset. The result equals the datetime with a nine hour
+        # fixed-offset timezone.
         # GH 12064
         result = Timestamp(arg)
         expected = Timestamp(datetime(2013, 1, 1), tz=timezone(timedelta(hours=9)))
@@ -929,6 +1162,13 @@ class TestTimestampConstructors:
 
     @pytest.mark.parametrize("box", [datetime, Timestamp])
     def test_raise_tz_and_tzinfo_in_datetime_input(self, box):
+        # [FUNCTION DOC]
+        # Regression test (GH 23579). Parametrized over datetime and Timestamp. An aware
+        # datetime-like input combined with the timezone keyword or the tzinfo keyword
+        # (with a zoneinfo timezone) raises a value error saying a datetime or Timestamp
+        # and timezone cannot both be passed.
+        # KNOWN ISSUE: the message variable is assigned twice with the same string; the
+        # second assignment is redundant.
         # GH 23579
         kwargs = {"year": 2018, "month": 1, "day": 1, "tzinfo": timezone.utc}
         msg = "Cannot pass a datetime or Timestamp"
@@ -939,15 +1179,24 @@ class TestTimestampConstructors:
             Timestamp(box(**kwargs), tzinfo=zoneinfo.ZoneInfo("US/Pacific"))
 
     def test_dont_convert_dateutil_utc_to_default_utc(self):
+        # [FUNCTION DOC]
+        # A datetime with the dateutil UTC timezone equals the naive datetime localized
+        # to the same timezone (the constructor must not swap it for the default UTC).
         result = Timestamp(datetime(2018, 1, 1), tz=tzutc())
         expected = Timestamp(datetime(2018, 1, 1)).tz_localize(tzutc())
         assert result == expected
 
     def test_constructor_subclassed_datetime(self):
+        # [FUNCTION DOC]
+        # Regression test (GH 25851). A Timestamp built from a subclass of datetime
+        # defined locally equals one built from components.
         # GH 25851
         # ensure that subclassed datetime works for
         # Timestamp creation
         class SubDatetime(datetime):
+            # [CLASS DOC]
+            # HELPER: local empty subclass of datetime, used only to check that the
+            # constructor accepts datetime subclasses.
             pass
 
         data = SubDatetime(2000, 1, 1)
@@ -956,6 +1205,9 @@ class TestTimestampConstructors:
         assert result == expected
 
     def test_timestamp_constructor_tz_utc(self):
+        # [FUNCTION DOC]
+        # Verifies a timestamp built with the string utc has the standard library UTC
+        # object as its timezone with hour five, and localizing to utc keeps hour five.
         utc_stamp = Timestamp("3/11/2012 05:00", tz="utc")
         assert utc_stamp.tzinfo is timezone.utc
         assert utc_stamp.hour == 5
@@ -964,12 +1216,21 @@ class TestTimestampConstructors:
         assert utc_stamp.hour == 5
 
     def test_timestamp_to_datetime_tzoffset(self):
+        # [FUNCTION DOC]
+        # Verifies a Timestamp with a dateutil fixed-offset timezone round trips through
+        # its python datetime.
         tzinfo = tzoffset(None, 7200)
         expected = Timestamp("3/11/2012 04:00", tz=tzinfo)
         result = Timestamp(expected.to_pydatetime())
         assert expected == result
 
     def test_timestamp_constructor_near_dst_boundary(self):
+        # [FUNCTION DOC]
+        # Regression test (GH 11481, GH 15777, GH 11708, GH 15823). Naive strings near
+        # daylight-saving boundaries (Brussels, Prague, Paris) are localized correctly
+        # rather than converted from UTC: the ambiguous 02:00 raises a value error,
+        # nonexistent Paris times raise, and surrounding times have the expected
+        # offsets; plus a UTC-to-Kolkata conversion.
         # GH#11481 & GH#15777
         # Naive string timestamps were being localized incorrectly
         # with tz_convert_from_utc_single instead of tz_localize_to_utc
@@ -1029,6 +1290,10 @@ class TestTimestampConstructors:
         ],
     )
     def test_timestamp_constructed_by_date_and_tz(self, tz):
+        # [FUNCTION DOC]
+        # Regression test (GH 2993). Parametrized over four Eastern timezone
+        # representations (pytz skipped if absent). A date object with a timezone gives
+        # the same hour and value as the equivalent string.
         # GH#2993, Timestamp cannot be constructed by datetime.date
         # and tz correctly
         if isinstance(tz, str) and tz.startswith("pytz/"):
@@ -1041,6 +1306,10 @@ class TestTimestampConstructors:
         assert result == expected
 
     def test_explicit_tz_none(self):
+        # [FUNCTION DOC]
+        # Regression test (GH 48688). An explicit timezone of none combined with aware
+        # input (aware datetime, string with tzinfo keyword, string with offset) raises
+        # a value error saying aware data is incompatible with the none timezone.
         # GH#48688
         msg = "Passed data is timezone-aware, incompatible with 'tz=None'"
         with pytest.raises(ValueError, match=msg):
@@ -1054,6 +1323,9 @@ class TestTimestampConstructors:
 
 
 def test_constructor_ambiguous_dst():
+    # [FUNCTION DOC]
+    # Regression test (GH 24329). Re-wrapping a Timestamp built from an ambiguous London
+    # instant does not change its stored value.
     # GH 24329
     # Make sure that calling Timestamp constructor
     # on Timestamp created from ambiguous time
@@ -1066,6 +1338,10 @@ def test_constructor_ambiguous_dst():
 
 @pytest.mark.parametrize("epoch", [1552211999999999872, 1552211999999999999])
 def test_constructor_before_dst_switch(epoch):
+    # [FUNCTION DOC]
+    # Regression test (GH 31043). Parametrized over two epochs just before the Los
+    # Angeles spring-forward. The timestamp's dst offset is zero and re-wrapping it
+    # keeps the stored value.
     # GH 31043
     # Make sure that calling Timestamp constructor
     # on time just before DST switch doesn't lead to
@@ -1078,6 +1354,9 @@ def test_constructor_before_dst_switch(epoch):
 
 
 def test_timestamp_constructor_identity():
+    # [FUNCTION DOC]
+    # Regression test (GH 30543). Constructing a Timestamp from an existing Timestamp
+    # returns the very same object.
     # Test for #30543
     expected = Timestamp("2017-01-01T12")
     result = Timestamp(expected)
@@ -1086,12 +1365,21 @@ def test_timestamp_constructor_identity():
 
 @pytest.mark.parametrize("nano", [-1, 1000])
 def test_timestamp_nano_range(nano):
+    # [FUNCTION DOC]
+    # Regression test (GH 48255). Parametrized over minus one and 1000. A nanosecond
+    # keyword outside zero to 999 raises a value error stating the allowed range.
     # GH 48255
     with pytest.raises(ValueError, match="nanosecond must be in 0..999"):
         Timestamp(year=2022, month=1, day=1, nanosecond=nano)
 
 
 def test_non_nano_value():
+    # [FUNCTION DOC]
+    # Regression test (GH 49076). Reading the nanosecond value property of a second-unit
+    # timestamp emits a user warning about the unit keyword and gives the nanosecond
+    # integer of 1800-01-01. For a microsecond-unit timestamp beyond nanosecond bounds
+    # it raises an overflow error suggesting the raw view workaround, and the workaround
+    # returns the stored integer.
     # https://github.com/pandas-dev/pandas/issues/49076
     msg = "The 'unit' keyword is only used when"
     with tm.assert_produces_warning(UserWarning, match=msg):
@@ -1118,6 +1406,9 @@ def test_non_nano_value():
     "na_value", [None, np.nan, np.datetime64("NaT", "ns"), NaT, NA]
 )
 def test_timestamp_constructor_na_value(na_value):
+    # [FUNCTION DOC]
+    # Regression test (GH 45481). Parametrized over none, NaN, a NaT datetime64, NaT and
+    # NA. Constructing a Timestamp from a missing value returns the NaT singleton.
     # GH45481
     result = Timestamp(na_value)
     expected = NaT
