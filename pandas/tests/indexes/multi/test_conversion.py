@@ -1,3 +1,8 @@
+# [MODULE DOC]
+# Tests for conversion of MultiIndex to other representations: numpy arrays,
+# data frames (with names, dtypes, column order, duplicates) and flat tuple indexes.
+# Uses the shared idx fixture. Pure tests module.
+
 import numpy as np
 import pytest
 
@@ -13,12 +18,19 @@ import pandas._testing as tm
 
 
 def test_to_numpy(idx):
+    # [FUNCTION DOC]
+    # Verifies converting to a numpy array equals the values attribute.
     result = idx.to_numpy()
     exp = idx.values
     tm.assert_numpy_array_equal(result, exp)
 
 
 def test_array_interface(idx):
+    # [FUNCTION DOC]
+    # Verifies (PR 60046) the array protocol gives an object array of tuples; that
+    # repeated default conversions share memory because values are cached; that an
+    # explicit copy gives independent arrays; and (numpy 2 and later only) that
+    # requesting no copy raises a value error.
     # https://github.com/pandas-dev/pandas/pull/60046
     result = np.asarray(idx)
     expected = np.empty((6,), dtype=object)
@@ -53,6 +65,11 @@ def test_array_interface(idx):
 
 
 def test_to_frame():
+    # [FUNCTION DOC]
+    # Verifies conversion to a frame with and without the index kept, unnamed and
+    # named levels, an explicit list of column names (GH-22580), datetime levels,
+    # and errors for a non-list name (type error) or a name list of the wrong length
+    # (value error).
     tuples = [(1, "one"), (1, "two"), (2, "one"), (2, "two")]
 
     index = MultiIndex.from_tuples(tuples)
@@ -126,6 +143,9 @@ def test_to_frame():
 
 
 def test_to_frame_dtype_fidelity():
+    # [FUNCTION DOC]
+    # Verifies (GH 22420) the frame produced from a multi-index preserves each level's
+    # dtype (aware datetimes, integers, ordered categorical, strings) and values.
     # GH 22420
     mi = MultiIndex.from_arrays(
         [
@@ -154,6 +174,9 @@ def test_to_frame_dtype_fidelity():
 
 
 def test_to_frame_resulting_column_order():
+    # [FUNCTION DOC]
+    # Verifies (GH 22420) the frame's columns follow the level names, including
+    # mixed string and integer names, in level order.
     # GH 22420
     expected = ["z", 0, "a"]
     mi = MultiIndex.from_arrays(
@@ -164,6 +187,9 @@ def test_to_frame_resulting_column_order():
 
 
 def test_to_frame_duplicate_labels():
+    # [FUNCTION DOC]
+    # Verifies (GH 45245) conversion with duplicate level names raises a value error
+    # unless duplicates are allowed; names given as none and zero both become the column label zero.
     # GH 45245
     data = [(1, 2), (3, 4)]
     names = ["a", "a"]
@@ -186,6 +212,8 @@ def test_to_frame_duplicate_labels():
 
 
 def test_to_frame_column_rangeindex():
+    # [FUNCTION DOC]
+    # Verifies the columns of a frame from unnamed levels are a range index.
     mi = MultiIndex.from_arrays([[1, 2], ["a", "b"]])
     result = mi.to_frame().columns
     expected = RangeIndex(2)
@@ -193,6 +221,9 @@ def test_to_frame_column_rangeindex():
 
 
 def test_to_flat_index(idx):
+    # [FUNCTION DOC]
+    # Verifies the flat index conversion gives an object index of the tuples
+    # with tuple elements not expanded into a multi-index.
     expected = pd.Index(
         (
             ("foo", "one"),

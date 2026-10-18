@@ -1,3 +1,12 @@
+# [MODULE DOC]
+# Tests for the IntervalIndex constructors: from_arrays, from_breaks,
+# from_tuples and the class constructors (IntervalIndex and Index). A shared
+# abstract test class defines checks written against a breaks format; each
+# subclass supplies the constructor under test and a converter from breaks to the
+# keyword arguments for that constructor. A few standalone tests cover subtype
+# handling and closed/dtype mismatches.
+# Uses the closed and inclusive_endpoints_fixture fixtures; some tests need pyarrow.
+
 from functools import partial
 
 import numpy as np
@@ -26,6 +35,12 @@ import pandas.core.common as com
 
 
 class ConstructorTests:
+    # [CLASS DOC]
+    # Mixin of constructor tests shared by all construction routes. Subclasses must
+    # provide a fixture named constructor (the callable under test) and a method that
+    # converts breaks (a sequence of boundary values) plus an optional closed side into
+    # a mapping of keyword arguments for that constructor. Not collected itself as it
+    # has no test-class name prefix.
     """
     Common tests for all variations of IntervalIndex construction. Input data
     to be supplied in breaks format, then converted by the subclass method
@@ -50,6 +65,12 @@ class ConstructorTests:
     )
     @pytest.mark.parametrize("name", [None, "foo"])
     def test_constructor(self, constructor, breaks_and_expected_subtype, closed, name):
+        # [FUNCTION DOC]
+        # Parametrized over (breaks, expected subtype) covering integer, unsigned,
+        # float, datetime (naive and aware) and timedelta breaks, and over name
+        # (none or a string), plus the closed fixture. Verifies the result keeps the
+        # closed side and name, has the expected subtype, and its left and right
+        # endpoints equal the breaks without the last and first element respectively.
         breaks, expected_subtype = breaks_and_expected_subtype
 
         result_kwargs = self.get_kwargs_from_breaks(breaks, closed)
@@ -74,6 +95,10 @@ class ConstructorTests:
         ],
     )
     def test_constructor_dtype(self, constructor, breaks, subtype):
+        # [FUNCTION DOC]
+        # Parametrized over breaks and a target subtype. Verifies (GH 19262) that
+        # passing an interval dtype (as an object or its string form) converts the
+        # endpoints to the subtype, equaling a construction from pre-converted breaks.
         # GH 19262: conversion via dtype parameter
         expected_kwargs = self.get_kwargs_from_breaks(breaks.astype(subtype))
         expected = constructor(**expected_kwargs)
@@ -95,6 +120,10 @@ class ConstructorTests:
         ],
     )
     def test_constructor_pass_closed(self, constructor, breaks):
+        # [FUNCTION DOC]
+        # Parametrized over breaks of several kinds. Verifies the closed argument may be
+        # passed to the constructor while the dtype lacks one (given as object or string)
+        # without emitting a warning, and the result takes that closed side.
         # not passing closed to IntervalDtype, but to IntervalArray constructor
         iv_dtype = IntervalDtype(breaks.dtype)
 
@@ -107,6 +136,10 @@ class ConstructorTests:
 
     @pytest.mark.parametrize("breaks", [[np.nan] * 2, [np.nan] * 4, [np.nan] * 50])
     def test_constructor_nan(self, constructor, breaks, closed):
+        # [FUNCTION DOC]
+        # Parametrized over breaks of all-missing floats of different lengths and the
+        # closed fixture. Verifies (GH 18421) the result has float subtype, the
+        # given closed side, and its values are all missing objects.
         # GH 18421
         result_kwargs = self.get_kwargs_from_breaks(breaks)
         result = constructor(closed=closed, **result_kwargs)
@@ -130,6 +163,10 @@ class ConstructorTests:
         ],
     )
     def test_constructor_empty(self, constructor, breaks, closed):
+        # [FUNCTION DOC]
+        # Parametrized over empty breaks of several dtypes and the closed fixture.
+        # Verifies (GH 18421) the result is empty, keeps the closed side, uses the
+        # breaks' dtype as subtype (integer when untyped), and has an empty object array of values.
         # GH 18421
         result_kwargs = self.get_kwargs_from_breaks(breaks)
         result = constructor(closed=closed, **result_kwargs)
@@ -152,6 +189,10 @@ class ConstructorTests:
         ],
     )
     def test_constructor_string(self, constructor, breaks):
+        # [FUNCTION DOC]
+        # Parametrized over string breaks (tuple, list, object array, unicode array).
+        # Verifies (GH 19016) a type error saying category, object and string subtypes are
+        # unsupported.
         # GH 19016
         msg = (
             "category, object, and string subtypes are not supported for IntervalIndex"
@@ -161,6 +202,10 @@ class ConstructorTests:
 
     @pytest.mark.parametrize("cat_constructor", [Categorical, CategoricalIndex])
     def test_constructor_categorical_valid(self, constructor, cat_constructor):
+        # [FUNCTION DOC]
+        # Parametrized over categorical container (Categorical or CategoricalIndex).
+        # Verifies (GH 21243) constructing from categorical integer breaks equals the
+        # construction from the plain breaks.
         # GH 21243/21253
 
         breaks = np.arange(10, dtype="int64")
@@ -172,6 +217,11 @@ class ConstructorTests:
         tm.assert_index_equal(result, expected)
 
     def test_generic_errors(self, constructor):
+        # [FUNCTION DOC]
+        # Verifies shared error cases: invalid closed side and non-interval dtypes
+        # (integer dtype, unknown name) raise value or type errors with specific messages,
+        # period breaks raise a value error recommending PeriodIndex, and decreasing
+        # breaks raise a value error that left must not exceed right.
         # filler input data to be used when supplying invalid kwargs
         filler = self.get_kwargs_from_breaks(range(10))
 
@@ -205,14 +255,22 @@ class ConstructorTests:
 
 
 class TestFromArrays(ConstructorTests):
+    # [CLASS DOC]
+    # Constructor tests for the from_arrays route.
     """Tests specific to IntervalIndex.from_arrays"""
 
     @pytest.fixture
     def constructor(self):
+        # [FUNCTION DOC]
+        # HELPER: fixture returning the from_arrays class method.
         """Fixture for IntervalIndex.from_arrays constructor"""
         return IntervalIndex.from_arrays
 
     def get_kwargs_from_breaks(self, breaks, closed="right"):
+        # [FUNCTION DOC]
+        # HELPER: converts breaks to keyword arguments with left being all but the last
+        # break and right all but the first; the closed argument is accepted for interface
+        # compatibility and ignored.
         """
         converts intervals in breaks format to a dictionary of kwargs to
         specific to the format expected by IntervalIndex.from_arrays
@@ -220,6 +278,9 @@ class TestFromArrays(ConstructorTests):
         return {"left": breaks[:-1], "right": breaks[1:]}
 
     def test_constructor_errors(self):
+        # [FUNCTION DOC]
+        # Verifies from_arrays raises a type error for categorical breaks (GH 19016) and a
+        # value error when left and right have different lengths.
         # GH 19016: categorical data
         data = Categorical(list("01234abcde"), ordered=True)
         msg = (
@@ -239,6 +300,10 @@ class TestFromArrays(ConstructorTests):
         "left_subtype, right_subtype", [(np.int64, np.float64), (np.float64, np.int64)]
     )
     def test_mixed_float_int(self, left_subtype, right_subtype):
+        # [FUNCTION DOC]
+        # Parametrized over (integer, float) and (float, integer) endpoint kinds.
+        # Verifies that mixed integer and float endpoints give float endpoints on both
+        # sides and a float subtype.
         """mixed int/float left/right results in float for both sides"""
         left = np.arange(9, dtype=left_subtype)
         right = np.arange(1, 10, dtype=right_subtype)
@@ -254,6 +319,10 @@ class TestFromArrays(ConstructorTests):
 
     @pytest.mark.parametrize("interval_cls", [IntervalArray, IntervalIndex])
     def test_from_arrays_mismatched_datetimelike_resos(self, interval_cls):
+        # [FUNCTION DOC]
+        # Parametrized over container class (array or index). Verifies (GH#55714)
+        # that from_arrays with datetime endpoints of different units casts to the finer
+        # unit, for naive datetimes, timedelta endpoints and aware datetimes.
         # GH#55714
         left = date_range("2016-01-01", periods=3, unit="s")
         right = date_range("2017-01-01", periods=3, unit="ms")
@@ -277,14 +346,20 @@ class TestFromArrays(ConstructorTests):
 
 
 class TestFromBreaks(ConstructorTests):
+    # [CLASS DOC]
+    # Constructor tests for the from_breaks route.
     """Tests specific to IntervalIndex.from_breaks"""
 
     @pytest.fixture
     def constructor(self):
+        # [FUNCTION DOC]
+        # HELPER: fixture returning the from_breaks class method.
         """Fixture for IntervalIndex.from_breaks constructor"""
         return IntervalIndex.from_breaks
 
     def get_kwargs_from_breaks(self, breaks, closed="right"):
+        # [FUNCTION DOC]
+        # HELPER: converts breaks to a single keyword argument holding the breaks; closed is ignored.
         """
         converts intervals in breaks format to a dictionary of kwargs to
         specific to the format expected by IntervalIndex.from_breaks
@@ -292,6 +367,8 @@ class TestFromBreaks(ConstructorTests):
         return {"breaks": breaks}
 
     def test_constructor_errors(self):
+        # [FUNCTION DOC]
+        # Verifies from_breaks raises a type error for categorical breaks (GH 19016).
         # GH 19016: categorical data
         data = Categorical(list("01234abcde"), ordered=True)
         msg = (
@@ -301,6 +378,8 @@ class TestFromBreaks(ConstructorTests):
             IntervalIndex.from_breaks(data)
 
     def test_length_one(self):
+        # [FUNCTION DOC]
+        # Verifies breaks of length one give an empty IntervalIndex equal to one made from empty breaks.
         """breaks of length one produce an empty IntervalIndex"""
         breaks = [0]
         result = IntervalIndex.from_breaks(breaks)
@@ -308,6 +387,9 @@ class TestFromBreaks(ConstructorTests):
         tm.assert_index_equal(result, expected)
 
     def test_left_right_dont_share_data(self):
+        # [FUNCTION DOC]
+        # Verifies (GH#36310) the left and right endpoint arrays of the underlying
+        # interval array do not share the same base buffer.
         # GH#36310
         breaks = np.arange(5)
         result = IntervalIndex.from_breaks(breaks)._data
@@ -315,14 +397,23 @@ class TestFromBreaks(ConstructorTests):
 
 
 class TestFromTuples(ConstructorTests):
+    # [CLASS DOC]
+    # Constructor tests for the from_tuples route.
     """Tests specific to IntervalIndex.from_tuples"""
 
     @pytest.fixture
     def constructor(self):
+        # [FUNCTION DOC]
+        # HELPER: fixture returning the from_tuples class method.
         """Fixture for IntervalIndex.from_tuples constructor"""
         return IntervalIndex.from_tuples
 
     def get_kwargs_from_breaks(self, breaks, closed="right"):
+        # [FUNCTION DOC]
+        # HELPER: converts breaks into a data keyword argument of consecutive pairs
+        # (list for list or tuple breaks, categorical for categorical, otherwise a tuple-safe
+        # array); empty breaks are passed through. Skips the test for unsigned integer
+        # breaks, which are not relevant.
         """
         converts intervals in breaks format to a dictionary of kwargs to
         specific to the format expected by IntervalIndex.from_tuples
@@ -341,6 +432,9 @@ class TestFromTuples(ConstructorTests):
         return {"data": com.asarray_tuplesafe(tuples)}
 
     def test_constructor_errors(self):
+        # [FUNCTION DOC]
+        # Verifies from_tuples raises a type error for a non-tuple item, and value
+        # errors for tuples of the wrong length (too few or too many).
         # non-tuple
         tuples = [(0, 1), 2, (3, 4)]
         msg = "IntervalIndex.from_tuples received an invalid item, 2"
@@ -358,6 +452,8 @@ class TestFromTuples(ConstructorTests):
             IntervalIndex.from_tuples(tuples)
 
     def test_na_tuples(self):
+        # [FUNCTION DOC]
+        # Verifies a pair of missing values behaves like a bare missing element.
         # tuple (NA, NA) evaluates the same as NA as an element
         na_tuple = [(0, 1), (np.nan, np.nan), (2, 3)]
         idx_na_tuple = IntervalIndex.from_tuples(na_tuple)
@@ -366,14 +462,23 @@ class TestFromTuples(ConstructorTests):
 
 
 class TestClassConstructors(ConstructorTests):
+    # [CLASS DOC]
+    # Constructor tests for the class constructors (IntervalIndex / Index).
     """Tests specific to the IntervalIndex/Index constructors"""
 
     @pytest.fixture
     def constructor(self):
+        # [FUNCTION DOC]
+        # HELPER: fixture returning the IntervalIndex class.
         """Fixture for IntervalIndex class constructor"""
         return IntervalIndex
 
     def get_kwargs_from_breaks(self, breaks, closed="right"):
+        # [FUNCTION DOC]
+        # HELPER: converts breaks into a data keyword argument consisting of Interval
+        # objects with the given closed side (missing left endpoints stay as missing
+        # elements): a list, a categorical for categorical breaks, otherwise an object
+        # array. Empty breaks pass through; unsigned integer breaks are skipped.
         """
         converts intervals in breaks format to a dictionary of kwargs to
         specific to the format expected by the IntervalIndex/Index constructors
@@ -396,12 +501,18 @@ class TestClassConstructors(ConstructorTests):
         return {"data": np.array(ivs, dtype=object)}
 
     def test_generic_errors(self, constructor):
+        # [FUNCTION DOC]
+        # Overrides the shared error test with no checks (docstring only), since errors
+        # are handled at the Interval level for this constructor.
         """
         override the base class implementation since errors are handled
         differently; checks unnecessary since caught at the Interval level
         """
 
     def test_constructor_string(self):
+        # [FUNCTION DOC]
+        # Overrides the shared string test with a no-op (GH23013): string intervals
+        # are already forbidden when forming the Interval.
         # GH23013
         # When forming the interval from breaks,
         # the interval of strings is already forbidden.
@@ -413,6 +524,10 @@ class TestClassConstructors(ConstructorTests):
         ids=["IntervalIndex", "Index"],
     )
     def test_constructor_errors(self, klass):
+        # [FUNCTION DOC]
+        # Parametrized over IntervalIndex and Index with interval dtype. Verifies a
+        # value error for mixed closed sides, a type error for a scalar argument, and a
+        # type error for non-interval elements (message allows 32 or 64 bit integers).
         # mismatched closed within intervals with no constructor override
         ivs = [Interval(0, 1, closed="right"), Interval(2, 3, closed="left")]
         msg = "intervals must all be closed on the same side"
@@ -449,6 +564,10 @@ class TestClassConstructors(ConstructorTests):
         ],
     )
     def test_override_inferred_closed(self, constructor, data, closed):
+        # [FUNCTION DOC]
+        # Parametrized over data (empty, all missing, intervals with various closed
+        # sides, an interval index) and closed side. Verifies (GH 19370) the closed
+        # argument overrides the inferred closed side, equaling a from_tuples construction.
         # GH 19370
         if isinstance(data, IntervalIndex):
             tuples = data.to_tuples()
@@ -462,6 +581,10 @@ class TestClassConstructors(ConstructorTests):
         "values_constructor", [list, np.array, IntervalIndex, IntervalArray]
     )
     def test_index_object_dtype(self, values_constructor):
+        # [FUNCTION DOC]
+        # Parametrized over value container (list, array, index, interval array).
+        # Verifies constructing an Index with object dtype from intervals gives a plain
+        # Index, not an IntervalIndex, with the same values.
         # Index(intervals, dtype=object) is an Index (not an IntervalIndex)
         intervals = [Interval(0, 1), Interval(1, 2), Interval(2, 3)]
         values = values_constructor(intervals)
@@ -471,6 +594,9 @@ class TestClassConstructors(ConstructorTests):
         tm.assert_numpy_array_equal(result.values, np.array(values))
 
     def test_index_mixed_closed(self):
+        # [FUNCTION DOC]
+        # Verifies (GH27172) an Index of intervals with different closed sides stays a
+        # generic object Index equal to the object-dtype construction.
         # GH27172
         intervals = [
             Interval(0, 1, closed="left"),
@@ -485,6 +611,11 @@ class TestClassConstructors(ConstructorTests):
 
 @pytest.mark.parametrize("timezone", ["UTC", "US/Pacific", "GMT"])
 def test_interval_index_subtype(timezone, inclusive_endpoints_fixture):
+    # [FUNCTION DOC]
+    # Parametrized over UTC, US/Pacific and GMT zone names plus
+    # inclusive_endpoints_fixture. Verifies (GH#46999) from_arrays with date strings
+    # and an interval dtype string including zone and closed side equals the
+    # construction from aware date ranges.
     # GH#46999
     dates = date_range("2022", periods=3, tz=timezone, unit="ns")
     dtype = f"interval[datetime64[ns, {timezone}], {inclusive_endpoints_fixture}]"
@@ -501,6 +632,10 @@ def test_interval_index_subtype(timezone, inclusive_endpoints_fixture):
 
 
 def test_dtype_closed_mismatch():
+    # [FUNCTION DOC]
+    # Verifies (GH#38394) that giving a closed side in both the dtype and the
+    # constructor argument, with differing values, raises a value error for both
+    # IntervalIndex and IntervalArray.
     # GH#38394 closed specified in both dtype and IntervalIndex constructor
 
     dtype = IntervalDtype(np.int64, "left")
@@ -518,6 +653,10 @@ def test_dtype_closed_mismatch():
     ["Float64", pytest.param("float64[pyarrow]", marks=td.skip_if_no("pyarrow"))],
 )
 def test_ea_dtype(dtype):
+    # [FUNCTION DOC]
+    # Parametrized over nullable Float64 and (if pyarrow is installed) Arrow
+    # float64 subtype. Verifies (GH#56765) from_tuples with an extension-array
+    # subtype dtype gives that dtype and equals a conversion after construction.
     # GH#56765
     bins = [(0.0, 0.4), (0.4, 0.6)]
     interval_dtype = IntervalDtype(subtype=dtype, closed="left")

@@ -1,3 +1,10 @@
+# [MODULE DOC]
+# Tests for equality and identity semantics of MultiIndex: the equals method,
+# elementwise comparison operators against indexes, arrays, Series, tuples and
+# scalars, level equality, the identical and is_ methods, missing-value handling,
+# and kind-of-index flags.
+# Uses the shared idx fixture. Pure tests module.
+
 import numpy as np
 import pytest
 
@@ -13,6 +20,11 @@ import pandas._testing as tm
 
 
 def test_equals(idx):
+    # [FUNCTION DOC]
+    # Verifies equals is true for itself, a copy, an object-dtype conversion, the flat
+    # tuple index, and a categorical version of it; false for a list or plain numpy
+    # array; and symmetric with an object index of the same tuples.
+    # KNOWN ISSUE: the trailing check is guarded by a condition on a single level, but the shared fixture always has two levels, so that assertion never runs.
     assert idx.equals(idx)
     assert idx.equals(idx.copy())
     assert idx.equals(idx.astype(object))
@@ -32,6 +44,12 @@ def test_equals(idx):
 
 
 def test_equals_op(idx):
+    # [FUNCTION DOC]
+    # Verifies (GH9947, GH10637) the equality operator on the index: length mismatch
+    # against indexes, arrays and Series (also length one) raises a value error
+    # about lengths (or about identically-labeled Series for two Series), and equal
+    # length comparisons return boolean arrays or Series.
+    # KNOWN ISSUE: the final scalar-broadcast block is guarded by a check that the index is not a multi-index, but the fixture is always a multi-index, so that block never runs.
     # GH9947, GH10637
     index_a = idx
 
@@ -93,6 +111,9 @@ def test_equals_op(idx):
 
 
 def test_compare_tuple():
+    # [FUNCTION DOC]
+    # Verifies (GH#21517) comparing a product multi-index with a tuple: equality,
+    # inequality and the ordering comparisons give the expected boolean arrays.
     # GH#21517
     mi = MultiIndex.from_product([[1, 2]] * 2)
 
@@ -119,6 +140,9 @@ def test_compare_tuple():
 
 
 def test_compare_tuple_strs():
+    # [FUNCTION DOC]
+    # Verifies (GH#34180) comparing a multi-index of string tuples with an equal tuple
+    # gives a single true, and with a tuple of the wrong length gives all false.
     # GH#34180
 
     mi = MultiIndex.from_tuples([("a", "b"), ("b", "c"), ("c", "a")])
@@ -133,6 +157,10 @@ def test_compare_tuple_strs():
 
 
 def test_equals_multi(idx):
+    # [FUNCTION DOC]
+    # Verifies equals is false against a values array or a slice or a tuple, true
+    # against an index of the values, and false when the number of levels, the
+    # level values, or the labels differ; also checks equal_levels in those cases.
     assert idx.equals(idx)
     assert not idx.equals(idx.values)
     assert idx.equals(Index(idx.values))
@@ -182,6 +210,10 @@ def test_equals_multi(idx):
 
 
 def test_identical(idx):
+    # [FUNCTION DOC]
+    # Verifies identical: copies are identical; after renaming one, they are still
+    # equal but not identical; matching names make them identical again; and a flat
+    # tuple index with the same values is equal but not identical.
     mi = idx.copy()
     mi2 = idx.copy()
     assert mi.identical(mi2)
@@ -199,11 +231,16 @@ def test_identical(idx):
 
 
 def test_equals_operator(idx):
+    # [FUNCTION DOC]
+    # Verifies (GH9785) elementwise self-comparison is true everywhere.
     # GH9785
     assert (idx == idx).all()
 
 
 def test_equals_missing_values():
+    # [FUNCTION DOC]
+    # Verifies equals is false between a single-row slice and a tuple even when a
+    # missing time is present, so take does not use the missing marker incorrectly.
     # make sure take is not using -1
     i = MultiIndex.from_tuples([(0, pd.NaT), (0, pd.Timestamp("20130101"))])
     result = i[0:1].equals(i[0])
@@ -213,6 +250,9 @@ def test_equals_missing_values():
 
 
 def test_equals_missing_values_differently_sorted():
+    # [FUNCTION DOC]
+    # Verifies (GH#38439) equality is sensitive to the position of missing values in
+    # the tuples and true for identical order.
     # GH#38439
     mi1 = MultiIndex.from_tuples([(81.0, np.nan), (np.nan, np.nan)])
     mi2 = MultiIndex.from_tuples([(np.nan, np.nan), (81.0, np.nan)])
@@ -223,6 +263,10 @@ def test_equals_missing_values_differently_sorted():
 
 
 def test_is_():
+    # [FUNCTION DOC]
+    # Verifies is_ semantics: true for itself and views; names are metadata and do not
+    # change identity; setting levels (including to equal levels) creates a new
+    # identity (GH 17464); original identity is unaffected.
     mi = MultiIndex.from_tuples(zip(range(10), range(10), strict=True))
     assert mi.is_(mi)
     assert mi.is_(mi.view())
@@ -250,15 +294,22 @@ def test_is_():
 
 
 def test_is_all_dates(idx):
+    # [FUNCTION DOC]
+    # Verifies the all-dates flag is false.
     assert not idx._is_all_dates
 
 
 def test_is_numeric(idx):
+    # [FUNCTION DOC]
+    # Verifies a multi-index is never of numeric dtype.
     # MultiIndex is never numeric
     assert not is_any_real_numeric_dtype(idx)
 
 
 def test_multiindex_compare():
+    # [FUNCTION DOC]
+    # Verifies (GH 21149) comparisons for a one-level multi-index behave as for
+    # multi-level: self equality is all true, and greater-than self is all false.
     # GH 21149
     # Ensure comparison operations for MultiIndex with nlevels == 1
     # behave consistently with those for MultiIndex with nlevels > 1
@@ -277,6 +328,9 @@ def test_multiindex_compare():
 
 
 def test_equals_ea_int_regular_int():
+    # [FUNCTION DOC]
+    # Verifies (GH#46026) an index with a nullable integer level is not equal to one
+    # with a plain integer level, in either order.
     # GH#46026
     mi1 = MultiIndex.from_arrays([Index([1, 2], dtype="Int64"), [3, 4]])
     mi2 = MultiIndex.from_arrays([[1, 2], [3, 4]])

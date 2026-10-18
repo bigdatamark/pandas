@@ -1,3 +1,11 @@
+# [MODULE DOC]
+# General tests for IntervalIndex behavior: properties, missing values, copy,
+# insert/delete, uniqueness and monotonicity, internal integer-conversion helper,
+# membership and containment, comparison, sorting, datetime support, append,
+# overlap detection, tuple conversion, closed-side changes, and miscellaneous
+# module-level tests (signedness mismatch, attribute listing, searchsorted).
+# Uses the closed, other_closed, listlike_box and any_real_numpy_dtype fixtures.
+
 from itertools import permutations
 import re
 
@@ -22,12 +30,21 @@ import pandas.core.common as com
 
 
 class TestIntervalIndex:
+    # [CLASS DOC]
+    # Groups general IntervalIndex tests. Has a class attribute holding a small shared
+    # index of two consecutive integer intervals, used by the comparison test.
     index = IntervalIndex.from_arrays([0, 1], [1, 2])
 
     def create_index(self, closed="right"):
+        # [FUNCTION DOC]
+        # HELPER: builds a ten-interval index from integer breaks zero to ten with the
+        # given closed side (default right).
         return IntervalIndex.from_breaks(range(11), closed=closed)
 
     def create_index_with_nan(self, closed="right"):
+        # [FUNCTION DOC]
+        # HELPER: builds a ten-interval index (default closed right) whose second
+        # interval is missing, from float endpoints zero to nine and one to ten.
         mask = [True, False] + [True] * 8
         return IntervalIndex.from_arrays(
             np.where(mask, np.arange(10), np.nan),
@@ -36,6 +53,10 @@ class TestIntervalIndex:
         )
 
     def test_properties(self, closed):
+        # [FUNCTION DOC]
+        # Parametrized over closed side. Verifies length, size, shape, left, right and
+        # midpoint indexes, closed side, and the object array of intervals, both for a
+        # complete index and an index with a missing interval (endpoints missing in the same position).
         index = self.create_index(closed=closed)
         assert len(index) == 10
         assert index.size == 10
@@ -87,6 +108,10 @@ class TestIntervalIndex:
         ],
     )
     def test_length(self, closed, breaks):
+        # [FUNCTION DOC]
+        # Parametrized over closed side and breaks (integers, infinite floats,
+        # datetimes in two units, timedeltas). Verifies (GH 18789) the length property
+        # equals each interval's length, also after inserting a missing entry.
         # GH 18789
         index = IntervalIndex.from_breaks(breaks, closed=closed)
         result = index.length
@@ -100,6 +125,9 @@ class TestIntervalIndex:
         tm.assert_index_equal(result, expected)
 
     def test_with_nans(self, closed):
+        # [FUNCTION DOC]
+        # Parametrized over closed side. Verifies the missing-value flag, and the
+        # missing and non-missing masks, for complete and partially missing indexes.
         index = self.create_index(closed=closed)
         assert index.hasnans is False
 
@@ -123,6 +151,9 @@ class TestIntervalIndex:
         tm.assert_numpy_array_equal(result, expected)
 
     def test_copy(self, closed):
+        # [FUNCTION DOC]
+        # Parametrized over closed side. Verifies shallow and deep copies are equal and a deep
+        # copy does not share the left endpoint index object.
         expected = self.create_index(closed=closed)
 
         result = expected.copy()
@@ -133,6 +164,10 @@ class TestIntervalIndex:
         assert result.left is not expected.left
 
     def test_ensure_copied_data(self, closed):
+        # [FUNCTION DOC]
+        # Parametrized over closed side. Verifies the constructor's copy flag: with no
+        # copy an interval index shares its endpoint buffers, while building from an
+        # object array of intervals always copies.
         # exercise the copy flag in the constructor
 
         # not copying
@@ -155,6 +190,9 @@ class TestIntervalIndex:
         )
 
     def test_delete(self, closed):
+        # [FUNCTION DOC]
+        # Parametrized over closed side. Verifies deleting the first element gives an index
+        # built from the remaining breaks.
         breaks = np.arange(1, 11, dtype=np.int64)
         expected = IntervalIndex.from_breaks(breaks, closed=closed)
         result = self.create_index(closed=closed).delete(0)
@@ -170,6 +208,15 @@ class TestIntervalIndex:
         ],
     )
     def test_insert(self, data):
+        # [FUNCTION DOC]
+        # Parametrized over numeric, float-step, datetime and timedelta interval ranges.
+        # Verifies inserting an interval at start, middle and end equals the corresponding
+        # concatenation; inserting an invalid value falls back to an object index while the
+        # underlying array raises a type error; inserting an interval with a different closed
+        # side falls back to object on the index and raises a value error on the array;
+        # inserting missing markers (nan, None, NA) inserts a missing interval; and
+        # inserting NaT behaves like a missing value (raising for numeric arrays).
+        # KNOWN ISSUE: the first closed-side message assigned before the loop is overwritten by the loop's own message before any use, so that assignment is dead; additionally the expected value used in the final comparison is only reassigned for non-datetime-like data and otherwise is left over from the earlier missing-marker loop.
         item = data[0]
         idx_item = IntervalIndex([item])
 
@@ -227,6 +274,9 @@ class TestIntervalIndex:
         tm.assert_index_equal(result, expected)
 
     def test_is_unique_interval(self, closed):
+        # [FUNCTION DOC]
+        # Parametrized over closed side. Verifies uniqueness is true for overlapping,
+        # shared-endpoint, nested and single-missing indexes and false for repeated missing intervals.
         """
         Interval specific tests for is_unique in addition to base class tests
         """
@@ -253,6 +303,10 @@ class TestIntervalIndex:
         assert idx.is_unique is False
 
     def test_monotonic(self, closed):
+        # [FUNCTION DOC]
+        # Parametrized over closed side. Verifies monotonic increasing/decreasing flags
+        # and their strict private counterparts for increasing, decreasing, unordered,
+        # overlapping, shared-endpoint, stationary and empty indexes.
         # increasing non-overlapping
         idx = IntervalIndex.from_tuples([(0, 1), (2, 3), (4, 5)], closed=closed)
         assert idx.is_monotonic_increasing is True
@@ -324,6 +378,9 @@ class TestIntervalIndex:
         assert idx._is_strictly_monotonic_decreasing is True
 
     def test_is_monotonic_with_nans(self):
+        # [FUNCTION DOC]
+        # Verifies (GH#41831) an index of two missing intervals reports no monotonicity
+        # (neither increasing nor decreasing, strict or not).
         # GH#41831
         index = IntervalIndex([np.nan, np.nan])
 
@@ -343,6 +400,10 @@ class TestIntervalIndex:
         ids=lambda x: str(x.dtype),
     )
     def test_maybe_convert_i8(self, breaks):
+        # [FUNCTION DOC]
+        # Parametrized over date, aware date and timedelta breaks. Verifies (GH 20636)
+        # the private integer-conversion helper maps an interval index, an interval, a datetime-like
+        # index, a scalar and a list of scalars to their integer representation.
         # GH 20636
         index = IntervalIndex.from_breaks(breaks)
 
@@ -380,6 +441,10 @@ class TestIntervalIndex:
         ],
     )
     def test_maybe_convert_i8_nat(self, breaks):
+        # [FUNCTION DOC]
+        # Parametrized over date and timedelta breaks. Verifies (GH 20636) the helper
+        # converts missing datetime-likes to float missing values, and a mixed
+        # list to floats including the integer value of the valid element.
         # GH 20636
         index = IntervalIndex.from_breaks(breaks)
 
@@ -399,6 +464,10 @@ class TestIntervalIndex:
         ids=["lambda", "list"],
     )
     def test_maybe_convert_i8_numeric(self, make_key, any_real_numpy_dtype):
+        # [FUNCTION DOC]
+        # Parametrized over key maker (identity or list) and any real numpy dtype.
+        # Verifies (GH 20636) the helper keeps numeric keys numeric, producing an index
+        # with signed, unsigned or float 64-bit dtype by kind.
         # GH 20636
         breaks = np.arange(5, dtype=any_real_numpy_dtype)
         index = IntervalIndex.from_breaks(breaks)
@@ -420,6 +489,10 @@ class TestIntervalIndex:
         ids=["IntervalIndex", "Interval", "scalar"],
     )
     def test_maybe_convert_i8_numeric_identical(self, make_key, any_real_numpy_dtype):
+        # [FUNCTION DOC]
+        # Parametrized over key makers (an interval index, an interval, a scalar) and numpy
+        # dtype. Verifies (GH 20636) the helper returns the very same object for
+        # intervals, interval indexes and scalars of numeric keys.
         # GH 20636
         breaks = np.arange(5, dtype=any_real_numpy_dtype)
         index = IntervalIndex.from_breaks(breaks)
@@ -453,6 +526,10 @@ class TestIntervalIndex:
         ids=["IntervalIndex", "Interval", "Index", "scalar", "list"],
     )
     def test_maybe_convert_i8_errors(self, breaks1, breaks2, make_key):
+        # [FUNCTION DOC]
+        # Parametrized over ordered pairs of different datetime-like kinds and key makers.
+        # Verifies (GH 20636) the helper raises a value error saying an interval index of
+        # one subtype cannot be indexed with values of another dtype.
         # GH 20636
         index = IntervalIndex.from_breaks(breaks1)
         key = make_key(breaks2)
@@ -466,6 +543,10 @@ class TestIntervalIndex:
             index._maybe_convert_i8(key)
 
     def test_contains_method(self):
+        # [FUNCTION DOC]
+        # Verifies the contains method returns a boolean array of which intervals contain
+        # a scalar (honoring right-closed ends), and that giving it an interval raises a
+        # not-implemented error.
         # can select values that are IN the range of a value
         i = IntervalIndex.from_arrays([0, 1], [1, 2])
 
@@ -489,6 +570,9 @@ class TestIntervalIndex:
             i.contains(Interval(0, 1))
 
     def test_dropna(self, closed):
+        # [FUNCTION DOC]
+        # Parametrized over closed side. Verifies dropping missing entries from indexes
+        # built via tuples and arrays gives the expected index.
         expected = IntervalIndex.from_tuples([(0.0, 1.0), (1.0, 2.0)], closed=closed)
 
         ii = IntervalIndex.from_tuples([(0, 1), (1, 2), np.nan], closed=closed)
@@ -500,6 +584,9 @@ class TestIntervalIndex:
         tm.assert_index_equal(result, expected)
 
     def test_non_contiguous(self, closed):
+        # [FUNCTION DOC]
+        # Parametrized over closed side. Verifies the indexer on non-contiguous intervals
+        # gives not-found for a gap value and the value is not contained.
         index = IntervalIndex.from_tuples([(0, 1), (2, 3)], closed=closed)
         target = [0.5, 1.5, 2.5]
         actual = index.get_indexer(target)
@@ -509,6 +596,10 @@ class TestIntervalIndex:
         assert 1.5 not in index
 
     def test_isin(self, closed):
+        # [FUNCTION DOC]
+        # Parametrized over closed side. Verifies membership testing against an index, a
+        # list, and indexes with other closed sides: only exactly matching intervals
+        # (including closed side) are found.
         index = self.create_index(closed=closed)
 
         expected = np.array([True] + [False] * (len(index) - 1))
@@ -536,6 +627,11 @@ class TestIntervalIndex:
             tm.assert_numpy_array_equal(result, expected)
 
     def test_comparison(self):
+        # [FUNCTION DOC]
+        # Verifies comparison operators between intervals and the shared index, between
+        # indexes, and with arrays, including elementwise results, unequal-closed
+        # comparisons being false, invalid comparisons with scalars (equality false
+        # elementwise, ordering raising a type error), and a length mismatch raising a value error.
         actual = Interval(0, 1) < self.index
         expected = np.array([False, True])
         tm.assert_numpy_array_equal(actual, expected)
@@ -600,6 +696,10 @@ class TestIntervalIndex:
             self.index > np.arange(3)
 
     def test_missing_values(self, closed):
+        # [FUNCTION DOC]
+        # Parametrized over closed side. Verifies an object index with a missing value
+        # and intervals equals the array-built version, that mismatched missing locations
+        # on left and right sides raise a value error, and the missing mask.
         idx = Index(
             [np.nan, Interval(0, 1, closed=closed), Interval(1, 2, closed=closed)]
         )
@@ -618,6 +718,9 @@ class TestIntervalIndex:
         tm.assert_numpy_array_equal(isna(idx), np.array([True, False, False]))
 
     def test_sort_values(self, closed):
+        # [FUNCTION DOC]
+        # Parametrized over closed side. Verifies sort_values ascending and descending,
+        # with missing values placed last or first.
         index = self.create_index(closed=closed)
 
         result = index.sort_values()
@@ -639,6 +742,10 @@ class TestIntervalIndex:
 
     @pytest.mark.parametrize("tz", [None, "US/Eastern"])
     def test_datetime(self, tz):
+        # [FUNCTION DOC]
+        # Parametrized over timezone. Verifies datetime-based intervals: midpoints, that
+        # membership checks whole intervals not points, that the contains method checks points,
+        # and the indexer for sorted point targets.
         start = Timestamp("2000-01-01", tz=tz)
         dates = date_range(start=start, periods=10)
         index = IntervalIndex.from_breaks(dates)
@@ -680,6 +787,10 @@ class TestIntervalIndex:
         tm.assert_numpy_array_equal(actual, expected)
 
     def test_append(self, closed):
+        # [FUNCTION DOC]
+        # Parametrized over closed side. Verifies concatenation of interval indexes with
+        # the same closed side, with a list, and that mixing closed sides falls back to
+        # object dtype.
         index1 = IntervalIndex.from_arrays([0, 1], [1, 2], closed=closed)
         index2 = IntervalIndex.from_arrays([1, 2], [2, 3], closed=closed)
 
@@ -702,6 +813,10 @@ class TestIntervalIndex:
             tm.assert_index_equal(result, expected)
 
     def test_is_non_overlapping_monotonic(self, closed):
+        # [FUNCTION DOC]
+        # Parametrized over closed side. Verifies the non-overlapping-monotonic flag:
+        # true for ordered disjoint intervals either direction; false for overlapping or
+        # unordered ones; and for touching intervals true unless the closed side is both (GH16560).
         # Should be True in all cases
         tpls = [(0, 1), (2, 3), (4, 5), (6, 7)]
         idx = IntervalIndex.from_tuples(tpls, closed=closed)
@@ -743,6 +858,11 @@ class TestIntervalIndex:
         ],
     )
     def test_is_overlapping(self, start, shift, na_value, closed):
+        # [FUNCTION DOC]
+        # Parametrized over start/shift/NA value (numbers, timestamps, timedeltas) and
+        # closed side. Verifies (GH 23309) the overlap flag for disjoint, overlapping,
+        # touching (overlapping only when both ends closed) intervals with or without
+        # missing entries, and for duplicated left values with right-closed intervals.
         # GH 23309
         # see test_interval_tree.py for extensive tests; interface tests here
 
@@ -801,6 +921,9 @@ class TestIntervalIndex:
         ],
     )
     def test_to_tuples(self, tuples):
+        # [FUNCTION DOC]
+        # Parametrized over zipped endpoints (integers, dates, timedeltas). Verifies
+        # (GH 18756) conversion to tuples equals an index of tuples.
         # GH 18756
         tuples = list(tuples)
         idx = IntervalIndex.from_tuples(tuples)
@@ -834,6 +957,10 @@ class TestIntervalIndex:
     )
     @pytest.mark.parametrize("na_tuple", [True, False])
     def test_to_tuples_na(self, tuples, na_tuple):
+        # [FUNCTION DOC]
+        # Parametrized over tuples with a trailing missing entry and the na_tuple flag.
+        # Verifies (GH 18756) the non-missing part converts to an index of tuples, and the
+        # missing entry becomes a pair of missing values (when the flag is true) or a single missing value.
         # GH 18756
         idx = IntervalIndex.from_tuples(tuples)
         result = idx.to_tuples(na_tuple=na_tuple)
@@ -853,6 +980,9 @@ class TestIntervalIndex:
             assert isna(result_na)
 
     def test_nbytes(self):
+        # [FUNCTION DOC]
+        # Verifies (GH 19209) the memory size of an index of four 64-bit integer intervals
+        # equals 64 bytes (two 8-byte arrays of four).
         # GH 19209
         left = np.arange(0, 4, dtype="i8")
         right = np.arange(1, 5, dtype="i8")
@@ -863,6 +993,9 @@ class TestIntervalIndex:
 
     @pytest.mark.parametrize("name", [None, "foo"])
     def test_set_closed(self, name, closed, other_closed):
+        # [FUNCTION DOC]
+        # Parametrized over name and both closed fixtures. Verifies (GH 21670) changing
+        # the closed side returns an index equal to one built with that side, keeping the name.
         # GH 21670
         index = interval_range(0, 5, closed=closed, name=name)
         result = index.set_closed(other_closed)
@@ -871,6 +1004,9 @@ class TestIntervalIndex:
 
     @pytest.mark.parametrize("bad_closed", ["foo", 10, "LEFT", True, False])
     def test_set_closed_errors(self, bad_closed):
+        # [FUNCTION DOC]
+        # Parametrized over invalid values (strings, integer, upper-case, booleans). Verifies
+        # (GH 21670) changing the closed side raises a value error naming the invalid option.
         # GH 21670
         index = interval_range(0, 5)
         msg = f"invalid option for 'closed': {bad_closed}"
@@ -878,6 +1014,8 @@ class TestIntervalIndex:
             index.set_closed(bad_closed)
 
     def test_is_all_dates(self):
+        # [FUNCTION DOC]
+        # Verifies (GH 23576) an interval index of timestamps does not count as an all-dates index.
         # GH 23576
         year_2017 = Interval(
             Timestamp("2017-01-01 00:00:00"), Timestamp("2018-01-01 00:00:00")
@@ -887,6 +1025,9 @@ class TestIntervalIndex:
 
 
 def test_from_arrays_mismatched_signedness_raises():
+    # [FUNCTION DOC]
+    # Verifies (GH 55715) building from arrays of signed and unsigned integer
+    # endpoints raises a type error about matching signedness.
     # GH 55715
     left = np.array([0, 1, 2], dtype="int64")
     right = np.array([1, 2, 3], dtype="uint64")
@@ -895,6 +1036,9 @@ def test_from_arrays_mismatched_signedness_raises():
 
 
 def test_dir():
+    # [FUNCTION DOC]
+    # Verifies (GH#27571) listing the attributes of an interval index does not
+    # raise and does not include the string accessor.
     # GH#27571 dir(interval_index) should not raise
     index = IntervalIndex.from_arrays([0, 1], [1, 2])
     result = dir(index)
@@ -902,6 +1046,10 @@ def test_dir():
 
 
 def test_searchsorted_different_argument_classes(listlike_box):
+    # [FUNCTION DOC]
+    # Parametrized over list-like container type. Verifies (issue 32762) the
+    # sorted-search position of an index's own values, via the index and via its
+    # underlying array, is zero then one.
     # https://github.com/pandas-dev/pandas/issues/32762
     values = IntervalIndex([Interval(0, 1), Interval(1, 2)])
     result = values.searchsorted(listlike_box(values))
@@ -916,6 +1064,10 @@ def test_searchsorted_different_argument_classes(listlike_box):
     "arg", [[1, 2], ["a", "b"], [Timestamp("2020-01-01", tz="Europe/London")] * 2]
 )
 def test_searchsorted_invalid_argument(arg):
+    # [FUNCTION DOC]
+    # Parametrized over invalid search arguments (integers, strings, aware
+    # timestamps). Verifies sorted search raises a type error stating the less-than
+    # comparison between the arguments and an Interval is unsupported.
     values = IntervalIndex([Interval(0, 1), Interval(1, 2)])
     msg = "'<' not supported between instances of 'pandas._libs.interval.Interval' and "
     with pytest.raises(TypeError, match=msg):

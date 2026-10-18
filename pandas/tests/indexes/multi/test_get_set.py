@@ -1,3 +1,9 @@
+# [MODULE DOC]
+# Tests for getting and setting MultiIndex metadata: level numbers, per-level
+# dtypes, names, levels and codes (including error handling, categorical levels,
+# iterables, and removed positional arguments).
+# Uses the shared idx fixture plus using_infer_string and multiindex_dataframe_random_data fixtures.
+
 import numpy as np
 import pytest
 
@@ -12,6 +18,11 @@ import pandas._testing as tm
 
 
 def assert_matching(actual, expected, check_dtype=False):
+    # [FUNCTION DOC]
+    # HELPER: asserts that two equally long sequences of array-likes match elementwise by
+    # converting each pair to numpy arrays and comparing them. Parameters: the actual
+    # sequence, the expected sequence, and a flag (default false) controlling whether dtypes
+    # must also match. Raises an assertion error on length mismatch or content mismatch.
     # avoid specifying internal representation
     # as much as possible
     assert len(actual) == len(expected)
@@ -22,6 +33,10 @@ def assert_matching(actual, expected, check_dtype=False):
 
 
 def test_get_level_number_integer(idx):
+    # [FUNCTION DOC]
+    # Mutates the shared index names to integers. Verifies the level number lookup by integer
+    # name returns positions, and raises an index error for a too-large number (naming two
+    # levels) and a key error for an unknown string name.
     idx.names = [1, 0]
     assert idx._get_level_number(1) == 0
     assert idx._get_level_number(0) == 1
@@ -33,6 +48,10 @@ def test_get_level_number_integer(idx):
 
 
 def test_get_dtypes(using_infer_string):
+    # [FUNCTION DOC]
+    # Verifies (Gh37062) the per-level dtypes of a three-level index are returned as a
+    # Series keyed by names: integer, object (or string dtype when inference is on)
+    # and timezone-aware datetime.
     # Test MultiIndex.dtypes (# Gh37062)
     idx_multitype = MultiIndex.from_product(
         [
@@ -55,6 +74,9 @@ def test_get_dtypes(using_infer_string):
 
 
 def test_get_dtypes_no_level_name(using_infer_string):
+    # [FUNCTION DOC]
+    # Verifies (GH38580) the dtypes series uses default names level_0, level_1,
+    # level_2 for unnamed levels.
     # Test MultiIndex.dtypes (# GH38580 )
     idx_multitype = MultiIndex.from_product(
         [
@@ -75,6 +97,8 @@ def test_get_dtypes_no_level_name(using_infer_string):
 
 
 def test_get_dtypes_duplicate_level_names(using_infer_string):
+    # [FUNCTION DOC]
+    # Verifies (GH45174) the dtypes series keeps duplicate level names as the index labels.
     # Test MultiIndex.dtypes with non-unique level names (# GH45174)
     result = MultiIndex.from_product(
         [
@@ -93,6 +117,9 @@ def test_get_dtypes_duplicate_level_names(using_infer_string):
 
 
 def test_get_level_number_out_of_bounds(multiindex_dataframe_random_data):
+    # [FUNCTION DOC]
+    # Verifies the level number lookup on a frame's index raises an index error for too
+    # many levels and for a negative number that is not a valid level number.
     frame = multiindex_dataframe_random_data
 
     with pytest.raises(IndexError, match="Too many levels"):
@@ -102,6 +129,11 @@ def test_get_level_number_out_of_bounds(multiindex_dataframe_random_data):
 
 
 def test_set_name_methods(idx):
+    # [FUNCTION DOC]
+    # Verifies the rename method is the same as set_names; setting names returns a new
+    # index leaving the original unchanged; wrong-length names raise a value error;
+    # in-place setting returns nothing and mutates; and setting names for one level
+    # (GH7792) or several levels works, in place or not.
     # so long as these are synonyms, we don't need to test set_names
     index_names = ["first", "second"]
     assert idx.rename == idx.set_names
@@ -137,6 +169,8 @@ def test_set_name_methods(idx):
 
 
 def test_set_levels_codes_directly(idx):
+    # [FUNCTION DOC]
+    # Verifies assigning directly to the levels or codes attribute raises an attribute error.
     # setting levels/codes directly raises AttributeError
 
     levels = idx.levels
@@ -158,6 +192,11 @@ def test_set_levels_codes_directly(idx):
 
 
 def test_set_levels(idx):
+    # [FUNCTION DOC]
+    # Verifies replacing levels (all, a single level by position, or several) returns a
+    # new index without mutating the original, and (GH 13754) invalid inputs
+    # (wrong-length levels, scalar levels, wrong-length codes, scalar codes) raise value
+    # or type errors while leaving the index unchanged.
     # side note - you probably wouldn't want to use levels and codes
     # directly like this - but it is possible.
     levels = idx.levels
@@ -203,6 +242,9 @@ def test_set_levels(idx):
 
 
 def test_set_codes(idx):
+    # [FUNCTION DOC]
+    # Verifies replacing codes (all, single and multiple levels) returns a new index without
+    # mutating the original, and replacing codes on a level with many categories works.
     # side note - you probably wouldn't want to use levels and codes
     # directly like this - but it is possible.
     codes = idx.codes
@@ -241,6 +283,10 @@ def test_set_codes(idx):
 
 
 def test_set_levels_codes_names_bad_input(idx):
+    # [FUNCTION DOC]
+    # Verifies errors for bad input to setting levels, codes and names: wrong length
+    # (value error), scalar data (type error asking for list-like), and mismatched level
+    # and value lengths or kinds.
     levels, codes = idx.levels, idx.codes
     names = idx.names
 
@@ -289,6 +335,9 @@ def test_set_levels_codes_names_bad_input(idx):
 
 @pytest.mark.parametrize("inplace", [True, False])
 def test_set_names_with_nlevel_1(inplace):
+    # [FUNCTION DOC]
+    # Parametrized over in-place flag. Verifies (GH 21149) setting the name on a
+    # one-level multi-index works both in place and not.
     # GH 21149
     # Ensure that .set_names for MultiIndex with
     # nlevels == 1 does not raise any errors
@@ -304,6 +353,9 @@ def test_set_names_with_nlevel_1(inplace):
 
 @pytest.mark.parametrize("ordered", [True, False])
 def test_set_levels_categorical(ordered):
+    # [FUNCTION DOC]
+    # Parametrized over ordered flag. Verifies (GH13854) setting a categorical as a level
+    # gives an index equal to one constructed with it, and the retrieved level keeps categories and ordering.
     # GH13854
     index = MultiIndex.from_arrays([list("xyzx"), [0, 1, 2, 3]])
 
@@ -320,6 +372,9 @@ def test_set_levels_categorical(ordered):
 
 
 def test_set_value_keeps_names():
+    # [FUNCTION DOC]
+    # Verifies (issue 3742) setting a value by label on a frame with a sorted named
+    # multi-index keeps the index names.
     # motivating example from #3742
     lev1 = ["hans", "hans", "hans", "grethe", "grethe", "grethe"]
     lev2 = ["1", "2", "3"] * 2
@@ -336,6 +391,9 @@ def test_set_value_keeps_names():
 
 
 def test_set_levels_with_iterable():
+    # [FUNCTION DOC]
+    # Verifies (GH23273) setting levels from a lazy iterable converts it and replaces the
+    # named level.
     # GH23273
     sizes = [1, 2, 3]
     colors = ["black"] * 3
@@ -349,6 +407,8 @@ def test_set_levels_with_iterable():
 
 
 def test_set_empty_level():
+    # [FUNCTION DOC]
+    # Verifies (GH#48636) setting an empty datetime level on an empty single-level index works.
     # GH#48636
     midx = MultiIndex.from_arrays([[]], names=["A"])
     result = midx.set_levels(pd.DatetimeIndex([]), level=0)
@@ -357,6 +417,9 @@ def test_set_empty_level():
 
 
 def test_set_levels_pos_args_removal():
+    # [FUNCTION DOC]
+    # Verifies (issue 41485) passing the level argument positionally to setting levels or
+    # codes raises a type error about positional arguments.
     # https://github.com/pandas-dev/pandas/issues/41485
     idx = MultiIndex.from_tuples(
         [
@@ -373,6 +436,8 @@ def test_set_levels_pos_args_removal():
 
 
 def test_set_levels_categorical_keep_dtype():
+    # [FUNCTION DOC]
+    # Verifies (GH#52125) setting a categorical as a level keeps the categorical dtype.
     # GH#52125
     midx = MultiIndex.from_arrays([[5, 6]])
     result = midx.set_levels(levels=pd.Categorical([1, 2]), level=0)

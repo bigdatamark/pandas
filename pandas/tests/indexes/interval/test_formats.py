@@ -1,3 +1,8 @@
+# [MODULE DOC]
+# Tests for text rendering of IntervalIndex: repr within a Series or DataFrame,
+# float formatting, the CSV value formatter and aware-timestamp repr.
+# Uses the unit and using_infer_string fixtures. Pure tests module.
+
 import numpy as np
 import pytest
 
@@ -15,6 +20,8 @@ import pandas._testing as tm
 
 
 class TestIntervalIndexRendering:
+    # [CLASS DOC]
+    # Groups rendering tests for IntervalIndex.
     # TODO: this is a test for DataFrame/Series, not IntervalIndex
     @pytest.mark.parametrize(
         "constructor,expected",
@@ -27,6 +34,12 @@ class TestIntervalIndexRendering:
         ],
     )
     def test_repr_missing(self, constructor, expected, using_infer_string, request):
+        # [FUNCTION DOC]
+        # Note: the in-source TODO says this is really a test for DataFrame and Series
+        # rather than for the index. Parametrized over a Series or DataFrame and the
+        # expected text. Verifies (GH 25984) the repr of an object with an interval
+        # index containing a missing label shows the missing label as NaN. Expected to
+        # fail for the Series case when string inference is enabled.
         # GH 25984
         if using_infer_string and constructor is Series:
             request.applymarker(pytest.mark.xfail(reason="repr different"))
@@ -36,6 +49,9 @@ class TestIntervalIndexRendering:
         assert result == expected
 
     def test_repr_floats(self):
+        # [FUNCTION DOC]
+        # Verifies (GH 32553) the string form of a Series indexed by float intervals
+        # shows the full float precision of the bounds.
         # GH 32553
 
         markers = Series(
@@ -95,6 +111,11 @@ class TestIntervalIndexRendering:
         ],
     )
     def test_get_values_for_csv(self, tuples, closed, expected_data):
+        # [FUNCTION DOC]
+        # Parametrized over tuples, closed side and expected strings (integers, floats
+        # with a missing entry, timestamps, timedeltas). Ignores invalid-cast runtime
+        # warnings. Verifies (GH 28210) the private CSV-value formatter gives an array
+        # of interval strings with the missing entry rendered as the NaN text.
         # GH 28210
         index = IntervalIndex.from_tuples(tuples, closed=closed)
         result = index._get_values_for_csv(na_rep="NaN")
@@ -102,6 +123,9 @@ class TestIntervalIndexRendering:
         tm.assert_numpy_array_equal(result, expected)
 
     def test_timestamp_with_timezone(self, unit):
+        # [FUNCTION DOC]
+        # Parametrized over unit. Verifies (GH 55035) the repr of an interval index of
+        # UTC-aware timestamps includes the offsets and the dtype with unit and zone.
         # GH 55035
         left = DatetimeIndex(["2020-01-01"], dtype=f"M8[{unit}, UTC]")
         right = DatetimeIndex(["2020-01-02"], dtype=f"M8[{unit}, UTC]")

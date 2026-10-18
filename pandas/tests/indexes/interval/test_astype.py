@@ -1,3 +1,10 @@
+# [MODULE DOC]
+# Tests for type conversion (astype) of IntervalIndex. A shared base class holds
+# checks that apply to any subtype; subclasses add subtype-specific checks and
+# provide the index fixture over a list of indexes for integer, float and
+# datetime-like subtypes.
+# Pure tests module; the index lists are built at import time.
+
 import re
 
 import numpy as np
@@ -23,9 +30,15 @@ import pandas._testing as tm
 
 
 class AstypeTests:
+    # [CLASS DOC]
+    # Mixin of conversion tests shared by every subtype class. Subclasses must
+    # provide a fixture named index; this class itself is not collected as tests.
     """Tests common to IntervalIndex with any subtype"""
 
     def test_astype_idempotent(self, index):
+        # [FUNCTION DOC]
+        # Verifies converting to the generic interval dtype or to the index's own
+        # dtype leaves the index unchanged.
         result = index.astype("interval")
         tm.assert_index_equal(result, index)
 
@@ -33,12 +46,20 @@ class AstypeTests:
         tm.assert_index_equal(result, index)
 
     def test_astype_object(self, index):
+        # [FUNCTION DOC]
+        # Verifies conversion to object gives an object Index of the interval values,
+        # which does not compare equal to the original.
         result = index.astype(object)
         expected = Index(index.values, dtype="object")
         tm.assert_index_equal(result, expected)
         assert not result.equals(index)
 
     def test_astype_category(self, index):
+        # [FUNCTION DOC]
+        # Verifies conversion to category (by name or default categorical dtype) equals
+        # a categorical index of the values; with custom categories and ordered flag a
+        # future-change warning about values outside the categories is expected, and the
+        # result equals the equivalently constructed categorical index.
         result = index.astype("category")
         expected = CategoricalIndex(index.values)
         tm.assert_index_equal(result, expected)
@@ -74,17 +95,26 @@ class AstypeTests:
         ],
     )
     def test_astype_cannot_cast(self, index, dtype):
+        # [FUNCTION DOC]
+        # Parametrized over numeric, period, timedelta and datetime dtypes. Verifies
+        # that conversion raises a type error saying an interval index cannot be cast to the dtype.
         msg = "Cannot cast IntervalIndex to dtype"
         with pytest.raises(TypeError, match=msg):
             index.astype(dtype)
 
     def test_astype_invalid_dtype(self, index):
+        # [FUNCTION DOC]
+        # Verifies that conversion to an unknown dtype name raises a type error saying
+        # the data type is not understood.
         msg = "data type [\"']fake_dtype[\"'] not understood"
         with pytest.raises(TypeError, match=msg):
             index.astype("fake_dtype")
 
 
 class TestIntSubtype(AstypeTests):
+    # [CLASS DOC]
+    # Conversion tests for integer subtype indexes (signed from negative breaks,
+    # and unsigned left-closed). Inherits the shared checks.
     """Tests specific to IntervalIndex with integer-like subtype"""
 
     indexes = [
@@ -94,12 +124,18 @@ class TestIntSubtype(AstypeTests):
 
     @pytest.fixture(params=indexes)
     def index(self, request):
+        # [FUNCTION DOC]
+        # HELPER: parametrized fixture returning each integer-subtype index of the class list.
         return request.param
 
     @pytest.mark.parametrize(
         "subtype", ["float64", "datetime64[ns]", "timedelta64[ns]"]
     )
     def test_subtype_conversion(self, index, subtype):
+        # [FUNCTION DOC]
+        # Parametrized over target subtype (float, datetime, timedelta). Verifies
+        # converting to an interval dtype with that subtype and the same closed side
+        # equals an index built from the endpoints converted to the subtype.
         dtype = IntervalDtype(subtype, index.closed)
         result = index.astype(dtype)
         expected = IntervalIndex.from_arrays(
@@ -111,6 +147,10 @@ class TestIntSubtype(AstypeTests):
         "subtype_start, subtype_end", [("int64", "uint64"), ("uint64", "int64")]
     )
     def test_subtype_integer(self, subtype_start, subtype_end):
+        # [FUNCTION DOC]
+        # Parametrized over starting and ending integer kinds (signed to unsigned and
+        # back). Verifies converting a non-negative integer index between signed and
+        # unsigned subtypes equals an index with converted endpoints.
         index = IntervalIndex.from_breaks(np.arange(100, dtype=subtype_start))
         dtype = IntervalDtype(subtype_end, index.closed)
         result = index.astype(dtype)
@@ -123,6 +163,10 @@ class TestIntSubtype(AstypeTests):
 
     @pytest.mark.xfail(reason="GH#15832")
     def test_subtype_integer_errors(self):
+        # [FUNCTION DOC]
+        # Expected failure (GH#15832). Verifies converting an index with negative
+        # endpoints to an unsigned subtype raises a value error whose message must not
+        # be the misleading wrapped-around-value message.
         # int64 -> uint64 fails with negative values
         index = interval_range(-10, 10)
         dtype = IntervalDtype("uint64", "right")
@@ -137,6 +181,9 @@ class TestIntSubtype(AstypeTests):
 
 
 class TestFloatSubtype(AstypeTests):
+    # [CLASS DOC]
+    # Conversion tests for float subtype indexes (open-closed interval range, and an
+    # index with missing values and both sides closed). Inherits the shared checks.
     """Tests specific to IntervalIndex with float subtype"""
 
     indexes = [
@@ -148,10 +195,17 @@ class TestFloatSubtype(AstypeTests):
 
     @pytest.fixture(params=indexes)
     def index(self, request):
+        # [FUNCTION DOC]
+        # HELPER: parametrized fixture returning each float-subtype index of the class list.
         return request.param
 
     @pytest.mark.parametrize("subtype", ["int64", "uint64"])
     def test_subtype_integer(self, subtype):
+        # [FUNCTION DOC]
+        # Parametrized over signed and unsigned integer subtype. Verifies a float index
+        # with integral endpoints converts to the integer subtype with converted
+        # endpoints, and that an index with a missing endpoint raises a value error about
+        # non-finite values.
         index = interval_range(0.0, 10.0)
         dtype = IntervalDtype(subtype, "right")
         result = index.astype(dtype)
@@ -167,6 +221,10 @@ class TestFloatSubtype(AstypeTests):
 
     @pytest.mark.parametrize("subtype", ["int64", "uint64"])
     def test_subtype_integer_with_non_integer_borders(self, subtype):
+        # [FUNCTION DOC]
+        # Parametrized over integer subtypes. Verifies (truncation) conversion of a
+        # quarter-step float interval range to integer subtypes equals an index of endpoints
+        # converted to the subtype.
         index = interval_range(0.0, 3.0, freq=0.25)
         dtype = IntervalDtype(subtype, "right")
         result = index.astype(dtype)
@@ -176,6 +234,9 @@ class TestFloatSubtype(AstypeTests):
         tm.assert_index_equal(result, expected)
 
     def test_subtype_integer_errors(self):
+        # [FUNCTION DOC]
+        # Verifies converting a float index with negative endpoints to an unsigned
+        # subtype raises a type error saying the subtypes are incompatible.
         # float64 -> uint64 fails with negative values
         index = interval_range(-10.0, 10.0)
         dtype = IntervalDtype("uint64", "right")
@@ -188,6 +249,10 @@ class TestFloatSubtype(AstypeTests):
 
     @pytest.mark.parametrize("subtype", ["datetime64[ns]", "timedelta64[ns]"])
     def test_subtype_datetimelike(self, index, subtype):
+        # [FUNCTION DOC]
+        # Parametrized over datetime and timedelta subtypes plus the index fixture.
+        # Verifies a float interval index cannot be converted to a datetime-like subtype
+        # (type error: subtypes incompatible).
         dtype = IntervalDtype(subtype, "right")
         msg = "Cannot convert .* to .*; subtypes are incompatible"
         with pytest.raises(TypeError, match=msg):
@@ -197,10 +262,18 @@ class TestFloatSubtype(AstypeTests):
         "ignore:invalid value encountered in cast:RuntimeWarning"
     )
     def test_astype_category(self, index):
+        # [FUNCTION DOC]
+        # Overrides the inherited category conversion test only to add a filter that
+        # ignores the runtime warning about invalid values in a cast, then delegates to
+        # the parent test.
         super().test_astype_category(index)
 
 
 class TestDatetimelikeSubtype(AstypeTests):
+    # [CLASS DOC]
+    # Conversion tests for datetime-like subtype indexes (naive and aware
+    # timestamps, timedeltas, with and without missing values, several closed
+    # sides). Inherits the shared checks.
     """Tests specific to IntervalIndex with datetime-like subtype"""
 
     indexes = [
@@ -213,10 +286,17 @@ class TestDatetimelikeSubtype(AstypeTests):
 
     @pytest.fixture(params=indexes)
     def index(self, request):
+        # [FUNCTION DOC]
+        # HELPER: parametrized fixture returning each datetime-like index of the class list.
         return request.param
 
     @pytest.mark.parametrize("subtype", ["int64", "uint64"])
     def test_subtype_integer(self, index, subtype):
+        # [FUNCTION DOC]
+        # Parametrized over signed and unsigned integer subtype plus the index fixture.
+        # For the unsigned subtype verifies a type error about incompatible conversion;
+        # for the signed subtype verifies the result equals an index with endpoints
+        # converted to the integer subtype.
         dtype = IntervalDtype(subtype, "right")
 
         if subtype != "int64":
@@ -237,12 +317,18 @@ class TestDatetimelikeSubtype(AstypeTests):
         tm.assert_index_equal(result, expected)
 
     def test_subtype_float(self, index):
+        # [FUNCTION DOC]
+        # Verifies a datetime-like interval index cannot be converted to a float
+        # subtype (type error: subtypes incompatible).
         dtype = IntervalDtype("float64", "right")
         msg = "Cannot convert .* to .*; subtypes are incompatible"
         with pytest.raises(TypeError, match=msg):
             index.astype(dtype)
 
     def test_subtype_datetimelike(self):
+        # [FUNCTION DOC]
+        # Verifies converting between datetime-like subtypes (naive or aware timestamps to
+        # timedelta, and timedelta to datetime) raises a type error about incompatible subtypes.
         # datetime -> timedelta raises
         dtype = IntervalDtype("timedelta64[ns]", "right")
         msg = "Cannot convert .* to .*; subtypes are incompatible"

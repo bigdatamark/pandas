@@ -1,3 +1,8 @@
+# [MODULE DOC]
+# Tests for the string and text rendering of DatetimeIndex: the CSV value
+# formatter, repr and str output, and the summary helper.
+# Pure tests module; no import-time side effects.
+
 from datetime import (
     datetime,
     timezone,
@@ -17,6 +22,12 @@ import pandas._testing as tm
 
 
 def test_get_values_for_csv():
+    # [FUNCTION DOC]
+    # Verifies the private CSV-value formatter of a daily DatetimeIndex.
+    # Checks the default output, that the missing-value representation has no
+    # effect without missing entries, a custom date format, missing entries rendered
+    # with a custom representation, and that an invalid format string is emitted
+    # literally instead of raising.
     index = pd.date_range(freq="1D", periods=3, start="2017-01-01")
 
     # First, with no arguments.
@@ -61,8 +72,14 @@ def test_get_values_for_csv():
 
 
 class TestDatetimeIndexRendering:
+    # [CLASS DOC]
+    # Groups tests of repr, str and summary rendering for DatetimeIndex.
     @pytest.mark.parametrize("tzstr", ["US/Eastern", "dateutil/US/Eastern"])
     def test_dti_with_timezone_repr(self, tzstr):
+        # [FUNCTION DOC]
+        # Parametrized over a pytz-style and a dateutil-style Eastern zone name.
+        # Verifies the repr of a localized daily range contains the first timestamp
+        # rendered with its time component.
         rng = pd.date_range("4/13/2010", "5/6/2010")
 
         rng_eastern = rng.tz_localize(tzstr)
@@ -71,11 +88,17 @@ class TestDatetimeIndexRendering:
         assert "2010-04-13 00:00:00" in rng_repr
 
     def test_dti_repr_dates(self):
+        # [FUNCTION DOC]
+        # Verifies the string form of a two-date index shows each date without a time
+        # component, as the first and last elements of a list.
         text = str(pd.to_datetime([datetime(2013, 1, 1), datetime(2014, 1, 1)]))
         assert "['2013-01-01'," in text
         assert ", '2014-01-01']" in text
 
     def test_dti_repr_mixed(self):
+        # [FUNCTION DOC]
+        # Verifies that when dates have mixed time components, every element is rendered
+        # with a full midnight time component.
         text = str(
             pd.to_datetime(
                 [datetime(2013, 1, 1), datetime(2014, 1, 1, 12), datetime(2014, 1, 1)]
@@ -85,6 +108,8 @@ class TestDatetimeIndexRendering:
         assert "'2014-01-01 00:00:00']" in text
 
     def test_dti_repr_short(self):
+        # [FUNCTION DOC]
+        # Smoke test: repr of ranges of length one, two and three must not raise.
         dr = pd.date_range(start="1/1/2012", periods=1)
         repr(dr)
 
@@ -119,12 +144,21 @@ class TestDatetimeIndexRendering:
         ],
     )
     def test_dti_repr_time_midnight(self, dates, freq, expected_repr, unit):
+        # [FUNCTION DOC]
+        # Parametrized over timestamp lists, frequency and the expected repr text, plus
+        # the unit fixture. Verifies (GH53634) that an index of midnight-only values
+        # shows dates only and that the repr reports the frequency and a dtype whose
+        # unit matches the converted unit.
         # GH53634
         dti = DatetimeIndex(dates, freq).as_unit(unit)
         actual_repr = repr(dti)
         assert actual_repr == expected_repr.replace("[ns]", f"[{unit}]")
 
     def test_dti_representation(self, unit):
+        # [FUNCTION DOC]
+        # Builds empty, short, timezone-aware and missing-containing indexes, converts
+        # each to the unit fixture, and checks that both the repr and str output match
+        # the expected text (dtype unit substituted), under a wide display width.
         idxs = []
         idxs.append(DatetimeIndex([], freq="D"))
         idxs.append(DatetimeIndex(["2011-01-01"], freq="D"))
@@ -185,6 +219,11 @@ class TestDatetimeIndexRendering:
 
     # TODO: this is a Series.__repr__ test
     def test_dti_representation_to_series(self, unit):
+        # [FUNCTION DOC]
+        # KNOWN ISSUE: the in-source TODO notes this actually tests the Series repr, not the index, so it belongs in the Series tests.
+        # Builds several indexes (empty to timezone-aware with missing values), wraps
+        # each in a Series after converting to the unit fixture, and checks the repr
+        # equals the expected text with the unit substituted, under a wide display width.
         idx1 = DatetimeIndex([], freq="D")
         idx2 = DatetimeIndex(["2011-01-01"], freq="D")
         idx3 = DatetimeIndex(["2011-01-01", "2011-01-02"], freq="D")
@@ -233,6 +272,10 @@ class TestDatetimeIndexRendering:
                 assert result == expected.replace("[ns", f"[{unit}")
 
     def test_dti_summary(self):
+        # [FUNCTION DOC]
+        # Verifies (GH#9116) the private summary helper: entry count, first and last
+        # entries and the frequency line for empty, short, timezone-aware and
+        # missing-containing indexes.
         # GH#9116
         idx1 = DatetimeIndex([], freq="D")
         idx2 = DatetimeIndex(["2011-01-01"], freq="D")
@@ -272,6 +315,10 @@ class TestDatetimeIndexRendering:
     @pytest.mark.parametrize("tz", [None, timezone.utc, dateutil.tz.tzutc()])
     @pytest.mark.parametrize("freq", ["B", "C"])
     def test_dti_business_repr_etc_smoke(self, tz, freq):
+        # [FUNCTION DOC]
+        # Parametrized over timezone (none, standard-library utc, dateutil utc) and
+        # business frequencies. Smoke test: repr and summary of a business-day index,
+        # including an empty slice, must not raise.
         # only really care that it works
         dti = pd.bdate_range(
             datetime(2009, 1, 1), datetime(2010, 1, 1), tz=tz, freq=freq

@@ -1,3 +1,8 @@
+# [MODULE DOC]
+# Tests for type conversion (astype) of MultiIndex: conversion to object and the
+# unsupported conversions to other dtypes and to categorical.
+# Uses the shared idx fixture. Pure tests module.
+
 import numpy as np
 import pytest
 
@@ -7,6 +12,10 @@ import pandas._testing as tm
 
 
 def test_astype(idx):
+    # [FUNCTION DOC]
+    # Verifies conversion to object dtype yields an index with equal levels, codes and
+    # names (copied data), and that conversion to an integer dtype raises a type
+    # error about setting a dtype on object-like data.
     expected = idx.copy()
     actual = idx.astype("O")
     tm.assert_copy(actual.levels, expected.levels)
@@ -19,6 +28,11 @@ def test_astype(idx):
 
 @pytest.mark.parametrize("ordered", [True, False])
 def test_astype_category(idx, ordered):
+    # [FUNCTION DOC]
+    # Parametrized over ordered flag. Verifies (GH 18630) conversion to a categorical
+    # dtype raises a not-implemented error about multi-dimensional categoricals,
+    # and the string alias for category is only checked once (for the unordered case,
+    # since it defaults to unordered).
     # GH 18630
     msg = "> 1 ndim Categorical are not supported at this time"
     with pytest.raises(NotImplementedError, match=msg):

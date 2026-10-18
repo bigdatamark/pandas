@@ -1,3 +1,9 @@
+# [MODULE DOC]
+# Tests for the interval_range function: numeric, timestamp and timedelta
+# construction from the start/end/periods/freq combinations, truncation, dtype
+# selection, daylight saving handling, and error cases.
+# Defines a local name fixture (none or a string) and uses the closed fixture.
+
 from datetime import timedelta
 
 import numpy as np
@@ -22,12 +28,21 @@ from pandas.tseries.offsets import Day
 
 @pytest.fixture(params=[None, "foo"])
 def name(request):
+    # [FUNCTION DOC]
+    # HELPER: parametrized fixture providing the index name argument (none or "foo").
     return request.param
 
 
 class TestIntervalRange:
+    # [CLASS DOC]
+    # Groups tests of interval_range.
     @pytest.mark.parametrize("freq, periods", [(1, 100), (2.5, 40), (5, 20), (25, 4)])
     def test_constructor_numeric(self, closed, name, freq, periods):
+        # [FUNCTION DOC]
+        # Parametrized over frequency/periods pairs plus closed and name fixtures.
+        # Verifies numeric ranges from start/end/freq, start/periods/freq, end/periods/freq
+        # and (GH 20976, linspace behavior) start/end/periods all equal an index built from
+        # the expected breaks.
         start, end = 0, 100
         breaks = np.arange(101, step=freq)
         expected = IntervalIndex.from_breaks(breaks, name=name, closed=closed)
@@ -61,6 +76,11 @@ class TestIntervalRange:
         "freq, periods", [("D", 364), ("2D", 182), ("22D18h", 16), ("ME", 11)]
     )
     def test_constructor_timestamp(self, closed, name, freq, periods, tz):
+        # [FUNCTION DOC]
+        # Parametrized over timezone, frequency/periods (daily, two-day, mixed day-hour,
+        # month end), closed and name. Verifies the same construction combinations as the
+        # numeric test for timestamps; the start/end/periods (linspace) form is only
+        # checked for naive ranges whose frequency multiple is not one.
         start, end = Timestamp("20180101", tz=tz), Timestamp("20181231", tz=tz)
         breaks = date_range(start=start, end=end, freq=freq)
         expected = IntervalIndex.from_breaks(breaks, name=name, closed=closed)
@@ -94,6 +114,9 @@ class TestIntervalRange:
         "freq, periods", [("D", 100), ("2D12h", 40), ("5D", 20), ("25D", 4)]
     )
     def test_constructor_timedelta(self, closed, name, freq, periods):
+        # [FUNCTION DOC]
+        # Parametrized over frequency/periods plus closed and name. Verifies the same
+        # four construction combinations for timedelta ranges.
         start, end = Timedelta("0 days"), Timedelta("100 days")
         breaks = timedelta_range(start=start, end=end, freq=freq)
         expected = IntervalIndex.from_breaks(breaks, name=name, closed=closed)
@@ -144,6 +167,10 @@ class TestIntervalRange:
         ],
     )
     def test_early_truncation(self, start, end, freq, expected_endpoint):
+        # [FUNCTION DOC]
+        # Parametrized over start, end, frequency and expected last right endpoint
+        # (numeric, timedelta, timestamps). Verifies the range stops early when the
+        # frequency steps over the end.
         # index truncates early if freq causes end to be skipped
         result = interval_range(start=start, end=end, freq=freq)
         result_endpoint = result.right[-1]
@@ -154,6 +181,10 @@ class TestIntervalRange:
         [(0.5, None, None), (None, 4.5, None), (0.5, None, 1.5), (None, 6.5, 1.5)],
     )
     def test_no_invalid_float_truncation(self, start, end, freq):
+        # [FUNCTION DOC]
+        # Parametrized over (start, end, frequency) with periods four. Verifies
+        # (GH 21161) float breaks are computed without truncation errors when
+        # constructed with periods from only one bound, with or without frequency.
         # GH 21161
         if freq is None:
             breaks = [0.5, 1.5, 2.5, 3.5, 4.5]
@@ -180,6 +211,10 @@ class TestIntervalRange:
         ],
     )
     def test_linspace_dst_transition(self, start, mid, end):
+        # [FUNCTION DOC]
+        # Parametrized over aware start/mid/end timestamps around daylight saving
+        # transitions (units converted to nanoseconds). Verifies (GH 20976) that
+        # start/end/periods spacing accounts for the hour gained or lost.
         # GH 20976: linspace behavior defined from start/end/periods
         # accounts for the hour gained/lost during DST transition
         start = start.as_unit("ns")
@@ -193,6 +228,10 @@ class TestIntervalRange:
     @pytest.mark.parametrize("end", [10, 10.0])
     @pytest.mark.parametrize("start", [0, 0.0])
     def test_float_subtype(self, start, end, freq):
+        # [FUNCTION DOC]
+        # Parametrized over start, end and frequency each as integer or float. Verifies
+        # the subtype is integer only if all given arguments are integral, and float
+        # otherwise, for each argument combination and for linspace-style construction.
         # Has float subtype if any of start/end/freq are float, even if all
         # resulting endpoints can safely be upcast to integers
 
@@ -231,10 +270,17 @@ class TestIntervalRange:
         ],
     )
     def test_interval_dtype(self, start, end, expected):
+        # [FUNCTION DOC]
+        # Parametrized over numpy scalar start/end types and expected dtype. Verifies
+        # the interval subtype follows numpy scalar types (keeps small ints and float32,
+        # mixed int and float16 gives float64, Python ints give int64).
         result = interval_range(start=start, end=end).dtype.subtype
         assert result == expected
 
     def test_interval_range_fractional_period(self):
+        # [FUNCTION DOC]
+        # Verifies a fractional periods value raises a type error saying periods must be
+        # an integer.
         # float value for periods
         msg = "periods must be an integer, got 10.5"
         ts = Timestamp("2024-03-25")
@@ -242,6 +288,10 @@ class TestIntervalRange:
             interval_range(ts, periods=10.5)
 
     def test_constructor_coverage(self):
+        # [FUNCTION DOC]
+        # Verifies equivalent forms of start/end (Timestamp, Python datetime, numpy
+        # datetime64; and the timedelta analogues) and equivalent frequency spellings
+        # (string, offset, timedelta, date offset) produce the same range.
         # equivalent timestamp-like start/end
         start, end = Timestamp("2017-01-01"), Timestamp("2017-01-15")
         expected = interval_range(start=start, end=end)
@@ -281,6 +331,11 @@ class TestIntervalRange:
             tm.assert_index_equal(result, expected)
 
     def test_errors(self):
+        # [FUNCTION DOC]
+        # Verifies all error cases: missing or excess of the four range parameters raise
+        # a value error; mixing numeric, timestamp and timedelta start/end/freq raises a
+        # type error; invalid periods, start, end and frequency raise type or value errors
+        # with specific messages; and aware start and end in different zones raise a type error.
         # not enough params
         msg = (
             "Of the four parameters: start, end, periods, and freq, "
@@ -372,6 +427,9 @@ class TestIntervalRange:
             interval_range(start=start, end=end)
 
     def test_float_freq(self):
+        # [FUNCTION DOC]
+        # Verifies (GH 54477) a float frequency of 0.1 gives eleven breaks computed as
+        # multiples, and a frequency that does not divide the range gives one interval.
         # GH 54477
         result = interval_range(0, 1, freq=0.1)
         expected = IntervalIndex.from_breaks([0 + 0.1 * n for n in range(11)])
@@ -382,6 +440,9 @@ class TestIntervalRange:
         tm.assert_index_equal(result, expected)
 
     def test_interval_range_float32_start_int_freq(self):
+        # [FUNCTION DOC]
+        # Verifies (GH 58964) a float32 start with an integer frequency yields a
+        # float64-subtype interval index.
         # GH 58964
         result = interval_range(start=np.float32(0), end=2, freq=1)
         expected = IntervalIndex.from_tuples(

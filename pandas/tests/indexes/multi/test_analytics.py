@@ -1,3 +1,10 @@
+# [MODULE DOC]
+# Analytics-type tests for MultiIndex: unsupported operations (inferring
+# objects, shift, subtraction, numpy ufuncs), grouping, truncation, level
+# reordering errors, numpy repeat, append with mixed level dtypes, iteration
+# and mapping.
+# Uses the shared idx fixture. Pure tests module.
+
 import numpy as np
 import pytest
 
@@ -12,11 +19,18 @@ import pandas._testing as tm
 
 
 def test_infer_objects(idx):
+    # [FUNCTION DOC]
+    # Verifies that inferring object dtypes on a MultiIndex raises a not-implemented
+    # error recommending frame conversion.
     with pytest.raises(NotImplementedError, match="to_frame"):
         idx.infer_objects()
 
 
 def test_shift(idx):
+    # [FUNCTION DOC]
+    # Verifies (GH8083) that shifting a MultiIndex raises a not-implemented error
+    # stating the method is only implemented for datetime-like, period and timedelta
+    # indexes, with and without a second argument.
     # GH8083 test the base class for shift
     msg = (
         "This method is only implemented for DatetimeIndex, PeriodIndex and "
@@ -29,6 +43,10 @@ def test_shift(idx):
 
 
 def test_groupby(idx):
+    # [FUNCTION DOC]
+    # Verifies grouping the index by a label array gives a mapping from each label to
+    # the list of index entries, and (GH5620) grouping by the index itself maps each
+    # entry to a list containing itself.
     groups = idx.groupby(np.array([1, 1, 1, 2, 2, 2]))
     labels = idx.tolist()
     exp = {1: labels[:3], 2: labels[3:]}
@@ -41,6 +59,11 @@ def test_groupby(idx):
 
 
 def test_truncate_multiindex():
+    # [FUNCTION DOC]
+    # Verifies (GH 34564) truncating a two-level index before and/or after a label
+    # keeps level names and trims the first level values appropriately, and that an
+    # after value smaller than before raises a value error.
+    # Note: the in-source comment lists reshape tests as a TODO.
     # GH 34564 for MultiIndex level names check
     major_axis = Index(list(range(4)))
     minor_axis = Index(list(range(2)))
@@ -77,12 +100,18 @@ def test_truncate_multiindex():
 
 
 def test_reorder_levels(idx):
+    # [FUNCTION DOC]
+    # Verifies that reordering levels with a level number out of range raises an index
+    # error saying too many levels were given.
     # this blows up
     with pytest.raises(IndexError, match="^Too many levels"):
         idx.reorder_levels([2, 1, 0])
 
 
 def test_numpy_repeat():
+    # [FUNCTION DOC]
+    # Verifies numpy repeat on a product multi-index repeats entries of the second
+    # level equal to the expected index, and that passing an axis raises a value error.
     reps = 2
     numbers = [1, 2, 3]
     names = np.array(["foo", "bar"])
@@ -97,6 +126,10 @@ def test_numpy_repeat():
 
 
 def test_append_mixed_dtypes():
+    # [FUNCTION DOC]
+    # Verifies (GH 13660) appending a multi-index with level dtypes of integer,
+    # float with missing, string, datetime, aware datetime and period to itself
+    # and to a string-only multi-index (levels become object where mixed).
     # GH 13660
     dti = date_range("2011-01-01", freq="ME", periods=3)
     dti_tz = date_range("2011-01-01", freq="ME", periods=3, tz="US/Eastern")
@@ -146,6 +179,8 @@ def test_append_mixed_dtypes():
 
 
 def test_iter(idx):
+    # [FUNCTION DOC]
+    # Verifies iterating over the index yields tuples in order.
     result = list(idx)
     expected = [
         ("foo", "one"),
@@ -159,6 +194,10 @@ def test_iter(idx):
 
 
 def test_sub(idx):
+    # [FUNCTION DOC]
+    # Verifies subtraction between a MultiIndex and another index or list, in
+    # either order, raises a type error naming the subtraction operator for this
+    # index type.
     first = idx
 
     # - now raises (previously was set op difference)
@@ -175,6 +214,8 @@ def test_sub(idx):
 
 
 def test_map(idx):
+    # [FUNCTION DOC]
+    # Verifies mapping with an identity function returns an equal index.
     # callable
     index = idx
 
@@ -190,6 +231,11 @@ def test_map(idx):
     ],
 )
 def test_map_dictlike(idx, mapper):
+    # [FUNCTION DOC]
+    # Parametrized over a dict-based and a Series-based identity mapper. Verifies
+    # mapping with the identity mapper returns the equal index, and mapping with a
+    # mapper from empty values returns an index of missing floats.
+    # KNOWN ISSUE: the branch for unsigned 64-bit dtype combined with a dict mapper can never run because a MultiIndex has object dtype, so it is dead code.
     identity = mapper(idx.values, idx)
 
     # we don't infer to uint64 dtype for a dict
@@ -236,6 +282,9 @@ def test_map_dictlike(idx, mapper):
     ids=lambda func: func.__name__,
 )
 def test_numpy_ufuncs(idx, func):
+    # [FUNCTION DOC]
+    # Parametrized over numpy math ufuncs. Verifies applying the function to a
+    # MultiIndex raises a type error saying the ufunc loop does not support tuple elements.
     # test ufuncs of numpy. see:
     # https://numpy.org/doc/stable/reference/ufuncs.html
 
@@ -254,6 +303,10 @@ def test_numpy_ufuncs(idx, func):
     ids=lambda func: func.__name__,
 )
 def test_numpy_type_funcs(idx, func):
+    # [FUNCTION DOC]
+    # Parametrized over numpy type-check ufuncs (finite, infinite, nan, sign bit).
+    # Verifies applying the function raises a type error that the ufunc is not
+    # supported for the input types.
     msg = (
         f"ufunc '{func.__name__}' not supported for the input types, and the inputs "
         "could not be safely coerced to any supported types according to "

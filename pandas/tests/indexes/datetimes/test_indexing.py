@@ -1,3 +1,10 @@
+# [MODULE DOC]
+# Tests for DatetimeIndex indexing operations: item access, where, take,
+# location lookup, containment, indexer computation, slice bound casting and
+# time-of-day indexers. Defines module-level START and END datetimes (2009-01-01
+# and 2010-01-01) used by business-range tests.
+# Uses the tz_aware_fixture; some tests need pyarrow.
+
 from datetime import (
     date,
     datetime,
@@ -30,7 +37,11 @@ START, END = datetime(2009, 1, 1), datetime(2010, 1, 1)
 
 
 class TestGetItem:
+    # [CLASS DOC]
+    # Groups tests of positional item access and slicing on a DatetimeIndex.
     def test_getitem_slice_keeps_name(self):
+        # [FUNCTION DOC]
+        # Verifies (GH4226) that slicing a timezone-aware hourly range keeps the index name.
         # GH4226
         st = Timestamp("2013-07-01 00:00:00", tz="America/Los_Angeles")
         et = Timestamp("2013-07-02 00:00:00", tz="America/Los_Angeles")
@@ -39,6 +50,10 @@ class TestGetItem:
 
     @pytest.mark.parametrize("tz", [None, "Asia/Tokyo"])
     def test_getitem(self, tz):
+        # [FUNCTION DOC]
+        # Parametrized over timezone (none or Tokyo). Verifies scalar, ascending slice,
+        # stepped, negative-bound and reversed slices give indexes equal to the
+        # equivalent range, with name, timezone and the multiplied (or negated) frequency preserved.
         idx = date_range("2011-01-01", "2011-01-31", freq="D", tz=tz, name="idx")
 
         result = idx[0]
@@ -77,6 +92,10 @@ class TestGetItem:
 
     @pytest.mark.parametrize("freq", ["B", "C"])
     def test_dti_business_getitem(self, freq):
+        # [FUNCTION DOC]
+        # Parametrized over business frequencies. Verifies slicing keeps frequency,
+        # a step multiplies the frequency, fancy list indexing yields a frequency-less
+        # DatetimeIndex, and indexing by a platform-long integer equals a plain integer.
         rng = bdate_range(START, END, freq=freq)
         smaller = rng[:5]
         exp = DatetimeIndex(rng.view(np.ndarray)[:5], freq=freq)
@@ -97,12 +116,18 @@ class TestGetItem:
 
     @pytest.mark.parametrize("freq", ["B", "C"])
     def test_dti_business_getitem_matplotlib_hackaround(self, freq):
+        # [FUNCTION DOC]
+        # Parametrized over business frequencies. Verifies (GH#30588) that
+        # multi-dimensional indexing with a new axis raises a value error.
         rng = bdate_range(START, END, freq=freq)
         with pytest.raises(ValueError, match="Multi-dimensional indexing"):
             # GH#30588 multi-dimensional indexing deprecated
             rng[:, None]
 
     def test_getitem_int_list(self):
+        # [FUNCTION DOC]
+        # Verifies indexing a month-end index with an integer list returns the selected
+        # timestamps and drops the frequency.
         dti = date_range(start="1/1/2005", end="12/1/2005", freq="ME")
         dti2 = dti[[1, 3, 5]]
 
@@ -119,8 +144,13 @@ class TestGetItem:
 
 
 class TestWhere:
+    # [CLASS DOC]
+    # Groups tests of the conditional-replacement method.
     @pytest.mark.parametrize("is_td", [True, False])
     def test_where_freq_invalidation(self, is_td):
+        # [FUNCTION DOC]
+        # Parametrized over is_td (timedelta-like or datetime). Verifies (GH#24555)
+        # that where with a replacement containing missing values yields no frequency.
         # GH#24555
         index = date_range("20130101", periods=3, tz="US/Eastern")
         if is_td:
@@ -131,6 +161,9 @@ class TestWhere:
         assert result.freq is None
 
     def test_where_doesnt_retain_freq(self):
+        # [FUNCTION DOC]
+        # Verifies where with a condition and a reversed replacement yields an index
+        # without frequency, keeping the name.
         dti = date_range("20130101", periods=3, freq="D", name="idx")
         cond = [True, True, False]
         expected = DatetimeIndex([dti[0], dti[1], dti[0]], freq=None, name="idx")
@@ -139,6 +172,9 @@ class TestWhere:
         tm.assert_index_equal(result, expected)
 
     def test_where_other(self):
+        # [FUNCTION DOC]
+        # Verifies where with a missing-value scalar (nan or NaT), with an Index and
+        # with its underlying array of replacements, on a timezone-aware index.
         # other is ndarray or Index
         i = date_range("20130101", periods=3, tz="US/Eastern")
 
@@ -158,6 +194,10 @@ class TestWhere:
         tm.assert_index_equal(result, i2)
 
     def test_where_invalid_dtypes(self):
+        # [FUNCTION DOC]
+        # Verifies where with replacements of mismatched kinds (naive array on aware
+        # index, aware on naive, period, timedelta array, integer array, timedelta
+        # scalar) falls back to an object-dtype index preserving the supplied values.
         dti = date_range("20130101", periods=3, tz="US/Eastern", unit="ns")
 
         tail = dti[2:].tolist()
@@ -200,6 +240,9 @@ class TestWhere:
         tm.assert_index_equal(result, expected)
 
     def test_where_mismatched_nat(self, tz_aware_fixture):
+        # [FUNCTION DOC]
+        # Parametrized over tz_aware_fixture. Verifies where with a timedelta missing
+        # marker replacement gives an object-dtype index holding that marker unchanged.
         tz = tz_aware_fixture
         dti = date_range("2013-01-01", periods=3, tz=tz)
         cond = np.array([True, False, True])
@@ -212,6 +255,9 @@ class TestWhere:
         tm.assert_index_equal(result, expected)
 
     def test_where_tz(self):
+        # [FUNCTION DOC]
+        # Verifies where with only a condition (no replacement) masks entries to
+        # missing on a timezone-aware index.
         i = date_range("20130101", periods=3, tz="US/Eastern")
         result = i.where(notna(i))
         expected = i
@@ -225,8 +271,13 @@ class TestWhere:
 
 
 class TestTake:
+    # [CLASS DOC]
+    # Groups tests of positional take on a DatetimeIndex.
     @pytest.mark.parametrize("tzstr", ["US/Eastern", "dateutil/US/Eastern"])
     def test_dti_take_dont_lose_meta(self, tzstr):
+        # [FUNCTION DOC]
+        # Parametrized over zone name spellings. Verifies taking the first five elements
+        # keeps the timezone and frequency.
         rng = date_range("1/1/2000", periods=20, tz=tzstr)
 
         result = rng.take(range(5))
@@ -234,6 +285,9 @@ class TestTake:
         assert result.freq == rng.freq
 
     def test_take_nan_first_datetime(self):
+        # [FUNCTION DOC]
+        # Verifies take with negative and zero positions on an index starting with a
+        # missing value returns the matching elements.
         index = DatetimeIndex([pd.NaT, Timestamp("20130101"), Timestamp("20130102")])
         result = index.take([-1, 0, 1])
         expected = DatetimeIndex([index[-1], index[0], index[1]])
@@ -241,6 +295,11 @@ class TestTake:
 
     @pytest.mark.parametrize("tz", [None, "Asia/Tokyo"])
     def test_take(self, tz):
+        # [FUNCTION DOC]
+        # Parametrized over timezone. Verifies (GH#10295) take results for a single
+        # position and for evenly spaced, reversed and irregular positions, including
+        # name, timezone and the resulting frequency (kept for regular spacing, none
+        # otherwise).
         # GH#10295
         idx = date_range("2011-01-01", "2011-01-31", freq="D", name="idx", tz=tz)
 
@@ -289,6 +348,9 @@ class TestTake:
         assert result.freq is None
 
     def test_take_invalid_kwargs(self):
+        # [FUNCTION DOC]
+        # Verifies take raises a type error for an unknown keyword, and value errors
+        # for unsupported out and mode parameters.
         idx = date_range("2011-01-01", "2011-01-31", freq="D", name="idx")
         indices = [1, 6, 5, 9, 10, 13, 15, 3]
 
@@ -307,6 +369,10 @@ class TestTake:
     # TODO: This method came from test_datetime; de-dup with version above
     @pytest.mark.parametrize("tz", [None, "US/Eastern", "Asia/Tokyo"])
     def test_take2(self, tz):
+        # [FUNCTION DOC]
+        # Note: this came from another test module and overlaps with the preceding take test.
+        # Parametrized over timezone. Verifies take and fancy list indexing of an hourly
+        # index give equal frequency-less results with matching timezone and name.
         dates = [
             datetime(2010, 1, 1, 14),
             datetime(2010, 1, 1, 15),
@@ -334,6 +400,10 @@ class TestTake:
             assert taken.name == expected.name
 
     def test_take_fill_value(self):
+        # [FUNCTION DOC]
+        # Verifies (GH#12631) take with the fill option: negative positions as fill
+        # values give missing entries, no filling when disabled, a value error for
+        # indices below minus one when filling, and an index error for out-of-bounds.
         # GH#12631
         idx = DatetimeIndex(["2011-01-01", "2011-02-01", "2011-03-01"], name="xxx")
         result = idx.take(np.array([1, 0, -1]))
@@ -363,6 +433,8 @@ class TestTake:
             idx.take(np.array([1, -5]))
 
     def test_take_fill_value_with_timezone(self):
+        # [FUNCTION DOC]
+        # Same checks as the preceding fill-value take test but for a timezone-aware index.
         idx = DatetimeIndex(
             ["2011-01-01", "2011-02-01", "2011-03-01"], name="xxx", tz="US/Eastern"
         )
@@ -400,7 +472,12 @@ class TestTake:
 
 
 class TestGetLoc:
+    # [CLASS DOC]
+    # Groups tests of single-key location lookup on a DatetimeIndex.
     def test_get_loc_key_unit_mismatch(self):
+        # [FUNCTION DOC]
+        # Verifies looking up a timestamp having a different unit than the index finds its
+        # position and membership is true.
         idx = date_range("2000-01-01", periods=3)
         key = idx[1].as_unit("ms")
         loc = idx.get_loc(key)
@@ -408,6 +485,9 @@ class TestGetLoc:
         assert key in idx
 
     def test_get_loc_key_unit_mismatch_not_castable(self):
+        # [FUNCTION DOC]
+        # Verifies that a key with sub-resolution precision against a coarser-unit index
+        # raises a key error and is not contained.
         dta = date_range("2000-01-01", periods=3)._data.astype("M8[s]")
         dti = DatetimeIndex(dta)
         key = dta[0].as_unit("ns") + pd.Timedelta(1)
@@ -420,6 +500,9 @@ class TestGetLoc:
         assert key not in dti
 
     def test_get_loc_time_obj(self):
+        # [FUNCTION DOC]
+        # Verifies lookup by time-of-day returns an array of matching positions (one for
+        # noon) and an empty array when nothing matches.
         # time indexing
         idx = date_range("2000-01-01", periods=24, freq="h")
 
@@ -433,6 +516,12 @@ class TestGetLoc:
 
     @pytest.mark.parametrize("offset", [-10, 10])
     def test_get_loc_time_obj2(self, monkeypatch, offset):
+        # [FUNCTION DOC]
+        # Parametrized over offset (index sizes below or above a patched size cutoff).
+        # Verifies (GH#8667) that time-of-day lookup works for both strategies with
+        # the internal size cutoff patched to fifty: positions, series selection and in-place
+        # multiplication via a time key agree with explicit positions. The patch is
+        # undone on exit.
         # GH#8667
         size_cutoff = 50
         n = size_cutoff + offset
@@ -456,6 +545,9 @@ class TestGetLoc:
             tm.assert_series_equal(left, right)
 
     def test_get_loc_time_nat(self):
+        # [FUNCTION DOC]
+        # Verifies (GH#35114) that a time-of-day lookup on an index with only a missing
+        # value returns an empty array of positions even if the microsecond fields coincide.
         # GH#35114
         # Case where key's total microseconds happens to match iNaT % 1e6 // 1000
         tic = time(minute=12, second=43, microsecond=145224)
@@ -466,6 +558,9 @@ class TestGetLoc:
         tm.assert_numpy_array_equal(loc, expected)
 
     def test_get_loc_nat(self):
+        # [FUNCTION DOC]
+        # Verifies (GH#20464) lookup of missing-like keys (NaT, None, nan, NA, a datetime
+        # missing marker) returns the position of NaT, while a timedelta missing marker raises a key error.
         # GH#20464
         index = DatetimeIndex(["1/3/2000", "NaT"])
         assert index.get_loc(pd.NaT) == 1
@@ -483,6 +578,9 @@ class TestGetLoc:
 
     @pytest.mark.parametrize("key", [pd.Timedelta(0), pd.Timedelta(1), timedelta(0)])
     def test_get_loc_timedelta_invalid_key(self, key):
+        # [FUNCTION DOC]
+        # Parametrized over timedelta keys. Verifies (GH#20464) lookup with a timedelta
+        # raises a type error saying a datetime index cannot be indexed with a timedelta.
         # GH#20464
         dti = date_range("1970-01-01", periods=10)
         msg = "Cannot index DatetimeIndex with [Tt]imedelta"
@@ -490,12 +588,18 @@ class TestGetLoc:
             dti.get_loc(key)
 
     def test_get_loc_reasonable_key_error(self):
+        # [FUNCTION DOC]
+        # Verifies (GH#1062) that looking up an absent date string raises a key error
+        # mentioning the year.
         # GH#1062
         index = DatetimeIndex(["1/3/2000"])
         with pytest.raises(KeyError, match="2000"):
             index.get_loc("1/1/2000")
 
     def test_get_loc_year_str(self):
+        # [FUNCTION DOC]
+        # Verifies looking up a year string returns the slice of positions for 2009 in a
+        # daily range.
         rng = date_range("1/1/2000", "1/1/2010")
 
         result = rng.get_loc("2009")
@@ -504,7 +608,11 @@ class TestGetLoc:
 
 
 class TestContains:
+    # [CLASS DOC]
+    # Groups membership tests.
     def test_dti_contains_with_duplicates(self):
+        # [FUNCTION DOC]
+        # Verifies membership of a datetime in an index with duplicates.
         d = datetime(2011, 12, 5, 20, 30)
         ix = DatetimeIndex([d, d])
         assert d in ix
@@ -520,15 +628,24 @@ class TestContains:
         ],
     )
     def test_contains_nonunique(self, vals):
+        # [FUNCTION DOC]
+        # Parametrized over value lists (integers and year strings in various orders).
+        # Verifies (GH#9512) the first element of a non-unique index is contained in it.
         # GH#9512
         idx = DatetimeIndex(vals)
         assert idx[0] in idx
 
 
 class TestGetIndexer:
+    # [CLASS DOC]
+    # Groups tests of computing indexers between a DatetimeIndex and a target.
     @td.skip_if_no("pyarrow")
     @pytest.mark.parametrize("as_td", [True, False])
     def test_get_indexer_pyarrow(self, as_td):
+        # [FUNCTION DOC]
+        # Requires pyarrow. Parametrized over as_td (durations or timestamps).
+        # Verifies (GH#62277) get-indexer accepts an Arrow-backed target in reverse
+        # order and returns positions two, one, zero, and the reversed operation is symmetric.
         # GH#62277
         index = date_range("2016-01-01", periods=3)
         target = index.astype("timestamp[ns][pyarrow]")[::-1]
@@ -547,6 +664,9 @@ class TestGetIndexer:
         tm.assert_numpy_array_equal(result2, expected)
 
     def test_get_indexer_date_objs(self):
+        # [FUNCTION DOC]
+        # Verifies get-indexer of plain date objects (mapped from the index) equals the
+        # indexer of the index itself.
         rng = date_range("1/1/2000", periods=20)
 
         result = rng.get_indexer(rng.map(lambda x: x.date()))
@@ -554,6 +674,11 @@ class TestGetIndexer:
         tm.assert_numpy_array_equal(result, expected)
 
     def test_get_indexer(self):
+        # [FUNCTION DOC]
+        # Verifies get-indexer for self, and for a target at fractional offsets with pad,
+        # backfill, nearest, nearest with scalar tolerance, and elementwise tolerances;
+        # raises value errors for an unconvertible element in the tolerance list and for an
+        # invalid string tolerance.
         idx = date_range("2000-01-01", periods=3)
         exp = np.array([0, 1, 2], dtype=np.intp)
         tm.assert_numpy_array_equal(idx.get_indexer(idx), exp)
@@ -602,6 +727,9 @@ class TestGetIndexer:
         ],
     )
     def test_get_indexer_mixed_dtypes(self, target):
+        # [FUNCTION DOC]
+        # Parametrized over targets mixing dates and Timestamps in either order.
+        # Verifies (issue 33741) get-indexer returns both positions found.
         # https://github.com/pandas-dev/pandas/issues/33741
         values = DatetimeIndex([Timestamp("2020-01-01"), Timestamp("2020-01-02")])
         result = values.get_indexer(target)
@@ -617,6 +745,9 @@ class TestGetIndexer:
         ],
     )
     def test_get_indexer_out_of_bounds_date(self, target, positions):
+        # [FUNCTION DOC]
+        # Parametrized over targets (with dates beyond the supported range) and expected
+        # positions. Verifies out-of-bounds dates yield not-found markers without raising.
         values = DatetimeIndex([Timestamp("2020-01-01"), Timestamp("2020-01-02")])
 
         result = values.get_indexer(target)
@@ -624,6 +755,9 @@ class TestGetIndexer:
         tm.assert_numpy_array_equal(result, expected)
 
     def test_get_indexer_pad_requires_monotonicity(self):
+        # [FUNCTION DOC]
+        # Verifies get-indexer with the pad method on an index that is neither monotonic
+        # increasing nor decreasing raises a value error.
         rng = date_range("1/1/2000", "3/1/2000", freq="B")
 
         # neither monotonic increasing or decreasing
@@ -635,7 +769,12 @@ class TestGetIndexer:
 
 
 class TestMaybeCastSliceBound:
+    # [CLASS DOC]
+    # Groups tests of casting string slice bounds on a DatetimeIndex.
     def test_maybe_cast_slice_bounds_empty(self):
+        # [FUNCTION DOC]
+        # Verifies (GH#14354) the bound-casting helper on an empty index: a right bound
+        # is the end of the day and a left bound the start of the day.
         # GH#14354
         empty_idx = date_range(freq="1h", periods=0, end="2015", unit="ns")
 
@@ -648,6 +787,9 @@ class TestMaybeCastSliceBound:
         assert left == exp
 
     def test_maybe_cast_slice_duplicate_monotonic(self):
+        # [FUNCTION DOC]
+        # Verifies (issue 16515) the bound-casting helper on a monotonic index with
+        # duplicates returns the start of the year for a left bound.
         # https://github.com/pandas-dev/pandas/issues/16515
         idx = DatetimeIndex(["2017", "2017"])
         result = idx._maybe_cast_slice_bound("2017-01-01", "left")
@@ -656,8 +798,15 @@ class TestMaybeCastSliceBound:
 
 
 class TestGetSliceBounds:
+    # [CLASS DOC]
+    # Groups tests of slice bound and slice location computation.
     @pytest.mark.parametrize("as_td", [True, False])
     def test_get_slice_bound_mismatched_unit(self, as_td):
+        # [FUNCTION DOC]
+        # Parametrized over as_td (datetime or timedelta-like index). Verifies
+        # (GH#63262) slice bounds with keys that differ by a nanosecond-scale unit from the
+        # index unit give left one and right two, and label slicing selects the single
+        # middle element.
         # GH#63262
         index = date_range(start="2000-01-01", freq="h", periods=8)
 
@@ -687,6 +836,11 @@ class TestGetSliceBounds:
     def test_get_slice_bounds_datetime_within(
         self, box, side, expected, tz_aware_fixture
     ):
+        # [FUNCTION DOC]
+        # Parametrized over key type (date, datetime, Timestamp) and side with expected
+        # positions, plus tz_aware_fixture. Verifies (GH 35690) behavior of slice bound
+        # with an in-range naive key; a deprecation warning is expected for plain date keys.
+        # KNOWN ISSUE: the aware-zone fixture never yields a missing zone, so the branch computing and comparing the expected position is unreachable; the test only ever checks that a type error about naive versus aware comparison is raised, and the expected parameter is unused.
         # GH 35690
         tz = tz_aware_fixture
         index = bdate_range("2000-01-03", "2000-02-11").tz_localize(tz)
@@ -709,6 +863,10 @@ class TestGetSliceBounds:
     def test_get_slice_bounds_datetime_outside(
         self, box, side, year, expected, tz_aware_fixture
     ):
+        # [FUNCTION DOC]
+        # Parametrized over key type, side, year and expected, plus tz_aware_fixture.
+        # Verifies (GH 35690) slice bounds for naive keys outside the index range.
+        # KNOWN ISSUE: the aware-zone fixture never yields a missing zone, so the branch checking the expected position is unreachable; the test only checks that a type error about naive versus aware comparison is raised.
         # GH 35690
         tz = tz_aware_fixture
         index = bdate_range("2000-01-03", "2000-02-11").tz_localize(tz)
@@ -724,6 +882,10 @@ class TestGetSliceBounds:
 
     @pytest.mark.parametrize("box", [datetime, Timestamp])
     def test_slice_datetime_locs(self, box, tz_aware_fixture):
+        # [FUNCTION DOC]
+        # Parametrized over key type and tz_aware_fixture. Verifies (GH 34077)
+        # slice locations of naive keys.
+        # KNOWN ISSUE: the aware-zone fixture never yields a missing zone, so the branch asserting the expected locations is unreachable; the test only checks that a type error about naive versus aware comparison is raised.
         # GH 34077
         tz = tz_aware_fixture
         index = DatetimeIndex(["2010-01-01", "2010-01-03"]).tz_localize(tz)
@@ -740,7 +902,12 @@ class TestGetSliceBounds:
 
 
 class TestIndexerBetweenTime:
+    # [CLASS DOC]
+    # Groups tests of the between-time indexer.
     def test_indexer_between_time(self):
+        # [FUNCTION DOC]
+        # Verifies (GH#11818) the between-time indexer raises a value error when given
+        # datetime objects instead of time objects.
         # GH#11818
         rng = date_range("1/1/2000", "1/5/2000", freq="5min")
         msg = r"Cannot convert arg \[datetime\.datetime\(2010, 1, 2, 1, 0\)\] to a time"
@@ -749,6 +916,11 @@ class TestIndexerBetweenTime:
 
     @pytest.mark.parametrize("unit", ["us", "ms", "s"])
     def test_indexer_between_time_non_nano(self, unit):
+        # [FUNCTION DOC]
+        # Parametrized over unit (microsecond, millisecond, second). Builds a
+        # non-nanosecond index from a nanosecond one via the internal array constructor
+        # and verifies the between-time indexer matches the nanosecond result, also with
+        # bounds having non-zero microseconds.
         # For simple cases like this, the non-nano indexer_between_time
         #  should match the nano result
 

@@ -1,3 +1,9 @@
+# [MODULE DOC]
+# Tests for text rendering of MultiIndex: repr and str with unicode, display option
+# limits on number of items and tuple width, right-justification of mixed-width
+# elements, and very long elements.
+# Uses the shared idx fixture. Compares against literal expected output text.
+
 import numpy as np
 import pytest
 
@@ -9,6 +15,9 @@ from pandas import (
 
 
 def test_repr_with_unicode_data():
+    # [FUNCTION DOC]
+    # Verifies that the repr of an index built from data with a Hebrew character,
+    # under UTF-8 encoding, does not contain escaped backslash sequences.
     with pd.option_context("display.encoding", "UTF-8"):
         d = {"a": ["\u05d0", 2, 3], "b": [4, 5, 6], "c": [7, 8, 9]}
         index = pd.DataFrame(d).set_index(["a", "b"]).index
@@ -16,6 +25,9 @@ def test_repr_with_unicode_data():
 
 
 def test_repr_roundtrip_raises():
+    # [FUNCTION DOC]
+    # Verifies the repr text is not evaluable: evaluating it raises a type error saying
+    # both levels and codes must be passed.
     mi = MultiIndex.from_product([list("ab"), range(3)], names=["first", "second"])
     msg = "Must pass both levels and codes"
     with pytest.raises(TypeError, match=msg):
@@ -23,12 +35,17 @@ def test_repr_roundtrip_raises():
 
 
 def test_unicode_string_with_unicode():
+    # [FUNCTION DOC]
+    # Smoke test: the string form of an index from data with non-ASCII text must not raise.
     d = {"a": ["\u05d0", 2, 3], "b": [4, 5, 6], "c": [7, 8, 9]}
     idx = pd.DataFrame(d).set_index(["a", "b"]).index
     str(idx)
 
 
 def test_repr_max_seq_item_setting(idx):
+    # [FUNCTION DOC]
+    # Verifies (GH10182) with no limit on displayed sequence items, a repeated
+    # index prints in full (no ellipsis) in repr and str.
     # GH10182
     idx = idx.repeat(50)
     with pd.option_context("display.max_seq_items", None):
@@ -37,7 +54,11 @@ def test_repr_max_seq_item_setting(idx):
 
 
 class TestRepr:
+    # [CLASS DOC]
+    # Groups repr tests on MultiIndex.
     def test_unicode_repr_issues(self):
+        # [FUNCTION DOC]
+        # Smoke test: repr of the levels and of a level's values for non-ASCII labels must not raise.
         levels = [Index(["a/\u03c3", "b/\u03c3", "c/\u03c3"]), Index([0, 1])]
         codes = [np.arange(3).repeat(2), np.tile(np.arange(2), 3)]
         index = MultiIndex(levels=levels, codes=codes)
@@ -46,6 +67,9 @@ class TestRepr:
         repr(index.get_level_values(1))
 
     def test_repr_max_seq_items_equal_to_n(self, idx):
+        # [FUNCTION DOC]
+        # Verifies that when the max item option equals the length, the repr shows all six
+        # tuples with names.
         # display.max_seq_items == n
         with pd.option_context("display.max_seq_items", 6):
             result = idx.__repr__()
@@ -60,6 +84,10 @@ MultiIndex([('foo', 'one'),
             assert result == expected
 
     def test_repr(self, idx):
+        # [FUNCTION DOC]
+        # Verifies repr for one element, all elements, a limit of five (shows the first two,
+        # ellipsis, last two with the length) and a limit of one (shows ellipsis and the last
+        # tuple with truncated names and the length).
         result = idx[:1].__repr__()
         expected = """\
 MultiIndex([('foo', 'one')],
@@ -98,6 +126,9 @@ MultiIndex([...
             assert result == expected
 
     def test_rjust(self):
+        # [FUNCTION DOC]
+        # Verifies tuples are right-justified so that mixed-width string and integer elements
+        # align, for one element, a sampling, and the full 2000 element index with elision.
         n = 1000
         ci = pd.CategoricalIndex(list("a" * n) + (["abc"] * n))
         dti = pd.date_range("2000-01-01", freq="s", periods=n * 2)
@@ -144,6 +175,9 @@ MultiIndex([(  'a',  9, '2000-01-01 00:00:00'),
         assert result == expected
 
     def test_tuple_width(self):
+        # [FUNCTION DOC]
+        # Verifies that an index with five levels truncates each tuple to the first four
+        # elements followed by an ellipsis, for one element, ten elements and the full index.
         n = 1000
         ci = pd.CategoricalIndex(list("a" * n) + (["abc"] * n))
         dti = pd.date_range("2000-01-01", freq="s", periods=n * 2)
@@ -197,6 +231,9 @@ MultiIndex([(  'a',  9, '2000-01-01 00:00:00', '2000-01-01 00:00:00', ...),
         assert result == expected
 
     def test_multiindex_long_element(self):
+        # [FUNCTION DOC]
+        # Verifies (GH#52960) a one-level multi-index with a very long element prints
+        # the element in full with a trailing empty names line.
         # Non-regression test towards GH#52960
         data = MultiIndex.from_tuples([("c" * 62,)])
 

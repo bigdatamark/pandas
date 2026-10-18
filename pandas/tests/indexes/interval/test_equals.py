@@ -1,3 +1,7 @@
+# [MODULE DOC]
+# Tests for equality comparison of IntervalIndex objects.
+# Uses the closed fixture. Pure tests module.
+
 import numpy as np
 
 from pandas import (
@@ -7,7 +11,14 @@ from pandas import (
 
 
 class TestEquals:
+    # [CLASS DOC]
+    # Groups equality tests.
     def test_equals(self, closed):
+        # [FUNCTION DOC]
+        # Parametrized over closed side. Verifies an index equals itself and a copy,
+        # does not equal an object-dtype version, plain array, list, non-interval
+        # values or a datetime index, ignores the name, and does not equal an index with
+        # a different closed side.
         expected = IntervalIndex.from_breaks(np.arange(5), closed=closed)
         assert expected.equals(expected)
         assert expected.equals(expected.copy())

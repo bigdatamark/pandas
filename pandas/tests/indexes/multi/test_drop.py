@@ -1,3 +1,9 @@
+# [MODULE DOC]
+# Tests for dropping labels and levels from MultiIndex: drop with tuples,
+# partial labels, ignored errors, droplevel by position, name and list, lexsort
+# state, missing labels, and non-monotonic duplicates.
+# Uses the shared idx fixture plus the performance_warning and nulls_fixture fixtures.
+
 import numpy as np
 import pytest
 
@@ -10,6 +16,12 @@ import pandas._testing as tm
 
 
 def test_drop(idx):
+    # [FUNCTION DOC]
+    # Verifies drop with a list of tuples or a multi-index removes those entries; a
+    # single or list of first-level labels removes all matching entries; absent
+    # labels raise key errors naming the label (for partially matching arguments the
+    # missing part); with errors set to ignore absent labels are skipped; and
+    # mixed partial and full labels work with the same rules.
     dropped = idx.drop([("foo", "two"), ("qux", "one")])
 
     index = MultiIndex.from_tuples([("foo", "two"), ("qux", "one")])
@@ -68,6 +80,10 @@ def test_drop(idx):
 
 
 def test_droplevel_with_names(idx):
+    # [FUNCTION DOC]
+    # Verifies dropping the first level of a sliced index keeps the remaining name as
+    # the index name, dropping level zero of a three-level index leaves the last two
+    # names, and dropping by name equals dropping by position.
     index = idx[idx.get_loc("foo")]
     dropped = index.droplevel(0)
     assert dropped.name == "second"
@@ -90,6 +106,10 @@ def test_droplevel_with_names(idx):
 
 
 def test_droplevel_list():
+    # [FUNCTION DOC]
+    # Verifies dropping levels by list of names equals successive single drops, an
+    # empty list is a no-op, removing all levels raises a value error that at least
+    # one must remain, and an unknown level name raises a key error.
     index = MultiIndex(
         levels=[Index(range(4)), Index(range(4)), Index(range(4))],
         codes=[
@@ -120,6 +140,10 @@ def test_droplevel_list():
 
 
 def test_drop_not_lexsorted(performance_warning):
+    # [FUNCTION DOC]
+    # Verifies (GH 12078) a not-lexsorted multi-index built through a pivot table
+    # equals its lexsorted counterpart, and that dropping a label from each gives
+    # equal results while emitting the performance warning (when enabled).
     # GH 12078
 
     # define the lexsorted version of the multi-index
@@ -143,6 +167,10 @@ def test_drop_not_lexsorted(performance_warning):
 
 
 def test_drop_with_nan_in_index(nulls_fixture):
+    # [FUNCTION DOC]
+    # Parametrized over nulls_fixture. Verifies (GH#18853) dropping a timestamp
+    # absent from a level that contains a null raises a key error saying the label was
+    # not found in the level.
     # GH#18853
     mi = MultiIndex.from_tuples([("blah", nulls_fixture)], names=["name", "date"])
     msg = r"labels \[Timestamp\('2001-01-01 00:00:00'\)\] not found in level"
@@ -152,6 +180,9 @@ def test_drop_with_nan_in_index(nulls_fixture):
 
 @pytest.mark.filterwarnings("ignore::pandas.errors.PerformanceWarning")
 def test_drop_with_non_monotonic_duplicates():
+    # [FUNCTION DOC]
+    # Ignores performance warnings. Verifies (GH#33494) dropping a label that is
+    # duplicated in a non-monotonic multi-index removes all its occurrences.
     # GH#33494
     mi = MultiIndex.from_tuples([(1, 2), (2, 3), (1, 2)])
     result = mi.drop((1, 2))
@@ -160,6 +191,10 @@ def test_drop_with_non_monotonic_duplicates():
 
 
 def test_single_level_drop_partially_missing_elements():
+    # [FUNCTION DOC]
+    # Verifies (GH 37820) dropping labels from a single level where some or all are
+    # missing raises key errors listing the missing labels, including missing-value and
+    # string labels.
     # GH 37820
 
     mi = MultiIndex.from_tuples([(1, 2), (2, 2), (3, 2)])
@@ -181,6 +216,9 @@ def test_single_level_drop_partially_missing_elements():
 
 
 def test_droplevel_multiindex_one_level():
+    # [FUNCTION DOC]
+    # Verifies (GH#37208) dropping an empty list of levels from a one-level multi-index
+    # yields a plain index with the level's name.
     # GH#37208
     index = MultiIndex.from_tuples([(2,)], names=("b",))
     result = index.droplevel([])

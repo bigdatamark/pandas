@@ -1,3 +1,9 @@
+# [MODULE DOC]
+# Tests for numeric and logical operation compatibility of MultiIndex (all
+# unsupported, raising type errors), cache behavior of the value array when
+# levels or codes are replaced, and boxing of categorical values.
+# Uses the shared idx fixture. Pure tests module.
+
 import numpy as np
 import pytest
 
@@ -7,6 +13,9 @@ import pandas._testing as tm
 
 
 def test_numeric_compat(idx):
+    # [FUNCTION DOC]
+    # Verifies multiplication, true division and floor division of a MultiIndex by a
+    # number (and reflected forms) raise a type error naming the operator.
     with pytest.raises(TypeError, match="cannot perform __mul__"):
         idx * 1
 
@@ -30,6 +39,9 @@ def test_numeric_compat(idx):
 
 @pytest.mark.parametrize("method", ["all", "any", "__invert__"])
 def test_logical_compat(idx, method):
+    # [FUNCTION DOC]
+    # Parametrized over all, any and invert. Verifies each raises a type error stating
+    # the method cannot be performed on this index.
     msg = f"cannot perform {method}"
 
     with pytest.raises(TypeError, match=msg):
@@ -37,6 +49,12 @@ def test_logical_compat(idx, method):
 
 
 def test_inplace_mutation_resets_values():
+    # [FUNCTION DOC]
+    # Verifies the value-array cache lifecycle: construction does not populate the
+    # cached values; accessing the values caches a numpy array; replacing levels
+    # returns new values but leaves the original cache intact; replacing codes returns
+    # a new index with an empty cache that fills on access, with the expected object
+    # array of tuples; and the original cache is unchanged.
     levels = [["a", "b", "c"], [4]]
     levels2 = [[1, 2, 3], ["a"]]
     codes = [[0, 1, 0, 2, 2, 0], [0, 0, 0, 0, 0, 0]]
@@ -87,6 +105,11 @@ def test_inplace_mutation_resets_values():
 
 
 def test_boxable_categorical_values():
+    # [FUNCTION DOC]
+    # Verifies the values of a product multi-index with a categorical datetime level
+    # are a numpy object array of tuples with Timestamp objects (not categories),
+    # and that a frame with categorical and object columns converts to a values array
+    # with datetimes unboxed.
     cat = pd.Categorical(pd.date_range("2012-01-01", periods=3, freq="h"))
     result = MultiIndex.from_product([["a", "b", "c"], cat]).values
     expected = pd.Series(

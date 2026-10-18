@@ -1,3 +1,10 @@
+# [MODULE DOC]
+# Tests for set operations (union, intersection, difference, symmetric
+# difference) on IntervalIndex, including empty results with different numeric
+# dtypes, nested and duplicate intervals, and fallbacks to object dtype for
+# incompatible operands. Defines two small index-building helpers.
+# Uses the closed and sort fixtures.
+
 import numpy as np
 import pytest
 
@@ -11,15 +18,28 @@ import pandas._testing as tm
 
 
 def monotonic_index(start, end, dtype="int64", closed="right"):
+    # [FUNCTION DOC]
+    # HELPER: builds a right-closed (or given closed side) interval index from
+    # consecutive integer breaks in a half-open range from start to end, with the
+    # given numeric dtype (default 64-bit integer). Used to create test operands.
     return IntervalIndex.from_breaks(np.arange(start, end, dtype=dtype), closed=closed)
 
 
 def empty_index(dtype="int64", closed="right"):
+    # [FUNCTION DOC]
+    # HELPER: builds an empty interval index with the given endpoint dtype (default
+    # 64-bit integer) and closed side, used as an expected value.
     return IntervalIndex(np.array([], dtype=dtype), closed=closed)
 
 
 class TestIntervalIndex:
+    # [CLASS DOC]
+    # Groups set-operation tests on IntervalIndex.
     def test_union(self, closed, sort):
+        # [FUNCTION DOC]
+        # Parametrized over closed side and sort. Verifies the union of overlapping
+        # monotonic indexes (given in reversed order) equals the full range, sorted when
+        # sort is none or true and otherwise equal after sorting, plus union with itself and a subset.
         index = monotonic_index(0, 11, closed=closed)
         other = monotonic_index(5, 13, closed=closed)
 
@@ -40,6 +60,11 @@ class TestIntervalIndex:
         tm.assert_index_equal(index.union(index[:1], sort=sort), index)
 
     def test_union_empty_result(self, closed, sort):
+        # [FUNCTION DOC]
+        # Parametrized over closed side and sort. Verifies (GH 19101) the union of empty
+        # indexes keeps the dtype, and mixing with empty float or unsigned indexes gives
+        # the common float dtype.
+        # KNOWN ISSUE: after the float case the test reassigns the other operand to a union of the index with itself and then re-asserts the unchanged previous result, so that statement and the repeated assertion check nothing new.
         # GH 19101: empty result, same dtype
         index = empty_index(dtype="int64", closed=closed)
         result = index.union(index, sort=sort)
@@ -62,6 +87,11 @@ class TestIntervalIndex:
         tm.assert_index_equal(result, expected)
 
     def test_intersection(self, closed, sort):
+        # [FUNCTION DOC]
+        # Parametrized over closed side and sort. Verifies the intersection of overlapping
+        # indexes equals the shared part (ordering as for union), the self-intersection,
+        # (GH 26225) nested intervals, shared intervals with distinct bounds, and
+        # duplicate missing elements collapsing to one.
         index = monotonic_index(0, 11, closed=closed)
         other = monotonic_index(5, 13, closed=closed)
 
@@ -102,6 +132,10 @@ class TestIntervalIndex:
         tm.assert_index_equal(result, expected)
 
     def test_intersection_empty_result(self, closed, sort):
+        # [FUNCTION DOC]
+        # Parametrized over closed side and sort. Verifies (GH 19101) the intersection
+        # of disjoint indexes is empty, keeping integer dtype, and with a float or unsigned
+        # operand the empty result has the float dtype.
         index = monotonic_index(0, 11, closed=closed)
 
         # GH 19101: empty result, same dtype
@@ -121,6 +155,8 @@ class TestIntervalIndex:
         tm.assert_index_equal(result, expected)
 
     def test_intersection_duplicates(self):
+        # [FUNCTION DOC]
+        # Verifies (GH#38743) the intersection removes duplicates from the left index.
         # GH#38743
         index = IntervalIndex.from_tuples([(1, 2), (1, 2), (2, 3), (3, 4)])
         other = IntervalIndex.from_tuples([(1, 2), (2, 3)])
@@ -129,6 +165,10 @@ class TestIntervalIndex:
         tm.assert_index_equal(result, expected)
 
     def test_difference(self, closed, sort):
+        # [FUNCTION DOC]
+        # Parametrized over closed side and sort. Verifies difference with a prefix
+        # removes it (result sorted when sort is none), the difference with itself is an
+        # empty integer index, and (GH 19101) with a float-converted copy it is also empty.
         index = IntervalIndex.from_arrays([1, 0, 3, 2], [1, 2, 3, 4], closed=closed)
         result = index.difference(index[:1], sort=sort)
         expected = index[1:]
@@ -149,6 +189,10 @@ class TestIntervalIndex:
         tm.assert_index_equal(result, expected)
 
     def test_symmetric_difference(self, closed, sort):
+        # [FUNCTION DOC]
+        # Parametrized over closed side and sort. Verifies the symmetric difference of
+        # shifted indexes is the two edge intervals, the self symmetric difference is
+        # empty, and (GH 19101) with a float-converted copy is an empty float index.
         index = monotonic_index(0, 11, closed=closed)
         result = index[1:].symmetric_difference(index[:-1], sort=sort)
         expected = IntervalIndex([index[0], index[-1]])
@@ -178,6 +222,12 @@ class TestIntervalIndex:
         "op_name", ["union", "intersection", "difference", "symmetric_difference"]
     )
     def test_set_incompatible_types(self, closed, op_name, sort):
+        # [FUNCTION DOC]
+        # Ignores comparison runtime warnings. Parametrized over closed side, operation
+        # name and sort. Verifies set operations with a non-interval index, differing
+        # closed sides, and (GH 19016) an index of incompatible subtype fall back to the object-dtype
+        # result (the difference returns the original index).
+        # Note: the in-source TODO suggests standardizing the return type of non-union operations.
         index = monotonic_index(0, 11, closed=closed)
         set_op = getattr(index, op_name)
 

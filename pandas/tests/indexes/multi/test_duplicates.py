@@ -1,3 +1,9 @@
+# [MODULE DOC]
+# Tests for duplicate handling in MultiIndex: unique, uniqueness checks, duplicated
+# masks, drop_duplicates, duplicate names and metadata, null handling, integer
+# overflow in code combination, and extension-dtype levels.
+# Uses the shared idx fixture plus the keep and complex_dtype fixtures; defines one local fixture.
+
 from itertools import product
 
 import numpy as np
@@ -20,6 +26,11 @@ import pandas._testing as tm
 
 @pytest.fixture
 def idx_dup():
+    # [FUNCTION DOC]
+    # HELPER: fixture returning a two-level index with repeated entries (level
+    # values foo, bar, baz, qux and one, two; codes producing duplicates such as foo-one
+    # appearing more than once), integrity verification disabled. Mirrors the shared
+    # idx fixture except for the first-level codes.
     # compare tests/indexes/multi/conftest.py
     major_axis = Index(["foo", "bar", "baz", "qux"])
     minor_axis = Index(["one", "two"])
@@ -38,6 +49,10 @@ def idx_dup():
 
 @pytest.mark.parametrize("names", [None, ["first", "second"]])
 def test_unique(names):
+    # [FUNCTION DOC]
+    # Parametrized over names (none or two names). Verifies unique removes repeated
+    # tuples keeping first occurrences and preserves names for integer, string and
+    # all-equal inputs; and (GH #20568) an empty index is returned as is.
     mi = MultiIndex.from_arrays([[1, 2, 1, 2], [1, 1, 1, 2]], names=names)
 
     res = mi.unique()
@@ -61,6 +76,9 @@ def test_unique(names):
 
 
 def test_unique_datetimelike():
+    # [FUNCTION DOC]
+    # Verifies unique on a multi-index of naive and aware datetime levels with
+    # missing values keeps first occurrences of each tuple including missing ones.
     idx1 = DatetimeIndex(
         ["2015-01-01", "2015-01-01", "2015-01-01", "2015-01-01", "NaT", "NaT"]
     )
@@ -80,6 +98,10 @@ def test_unique_datetimelike():
 
 @pytest.mark.parametrize("level", [0, "first", 1, "second"])
 def test_unique_level(idx, level):
+    # [FUNCTION DOC]
+    # Parametrized over level (by position and name). Verifies unique restricted to a level equals
+    # the unique values of that level (GH #17896), including for an already unique
+    # level and an empty index.
     # GH #17896 - with level= argument
     result = idx.unique(level=level)
     expected = idx.get_level_values(level).unique()
@@ -99,6 +121,10 @@ def test_unique_level(idx, level):
 
 
 def test_duplicate_multiindex_codes():
+    # [FUNCTION DOC]
+    # Verifies (GH 17464) constructing a multi-index with duplicate level values
+    # raises a value error that level values must be unique, and the same for
+    # replacing levels with duplicated ones.
     # GH 17464
     # Make sure that a MultiIndex with duplicate levels throws a ValueError
     msg = r"Level values must be unique: \[[A', ]+\] on level 0"
@@ -114,6 +140,10 @@ def test_duplicate_multiindex_codes():
 
 @pytest.mark.parametrize("names", [["a", "b", "a"], [1, 1, 2], [1, "a", 1]])
 def test_duplicate_level_names(names):
+    # [FUNCTION DOC]
+    # Parametrized over name lists with repeated names. Verifies (GH18872, GH19029)
+    # duplicate names are accepted when constructing, renaming all levels, and
+    # renaming selected levels individually or by lists.
     # GH18872, GH19029
     mi = MultiIndex.from_product([[0, 1]] * 3, names=names)
     assert mi.names == names
@@ -130,6 +160,9 @@ def test_duplicate_level_names(names):
 
 
 def test_duplicate_meta_data():
+    # [FUNCTION DOC]
+    # Verifies (GH 10115) an index with duplicates reports duplicates and keeps names
+    # after dropping duplicates, for several name settings.
     # GH 10115
     mi = MultiIndex(
         levels=[[0, 1], [0, 1, 2]], codes=[[0, 0, 0, 0, 1, 1, 1], [0, 1, 2, 0, 0, 1, 2]]
@@ -146,6 +179,9 @@ def test_duplicate_meta_data():
 
 
 def test_has_duplicates(idx, idx_dup):
+    # [FUNCTION DOC]
+    # Verifies the unique flag and duplicate flag on the shared fixtures, an index with
+    # repeated tuples, and indexes with a single or repeated null entries.
     # see fixtures
     assert idx.is_unique is True
     assert idx.has_duplicates is False
@@ -174,6 +210,8 @@ def test_has_duplicates(idx, idx_dup):
 
 
 def test_has_duplicates_from_tuples():
+    # [FUNCTION DOC]
+    # Verifies (GH 9075) an index of long tuples with distinct third elements has no duplicates.
     # GH 9075
     t = [
         ("x", "out", "z", 5, "y", "in", "z", 169),
@@ -203,6 +241,11 @@ def test_has_duplicates_from_tuples():
 @pytest.mark.parametrize("nlevels", [4, 8])
 @pytest.mark.parametrize("with_nulls", [True, False])
 def test_has_duplicates_overflow(nlevels, with_nulls):
+    # [FUNCTION DOC]
+    # Parametrized over number of levels (four, eight) and whether nulls are injected.
+    # Builds large code arrays that may overflow a combined 64-bit key (with eight
+    # levels) and verifies the index with unique entries reports no duplicates, and
+    # adding one duplicate (via code insertion or tuple extension) reports duplicates.
     # handle int64 overflow if possible
     # no overflow with 4
     # overflow possible with 8
@@ -229,6 +272,9 @@ def test_has_duplicates_overflow(nlevels, with_nulls):
     if with_nulls:
 
         def f(a):
+            # [FUNCTION DOC]
+            # HELPER: inserts a copy of the first element of the given array at position 1000
+            # and returns the new array; used to duplicate a row in the code arrays.
             return np.insert(a, 1000, a[0])
 
         codes = list(map(f, codes))
@@ -249,6 +295,9 @@ def test_has_duplicates_overflow(nlevels, with_nulls):
     ],
 )
 def test_duplicated(idx_dup, keep, expected):
+    # [FUNCTION DOC]
+    # Parametrized over keep mode (first, last, none) and expected masks. Verifies the
+    # duplicated mask of the repeated-entry index.
     result = idx_dup.duplicated(keep=keep)
     expected = np.array(expected)
     tm.assert_numpy_array_equal(result, expected)
@@ -256,6 +305,11 @@ def test_duplicated(idx_dup, keep, expected):
 
 @pytest.mark.arm_slow
 def test_duplicated_hashtable_impl(keep, monkeypatch):
+    # [FUNCTION DOC]
+    # Marked slow on ARM. Uses the shared keep fixture and monkeypatch. Verifies
+    # (GH 9125) with the internal size cutoff patched to fifty (forcing the hash-table
+    # implementation) that the duplicated mask of a randomly generated three-level
+    # index equals the hash-table result on its values. The patch is undone on exit.
     # GH 9125
     n, k = 6, 10
     levels = [np.arange(n), [str(i) for i in range(n)], 1000 + np.arange(n)]
@@ -271,6 +325,9 @@ def test_duplicated_hashtable_impl(keep, monkeypatch):
 
 @pytest.mark.parametrize("val", [101, 102])
 def test_duplicated_with_nan(val):
+    # [FUNCTION DOC]
+    # Parametrized over second value. Verifies (GH5873) an index with a missing value
+    # in one level has no duplicates and an all-false duplicated mask.
     # GH5873
     mi = MultiIndex.from_arrays([[101, val], [3.5, np.nan]])
     assert not mi.has_duplicates
@@ -281,6 +338,10 @@ def test_duplicated_with_nan(val):
 @pytest.mark.parametrize("n", range(1, 6))
 @pytest.mark.parametrize("m", range(1, 5))
 def test_duplicated_with_nan_multi_shape(n, m):
+    # [FUNCTION DOC]
+    # Parametrized over level sizes. Verifies (GH5873) a multi-index of all code
+    # combinations including missing, in random order, has the expected length, no
+    # duplicates and an all-false mask.
     # GH5873
     # all possible unique combinations, including nan
     codes = product(range(-1, n), range(-1, m))
@@ -295,6 +356,9 @@ def test_duplicated_with_nan_multi_shape(n, m):
 
 
 def test_duplicated_drop_duplicates():
+    # [FUNCTION DOC]
+    # Verifies (GH#4060) the duplicated masks (boolean dtype) and drop_duplicates
+    # results for keep first, last and none.
     # GH#4060
     idx = MultiIndex.from_arrays(([1, 2, 3, 1, 2, 3], [1, 1, 1, 1, 2, 2]))
 
@@ -321,6 +385,10 @@ def test_duplicated_drop_duplicates():
 
 
 def test_duplicated_series_complex_numbers(complex_dtype):
+    # [FUNCTION DOC]
+    # Parametrized over complex dtype. Verifies (GH 17927) the duplicated mask of a
+    # series of complex numbers including missing values treats equal real/imaginary
+    # pairs as duplicates and missing complex values as equal.
     # GH 17927
     expected = Series(
         [False, False, False, True, False, False, False, True, False, True],
@@ -345,6 +413,9 @@ def test_duplicated_series_complex_numbers(complex_dtype):
 
 
 def test_midx_unique_ea_dtype():
+    # [FUNCTION DOC]
+    # Verifies (GH#48335) unique on a multi-index with a nullable integer level and
+    # missing values keeps one missing entry and the nullable dtype.
     # GH#48335
     vals_a = Series([1, 2, NA, NA], dtype="Int64")
     vals_b = np.array([1, 2, 3, 3])

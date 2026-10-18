@@ -1,3 +1,8 @@
+# [MODULE DOC]
+# Tests for reindexing a DatetimeIndex: timezone retention with empty targets
+# and nearest-match reindexing with tolerance.
+# Pure tests module; no import-time side effects.
+
 from datetime import timedelta
 
 import numpy as np
@@ -10,13 +15,23 @@ import pandas._testing as tm
 
 
 class TestDatetimeIndexReindex:
+    # [CLASS DOC]
+    # Groups tests of reindex on a DatetimeIndex.
     def test_reindex_preserves_tz_if_target_is_empty_list_or_array(self):
+        # [FUNCTION DOC]
+        # Verifies (GH#7774) that reindexing a timezone-aware index to an empty list or
+        # empty array still yields an index retaining the timezone.
         # GH#7774
         index = date_range("2013-01-01", periods=3, tz="US/Eastern", unit="ns")
         assert str(index.reindex([])[0].tz) == "US/Eastern"
         assert str(index.reindex(np.array([]))[0].tz) == "US/Eastern"
 
     def test_reindex_with_same_tz_nearest(self):
+        # [FUNCTION DOC]
+        # Verifies (GH#32740) that reindexing a UTC range of 24 points to a UTC range of
+        # 23 points with the nearest method and a 20 second tolerance returns the target
+        # (with expected fractional-second timestamps and no frequency) and an indexer
+        # that matches only the first and last positions, marking the rest as missing.
         # GH#32740
         rng_a = date_range("2010-01-01", "2010-01-02", periods=24, tz="utc", unit="ns")
         rng_b = date_range("2010-01-01", "2010-01-02", periods=23, tz="utc", unit="ns")

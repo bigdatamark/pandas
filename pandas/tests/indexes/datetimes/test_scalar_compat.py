@@ -2,6 +2,12 @@
 Tests for DatetimeIndex methods behaving like their Timestamp counterparts
 """
 
+# [MODULE DOC]
+# Tests that DatetimeIndex accessors and name methods agree with the Timestamp
+# counterparts: date and time parts, calendar fields, boundary flags, day and
+# month names (including locales), and an optional property-based comparison.
+# Uses hypothesis for one slow test; reads the available locales at collection time.
+
 import calendar
 from datetime import (
     date,
@@ -31,7 +37,12 @@ from pandas.core.arrays import DatetimeArray
 
 
 class TestDatetimeIndexOps:
+    # [CLASS DOC]
+    # Groups tests of DatetimeIndex field and name accessors.
     def test_dti_no_millisecond_field(self):
+        # [FUNCTION DOC]
+        # Verifies that the class and instances of DatetimeIndex raise an attribute error
+        # for a millisecond field that does not exist.
         msg = "type object 'DatetimeIndex' has no attribute 'millisecond'"
         with pytest.raises(AttributeError, match=msg):
             DatetimeIndex.millisecond
@@ -41,12 +52,18 @@ class TestDatetimeIndexOps:
             DatetimeIndex([]).millisecond
 
     def test_dti_time(self):
+        # [FUNCTION DOC]
+        # Verifies the time accessor of a 12-minute range equals the list of the elements'
+        # time-of-day values.
         rng = date_range("1/1/2000", freq="12min", periods=10)
         result = Index(rng).time
         expected = [t.time() for t in rng]
         assert (result == expected).all()
 
     def test_dti_date(self):
+        # [FUNCTION DOC]
+        # Verifies the date accessor of a 12-hour range equals the list of the elements'
+        # dates.
         rng = date_range("1/1/2000", freq="12h", periods=10)
         result = Index(rng).date
         expected = [t.date() for t in rng]
@@ -57,6 +74,10 @@ class TestDatetimeIndexOps:
         [None, "datetime64[ns, CET]", "datetime64[ns, EST]", "datetime64[ns, UTC]"],
     )
     def test_dti_date2(self, dtype):
+        # [FUNCTION DOC]
+        # Parametrized over dtype (naive, CET, EST, UTC). Regression test (GH#21230)
+        # that the date accessor returns an object array of the date and the
+        # missing-time marker for a missing entry.
         # Regression test for GH#21230
         expected = np.array([date(2018, 6, 4), NaT])
 
@@ -70,6 +91,10 @@ class TestDatetimeIndexOps:
         [None, "datetime64[ns, CET]", "datetime64[ns, EST]", "datetime64[ns, UTC]"],
     )
     def test_dti_time2(self, dtype):
+        # [FUNCTION DOC]
+        # Parametrized over dtype (naive, CET, EST, UTC). Regression test (GH#21267)
+        # that the time accessor returns an object array of the time-of-day and the
+        # missing-time marker for a missing entry.
         # Regression test for GH#21267
         expected = np.array([time(10, 20, 30), NaT])
 
@@ -79,6 +104,10 @@ class TestDatetimeIndexOps:
         tm.assert_numpy_array_equal(result, expected)
 
     def test_dti_timetz(self, tz_naive_fixture):
+        # [FUNCTION DOC]
+        # Parametrized over tz_naive_fixture. Verifies (GH#21358) the timetz accessor
+        # returns time-of-day objects carrying the index timezone, with the missing
+        # marker preserved.
         # GH#21358
         tz = timezones.maybe_get_tz(tz_naive_fixture)
 
@@ -107,6 +136,10 @@ class TestDatetimeIndexOps:
         ],
     )
     def test_dti_timestamp_fields(self, field):
+        # [FUNCTION DOC]
+        # Parametrized over fields (weekday, ordinal-day, quarter, days in month,
+        # and start/end flags). Verifies the index field at the last position equals the
+        # same field of the corresponding Timestamp.
         # extra fields from DatetimeIndex like quarter and week
         idx = date_range("2020-01-01", periods=10)
         expected = getattr(idx, field)[-1]
@@ -115,6 +148,9 @@ class TestDatetimeIndexOps:
         assert result == expected
 
     def test_dti_nanosecond(self):
+        # [FUNCTION DOC]
+        # Verifies the nanosecond accessor of an index built from small integers returns
+        # an index of 32-bit integers equal to those values.
         dti = DatetimeIndex(np.arange(10))
         expected = Index(np.arange(10, dtype=np.int32))
 
@@ -122,6 +158,11 @@ class TestDatetimeIndexOps:
 
     @pytest.mark.parametrize("prefix", ["", "dateutil/"])
     def test_dti_hour_tzaware(self, prefix):
+        # [FUNCTION DOC]
+        # Parametrized over a timezone prefix (pytz-style or dateutil). Verifies hour
+        # is zero for midnight values in US/Eastern, and (GH#1946) that an hourly range
+        # in an unusual zone (Atikokan) yields hours zero through nine as a 32-bit
+        # integer index.
         strdates = ["1/1/2012", "3/1/2012", "4/1/2012"]
         rng = DatetimeIndex(strdates, tz=prefix + "US/Eastern")
         assert (rng.hour == 0).all()
@@ -140,6 +181,15 @@ class TestDatetimeIndexOps:
         [None, *tm.get_locales()],
     )
     def test_day_name_month_name(self, time_locale):
+        # [FUNCTION DOC]
+        # Parametrized over locale (none plus all available locales). Verifies
+        # (GH#12805, GH#12806, GH#11128) that day and month names match the locale's
+        # calendar names (English when no locale), for the index and for Timestamp
+        # objects, and that missing entries give a missing float.
+        # Names are normalized to a canonical Unicode form before comparing to work
+        # around differing normalization schemes (GH#22342).
+        # Sets the time locale temporarily; the setting is restored on exit.
+        # KNOWN ISSUE: in the per-element month name loop the expected value is rebuilt from the already normalized result instead of from the expected month name, so the final assertion compares the result with itself and can never fail.
         # Test Monday -> Sunday and January -> December, in that sequence
         if time_locale is None:
             # If the time_locale is None, day-name and month_name should
@@ -217,6 +267,9 @@ class TestDatetimeIndexOps:
         assert np.isnan(dti.month_name(locale=time_locale)[-1])
 
     def test_dti_week(self):
+        # [FUNCTION DOC]
+        # Verifies (GH#6538) that the ISO week of dates near new year in the Brussels
+        # zone is identical for the index and its timestamps, with expected weeks 52, 1, 1.
         # GH#6538: Check that DatetimeIndex and its TimeStamp elements
         # return the same weekofyear accessor close to new year w/ tz
         dates = ["2013/12/29", "2013/12/30", "2013/12/31"]
@@ -227,6 +280,14 @@ class TestDatetimeIndexOps:
 
     @pytest.mark.parametrize("tz", [None, "US/Eastern"])
     def test_dti_fields(self, tz):
+        # [FUNCTION DOC]
+        # Parametrized over timezone (none or US/Eastern). Verifies (GH#13303) the
+        # calendar field accessors of a daily nanosecond range over 1998 at selected
+        # positions: year, month, day, time parts, weekday, ordinal day, ISO week,
+        # quarter, days in month, and start/end flags; that every accessor has 365
+        # entries; that integer-like accessors return an index retaining the name and
+        # boolean ones return plain arrays; and boolean indexing by quarter start and by
+        # leap year (empty result) selects the expected elements.
         # GH#13303
         dti = date_range(
             freq="D", start=datetime(1998, 1, 1), periods=365, tz=tz, unit="ns"
@@ -312,6 +373,9 @@ class TestDatetimeIndexOps:
         tm.assert_index_equal(res, exp)
 
     def test_dti_is_year_quarter_start(self):
+        # [FUNCTION DOC]
+        # Verifies for a business-quarter-end range with a February fiscal year that
+        # there are no quarter or year starts, four quarter ends and exactly one year end.
         dti = date_range(freq="BQE-FEB", start=datetime(1998, 1, 1), periods=4)
 
         assert sum(dti.is_quarter_start) == 0
@@ -320,11 +384,17 @@ class TestDatetimeIndexOps:
         assert sum(dti.is_year_end) == 1
 
     def test_dti_is_month_start(self):
+        # [FUNCTION DOC]
+        # Verifies the month-start flag is truthy for the first element of a short index
+        # starting on the first of a month.
         dti = DatetimeIndex(["2000-01-01", "2000-01-02", "2000-01-03"])
 
         assert dti.is_month_start[0] == 1
 
     def test_dti_is_month_start_custom(self):
+        # [FUNCTION DOC]
+        # Verifies that asking for the month-start flag on a custom business day
+        # range raises a value error stating custom business days are not supported.
         # Ensure is_start/end accessors throw ValueError for CustomBusinessDay,
         bday_egypt = offsets.CustomBusinessDay(weekmask="Sun Mon Tue Wed Thu")
         dti = date_range(datetime(2013, 4, 30), periods=5, freq=bday_egypt)
@@ -341,6 +411,10 @@ class TestDatetimeIndexOps:
         ],
     )
     def test_dti_dr_is_year_start(self, timestamp, freq, periods, expected_values):
+        # [FUNCTION DOC]
+        # Parametrized over start timestamp, frequency, number of periods and expected
+        # flags. Verifies (GH57377) the year-start flag of month, quarter and year start
+        # ranges beginning in December.
         # GH57377
         result = date_range(timestamp, freq=freq, periods=periods).is_year_start
         tm.assert_numpy_array_equal(result, expected_values)
@@ -354,6 +428,10 @@ class TestDatetimeIndexOps:
         ],
     )
     def test_dti_dr_is_year_end(self, timestamp, freq, periods, expected_values):
+        # [FUNCTION DOC]
+        # Parametrized over start timestamp, frequency, periods and expected flags.
+        # Verifies (GH57377) the year-end flag of month, quarter and year end ranges
+        # beginning in December.
         # GH57377
         result = date_range(timestamp, freq=freq, periods=periods).is_year_end
         tm.assert_numpy_array_equal(result, expected_values)
@@ -367,6 +445,10 @@ class TestDatetimeIndexOps:
         ],
     )
     def test_dti_dr_is_quarter_start(self, timestamp, freq, periods, expected_values):
+        # [FUNCTION DOC]
+        # Parametrized over start timestamp, frequency, periods and expected flags.
+        # Verifies (GH57377) the quarter-start flag for month, quarter and year start
+        # ranges beginning in December.
         # GH57377
         result = date_range(timestamp, freq=freq, periods=periods).is_quarter_start
         tm.assert_numpy_array_equal(result, expected_values)
@@ -380,6 +462,10 @@ class TestDatetimeIndexOps:
         ],
     )
     def test_dti_dr_is_quarter_end(self, timestamp, freq, periods, expected_values):
+        # [FUNCTION DOC]
+        # Parametrized over start timestamp, frequency, periods and expected flags.
+        # Verifies (GH57377) the quarter-end flag for month, quarter and year end ranges
+        # beginning in December.
         # GH57377
         result = date_range(timestamp, freq=freq, periods=periods).is_quarter_end
         tm.assert_numpy_array_equal(result, expected_values)
@@ -393,6 +479,10 @@ class TestDatetimeIndexOps:
         ],
     )
     def test_dti_dr_is_month_start(self, timestamp, freq, periods, expected_values):
+        # [FUNCTION DOC]
+        # Parametrized over start timestamp, frequency, periods and expected flags.
+        # Verifies (GH57377) the month-start flag is always true for month, quarter and
+        # year start ranges.
         # GH57377
         result = date_range(timestamp, freq=freq, periods=periods).is_month_start
         tm.assert_numpy_array_equal(result, expected_values)
@@ -406,11 +496,18 @@ class TestDatetimeIndexOps:
         ],
     )
     def test_dti_dr_is_month_end(self, timestamp, freq, periods, expected_values):
+        # [FUNCTION DOC]
+        # Parametrized over start timestamp, frequency, periods and expected flags.
+        # Verifies (GH57377) the month-end flag is always true for month, quarter and
+        # year end ranges.
         # GH57377
         result = date_range(timestamp, freq=freq, periods=periods).is_month_end
         tm.assert_numpy_array_equal(result, expected_values)
 
     def test_dti_is_year_quarter_start_doubledigit_freq(self):
+        # [FUNCTION DOC]
+        # Verifies (GH#58523) that year and quarter start flags are true for every
+        # element when the frequency has a multi-digit multiple of a year or quarter start.
         # GH#58523
         dr = date_range("2017-01-01", periods=2, freq="10YS")
         assert all(dr.is_year_start)
@@ -419,6 +516,9 @@ class TestDatetimeIndexOps:
         assert all(dr.is_quarter_start)
 
     def test_dti_is_year_start_freq_custom_business_day_with_digit(self):
+        # [FUNCTION DOC]
+        # Verifies (GH#58664) that asking for the year-start flag on a custom business
+        # day range with a numeric multiple raises a value error about custom business days.
         # GH#58664
         dr = date_range("2020-01-01", periods=2, freq="2C")
         msg = "Custom business days is not supported by is_year_start"
@@ -427,6 +527,12 @@ class TestDatetimeIndexOps:
 
     @pytest.mark.parametrize("freq", ["3BMS", offsets.BusinessMonthBegin(3)])
     def test_dti_is_year_quarter_start_freq_business_month_begin(self, freq):
+        # [FUNCTION DOC]
+        # Parametrized over a three-month business-month-begin frequency given as a
+        # string or an offset. Verifies (GH#58729) the year-start flags of the elements
+        # follow the pattern true, false, false, false, true over five periods, and that
+        # all quarter-start flags are true over four periods.
+        # KNOWN ISSUE: the second per-element list of quarter-start flags is computed into a variable that is never used; the assertion checks the index-level flags instead, so the per-element path is not verified.
         # GH#58729
         dr = date_range("2020-01-01", periods=5, freq=freq)
         result = [x.is_year_start for x in dr]
@@ -437,6 +543,9 @@ class TestDatetimeIndexOps:
         assert all(dr.is_quarter_start)
 
     def test_dti_is_year_start_freq_two_business_days(self):
+        # [FUNCTION DOC]
+        # Verifies (GH#58524) the year-start flags for a two-business-day range starting
+        # on a January first are true then false.
         # GH#58524
         dr = date_range("2017-01-01", periods=2, freq="2B")
         result = dr.is_year_start
@@ -451,6 +560,11 @@ class TestDatetimeIndexOps:
 )
 @pytest.mark.slow
 def test_against_scalar_parametric(freq, dt, n):
+    # [FUNCTION DOC]
+    # Slow, property-based test over generated start datetimes (1960-1980), a
+    # multiplier from one to ten, and month/quarter/year start frequencies. Verifies
+    # (see issue 49606) that the vectorised year-start flags of a three-period range
+    # equal the flags of its individual elements.
     # https://github.com/pandas-dev/pandas/issues/49606
     freq = f"{n}{freq}"
     d = date_range(dt, periods=3, freq=freq)

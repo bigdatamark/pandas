@@ -1,5 +1,11 @@
 """test partial slicing on Series/Frame"""
 
+# [MODULE DOC]
+# Tests for partial string indexing and slicing of Series and DataFrame objects
+# that have a DatetimeIndex: strings coarser than the index resolution select
+# slices, equal or finer ones select exact matches, with the associated errors.
+# Pure tests module; uses seeded random data only.
+
 from datetime import datetime
 
 import numpy as np
@@ -19,7 +25,12 @@ import pandas._testing as tm
 
 
 class TestSlicing:
+    # [CLASS DOC]
+    # Groups partial-string-slicing tests on datetime-indexed Series and frames.
     def test_string_index_series_name_converted(self):
+        # [FUNCTION DOC]
+        # Verifies (GH#1644) that selecting a row with a date string returns a row
+        # whose name is the matching index timestamp, for both a frame and its transpose.
         # GH#1644
         df = DataFrame(
             np.random.default_rng(2).standard_normal((10, 4)),
@@ -33,6 +44,9 @@ class TestSlicing:
         assert result.name == df.index[2]
 
     def test_stringified_slice_with_tz(self):
+        # [FUNCTION DOC]
+        # Verifies (GH#2658) that slicing a frame with a timezone-aware index using a
+        # string start with a fractional second and offset does not raise.
         # GH#2658
         start = "2013-01-07"
         idx = date_range(start=start, freq="1D", periods=10, tz="US/Eastern")
@@ -40,6 +54,10 @@ class TestSlicing:
         df["2013-01-14 23:44:34.437768-05:00":]  # no exception here
 
     def test_return_type_doesnt_depend_on_monotonicity(self):
+        # [FUNCTION DOC]
+        # Verifies (GH#24892) that a date key coarser than the index resolution
+        # returns a Series slice for monotonic increasing, monotonic decreasing and
+        # non-monotonic minute-resolution indexes.
         # GH#24892 we get Series back regardless of whether our DTI is monotonic
         dti = date_range(start="2015-5-13 23:59:00", freq="min", periods=3)
         ser = Series(range(3), index=dti)
@@ -66,6 +84,10 @@ class TestSlicing:
         tm.assert_series_equal(result2, expected2)
 
     def test_return_type_doesnt_depend_on_monotonicity_higher_reso(self):
+        # [FUNCTION DOC]
+        # Verifies (GH#24892) that a key finer than the minute resolution returns a
+        # scalar for increasing, decreasing and non-monotonic indexes (positions one,
+        # one, zero).
         # GH#24892 we get Series back regardless of whether our DTI is monotonic
         dti = date_range(start="2015-5-13 23:59:00", freq="min", periods=3)
         ser = Series(range(3), index=dti)
@@ -89,6 +111,10 @@ class TestSlicing:
         assert result2 == 0
 
     def test_monotone_DTI_indexing_bug(self):
+        # [FUNCTION DOC]
+        # Verifies (GH 19362) that assigning a date column keeps the frame as expected,
+        # and that a coarser (daily) string against an hourly monotonic-decreasing index
+        # gives a slice frame, also after reversing the frame.
         # GH 19362
         # Testing accessing the first element in a monotonic descending
         # partial string indexing.
@@ -121,6 +147,9 @@ class TestSlicing:
         tm.assert_frame_equal(result2, expected2)
 
     def test_slice_year(self):
+        # [FUNCTION DOC]
+        # Verifies selecting by the year string equals selecting by a boolean year mask,
+        # for a Series and a DataFrame with a business-day index.
         dti = date_range(freq="B", start=datetime(2005, 1, 1), periods=500)
 
         s = Series(np.arange(len(dti)), index=dti)
@@ -145,6 +174,10 @@ class TestSlicing:
         ],
     )
     def test_slice_end_of_period_resolution(self, partial_dtime):
+        # [FUNCTION DOC]
+        # Parametrized over partial strings of varying resolution (year, quarter,
+        # month name, day, hour, minute). Verifies (GH#31064) that for a one-second range
+        # starting just before the end of 2019 the first five elements are selected.
         # GH#31064
         dti = date_range("2019-12-31 23:59:55.999999999", periods=10, freq="s")
 
@@ -154,6 +187,9 @@ class TestSlicing:
         tm.assert_series_equal(result, expected)
 
     def test_slice_quarter(self):
+        # [FUNCTION DOC]
+        # Verifies quarter-string selection (two spellings) on a daily index returns the
+        # 90 elements of the first quarter of 2001, for Series and frame.
         dti = date_range(freq="D", start=datetime(2000, 6, 1), periods=500)
 
         s = Series(np.arange(len(dti)), index=dti)
@@ -163,6 +199,9 @@ class TestSlicing:
         assert len(df.loc["1Q01"]) == 90
 
     def test_slice_month(self):
+        # [FUNCTION DOC]
+        # Verifies month-string selection returns 30 elements for November (two string
+        # orderings give equal results) in a Series and a frame.
         dti = date_range(freq="D", start=datetime(2005, 1, 1), periods=500)
         s = Series(np.arange(len(dti)), index=dti)
         assert len(s["2005-11"]) == 30
@@ -173,6 +212,10 @@ class TestSlicing:
         tm.assert_series_equal(s["2005-11"], s["11-2005"])
 
     def test_partial_slice(self):
+        # [FUNCTION DOC]
+        # Verifies partial month strings used as slice bounds equal full-date bounds
+        # (including open ends), that a day string retrieves the first element, and that
+        # a missing day before the range raises a key error.
         rng = date_range(freq="D", start=datetime(2005, 1, 1), periods=500)
         s = Series(np.arange(len(rng)), index=rng)
 
@@ -195,6 +238,9 @@ class TestSlicing:
             s["2004-12-31"]
 
     def test_partial_slice_daily(self):
+        # [FUNCTION DOC]
+        # Verifies a day string selects 24 hourly elements from an hourly index and that
+        # a missing hour string before the range raises a key error.
         rng = date_range(freq="h", start=datetime(2005, 1, 31), periods=500)
         s = Series(np.arange(len(rng)), index=rng)
 
@@ -205,6 +251,10 @@ class TestSlicing:
             s["2004-12-31 00"]
 
     def test_partial_slice_hourly(self):
+        # [FUNCTION DOC]
+        # Verifies day and hour strings on a minutely index select four hours and one
+        # hour of elements, a minute string selects the exact first element, and a
+        # missing minute string raises a key error.
         rng = date_range(freq="min", start=datetime(2005, 1, 1, 20, 0, 0), periods=500)
         s = Series(np.arange(len(rng)), index=rng)
 
@@ -219,6 +269,10 @@ class TestSlicing:
             s["2004-12-31 00:15"]
 
     def test_partial_slice_minutely(self):
+        # [FUNCTION DOC]
+        # Verifies minute and day strings on a secondly index select the first 60 elements,
+        # a Timestamp key selects the exact first element, and a missing second raises a
+        # key error.
         rng = date_range(freq="s", start=datetime(2005, 1, 1, 23, 59, 0), periods=500)
         s = Series(np.arange(len(rng)), index=rng)
 
@@ -233,6 +287,11 @@ class TestSlicing:
             s["2004-12-31 00:00:00"]
 
     def test_partial_slice_second_precision(self):
+        # [FUNCTION DOC]
+        # Verifies strings at minute and second resolution against a microsecond-spaced
+        # index spanning a minute boundary select the elements before and after the
+        # boundary; an exact Timestamp key finds the first element; a missing key raises
+        # a key error.
         rng = date_range(
             start=datetime(2005, 1, 1, 0, 0, 59, microsecond=999990),
             periods=20,
@@ -251,6 +310,12 @@ class TestSlicing:
             s["2005-1-1 00:00:00"]
 
     def test_partial_slicing_dataframe(self):
+        # [FUNCTION DOC]
+        # Verifies (GH14856) over index resolutions of day, hour, minute and second:
+        # strings of the same resolution as the index are exact matches (scalar for a
+        # Series, key error for a frame); less precise strings give slices for a Series
+        # but key errors on a frame; more precise compatible strings give the scalar for
+        # the middle element; and incompatible precise strings raise key errors for both.
         # GH14856
         # Test various combinations of string slicing resolution vs.
         # index resolution
@@ -329,6 +394,11 @@ class TestSlicing:
                     df[ts_string]
 
     def test_partial_slicing_with_multiindex(self):
+        # [FUNCTION DOC]
+        # Verifies (GH 4758) partial string indexing on the first level of a
+        # three-level index built from a time index and two columns: tuples of
+        # datetime string and keys return the expected frame or series, including a
+        # date-only string that gives a frame with levels dropped.
         # GH 4758
         # partial string indexing with a multi-index buggy
         df = DataFrame(
@@ -359,6 +429,10 @@ class TestSlicing:
         tm.assert_frame_equal(result, expected)
 
     def test_partial_slicing_with_multiindex_series(self):
+        # [FUNCTION DOC]
+        # Verifies (GH 4294) that a partial slice on a Series with a time-by-integer
+        # multi-index gives the same result for a Timestamp key as for the equivalent
+        # string, for the full and shortened series, and for a frame cross-section.
         # GH 4294
         # partial slice on a series mi
         ser = Series(
@@ -383,6 +457,10 @@ class TestSlicing:
         tm.assert_frame_equal(result, expected)
 
     def test_partial_slice_requires_monotonicity(self):
+        # [FUNCTION DOC]
+        # Verifies (GH 37819) that partial-string and timestamp slicing on a
+        # non-monotonic index raise a key error (with specific messages) via both
+        # direct indexing and label-based indexing.
         # Disallowed since 2.0 (GH 37819)
         ser = Series(np.arange(10), date_range("2014-01-01", periods=10))
 
@@ -405,6 +483,9 @@ class TestSlicing:
             nonmonotonic.loc[timestamp:]
 
     def test_loc_datetime_length_one(self):
+        # [FUNCTION DOC]
+        # Verifies (GH16071) that label slicing a frame having a length-one datetime
+        # index from a datetime or a string returns the whole frame.
         # GH16071
         df = DataFrame(
             columns=["1"],
@@ -433,6 +514,13 @@ class TestSlicing:
         ],
     )
     def test_getitem_with_datestring_with_UTC_offset(self, start, end):
+        # [FUNCTION DOC]
+        # Parametrized over start and end forms (offset strings, Timestamps, datetimes).
+        # Verifies (GH 24076) that slicing a frame by offset-bearing bounds gives the
+        # first rows, (GH 16785) that mismatched offsets in the bounds raise a value
+        # error saying both dates must share the offset, and that slicing a naive
+        # index with aware bounds raises a value error about timezone.
+        # KNOWN ISSUE: the range used to build the index has identical start and end timestamps, so the index has a single element; the expected first-three-rows slice then trivially equals the single row, which suggests the intended end timestamp differs.
         # GH 24076
         idx = date_range(
             start="2018-12-02 14:50:00-07:00",
@@ -455,6 +543,9 @@ class TestSlicing:
             df[start:end]
 
     def test_slice_reduce_to_series(self):
+        # [FUNCTION DOC]
+        # Verifies (GH 27516) that selecting a year string with a column label on a
+        # two-year monthly frame returns a Series of that year's twelve values with the column name.
         # GH 27516
         df = DataFrame(
             {"A": range(24)}, index=date_range("2000", periods=24, freq="ME")
