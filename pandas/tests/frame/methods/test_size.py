@@ -1,3 +1,7 @@
+# [MODULE DOC]
+# Tests for the size attribute of DataFrame (number of elements, rows times columns).
+# Contains a single parametrized test function.
+
 import numpy as np
 import pytest
 
@@ -15,6 +19,12 @@ from pandas import DataFrame
     ],
 )
 def test_size(data, index, expected):
+    # [FUNCTION DOC]
+    # Verifies that the size attribute equals the number of cells of the frame.
+    # Parametrized over data mappings and optional index (None, nested list for a
+    # multi-level index, or flat labels); expected sizes include an empty frame (0),
+    # a frame with a missing value (still counted) and a multi-index frame.
+    # Asserts the value equals the expectation and that its type is the builtin integer.
     # GH#52897
     df = DataFrame(data, index=index)
     assert df.size == expected

@@ -1,6 +1,12 @@
 """
 See also: test_reindex.py:TestReindexSetIndex
 """
+# [MODULE DOC]
+# Tests for DataFrame.set_index: setting the index from column labels, arrays, indexes, multi-indexes and
+# mixtures of these, with the drop, append and verify_integrity options; categorical, datetime, period and
+# timezone handling; invalid input errors; and custom label types. Defines a shared fixture of columns usable as keys.
+# Related reindex tests live in the reindex test module.
+
 
 from datetime import (
     datetime,
@@ -29,6 +35,10 @@ import pandas._testing as tm
 
 @pytest.fixture
 def frame_of_index_cols():
+    # [FUNCTION DOC]
+    # Fixture: returns a five-row frame with string columns A (foo/bar, has duplicates) and B (one/two/three, with A jointly unique),
+    # unique string column C, random float columns D and E, and a random float column labeled by a three-element tuple.
+    # Fresh random data each call (seeded generator); no side effects.
     """
     Fixture for DataFrame of columns that can be used for indexing
 
@@ -56,7 +66,11 @@ def frame_of_index_cols():
 
 
 class TestSetIndex:
+    # [CLASS DOC]
+    # Test container for valid uses of set_index.
     def test_set_index_multiindex(self):
+        # [FUNCTION DOC]
+        # Regression test (GH 3308, formerly a segfault). Setting a multi-index built from a column of tuples as the index works without error; no assertion beyond not raising.
         # segfault in GH#3308
         d = {"t1": [2, 2.5, 3], "t2": [4, 5, 6]}
         df = DataFrame(d)
@@ -68,6 +82,8 @@ class TestSetIndex:
         df.set_index(index)
 
     def test_set_index_empty_column(self):
+        # [FUNCTION DOC]
+        # Regression test (GH 1971). Setting an index from a column that is entirely missing plus another column yields a multi-index with both names and the remaining columns as the frame.
         # GH#1971
         df = DataFrame(
             [
@@ -86,6 +102,8 @@ class TestSetIndex:
         tm.assert_frame_equal(result, expected)
 
     def test_set_index_empty_dataframe(self):
+        # [FUNCTION DOC]
+        # Regression test (GH 38419). Setting a two-column index on a frame with zero rows preserves the datetime and integer dtypes of the index levels.
         # GH#38419
         df1 = DataFrame(
             {"a": Series(dtype="datetime64[ns]"), "b": Series(dtype="int64"), "c": []}
@@ -97,6 +115,8 @@ class TestSetIndex:
         tm.assert_series_equal(result, expected)
 
     def test_set_index_multiindexcolumns(self):
+        # [FUNCTION DOC]
+        # A frame with multi-level columns indexed by its first column label: the result has the other columns and an index named by the tuple label.
         columns = MultiIndex.from_tuples([("foo", 1), ("foo", 2), ("bar", 1)])
         df = DataFrame(
             np.random.default_rng(2).standard_normal((3, 3)), columns=columns
@@ -110,6 +130,8 @@ class TestSetIndex:
         tm.assert_frame_equal(result, expected)
 
     def test_set_index_timezone(self):
+        # [FUNCTION DOC]
+        # Regression test (GH 12358). A timezone-aware (Rome) series or index passed to set_index retains its zone: the first index element has local hour 11 in all three ways of building it.
         # GH#12358
         # tz-aware Series should retain the tz
         idx = DatetimeIndex(["2014-01-01 10:10:10"], tz="UTC").tz_convert("Europe/Rome")
@@ -119,6 +141,8 @@ class TestSetIndex:
         assert df.set_index(df.A).index[0].hour == 11
 
     def test_set_index_cast_datetimeindex(self):
+        # [FUNCTION DOC]
+        # Setting a column of datetime objects as the index produces a datetime index.
         df = DataFrame(
             {
                 "A": [datetime(2000, 1, 1) + timedelta(i) for i in range(1000)],
@@ -130,6 +154,8 @@ class TestSetIndex:
         assert isinstance(idf.index, DatetimeIndex)
 
     def test_set_index_dst(self):
+        # [FUNCTION DOC]
+        # Regression test (GH 12920). A frame whose index crosses a daylight-saving transition (US/Pacific, hourly) after resetting the index: setting the column back as the index gives the expected index with no frequency, and setting it together with another column gives a multi-index.
         di = date_range("2006-10-29 00:00:00", periods=3, freq="h", tz="US/Pacific")
 
         df = DataFrame(data={"a": [0, 1, 2], "b": [3, 4, 5]}, index=di).reset_index()
@@ -149,6 +175,8 @@ class TestSetIndex:
         tm.assert_frame_equal(res, exp)
 
     def test_set_index(self, float_string_frame):
+        # [FUNCTION DOC]
+        # Setting an Index object as the index replaces the index with it; an index of the wrong length (every second element) raises a value error about length mismatch.
         df = float_string_frame
         idx = Index(np.arange(len(df) - 1, -1, -1, dtype=np.int64))
 
@@ -158,6 +186,8 @@ class TestSetIndex:
             df.set_index(idx[::2])
 
     def test_set_index_names(self):
+        # [FUNCTION DOC]
+        # Checks index names are kept when passing an existing index or multi-index to set_index: the single name is preserved, a multi-index remains a multi-index with equal levels and names, and passing a list of two multi-indexes concatenates their levels into a four-level multi-index with names A, B, C, D.
         df = DataFrame(
             np.ones((10, 4)),
             columns=Index(list("ABCD"), dtype=object),
@@ -196,6 +226,8 @@ class TestSetIndex:
     @pytest.mark.parametrize("inplace", [True, False])
     @pytest.mark.parametrize("drop", [True, False])
     def test_set_index_drop_inplace(self, frame_of_index_cols, drop, inplace, keys):
+        # [FUNCTION DOC]
+        # Parametrized over drop, inplace and key (single column with duplicates, unique column, two columns, and the tuple label). The result index equals an index (or multi-index) built from those columns; columns are removed when drop is on; with inplace on, the method returns nothing and mutates the copy.
         df = frame_of_index_cols
 
         if isinstance(keys, list):
@@ -218,6 +250,8 @@ class TestSetIndex:
     @pytest.mark.parametrize("keys", ["A", "C", ["A", "B"], ("tuple", "as", "label")])
     @pytest.mark.parametrize("drop", [True, False])
     def test_set_index_append(self, frame_of_index_cols, drop, keys):
+        # [FUNCTION DOC]
+        # Parametrized over drop and key kinds. With append on, the original index is kept as the first level and the key columns follow, with the original index name being none.
         df = frame_of_index_cols
 
         keys = keys if isinstance(keys, list) else [keys]
@@ -235,6 +269,8 @@ class TestSetIndex:
     @pytest.mark.parametrize("keys", ["A", "C", ["A", "B"], ("tuple", "as", "label")])
     @pytest.mark.parametrize("drop", [True, False])
     def test_set_index_append_to_multiindex(self, frame_of_index_cols, drop, keys):
+        # [FUNCTION DOC]
+        # Parametrized over drop and key kinds. Appending keys to a frame that already has a multi-index gives the same result as setting the index with the older key together with the new keys at once.
         # append to existing multiindex
         df = frame_of_index_cols.set_index(["D"], drop=drop, append=True)
 
@@ -246,6 +282,8 @@ class TestSetIndex:
         tm.assert_frame_equal(result, expected)
 
     def test_set_index_after_mutation(self):
+        # [FUNCTION DOC]
+        # Regression test (GH 1590). Setting an index on a frame that is the result of a boolean selection on an earlier frame gives the expected frame with the key column as index.
         # GH#1590
         df = DataFrame({"val": [0, 1, 2], "key": ["a", "b", "c"]})
         expected = DataFrame({"val": [1, 2]}, Index(["b", "c"], name="key"))
@@ -275,6 +313,9 @@ class TestSetIndex:
     def test_set_index_pass_single_array(
         self, frame_of_index_cols, drop, append, index_name, box
     ):
+        # [FUNCTION DOC]
+        # Parametrized over drop, append, an existing index name, and how the array is wrapped (series, index, numpy array, plain list, list of lists, single-level multi-index). A column of strings passed as a plain list is interpreted as column labels and raises a key error listing them. Otherwise the result equals using the column as index without dropping (the key is an array so no column is dropped), with names depending on the wrapper: numpy arrays and lists of lists lose the name.
+        # KNOWN ISSUE: the key error message pattern is a bracketed list of quoted strings, which the regular-expression matcher treats as a character class, so the message check is much looser than intended.
         df = frame_of_index_cols
         df.index.name = index_name
 
@@ -311,6 +352,8 @@ class TestSetIndex:
     def test_set_index_pass_arrays(
         self, frame_of_index_cols, drop, append, index_name, box
     ):
+        # [FUNCTION DOC]
+        # Parametrized over drop, append, an existing index name and wrapper kinds. Keys are a column label followed by the array version of a second column. Only the column label is dropped (when drop is on); index names are the label and then the array's name (lost for numpy arrays and lists). The existing index name leads when appending.
         df = frame_of_index_cols
         df.index.name = index_name
 
@@ -362,6 +405,8 @@ class TestSetIndex:
     def test_set_index_pass_arrays_duplicate(
         self, frame_of_index_cols, drop, append, index_name, box1, box2
     ):
+        # [FUNCTION DOC]
+        # Parametrized over drop, append, an existing index name and two independent wrapper kinds (series, index, array, list, iterator, single-level multi-index, or the plain label). Passing the same column twice must equal setting each key in sequence (second always appended). When both keys are the plain label, the first set does not drop to avoid dropping the same column twice. Keys are rebuilt for the comparison because iterators are consumed.
         df = frame_of_index_cols
         df.index.name = index_name
 
@@ -394,6 +439,8 @@ class TestSetIndex:
     @pytest.mark.parametrize("append", [True, False])
     @pytest.mark.parametrize("drop", [True, False])
     def test_set_index_pass_multiindex(self, frame_of_index_cols, drop, append):
+        # [FUNCTION DOC]
+        # Parametrized over drop and append. Passing a multi-index built from two columns never drops columns; the result equals setting the same columns without dropping.
         df = frame_of_index_cols
         keys = MultiIndex.from_arrays([df["A"], df["B"]], names=["A", "B"])
 
@@ -405,6 +452,8 @@ class TestSetIndex:
         tm.assert_frame_equal(result, expected)
 
     def test_construction_with_categorical_index(self):
+        # [FUNCTION DOC]
+        # A categorical column (given as values or as a categorical index) set as index gives an equal categorical index; resetting and setting again round-trips.
         ci = CategoricalIndex(list("ab") * 5, name="B")
 
         # with Categorical
@@ -424,6 +473,8 @@ class TestSetIndex:
         tm.assert_index_equal(idf.index, ci)
 
     def test_set_index_preserve_categorical_dtype(self):
+        # [FUNCTION DOC]
+        # Regression test (GH 13743, GH 13854). Setting categorical (ordered or unordered) columns, alone or combined with an integer column, as index and resetting yields the original frame, so the categorical dtypes survive.
         # GH#13743, GH#13854
         df = DataFrame(
             {
@@ -439,6 +490,8 @@ class TestSetIndex:
             tm.assert_frame_equal(result, df)
 
     def test_set_index_datetime(self):
+        # [FUNCTION DOC]
+        # Regression test (GH 3950, GH 7092). Part one: a timezone-aware (converted to US/Pacific) datetime index with an appended label column gives a multi-index with the expected tz-aware level, label level and names, and swapping the levels reorders them. Part two: three datetime indexes (two Eastern, one Tokyo with frequency removed) set and appended in turn give levels equal to the unique values and level values equal to the originals.
         # GH#3950
         df = DataFrame(
             {
@@ -521,6 +574,8 @@ class TestSetIndex:
         tm.assert_index_equal(df.index.get_level_values(2), idx3)
 
     def test_set_index_period(self):
+        # [FUNCTION DOC]
+        # Regression test (GH 6631). Three period indexes of different frequency (monthly, hourly, yearly) set and appended in turn give levels equal to unique values and level values equal to the originals.
         # GH#6631
         df = DataFrame(np.random.default_rng(2).random(6))
         idx1 = period_range("2011-01-01", periods=3, freq="M")
@@ -546,7 +601,11 @@ class TestSetIndex:
 
 
 class TestSetIndexInvalid:
+    # [CLASS DOC]
+    # Test container for invalid input to set_index.
     def test_set_index_verify_integrity(self, frame_of_index_cols):
+        # [FUNCTION DOC]
+        # Passing the verify_integrity option emits a deprecation warning of the Pandas4 warning category naming that keyword and, for duplicate keys in single or multi-level form, raises a value error about duplicate keys.
         df = frame_of_index_cols
 
         msg = "The 'verify_integrity' keyword in DataFrame.set_index"
@@ -561,6 +620,9 @@ class TestSetIndexInvalid:
     @pytest.mark.parametrize("append", [True, False])
     @pytest.mark.parametrize("drop", [True, False])
     def test_set_index_raise_keys(self, frame_of_index_cols, drop, append):
+        # [FUNCTION DOC]
+        # Parametrized over drop and append. Raises a key error for nonexistent labels, for a nonexistent label mixed with arrays, for a tuple of values (tuples are always treated as one key), and for such a tuple within a list.
+        # KNOWN ISSUE: the first message pattern is a bracketed list of quoted strings and thus a regular-expression character class, not a literal match; the tuple message pattern is also bracketed.
         df = frame_of_index_cols
 
         with pytest.raises(KeyError, match="['foo', 'bar', 'baz']"):
@@ -583,6 +645,8 @@ class TestSetIndexInvalid:
     @pytest.mark.parametrize("append", [True, False])
     @pytest.mark.parametrize("drop", [True, False])
     def test_set_index_raise_on_type(self, frame_of_index_cols, drop, append):
+        # [FUNCTION DOC]
+        # Parametrized over drop and append. A set of values passed as key, directly or inside a list, raises a type error saying the keys parameter may be a column key, one-dimensional array, or list of these.
         box = set
         df = frame_of_index_cols
 
@@ -607,6 +671,8 @@ class TestSetIndexInvalid:
     def test_set_index_raise_on_len(
         self, frame_of_index_cols, box, length, drop, append
     ):
+        # [FUNCTION DOC]
+        # Regression test (GH 24984). Parametrized over drop, append, array kind (series, index, numpy array, iterator, single-level multi-index) and wrong length (4 or 6 versus 5 rows). Raises a value error about length mismatch whether the array is passed directly or inside a list with a column label and a column.
         # GH 24984
         df = frame_of_index_cols  # has length 5
 
@@ -624,15 +690,25 @@ class TestSetIndexInvalid:
 
 
 class TestSetIndexCustomLabelType:
+    # [CLASS DOC]
+    # Test container for set_index when column labels are custom objects.
     def test_set_index_custom_label_type(self):
+        # [FUNCTION DOC]
+        # Regression test (GH 24969). Frame with columns labeled by instances of a custom hashable class; set_index works with the label directly and wrapped in a list, giving a frame with that label as index name, and a missing custom label raises a key error showing its string form.
         # GH#24969
 
         class Thing:
+            # [CLASS DOC]
+            # HELPER: simple label class with a name and color, hashable by identity, whose string form shows the name; its repr is aliased to its string form so key errors are readable.
             def __init__(self, name, color) -> None:
+                # [FUNCTION DOC]
+                # HELPER: stores the given name and color on the instance.
                 self.name = name
                 self.color = color
 
             def __str__(self) -> str:
+                # [FUNCTION DOC]
+                # HELPER: returns a text of the form angle-bracketed Thing followed by the quoted name.
                 return f"<Thing {self.name!r}>"
 
             # necessary for pretty KeyError
@@ -663,6 +739,8 @@ class TestSetIndexCustomLabelType:
             df.set_index([thing3])
 
     def test_set_index_custom_label_hashable_iterable(self):
+        # [FUNCTION DOC]
+        # Regression test (GH 24969). Same checks as the custom label test but with a label type that is both hashable and iterable (subclass of the immutable set type, standing in for geometry objects): works directly and in a list, and a missing label raises a key error showing its set-style repr.
         # GH#24969
 
         # actual example discussed in GH 24984 was e.g. for shapely.geometry
@@ -670,8 +748,12 @@ class TestSetIndexCustomLabelType:
         # iterable; using frozenset as a stand-in for testing here
 
         class Thing(frozenset):
+            # [CLASS DOC]
+            # HELPER: immutable set subclass used as a hashable and iterable column label; overrides repr to give a deterministic ordering.
             # need to stabilize repr for KeyError (due to random order in sets)
             def __repr__(self) -> str:
+                # [FUNCTION DOC]
+                # HELPER: returns the text of an immutable-set form with its elements sorted and individually represented, so key error messages are stable.
                 tmp = sorted(self)
                 joined_reprs = ", ".join(map(repr, tmp))
                 # double curly brace prints one brace in format string
@@ -702,15 +784,23 @@ class TestSetIndexCustomLabelType:
             df.set_index([thing3])
 
     def test_set_index_custom_label_type_raises(self):
+        # [FUNCTION DOC]
+        # Regression test (GH 24969). Column labels that are instances of an unhashable class derived from the mutable set type: passing such a label directly or in a list raises a type error saying the keys parameter may be a column key, array or list of these.
         # GH#24969
 
         # purposefully inherit from something unhashable
         class Thing(set):
+            # [CLASS DOC]
+            # HELPER: mutable set subclass (unhashable) with a name and color, used to check that unhashable labels are rejected.
             def __init__(self, name, color) -> None:
+                # [FUNCTION DOC]
+                # HELPER: stores the given name and color on the instance (does not initialize the set contents).
                 self.name = name
                 self.color = color
 
             def __str__(self) -> str:
+                # [FUNCTION DOC]
+                # HELPER: returns a text of the form angle-bracketed Thing followed by the quoted name.
                 return f"<Thing {self.name!r}>"
 
         thing1 = Thing("One", "red")
@@ -728,6 +818,9 @@ class TestSetIndexCustomLabelType:
             df.set_index([thing2])
 
     def test_set_index_periodindex(self):
+        # [FUNCTION DOC]
+        # Regression test (GH 6631). Setting a monthly period index and then a yearly period index as the index in turn replaces the index each time with the given one.
+        # KNOWN ISSUE: this test is about period indexes, not custom label types, so it sits in the wrong test class.
         # GH#6631
         df = DataFrame(np.random.default_rng(2).random(6))
         idx1 = period_range("2011/01/01", periods=6, freq="M")

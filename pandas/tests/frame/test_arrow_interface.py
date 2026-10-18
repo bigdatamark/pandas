@@ -1,3 +1,8 @@
+# [MODULE DOC]
+# Tests for the Arrow PyCapsule interface of DataFrame: exporting as an Arrow stream and constructing a frame
+# from Arrow-compatible objects. Skipped entirely if pyarrow is not installed (import-time skip). Defines two small
+# wrapper classes that expose only the Arrow capsule protocols.
+
 import ctypes
 
 import numpy as np
@@ -13,6 +18,9 @@ pa = pytest.importorskip("pyarrow")
 
 @td.skip_if_no("pyarrow", min_version="14.0")
 def test_dataframe_arrow_interface(using_infer_string):
+    # [FUNCTION DOC]
+    # Needs pyarrow 14 or newer. The stream capsule export returns a valid capsule named arrow_array_stream. Converting the frame
+    # with pyarrow's table constructor gives a table equal to the expected one (large string type when string inference is on, standard string otherwise), and when given a target schema the table is cast to it.
     df = pd.DataFrame({"a": [1, 2, 3], "b": ["a", "b", "c"]})
 
     capsule = df.__arrow_c_stream__()
@@ -36,6 +44,8 @@ def test_dataframe_arrow_interface(using_infer_string):
 
 @td.skip_if_no("pyarrow", min_version="15.0")
 def test_dataframe_to_arrow(using_infer_string):
+    # [FUNCTION DOC]
+    # Needs pyarrow 15 or newer. Reading a record-batch reader created from the frame's stream gives the same table as expected, also with a requested schema (cast to 8-bit integer and string).
     df = pd.DataFrame({"a": [1, 2, 3], "b": ["a", "b", "c"]})
 
     table = pa.RecordBatchReader.from_stream(df).read_all()
@@ -50,23 +60,38 @@ def test_dataframe_to_arrow(using_infer_string):
 
 
 class ArrowArrayWrapper:
+    # [CLASS DOC]
+    # HELPER: test wrapper holding a record batch; it exposes only the Arrow array capsule protocol, delegating to the held batch, so tests can show non-pyarrow objects are accepted.
     def __init__(self, batch):
+        # [FUNCTION DOC]
+        # HELPER: stores the given record batch in the array attribute.
         self.array = batch
 
     def __arrow_c_array__(self, requested_schema=None):
+        # [FUNCTION DOC]
+        # HELPER: Arrow array capsule protocol method. Takes an optional requested schema (default none) and returns whatever the wrapped batch returns for the same request.
         return self.array.__arrow_c_array__(requested_schema)
 
 
 class ArrowStreamWrapper:
+    # [CLASS DOC]
+    # HELPER: test wrapper holding a table; it exposes only the Arrow stream capsule protocol, delegating to the held table.
     def __init__(self, table):
+        # [FUNCTION DOC]
+        # HELPER: stores the given table in the stream attribute.
         self.stream = table
 
     def __arrow_c_stream__(self, requested_schema=None):
+        # [FUNCTION DOC]
+        # HELPER: Arrow stream capsule protocol method. Takes an optional requested schema (default none) and returns whatever the wrapped table returns for the same request.
         return self.stream.__arrow_c_stream__(requested_schema)
 
 
 @td.skip_if_no("pyarrow", min_version="14.0")
 def test_dataframe_from_arrow(using_infer_string):
+    # [FUNCTION DOC]
+    # Needs pyarrow 14 or newer. Frame construction from Arrow data: from a table (strings become the string dtype backed by NaN-missing semantics unless string inference is on), from a wrapper that only implements the stream protocol, and from a wrapper that only implements the array protocol. A plain dictionary raises a type error saying an Arrow-compatible tabular object was expected.
+    # KNOWN ISSUE: in the part labeled as covering objects with the array protocol, the first check again passes the table rather than the batch, so it repeats the earlier table check.
     # objects with __arrow_c_stream__
     table = pa.table({"a": [1, 2, 3], "b": ["a", "b", "c"]})
 

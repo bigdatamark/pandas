@@ -1,3 +1,7 @@
+# [MODULE DOC]
+# Tests for DataFrame.to_records (conversion to a numpy record array): index handling, dtype mapping
+# arguments (column_dtypes, index_dtypes), multi-level axes, timezone-aware data, categoricals and non-ascii names.
+
 from collections import abc
 import email
 from email.parser import Parser
@@ -17,7 +21,13 @@ import pandas._testing as tm
 
 
 class TestDataFrameToRecords:
+    # [CLASS DOC]
+    # Test container for to_records.
     def test_to_records_timeseries(self):
+        # [FUNCTION DOC]
+        # A frame with a nanosecond datetime index converts with the index field named index and datetime dtype. A second
+        # conversion without the index is performed.
+        # KNOWN ISSUE: the result of the second conversion (index turned off) is never asserted on; the call only checks that no error is raised.
         index = date_range("1/1/2000", periods=10, unit="ns")
         df = DataFrame(
             np.random.default_rng(2).standard_normal((10, 3)),
@@ -31,6 +41,8 @@ class TestDataFrameToRecords:
         result = df.to_records(index=False)
 
     def test_to_records_dt64(self):
+        # [FUNCTION DOC]
+        # The index field of the first record equals the first value of the datetime index.
         df = DataFrame(
             [["one", "two", "three"], ["four", "five", "six"]],
             index=date_range("2012-01-01", "2012-01-02"),
@@ -41,6 +53,8 @@ class TestDataFrameToRecords:
         assert expected == result
 
     def test_to_records_dt64tz_column(self):
+        # [FUNCTION DOC]
+        # Regression test (GH 32535). A timezone-aware column is converted to object dtype field holding timestamp objects equal to the frame's original value, so the timezone is not lost.
         # GH#32535 dont less tz in to_records
         df = DataFrame({"A": date_range("2012-01-01", "2012-01-02", tz="US/Eastern")})
 
@@ -52,6 +66,8 @@ class TestDataFrameToRecords:
         assert val == df.loc[0, "A"]
 
     def test_to_records_with_multindex(self):
+        # [FUNCTION DOC]
+        # Regression test (GH 3189). With a two-level index, the first level is exposed as a field named level_0 and contains first-level labels but not second-level labels.
         # GH#3189
         index = [
             ["bar", "bar", "baz", "baz", "foo", "foo", "qux", "qux"],
@@ -64,6 +80,10 @@ class TestDataFrameToRecords:
         assert "one" not in r
 
     def test_to_records_with_Mapping_type(self):
+        # [FUNCTION DOC]
+        # Registers an email message class as a mapping type (global side effect on the abstract mapping class) and builds a frame from records
+        # containing a parsed message.
+        # KNOWN ISSUE: the final all-membership check builds a boolean but its result is never asserted, so nothing is verified beyond not raising.
         abc.Mapping.register(email.message.Message)
 
         headers = Parser().parsestr(
@@ -78,10 +98,16 @@ class TestDataFrameToRecords:
         all(x in frame for x in ["Type", "Subject", "From"])
 
     def test_to_records_floats(self):
+        # [FUNCTION DOC]
+        # Smoke test: converting a random float frame does not raise; no assertions are made.
         df = DataFrame(np.random.default_rng(2).random((10, 10)))
         df.to_records()
 
     def test_to_records_index_name(self):
+        # [FUNCTION DOC]
+        # Index field naming: a named index uses its name, an unnamed index uses the label index, and for a two-level index
+        # with names A and none the fields are A and level_1 (object dtype) followed by the column fields named by
+        # column labels as strings with float dtype; compared with the expected record array.
         df = DataFrame(np.random.default_rng(2).standard_normal((3, 3)))
         df.index.name = "X"
         rs = df.to_records()
@@ -111,6 +137,8 @@ class TestDataFrameToRecords:
         tm.assert_numpy_array_equal(result, expected)
 
     def test_to_records_with_unicode_index(self):
+        # [FUNCTION DOC]
+        # Regression test (GH 13172). A string index named a gives an object-dtype record array with fields a and b.
         # GH#13172
         # unicode_literals conflict with to_records
         result = DataFrame([{"a": "x", "b": "y"}]).set_index("a").to_records()
@@ -118,6 +146,9 @@ class TestDataFrameToRecords:
         tm.assert_almost_equal(result, expected)
 
     def test_to_records_index_dtype(self):
+        # [FUNCTION DOC]
+        # Regression test (GH 47263). Three datetime columns give the same record array whether the index is dropped, or the first column,
+        # or the first two columns, are used as the (multi-)index and then included in the records: consistent datetime field dtypes.
         # GH 47263: consistent data types for Index and MultiIndex
         df = DataFrame(
             {
@@ -149,6 +180,8 @@ class TestDataFrameToRecords:
         tm.assert_almost_equal(result, expected)
 
     def test_to_records_with_unicode_column_names(self):
+        # [FUNCTION DOC]
+        # Regression test (GH 11879). A column with a non-ascii label converts, giving fields for the index and that label.
         # xref issue: https://github.com/numpy/numpy/issues/2407
         # Issue GH#11879. to_records used to raise an exception when used
         # with column names containing non-ascii characters in Python 2
@@ -163,6 +196,9 @@ class TestDataFrameToRecords:
         tm.assert_almost_equal(result, expected)
 
     def test_to_records_with_categorical(self):
+        # [FUNCTION DOC]
+        # Regression test (GH 8626). First checks that a categorical frame built from a mapping and from a list has categorical columns (construction checks only), then
+        # verifies conversion coerces the categorical column to object dtype.
         # GH#8626
 
         # dict creation
@@ -388,6 +424,13 @@ class TestDataFrameToRecords:
         ],
     )
     def test_to_records_dtype(self, kwargs, expected):
+        # [FUNCTION DOC]
+        # Regression test (GH 18146). Parametrized over keyword argument sets and expected output. Cases: defaults; index option;
+        # a single column dtype string, type or dtype instance applied to all columns; a single index dtype string; per-column name
+        # mappings and per-index position mappings; mappings with unknown keys are ignored; index dtype is ignored when the index is turned off;
+        # columns missing from mappings keep their own dtype; and error cases expecting a value error for invalid dtype values (an empty list,
+        # a non-dtype number, an extension dtype) or a type error for an unknown dtype name. When the expectation is a pair the
+        # call must raise that exception with a matching message, otherwise the result is compared to the expected record array.
         # see GH#18146
         df = DataFrame({"A": [1, 2], "B": [0.2, 1.5], "C": ["a", "bc"]})
 
@@ -471,23 +514,39 @@ class TestDataFrameToRecords:
         ],
     )
     def test_to_records_dtype_mi(self, df, kwargs, expected):
+        # [FUNCTION DOC]
+        # Regression test (GH 18146). Parametrized over frames with multi-level index, multi-level columns and both, with dtype mapping
+        # arguments given by position; the resulting record array must match (multi-level column labels become tuple-formatted field names).
         # see GH#18146
         result = df.to_records(**kwargs)
         tm.assert_almost_equal(result, expected)
 
     def test_to_records_dict_like(self):
+        # [FUNCTION DOC]
+        # Regression test (GH 18146). Dtype mapping arguments that are dict-like objects (only item access, membership and keys supported, not true mappings) must be
+        # accepted: per-column mapping from such an object and a single index dtype produce the expected record array.
         # see GH#18146
         class DictLike:
+            # [CLASS DOC]
+            # HELPER: minimal dict-like class (wraps a dictionary) used to test dtype mapping arguments that are not real mappings.
             def __init__(self, **kwargs) -> None:
+                # [FUNCTION DOC]
+                # HELPER: stores a copy of the given keyword arguments as the wrapped dictionary.
                 self.d = kwargs.copy()
 
             def __getitem__(self, key):
+                # [FUNCTION DOC]
+                # HELPER: returns the wrapped dictionary's value for the key (propagating a missing key error).
                 return self.d.__getitem__(key)
 
             def __contains__(self, key) -> bool:
+                # [FUNCTION DOC]
+                # HELPER: returns whether the key exists in the wrapped dictionary.
                 return key in self.d
 
             def keys(self):
+                # [FUNCTION DOC]
+                # HELPER: returns the keys view of the wrapped dictionary.
                 return self.d.keys()
 
         df = DataFrame({"A": [1, 2], "B": [0.2, 1.5], "C": ["a", "bc"]})
@@ -511,6 +570,9 @@ class TestDataFrameToRecords:
 
     @pytest.mark.parametrize("tz", ["UTC", "GMT", "US/Eastern"])
     def test_to_records_datetimeindex_with_tz(self, tz):
+        # [FUNCTION DOC]
+        # Regression test (GH 13937). Parametrized over UTC, GMT and US/Eastern. A frame with a timezone-aware column and index gives the same records
+        # as the same frame first converted to UTC, since records are always UTC-normalized.
         # GH#13937
         dr = date_range("2016-01-01", periods=10, freq="s", tz=tz)
 

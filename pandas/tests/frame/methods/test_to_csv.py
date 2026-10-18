@@ -1,3 +1,10 @@
+# [MODULE DOC]
+# Tests for DataFrame.to_csv (and the Series equivalent in a few places): round trips through the csv reader
+# with various index/column kinds (flat, multi-level, datetime, period, timedelta, timezone-aware, duplicate labels,
+# categorical), chunked writing, float and date formats, quoting and escaping, line terminators, compression,
+# file handles and in-memory buffers, encodings, and warnings/errors. One large test class; several tests are
+# marked slow. Most tests use the temporary-file fixture and read back with the csv reader.
+
 import csv
 from io import StringIO
 import os
@@ -27,13 +34,22 @@ from pandas.io.common import get_handle
 
 
 class TestDataFrameToCSV:
+    # [CLASS DOC]
+    # Test container for to_csv. Provides a small reader wrapper and a round-trip helper used by the chunking tests.
     def read_csv(self, path, **kwargs):
+        # [FUNCTION DOC]
+        # HELPER: thin wrapper around the module-level csv reader used by the tests in this class.
+        # Takes a path or buffer plus keyword arguments passed through; defaults the index column to the first column
+        # unless overridden. Returns the parsed frame.
         params = {"index_col": 0}
         params.update(**kwargs)
 
         return read_csv(path, **params)
 
     def test_to_csv_from_csv1(self, temp_file, float_frame):
+        # [FUNCTION DOC]
+        # Smoke test: writes a float frame (with leading missing values in one column) to a file with defaults, with a column subset, without a header, and without the index.
+        # KNOWN ISSUE: nothing is read back or asserted; the test only verifies that the calls do not raise.
         path = str(temp_file)
         float_frame.iloc[:5, float_frame.columns.get_loc("A")] = np.nan
 
@@ -43,6 +59,8 @@ class TestDataFrameToCSV:
         float_frame.to_csv(path, index=False)
 
     def test_to_csv_from_csv1_datetime(self, temp_file, datetime_frame):
+        # [FUNCTION DOC]
+        # Round trip for a datetime-indexed frame (frequency dropped since it does not round-trip): reading back with date parsing gives the frame with microsecond-resolution index. Writing with an explicit index label adds one more column when read without an index column; writing without the index gives equal values.
         path = str(temp_file)
         # test roundtrip
         # freq does not roundtrip
@@ -64,6 +82,8 @@ class TestDataFrameToCSV:
         tm.assert_almost_equal(datetime_frame.values, recons.values)
 
     def test_to_csv_from_csv1_corner_case(self, temp_file):
+        # [FUNCTION DOC]
+        # Round trip of a frame built from two series of different lengths (so containing a missing value) equals the original.
         path = str(temp_file)
         dm = DataFrame(
             {
@@ -77,6 +97,8 @@ class TestDataFrameToCSV:
         tm.assert_frame_equal(dm, recons)
 
     def test_to_csv_from_csv2(self, temp_file, float_frame):
+        # [FUNCTION DOC]
+        # Round trips with a duplicated string index, with a duplicated three-level index (names not compared), and with the header argument given as an index of aliases (replaces column names). A header list whose length differs from the number of columns raises a value error reporting the column and alias counts.
         path = str(temp_file)
         # duplicate index
         df = DataFrame(
@@ -113,6 +135,8 @@ class TestDataFrameToCSV:
             float_frame.to_csv(path, header=["AA", "X"])
 
     def test_to_csv_from_csv3(self, temp_file):
+        # [FUNCTION DOC]
+        # Appending mode: writing one frame then appending a second without header, reading back gives the concatenation (column labels normalized to integers).
         path = str(temp_file)
         df1 = DataFrame(np.random.default_rng(2).standard_normal((3, 1)))
         df2 = DataFrame(np.random.default_rng(2).standard_normal((3, 1)))
@@ -126,6 +150,8 @@ class TestDataFrameToCSV:
         tm.assert_frame_equal(xp, rs)
 
     def test_to_csv_from_csv4(self, temp_file):
+        # [FUNCTION DOC]
+        # Regression test (GH 10833). Timedelta index and data round-trip once converted back from text.
         path = str(temp_file)
         # GH 10833 (TimedeltaIndex formatting)
         dt = pd.Timedelta(seconds=1).as_unit("us")
@@ -142,6 +168,8 @@ class TestDataFrameToCSV:
         tm.assert_frame_equal(df, result, check_index_type=True)
 
     def test_to_csv_from_csv5(self, temp_file, timezone_frame):
+        # [FUNCTION DOC]
+        # Regression test (GH 8260). A frame with naive and two timezone-aware datetime columns round-trips: after reading, the tz-aware columns are converted via UTC back to their zones and all columns cast to nanosecond resolution before comparing.
         # tz, 8260
         path = str(temp_file)
         timezone_frame.to_csv(path)
@@ -159,6 +187,8 @@ class TestDataFrameToCSV:
         tm.assert_frame_equal(result, timezone_frame)
 
     def test_to_csv_cols_reordering(self, temp_file):
+        # [FUNCTION DOC]
+        # Regression test (GH 3454). Writing selected columns in a different order with a small chunk size gives the reordered subset when read back (names ignored).
         # GH3454
         chunksize = 5
         N = int(chunksize * 2.5)
@@ -179,6 +209,8 @@ class TestDataFrameToCSV:
 
     @pytest.mark.parametrize("cols", [None, ["b", "a"]])
     def test_to_csv_new_dupe_cols(self, temp_file, cols):
+        # [FUNCTION DOC]
+        # Parametrized over no column subset and a reordered subset. A frame with duplicate column labels written in chunks and read back has the columns relabeled by the original labels (taken in the written order for the subset) and each selected column equals the original.
         chunksize = 5
         N = int(chunksize * 2.5)
 
@@ -216,8 +248,12 @@ class TestDataFrameToCSV:
 
     @pytest.mark.slow
     def test_to_csv_dtnat(self, temp_file):
+        # [FUNCTION DOC]
+        # Regression test (GH 3437); marked slow. Two datetime columns of 1005 values, one with about ten percent NaT values and one with none, written in chunks of 1000 round-trip (converted to datetime from text) equal to the originals at microsecond resolution.
         # GH3437
         def make_dtnat_arr(n, nnat=None):
+            # [FUNCTION DOC]
+            # HELPER: builds a list of timestamps for the dtnat test. Takes the number of values n and an optional number of missing values (default ten percent of n). Returns n five-minute spaced timestamps starting at 2000 with randomly chosen positions replaced by NaT; when the count is non-zero it additionally forces NaT at a random small position and at its mirror from the end.
             if nnat is None:
                 nnat = int(n * 0.1)  # 10%
             s = list(date_range("2000", freq="5min", periods=n))
@@ -255,6 +291,9 @@ class TestDataFrameToCSV:
         cnlvl=None,
         dupe_col=False,
     ):
+        # [FUNCTION DOC]
+        # HELPER: round-trip helper for the chunking tests. Parameters: the frame to write, the chunk size, the temporary file, an optional row index kind code and column index kind code (integer, float, string, unicode, datetime, period), optional counts of row index levels and column index levels, and a flag saying the columns contain duplicate labels. Writes the frame in utf8 in chunks, reads it back (with multi-row headers and multi-column index if level counts are given; header row zero otherwise, no date parsing), restores duplicate column labels and multi-level row index when needed, then converts both the original frame's and the read frame's index and columns to the same dtype according to the kind codes (unicode via decoding, datetimes via timestamps, periods via their start timestamps, others via a type map). Returns the pair of the converted original and the read-back frame. Mutates the passed frame's index/columns.
+        # KNOWN ISSUE: the comment on the datetime branch for the row index says unicode, which is wrong (copy-paste leftover).
         kwargs = {"parse_dates": False}
         if cnlvl:
             if rnlvl is not None:
@@ -270,6 +309,8 @@ class TestDataFrameToCSV:
             recons = self.read_csv(temp_file, **kwargs)
 
         def _to_uni(x):
+            # [FUNCTION DOC]
+            # HELPER: returns the text of the given label, decoding byte strings as utf8 and returning text unchanged.
             if not isinstance(x, str):
                 return x.decode("utf8")
             return x
@@ -353,6 +394,8 @@ class TestDataFrameToCSV:
         "nrows", [2, 10, 99, 100, 101, 102, 198, 199, 200, 201, 202, 249, 250, 251]
     )
     def test_to_csv_nrows(self, nrows, temp_file):
+        # [FUNCTION DOC]
+        # Slow; parametrized over many row counts around chunk boundaries. A datetime-indexed frame of ones with string columns round-trips through the helper with chunk size 1000; expected index cast to microsecond resolution.
         df = DataFrame(
             np.ones((nrows, 4)),
             index=date_range("2020-01-01", periods=nrows),
@@ -372,6 +415,8 @@ class TestDataFrameToCSV:
     @pytest.mark.parametrize("ncols", [1, 2, 3, 4])
     @pytest.mark.filterwarnings(r"ignore:PeriodDtype\[B\] is deprecated:FutureWarning")
     def test_to_csv_idx_types(self, nrows, r_idx_type, c_idx_type, ncols, temp_file):
+        # [FUNCTION DOC]
+        # Slow; parametrized over row counts, row/column index kinds (integer/integer, string/string, string/datetime, period/period) and column counts 1 to 4; a deprecation warning for business-day period dtype is ignored. Builds axes by kind, round-trips through the helper and compares (datetime and period axes cast to microsecond resolution; names ignored).
         axes = {
             "i": lambda n: Index(np.arange(n), dtype=np.int64),
             "s": lambda n: Index([f"{i}_{chr(i)}" for i in range(97, 97 + n)]),
@@ -406,6 +451,8 @@ class TestDataFrameToCSV:
     )
     @pytest.mark.parametrize("ncols", [1, 2, 3, 4])
     def test_to_csv_idx_ncols(self, nrows, ncols, temp_file):
+        # [FUNCTION DOC]
+        # Slow; parametrized over row counts and 1 to 4 columns. Named string index and columns round-trip with chunk size 1000.
         df = DataFrame(
             np.ones((nrows, ncols)),
             index=Index([f"i-{i}" for i in range(nrows)], name="a"),
@@ -417,6 +464,8 @@ class TestDataFrameToCSV:
     @pytest.mark.slow
     @pytest.mark.parametrize("nrows", [10, 98, 99, 100, 101, 102])
     def test_to_csv_dup_cols(self, nrows, temp_file):
+        # [FUNCTION DOC]
+        # Slow; parametrized over row counts. Duplicate labels in both the index and the columns (at the start and the end) round-trip when the duplicate-column flag is set to restore the column labels.
         df = DataFrame(
             np.ones((nrows, 3)),
             index=Index([f"i-{i}" for i in range(nrows)], name="a"),
@@ -438,12 +487,16 @@ class TestDataFrameToCSV:
 
     @pytest.mark.slow
     def test_to_csv_empty(self, temp_file):
+        # [FUNCTION DOC]
+        # Slow. A frame with an integer index and no columns round-trips (column type not checked).
         df = DataFrame(index=np.arange(10, dtype=np.int64))
         result, expected = self._return_result_expected(df, 1000, temp_file)
         tm.assert_frame_equal(result, expected, check_column_type=False)
 
     @pytest.mark.slow
     def test_to_csv_chunksize(self, temp_file):
+        # [FUNCTION DOC]
+        # Slow. A frame with a two-level integer index and just over half the chunk size rows round-trips with row level count two.
         chunksize = 1000
         rows = chunksize // 2 + 1
         df = DataFrame(
@@ -470,6 +523,8 @@ class TestDataFrameToCSV:
         ],
     )
     def test_to_csv_params(self, nrows, df_params, func_params, ncols, temp_file):
+        # [FUNCTION DOC]
+        # Slow; parametrized over row counts, column counts and three combinations of multi-level row index, multi-level columns, or both. Builds the corresponding frame and round-trips it with the matching level counts (names ignored).
         if df_params.get("r_idx_nlevels"):
             index = MultiIndex.from_arrays(
                 [f"i-{i}" for i in range(nrows)]
@@ -492,6 +547,8 @@ class TestDataFrameToCSV:
         tm.assert_frame_equal(result, expected, check_names=False)
 
     def test_to_csv_from_csv_w_some_infs(self, temp_file, float_frame):
+        # [FUNCTION DOC]
+        # Round trip of a frame with an all-missing column and a column of random infinity and missing values: the frame and its infinity mask are equal after reading.
         # test roundtrip with inf, -inf, nan, as full columns and mix
         float_frame["G"] = np.nan
         f = lambda x: [np.inf, np.nan][np.random.default_rng(2).random() < 0.5]
@@ -505,6 +562,8 @@ class TestDataFrameToCSV:
         tm.assert_frame_equal(np.isinf(float_frame), np.isinf(recons))
 
     def test_to_csv_from_csv_w_all_infs(self, temp_file, float_frame):
+        # [FUNCTION DOC]
+        # Round trip of a frame with a column of positive infinity and another of negative infinity: values and infinity masks are equal.
         # test roundtrip with inf, -inf, nan, as full columns and mix
         float_frame["E"] = np.inf
         float_frame["F"] = -np.inf
@@ -517,6 +576,8 @@ class TestDataFrameToCSV:
         tm.assert_frame_equal(np.isinf(float_frame), np.isinf(recons))
 
     def test_to_csv_no_index(self, temp_file):
+        # [FUNCTION DOC]
+        # Regression test (GH 3624). Writing without the index round-trips, also after adding another column to the frame.
         # GH 3624, after appending columns, to_csv fails
         path = str(temp_file)
         df = DataFrame({"c1": [1, 2, 3], "c2": [4, 5, 6]})
@@ -529,6 +590,8 @@ class TestDataFrameToCSV:
         tm.assert_frame_equal(df, result)
 
     def test_to_csv_with_mix_columns(self):
+        # [FUNCTION DOC]
+        # Regression test (GH 11637). Output with an explicit column list mixing integer and string labels (all columns in order) equals the default output.
         # gh-11637: incorrect output when a mix of integer and string column
         # names passed as columns parameter in to_csv
 
@@ -537,6 +600,8 @@ class TestDataFrameToCSV:
         assert df.to_csv() == df.to_csv(columns=[0, 1, "test"])
 
     def test_to_csv_headers(self, temp_file):
+        # [FUNCTION DOC]
+        # Regression test (GH 6186). Passing a list as header renames columns the same way with or without the index being written (after resetting the index when read back without it).
         # GH6186, the presence or absence of `index` incorrectly
         # causes to_csv to have different header semantics.
         from_df = DataFrame([[1, 2], [3, 4]], columns=["A", "B"])
@@ -555,6 +620,9 @@ class TestDataFrameToCSV:
         tm.assert_frame_equal(to_df, recons)
 
     def test_to_csv_multiindex(self, temp_file, float_frame, datetime_frame):
+        # [FUNCTION DOC]
+        # Large scenario test of multi-level axes. Row multi-index with names: writing with no header, a column subset, and full round trip (index names kept, column names dropped). Then multi-index with dates: writing with explicit index labels reads back with a format-inference user warning and microsecond-resolution dates; writing the index but reading it as data adds two columns; writing without index gives equal values. Then column and row multi-levels with names in various combinations (including a helper that builds a three-column multi-level frame), writing without the index, losing names on read (checked to be none then restored), the whatsnew example, reading with too many header rows raising a parser error, passing a column list for multi-level columns raising a type error, and writing an empty frame.
+        # KNOWN ISSUE: the code carries TODO comments that to_csv drops the column names and mentions a setUp method in comments although this is a plain pytest class.
         frame = float_frame
         old_index = frame.index
         arrays = np.arange(len(old_index) * 2, dtype=np.int64).reshape(2, -1)
@@ -606,6 +674,8 @@ class TestDataFrameToCSV:
         datetime_frame.index = old_index
 
         def _make_frame(names=None):
+            # [FUNCTION DOC]
+            # HELPER: builds a three-by-three random integer frame with a two-level column index (labels bah/foo, bah/bar, ban/baz). Takes optional names: if true, the level names first and second are used; if a list, those names; otherwise none.
             if names is True:
                 names = ["first", "second"]
             return DataFrame(
@@ -705,6 +775,9 @@ class TestDataFrameToCSV:
         assert len(recons) == 0
 
     def test_to_csv_interval_index(self, temp_file, using_infer_string):
+        # [FUNCTION DOC]
+        # Regression test (GH 28210, GH 23595). An interval index cannot round-trip, so the index read back equals the string form of the intervals.
+        # KNOWN ISSUE: the test accepts an infer-string fixture argument but never uses it.
         # GH 28210
         df = DataFrame({"A": list("abc"), "B": range(3)}, index=pd.interval_range(0, 3))
 
@@ -719,6 +792,8 @@ class TestDataFrameToCSV:
         tm.assert_frame_equal(result, expected)
 
     def test_to_csv_float32_nanrep(self, temp_file):
+        # [FUNCTION DOC]
+        # A missing value in a 32-bit float column with a numeric na_rep of 999 is written as that text in the second row.
         df = DataFrame(
             np.random.default_rng(2).standard_normal((1, 4)).astype(np.float32)
         )
@@ -732,6 +807,8 @@ class TestDataFrameToCSV:
             assert lines[1].split(",")[2] == "999"
 
     def test_to_csv_withcommas(self, temp_file):
+        # [FUNCTION DOC]
+        # Fields containing commas are quoted so the frame round-trips.
         # Commas inside fields should be correctly escaped when saving as CSV.
         df = DataFrame({"A": [1, 2, 3], "B": ["5,6", "7,8", "9,0"]})
 
@@ -741,7 +818,11 @@ class TestDataFrameToCSV:
         tm.assert_frame_equal(df2, df)
 
     def test_to_csv_mixed(self, temp_file):
+        # [FUNCTION DOC]
+        # A wide frame of float, integer, boolean, object and datetime columns (with some missing values) round-trips given explicit dtypes and date parsing.
         def create_cols(name):
+            # [FUNCTION DOC]
+            # HELPER: returns five column labels formed from a name prefix and a three-digit counter from 000 to 004.
             return [f"{name}{i:03d}" for i in range(5)]
 
         df_float = DataFrame(
@@ -787,6 +868,8 @@ class TestDataFrameToCSV:
         tm.assert_frame_equal(rs, df)
 
     def test_to_csv_dups_cols(self, temp_file):
+        # [FUNCTION DOC]
+        # A 1000x30 float frame with each integer label used twice round-trips (labels restored). A mixed-dtype frame with the labels 0,1,2 repeated five times round-trips after converting the date columns (read back with renamed duplicate labels) to datetimes.
         df = DataFrame(
             np.random.default_rng(2).standard_normal((1000, 30)),
             columns=list(range(15)) + list(range(15)),
@@ -825,6 +908,8 @@ class TestDataFrameToCSV:
         tm.assert_frame_equal(result, df)
 
     def test_to_csv_dups_cols2(self, temp_file):
+        # [FUNCTION DOC]
+        # Regression test (GH 3457). A frame with duplicated labels a,a,b round-trips once the reader's renamed duplicate (a followed by .1) is renamed back.
         # GH3457
         df = DataFrame(
             np.ones((5, 3)),
@@ -842,6 +927,8 @@ class TestDataFrameToCSV:
 
     @pytest.mark.parametrize("chunksize", [1, 5, 10])
     def test_to_csv_chunking(self, chunksize, temp_file):
+        # [FUNCTION DOC]
+        # Parametrized over chunk sizes 1, 5, 10. A float frame round-trips regardless of chunk size.
         aa = DataFrame({"A": range(10)})
         aa["B"] = aa.A + 1.0
         aa["C"] = aa.A + 2.0
@@ -854,6 +941,8 @@ class TestDataFrameToCSV:
 
     @pytest.mark.slow
     def test_to_csv_wide_frame_formatting(self, temp_file, monkeypatch):
+        # [FUNCTION DOC]
+        # Slow. Regression test (issue 8621). With the default chunk-size-in-cells constant patched to 100 (via the monkeypatch fixture), a one-row frame of 110 columns is written without header or index and read back equal.
         # Issue #8621
         chunksize = 100
         df = DataFrame(
@@ -869,6 +958,8 @@ class TestDataFrameToCSV:
         tm.assert_frame_equal(rs, df)
 
     def test_to_csv_bug(self, temp_file):
+        # [FUNCTION DOC]
+        # A frame created from a text buffer with no header, reduced to a single renamed column, round-trips (names ignored).
         f1 = StringIO("a,1.0\nb,2.0")
         df = self.read_csv(f1, header=None)
         newdf = DataFrame({"t": df[df.columns[0]]})
@@ -881,6 +972,8 @@ class TestDataFrameToCSV:
         tm.assert_frame_equal(recons, newdf, check_names=False)
 
     def test_to_csv_unicode(self, temp_file):
+        # [FUNCTION DOC]
+        # A non-ascii column label round-trips with UTF-8 encoding, with and without the index.
         df = DataFrame({"c/\u03c3": [1, 2, 3]})
         path = str(temp_file)
         df.to_csv(path, encoding="UTF-8")
@@ -892,6 +985,8 @@ class TestDataFrameToCSV:
         tm.assert_frame_equal(df, df2)
 
     def test_to_csv_unicode_index_col(self):
+        # [FUNCTION DOC]
+        # A frame with Hebrew letter labels in the index and columns is written to an in-memory text buffer and read back equal.
         buf = StringIO("")
         df = DataFrame(
             [["\u05d0", "d2", "d3", "d4"], ["a1", "a2", "a3", "a4"]],
@@ -906,6 +1001,8 @@ class TestDataFrameToCSV:
         tm.assert_frame_equal(df, df2)
 
     def test_to_csv_stringio(self, float_frame):
+        # [FUNCTION DOC]
+        # Writing to an in-memory text buffer and reading it back reproduces the float frame.
         buf = StringIO()
         float_frame.to_csv(buf)
         buf.seek(0)
@@ -913,6 +1010,8 @@ class TestDataFrameToCSV:
         tm.assert_frame_equal(recons, float_frame)
 
     def test_to_csv_float_format(self, temp_file):
+        # [FUNCTION DOC]
+        # A percent-style float format with two decimals writes values rounded to two decimals, as read back.
         df = DataFrame(
             [[0.123456, 0.234567, 0.567567], [12.32112, 123123.2, 321321.2]],
             index=["A", "B"],
@@ -931,6 +1030,8 @@ class TestDataFrameToCSV:
         tm.assert_frame_equal(rs, xp)
 
     def test_to_csv_float_format_over_decimal(self):
+        # [FUNCTION DOC]
+        # Regression test (GH 47436). A callable float format takes precedence over the decimal separator argument: output has the callable's formatting (trimmed zeros) with a point.
         # GH#47436
         df = DataFrame({"a": [0.5, 1.0]})
         result = df.to_csv(
@@ -943,6 +1044,8 @@ class TestDataFrameToCSV:
         assert result == expected
 
     def test_to_csv_unicodewriter_quoting(self):
+        # [FUNCTION DOC]
+        # Quoting non-numeric values: header and strings are quoted and numbers are not.
         df = DataFrame({"A": [1, 2, 3], "B": ["foo", "bar", "baz"]})
 
         buf = StringIO()
@@ -955,6 +1058,8 @@ class TestDataFrameToCSV:
 
     @pytest.mark.parametrize("encoding", [None, "utf-8"])
     def test_to_csv_quote_none(self, encoding):
+        # [FUNCTION DOC]
+        # Regression test (GH 4328). Parametrized over no encoding and utf-8. With quoting disabled, a string containing double quotes is written unchanged.
         # GH4328
         df = DataFrame({"A": ["hello", '{"hello"}']})
         buf = StringIO()
@@ -966,6 +1071,8 @@ class TestDataFrameToCSV:
         assert result == expected
 
     def test_to_csv_index_no_leading_comma(self):
+        # [FUNCTION DOC]
+        # An index label of false suppresses the index column name, so the header has no leading comma while rows still start with the index value.
         df = DataFrame({"A": [1, 2, 3], "B": [4, 5, 6]}, index=["one", "two", "three"])
 
         buf = StringIO()
@@ -976,6 +1083,8 @@ class TestDataFrameToCSV:
         assert buf.getvalue() == expected
 
     def test_to_csv_lineterminators(self, temp_file):
+        # [FUNCTION DOC]
+        # Regression test (GH 20353). Case 1: a carriage-return plus line-feed terminator is used for every line (compared in binary).
         # see gh-20353
         df = DataFrame({"A": [1, 2, 3], "B": [4, 5, 6]}, index=["one", "two", "three"])
 
@@ -988,6 +1097,8 @@ class TestDataFrameToCSV:
             assert f.read() == expected
 
     def test_to_csv_lineterminators2(self, temp_file):
+        # [FUNCTION DOC]
+        # Regression test (GH 20353). Case 2: a line-feed terminator is used for every line (compared in binary).
         # see gh-20353
         df = DataFrame({"A": [1, 2, 3], "B": [4, 5, 6]}, index=["one", "two", "three"])
 
@@ -1000,6 +1111,8 @@ class TestDataFrameToCSV:
             assert f.read() == expected
 
     def test_to_csv_lineterminators3(self, temp_file):
+        # [FUNCTION DOC]
+        # Regression test (GH 20353, GH 21406). Case 3: with no terminator argument, the operating system line separator is used (compared in binary).
         # see gh-20353
         df = DataFrame({"A": [1, 2, 3], "B": [4, 5, 6]}, index=["one", "two", "three"])
         path = str(temp_file)
@@ -1021,6 +1134,8 @@ class TestDataFrameToCSV:
             assert f.read() == expected
 
     def test_to_csv_from_csv_categorical(self):
+        # [FUNCTION DOC]
+        # Writing a categorical series (and a frame with it) gives output identical to writing the same values as plain strings.
         # CSV with categoricals should result in the same output
         # as when one would add a "normal" Series/DataFrame.
         s = Series(pd.Categorical(["a", "b", "b", "a", "a", "c", "c", "c"]))
@@ -1045,6 +1160,8 @@ class TestDataFrameToCSV:
         assert res.getvalue() == exp.getvalue()
 
     def test_to_csv_path_is_none(self, float_frame):
+        # [FUNCTION DOC]
+        # Regression test (GH 8215). With no path the method returns a text string that reads back to the original frame.
         # GH 8215
         # Make sure we return string for consistency with
         # Series.to_csv()
@@ -1077,6 +1194,8 @@ class TestDataFrameToCSV:
         ],
     )
     def test_to_csv_compression(self, temp_file, df, encoding, compression):
+        # [FUNCTION DOC]
+        # Parametrized over four frames with encodings (none, ascii, gb2312, cp737) and the shared compression fixture. Checks: writing to a path and reading with matching compression; writing through an opened handle (which stays open); reading and squeezing the columns; that the file really is compressed and, once decompressed, contains the column labels; and reading the decompressed handle.
         path = str(temp_file)
         df.to_csv(path, compression=compression, encoding=encoding)
         # test the round trip - to_csv -> read_csv
@@ -1108,6 +1227,8 @@ class TestDataFrameToCSV:
             tm.assert_frame_equal(df, read_csv(fh, index_col=0, encoding=encoding))
 
     def test_to_csv_date_format(self, temp_file, datetime_frame):
+        # [FUNCTION DOC]
+        # Writing a datetime frame with day-style compact date format reads back as integers (also for the index); with a dashed format reads back as strings; on the transposed frame the column labels are formatted; a frame with NaT values and a dashed format reads back (with parsing) equal to the original.
         path = str(temp_file)
         dt_index = datetime_frame.index
         datetime_frame = DataFrame(
@@ -1165,6 +1286,8 @@ class TestDataFrameToCSV:
 
     @pytest.mark.parametrize("td", [pd.Timedelta(0).as_unit("us"), pd.Timedelta("10s")])
     def test_to_csv_with_dst_transitions(self, td, temp_file):
+        # [FUNCTION DOC]
+        # Parametrized over a zero and a ten-second offset. Writing an hourly Europe/London index across a daylight-saving change (with ambiguous times inferred) works, and the index reads back, after conversion through UTC, equal to the original.
         path = str(temp_file)
         # make sure we are not failing on transitions
         times = date_range(
@@ -1193,6 +1316,8 @@ class TestDataFrameToCSV:
         ],
     )
     def test_to_csv_with_dst_transitions_with_pickle(self, start, end, temp_file):
+        # [FUNCTION DOC]
+        # Regression test (GH 11619). Parametrized over two Paris daylight-saving start/end ranges. Writing, reading back (with conversion via UTC to Paris) is equal; casting to string works; and pickling then unpickling the frame gives an equal frame. The frequency is cleared (including on the private data object) because it does not round-trip.
         # GH11619
         idx = date_range(start, end, freq="h", tz="Europe/Paris", unit="ns")
         idx = idx._with_freq(None)  # freq does not round-trip
@@ -1218,6 +1343,8 @@ class TestDataFrameToCSV:
         tm.assert_frame_equal(result, df)
 
     def test_to_csv_quoting(self):
+        # [FUNCTION DOC]
+        # Checks the quoting option: default and none, minimal, all, non-numeric; quoting none without an escape character raises a csv error that an escape character is needed (also with the escape character explicitly none); with escape character exclamation or the letter f commas (and the f in the header) are escaped; quoting of embedded Windows line terminators round-trips (GH 3503); and quoting is applied for multi-index (GH 7791).
         df = DataFrame(
             {
                 "c_bool": [True, False],
@@ -1316,6 +1443,8 @@ class TestDataFrameToCSV:
         assert df.to_csv(quoting=csv.QUOTE_ALL) == expected
 
     def test_period_index_date_overflow(self):
+        # [FUNCTION DOC]
+        # Regression test (GH 15982). A period index with a year beyond the datetime range (3005) is written as text, with the default and with a custom date format; NaT in the index is written as an empty field.
         # see gh-15982
 
         dates = ["1990-01-01", "2000-01-01", "3005-01-01"]
@@ -1347,6 +1476,8 @@ class TestDataFrameToCSV:
         assert result == expected
 
     def test_multi_index_header(self):
+        # [FUNCTION DOC]
+        # Regression test (GH 5539). With a two-level column index, a list of four header names replaces the columns in the header row.
         # see gh-5539
         columns = MultiIndex.from_tuples([("a", 1), ("a", 2), ("b", 1), ("b", 2)])
         df = DataFrame([[1, 2, 3, 4], [5, 6, 7, 8]])
@@ -1360,6 +1491,8 @@ class TestDataFrameToCSV:
         assert result == expected
 
     def test_to_csv_single_level_multi_index(self):
+        # [FUNCTION DOC]
+        # Regression test (GH 26303). Columns that are one-element tuples are written as plain values (1 and 3) when reindexed to a subset.
         # see gh-26303
         index = Index([(1,), (2,), (3,)])
         df = DataFrame([[1, 2, 3]], columns=index)
@@ -1369,6 +1502,8 @@ class TestDataFrameToCSV:
         tm.assert_almost_equal(result, expected)
 
     def test_gz_lineend(self, tmp_path):
+        # [FUNCTION DOC]
+        # Regression test (GH 25311). Writing to a gzip path (after creating an empty file) produces text with the platform-normalized line endings as in the expected rows.
         # GH 25311
         df = DataFrame({"a": [1, 2]})
         expected_rows = ["a", "1", "2"]
@@ -1383,6 +1518,8 @@ class TestDataFrameToCSV:
         assert result == expected
 
     def test_to_csv_numpy_16_bug(self):
+        # [FUNCTION DOC]
+        # Writing a frame with a datetime column to a text buffer contains the formatted date.
         frame = DataFrame({"a": date_range("1/1/2000", periods=10)})
 
         buf = StringIO()
@@ -1392,6 +1529,8 @@ class TestDataFrameToCSV:
         assert "2000-01-01" in result
 
     def test_to_csv_na_quoting(self):
+        # [FUNCTION DOC]
+        # Regression test (GH 15891). Writing missing values with an empty na_rep to a string, no header or index, yields quoted empty strings on each line (carriage returns normalized).
         # GH 15891
         # Normalize carriage return for Windows OS
         result = (
@@ -1403,6 +1542,8 @@ class TestDataFrameToCSV:
         assert result == expected
 
     def test_to_csv_categorical_and_ea(self):
+        # [FUNCTION DOC]
+        # Regression test (GH 46812). A categorical column derived from nullable integers is written with the integer text and an empty field for missing.
         # GH#46812
         df = DataFrame({"a": "x", "b": [1, pd.NA]})
         df["b"] = df["b"].astype("Int16")
@@ -1413,6 +1554,8 @@ class TestDataFrameToCSV:
         assert result == expected
 
     def test_to_csv_categorical_and_interval(self):
+        # [FUNCTION DOC]
+        # Regression test (GH 46297). A categorical column of a closed-both timestamp interval is written as the quoted bracketed text.
         # GH#46297
         df = DataFrame(
             {
@@ -1432,6 +1575,8 @@ class TestDataFrameToCSV:
         assert result == expected
 
     def test_to_csv_warn_when_zip_tar_and_append_mode(self, tmp_path):
+        # [FUNCTION DOC]
+        # Regression test (GH 57875). Writing in append mode to a zip path or a tar path emits a runtime warning that these formats do not support append mode properly (other warnings are tolerated).
         # GH57875
         df = DataFrame({"a": [1, 2, 3]})
         msg = (
@@ -1451,6 +1596,8 @@ class TestDataFrameToCSV:
             df.to_csv(tar_path, mode="a")
 
     def test_to_csv_escape_quotechar(self):
+        # [FUNCTION DOC]
+        # Regression test (GH 61514). With quote character double-quote, escape character backslash and quoting none, embedded double quotes and commas are escaped with a backslash and missing values written as empty.
         # GH61514
         df = DataFrame(
             {

@@ -1,3 +1,9 @@
+# [MODULE DOC]
+# Tests for DataFrame.sort_index (and the Series counterpart in places): sorting rows or columns by label,
+# multi-level and categorical indexes, the level, sort_remaining, ascending, na_position, ignore_index,
+# inplace, kind and key options, and regression cases for lexsortedness of multi-indexes.
+# Two test classes plus several module-level tests; the key tests live in a separate class.
+
 import numpy as np
 import pytest
 
@@ -16,7 +22,11 @@ import pandas._testing as tm
 
 
 class TestDataFrameSortIndex:
+    # [CLASS DOC]
+    # Test container for sort_index with the standard options.
     def test_sort_index_and_reconstruction_doc_example(self):
+        # [FUNCTION DOC]
+        # Documentation example. A multi-index whose second level has unsorted level values ("bb" before "aa") is lexsorted by codes but not monotonic; sort_index yields a monotonic index and the expected frame with re-ordered levels. Re-sorting the levels of the sorted result with the private level-sorting helper gives the same.
         # doc example
         df = DataFrame(
             {"value": [1, 2, 3, 4]},
@@ -45,6 +55,8 @@ class TestDataFrameSortIndex:
         tm.assert_frame_equal(result, expected)
 
     def test_sort_index_non_existent_label_multiindex(self):
+        # [FUNCTION DOC]
+        # Regression test (GH 12261). Adding rows by label to an empty frame with an empty multi-index emits no warning and produces an index that sorts to a monotonic increasing index (checked to be exactly True).
         # GH#12261
         df = DataFrame(0, columns=[], index=MultiIndex.from_product([[], []]))
         with tm.assert_produces_warning(None):
@@ -54,6 +66,8 @@ class TestDataFrameSortIndex:
         assert result is True
 
     def test_sort_index_reorder_on_ops(self):
+        # [FUNCTION DOC]
+        # Regression test (GH 15687). After a group-by on two of three levels, applying a function that relabels the third level to two new labels and then sorting yields a multi-index with the sorted new labels and a nameless last level.
         # GH#15687
         df = DataFrame(
             np.random.default_rng(2).standard_normal((8, 2)),
@@ -66,6 +80,8 @@ class TestDataFrameSortIndex:
         df = df.sort_index()
 
         def my_func(group):
+            # [FUNCTION DOC]
+            # HELPER: group-apply function for the reorder test. Sets the group's index to the two labels newz then newa (the group must have two rows) and returns the same group; mutates the group in place.
             group.index = ["newz", "newa"]
             return group
 
@@ -78,6 +94,8 @@ class TestDataFrameSortIndex:
         tm.assert_index_equal(result.index, expected)
 
     def test_sort_index_nan_multiindex(self):
+        # [FUNCTION DOC]
+        # Regression test (GH 14784). Missing values in a multi-index sort last by default and with na_position last, and first with na_position first, for both a frame and a series. A larger frame with dropped rows gives the same whether dropping before or after sorting.
         # GH#14784
         # incorrect sorting w.r.t. nans
         tuples = [[12, 13], [np.nan, np.nan], [np.nan, 3], [1, 2]]
@@ -159,6 +177,8 @@ class TestDataFrameSortIndex:
         tm.assert_series_equal(result, expected)
 
     def test_sort_index_nan(self):
+        # [FUNCTION DOC]
+        # Regression test (GH 3917). A frame with a missing label in a numeric index: all four combinations of ascending flag and na_position put the missing label first or last as requested (quick sort kind is explicitly requested in several).
         # GH#3917
 
         # Test DataFrame with nan label
@@ -202,6 +222,8 @@ class TestDataFrameSortIndex:
         tm.assert_frame_equal(sorted_df, expected)
 
     def test_sort_index_multi_index(self):
+        # [FUNCTION DOC]
+        # Regression test (GH 25775). Sorting a three-level index by levels b then a (the remaining level c sorted afterwards) gives rows ordered by a with ties by c.
         # GH#25775, testing that sorting by index works with a multi-index.
         df = DataFrame(
             {"a": [3, 1, 2], "b": [0, 0, 0], "c": [0, 1, 2], "d": list("abc")}
@@ -216,6 +238,8 @@ class TestDataFrameSortIndex:
         tm.assert_frame_equal(result, expected)
 
     def test_sort_index_inplace(self):
+        # [FUNCTION DOC]
+        # Inplace sorting returns nothing and the sorted frame equals the expected frame for ascending and descending sorts along both axes. After the row sort the previously extracted column object is not the frame's current column (a weaker check than identity of memory, to avoid flakiness).
         frame = DataFrame(
             np.random.default_rng(2).standard_normal((4, 4)),
             index=[1, 2, 3, 4],
@@ -255,6 +279,9 @@ class TestDataFrameSortIndex:
         tm.assert_frame_equal(df, expected)
 
     def test_sort_index_different_sortorder(self):
+        # [FUNCTION DOC]
+        # Builds a 100-row frame with a shuffled two-level key and checks sorting by two levels with mixed order (first ascending, second descending, given as integers) against a lexicographic sort reference, for frame and for a series column.
+        # KNOWN ISSUE: the first computed expected frame (a plain take by the reference indexer on the unindexed frame) is immediately overwritten and never used.
         A = np.arange(20).repeat(5)
         B = np.tile(np.arange(5), 20)
 
@@ -281,6 +308,8 @@ class TestDataFrameSortIndex:
         tm.assert_series_equal(result, expected["C"])
 
     def test_sort_index_level(self):
+        # [FUNCTION DOC]
+        # A two-row multi-index frame: sorting by a single level or by the first two levels without sorting the remaining levels leaves the frame as is; sorting with level lists where the first-listed level is sorted last (GH 26053) puts the second row first.
         mi = MultiIndex.from_tuples([[1, 1, 3], [1, 1, 1]], names=list("ABC"))
         df = DataFrame([[1, 2], [3, 4]], mi)
 
@@ -307,6 +336,8 @@ class TestDataFrameSortIndex:
         tm.assert_frame_equal(result, expected)
 
     def test_sort_index_categorical_index(self):
+        # [FUNCTION DOC]
+        # Sorting a categorical-indexed frame orders by category order (c, a, b), not alphabetically; descending reverses it, with stable ordering within equal categories.
         df = DataFrame(
             {
                 "A": np.arange(6, dtype="int64"),
@@ -323,6 +354,8 @@ class TestDataFrameSortIndex:
         tm.assert_frame_equal(result, expected)
 
     def test_sort_index(self):
+        # [FUNCTION DOC]
+        # Regression test (GH 13496). Sorting rows by index labels (ascending/descending) and columns (axis 1, ascending/descending) restores or reverses the original frame.
         # GH#13496
 
         frame = DataFrame(
@@ -352,6 +385,8 @@ class TestDataFrameSortIndex:
 
     @pytest.mark.parametrize("level", ["A", 0])  # GH#21052
     def test_sort_index_multiindex(self, level):
+        # [FUNCTION DOC]
+        # Regression test (GH 13496, GH 21052). Parametrized over the level given by name (A) or position (0). Sorting by a level sorts rows by it (and then by the rest); with sort_remaining off only that level orders the rows, ties keep original order.
         # GH#13496
 
         # sort rows by specified level of multi-index
@@ -376,6 +411,8 @@ class TestDataFrameSortIndex:
         tm.assert_frame_equal(result, expected)
 
     def test_sort_index_intervalindex(self):
+        # [FUNCTION DOC]
+        # Builds series, a sign series and a binned (cut) series, groups by sign and bin, takes the mean and unstacks; the resulting column level categories are the four interval bins in bin order (right-closed). This verifies sorting follows the order of the bins.
         # this is a de-facto sort via unstack
         # confirming that we sort in the order of the bins
         y = Series(np.random.default_rng(2).standard_normal(100))
@@ -406,6 +443,8 @@ class TestDataFrameSortIndex:
     def test_sort_index_ignore_index(
         self, inplace, original_dict, sorted_dict, ascending, ignore_index, output_index
     ):
+        # [FUNCTION DOC]
+        # Regression test (GH 30114). Parametrized over inplace and four cases of ascending flag and ignore_index. The sorted frame has values in expected order and either a default integer index (ignore_index) or the sorted original labels; the source frame remains unchanged for the non-inplace case (compared against a fresh construction).
         # GH 30114
         original_index = [2, 5, 3]
         df = DataFrame(original_dict, index=original_index)
@@ -428,6 +467,8 @@ class TestDataFrameSortIndex:
     @pytest.mark.parametrize("inplace", [True, False])
     @pytest.mark.parametrize("ignore_index", [True, False])
     def test_respect_ignore_index(self, inplace, ignore_index):
+        # [FUNCTION DOC]
+        # Regression test (GH 43591). Parametrized over inplace and ignore_index with a decreasing range index sorted descending: with ignore_index the result has a default index; otherwise the index stays as the original descending range (already sorted descending).
         # GH 43591
         df = DataFrame({"a": [1, 2, 3]}, index=RangeIndex(4, -1, -2))
         result = df.sort_index(
@@ -480,6 +521,8 @@ class TestDataFrameSortIndex:
     def test_sort_index_ignore_index_multi_index(
         self, inplace, original_dict, sorted_dict, ascending, ignore_index, output_index
     ):
+        # [FUNCTION DOC]
+        # Regression test (GH 30114). Parametrized over inplace and four cases for a two-level index: with ignore_index the labels are replaced by a default integer index, otherwise the sorted multi-index (with names) is kept. The source frame remains unchanged.
         # GH 30114, this is to test ignore_index on MultiIndex of index
         mi = MultiIndex.from_tuples([(2, 1), (3, 4)], names=list("AB"))
         df = DataFrame(original_dict, index=mi)
@@ -501,6 +544,8 @@ class TestDataFrameSortIndex:
         tm.assert_frame_equal(df, DataFrame(original_dict, index=mi))
 
     def test_sort_index_categorical_multiindex(self):
+        # [FUNCTION DOC]
+        # Regression test (GH 15058). A multi-index with an ordered categorical first level (categories in order c, a, b) sorts by category order and then by the integer level.
         # GH#15058
         df = DataFrame(
             {
@@ -535,6 +580,8 @@ class TestDataFrameSortIndex:
         tm.assert_frame_equal(result, expected)
 
     def test_sort_index_and_reconstruction(self):
+        # [FUNCTION DOC]
+        # Regression test (GH 15622, GH 14015). The lexsortedness and sorted result are the same for a multi-index built from tuples, from a product, from levels and codes and from concatenation with keys. Also a column multi-index whose second level was converted to datetimes is not monotonic until sorted along axis 1 (with and without specifying level 1).
         # GH#15622
         # lexsortedness should be identical
         # across MultiIndex construction methods
@@ -595,6 +642,9 @@ class TestDataFrameSortIndex:
 
     # TODO: better name, de-duplicate with test_sort_index_level above
     def test_sort_index_level2(self, multiindex_dataframe_random_data):
+        # [FUNCTION DOC]
+        # Sorting a multi-index frame by level 0: a series column keeps the index names; the inplace variant returns nothing and equals the non-inplace result.
+        # KNOWN ISSUE: contains a comment about axis 1 and builds a frame with a reset integer index and a sorted series, neither of which is used in any assertion; the code has a TODO to give it a better name and de-duplicate it with the other level test.
         frame = multiindex_dataframe_random_data
 
         df = frame.copy()
@@ -615,6 +665,8 @@ class TestDataFrameSortIndex:
         tm.assert_frame_equal(rs, frame.sort_index(level=0))
 
     def test_sort_index_level_large_cardinality(self):
+        # [FUNCTION DOC]
+        # Regression test (GH 2684). Sorting by level 0 a three-level index with 4000 unique entries works for 64-bit and 32-bit integer data; the result is fully lexsorted (depth three) and the 32-bit data keeps its dtype.
         # GH#2684 (int64)
         index = MultiIndex.from_arrays([np.arange(4000)] * 3)
         df = DataFrame(
@@ -637,6 +689,8 @@ class TestDataFrameSortIndex:
         assert result.index._lexsort_depth == 3
 
     def test_sort_index_level_by_name(self, multiindex_dataframe_random_data):
+        # [FUNCTION DOC]
+        # Sorting by a level name gives the same result as sorting by its position.
         frame = multiindex_dataframe_random_data
 
         frame.index.names = ["first", "second"]
@@ -645,6 +699,8 @@ class TestDataFrameSortIndex:
         tm.assert_frame_equal(result, expected)
 
     def test_sort_index_level_mixed(self, multiindex_dataframe_random_data):
+        # [FUNCTION DOC]
+        # Adding a string column (or an extra string column label on the transposed frame sorted along axis 1) does not change the sort order of the other data.
         frame = multiindex_dataframe_random_data
 
         sorted_before = frame.sort_index(level=1)
@@ -665,6 +721,8 @@ class TestDataFrameSortIndex:
         )
 
     def test_sort_index_preserve_levels(self, multiindex_dataframe_random_data):
+        # [FUNCTION DOC]
+        # Sorting a multi-index frame keeps the index names.
         frame = multiindex_dataframe_random_data
 
         result = frame.sort_index()
@@ -688,6 +746,8 @@ class TestDataFrameSortIndex:
         ],
     )
     def test_sort_index_multilevel_repr_8017(self, gen, extra):
+        # [FUNCTION DOC]
+        # Regression test (GH 8017). Parametrized over float, integer, timestamp and string labels with an extra out-of-order label. After concatenating an extra column, the printed frame has a single sparsified top header (the first output line contains only the shared outer label). Sorting along axis 1 works on the single-dtype frame, the concatenated frame, and a frame to which the column was added by assignment, and gives the expected column order.
         data = np.random.default_rng(2).standard_normal((3, 4))
 
         columns = MultiIndex.from_tuples([("red", i) for i in gen])
@@ -739,6 +799,8 @@ class TestDataFrameSortIndex:
         ],
     )
     def test_sort_index_with_categories(self, categories):
+        # [FUNCTION DOC]
+        # Regression test (GH 23452). Parametrized over string categories and interval categories. After reversing the category order of an ordered categorical index, sorting orders the rows by the new category order.
         # GH#23452
         df = DataFrame(
             {"foo": range(len(categories))},
@@ -765,6 +827,8 @@ class TestDataFrameSortIndex:
         ],
     )
     def test_sort_index_ascending_bad_value_raises(self, ascending):
+        # [FUNCTION DOC]
+        # Regression test (GH 39434). Parametrized over invalid ascending values (none, a list with none, a list with a string); raises a value error saying the ascending argument expects a boolean.
         # GH 39434
         df = DataFrame(np.arange(64))
         length = len(df.index)
@@ -778,6 +842,8 @@ class TestDataFrameSortIndex:
         [(True, False), [True, False]],
     )
     def test_sort_index_ascending_tuple(self, ascending):
+        # [FUNCTION DOC]
+        # Parametrized over a tuple and a list for the ascending argument. Sorting a two-level index by both levels (levels given as a tuple of positions) with first ascending and second descending gives the expected row order.
         df = DataFrame(
             {
                 "legs": [4, 2, 4, 2, 2],
@@ -816,6 +882,8 @@ class TestDataFrameSortIndex:
         tm.assert_frame_equal(result, expected)
 
     def test_sort_index_level_on_range_index(self):
+        # [FUNCTION DOC]
+        # Regression test (GH 64383). Sorting by level name on a range index that was given a name no longer raises an assertion error and returns an equal frame.
         # GH#64383: sort_index with level= on a RangeIndex raised AssertionError
         df = DataFrame({"a": [1, 2, 3]})
         df.index.names = ["foo"]
@@ -824,7 +892,11 @@ class TestDataFrameSortIndex:
 
 
 class TestDataFrameSortIndexKey:
+    # [CLASS DOC]
+    # Test container for sort_index with the key option (a function applied to the index values before sorting).
     def test_sort_multi_index_key(self):
+        # [FUNCTION DOC]
+        # Regression test (GH 25775). Sorting a three-level index by levels a and c with an identity key and with a negating key gives the expected row orders.
         # GH 25775, testing that sorting by index works with a multi-index.
         df = DataFrame(
             {"a": [3, 1, 2], "b": [0, 0, 0], "c": [0, 1, 2], "d": list("abc")}
@@ -845,6 +917,8 @@ class TestDataFrameSortIndexKey:
         tm.assert_frame_equal(result, expected)
 
     def test_sort_index_key(self):  # issue 27237
+        # [FUNCTION DOC]
+        # Issue 27237. Default sorting orders upper-case labels first; with a lower-casing key ordering is case insensitive (stable within equal keys), ascending or descending.
         df = DataFrame(np.arange(6, dtype="int64"), index=list("aaBBca"))
 
         result = df.sort_index()
@@ -860,6 +934,8 @@ class TestDataFrameSortIndexKey:
         tm.assert_frame_equal(result, expected)
 
     def test_sort_index_key_int(self):
+        # [FUNCTION DOC]
+        # Integer index: a negating key equals descending sort; a scaling key keeps the order.
         df = DataFrame(np.arange(6, dtype="int64"), index=np.arange(6, dtype="int64"))
 
         result = df.sort_index()
@@ -873,6 +949,8 @@ class TestDataFrameSortIndexKey:
         tm.assert_frame_equal(result, df)
 
     def test_sort_multi_index_key_str(self):
+        # [FUNCTION DOC]
+        # Regression test (GH 25775). Sorting a multi-index by a string level with a lower-casing key; and by all three levels (referred to by name) with a key that lower-cases levels a and c but negates other levels. Both give the same case-insensitive order.
         # GH 25775, testing that sorting by index works with a multi-index.
         df = DataFrame(
             {"a": ["B", "a", "C"], "b": [0, 1, 0], "c": list("abc"), "d": [0, 1, 2]}
@@ -896,11 +974,15 @@ class TestDataFrameSortIndexKey:
         tm.assert_frame_equal(result, expected)
 
     def test_changes_length_raises(self):
+        # [FUNCTION DOC]
+        # A key function that returns fewer elements than the index raises a value error saying the key must not change the shape.
         df = DataFrame({"A": [1, 2, 3]})
         with pytest.raises(ValueError, match="change the shape"):
             df.sort_index(key=lambda x: x[:1])
 
     def test_sort_index_multiindex_sparse_column(self):
+        # [FUNCTION DOC]
+        # Regression test (GH 29735). Sorting by level 0 a multi-index frame with sparse columns (fill value zero) leaves the all-zero data equal, with the sparse dtype kept.
         # GH 29735, testing that sort_index on a multiindexed frame with sparse
         # columns fills with 0.
         expected = DataFrame(
@@ -916,6 +998,8 @@ class TestDataFrameSortIndexKey:
         tm.assert_frame_equal(result, expected)
 
     def test_sort_index_na_position(self):
+        # [FUNCTION DOC]
+        # Regression test (GH 51612). Sorting a two-level index containing a missing-value marker with na_position last leaves the already ordered frame unchanged.
         # GH#51612
         df = DataFrame([1, 2], index=MultiIndex.from_tuples([(1, 1), (1, pd.NA)]))
         expected = df.copy()
@@ -923,6 +1007,8 @@ class TestDataFrameSortIndexKey:
         tm.assert_frame_equal(result, expected)
 
     def test_sort_index_multiindex_sort_remaining(self, ascending):
+        # [FUNCTION DOC]
+        # Regression test (GH 24247). Uses the ascending fixture (true and false). Sorting by level 1 with sort_remaining off groups rows by second level (x before y when ascending, y before x when descending) while keeping the original relative order of rows within each group.
         # GH #24247
         df = DataFrame(
             {"A": [1, 2, 3, 4, 5], "B": [10, 20, 30, 40, 50]},
@@ -952,6 +1038,8 @@ class TestDataFrameSortIndexKey:
 
 
 def test_sort_index_with_sliced_multiindex():
+    # [FUNCTION DOC]
+    # Regression test (GH 55379). Sorting the first six rows of a multi-index with string second-level values returns a frame sorted lexicographically by both levels (so "45" comes after "25"), with names kept.
     # GH 55379
     mi = MultiIndex.from_tuples(
         [
@@ -991,6 +1079,8 @@ def test_sort_index_with_sliced_multiindex():
 
 
 def test_axis_columns_ignore_index():
+    # [FUNCTION DOC]
+    # Regression test (GH 56478). Sorting columns with ignore_index replaces the sorted column labels by a default integer range.
     # GH 56478
     df = DataFrame([[1, 2]], columns=["d", "c"])
     result = df.sort_index(axis="columns", ignore_index=True)
@@ -999,6 +1089,8 @@ def test_axis_columns_ignore_index():
 
 
 def test_axis_columns_ignore_index_ascending_false():
+    # [FUNCTION DOC]
+    # Regression test (GH 57293). Sorting columns in descending order with ignore_index on a frame with a three-level index keeps the data order of the columns (already descending by label) and replaces the labels by a two-element range index.
     # GH 57293
     df = DataFrame(
         {
@@ -1016,6 +1108,8 @@ def test_axis_columns_ignore_index_ascending_false():
 
 
 def test_sort_index_stable_sort():
+    # [FUNCTION DOC]
+    # Regression test (GH 57151). Sorting by the datetime index level with the stable kind keeps the original relative order of rows with equal timestamps.
     # GH 57151
     df = DataFrame(
         data=[

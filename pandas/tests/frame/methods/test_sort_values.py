@@ -1,3 +1,9 @@
+# [MODULE DOC]
+# Tests for DataFrame.sort_values: sorting by one or several columns (or rows when sorting along axis 1),
+# ascending flags, na_position, stability, inplace, ignore_index, the key option, datetimelike and
+# categorical data, and sorting by a mixture of index level names and column labels. Defines fixtures used
+# by the last test class (a frame, an index-based variant and a set of sort keys).
+
 import numpy as np
 import pytest
 
@@ -13,8 +19,12 @@ import pandas._testing as tm
 
 
 class TestDataFrameSortValues:
+    # [CLASS DOC]
+    # Test container for sort_values with the standard options.
     @pytest.mark.parametrize("dtype", [np.uint8, bool])
     def test_sort_values_sparse_no_warning(self, dtype):
+        # [FUNCTION DOC]
+        # Regression test (GH 45618). Parametrized over unsigned 8-bit and boolean dtypes. Sorting a frame of sparse dummy columns by all its columns emits no warning (in particular none about building an index from a sparse array).
         # GH#45618
         ser = pd.Series(Categorical(["a", "b", "a"], categories=["a", "b", "c"]))
         df = pd.get_dummies(ser, dtype=dtype, sparse=True)
@@ -24,6 +34,8 @@ class TestDataFrameSortValues:
             df.sort_values(by=df.columns.tolist())
 
     def test_sort_values(self):
+        # [FUNCTION DOC]
+        # Covers the basics on a 3x3 frame: sorting by one column ascending and descending (also with a one-element ascending list, GH 4839), by two columns with single or per-column ascending flags, an invalid axis raising a value error that no axis named 2 exists, sorting columns by a row label (axis 1, GH 10806) for single and multiple rows and orders, and a length mismatch between ascending and by raising a value error stating both lengths.
         frame = DataFrame(
             [[1, 1, 2], [3, 1, 0], [4, 5, 6]], index=[1, 2, 3], columns=list("ABC")
         )
@@ -86,6 +98,8 @@ class TestDataFrameSortValues:
             frame.sort_values(by=["A", "B"], axis=0, ascending=[True] * 5)
 
     def test_sort_values_by_empty_list(self):
+        # [FUNCTION DOC]
+        # Regression test for issue 40258. Sorting by an empty list returns an equal frame that is a new object.
         # https://github.com/pandas-dev/pandas/issues/40258
         expected = DataFrame({"a": [1, 4, 2, 5, 3, 6]})
         result = expected.sort_values(by=[])
@@ -93,6 +107,8 @@ class TestDataFrameSortValues:
         assert result is not expected
 
     def test_sort_values_inplace(self):
+        # [FUNCTION DOC]
+        # Inplace sorting returns nothing and equals the non-inplace result for sorting by one column, by a row label along axis 1, by one column descending, and by two columns descending.
         frame = DataFrame(
             np.random.default_rng(2).standard_normal((4, 4)),
             index=[1, 2, 3, 4],
@@ -126,6 +142,8 @@ class TestDataFrameSortValues:
         tm.assert_frame_equal(sorted_df, expected)
 
     def test_sort_values_multicolumn(self):
+        # [FUNCTION DOC]
+        # Sorting 100 rows by two columns holding shuffled integers equals a lexicographic reference ordering, for ascending, for descending (ranks reversed) and for swapped key order.
         A = np.arange(5).repeat(20)
         B = np.tile(np.arange(5), 20)
         np.random.default_rng(2).shuffle(A)
@@ -152,6 +170,8 @@ class TestDataFrameSortValues:
         tm.assert_frame_equal(result, expected)
 
     def test_sort_values_multicolumn_uint64(self):
+        # [FUNCTION DOC]
+        # Regression test (GH 9918). Two-column sort where the first column holds unsigned 64-bit values above the signed range orders the rows correctly (second row first).
         # GH#9918
         # uint64 multicolumn sort
 
@@ -175,6 +195,8 @@ class TestDataFrameSortValues:
         tm.assert_frame_equal(result, expected)
 
     def test_sort_values_nan(self):
+        # [FUNCTION DOC]
+        # Regression test (GH 3917). Missing values in one or two columns are placed first or last as requested with ascending, descending and mixed per-column ordering, and sorting along axis 1 by a row with missing values placed first.
         # GH#3917
         df = DataFrame(
             {"A": [1, 2, np.nan, 1, 6, 8, 4], "B": [9, np.nan, 5, 2, 5, 4, 5]}
@@ -232,6 +254,8 @@ class TestDataFrameSortValues:
         tm.assert_frame_equal(sorted_df, expected)
 
     def test_sort_values_stable_descending_sort(self):
+        # [FUNCTION DOC]
+        # Regression test (GH 6399). A descending merge sort on a column with ties keeps the original relative order of tied rows, so an already ordered frame is unchanged.
         # GH#6399
         df = DataFrame(
             [[2, "first"], [2, "second"], [1, "a"], [1, "b"]],
@@ -265,6 +289,8 @@ class TestDataFrameSortValues:
     def test_sort_values_stable_multicolumn_sort(
         self, expected_idx_non_na, ascending, na_position
     ):
+        # [FUNCTION DOC]
+        # Regression test (GH 38426). Parametrized over four expected orderings (from combinations of ascending flags for the two columns) and the na_position choice. A 15-row frame with ties and missing values is sorted by two columns; the result must equal taking the rows in the expected order (rows with missing values in the first column come first or last in original order).
         # GH#38426 Clarify sort_values with mult. columns / labels is stable
         df = DataFrame(
             {
@@ -286,6 +312,8 @@ class TestDataFrameSortValues:
         tm.assert_frame_equal(sorted_df, expected)
 
     def test_sort_values_stable_categorial(self):
+        # [FUNCTION DOC]
+        # Regression test (GH 16793). Merge sorting an already sorted ordered categorical column leaves the frame unchanged.
         # GH#16793
         df = DataFrame({"x": Categorical(np.repeat([1, 2, 3, 4], 5), ordered=True)})
         expected = df.copy()
@@ -293,6 +321,8 @@ class TestDataFrameSortValues:
         tm.assert_frame_equal(sorted_df, expected)
 
     def test_sort_values_datetimes(self):
+        # [FUNCTION DOC]
+        # Regression test (GH 3461). Sorting by a string column, a datetime column, or a constant float column followed by the datetime column gives the same result whether the key is given as a label or a one-element list, and sorting by the constant plus datetime equals sorting by the datetime alone.
         # GH#3461, argsort / lexsort differences for a datetime column
         df = DataFrame(
             ["a", "a", "a", "b", "c", "d", "e", "f", "g"],
@@ -331,6 +361,9 @@ class TestDataFrameSortValues:
         tm.assert_frame_equal(df1, df2)
 
     def test_sort_values_frame_column_inplace_sort_exception(self, float_frame):
+        # [FUNCTION DOC]
+        # Sorting a column extracted from a frame in place changes only the extracted series (it is a new object under copy-on-write), not the frame; a copy of that series can then also be sorted.
+        # KNOWN ISSUE: the name refers to an exception but nothing here raises or expects an exception.
         s = float_frame["A"]
         float_frame_orig = float_frame.copy()
         # INFO(CoW) Series is a new object, so can be changed inplace
@@ -344,6 +377,8 @@ class TestDataFrameSortValues:
         cp.sort_values()  # it works!
 
     def test_sort_values_nat_values_in_int_column(self):
+        # [FUNCTION DOC]
+        # Regression test (GH 14922). The raw integer value of NaT in an integer column must not be treated as missing, so na_position does not change the order; with a datetime column the NaT is still treated as missing, going first or last as requested and ignoring the ascending flag when it is last.
         # GH#14922: "sorting with large float and multiple columns incorrect"
 
         # cause was that the int64 value NaT was considered as "na". Which is
@@ -398,6 +433,8 @@ class TestDataFrameSortValues:
         tm.assert_frame_equal(df_sorted, df)
 
     def test_sort_nat(self):
+        # [FUNCTION DOC]
+        # Regression test (GH 16836). Sorting by two datetime columns where one value is missing puts the row with the missing value last in the first column order.
         # GH 16836
 
         d1 = [Timestamp(x) for x in ["2016-01-01", "2015-01-01", np.nan, "2016-01-01"]]
@@ -417,6 +454,8 @@ class TestDataFrameSortValues:
         tm.assert_frame_equal(sorted_df, expected)
 
     def test_sort_values_na_position_with_categories(self):
+        # [FUNCTION DOC]
+        # Regression test (GH 22556). Missing values in an ordered categorical column are placed first or last as requested, for ascending and descending, with the non-missing values in category order.
         # GH#22556
         # Positioning missing value properly when column is Categorical.
         categories = ["A", "B", "C"]
@@ -503,6 +542,10 @@ class TestDataFrameSortValues:
         tm.assert_frame_equal(result, expected)
 
     def test_sort_values_nat(self):
+        # [FUNCTION DOC]
+        # Regression test (GH 16836).
+        # KNOWN ISSUE: the body is identical to the earlier test_sort_nat (same data, same call, same expectation), so it is a duplicate test.
+        # Sorting by two datetime columns with a missing value puts the row with the missing value last.
         # GH#16836
 
         d1 = [Timestamp(x) for x in ["2016-01-01", "2015-01-01", np.nan, "2016-01-01"]]
@@ -522,6 +565,8 @@ class TestDataFrameSortValues:
         tm.assert_frame_equal(sorted_df, expected)
 
     def test_sort_values_na_position_with_categories_raises(self):
+        # [FUNCTION DOC]
+        # An invalid na_position string with a categorical column raises a value error naming the invalid position.
         df = DataFrame(
             {
                 "c": Categorical(
@@ -558,6 +603,8 @@ class TestDataFrameSortValues:
     def test_sort_values_ignore_index(
         self, inplace, original_dict, sorted_dict, ignore_index, output_index
     ):
+        # [FUNCTION DOC]
+        # Regression test (GH 30114). Parametrized over inplace, one or two columns, and ignore_index. Sorting descending by column A gives the expected values with either a default integer index (ignore_index) or the original reversed labels; the source frame is unchanged for the non-inplace case.
         # GH 30114
         df = DataFrame(original_dict)
         expected = DataFrame(sorted_dict, index=output_index)
@@ -573,6 +620,8 @@ class TestDataFrameSortValues:
         tm.assert_frame_equal(df, DataFrame(original_dict))
 
     def test_sort_values_nat_na_position_default(self):
+        # [FUNCTION DOC]
+        # Regression test (GH 13230). Sorting by an integer column and a datetime column where the last row has NaT leaves an already ordered frame unchanged, i.e. NaT sorts last by default.
         # GH 13230
         expected = DataFrame(
             {
@@ -592,6 +641,8 @@ class TestDataFrameSortValues:
         tm.assert_frame_equal(result, expected)
 
     def test_sort_values_reshaping(self):
+        # [FUNCTION DOC]
+        # Regression test (GH 39426). Sorting a one-row frame of 21 columns along axis 1 by its row with ignore_index leaves it unchanged.
         # GH 39426
         values = list(range(21))
         expected = DataFrame([values], columns=values)
@@ -600,6 +651,8 @@ class TestDataFrameSortValues:
         tm.assert_frame_equal(df, expected)
 
     def test_sort_values_no_by_inplace(self):
+        # [FUNCTION DOC]
+        # Regression test (GH 50643). Inplace sorting by an empty list returns nothing and leaves the frame unchanged.
         # GH#50643
         df = DataFrame({"a": [1, 2, 3]})
         expected = df.copy()
@@ -608,6 +661,8 @@ class TestDataFrameSortValues:
         assert result is None
 
     def test_sort_values_no_op_reset_index(self):
+        # [FUNCTION DOC]
+        # Regression test (GH 52553). An already sorted frame sorted with ignore_index gets a default integer index.
         # GH#52553
         df = DataFrame({"A": [10, 20], "B": [1, 5]}, index=[2, 3])
         result = df.sort_values(by="A", ignore_index=True)
@@ -615,6 +670,8 @@ class TestDataFrameSortValues:
         tm.assert_frame_equal(result, expected)
 
     def test_sort_by_column_named_none(self):
+        # [FUNCTION DOC]
+        # Regression test (GH 61512). When a column label is None, sorting with by set to None sorts by that column (rows reorder to put 2 before 3).
         # GH#61512
         df = DataFrame([[3, 1], [2, 2]], columns=[None, "C1"])
         result = df.sort_values(by=None)
@@ -623,7 +680,11 @@ class TestDataFrameSortValues:
 
 
 class TestDataFrameSortKey:  # test key sorting (issue 27237)
+    # [CLASS DOC]
+    # Test container for sort_values with the key option (a function applied to the values before sorting); see issue 27237. Uses the sort_by_key fixture from the shared test configuration.
     def test_sort_values_inplace_key(self, sort_by_key):
+        # [FUNCTION DOC]
+        # Inplace variants (single column, row on axis 1, descending, two columns) with the parametrized key function give nothing returned and the same result as the non-inplace sort.
         frame = DataFrame(
             np.random.default_rng(2).standard_normal((4, 4)),
             index=[1, 2, 3, 4],
@@ -660,6 +721,8 @@ class TestDataFrameSortKey:  # test key sorting (issue 27237)
         tm.assert_frame_equal(sorted_df, expected)
 
     def test_sort_values_key(self):
+        # [FUNCTION DOC]
+        # Sorting a single column with missing values: default, with a shifting key (order unchanged) and with a negating key plus descending order give the same row order, with missing values last.
         df = DataFrame(np.array([0, 5, np.nan, 3, 2, np.nan]))
 
         result = df.sort_values(0)
@@ -675,6 +738,8 @@ class TestDataFrameSortKey:  # test key sorting (issue 27237)
         tm.assert_frame_equal(result, expected)
 
     def test_sort_values_by_key(self):
+        # [FUNCTION DOC]
+        # Sorting by one and by two columns with a negating key, ascending and descending, gives the expected row orders with missing rows last.
         df = DataFrame(
             {
                 "a": np.array([0, 3, np.nan, 3, 2, np.nan]),
@@ -695,6 +760,8 @@ class TestDataFrameSortKey:  # test key sorting (issue 27237)
         tm.assert_frame_equal(result, expected)
 
     def test_sort_values_by_key_by_name(self):
+        # [FUNCTION DOC]
+        # Key function receives each column separately and can depend on its name. A key that negates only column a: sorting by a or by a list with a, by b (unaffected) and by both give the expected row orders.
         df = DataFrame(
             {
                 "a": np.array([0, 3, np.nan, 3, 2, np.nan]),
@@ -703,6 +770,8 @@ class TestDataFrameSortKey:  # test key sorting (issue 27237)
         )
 
         def key(col):
+            # [FUNCTION DOC]
+            # HELPER: key function for the by-name test. Takes a column (series); returns its negation when the column is named a, otherwise returns it unchanged.
             if col.name == "a":
                 return -col
             else:
@@ -725,6 +794,8 @@ class TestDataFrameSortKey:  # test key sorting (issue 27237)
         tm.assert_frame_equal(result, expected)
 
     def test_sort_values_key_string(self):
+        # [FUNCTION DOC]
+        # Sorting string data: default order by the second column; case-insensitive key over two columns leaves the frame as is; with descending order equals sorting by the second column descending with the same key.
         df = DataFrame(np.array([["hello", "goodbye"], ["hello", "Hello"]]))
 
         result = df.sort_values(1)
@@ -741,17 +812,23 @@ class TestDataFrameSortKey:  # test key sorting (issue 27237)
         tm.assert_frame_equal(result, expected)
 
     def test_sort_values_key_empty(self, sort_by_key):
+        # [FUNCTION DOC]
+        # Sorting an empty frame by a label with the key fixture, and sorting its index with the key, does not raise (no assertions).
         df = DataFrame(np.array([]))
 
         df.sort_values(0, key=sort_by_key)
         df.sort_index(key=sort_by_key)
 
     def test_changes_length_raises(self):
+        # [FUNCTION DOC]
+        # A key function that returns fewer elements than the column raises a value error saying the key must not change the shape.
         df = DataFrame({"A": [1, 2, 3]})
         with pytest.raises(ValueError, match="change the shape"):
             df.sort_values("A", key=lambda x: x[:1])
 
     def test_sort_values_key_axes(self):
+        # [FUNCTION DOC]
+        # Key applied along rows: lower-casing a string column and negating a numeric column both reverse the two-row frame.
         df = DataFrame({0: ["Hello", "goodbye"], 1: [0, 1]})
 
         result = df.sort_values(0, key=lambda col: col.str.lower())
@@ -763,6 +840,8 @@ class TestDataFrameSortKey:  # test key sorting (issue 27237)
         tm.assert_frame_equal(result, expected)
 
     def test_sort_values_key_dict_axis(self):
+        # [FUNCTION DOC]
+        # Key applied when sorting columns along axis 1 by a row (lower-casing a string row; negating a numeric row) reverses the two columns.
         df = DataFrame({0: ["Hello", 0], 1: ["goodbye", 1]})
 
         result = df.sort_values(0, key=lambda col: col.str.lower(), axis=1)
@@ -775,11 +854,15 @@ class TestDataFrameSortKey:  # test key sorting (issue 27237)
 
     @pytest.mark.parametrize("ordered", [True, False])
     def test_sort_values_key_casts_to_categorical(self, ordered):
+        # [FUNCTION DOC]
+        # Parametrized over ordered and unordered. Regression for issue 36383. A key that converts the string column to a categorical with reversed category order is respected: sorting by an all-equal column then the string column gives reverse alphabetical row order. Other columns are returned unchanged by the key.
         # https://github.com/pandas-dev/pandas/issues/36383
         categories = ["c", "b", "a"]
         df = DataFrame({"x": [1, 1, 1], "y": ["a", "b", "c"]})
 
         def sorter(key):
+            # [FUNCTION DOC]
+            # HELPER: key function for the categorical test. Takes a column (series); for the column named y returns a series of categorical values with the reversed category list and the given ordered flag, otherwise returns the column unchanged.
             if key.name == "y":
                 return pd.Series(
                     Categorical(key, categories=categories, ordered=ordered)
@@ -796,6 +879,8 @@ class TestDataFrameSortKey:  # test key sorting (issue 27237)
 
 @pytest.fixture
 def df_none():
+    # [FUNCTION DOC]
+    # Fixture: returns a six-row frame with a string column outer, an integer column inner, a descending integer column A and a column labeled by a tuple holding strings. Used as the reference for sorting by index levels and columns.
     return DataFrame(
         {
             "outer": ["a", "a", "a", "b", "b", "b"],
@@ -808,6 +893,8 @@ def df_none():
 
 @pytest.fixture(params=[["outer"], ["outer", "inner"]])
 def df_idx(request, df_none):
+    # [FUNCTION DOC]
+    # Parametrized fixture (index of just outer, or outer plus inner). Returns the df_none frame with those columns set as the (multi-)index.
     levels = request.param
     return df_none.set_index(levels)
 
@@ -825,13 +912,20 @@ def df_idx(request, df_none):
     ]
 )
 def sort_names(request):
+    # [FUNCTION DOC]
+    # Parametrized fixture providing eight sort-key specifications: an index level name, a list with one level, a column name, a list with a tuple column label, two level names, a level and a column, two columns, and a repeat of two levels.
+    # KNOWN ISSUE: the last parameter duplicates the fifth (two index levels) although its comment says it combines two index levels and a column.
     return request.param
 
 
 class TestSortValuesLevelAsStr:
+    # [CLASS DOC]
+    # Test container for sorting by a mixture of index level names and column labels (GH 14353).
     def test_sort_index_level_and_column_label(
         self, df_none, df_idx, sort_names, ascending, request
     ):
+        # [FUNCTION DOC]
+        # Uses the reference frame, its indexed variant, the sort key fixture and the ascending fixture. For the case with id df_idx0-inner-True the test is marked as an allowed failure (non-strict) because of an unstable sort of duplicates with newer numpy. Sorting the indexed frame by the given names gives the same as sorting the reference by those columns then setting the index.
         # GH#14353
         if request.node.callspec.id == "df_idx0-inner-True":
             request.applymarker(
@@ -860,6 +954,8 @@ class TestSortValuesLevelAsStr:
     def test_sort_column_level_and_index_label(
         self, df_none, df_idx, sort_names, ascending, request
     ):
+        # [FUNCTION DOC]
+        # Same idea transposed: sorting the transposed indexed frame along axis 1 by names equals sorting the reference by columns, setting the index and transposing. The test unconditionally marks itself as a non-strict expected failure (unstable sorting of duplicates) before comparing.
         # GH#14353
 
         # Get levels from df_idx
@@ -890,6 +986,8 @@ class TestSortValuesLevelAsStr:
         tm.assert_frame_equal(result, expected)
 
     def test_sort_values_validate_ascending_for_value_error(self):
+        # [FUNCTION DOC]
+        # Regression test (GH 41634). Passing a string as the ascending flag raises a value error saying the argument expects a boolean and received a string.
         # GH41634
         df = DataFrame({"D": [23, 7, 21]})
 
@@ -898,6 +996,8 @@ class TestSortValuesLevelAsStr:
             df.sort_values(by="D", ascending="False")
 
     def test_sort_values_validate_ascending_functional(self, ascending):
+        # [FUNCTION DOC]
+        # Using the ascending fixture, sorting a single column gives the same as selecting rows by the (reversed when descending) argsort order.
         df = DataFrame({"D": [23, 7, 21]})
         indexer = df["D"].argsort().values
 

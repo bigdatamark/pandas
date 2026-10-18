@@ -1,3 +1,8 @@
+# [MODULE DOC]
+# Tests for DataFrame.to_dict: every orient option (dict, list, series, split, tight, records, index), the into
+# argument (dict, ordered and default dictionaries), scalar boxing to native Python types, missing-value
+# handling, duplicate labels and error cases.
+
 from collections import (
     OrderedDict,
     defaultdict,
@@ -25,7 +30,12 @@ import pandas._testing as tm
 
 
 class TestDataFrameToDict:
+    # [CLASS DOC]
+    # Test container for to_dict.
     def test_to_dict_timestamp(self):
+        # [FUNCTION DOC]
+        # Regression test (GH 11247). For frames with all-timestamp and mixed timestamp/integer columns, the records, series and
+        # split orients must hold Timestamp objects (not raw numpy datetime values) and match the expected structures.
         # GH#11247
         # split/records producing np.datetime64 rather than Timestamps
         # on datetime64[ns] dtypes only
@@ -71,6 +81,8 @@ class TestDataFrameToDict:
         )
 
     def test_to_dict_index_not_unique_with_index_orient(self):
+        # [FUNCTION DOC]
+        # Regression test (GH 22801). The index orient on a frame with duplicate index labels raises a value error that the index must be unique for that orient.
         # GH#22801
         # Data loss when indexes are not unique. Raise ValueError.
         df = DataFrame({"a": [1, 2], "b": [0.5, 0.75]}, index=["A", "A"])
@@ -79,6 +91,8 @@ class TestDataFrameToDict:
             df.to_dict(orient="index")
 
     def test_to_dict_invalid_orient(self):
+        # [FUNCTION DOC]
+        # An unknown orient value raises a value error saying the orient is not understood.
         df = DataFrame({"A": [0, 1]})
         msg = "orient 'xinvalid' not understood"
         with pytest.raises(ValueError, match=msg):
@@ -86,6 +100,8 @@ class TestDataFrameToDict:
 
     @pytest.mark.parametrize("orient", ["d", "l", "r", "sp", "s", "i"])
     def test_to_dict_short_orient_raises(self, orient):
+        # [FUNCTION DOC]
+        # Regression test (GH 32515). Parametrized over abbreviated orient values (single letters and short forms); each raises a value error because abbreviations are not accepted.
         # GH#32515
         df = DataFrame({"A": [0, 1]})
         with pytest.raises(ValueError, match="not understood"):
@@ -93,6 +109,11 @@ class TestDataFrameToDict:
 
     @pytest.mark.parametrize("mapping", [dict, defaultdict(list), OrderedDict])
     def test_to_dict(self, mapping):
+        # [FUNCTION DOC]
+        # Parametrized over the into argument: dict, an initialized default dictionary, and ordered dictionary. For a frame with a float column with a gap
+        # and a string column, checks the default orient (nested by column then index), list, series, split (columns, index, data with NaN), records
+        # (list of three row dictionaries) and index orients, including an index orient case with a duplicated column (GH 10844, GH 16122).
+        # KNOWN ISSUE: the leading comment says the orient should only take listed options, which belongs to the separate short-orient test; this test checks conversion results. The index orient calls do not pass the into argument.
         # orient= should only take the listed options
         # see GH#32515
         test_data = {"A": {"1": 1, "2": 2}, "B": {"1": "1", "2": "2", "3": "3"}}
@@ -153,6 +174,9 @@ class TestDataFrameToDict:
 
     @pytest.mark.parametrize("mapping", [list, defaultdict, []])
     def test_to_dict_errors(self, mapping):
+        # [FUNCTION DOC]
+        # Regression test (GH 16122). Parametrized over invalid into values (the list type, the uninitialized default dictionary type, and an empty list instance); each must
+        # raise a type error about an unsupported type or that only initialized default dictionaries are accepted.
         # GH#16122
         df = DataFrame(np.random.default_rng(2).standard_normal((3, 3)))
         msg = "|".join(
@@ -165,6 +189,8 @@ class TestDataFrameToDict:
             df.to_dict(into=mapping)
 
     def test_to_dict_not_unique_warning(self):
+        # [FUNCTION DOC]
+        # Regression test (GH 16927). A frame with a repeated column label produces a user warning that columns will be omitted when converting with the default orient.
         # GH#16927: When converting to a dict, if a column has a non-unique name
         # it will be dropped, throwing a warning.
         df = DataFrame([[1, 2, 3]], columns=["a", "a", "b"])
@@ -180,6 +206,8 @@ class TestDataFrameToDict:
         ],
     )
     def test_to_dict_not_unique(self, orient, expected):
+        # [FUNCTION DOC]
+        # Regression test (GH 54824). Parametrized over list and dict orients; user warnings are ignored. With repeated column label A, the result keeps the last A column (values 2, 5) alongside B, uniformly in both orients.
         # GH#54824: This is to make sure that dataframes with non-unique column
         # would have uniform behavior throughout different orients
         df = DataFrame([[1, 2, 3], [4, 5, 6]], columns=["A", "A", "B"])
@@ -200,6 +228,8 @@ class TestDataFrameToDict:
         ],
     )
     def test_to_dict_box_scalars(self, orient, item_getter):
+        # [FUNCTION DOC]
+        # Regression test (GH 14216, GH 23753). Parametrized over orient and an accessor function that retrieves a cell from that orient's result layout. Integer cells come out as the native integer type and float cells as the native float type.
         # GH#14216, GH#23753
         # make sure that we are boxing properly
         df = DataFrame({"a": [1, 2], "b": [0.1, 0.2]})
@@ -208,6 +238,8 @@ class TestDataFrameToDict:
         assert isinstance(item_getter(result, "b", 0), float)
 
     def test_to_dict_tz(self):
+        # [FUNCTION DOC]
+        # Regression test (GH 18372). A timezone-aware datetime column in the records orient gives Timestamp values with the original UTC zone and microsecond precision.
         # GH#18372 When converting to dict with orient='records' columns of
         # datetime that are tz-aware were not converted to required arrays
         data = [
@@ -259,6 +291,8 @@ class TestDataFrameToDict:
         ],
     )
     def test_to_dict_index_dtypes(self, into, expected):
+        # [FUNCTION DOC]
+        # Regression test (GH 18580). Parametrized over into types. With the index orient on integer and float columns, integer values must not be cast to float; round-tripping through frame construction equals the expected frame.
         # GH#18580
         # When using to_dict(orient='index') on a dataframe with int
         # and float columns only the int columns were cast to float
@@ -272,6 +306,8 @@ class TestDataFrameToDict:
         tm.assert_frame_equal(result, expected)
 
     def test_to_dict_numeric_names(self):
+        # [FUNCTION DOC]
+        # Regression test (GH 24940). Records for a frame whose column labels are digit strings have exactly the column labels as keys.
         # GH#24940
         df = DataFrame({str(i): [i] for i in range(5)})
         result = set(df.to_dict("records")[0].keys())
@@ -279,6 +315,8 @@ class TestDataFrameToDict:
         assert result == expected
 
     def test_to_dict_wide(self):
+        # [FUNCTION DOC]
+        # Regression test (GH 24939). A frame with 256 columns converts to a single record dictionary with all the values.
         # GH#24939
         df = DataFrame({(f"A_{i:d}"): [i] for i in range(256)})
         result = df.to_dict("records")[0]
@@ -303,6 +341,8 @@ class TestDataFrameToDict:
         ),
     )
     def test_to_dict_orient_dtype(self, data, dtype):
+        # [FUNCTION DOC]
+        # Regression test (GH 22620, GH 21256). Parametrized over data of bool, datetime (Timestamp), float, int and str: in records orient every value has exactly the expected native or pandas scalar type.
         # GH22620 & GH21256
 
         df = DataFrame({"a": data})
@@ -320,6 +360,8 @@ class TestDataFrameToDict:
         ),
     )
     def test_to_dict_scalar_constructor_orient_dtype(self, data, expected_dtype):
+        # [FUNCTION DOC]
+        # Regression test (GH 22620, GH 21256). Parametrized over numpy scalar values (unsigned and signed integers, float, boolean, datetime). A frame built from a single scalar with explicit index gives, in records orient, the native integer, float, boolean or Timestamp type respectively.
         # GH22620 & GH21256
 
         df = DataFrame({"a": data}, index=[0])
@@ -328,6 +370,8 @@ class TestDataFrameToDict:
         assert result is expected_dtype
 
     def test_to_dict_mixed_numeric_frame(self):
+        # [FUNCTION DOC]
+        # Regression test (GH 12859). Resetting the index of a float frame and converting to records gives an integer index value next to floats.
         # GH 12859
         df = DataFrame({"a": [1.0], "b": [9.0]})
         result = df.reset_index().to_dict("records")
@@ -355,6 +399,8 @@ class TestDataFrameToDict:
         ],
     )
     def test_to_dict_orient_tight(self, index, columns):
+        # [FUNCTION DOC]
+        # Parametrized over five index kinds (default, plain, named, multi-level, named multi-level) and five column kinds (list, plain, named, multi-level, named multi-level). The tight orient output, given back to the dict constructor with the tight orient, round-trips to a frame equal to the original (names preserved).
         df = DataFrame.from_records(
             [[1, 3], [2, 4]],
             columns=columns,
@@ -412,6 +458,8 @@ class TestDataFrameToDict:
         ),
     )
     def test_to_dict_returns_native_types(self, orient, data, expected_types):
+        # [FUNCTION DOC]
+        # Regression test (GH 46751). Parametrized over every orient (dict, list, split, records, index, tight) and three datasets (numpy scalars mixed with Python objects including list and tuple, plain Python numbers, and object columns with strings). For each orient the cells are walked using a layout-specific iterator; each value must equal the source value and be exactly the expected native type.
         # GH 46751
         # Tests we get back native types for all orient types
         df = DataFrame(data)
@@ -453,6 +501,8 @@ class TestDataFrameToDict:
 
     @pytest.mark.parametrize("orient", ["dict", "list", "series", "records", "index"])
     def test_to_dict_index_false_error(self, orient):
+        # [FUNCTION DOC]
+        # Regression test (GH 46398). Parametrized over orients other than split and tight: turning off the index raises a value error saying that option is only valid for split or tight.
         # GH#46398
         df = DataFrame({"col1": [1, 2], "col2": [3, 4]}, index=["row1", "row2"])
         msg = "'index=False' is only valid when 'orient' is 'split' or 'tight'"
@@ -474,6 +524,8 @@ class TestDataFrameToDict:
         ],
     )
     def test_to_dict_index_false(self, orient, expected):
+        # [FUNCTION DOC]
+        # Regression test (GH 46398). Parametrized over split and tight orients: with the index turned off the result omits the index entries (and index names) and keeps the columns, data, and for tight the column names.
         # GH#46398
         df = DataFrame({"col1": [1, 2], "col2": [3, 4]}, index=["row1", "row2"])
         result = df.to_dict(orient=orient, index=False)
@@ -500,12 +552,16 @@ class TestDataFrameToDict:
         ],
     )
     def test_to_dict_na_to_none(self, orient, expected):
+        # [FUNCTION DOC]
+        # Regression test (GH 50795). Parametrized over all six orients. A nullable integer column holding a missing value yields None (not a missing-value marker) in the output of every orient, including the tight orient's name lists.
         # GH#50795
         df = DataFrame({"a": [1, NA]}, dtype="Int64")
         result = df.to_dict(orient=orient)
         assert result == expected
 
     def test_to_dict_masked_native_python(self):
+        # [FUNCTION DOC]
+        # Regression test (GH 34665). Values of a nullable integer column in records orient are native integers, both without and with a missing value (checking only the first record).
         # GH#34665
         df = DataFrame({"a": Series([1, 2], dtype="Int64"), "B": 1})
         result = df.to_dict(orient="records")
@@ -516,6 +572,8 @@ class TestDataFrameToDict:
         assert isinstance(result[0]["a"], int)
 
     def test_to_dict_tight_no_warning_with_duplicate_column(self):
+        # [FUNCTION DOC]
+        # Regression test (GH 58281). The tight orient on a frame with repeated column labels emits no warning and returns all columns, data, and name lists.
         # GH#58281
         df = DataFrame([[1, 2], [3, 4], [5, 6]], columns=["A", "A"])
         with tm.assert_produces_warning(None):
@@ -534,6 +592,8 @@ class TestDataFrameToDict:
     "val", [Timestamp(2020, 1, 1), Timedelta(1), Period("2020"), Interval(1, 2)]
 )
 def test_to_dict_list_pd_scalars(val):
+    # [FUNCTION DOC]
+    # Regression test (GH 54824). Parametrized over Timestamp, Timedelta, Period and Interval scalars. The list orient keeps those scalars as the pandas types.
     # GH 54824
     df = DataFrame({"a": [val]})
     result = df.to_dict(orient="list")

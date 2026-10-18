@@ -1,3 +1,7 @@
+# [MODULE DOC]
+# Tests for to_timestamp on DataFrame and Series (convert a period index or period columns to timestamps).
+# Includes one module-level helper that builds expected year-end date ranges.
+
 from datetime import timedelta
 
 import numpy as np
@@ -17,6 +21,11 @@ import pandas._testing as tm
 
 
 def _get_with_delta(delta, freq="YE-DEC"):
+    # [FUNCTION DOC]
+    # HELPER: builds the expected index for the to_timestamp tests.
+    # Takes a time offset (delta) and an optional frequency string (default: year-end in December).
+    # Returns a datetime index running from 2001-01-01 plus the offset to 2009-12-31 plus the offset at that frequency.
+    # No side effects.
     return date_range(
         to_datetime("1/1/2001") + delta,
         to_datetime("12/31/2009") + delta,
@@ -25,7 +34,15 @@ def _get_with_delta(delta, freq="YE-DEC"):
 
 
 class TestToTimestamp:
+    # [CLASS DOC]
+    # Test container for to_timestamp on frames and series with period axes.
     def test_to_timestamp(self, frame_or_series):
+        # [FUNCTION DOC]
+        # Builds a yearly period-indexed frame (random floats plus a string column), wrapped as frame or series by the
+        # fixture. Checks the converted index and unchanged values for: target frequency day with end anchoring (end of each year's
+        # last day, one microsecond before the next day), day with start anchoring and the start keyword alone (year-start dates),
+        # and hour, minute and second target frequencies with end anchoring (each expected index is the year-end shifted by the
+        # corresponding delta then by one unit minus one microsecond). For series also asserts the name is kept.
         K = 5
         index = period_range(freq="Y", start="1/1/2001", end="12/1/2009")
         obj = DataFrame(
@@ -70,6 +87,11 @@ class TestToTimestamp:
         tm.assert_index_equal(result.index, exp_index)
 
     def test_to_timestamp_columns(self):
+        # [FUNCTION DOC]
+        # Same checks as the row-wise test, applied to the transposed frame converting the column axis (axis 1):
+        # day, hour, minute and second targets with end anchoring and day target with start anchoring.
+        # Also checks that a five-minute target and a one-minute target both give a datetime column index equal to year-start
+        # dates with year-start January frequency (the target frequency is ignored for the inferred frequency).
         K = 5
         index = period_range(freq="Y", start="1/1/2001", end="12/1/2009")
         df = DataFrame(
@@ -122,6 +144,8 @@ class TestToTimestamp:
         assert result2.columns.freqstr == "YS-JAN"
 
     def test_to_timestamp_invalid_axis(self):
+        # [FUNCTION DOC]
+        # Passing axis 2 must raise a value error whose message mentions the axis.
         index = period_range(freq="Y", start="1/1/2001", end="12/1/2009")
         obj = DataFrame(
             np.random.default_rng(2).standard_normal((len(index), 5)), index=index
@@ -132,6 +156,10 @@ class TestToTimestamp:
             obj.to_timestamp(axis=2)
 
     def test_to_timestamp_hourly(self, frame_or_series):
+        # [FUNCTION DOC]
+        # Series (or one-column frame) with hourly periods and a name. Converting with end anchoring gives
+        # timestamps at the last microsecond of each hour (expected index built from the last second of the hour
+        # plus a second minus a microsecond); for series the name is kept.
         index = period_range(freq="h", start="1/1/2001", end="1/2/2001")
         obj = Series(1, index=index, name="foo")
         if frame_or_series is not Series:
@@ -145,6 +173,9 @@ class TestToTimestamp:
             assert result.name == "foo"
 
     def test_to_timestamp_raises(self, index, frame_or_series):
+        # [FUNCTION DOC]
+        # Regression test (GH 33327). For every index type from the index fixture other than period index, an empty
+        # object built on it must raise a type error stating that the index type is unsupported.
         # GH#33327
         obj = frame_or_series(index=index, dtype=object)
 
