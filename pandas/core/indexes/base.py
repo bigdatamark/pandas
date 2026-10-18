@@ -1,3 +1,21 @@
+# [MODULE DOC]
+# Core module defining the Index class, the immutable ordered, sliceable
+# sequence of hashable labels used as the axis of every pandas object. Public
+# contents: Index (the only name listed for export). Private/module-level
+# helpers: a decorator that adapts the join method to an optional
+# return-indexers flag, an unpickling constructor, a name-extraction helper,
+# index/array/ensure functions for constructing indexes from arrays and
+# sequences, and several shared-doc dictionaries and lookup tables (engine
+# classes for masked dtypes, the doc-format keyword table, a set of unsortable
+# inferred types). Index is built on the shared index-ops mixin and the
+# pandas object base; subclasses (range, categorical, datetimelike, interval,
+# multi, period, and so on) live in sibling modules and are imported lazily
+# inside functions to avoid circular imports. Lookup is delegated to hash
+# engines from the compiled index library, set operations and joins to the
+# compiled join library and the algorithms module. Import-time side effects:
+# builds the module-level tables only; the string accessor is attached to the
+# class body at definition time.
+
 from __future__ import annotations
 
 from collections import abc
@@ -264,6 +282,11 @@ _masked_engines = {
 
 
 def _maybe_return_indexers(meth: F) -> F:
+    # [FUNCTION DOC]
+    # HELPER: decorator used on the Index join implementation. Parameter meth
+    # is the underlying join callable, which always returns a triple of join
+    # index and optional left and right indexers. Returns a wrapper function
+    # (typed as the original) that preserves metadata of meth.
     """
     Decorator to simplify 'return_indexers' checks in Index.join.
     """
@@ -278,6 +301,14 @@ def _maybe_return_indexers(meth: F) -> F:
         return_indexers: bool = False,
         sort: bool = False,
     ):
+        # [FUNCTION DOC]
+        # HELPER: the wrapper produced by the join decorator. Keyword-only
+        # parameters: how (join kind, default left), level (default none),
+        # return_indexers (bool, default false) and sort (bool, default
+        # false). Calls the wrapped method without return_indexers. If
+        # return_indexers is false, returns only the join index; otherwise
+        # returns a triple of join index and the left and right indexers
+        # each converted to platform integer arrays (or none).
         join_index, lidx, ridx = meth(self, other, how=how, level=level, sort=sort)
         if not return_indexers:
             return join_index
@@ -292,6 +323,15 @@ def _maybe_return_indexers(meth: F) -> F:
 
 
 def _new_Index(cls, d):
+    # [FUNCTION DOC]
+    # HELPER: unpickling reconstructor. Parameters: cls (the Index subclass)
+    # and d (dict of constructor keyword arguments saved at pickle time;
+    # mutated in place: copy forced false). Period indexes are delegated to
+    # their own reconstructor; for MultiIndex an old labels key is renamed to
+    # codes and integrity verification is disabled; for other classes with
+    # data but no dtype entry the dtype is set from the data to prevent
+    # inference. Returns the new index built by calling the class's new
+    # method with the keywords.
     """
     This is called upon unpickling, rather than the default which doesn't
     have arguments and breaks __new__.
@@ -322,6 +362,22 @@ def _new_Index(cls, d):
 
 @set_module("pandas")
 class Index(IndexOpsMixin, PandasObject):
+    # [CLASS DOC]
+    # Immutable one-dimensional sequence of hashable labels, the axis label
+    # container for Series and DataFrame. Inherits shared array-like
+    # operations from the index-ops mixin and display/dir support from the
+    # pandas object base. State: the wrapped data (a numpy array or an
+    # extension array), a name label, a cache dictionary for cached
+    # properties (the hash engine, uniqueness, monotonicity), an identity
+    # token used by the identity check, and a reference tracker for
+    # copy-on-write. The class selects its concrete subclass from the dtype
+    # when constructed. Invariants: contents are hashable and one-dimensional,
+    # the object is never mutated in place (except cache and identity
+    # bookkeeping), and float16 data is unsupported. Key method groups:
+    # constructors (new, simple-new), lookup (get-loc, get-indexer and
+    # friends), set operations (union, intersection, difference,
+    # symmetric difference), join, slicing and slice-bound location, sorting,
+    # type conversion and rendering.
     """
     Immutable sequence used for indexing and alignment.
 
@@ -391,6 +447,12 @@ class Index(IndexOpsMixin, PandasObject):
 
     @final
     def _left_indexer_unique(self, other: Self) -> npt.NDArray[np.intp]:
+        # [FUNCTION DOC]
+        # HELPER: for join. Computes, for every element of self, the position
+        # of the matching element in other (minus one if absent), assuming
+        # other has unique labels and the same dtype as self (caller checks).
+        # Returns an integer position array via the compiled join routine on
+        # the join-target arrays.
         # Caller is responsible for ensuring other.dtype == self.dtype
         sv = self._get_join_target()
         ov = other._get_join_target()
@@ -401,6 +463,11 @@ class Index(IndexOpsMixin, PandasObject):
     def _left_indexer(
         self, other: Self
     ) -> tuple[ArrayLike, npt.NDArray[np.intp], npt.NDArray[np.intp]]:
+        # [FUNCTION DOC]
+        # HELPER: for join. Left join of two monotonic same-dtype indexes
+        # (caller guarantees). Returns a triple: joined values (converted back
+        # from the join-target representation), the left positions and the
+        # right positions (minus one where there is no match).
         # Caller is responsible for ensuring other.dtype == self.dtype
         sv = self._get_join_target()
         ov = other._get_join_target()
@@ -412,6 +479,10 @@ class Index(IndexOpsMixin, PandasObject):
     def _inner_indexer(
         self, other: Self
     ) -> tuple[ArrayLike, npt.NDArray[np.intp], npt.NDArray[np.intp]]:
+        # [FUNCTION DOC]
+        # HELPER: for join. Inner join of two monotonic same-dtype indexes.
+        # Returns a triple: joined values (only labels present in both),
+        # left positions and right positions.
         # Caller is responsible for ensuring other.dtype == self.dtype
         sv = self._get_join_target()
         ov = other._get_join_target()
@@ -423,6 +494,10 @@ class Index(IndexOpsMixin, PandasObject):
     def _outer_indexer(
         self, other: Self
     ) -> tuple[ArrayLike, npt.NDArray[np.intp], npt.NDArray[np.intp]]:
+        # [FUNCTION DOC]
+        # HELPER: for join. Outer join of two monotonic same-dtype indexes.
+        # Returns a triple: sorted union of the values, left positions and
+        # right positions (minus one where a label is missing on that side).
         # Caller is responsible for ensuring other.dtype == self.dtype
         sv = self._get_join_target()
         ov = other._get_join_target()
@@ -447,6 +522,9 @@ class Index(IndexOpsMixin, PandasObject):
 
     @cache_readonly
     def _can_hold_strings(self) -> bool:
+        # [FUNCTION DOC]
+        # HELPER: cached property. Returns true when the dtype is not numeric,
+        # i.e. the index may contain string labels.
         return not is_numeric_dtype(self.dtype)
 
     _engine_types: dict[np.dtype | ExtensionDtype, type[libindex.IndexEngine]] = {
@@ -468,6 +546,10 @@ class Index(IndexOpsMixin, PandasObject):
     def _engine_type(
         self,
     ) -> type[libindex.IndexEngine | libindex.ExtensionEngine]:
+        # [FUNCTION DOC]
+        # HELPER: property. Returns the engine class for the dtype from the
+        # class-level lookup table, defaulting to the object engine for any
+        # dtype not listed.
         return self._engine_types.get(self.dtype, libindex.ObjectEngine)
 
     # whether we support partial string indexing. Overridden
@@ -491,6 +573,26 @@ class Index(IndexOpsMixin, PandasObject):
         name=None,
         tupleize_cols: bool = True,
     ) -> Self:
+        # [FUNCTION DOC]
+        # Constructor; picks the concrete subclass from the resulting dtype.
+        # Parameters: data (array-like, range, iterator, set or Index/Series;
+        # default none, which is rejected as scalar), dtype (anything
+        # convertible to a dtype, default none meaning infer), copy (bool or
+        # none, default none; resolved by a helper that defaults to copying
+        # arrays but not Index/Series), name (hashable label; default none,
+        # taken from data if it has one), tupleize_cols (bool, default true:
+        # a non-empty sequence of tuples becomes a MultiIndex). A range or
+        # range index yields a RangeIndex (cast to dtype if given). Numpy
+        # arrays not of integer/unsigned/float/complex/bool/time kinds are
+        # converted to object arrays safely. Objects exposing the array
+        # protocol are converted and re-dispatched. Other iterables are
+        # materialized to a list; empty ones become object dtype. Data is
+        # then sanitized to an array of the requested dtype, wrapped for
+        # datetime-likes, and the subclass picked from the dtype creates the
+        # result, sharing the reference tracker of an input Series/Index when
+        # not copying. Raises a type error for scalar (non-list-like) data,
+        # a value error when the data is not one-dimensional, and
+        # not-implemented for float16.
         from pandas.core.indexes.range import RangeIndex
 
         name = maybe_extract_name(name, data, cls)
@@ -593,6 +695,12 @@ class Index(IndexOpsMixin, PandasObject):
 
     @classmethod
     def _ensure_array(cls, data, dtype, copy: bool):
+        # [FUNCTION DOC]
+        # HELPER: classmethod validating an array before it is wrapped.
+        # Parameters: data (array), dtype (its dtype), copy (bool; copy the
+        # data). Raises a value error for data with more than one dimension
+        # and a not-implemented error for float16 dtype. Returns the data,
+        # copied if requested.
         """
         Ensure we have a valid array to pass to _simple_new.
         """
@@ -612,6 +720,13 @@ class Index(IndexOpsMixin, PandasObject):
     @final
     @classmethod
     def _dtype_to_subclass(cls, dtype: DtypeObj):
+        # [FUNCTION DOC]
+        # HELPER: final classmethod mapping a dtype to the Index class to use.
+        # Extension dtypes give their own index class; datetime64 gives a
+        # DatetimeIndex; timedelta64 gives a TimedeltaIndex; object, string
+        # and numeric dtypes give the plain Index. Any other dtype raises a
+        # not-implemented error. (Multi-level and range cases are handled
+        # elsewhere.)
         # Delay import for perf. https://github.com/pandas-dev/pandas/pull/31423
 
         if isinstance(dtype, ExtensionDtype):
@@ -656,6 +771,17 @@ class Index(IndexOpsMixin, PandasObject):
         name: Hashable | None = None,
         refs: BlockValuesRefs | None = None,
     ) -> Self:
+        # [FUNCTION DOC]
+        # HELPER: fast internal constructor that performs no inference or
+        # copying. Parameters: values (array of the type listed in the class's
+        # accepted data types), name (label, default none), refs (reference
+        # tracker to share, default none meaning a fresh tracker). Asserts
+        # that values is of the accepted data class. Creates the object
+        # directly, sets data, name, an empty cache and a fresh identity
+        # token, and registers the new index with the tracker. Returns it.
+        # KNOWN ISSUE: the docstring claims non-compatible values are coerced
+        # through the constructor, but the code only asserts the type and
+        # never coerces.
         """
         We require that we have a dtype compat for the values. If we are passed
         a non-dtype compat, then coerce using the constructor.
@@ -679,6 +805,13 @@ class Index(IndexOpsMixin, PandasObject):
 
     @classmethod
     def _with_infer(cls, *args, **kwargs):
+        # [FUNCTION DOC]
+        # HELPER: classmethod alternative constructor. Accepts the same
+        # arguments as the regular constructor, which it calls. If the result
+        # is a non-multi object-dtype index, tries to convert the values to a
+        # better type; when that gives integer, unsigned, float or boolean
+        # values, returns a new Index of them (same name, no copy); otherwise
+        # returns the original result.
         """
         Constructor that uses the 1.0.x behavior inferring numeric dtypes
         for ndarray[object] inputs.
@@ -697,10 +830,18 @@ class Index(IndexOpsMixin, PandasObject):
 
     @cache_readonly
     def _constructor(self) -> type[Self]:
+        # [FUNCTION DOC]
+        # HELPER: cached property returning the class of this instance, for
+        # building results of the same type.
         return type(self)
 
     @final
     def _maybe_check_unique(self) -> None:
+        # [FUNCTION DOC]
+        # HELPER: final. Verifies there are no duplicate labels. Raises a
+        # duplicate-label error whose message lists duplicated labels and
+        # their positions (built by the duplicate-message helper). Returns
+        # nothing otherwise.
         """
         Check that an Index has no duplicates.
 
@@ -722,6 +863,12 @@ class Index(IndexOpsMixin, PandasObject):
 
     @final
     def _format_duplicate_message(self) -> DataFrame:
+        # [FUNCTION DOC]
+        # HELPER: final. Precondition: the index has duplicates (asserted).
+        # Returns a DataFrame with one row per duplicated label (index named
+        # label for single-level indexes) and a positions column listing all
+        # integer positions of that label. For a multi-level index the row
+        # index is rebuilt from tuples.
         """
         Construct the DataFrame for a DuplicateLabelError.
 
@@ -760,6 +907,11 @@ class Index(IndexOpsMixin, PandasObject):
     # Index Internals Methods
 
     def _shallow_copy(self, values, name: Hashable = no_default) -> Self:
+        # [FUNCTION DOC]
+        # HELPER: builds a new index of the same class around values without
+        # copying. Parameters: values (array of the accepted data type) and
+        # name (label; the sentinel default means use this index's name).
+        # Shares this index's reference tracker. Returns the new index.
         """
         Create a new Index with the same class as the caller, don't copy the
         data, use the same object attributes with passed in attributes taking
@@ -777,6 +929,10 @@ class Index(IndexOpsMixin, PandasObject):
         return self._simple_new(values, name=name, refs=self._references)
 
     def _view(self) -> Self:
+        # [FUNCTION DOC]
+        # HELPER: returns a new index object of the same class sharing the
+        # same data, name and reference tracker. Also shares (not copies) the
+        # cache dictionary, so cached properties are reused.
         """
         fastpath to make a shallow copy, i.e. new object with same data.
         """
@@ -787,6 +943,10 @@ class Index(IndexOpsMixin, PandasObject):
 
     @final
     def _rename(self, name: Hashable) -> Self:
+        # [FUNCTION DOC]
+        # HELPER: final. Parameter name is an already-validated label.
+        # Returns a view of this index with its name replaced. No
+        # validation.
         """
         fastpath for rename if new name is already validated.
         """
@@ -796,6 +956,12 @@ class Index(IndexOpsMixin, PandasObject):
 
     @final
     def is_(self, other) -> bool:
+        # [FUNCTION DOC]
+        # Final. Parameter other is any object. Returns true if other is the
+        # very same object, or if both carry a non-missing identity token and
+        # the tokens are the same object (so views of one another match).
+        # Returns false if other lacks an identity token or either token is
+        # unset. Does not compare metadata or values.
         """
         More flexible, faster check like ``is`` but that works through views.
 
@@ -836,6 +1002,9 @@ class Index(IndexOpsMixin, PandasObject):
 
     @final
     def _reset_identity(self) -> None:
+        # [FUNCTION DOC]
+        # HELPER: final. Assigns a fresh unique identity token to the
+        # instance (mutates it); used by the identity check. Returns nothing.
         """
         Initializes or resets ``_id`` attribute with new object.
         """
@@ -843,6 +1012,10 @@ class Index(IndexOpsMixin, PandasObject):
 
     @final
     def _cleanup(self) -> None:
+        # [FUNCTION DOC]
+        # HELPER: final. If the hash engine has been created (is in the
+        # cache), asks it to clear its internal mapping to release memory.
+        # Mutates the engine; returns nothing.
         if "_engine" in self._cache:
             self._engine.clear_mapping()
 
@@ -850,6 +1023,19 @@ class Index(IndexOpsMixin, PandasObject):
     def _engine(
         self,
     ) -> libindex.IndexEngine | libindex.ExtensionEngine | libindex.MaskedIndexEngine:
+        # [FUNCTION DOC]
+        # HELPER: cached property that builds the hash-table lookup engine
+        # for this index. Chooses by data type: arrow-backed timestamp or
+        # duration data get datetime/timedelta engines over converted
+        # arrays; masked or arrow extension arrays use the masked engine for
+        # their dtype name when one exists (otherwise fall through); other
+        # extension data with the generic engine type gets the extension
+        # engine; boolean and complex arrays get their dedicated engines;
+        # datetime-like data uses the raw datetime64/timedelta64 array; pure
+        # string (non-object) dtypes get a string engine carrying the NA
+        # sentinel; everything else uses the engine class chosen by the
+        # engine-type property. Target arrays are bound locally to avoid a
+        # reference cycle with the index.
         # For base class (object dtype) we get ObjectEngine
         target_values = self._get_engine_target()
 
@@ -900,6 +1086,11 @@ class Index(IndexOpsMixin, PandasObject):
     @final
     @cache_readonly
     def _dir_additions_for_owner(self) -> set[str_t]:
+        # [FUNCTION DOC]
+        # HELPER: final cached property used for tab completion on the owning
+        # Series/DataFrame. Returns the set of unique first-level labels (up
+        # to the configured display limit of directory items) that are
+        # strings and valid identifiers.
         """
         Add the string-like labels to the owner dataframe/series dir output.
 
@@ -916,12 +1107,21 @@ class Index(IndexOpsMixin, PandasObject):
 
     # ndarray compat
     def __len__(self) -> int:
+        # [FUNCTION DOC]
+        # Returns the number of elements in the wrapped data.
         """
         Return the length of the Index.
         """
         return len(self._data)
 
     def __array__(self, dtype=None, copy=None) -> np.ndarray:
+        # [FUNCTION DOC]
+        # Numpy array-protocol conversion. Parameters: dtype (optional target
+        # dtype, default none) and copy (none, true or false). With copy
+        # unspecified it uses the lenient conversion (copy only if needed);
+        # otherwise it passes the copy flag through to numpy's array
+        # construction (which can raise if a copy is forbidden but needed).
+        # Returns a numpy array.
         """
         The array interface, return my values.
         """
@@ -932,6 +1132,18 @@ class Index(IndexOpsMixin, PandasObject):
         return np.array(self._data, dtype=dtype, copy=copy)
 
     def __array_ufunc__(self, ufunc: np.ufunc, method: str_t, *inputs, **kwargs):
+        # [FUNCTION DOC]
+        # Numpy universal-function protocol. Parameters: ufunc, method (the
+        # call kind, e.g. a plain call or a reduction), positional inputs and
+        # keyword arguments. Returns the not-implemented sentinel when any
+        # input is a Series or DataFrame (so they take priority). Otherwise
+        # tries, in order: dispatching to the equivalent dunder operator;
+        # handling an out keyword; dispatching reductions. Otherwise calls
+        # the ufunc on the underlying values of all Index inputs. Results
+        # with two outputs are each wrapped; reductions and scalar results
+        # are returned as unboxed scalars; half-precision float results are
+        # upcast to single precision; other results are wrapped in a new
+        # Index with this index's name.
         if any(isinstance(other, (ABCSeries, ABCDataFrame)) for other in inputs):
             return NotImplemented
 
@@ -973,6 +1185,13 @@ class Index(IndexOpsMixin, PandasObject):
 
     @final
     def __array_wrap__(self, result, context=None, return_scalar=False):
+        # [FUNCTION DOC]
+        # Final. Numpy hook applied to ufunc and function outputs.
+        # Parameters: result (array or zero-dimensional result), context and
+        # return_scalar (both accepted but unused). A zero-dimensional result
+        # is converted to a scalar; results with more than one dimension are
+        # returned as they are; otherwise returns a new Index of the result
+        # with this index's name.
         """
         Gets called after a ufunc and other functions e.g. np.split.
         """
@@ -985,6 +1204,8 @@ class Index(IndexOpsMixin, PandasObject):
 
     @cache_readonly
     def dtype(self) -> DtypeObj:
+        # [FUNCTION DOC]
+        # Cached property. Returns the dtype object of the wrapped data.
         """
         Return the dtype object of the underlying data.
 
@@ -1004,6 +1225,9 @@ class Index(IndexOpsMixin, PandasObject):
 
     @final
     def ravel(self, order: str_t = "C") -> Self:
+        # [FUNCTION DOC]
+        # Final. Numpy-compatibility method. Parameter order (default C) is
+        # accepted but ignored. Returns a full-slice view of this index.
         """
         Return a view on self.
 
@@ -1031,6 +1255,15 @@ class Index(IndexOpsMixin, PandasObject):
         return self[:]
 
     def view(self, cls=None):
+        # [FUNCTION DOC]
+        # Parameter cls (default none) is a dtype, dtype string or array
+        # class. With none, returns a new index sharing the same data and
+        # identity token. With a datetime64/timedelta64 dtype, views the
+        # array as that dtype and returns an index of the matching class
+        # (sharing references) if the result is an extension array, else the
+        # raw array. For any other cls, returns the result of the wrapped
+        # data's view; when that result is an Index it receives this index's
+        # identity token. Incompatible layouts raise a value error from numpy.
         """
         Return a view of the Index with the specified dtype or a new Index instance.
 
@@ -1109,6 +1342,20 @@ class Index(IndexOpsMixin, PandasObject):
         return result
 
     def astype(self, dtype: Dtype, copy: bool = True):
+        # [FUNCTION DOC]
+        # Parameters: dtype (anything convertible to a dtype) and copy (bool,
+        # default true). If the dtype already matches, returns a copy (or self
+        # when copy is false). Otherwise extension-array data converts itself
+        # (re-labelling errors with the index class name); numpy data headed
+        # for an extension dtype is built through that dtype's array type
+        # from the index; other cases use the generic array conversion. The
+        # result is a new Index (class chosen from the new dtype) with the
+        # same name. When not copying and the conversion is a pure view, the
+        # result shares this index's reference tracker. Conversion failures
+        # raise type or value errors from the underlying conversion.
+        # KNOWN ISSUE: the docstring says any signed integer dtype is treated
+        # as 64-bit regardless of size, which this method does not do (the
+        # requested integer size is kept since indexes support all sizes).
         """
         Create an Index with values cast to dtypes.
 
@@ -1233,6 +1480,22 @@ class Index(IndexOpsMixin, PandasObject):
         fill_value=None,
         **kwargs,
     ) -> Self:
+        # [FUNCTION DOC]
+        # Select elements by position. Parameters: indices (array-like of
+        # integers), axis (must be 0; not otherwise used), allow_fill (bool,
+        # default true), fill_value (scalar, default none) and extra keyword
+        # arguments validated only for numpy compatibility (anything
+        # unsupported raises). Raises a type error if indices is a scalar. The
+        # fill flag is turned off unless a non-none fill value is given; if
+        # filling is enabled, indices below minus one raise a value error and
+        # an index that cannot hold missing values raises a value error.
+        # If the positions are exactly the identity range, returns a copy.
+        # Otherwise takes from the values (with the index's own missing-value
+        # marker as fill, ignoring the given fill value) and returns a new
+        # index of the constructor class with the same name.
+        # KNOWN ISSUE: the docstring says negative indices count from the
+        # right when allow_fill is false and calls that the default, but the
+        # signature default for allow_fill is true.
         """
         Return a new Index of the values selected by the indices.
 
@@ -1304,6 +1567,12 @@ class Index(IndexOpsMixin, PandasObject):
 
     @final
     def _maybe_disallow_fill(self, allow_fill: bool, fill_value, indices) -> bool:
+        # [FUNCTION DOC]
+        # HELPER: final helper for take. Parameters: allow_fill (bool),
+        # fill_value (scalar or none) and indices (integer array). Returns
+        # true only if allow_fill is true and fill_value is not none; in that
+        # case raises a value error when the index cannot hold missing values
+        # or when any index is below minus one. Otherwise returns false.
         """
         We only use pandas-style take when allow_fill is True _and_
         fill_value is not None.
@@ -1326,6 +1595,12 @@ class Index(IndexOpsMixin, PandasObject):
         return allow_fill
 
     def repeat(self, repeats, axis: None = None) -> Self:
+        # [FUNCTION DOC]
+        # Parameters: repeats (int or array of ints; non-negative; converted
+        # to platform integers) and axis (must be none; validated for numpy
+        # compatibility, raising otherwise). Repeats each element
+        # consecutively and returns a new index of the constructor class
+        # (so a range index becomes a plain integer index) with the same name.
         """
         Repeat elements of an Index.
 
@@ -1377,6 +1652,13 @@ class Index(IndexOpsMixin, PandasObject):
         name: Hashable | None = None,
         deep: bool = False,
     ) -> Self:
+        # [FUNCTION DOC]
+        # Parameters: name (label, default none, meaning keep the current
+        # name; validated for hashability) and deep (bool, default false).
+        # A deep copy duplicates the underlying data into a new index of the
+        # same class with the (validated) name; a shallow copy returns a
+        # renamed view sharing data. Raises a type error if the name is not
+        # hashable.
         """
         Make a copy of this object.
 
@@ -1423,10 +1705,15 @@ class Index(IndexOpsMixin, PandasObject):
 
     @final
     def __copy__(self) -> Self:
+        # [FUNCTION DOC]
+        # Final. Standard shallow-copy hook; returns a shallow copy.
         return self.copy(deep=False)
 
     @final
     def __deepcopy__(self, memo=None) -> Self:
+        # [FUNCTION DOC]
+        # Final. Standard deep-copy hook; the memo argument is ignored.
+        # Returns a deep copy of the index.
         """
         Parameters
         ----------
@@ -1440,6 +1727,10 @@ class Index(IndexOpsMixin, PandasObject):
 
     @final
     def __repr__(self) -> str_t:
+        # [FUNCTION DOC]
+        # Final. Returns the class name followed in parentheses by the
+        # formatted data and then comma-joined name=value attribute pairs
+        # from the attribute formatter.
         """
         Return a string representation for this object.
         """
@@ -1453,6 +1744,9 @@ class Index(IndexOpsMixin, PandasObject):
 
     @property
     def _formatter_func(self):
+        # [FUNCTION DOC]
+        # HELPER: property for rendering. Returns the default element
+        # pretty-printing function; subclasses override it.
         """
         Return the formatter function.
         """
@@ -1460,6 +1754,13 @@ class Index(IndexOpsMixin, PandasObject):
 
     @final
     def _format_data(self, name=None) -> str_t:
+        # [FUNCTION DOC]
+        # HELPER: final. Parameter name is an optional label forwarded to the
+        # summary formatter. Returns the bracketed, truncated element listing
+        # for the repr. Justification is disabled for string-inferred and for
+        # categorical indexes with string categories; a range index returns an
+        # empty string (formatted through attributes). Multi-level indexes
+        # break lines after each value.
         """
         Return the formatted data as a unicode string.
         """
@@ -1485,6 +1786,12 @@ class Index(IndexOpsMixin, PandasObject):
         )
 
     def _format_attrs(self) -> list[tuple[str_t, str_t | int | bool | None]]:
+        # [FUNCTION DOC]
+        # HELPER: for the repr. Returns a list of (name, value) pairs: the
+        # quoted dtype (omitted for multi-level indexes); the name, or for
+        # multi-level indexes the names if any is set; and the length when it
+        # exceeds the configured maximum number of displayed items (a zero or
+        # unset option means no truncation).
         """
         Return a list of tuples of the (attr,formatted_value).
         """
@@ -1505,6 +1812,12 @@ class Index(IndexOpsMixin, PandasObject):
 
     @final
     def _get_level_names(self) -> range | Sequence[Hashable]:
+        # [FUNCTION DOC]
+        # HELPER: final. Returns the level names for column labelling. For a
+        # multi-level index: each name, with unnamed levels replaced by their
+        # level number, compacted to a range when possible. For a flat index:
+        # a single-element range if unnamed, otherwise a one-element list
+        # holding the name.
         """
         Return a name or list of names with None replaced by the level number.
         """
@@ -1520,6 +1833,10 @@ class Index(IndexOpsMixin, PandasObject):
 
     @final
     def _mpl_repr(self) -> np.ndarray:
+        # [FUNCTION DOC]
+        # HELPER: final. Returns the values in a form for plotting: the raw
+        # numpy values for numpy dtypes that are not datetime64, otherwise an
+        # object-dtype array of the values.
         # how to represent ourselves to matplotlib
         if isinstance(self.dtype, np.dtype) and self.dtype.kind != "M":
             return cast(np.ndarray, self.values)
@@ -1534,6 +1851,14 @@ class Index(IndexOpsMixin, PandasObject):
         include_name: bool,
         formatter: Callable | None = None,
     ) -> list[str_t]:
+        # [FUNCTION DOC]
+        # HELPER: final. Keyword-only parameters: include_name (bool; add a
+        # header entry with the escaped name, empty if unnamed) and formatter
+        # (optional callable, default none). Returns a list of strings: the
+        # header entry (if requested) followed by the elements formatted
+        # either by mapping the formatter over the index or, when absent, by
+        # the header-aware formatting method with the class's default
+        # missing-value text.
         """
         Render a string representation of the Index.
         """
@@ -1551,6 +1876,13 @@ class Index(IndexOpsMixin, PandasObject):
         return self._format_with_header(header=header, na_rep=self._default_na_rep)
 
     def _format_with_header(self, *, header: list[str_t], na_rep: str_t) -> list[str_t]:
+        # [FUNCTION DOC]
+        # HELPER: keyword-only parameters header (list of leading strings) and
+        # na_rep (missing-value text; unused here). Formats all values with
+        # the generic array formatter (left justification, but full
+        # justification for object, string, interval and categorical data),
+        # strips common leading whitespace, and returns the header followed
+        # by the formatted strings.
         from pandas.io.formats.format import format_array
 
         values = self._values
@@ -1580,6 +1912,13 @@ class Index(IndexOpsMixin, PandasObject):
         date_format=None,
         quoting=None,
     ) -> npt.NDArray[np.object_]:
+        # [FUNCTION DOC]
+        # HELPER: for csv-style text output. Keyword-only parameters: na_rep
+        # (text for missing values, default empty), decimal (decimal
+        # separator, default period), float_format (optional), date_format
+        # (optional) and quoting (optional csv quoting mode). Returns an
+        # object array of the values converted to strings by the shared
+        # formatting routine.
         return get_values_for_csv(
             self._values,
             na_rep=na_rep,
@@ -1590,6 +1929,13 @@ class Index(IndexOpsMixin, PandasObject):
         )
 
     def _summary(self, name=None) -> str_t:
+        # [FUNCTION DOC]
+        # HELPER: for the info-style summary. Parameter name is an optional
+        # header label (default none, meaning the class name). Returns a
+        # string of the form label, colon, number of entries, followed for
+        # non-empty indexes by the first and last element (formatted via
+        # their own formatting method when available, or via the formatter
+        # without quotes for datetime-like types).
         """
         Return a summarized representation.
 
@@ -1628,6 +1974,9 @@ class Index(IndexOpsMixin, PandasObject):
     # Conversion Methods
 
     def to_flat_index(self) -> Self:
+        # [FUNCTION DOC]
+        # Identity operation for flat indexes (overridden by the multi-level
+        # index). Returns self unchanged.
         """
         Identity method.
 
@@ -1647,6 +1996,11 @@ class Index(IndexOpsMixin, PandasObject):
 
     @final
     def to_series(self, index=None, name: Hashable | None = None) -> Series:
+        # [FUNCTION DOC]
+        # Final. Parameters: index (optional Index or array-like for the
+        # result's index; default none means a view of this index) and name
+        # (optional label; default none means this index's name). Returns a
+        # Series holding a copy of the values with that index and name.
         """
         Create a Series with both index and values equal to the index keys.
 
@@ -1712,6 +2066,12 @@ class Index(IndexOpsMixin, PandasObject):
     def to_frame(
         self, index: bool = True, name: Hashable = lib.no_default
     ) -> DataFrame:
+        # [FUNCTION DOC]
+        # Parameters: index (bool, default true: use this index as the
+        # result's row index; otherwise a default range index) and name
+        # (label for the single column; the sentinel default means use the
+        # level names, i.e. the index name or level numbers). Returns a new
+        # DataFrame built without copying whose columns are set accordingly.
         """
         Create a DataFrame with a column containing the Index.
 
@@ -1778,6 +2138,8 @@ class Index(IndexOpsMixin, PandasObject):
 
     @property
     def name(self) -> Hashable:
+        # [FUNCTION DOC]
+        # Property getter. Returns the stored name label (may be none).
         """
         Return Index or MultiIndex name.
 
@@ -1804,6 +2166,11 @@ class Index(IndexOpsMixin, PandasObject):
 
     @name.setter
     def name(self, value: Hashable) -> None:
+        # [FUNCTION DOC]
+        # Property setter. Parameter value is the new name label. Raises a
+        # runtime error if this index is a level of a multi-level index (name
+        # setting is disabled there). Validates that the value is hashable
+        # (raising a type error otherwise) and stores it. Mutates the index.
         if self._no_setting_name:
             # Used in MultiIndex.levels to avoid silently ignoring name updates.
             raise RuntimeError(
@@ -1817,6 +2184,14 @@ class Index(IndexOpsMixin, PandasObject):
     def _validate_names(
         self, name=None, names=None, deep: bool = False
     ) -> list[Hashable]:
+        # [FUNCTION DOC]
+        # HELPER: final. Parameters: name (single label or list-like, for flat
+        # indexes), names (list-like, for multi-level indexes) and deep (bool,
+        # default false: deep-copy the current names when neither is given).
+        # Raises a type error if both name and names are given or names is not
+        # list-like; a value error if the number of new names differs from
+        # the number of levels; a type error if any name is unhashable.
+        # Returns the list of validated names.
         """
         Handles the quirks of having a singular 'name' parameter for general
         Index and plural 'names' parameter for MultiIndex.
@@ -1849,6 +2224,16 @@ class Index(IndexOpsMixin, PandasObject):
     def _get_default_index_names(
         self, names: Hashable | Sequence[Hashable] | None = None, default=None
     ) -> list[Hashable]:
+        # [FUNCTION DOC]
+        # HELPER: determines names for an index being exported. Parameters:
+        # names (integer, string, list or none) and default (fallback name).
+        # A scalar integer/string is wrapped in a list. Raises a value error
+        # if names is neither none nor a list after that. If names is empty or
+        # none, uses the multi-level names with missing ones filled, or for a
+        # flat index its own name, or the default when unnamed. Returns the
+        # list of names.
+        # KNOWN ISSUE: the docstring says a type error is raised for invalid
+        # names, but the code raises a value error.
         """
         Get names of index.
 
@@ -1882,6 +2267,9 @@ class Index(IndexOpsMixin, PandasObject):
         return names
 
     def _get_names(self) -> FrozenList:
+        # [FUNCTION DOC]
+        # HELPER: getter behind the names property. Returns an immutable list
+        # containing the single name (possibly none).
         """
         Get names on index.
 
@@ -1917,6 +2305,14 @@ class Index(IndexOpsMixin, PandasObject):
         return FrozenList((self.name,))
 
     def _set_names(self, values, *, level=None) -> None:
+        # [FUNCTION DOC]
+        # HELPER: setter behind the names property. Parameters: values (a
+        # list-like of exactly one hashable name) and level (accepted but
+        # ignored for flat indexes). Raises a value error if values is not
+        # list-like or does not have length one, and a type error if the name
+        # is unhashable. Mutates the stored name; returns nothing.
+        # KNOWN ISSUE: the level parameter is documented as needing to be
+        # none for flat indexes, but it is never checked or used here.
         """
         Set new names on index. Each name has to be a hashable type.
 
@@ -1946,15 +2342,41 @@ class Index(IndexOpsMixin, PandasObject):
     names = property(fset=_set_names, fget=_get_names)
 
     @overload
-    def set_names(self, names, *, level=..., inplace: Literal[False] = ...) -> Self: ...
+    def set_names(self, names, *, level=..., inplace: Literal[False] = ...) -> Self:
+        # [FUNCTION DOC]
+        # Type-checking overload only: inplace false returns a new index.
+        # See the implementation below for behavior.
+        ...
 
     @overload
-    def set_names(self, names, *, level=..., inplace: Literal[True]) -> None: ...
+    def set_names(self, names, *, level=..., inplace: Literal[True]) -> None:
+        # [FUNCTION DOC]
+        # Type-checking overload only: inplace true returns nothing.
+        # See the implementation below for behavior.
+        ...
 
     @overload
-    def set_names(self, names, *, level=..., inplace: bool = ...) -> Self | None: ...
+    def set_names(self, names, *, level=..., inplace: bool = ...) -> Self | None:
+        # [FUNCTION DOC]
+        # Type-checking overload only: general inplace flag returns a new
+        # index or nothing. See the implementation below for behavior.
+        ...
 
     def set_names(self, names, *, level=None, inplace: bool = False) -> Self | None:
+        # [FUNCTION DOC]
+        # Keyword-only options: level (label, position or sequence; default
+        # none = all levels) and inplace (bool, default false). Parameter
+        # names is a label, a sequence of labels, or (multi-level only) a
+        # mapping from old to new level names. Validation raises a value
+        # error if a level is given for a flat index; a type error if a
+        # single level is given with a list of names, if a scalar is given
+        # for a multi-level index without a level, if a mapping is given for
+        # a flat index, or if both a mapping and a level are given. A mapping
+        # on a multi-level index is translated into the matching levels and
+        # new names. Scalars are wrapped into lists. Operates on this index
+        # when inplace is true, else on a view, and delegates to the names
+        # setter (which validates hashability). Returns the new index, or
+        # nothing when inplace.
         """
         Set Index or MultiIndex name.
 
@@ -2054,12 +2476,26 @@ class Index(IndexOpsMixin, PandasObject):
         return None
 
     @overload
-    def rename(self, name, *, inplace: Literal[False] = ...) -> Self: ...
+    def rename(self, name, *, inplace: Literal[False] = ...) -> Self:
+        # [FUNCTION DOC]
+        # Type-checking overload only: returns a new index. See the
+        # implementation below.
+        ...
 
     @overload
-    def rename(self, name, *, inplace: Literal[True]) -> None: ...
+    def rename(self, name, *, inplace: Literal[True]) -> None:
+        # [FUNCTION DOC]
+        # Type-checking overload only: modifies in place, returns nothing.
+        # See the implementation below.
+        ...
 
     def rename(self, name, *, inplace: bool = False) -> Self | None:
+        # [FUNCTION DOC]
+        # Parameters: name (label, or a sequence of labels for multi-level
+        # indexes) and inplace (bool, default false). Wraps the name in a list
+        # and delegates to the name-setting method for all levels; errors
+        # (e.g. a scalar name on a multi-level index) come from there.
+        # Returns the renamed index, or nothing if inplace.
         """
         Alter Index or MultiIndex name.
 
@@ -2115,12 +2551,17 @@ class Index(IndexOpsMixin, PandasObject):
 
     @property
     def nlevels(self) -> int:
+        # [FUNCTION DOC]
+        # Property. Returns the number of levels; always one for a flat index.
         """
         Number of levels.
         """
         return 1
 
     def _sort_levels_monotonic(self) -> Self:
+        # [FUNCTION DOC]
+        # HELPER: compatibility with the multi-level index. For a flat index
+        # does nothing and returns self.
         """
         Compat with MultiIndex.
         """
@@ -2128,6 +2569,11 @@ class Index(IndexOpsMixin, PandasObject):
 
     @final
     def _validate_index_level(self, level) -> None:
+        # [FUNCTION DOC]
+        # HELPER: final. Parameter level is an integer or a label. An integer
+        # must be zero or minus one, otherwise an index error ("too many
+        # levels") is raised. A non-integer must equal the index name, else a
+        # key error is raised. Returns nothing.
         """
         Validate index level.
 
@@ -2151,6 +2597,10 @@ class Index(IndexOpsMixin, PandasObject):
             )
 
     def _get_level_number(self, level) -> int:
+        # [FUNCTION DOC]
+        # HELPER: translates a level specifier into its position. Validates
+        # the specifier (may raise index or key errors) and always returns
+        # zero for a flat index.
         self._validate_index_level(level)
         return 0
 
@@ -2161,6 +2611,16 @@ class Index(IndexOpsMixin, PandasObject):
         sort_remaining=None,
         na_position: NaPosition = "first",
     ) -> tuple[Self, np.ndarray]:
+        # [FUNCTION DOC]
+        # Compatibility method with the multi-level index. Parameters:
+        # level and sort_remaining are ignored; ascending is a bool or a
+        # one-element list of bool (default true); na_position is first or
+        # last (default first). Raises a type error if ascending is neither a
+        # bool nor a list, is a list of the wrong length, or its single item
+        # is not a bool. Sorts the values and returns a pair of the sorted
+        # index and the integer indexer that sorts it.
+        # KNOWN ISSUE: the return annotation and docstring describe a single
+        # index, but the method returns an index and indexer pair.
         """
         For internal compatibility with the Index API.
 
@@ -2201,6 +2661,11 @@ class Index(IndexOpsMixin, PandasObject):
         )
 
     def _get_level_values(self, level) -> Index:
+        # [FUNCTION DOC]
+        # Parameter level is an integer position or label. Validates it
+        # against the single level (index error or key error if invalid) and
+        # returns this same index. Also exposed under the public level-values
+        # name.
         """
         Return an Index of values for requested level.
 
@@ -2243,6 +2708,13 @@ class Index(IndexOpsMixin, PandasObject):
 
     @final
     def droplevel(self, level: IndexLabel = 0):
+        # [FUNCTION DOC]
+        # Final. Parameter level (default 0) is a level position, name, or
+        # list/tuple of them. Resolves each to a level number (errors from
+        # invalid levels propagate), sorts them descending, and delegates to
+        # the number-based helper. Returns the remaining index (flat if one
+        # level remains). Raises a value error if all levels would be removed.
+        # Does not modify the original.
         """
         Return index with requested level(s) removed.
 
@@ -2302,6 +2774,16 @@ class Index(IndexOpsMixin, PandasObject):
 
     @final
     def _drop_level_numbers(self, levnums: list[int]):
+        # [FUNCTION DOC]
+        # HELPER: final helper for dropping levels. Parameter levnums is a
+        # list of level positions in descending order. An empty list on a flat
+        # index returns self. Raises a value error if the count to remove is
+        # at least the number of levels. Otherwise copies the level, code and
+        # name lists, removes the chosen entries, and: if one level remains,
+        # rebuilds a flat index by taking level values by code (using missing
+        # values for the minus-one codes; an empty level with empty codes
+        # gives an empty slice of that level) and sets its name; else builds
+        # a new multi-level index without integrity verification.
         """
         Drop MultiIndex levels by level _number_, not name.
         """
@@ -2364,6 +2846,11 @@ class Index(IndexOpsMixin, PandasObject):
     @cache_readonly
     @final
     def _can_hold_na(self) -> bool:
+        # [FUNCTION DOC]
+        # HELPER: final cached property. Returns whether the index can hold
+        # missing values: for extension dtypes the dtype's own flag; false
+        # for signed/unsigned integer and boolean numpy dtypes; true
+        # otherwise.
         if isinstance(self.dtype, ExtensionDtype):
             return self.dtype._can_hold_na
         if self.dtype.kind in "iub":
@@ -2372,6 +2859,9 @@ class Index(IndexOpsMixin, PandasObject):
 
     @property
     def is_monotonic_increasing(self) -> bool:
+        # [FUNCTION DOC]
+        # Property. Returns true if values are non-decreasing (ties allowed),
+        # as reported (and cached) by the hash engine.
         """
         Return a boolean if the values are equal or increasing.
 
@@ -2396,6 +2886,9 @@ class Index(IndexOpsMixin, PandasObject):
 
     @property
     def is_monotonic_decreasing(self) -> bool:
+        # [FUNCTION DOC]
+        # Property. Returns true if values are non-increasing (ties allowed),
+        # as reported (and cached) by the hash engine.
         """
         Return a boolean if the values are equal or decreasing.
 
@@ -2421,6 +2914,9 @@ class Index(IndexOpsMixin, PandasObject):
     @final
     @property
     def _is_strictly_monotonic_increasing(self) -> bool:
+        # [FUNCTION DOC]
+        # HELPER: final property. True only if the index is unique and
+        # monotonic increasing (strictly increasing).
         """
         Return if the index is strictly monotonic increasing
         (only increasing) values.
@@ -2439,6 +2935,9 @@ class Index(IndexOpsMixin, PandasObject):
     @final
     @property
     def _is_strictly_monotonic_decreasing(self) -> bool:
+        # [FUNCTION DOC]
+        # HELPER: final property. True only if the index is unique and
+        # monotonic decreasing (strictly decreasing).
         """
         Return if the index is strictly monotonic decreasing
         (only decreasing) values.
@@ -2456,6 +2955,9 @@ class Index(IndexOpsMixin, PandasObject):
 
     @cache_readonly
     def is_unique(self) -> bool:
+        # [FUNCTION DOC]
+        # Cached property. Returns true if no label repeats, as determined
+        # (and cached) by the hash engine.
         """
         Return if the index has unique values.
 
@@ -2492,6 +2994,8 @@ class Index(IndexOpsMixin, PandasObject):
     @final
     @property
     def has_duplicates(self) -> bool:
+        # [FUNCTION DOC]
+        # Final property. Returns the negation of the uniqueness flag.
         """
         Check if the Index has duplicate values.
 
@@ -2528,6 +3032,10 @@ class Index(IndexOpsMixin, PandasObject):
 
     @cache_readonly
     def inferred_type(self) -> str_t:
+        # [FUNCTION DOC]
+        # Cached property. Returns the name of the type inferred from the
+        # values by the library inference routine (e.g. integer, string,
+        # mixed), without skipping missing values.
         """
         Return a string of the type inferred from the values.
 
@@ -2548,6 +3056,10 @@ class Index(IndexOpsMixin, PandasObject):
     @cache_readonly
     @final
     def _is_all_dates(self) -> bool:
+        # [FUNCTION DOC]
+        # HELPER: final cached property. Returns true for datetime-like
+        # dtypes; false for any other non-object dtype and for multi-level
+        # indexes; for object dtype, true if all values are datetimes.
         """
         Whether or not the index values only consist of dates.
         """
@@ -2565,6 +3077,9 @@ class Index(IndexOpsMixin, PandasObject):
     @final
     @cache_readonly
     def _is_multi(self) -> bool:
+        # [FUNCTION DOC]
+        # HELPER: final cached property. True if this is a multi-level
+        # index instance.
         """
         Cached check equivalent to isinstance(self, MultiIndex)
         """
@@ -2574,6 +3089,10 @@ class Index(IndexOpsMixin, PandasObject):
     # Pickle Methods
 
     def __reduce__(self):
+        # [FUNCTION DOC]
+        # Pickle hook. Returns the reconstruction triple: the unpickling
+        # constructor function, an argument pair of the class and a dict of
+        # data and name, and no state.
         d = {"data": self._data, "name": self.name}
         return _new_Index, (type(self), d), None
 
@@ -2582,6 +3101,10 @@ class Index(IndexOpsMixin, PandasObject):
 
     @cache_readonly
     def _na_value(self):
+        # [FUNCTION DOC]
+        # HELPER: cached property. Returns the missing-value marker for the
+        # dtype: NaT for datetime64/timedelta64, NaN for other numpy dtypes,
+        # or the extension dtype's own marker.
         """The expected NA value to use with this index."""
         dtype = self.dtype
         if isinstance(dtype, np.dtype):
@@ -2592,6 +3115,10 @@ class Index(IndexOpsMixin, PandasObject):
 
     @cache_readonly
     def _isnan(self) -> npt.NDArray[np.bool_]:
+        # [FUNCTION DOC]
+        # HELPER: cached property. Returns a boolean array flagging missing
+        # elements: computed with the missing-value test when the dtype can
+        # hold missing values, otherwise an all-false array.
         """
         Return if each value is NaN.
         """
@@ -2605,6 +3132,9 @@ class Index(IndexOpsMixin, PandasObject):
 
     @cache_readonly
     def hasnans(self) -> bool:
+        # [FUNCTION DOC]
+        # Cached property. Returns true if any element is missing; false
+        # without scanning when the dtype cannot hold missing values.
         """
         Return True if there are any NaNs.
 
@@ -2638,6 +3168,11 @@ class Index(IndexOpsMixin, PandasObject):
 
     @final
     def isna(self) -> npt.NDArray[np.bool_]:
+        # [FUNCTION DOC]
+        # Final. Returns a boolean array marking missing values (none, NaN,
+        # NaT and equivalents; empty strings and infinity are not missing).
+        # The array returned is the cached internal mask, not a copy. Also
+        # available under the null alias.
         """
         Detect missing values.
 
@@ -2696,6 +3231,9 @@ class Index(IndexOpsMixin, PandasObject):
 
     @final
     def notna(self) -> npt.NDArray[np.bool_]:
+        # [FUNCTION DOC]
+        # Final. Returns the logical negation of the missing-value mask as a
+        # new boolean array. Also available under the not-null alias.
         """
         Detect existing (non-missing) values.
 
@@ -2741,6 +3279,12 @@ class Index(IndexOpsMixin, PandasObject):
     notnull = notna
 
     def fillna(self, value):
+        # [FUNCTION DOC]
+        # Parameter value is a scalar replacement. Raises a type error if it
+        # is not a scalar. If there are no missing values returns a view of
+        # this index; otherwise replaces missing entries via the masked
+        # replacement, then re-infers the dtype (needed e.g. for categorical
+        # data) and returns a new Index with the same name.
         """
         Fill NA/NaN values with the specified value.
 
@@ -2778,6 +3322,12 @@ class Index(IndexOpsMixin, PandasObject):
         return self._view()
 
     def dropna(self, how: AnyAll = "any") -> Self:
+        # [FUNCTION DOC]
+        # Parameter how is any or all (default any); only validated here since
+        # it matters only for multi-level indexes. Raises a value error for
+        # any other value. If there are missing values, returns a new index
+        # of the same class without them (same name); otherwise returns a
+        # view of this index.
         """
         Return Index without NA/NaN values.
 
@@ -2815,6 +3365,12 @@ class Index(IndexOpsMixin, PandasObject):
     # Uniqueness Methods
 
     def unique(self, level: Hashable | None = None) -> Self:
+        # [FUNCTION DOC]
+        # Parameter level (default none) is validated as the single level when
+        # given (index or key error if invalid). If the index is already
+        # unique returns a view; otherwise computes the unique values in
+        # order of appearance (via the shared base implementation) and
+        # returns them as a new index sharing metadata.
         """
         Return unique values in the index.
 
@@ -2852,6 +3408,10 @@ class Index(IndexOpsMixin, PandasObject):
         return self._shallow_copy(result)
 
     def drop_duplicates(self, *, keep: DropKeep = "first") -> Self:
+        # [FUNCTION DOC]
+        # Keyword-only keep is first (default), last, or false (drop every
+        # duplicated label). A unique index returns a view; otherwise delegates
+        # to the shared base implementation and returns a new index.
         """
         Return Index with duplicate values removed.
 
@@ -2904,6 +3464,12 @@ class Index(IndexOpsMixin, PandasObject):
         return super().drop_duplicates(keep=keep)
 
     def duplicated(self, keep: DropKeep = "first") -> npt.NDArray[np.bool_]:
+        # [FUNCTION DOC]
+        # Parameter keep is first (default), last, or false. Returns a boolean
+        # array marking repeated labels (all but the first occurrence, all but
+        # the last, or all occurrences respectively). Fast path: a unique
+        # index returns an all-false array; otherwise delegates to the shared
+        # duplicate-marking routine.
         """
         Indicate duplicate index values.
 
@@ -2967,11 +3533,19 @@ class Index(IndexOpsMixin, PandasObject):
     # Arithmetic & Logical Methods
 
     def __iadd__(self, other):
+        # [FUNCTION DOC]
+        # In-place addition operator. Because indexes are immutable, simply
+        # returns the result of regular addition with other (a new object).
         # alias for __add__
         return self + other
 
     @final
     def __bool__(self) -> NoReturn:
+        # [FUNCTION DOC]
+        # Final. Truth-value test is intentionally unsupported: always raises
+        # a value error stating the truth value of the class is ambiguous.
+        # KNOWN ISSUE: the error message suggests calling a bool method or
+        # an item method on the object, which indexes do not provide.
         raise ValueError(
             f"The truth value of a {type(self).__name__} is ambiguous. "
             "Use a.empty, a.bool(), a.item(), a.any() or a.all()."
@@ -2981,6 +3555,11 @@ class Index(IndexOpsMixin, PandasObject):
     # Set Operation Methods
 
     def _get_reconciled_name_object(self, other):
+        # [FUNCTION DOC]
+        # HELPER: for set operations whose result is self. Parameter other is
+        # the other operand. Computes the result name from the two operands;
+        # if it differs from this index's name returns a renamed copy,
+        # otherwise a shallow copy.
         """
         If the result of a set operation will be self,
         return a shallow copy of self.
@@ -2992,6 +3571,9 @@ class Index(IndexOpsMixin, PandasObject):
 
     @final
     def _validate_sort_keyword(self, sort) -> None:
+        # [FUNCTION DOC]
+        # HELPER: final. Parameter sort must be none, true or false; any other
+        # value raises a value error naming the allowed values.
         if sort not in [None, False, True]:
             raise ValueError(
                 "The 'sort' keyword only takes the values of "
@@ -3000,6 +3582,12 @@ class Index(IndexOpsMixin, PandasObject):
 
     @final
     def _dti_setop_align_tzs(self, other: Index, setop: str_t) -> tuple[Index, Index]:
+        # [FUNCTION DOC]
+        # HELPER: final, for set operations on mismatched dtypes. Parameters:
+        # other and setop (operation name; unused). Caller ensures dtypes
+        # differ. If both are timezone-aware datetime indexes with different
+        # timezones, returns both converted to UTC; otherwise returns the pair
+        # unchanged.
         """
         With mismatched timezones, cast both to UTC.
         """
@@ -3023,6 +3611,19 @@ class Index(IndexOpsMixin, PandasObject):
 
     @final
     def union(self, other, sort: bool | None = None):
+        # [FUNCTION DOC]
+        # Final. Union of unique elements. Parameters: other (Index or
+        # array-like) and sort (none, true or false; default none). Validates
+        # sort (value error) and that other is list-like and comparable
+        # (type error), and converts other to an Index, deriving the result
+        # name. For mismatched dtypes: a multi-level index with a non-tuple,
+        # non-empty other raises a not-implemented error; timezones are
+        # aligned; both sides are cast to a common dtype and the union is
+        # recomputed. For equal dtypes: if other is empty or equal, or self
+        # is empty, returns the other/self with reconciled name (sorted only
+        # when sort is true). Otherwise calls the overridable internal union
+        # routine and wraps its array/index result into an index named by the
+        # combined operand names.
         """
         Form the union of two Index objects.
 
@@ -3154,6 +3755,21 @@ class Index(IndexOpsMixin, PandasObject):
         return self._wrap_setop_result(other, result)
 
     def _union(self, other: Index, sort: bool | None):
+        # [FUNCTION DOC]
+        # HELPER: overridable core of union, called after the public method
+        # has validated arguments and matched dtypes. Parameters: other and
+        # sort (none, true or false). If sort is not false and at least one
+        # operand is unique and both can use the compiled join, returns the
+        # outer-join values (falling back, on incomparable object values, to
+        # an object array of self's values plus other's values not in self).
+        # Else, if other has duplicates, uses the duplicate-aware union and
+        # tries to sort. Otherwise finds elements of other missing from self
+        # via lookup and appends them (multi-level indexes keep their type),
+        # then tries to sort unless both are already increasing. Returns an
+        # array-like or index (not yet name-wrapped).
+        # KNOWN ISSUE: the docstring says the sort default is false and lists
+        # only false/none as accepted, but the method also receives true and
+        # has no default.
         """
         Specific union logic should go here. In subclasses, union behavior
         should be overwritten here rather than in `self.union`.
@@ -3231,6 +3847,11 @@ class Index(IndexOpsMixin, PandasObject):
 
     @final
     def _wrap_setop_result(self, other: Index, result) -> Index:
+        # [FUNCTION DOC]
+        # HELPER: final. Converts a raw set-operation result into an Index
+        # named from the operand names. An Index result is renamed if its name
+        # differs; an array result is wrapped via the shallow-copy
+        # constructor. Returns the index.
         name = get_op_result_name(self, other)
         if isinstance(result, Index):
             if result.name != name:
@@ -3241,6 +3862,18 @@ class Index(IndexOpsMixin, PandasObject):
 
     @final
     def intersection(self, other, sort: bool = False):
+        # [FUNCTION DOC]
+        # Final. Elements common to both. Parameters: other (Index or
+        # array-like) and sort (true, false or none; default false, unlike
+        # the other set operations). Validates sort (value error) and
+        # list-likeness of other (type error); converts other to an Index.
+        # Mismatched timezones are aligned. If the operands are equal,
+        # returns self (uniqued, name-reconciled; sorted if sort is true).
+        # An empty operand yields an empty slice of the appropriate operand
+        # (or an empty index of the common dtype). Non-comparable dtypes
+        # give an empty index. Mismatched dtypes are cast to a common dtype
+        # and recomputed. Otherwise uses the overridable internal
+        # intersection and wraps the result.
         # default sort keyword is different here from other setops intentionally
         #  done in GH#25063
         """
@@ -3336,6 +3969,13 @@ class Index(IndexOpsMixin, PandasObject):
         return self._wrap_intersection_result(other, result)
 
     def _intersection(self, other: Index, sort: bool = False):
+        # [FUNCTION DOC]
+        # HELPER: overridable core of intersection for matching dtypes.
+        # Parameters: other and sort (default false). If both can use the
+        # compiled join, computes the inner join and returns unique matching
+        # values (wrapped for datetime-likes); on a type error from
+        # incomparable objects it falls back. The fallback finds the
+        # intersection via lookup and tries to sort according to sort.
         """
         intersection specialized to the case with matching dtypes.
         """
@@ -3361,6 +4001,9 @@ class Index(IndexOpsMixin, PandasObject):
         return res_values
 
     def _wrap_intersection_result(self, other, result):
+        # [FUNCTION DOC]
+        # HELPER: hook for subclasses to post-process an intersection result;
+        # the base version just names and wraps it like any set operation.
         # We will override for MultiIndex to handle empty results
         return self._wrap_setop_result(other, result)
 
@@ -3368,6 +4011,13 @@ class Index(IndexOpsMixin, PandasObject):
     def _intersection_via_get_indexer(
         self, other: Index | MultiIndex, sort
     ) -> ArrayLike | MultiIndex:
+        # [FUNCTION DOC]
+        # HELPER: final. Parameters: other and sort (false means restore the
+        # order of self). Takes the unique values of both, looks up other's
+        # values in self's, keeps matches, and returns the matching values
+        # (as an array, or a multi-level index when self is one) with no
+        # duplicates. Matches are re-ordered to follow self when sort is
+        # false.
         """
         Find the intersection of two Indexes using get_indexer.
 
@@ -3399,6 +4049,14 @@ class Index(IndexOpsMixin, PandasObject):
 
     @final
     def difference(self, other, sort: bool | None = None):
+        # [FUNCTION DOC]
+        # Final. Elements of self not in other. Parameters: other (Index or
+        # array-like) and sort (none, true or false; default none). Validates
+        # sort and other like the other set operations. Timezones are not
+        # aligned (difference need not be symmetric). Equal operands give an
+        # empty slice of self; an empty other, or nothing comparable, gives
+        # self's unique values (sorted only when sort is true). Otherwise
+        # uses the overridable internal difference and wraps the result.
         """
         Return a new Index with elements of index not in `other`.
 
@@ -3470,6 +4128,13 @@ class Index(IndexOpsMixin, PandasObject):
         return self._wrap_difference_result(other, result)
 
     def _difference(self, other, sort):
+        # [FUNCTION DOC]
+        # HELPER: overridable core of difference (overridden for range
+        # indexes). Parameters: other and sort. For a categorical index where
+        # both have missing values, drops self's missing entries first. Keeps
+        # entries of self whose lookup in other's unique values fails, uniques
+        # the result if self had duplicates, and tries to sort per sort.
+        # Returns an index.
         # overridden by RangeIndex
         this = self
         if isinstance(self, ABCCategoricalIndex) and self.hasnans and other.hasnans:
@@ -3481,6 +4146,9 @@ class Index(IndexOpsMixin, PandasObject):
         return the_diff
 
     def _wrap_difference_result(self, other, result):
+        # [FUNCTION DOC]
+        # HELPER: hook for subclasses to post-process a difference result;
+        # the base version names and wraps it like any set operation.
         # We will override for MultiIndex to handle empty results
         return self._wrap_setop_result(other, result)
 
@@ -3490,6 +4158,18 @@ class Index(IndexOpsMixin, PandasObject):
         result_name: abc.Hashable | None = None,
         sort: bool | None = None,
     ):
+        # [FUNCTION DOC]
+        # Elements in either index but not both. Parameters: other (Index or
+        # array-like), result_name (optional label overriding the computed
+        # name; default none) and sort (none, true or false; default none).
+        # Validates sort and other (value/type errors). Aligns timezones. If
+        # the dtypes are not comparable, returns the union under the result
+        # name. If dtypes differ, casts both to a common dtype and recurses.
+        # Otherwise takes unique values of each, finds the entries of self
+        # absent from other and vice versa, appends them (self's first) and
+        # tries to sort per sort. Returns a flat Index with the result name,
+        # or for multi-level indexes the multi-level result with names set
+        # (an empty result keeps the left operand's levels pruned).
         """
         Compute the symmetric difference of two Index objects.
 
@@ -3583,11 +4263,20 @@ class Index(IndexOpsMixin, PandasObject):
 
     @final
     def _assert_can_do_setop(self, other) -> bool:
+        # [FUNCTION DOC]
+        # HELPER: final. Raises a type error unless other is list-like;
+        # otherwise returns true.
         if not is_list_like(other):
             raise TypeError("Input must be Index or array-like")
         return True
 
     def _convert_can_do_setop(self, other) -> tuple[Index, Hashable]:
+        # [FUNCTION DOC]
+        # HELPER: normalizes the other operand of a set operation. A non-Index
+        # is converted to an Index carrying this index's name, and the result
+        # name is this index's name; an Index keeps itself and the result name
+        # comes from the shared name-combining rule (the common name or none).
+        # Returns the pair (index, result name).
         if not isinstance(other, Index):
             other = Index(other, name=self.name)
             result_name = self.name
@@ -3599,6 +4288,15 @@ class Index(IndexOpsMixin, PandasObject):
     # Indexing Methods
 
     def get_loc(self, key):
+        # [FUNCTION DOC]
+        # Parameter key is a label. Casts it via the subclass hook and looks
+        # it up in the hash engine. Returns an integer for a unique match, a
+        # slice for a monotonic run of duplicates, or a boolean mask for
+        # non-contiguous duplicates. Raises a key error carrying the original
+        # key when absent, an invalid-indexer error when the key (or any
+        # element of an iterable key) is a slice, and for unhashable
+        # list-like keys an invalid-indexer error via the indexing-error
+        # check, otherwise the original type error.
         """
         Get integer location, slice or boolean mask for requested label.
 
@@ -3661,6 +4359,24 @@ class Index(IndexOpsMixin, PandasObject):
         limit: int | None = None,
         tolerance=None,
     ) -> npt.NDArray[np.intp]:
+        # [FUNCTION DOC]
+        # Final. Position of each target label within this index. Parameters:
+        # target (array-like or Index), method (none, pad/ffill,
+        # backfill/bfill or nearest; default none = exact), limit (optional
+        # maximum consecutive inexact fills) and tolerance (scalar or
+        # list-like maximum distance). Returns an integer position array the
+        # length of target, with minus one for unmatched labels. Raises an
+        # invalid-indexer error if this index has duplicates; value errors for
+        # a bad method or for limit/tolerance without a method; not-implemented
+        # errors for unsupported methods on multi-level, interval and
+        # categorical indexes. Strategy: normalize method, cast target via the
+        # subclass hook, and validate; empty target gives an empty result;
+        # non-comparable dtypes give all minus one; categorical self uses
+        # codes (with special handling of missing values), categorical target
+        # looks up its categories then propagates through the codes; datetime
+        # and similar targets may be downcast first; equal indexes give the
+        # identity range; differing dtypes are cast to a common type; the
+        # rest goes to the engine-based lookup.
         """
         Compute indexer and mask for new index given the current index.
 
@@ -3802,6 +4518,14 @@ class Index(IndexOpsMixin, PandasObject):
         limit: int | None = None,
         tolerance=None,
     ) -> npt.NDArray[np.intp]:
+        # [FUNCTION DOC]
+        # HELPER: overridable engine-level implementation of get_indexer
+        # after validation and dtype matching. Parameters: target (same-dtype
+        # Index), method (none, pad, backfill or nearest), limit and
+        # tolerance. A tolerance is converted first. Pad/backfill use the
+        # fill routine, nearest the nearest routine; otherwise performs exact
+        # lookup in the engine (multi-level indexes via level codes). Returns
+        # the integer position array in platform integer type.
         if tolerance is not None:
             tolerance = self._convert_tolerance(tolerance, target)
 
@@ -3826,6 +4550,11 @@ class Index(IndexOpsMixin, PandasObject):
 
     @final
     def _should_partial_index(self, target: Index) -> bool:
+        # [FUNCTION DOC]
+        # HELPER: final. Returns true only when this is an interval index and
+        # target is not interval-typed but its dtype is comparable with the
+        # interval endpoints (so scalars can match intervals); false in all
+        # other cases.
         """
         Should we attempt partial-matching indexing?
         """
@@ -3843,6 +4572,13 @@ class Index(IndexOpsMixin, PandasObject):
         limit: int | None = None,
         tolerance=None,
     ) -> None:
+        # [FUNCTION DOC]
+        # HELPER: final validator for lookup options. Parameters: method,
+        # limit and tolerance. Raises a value error for an unknown method; a
+        # not-implemented error for nearest on multi-level indexes, for
+        # tolerance with pad/backfill on multi-level indexes, and for any
+        # method on interval or categorical indexes; and value errors when a
+        # tolerance or limit is given without a method. Returns nothing.
         """
         Raise if we have a get_indexer `method` that is not supported or valid.
         """
@@ -3883,6 +4619,13 @@ class Index(IndexOpsMixin, PandasObject):
                 )
 
     def _convert_tolerance(self, tolerance, target: np.ndarray | Index) -> np.ndarray:
+        # [FUNCTION DOC]
+        # HELPER: normalizes a tolerance. Parameters: tolerance (scalar or
+        # list-like) and target (array or Index). Converts it to an array.
+        # Raises a value error if it is list-like of a different size than
+        # target, or if this index is numeric and the tolerance has a
+        # non-numeric dtype (separate messages for scalar and list cases).
+        # Returns the array. Subclasses (e.g. datetime-like) override.
         # override this method on subclasses
         tolerance = np.asarray(tolerance)
         if target.size != tolerance.size and tolerance.size > 1:
@@ -3904,6 +4647,17 @@ class Index(IndexOpsMixin, PandasObject):
     def _get_fill_indexer(
         self, target: Index, method: str_t, limit: int | None = None, tolerance=None
     ) -> npt.NDArray[np.intp]:
+        # [FUNCTION DOC]
+        # HELPER: final. Pad/backfill lookup. Parameters: target, method (pad
+        # or backfill), limit (optional) and tolerance (optional, already
+        # converted). A multi-level index must be monotonic (else value
+        # error); it is encoded to flat tuple-like codes and processed as a
+        # flat index. When both are monotonic increasing, uses the compiled
+        # pad/backfill routines on engine values (not-implemented error if
+        # those are not plain arrays); otherwise falls back to the
+        # search-based method. If a tolerance is given and this index is
+        # non-empty, positions farther than the tolerance become minus one.
+        # Returns the integer position array.
         if self._is_multi:
             if not (self.is_monotonic_increasing or self.is_monotonic_decreasing):
                 raise ValueError("index must be monotonic increasing or decreasing")
@@ -3937,6 +4691,14 @@ class Index(IndexOpsMixin, PandasObject):
     def _get_fill_indexer_searchsorted(
         self, target: Index, method: str_t, limit: int | None = None
     ) -> npt.NDArray[np.intp]:
+        # [FUNCTION DOC]
+        # HELPER: final fallback for pad/backfill lookup on decreasing indexes
+        # or non-monotonic targets. Parameters: target, method (pad or
+        # backfill) and limit, which must be none (value error otherwise).
+        # Finds exact matches, then binary-searches the rest: for pad,
+        # subtracts one from the insertion points (so insertion at the start
+        # becomes minus one); for backfill, insertion past the end becomes
+        # minus one. Returns the integer position array.
         """
         Fallback pad/backfill get_indexer that works for monotonic decreasing
         indexes and non-monotonic targets.
@@ -3971,6 +4733,15 @@ class Index(IndexOpsMixin, PandasObject):
     def _get_nearest_indexer(
         self, target: Index, limit: int | None, tolerance
     ) -> npt.NDArray[np.intp]:
+        # [FUNCTION DOC]
+        # HELPER: final. Nearest-label lookup. Parameters: target, limit
+        # (optional) and tolerance (optional). Empty self falls back to the
+        # pad lookup. Otherwise computes pad and backfill lookups, the
+        # distances to each, and picks the pad match when its distance is
+        # smaller (or equal, for decreasing indexes) or no backfill match
+        # exists; ties therefore favor the larger label for increasing
+        # indexes. Applies the tolerance filter if given. Returns the
+        # integer position array.
         """
         Get the indexer for the nearest index labels; requires an index with
         values that can be subtracted from each other (e.g., not strings or
@@ -4006,6 +4777,11 @@ class Index(IndexOpsMixin, PandasObject):
         indexer: npt.NDArray[np.intp],
         tolerance,
     ) -> npt.NDArray[np.intp]:
+        # [FUNCTION DOC]
+        # HELPER: final. Parameters: target, indexer (integer positions into
+        # self, may contain minus one) and tolerance (scalar or array-like).
+        # Returns a copy of the positions where positions whose distance from
+        # the target label exceeds the tolerance are replaced by minus one.
         distance = self._difference_compat(target, indexer)
 
         return np.where(distance <= tolerance, indexer, -1)
@@ -4014,6 +4790,13 @@ class Index(IndexOpsMixin, PandasObject):
     def _difference_compat(
         self, target: Index, indexer: npt.NDArray[np.intp]
     ) -> ArrayLike:
+        # [FUNCTION DOC]
+        # HELPER: final. Parameters: target (Index of the same dtype) and
+        # indexer (positions into self). Returns the absolute difference
+        # between self's values at those positions and target's values; for
+        # period dtype the difference is taken on the raw integer ordinals so
+        # the result is numeric rather than offset objects. A minus one
+        # position picks the last element, so callers must mask those.
         # Compatibility for PeriodArray, for which __sub__ returns an ndarray[object]
         #  of DateOffset objects, which do not support __abs__ (and would be slow
         #  if they did)
@@ -4033,6 +4816,10 @@ class Index(IndexOpsMixin, PandasObject):
 
     @final
     def _validate_positional_slice(self, key: slice) -> None:
+        # [FUNCTION DOC]
+        # HELPER: final. Parameter key is a slice. Checks that start, stop
+        # and step are each none or an integer, using the positional-indexer
+        # validator (raises a type error otherwise). Returns nothing.
         """
         For positional indexing, a slice must have either int or None
         for each of start, stop, and step.
@@ -4042,6 +4829,17 @@ class Index(IndexOpsMixin, PandasObject):
         self._validate_indexer("positional", key.step, "iloc")
 
     def _convert_slice_indexer(self, key: slice, kind: Literal["loc", "getitem"]):
+        # [FUNCTION DOC]
+        # HELPER: parameters key (a slice) and kind (loc or getitem). For
+        # getitem: an integer-only slice is returned unchanged; for an
+        # integer-dtype index the bounds are validated and the slice returned.
+        # Otherwise decides whether the slice should be treated as positional
+        # (integer-valued and the index falls back to positions); if so it
+        # checks whether the bounds exist as labels and, if they do, treats it
+        # as label-based. A null slice is returned unchanged. A positional
+        # slice under loc raises a type error. Label-based slices are
+        # converted through the slice-indexer routine into positions.
+        # Returns a slice (or equivalent positional indexer).
         """
         Convert a slice indexer.
 
@@ -4113,6 +4911,12 @@ class Index(IndexOpsMixin, PandasObject):
         key,
         reraise: lib.NoDefault | None | Exception = lib.no_default,
     ) -> None:
+        # [FUNCTION DOC]
+        # HELPER: final. Parameters: form (slice or positional), key (the
+        # offending indexer) and reraise (an exception to chain as the cause;
+        # the sentinel default means none). Always raises a type error saying
+        # that form of indexing is invalid on this class with the given key
+        # and its type name, chained from reraise when one is supplied.
         """
         Raise consistent invalid indexer message.
         """
@@ -4129,6 +4933,10 @@ class Index(IndexOpsMixin, PandasObject):
 
     @final
     def _validate_can_reindex(self, indexer: np.ndarray) -> None:
+        # [FUNCTION DOC]
+        # HELPER: final. Parameter indexer is an integer array. Raises a
+        # value error when this index has duplicate labels and the indexer is
+        # non-empty; otherwise returns nothing.
         """
         Check if we are allowing reindexing with this particular indexer.
 
@@ -4152,6 +4960,22 @@ class Index(IndexOpsMixin, PandasObject):
         limit: int | None = None,
         tolerance: float | None = None,
     ) -> tuple[Index, npt.NDArray[np.intp] | None]:
+        # [FUNCTION DOC]
+        # Conform to target's labels. Parameters: target (iterable, Index or
+        # empty list-like), method (none, pad/ffill, backfill/bfill or
+        # nearest), level (optional level for multi-level indexes), limit and
+        # tolerance (scalar or list-like). Iterators are materialized. An
+        # empty non-Index target keeps this index's dtype (or the chosen
+        # level's); other targets are converted to an Index, and a non-Index
+        # target without a name keeps the original name. With a level and a
+        # multi-level involved, method is not allowed (type error) and the
+        # right-join-on-level helper provides target and indexer. Otherwise:
+        # an equal target gives no indexer; a unique index uses exact or
+        # filled lookup; a non-unique multi-level index or an index with
+        # duplicate labels raises a value error; any remaining case uses the
+        # non-unique lookup. Finally the result is passed to the reindex
+        # wrapper hook (which copies the original name onto an unnamed
+        # target). Returns the pair (new index, indexer or none).
         """
         Create index with target's values.
 
@@ -4258,10 +5082,20 @@ class Index(IndexOpsMixin, PandasObject):
         return target, indexer
 
     def _wrap_reindex_result(self, target, indexer, preserve_names: bool):
+        # [FUNCTION DOC]
+        # HELPER: hook (overridden by multi-level index) run at the end of
+        # reindex. Parameters: target (the new index), indexer (unused here)
+        # and preserve_names (bool). Returns target, with its name replaced by
+        # this index's name when requested (see the name-preserving helper).
         target = self._maybe_preserve_names(target, preserve_names)
         return target
 
     def _maybe_preserve_names(self, target: IndexT, preserve_names: bool) -> IndexT:
+        # [FUNCTION DOC]
+        # HELPER: parameters target (an index) and preserve_names (bool). If
+        # preserve_names is true, target has a single level, and its name
+        # differs from this index's, returns a shallow copy of target named
+        # like this index; otherwise returns target unchanged.
         if preserve_names and target.nlevels == 1 and target.name != self.name:
             target = target.copy(deep=False)
             target.name = self.name
@@ -4271,6 +5105,19 @@ class Index(IndexOpsMixin, PandasObject):
     def _reindex_non_unique(
         self, target: Index
     ) -> tuple[Index, npt.NDArray[np.intp], npt.NDArray[np.intp] | None]:
+        # [FUNCTION DOC]
+        # HELPER: final. Reindex for a non-unique self and possibly
+        # non-unique target. Parameter target is an iterable converted to an
+        # Index. An empty target gives an empty slice of self, an empty
+        # indexer and no secondary indexer. Otherwise uses the non-unique
+        # lookup: matched labels are taken from self; labels missing from self
+        # are filled from target, with the combined labels built as an object
+        # array and re-inferred. The secondary indexer (none if nothing is
+        # missing) maps output rows back to rows of the matched take, using
+        # minus one for missing; its construction differs for an empty self,
+        # a unique target, and a non-unique target. Returns a triple of the
+        # new index (multi-level indexes rebuilt from tuples with names), the
+        # lookup indexer, and the secondary indexer.
         """
         Create a new index with target's values (move/add/delete values as
         necessary) use with non-unique Index and a possibly non-unique target.
@@ -4351,7 +5198,11 @@ class Index(IndexOpsMixin, PandasObject):
         level: Level = ...,
         return_indexers: Literal[True],
         sort: bool = ...,
-    ) -> tuple[Index, npt.NDArray[np.intp] | None, npt.NDArray[np.intp] | None]: ...
+    ) -> tuple[Index, npt.NDArray[np.intp] | None, npt.NDArray[np.intp] | None]:
+        # [FUNCTION DOC]
+        # Type-checking overload only: with return_indexers true, returns the
+        # join index plus left and right indexers. See the implementation.
+        ...
 
     @overload
     def join(
@@ -4362,7 +5213,11 @@ class Index(IndexOpsMixin, PandasObject):
         level: Level = ...,
         return_indexers: Literal[False] = ...,
         sort: bool = ...,
-    ) -> Index: ...
+    ) -> Index:
+        # [FUNCTION DOC]
+        # Type-checking overload only: with return_indexers false, returns
+        # only the join index. See the implementation.
+        ...
 
     @overload
     def join(
@@ -4375,7 +5230,11 @@ class Index(IndexOpsMixin, PandasObject):
         sort: bool = ...,
     ) -> (
         Index | tuple[Index, npt.NDArray[np.intp] | None, npt.NDArray[np.intp] | None]
-    ): ...
+    ):
+        # [FUNCTION DOC]
+        # Type-checking overload only: general flag; returns an index or an
+        # index with indexers. See the implementation.
+        ...
 
     @final
     @_maybe_return_indexers
@@ -4388,6 +5247,27 @@ class Index(IndexOpsMixin, PandasObject):
         return_indexers: bool = False,
         sort: bool = False,
     ) -> Index | tuple[Index, npt.NDArray[np.intp] | None, npt.NDArray[np.intp] | None]:
+        # [FUNCTION DOC]
+        # Final; wrapped by the return-indexers decorator, which supplies the
+        # return_indexers option and strips it before calling this body (the
+        # body always yields a triple). Parameters: other (an Index; other
+        # types emit a deprecation warning and are converted), how (left,
+        # right, inner or outer; default left), level (optional level of a
+        # multi-level index), sort (bool, default false; forced true for
+        # outer joins). Raises a type error when joining tz-naive with
+        # tz-aware datetime indexes; a value error for an invalid how.
+        # Dispatch order: downcast/upcast of mismatched types first; multi-
+        # level indexes with differing names go to the multi-join, an explicit
+        # level to the level-join; an empty operand to the empty-join; mismatched
+        # dtypes are cast to a common dtype and the join repeated; categorical
+        # indexes with differently ordered categories are aligned; monotonic
+        # increasing indexes (one unique) use the fast compiled path; non-
+        # unique indexes use the non-unique path; everything else joins via
+        # lookup. Returns the join index and left and right integer indexers
+        # (none meaning identity).
+        # KNOWN ISSUE: when dtypes differ, the recursive join call passes
+        # neither the sort option nor the level, so the sort request is
+        # dropped on that path.
         """
         Compute join_index and indexers to conform data structures to the new index.
 
@@ -4507,6 +5387,16 @@ class Index(IndexOpsMixin, PandasObject):
     def _join_empty(
         self, other: Index, how: JoinHow, sort: bool
     ) -> tuple[Index, npt.NDArray[np.intp] | None, npt.NDArray[np.intp] | None]:
+        # [FUNCTION DOC]
+        # HELPER: join where at least one operand is empty (asserted).
+        # Parameters: other, how, sort. Validates how. If other is non-empty,
+        # swaps roles (flipping left/right) and recurses, then swaps the
+        # returned indexers back. If self is non-empty (other empty): for left
+        # or outer joins returns self (sorted via argsort if sort is true and
+        # it is not already increasing) with a right indexer of all minus
+        # ones; otherwise (right/inner) returns other with an empty left
+        # indexer and no right indexer. Returns (join index, left indexer,
+        # right indexer).
         assert len(self) == 0 or len(other) == 0
         _validate_join_method(how)
 
@@ -4534,6 +5424,16 @@ class Index(IndexOpsMixin, PandasObject):
     def _join_via_get_indexer(
         self, other: Index, how: JoinHow, sort: bool
     ) -> tuple[Index, npt.NDArray[np.intp] | None, npt.NDArray[np.intp] | None]:
+        # [FUNCTION DOC]
+        # HELPER: final generic fallback join (dtypes already match).
+        # Parameters: other, how, sort. The join index is: self (left; sorted
+        # first if sort), other (right; likewise), the intersection (inner),
+        # or the union (outer; if sorting the union raises a type error it
+        # retries unsorted and attempts a best-effort sort). Names come from
+        # other for right joins else self; the join index is renamed if its
+        # names differ. Indexers come from lookup of the join index in each
+        # operand, with none used when the join index is that very operand.
+        # Returns (join index, left indexer, right indexer).
         # Fallback if we do not have any fastpaths available based on
         #  uniqueness/monotonicity
 
@@ -4583,6 +5483,18 @@ class Index(IndexOpsMixin, PandasObject):
 
     @final
     def _join_multi(self, other: Index, how: JoinHow):
+        # [FUNCTION DOC]
+        # HELPER: final. Join where at least one operand is multi-level and
+        # the level names differ. Parameters: other, how. Raises a value
+        # error if there are no common level names. If both are multi-level:
+        # drops the non-shared levels from each (or just reorders other's
+        # levels when only the order differs), joins on the shared levels,
+        # restores the dropped levels in the result, removes unused levels
+        # and orders levels (other's then left drops for a right join, else
+        # self's then right drops). If only one is multi-level: picks the
+        # common name, swaps operands so the flat one is on the left
+        # (flipping left/right), and delegates to the level join, swapping the
+        # indexers back. Returns (join index, left indexer, right indexer).
         from pandas.core.indexes.multi import MultiIndex
         from pandas.core.reshape.merge import restore_dropped_levels_multijoin
 
@@ -4674,6 +5586,15 @@ class Index(IndexOpsMixin, PandasObject):
     def _join_non_unique(
         self, other: Index, how: JoinHow = "left", sort: bool = False
     ) -> tuple[Index, npt.NDArray[np.intp], npt.NDArray[np.intp]]:
+        # [FUNCTION DOC]
+        # HELPER: final. Join when either operand has duplicate labels
+        # (dtypes asserted equal). Parameters: other, how (default left), sort
+        # (default false). Gets both indexers from the merge machinery's
+        # non-unique routine, builds the join index by taking from other for
+        # a right join else from self; for an outer join fills the rows with
+        # no left match from other's labels; and for an outer join of multi-
+        # level indexes sorts levels monotonic. Returns (join index, left
+        # indexer, right indexer).
         from pandas.core.reshape.merge import get_join_indexers_non_unique
 
         # We only get here if dtypes match
@@ -4703,6 +5624,19 @@ class Index(IndexOpsMixin, PandasObject):
     def _join_level(
         self, other: Index, level, how: JoinHow = "left", keep_order: bool = True
     ) -> tuple[MultiIndex, npt.NDArray[np.intp] | None, npt.NDArray[np.intp] | None]:
+        # [FUNCTION DOC]
+        # HELPER: final. Join a flat index onto one level of a multi-level
+        # index. Parameters: other, level (position or name), how (default
+        # left), keep_order (bool, default true: keep the multi-level data
+        # order; otherwise order to match the flat index). Raises a type error
+        # if both are multi-level (ambiguous) and a not-implemented error if
+        # the flat index is non-unique. The flat operand is treated as the
+        # right side (flipping how if self was the flat one). The level is
+        # joined with the flat index; the multi-level codes are remapped to
+        # the new level (dropping missing, or reordering leaves/outer groups
+        # when not keeping order) to build the result multi-level index.
+        # Returns (join index, left indexer, right indexer), indexers swapped
+        # back if operands were flipped, each as platform integers or none.
         """
         The join method *only* affects the level of the resulting
         MultiIndex. Otherwise it just exactly aligns the Index data to the
@@ -4715,6 +5649,13 @@ class Index(IndexOpsMixin, PandasObject):
         from pandas.core.indexes.multi import MultiIndex
 
         def _get_leaf_sorter(labels: list[np.ndarray]) -> npt.NDArray[np.intp]:
+            # [FUNCTION DOC]
+            # HELPER: nested helper of the level join. Parameter labels is a
+            # list of integer code arrays (one per level, outermost first,
+            # all the same length). Returns the permutation (positions) that
+            # sorts the innermost level within runs of equal outer-level
+            # codes while keeping the outer order. Empty input gives an empty
+            # result; a single level uses the group-index sorter.
             """
             Returns sorter for the inner most level while preserving the
             order of higher levels.
@@ -4850,6 +5791,16 @@ class Index(IndexOpsMixin, PandasObject):
     def _join_monotonic(
         self, other: Index, how: JoinHow = "left"
     ) -> tuple[Index, npt.NDArray[np.intp] | None, npt.NDArray[np.intp] | None]:
+        # [FUNCTION DOC]
+        # HELPER: fast join for matching-dtype, monotonic increasing indexes
+        # where at least one is unique (callers guarantee; asserted partly).
+        # Parameters: other, how (default left). If the two are equal returns
+        # self (other for right) with no indexers. Left join with unique other
+        # uses the unique-left indexer (join index is self, no left indexer);
+        # right join with unique self is the mirror. Other cases use the
+        # compiled left/inner/outer indexers and wrap the result. Returns
+        # (join index, left indexer, right indexer) with indexers as platform
+        # integers or none.
         # We only get here with (caller is responsible for ensuring):
         #  1) matching dtypes
         #  2) both monotonic increasing
@@ -4912,6 +5863,17 @@ class Index(IndexOpsMixin, PandasObject):
         ridx: npt.NDArray[np.intp] | None,
         how: JoinHow,
     ) -> tuple[Self, npt.NDArray[np.intp] | None, npt.NDArray[np.intp] | None]:
+        # [FUNCTION DOC]
+        # HELPER: turns raw compiled-join output into the join index.
+        # Parameters: joined (array of joined values), other (same dtype,
+        # asserted), lidx and ridx (optional integer indexers), how. An
+        # indexer equal to the identity range is replaced by none. If the left
+        # indexer is none the join index is self; else if the right is none it
+        # is other (preserving cached attributes); else a new index is built
+        # from joined with inference. The index is renamed if its names differ
+        # from the expected ones (other's for right joins, else self's).
+        # Returns (join index, left indexer, right indexer). Overridden by
+        # datetime-like indexes to set the frequency.
         assert other.dtype == self.dtype
 
         if lidx is not None and lib.is_range_indexer(lidx, len(self)):
@@ -4938,6 +5900,12 @@ class Index(IndexOpsMixin, PandasObject):
     @final
     @cache_readonly
     def _can_use_libjoin(self) -> bool:
+        # [FUNCTION DOC]
+        # HELPER: final cached property. Returns false unless the index is
+        # monotonic increasing. For the plain Index class: true for numpy
+        # dtypes, masked or arrow-backed extension data, and python-storage
+        # string data. For subclasses: true unless it is an interval or
+        # multi-level index (subclasses may override).
         """
         Whether we can use the fastpaths implemented in _libs.join.
 
@@ -4974,6 +5942,10 @@ class Index(IndexOpsMixin, PandasObject):
 
     @property
     def values(self) -> ArrayLike:
+        # [FUNCTION DOC]
+        # Property. Returns the underlying data. A numpy array is returned as
+        # a read-only view (the flag is cleared on the view only); an
+        # extension array is returned as is.
         """
         Return an array representing the data in the Index.
 
@@ -5022,6 +5994,11 @@ class Index(IndexOpsMixin, PandasObject):
 
     @cache_readonly
     def array(self) -> ExtensionArray:
+        # [FUNCTION DOC]
+        # Cached property. Returns the data as an extension array: extension
+        # data as is, numpy data wrapped without copying in the numpy-backed
+        # extension array. Not made read-only (a pending decision noted in
+        # code).
         """
         The ExtensionArray of the data backing this Index.
 
@@ -5100,6 +6077,10 @@ class Index(IndexOpsMixin, PandasObject):
 
     @property
     def _values(self) -> ExtensionArray | np.ndarray:
+        # [FUNCTION DOC]
+        # HELPER: property giving the best internal array form; here simply
+        # the stored data. Subclasses may override (e.g. to expose datetime
+        # arrays).
         """
         The best array representation.
 
@@ -5125,6 +6106,12 @@ class Index(IndexOpsMixin, PandasObject):
         return self._data
 
     def _get_engine_target(self) -> ArrayLike:
+        # [FUNCTION DOC]
+        # HELPER: returns the array to hand to the lookup engine. String
+        # arrays give their raw numpy storage; arrow timestamp/duration data
+        # give 64-bit integer views of converted arrays; for the plain Index
+        # class, extension data other than masked, numeric-arrow arrays is
+        # converted to an object array; everything else is returned as is.
         """
         Get the ndarray or ExtensionArray that we can pass to the IndexEngine
         constructor.
@@ -5160,6 +6147,13 @@ class Index(IndexOpsMixin, PandasObject):
 
     @final
     def _get_join_target(self) -> np.ndarray:
+        # [FUNCTION DOC]
+        # HELPER: final. Returns the plain numpy array to pass to the compiled
+        # join routines (used only for monotonic data, so no missing values):
+        # the data of masked arrays, a numpy conversion of non-datetime arrow
+        # arrays, else the engine target. Raises a value error if the engine
+        # target is not a numpy array (the join-eligibility check should have
+        # prevented this).
         """
         Get the ndarray or ExtensionArray that we can pass to the join
         functions.
@@ -5183,6 +6177,11 @@ class Index(IndexOpsMixin, PandasObject):
         return target
 
     def _from_join_target(self, result: np.ndarray) -> ArrayLike:
+        # [FUNCTION DOC]
+        # HELPER: inverse of the join-target conversion. Parameter result is a
+        # numpy array from a compiled join. Masked-array data are rebuilt with
+        # an all-false mask; arrow and string arrays are rebuilt from the
+        # sequence with this dtype; otherwise the array is returned as is.
         """
         Cast the ndarray returned from one of the libjoin.foo_indexer functions
         back to type(self._data).
@@ -5194,6 +6193,11 @@ class Index(IndexOpsMixin, PandasObject):
         return result
 
     def memory_usage(self, deep: bool = False) -> int:
+        # [FUNCTION DOC]
+        # Parameter deep (bool, default false) asks to inspect object
+        # contents. Returns the byte size of the values, plus the size of the
+        # lookup engine's hash table if the engine has already been built.
+        # Does not build the engine.
         """
         Memory usage of the values.
 
@@ -5233,6 +6237,12 @@ class Index(IndexOpsMixin, PandasObject):
 
     @final
     def where(self, cond, other=None) -> Index:
+        # [FUNCTION DOC]
+        # Final. Parameters: cond (boolean array-like of the same length) and
+        # other (scalar or array-like replacement, default none). Not
+        # supported for multi-level indexes (raises not-implemented).
+        # Replaces entries where cond is false by other, by masking the
+        # negated condition. Returns a new index (dtype may widen).
         """
         Replace values where the condition is False.
 
@@ -5275,6 +6285,15 @@ class Index(IndexOpsMixin, PandasObject):
     @final
     @classmethod
     def _raise_scalar_data_error(cls, data):
+        # [FUNCTION DOC]
+        # HELPER: final classmethod used by constructors. Parameter data is
+        # the offending scalar. Always raises a type error saying the class
+        # must be constructed from a collection and showing the value
+        # (numpy scalars are shown as plain strings).
+        # KNOWN ISSUE: the comment says the error is returned so callers can
+        # raise it, but the function actually raises it itself and never
+        # returns (callers write a raise of its result, which is unreachable
+        # as an expression).
         # We return the TypeError so that we can raise it from the constructor
         #  in order to keep mypy happy
         raise TypeError(
@@ -5287,6 +6306,14 @@ class Index(IndexOpsMixin, PandasObject):
     def _maybe_copy_array_input(
         cls, data, copy: bool | None, dtype
     ) -> tuple[Any, bool]:
+        # [FUNCTION DOC]
+        # HELPER: classmethod run at construction. Parameters: data, copy
+        # (bool or none) and dtype (requested or none). For numpy or
+        # extension array input where copying is not forbidden (copy is not
+        # false) and either no dtype is requested or the cast would be a pure
+        # view, copies the data up front and clears the copy flag so later
+        # steps do not copy again. Returns the pair (possibly copied data,
+        # copy flag as bool where none counts as false).
         """
         Ensure that the input data is copied if necessary.
         GH#63388
@@ -5299,6 +6326,15 @@ class Index(IndexOpsMixin, PandasObject):
         return data, bool(copy)
 
     def _validate_fill_value(self, value):
+        # [FUNCTION DOC]
+        # HELPER: checks that a scalar can be stored in this index's array
+        # without changing dtype. Parameter value is the candidate. For numpy
+        # dtypes other than datetime-like: a tuple is rejected unless dtype is
+        # object (type error), otherwise the value is converted by the numpy
+        # element-compatibility routine, whose lossy-cast failure is re-raised
+        # as a type error; returns the converted value. For other dtypes,
+        # raises a type error if the array cannot hold the value; else returns
+        # the value unchanged.
         """
         Check if the value can be inserted into our array without casting,
         and convert it to an appropriate native type if necessary.
@@ -5324,6 +6360,10 @@ class Index(IndexOpsMixin, PandasObject):
 
     @cache_readonly
     def _is_memory_usage_qualified(self) -> bool:
+        # [FUNCTION DOC]
+        # HELPER: cached property for info display. Returns true for object
+        # dtype and for python-storage string dtype, i.e. when the reported
+        # memory is only a lower bound and needs the qualifier marker.
         """
         Return a boolean if we need a qualified .info display.
         """
@@ -5332,6 +6372,11 @@ class Index(IndexOpsMixin, PandasObject):
         )
 
     def __contains__(self, key: Any) -> bool:
+        # [FUNCTION DOC]
+        # Membership test. Parameter key is a label. Raises a type error if
+        # the key is unhashable. Returns whether the engine contains the key;
+        # overflow, type or value errors during lookup (e.g. an out-of-range
+        # or incomparable key) are treated as not present.
         """
         Return a boolean indicating whether the provided key is in the index.
 
@@ -5379,9 +6424,23 @@ class Index(IndexOpsMixin, PandasObject):
 
     @final
     def __setitem__(self, key, value) -> None:
+        # [FUNCTION DOC]
+        # Final. Item assignment is unsupported because indexes are
+        # immutable; always raises a type error regardless of arguments.
         raise TypeError("Index does not support mutable operations")
 
     def __getitem__(self, key):
+        # [FUNCTION DOC]
+        # Positional selection. Parameter key is an integer or float scalar
+        # (bool excluded; floats must be integer-valued), a slice, a boolean
+        # mask (array, list or Series, including nullable booleans, where
+        # missing counts as false), or an integer array/list. A scalar returns
+        # the element itself. A slice takes the slice fast path (sharing the
+        # reference tracker and engine state). A boolean mask for numpy-typed
+        # data of length zero against a non-empty index raises a value error.
+        # Array-like keys that yield more than one dimension raise through the
+        # multi-dimensional indexing guard. Otherwise returns a new index of
+        # the constructor class with the same name.
         """
         Override numpy.ndarray's __getitem__ method to work as desired.
 
@@ -5432,6 +6491,12 @@ class Index(IndexOpsMixin, PandasObject):
         return self._constructor._simple_new(result, name=self._name)
 
     def _getitem_slice(self, slobj: slice) -> Self:
+        # [FUNCTION DOC]
+        # HELPER: fast path for slicing. Parameter slobj is a slice. Slices the
+        # data and builds a new index of the same class sharing the name and
+        # reference tracker. If this index already built its lookup engine,
+        # the new engine is initialized from the old one (reversed for
+        # negative steps) to avoid recomputation. Returns the new index.
         """
         Fastpath for __getitem__ when we know we have a slice.
         """
@@ -5445,6 +6510,11 @@ class Index(IndexOpsMixin, PandasObject):
 
     @final
     def _can_hold_identifiers_and_holds_name(self, name) -> bool:
+        # [FUNCTION DOC]
+        # HELPER: final, used for attribute-style column access. Parameter
+        # name is an identifier string. Returns whether it is a member of the
+        # index, but only for object, string and categorical dtypes; always
+        # false for other dtypes.
         """
         Faster check for ``name in self`` when we know `name` is a Python
         identifier (e.g. in NDFrame.__getattr__, which hits this to support
@@ -5462,6 +6532,11 @@ class Index(IndexOpsMixin, PandasObject):
         return False
 
     def append(self, other: Index | Sequence[Index]) -> Index:
+        # [FUNCTION DOC]
+        # Parameter other is an Index or a list/tuple of Index objects. Raises
+        # a type error if any element is not an Index. The result name is this
+        # index's name if all names agree, else none. Concatenation is done by
+        # the overridable concat helper. Returns a new index.
         """
         Append a collection of Index options together.
 
@@ -5506,6 +6581,11 @@ class Index(IndexOpsMixin, PandasObject):
         return self._concat(to_concat, name)
 
     def _concat(self, to_concat: list[Index], name: Hashable) -> Index:
+        # [FUNCTION DOC]
+        # HELPER: overridable concatenation. Parameters: to_concat (list of
+        # indexes, self first) and name (result label). Concatenates the
+        # underlying value arrays with common-type coercion and builds an
+        # index with dtype re-inference (no copy). Returns it.
         """
         Concatenate multiple Index objects.
         """
@@ -5516,6 +6596,17 @@ class Index(IndexOpsMixin, PandasObject):
         return Index._with_infer(result, name=name, copy=False)
 
     def putmask(self, mask, value) -> Index:
+        # [FUNCTION DOC]
+        # Parameters: mask (boolean array-like marking positions to replace)
+        # and value (replacement scalar, or array-like for the extension case).
+        # If the mask selects nothing returns a copy. A missing-value marker
+        # is normalized to the dtype's own marker. If the value fits the
+        # dtype it is written into a copy of the values; otherwise the index
+        # is cast to a common dtype and the operation retried on that (an
+        # assertion error is raised if no widening occurs, to avoid infinite
+        # recursion; object dtype re-raises the original error). Returns a new
+        # index (shallow-copied wrapper of the changed values) with the same
+        # name; the original is untouched.
         """
         Return a new Index of the values set with the mask.
 
@@ -5582,6 +6673,16 @@ class Index(IndexOpsMixin, PandasObject):
         return self._shallow_copy(values)
 
     def equals(self, other: Any) -> bool:
+        # [FUNCTION DOC]
+        # Parameter other is any object. True if it is the very same index or
+        # shares identity; false if it is not an Index or the lengths differ.
+        # Special cases delegate the comparison to the other operand: string
+        # dtype versus a different dtype (compared after casting self to
+        # object), object self versus non-object other, a multi-level other,
+        # and extension-dtype others. Extension-array data are compared by
+        # the array's own equality but only against the same index class;
+        # otherwise the arrays are compared element-wise treating missing
+        # values in matching positions as equal. The dtype is not compared.
         """
         Determine if two Index object are equal.
 
@@ -5685,6 +6786,10 @@ class Index(IndexOpsMixin, PandasObject):
 
     @final
     def identical(self, other) -> bool:
+        # [FUNCTION DOC]
+        # Final. Parameter other is an object to compare. True only if the
+        # elements are equal, every comparable attribute (such as the name)
+        # matches, the classes are identical, and the dtypes are equal.
         """
         Similar to equals, but checks that object attributes and types are also equal.
 
@@ -5729,6 +6834,14 @@ class Index(IndexOpsMixin, PandasObject):
 
     @final
     def asof(self, label):
+        # [FUNCTION DOC]
+        # Final. Parameter label is a scalar label. The index must be sorted
+        # (value error from the monotonic search if not). If the label is
+        # present returns it (the last of a run of duplicates, when the
+        # lookup yields a slice or mask the matching element); otherwise
+        # looks up the previous label with pad-fill and returns it, or the
+        # dtype's missing marker if every label is later. Raises a type error
+        # if the label is not scalar.
         """
         Return the label from the index, or, if not present, the previous one.
 
@@ -5805,6 +6918,14 @@ class Index(IndexOpsMixin, PandasObject):
     def asof_locs(
         self, where: Index, mask: npt.NDArray[np.bool_]
     ) -> npt.NDArray[np.intp]:
+        # [FUNCTION DOC]
+        # Parameters: where (Index of labels to locate) and mask (boolean
+        # array, true where this index's values are not missing). For each
+        # label in where, finds the position of the latest non-missing index
+        # value that is not greater than it (binary search over the non-
+        # missing values), and returns minus one for labels earlier than the
+        # first non-missing value. Assumes the index is sorted. Returns an
+        # integer position array the length of where.
         """
         Return the locations (indices) of labels in the index.
 
@@ -5877,7 +6998,11 @@ class Index(IndexOpsMixin, PandasObject):
         ascending: bool = ...,
         na_position: NaPosition = ...,
         key: Callable | None = ...,
-    ) -> Self: ...
+    ) -> Self:
+        # [FUNCTION DOC]
+        # Type-checking overload only: without the indexer, returns the sorted
+        # index. See the implementation.
+        ...
 
     @overload
     def sort_values(
@@ -5887,7 +7012,11 @@ class Index(IndexOpsMixin, PandasObject):
         ascending: bool = ...,
         na_position: NaPosition = ...,
         key: Callable | None = ...,
-    ) -> tuple[Self, np.ndarray]: ...
+    ) -> tuple[Self, np.ndarray]:
+        # [FUNCTION DOC]
+        # Type-checking overload only: with the indexer, returns the sorted
+        # index and the sorting positions. See the implementation.
+        ...
 
     @overload
     def sort_values(
@@ -5897,7 +7026,10 @@ class Index(IndexOpsMixin, PandasObject):
         ascending: bool = ...,
         na_position: NaPosition = ...,
         key: Callable | None = ...,
-    ) -> Self | tuple[Self, np.ndarray]: ...
+    ) -> Self | tuple[Self, np.ndarray]:
+        # [FUNCTION DOC]
+        # Type-checking overload only: general flag. See the implementation.
+        ...
 
     def sort_values(
         self,
@@ -5907,6 +7039,17 @@ class Index(IndexOpsMixin, PandasObject):
         na_position: NaPosition = "last",
         key: Callable | None = None,
     ) -> Self | tuple[Self, np.ndarray]:
+        # [FUNCTION DOC]
+        # Keyword-only parameters: return_indexer (bool, default false),
+        # ascending (bool, default true), na_position (first or last, default
+        # last; ignored for multi-level indexes) and key (optional vectorized
+        # function applied to the index before comparing; default none).
+        # Fast path: with no key and an index already ordered in the requested
+        # direction, returns a copy (and an identity range as indexer).
+        # Otherwise computes sorting positions (for multi-level: the key-mapped
+        # argsort, reversed when descending; for others: the shared missing-
+        # aware argsort), takes them, and returns the sorted index, plus the
+        # positions when return_indexer is true. Does not modify self.
         """
         Return a sorted copy of the index.
 
@@ -5988,6 +7131,11 @@ class Index(IndexOpsMixin, PandasObject):
             return sorted_index
 
     def shift(self, periods: int = 1, freq=None) -> Self:
+        # [FUNCTION DOC]
+        # Unsupported on the generic index: parameters periods (int, default
+        # 1) and freq (default none) are ignored and a not-implemented error
+        # naming the actual class is always raised. Datetime, period and
+        # timedelta indexes override this.
         """
         Shift index by desired number of time frequency increments.
 
@@ -6049,6 +7197,10 @@ class Index(IndexOpsMixin, PandasObject):
         )
 
     def argsort(self, *args, **kwargs) -> npt.NDArray[np.intp]:
+        # [FUNCTION DOC]
+        # Extra positional and keyword arguments are forwarded unchanged to
+        # the underlying array's argsort. Returns integer positions that sort
+        # the values. Overridden by range and multi-level indexes.
         """
         Return the integer indices that would sort the index.
 
@@ -6088,6 +7240,10 @@ class Index(IndexOpsMixin, PandasObject):
         return self._data.argsort(*args, **kwargs)
 
     def _check_indexing_error(self, key) -> None:
+        # [FUNCTION DOC]
+        # HELPER: parameter key is a lookup key. Raises an invalid-indexer
+        # error carrying the key if it is not a scalar (avoiding a later,
+        # less clear failure); otherwise returns nothing.
         if not is_scalar(key):
             # if key is not a scalar, directly raise an error (the code below
             # would convert to numpy arrays and raise later any way) - GH29926
@@ -6095,6 +7251,10 @@ class Index(IndexOpsMixin, PandasObject):
 
     @cache_readonly
     def _should_fallback_to_positional(self) -> bool:
+        # [FUNCTION DOC]
+        # HELPER: cached property. Returns true unless the inferred type is
+        # integer, mixed-integer, floating or complex, i.e. true when integer
+        # keys should be read as positions because the labels are not numeric.
         """
         Should an integer key be treated as positional?
         """
@@ -6161,6 +7321,16 @@ class Index(IndexOpsMixin, PandasObject):
     def get_indexer_non_unique(
         self, target
     ) -> tuple[npt.NDArray[np.intp], npt.NDArray[np.intp]]:
+        # [FUNCTION DOC]
+        # Position lookup that supports duplicate labels. Parameter target is
+        # an array-like or Index. Returns a pair: an integer array with every
+        # matching position in self for each target label, in target order
+        # (one minus-one entry for a label with no match), and an integer
+        # array of the target positions that had no match. Non-comparable
+        # dtypes give all minus ones; certain downcasts (datetime/period) are
+        # applied first and the lookup repeated; mismatched dtypes are cast to
+        # a common dtype and repeated; multi-level targets use level codes;
+        # the engine does the lookup.
         """
         Compute indexer and mask for new index given the current index.
 
@@ -6251,6 +7421,12 @@ class Index(IndexOpsMixin, PandasObject):
 
     @final
     def get_indexer_for(self, target) -> npt.NDArray[np.intp]:
+        # [FUNCTION DOC]
+        # Final. Parameter target is an array-like or Index. Uses the exact-
+        # match lookup if this index can be treated as unique, otherwise the
+        # non-unique lookup (discarding the missing-position output). Returns
+        # an integer position array (minus one where absent, in the unique
+        # case).
         """
         Guaranteed return of an indexer even when non-unique.
 
@@ -6286,6 +7462,17 @@ class Index(IndexOpsMixin, PandasObject):
         return indexer
 
     def _get_indexer_strict(self, key, axis_name: str_t) -> tuple[Index, np.ndarray]:
+        # [FUNCTION DOC]
+        # HELPER: strict list-like lookup used by label-based selection.
+        # Parameters: key (list-like of labels) and axis_name (axis label used
+        # in error messages). Non-Index keys are converted to arrays. For a
+        # unique index uses the standard lookup, otherwise the non-unique
+        # reindex path. Raises a key error if any label is missing (message
+        # differs when none are found). The result keys are taken from self
+        # by the indexer, taking over the name of an Index key; for
+        # datetime-like results it clears the frequency when the key was a
+        # list or an index without frequency. Returns (selected index,
+        # integer positions).
         """
         Analogue to get_indexer that raises if any elements are missing.
         """
@@ -6320,6 +7507,14 @@ class Index(IndexOpsMixin, PandasObject):
         return keyarr, indexer
 
     def _raise_if_missing(self, key, indexer, axis_name: str_t) -> None:
+        # [FUNCTION DOC]
+        # HELPER: parameters key (requested labels), indexer (integer
+        # positions, negative where not found) and axis_name (for messages).
+        # Returns nothing for an empty key. Raises a key error saying none of
+        # the labels are in the axis when all are missing, or a key error
+        # listing the unique missing labels when only some are.
+        # KNOWN ISSUE: the docstring calls indexer an array of booleans, but
+        # it is an integer position array tested for negative values.
         """
         Check that indexer can be used to return a result.
 
@@ -6357,22 +7552,41 @@ class Index(IndexOpsMixin, PandasObject):
     @overload
     def _get_indexer_non_comparable(
         self, target: Index, method, unique: Literal[True] = ...
-    ) -> npt.NDArray[np.intp]: ...
+    ) -> npt.NDArray[np.intp]:
+        # [FUNCTION DOC]
+        # HELPER: type-checking overload only (unique true gives one array).
+        # See the implementation below.
+        ...
 
     @overload
     def _get_indexer_non_comparable(
         self, target: Index, method, unique: Literal[False]
-    ) -> tuple[npt.NDArray[np.intp], npt.NDArray[np.intp]]: ...
+    ) -> tuple[npt.NDArray[np.intp], npt.NDArray[np.intp]]:
+        # [FUNCTION DOC]
+        # HELPER: type-checking overload only (unique false gives a pair of
+        # arrays). See the implementation below.
+        ...
 
     @overload
     def _get_indexer_non_comparable(
         self, target: Index, method, unique: bool = True
-    ) -> npt.NDArray[np.intp] | tuple[npt.NDArray[np.intp], npt.NDArray[np.intp]]: ...
+    ) -> npt.NDArray[np.intp] | tuple[npt.NDArray[np.intp], npt.NDArray[np.intp]]:
+        # [FUNCTION DOC]
+        # HELPER: type-checking overload only (general flag). See the
+        # implementation below.
+        ...
 
     @final
     def _get_indexer_non_comparable(
         self, target: Index, method, unique: bool = True
     ) -> npt.NDArray[np.intp] | tuple[npt.NDArray[np.intp], npt.NDArray[np.intp]]:
+        # [FUNCTION DOC]
+        # HELPER: final. Parameters: target (Index), method (fill method or
+        # none) and unique (bool, default true). Raises a type error if a fill
+        # method is requested (inequality lookups on incomparable dtypes).
+        # Otherwise returns an all-minus-one position array the shape of
+        # target when unique is true; when false returns that array together
+        # with the array of all target positions as the "missing" output.
         """
         Called from get_indexer or get_indexer_non_unique when the target
         is of a non-comparable dtype.
@@ -6411,6 +7625,9 @@ class Index(IndexOpsMixin, PandasObject):
 
     @property
     def _index_as_unique(self) -> bool:
+        # [FUNCTION DOC]
+        # HELPER: property deciding which lookup routine to use. Returns the
+        # uniqueness flag; interval indexes override it.
         """
         Whether we should treat this as unique for the sake of
         get_indexer vs get_indexer_non_unique.
@@ -6423,6 +7640,18 @@ class Index(IndexOpsMixin, PandasObject):
 
     @final
     def _maybe_downcast_for_indexing(self, other: Index) -> tuple[Index, Index]:
+        # [FUNCTION DOC]
+        # HELPER: final. Parameter other is the lookup target. Returns the pair
+        # (self, other), possibly converted to improve lookups: two timezone-
+        # aware datetime indexes with different zones are both converted to
+        # UTC; an object index of dates against a datetime index is converted
+        # to datetime (left alone on out-of-bounds); an object index of
+        # timedeltas against a timedelta index is converted; an unsigned
+        # index against a signed index with no negatives casts other to the
+        # unsigned dtype; a multi-level self with a flat other tries to turn
+        # other into a multi-level index, else self falls back to a flat
+        # index of tuples. Finally, if self is non-object and other is object
+        # the roles are reversed so the object side is converted.
         """
         When dealing with an object-dtype Index and a non-object Index, see
         if we can upcast the object-dtype one to improve performance.
@@ -6469,6 +7698,14 @@ class Index(IndexOpsMixin, PandasObject):
 
     @final
     def _find_common_type_compat(self, target) -> DtypeObj:
+        # [FUNCTION DOC]
+        # HELPER: final. Parameter target is an Index, array, dtype or scalar.
+        # Returns the common dtype of self and target with Index-specific
+        # rules: a tuple target gives object; under the string-dtype option,
+        # an empty range index or empty object index on one side defers to the
+        # other side's dtype; an unsigned 64-bit dtype combined with a signed
+        # integer dtype gives object; otherwise the generic result-type
+        # routine with categorical compatibility adjustments.
         """
         Implementation of find_common_type that adjusts for Index-specific
         special cases.
@@ -6515,6 +7752,13 @@ class Index(IndexOpsMixin, PandasObject):
 
     @final
     def _should_compare(self, other: Index) -> bool:
+        # [FUNCTION DOC]
+        # HELPER: final. Parameter other is an Index. Returns whether an
+        # equality comparison between the two could ever be true. False when
+        # one side holds booleans and the other is a real numeric dtype;
+        # otherwise true if this index's comparable-dtype check accepts
+        # other's (possibly nested/categorical-unpacked) dtype, or other is
+        # object or string typed.
         """
         Check if `self == other` can ever have non-False entries.
         """
@@ -6539,6 +7783,10 @@ class Index(IndexOpsMixin, PandasObject):
         )
 
     def _is_comparable_dtype(self, dtype: DtypeObj) -> bool:
+        # [FUNCTION DOC]
+        # HELPER: overridable. Parameter dtype is another dtype. Boolean
+        # indexes are comparable only to boolean dtypes; numeric indexes only
+        # to numeric dtypes; everything else accepts any dtype (true).
         """
         Can we compare values of the given dtype to our own?
         """
@@ -6552,6 +7800,12 @@ class Index(IndexOpsMixin, PandasObject):
 
     @final
     def groupby(self, values) -> PrettyDict[Hashable, Index]:
+        # [FUNCTION DOC]
+        # Final. Parameter values is an array (or multi-level index, which is
+        # first flattened to tuples) of group keys, one per element of this
+        # index. Factorizes the keys as categories and, for each category,
+        # takes the corresponding labels from this index. Returns an ordered
+        # pretty-printing mapping from group key to an Index of its labels.
         """
         Group the index labels by a given array of values.
 
@@ -6578,6 +7832,17 @@ class Index(IndexOpsMixin, PandasObject):
         return PrettyDict(result)
 
     def map(self, mapper, na_action: Literal["ignore"] | None = None):
+        # [FUNCTION DOC]
+        # Parameters: mapper (function, mapping or Series) and na_action
+        # (ignore, or none = default, to pass missing values through to the
+        # mapper). Applies the mapping elementwise through the shared value-
+        # mapping routine. If the first result is a tuple, returns a
+        # multi-level index built from the tuples (names: this index's names
+        # if multi-level, the index name repeated per element if named, else
+        # none). Otherwise determines the result dtype: this index's dtype if
+        # empty; a categorical result keeps its dtype; else the result is cast
+        # via the array's pointwise-result rule. Returns an Index with the
+        # same name (no copy).
         """
         Map values using an input mapping or function.
 
@@ -6652,6 +7917,13 @@ class Index(IndexOpsMixin, PandasObject):
     # TODO: De-duplicate with map, xref GH#32349
     @final
     def _transform_index(self, func, *, level=None) -> Index:
+        # [FUNCTION DOC]
+        # HELPER: final. Parameters: func (callable applied to single labels)
+        # and level (optional level to transform; default none = all levels).
+        # For multi-level indexes, maps the function over the chosen level(s)
+        # and rebuilds from arrays. Otherwise applies func to each label in
+        # Python and builds a plain Index (tuples not combined into levels)
+        # with the same name. Returns the new index.
         """
         Apply function to all values found in index.
 
@@ -6673,6 +7945,12 @@ class Index(IndexOpsMixin, PandasObject):
             return Index(items, name=self.name, tupleize_cols=False)
 
     def isin(self, values, level: str_t | int | None = None) -> npt.NDArray[np.bool_]:
+        # [FUNCTION DOC]
+        # Parameters: values (set or list-like of sought values) and level
+        # (optional level name/position; validated, so an invalid level
+        # raises an index or key error). Returns a boolean array, one entry
+        # per element, marking membership in values via the shared membership
+        # routine on the underlying values.
         """
         Return a boolean array where the index values are in `values`.
 
@@ -6746,6 +8024,11 @@ class Index(IndexOpsMixin, PandasObject):
         return algos.isin(self._values, values)
 
     def _get_string_slice(self, key: str_t):
+        # [FUNCTION DOC]
+        # HELPER: hook for partial string indexing. Parameter key is the
+        # string label. The generic index does not support it and always
+        # raises a not-implemented error; datetime, timedelta and period
+        # indexes override.
         # this is for partial string indexing,
         # overridden in DatetimeIndex, TimedeltaIndex and PeriodIndex
         raise NotImplementedError
@@ -6756,6 +8039,13 @@ class Index(IndexOpsMixin, PandasObject):
         end: Hashable | None = None,
         step: int | None = None,
     ) -> slice:
+        # [FUNCTION DOC]
+        # Parameters: start and end (labels; default none = open end) and step
+        # (int, default none). Converts the labels to positions with the
+        # slice-bound location routine, asserts both are scalars (assertion
+        # error otherwise), and returns a slice of those positions and the
+        # step. Errors from bound lookup (key errors for missing labels in
+        # non-monotonic indexes) propagate.
         """
         Compute the slice indexer for input labels and step.
 
@@ -6812,6 +8102,13 @@ class Index(IndexOpsMixin, PandasObject):
         return slice(start_slice, end_slice, step)
 
     def _maybe_cast_indexer(self, key):
+        # [FUNCTION DOC]
+        # HELPER: hook that normalizes a scalar lookup key before engine
+        # lookup. Parameter key is a label. A float NaN key on a nullable
+        # floating-dtype index (when NaN is treated as missing) is replaced by
+        # the dtype's missing marker; all other keys are returned unchanged.
+        # KNOWN ISSUE: the docstring says integer-equivalent floats are cast
+        # to int, but no such conversion occurs in this implementation.
         """
         If we have a float key and are not a floating index, then try to cast
         to an int if equivalent.
@@ -6827,6 +8124,14 @@ class Index(IndexOpsMixin, PandasObject):
         return key
 
     def _maybe_cast_listlike_indexer(self, target) -> Index:
+        # [FUNCTION DOC]
+        # HELPER: overridable list-like analogue of key casting. Parameter
+        # target is an array-like or Index. Converts it to an Index. If the
+        # target had no dtype of its own (e.g. a plain list) and this index is
+        # object dtype, a string-inferred result is re-created with this
+        # index's object dtype; if this is a NaN-based string dtype under the
+        # string-dtype option, missing values are filled with NaN for
+        # consistency. Returns the Index.
         """
         Analogue to maybe_cast_indexer for get_indexer instead of get_loc.
         """
@@ -6856,6 +8161,11 @@ class Index(IndexOpsMixin, PandasObject):
         key,
         kind: Literal["getitem", "iloc"],
     ) -> None:
+        # [FUNCTION DOC]
+        # HELPER: final. Parameters: form (positional or slice), key (a slice
+        # bound or position) and kind (getitem or iloc; unused). Raises, via
+        # the invalid-indexer error (type error), unless the key is an integer
+        # or none. Returns nothing.
         """
         If we are positional indexer, validate that we have appropriate
         typed bounds must be an integer.
@@ -6864,6 +8174,13 @@ class Index(IndexOpsMixin, PandasObject):
             self._raise_invalid_indexer(form, key)
 
     def _maybe_cast_slice_bound(self, label, side: str_t):
+        # [FUNCTION DOC]
+        # HELPER: overridable hook. Parameters: label (a slice bound) and
+        # side (left or right; unused in the base). For numeric dtypes the
+        # label goes through the scalar-key casting hook. Otherwise a float or
+        # integer label that is not a member of the index is rejected with the
+        # invalid-indexer error (type error). Everything else is returned
+        # unchanged.
         """
         This function should be overloaded in subclasses that allow non-trivial
         casting on label-slice bounds, e.g. datetime-like indices allowing
@@ -6896,6 +8213,13 @@ class Index(IndexOpsMixin, PandasObject):
         return label
 
     def _searchsorted_monotonic(self, label, side: Literal["left", "right"] = "left"):
+        # [FUNCTION DOC]
+        # HELPER: binary search in a sorted index. Parameters: label and side
+        # (left default or right). For an increasing index, searches
+        # directly. For a decreasing one, searches the reversed index with
+        # the opposite side and maps the position back. Returns the insertion
+        # position (unboxed scalar). Raises a value error if the index is
+        # neither monotonic increasing nor decreasing.
         if self.is_monotonic_increasing:
             return self.searchsorted(label, side=side)
         elif self.is_monotonic_decreasing:
@@ -6910,6 +8234,16 @@ class Index(IndexOpsMixin, PandasObject):
         raise ValueError("index must be monotonic increasing or decreasing")
 
     def get_slice_bound(self, label, side: Literal["left", "right"]) -> int:
+        # [FUNCTION DOC]
+        # Parameters: label (a label or, for datetime-like indexes, a string)
+        # and side (left or right). Raises a value error for any other side.
+        # The label is first cast by the slice-bound hook. If found, returns
+        # the start of its run for left or one past its end for right; a
+        # boolean-mask match is accepted only if it is a contiguous run, else
+        # a key error (non-unique label). If not found, uses binary search on
+        # a monotonic index; a non-monotonic index raises a key error
+        # advising to sort or use an existing label. Returns the integer
+        # bound.
         """
         Calculate slice bound that corresponds to given label.
 
@@ -7003,6 +8337,16 @@ class Index(IndexOpsMixin, PandasObject):
         end: SliceType = None,
         step: int | None = None,
     ) -> tuple[int, int]:
+        # [FUNCTION DOC]
+        # Parameters: start and end (labels, default none = open) and step
+        # (int, default none). For a negative step the bounds are swapped
+        # while computing and swapped back afterward, shifted by one (with
+        # special handling so minus one does not wrap to the last element).
+        # If both bounds are strings or datetimes that parse to timestamps
+        # with different UTC offsets, raises a value error. The start bound
+        # uses the left side lookup (default zero) and the end bound the
+        # right side lookup (default length). Returns the pair of unboxed
+        # integer bounds. Key errors from bound lookup propagate.
         """
         Compute slice locations for input labels.
 
@@ -7101,6 +8445,13 @@ class Index(IndexOpsMixin, PandasObject):
     def delete(
         self, loc: int | np.integer | list[int] | npt.NDArray[np.integer]
     ) -> Self:
+        # [FUNCTION DOC]
+        # Parameter loc is an integer or integer sequence/array of positions
+        # to remove. Deletes them from the underlying values (numpy deletion
+        # for arrays, the extension array's own deletion otherwise), raising
+        # an index error for out-of-range positions as those routines do.
+        # Returns a new index of the constructor class (a range index becomes
+        # a plain integer index) with the same name.
         """
         Make new Index with passed location(-s) deleted.
 
@@ -7141,6 +8492,18 @@ class Index(IndexOpsMixin, PandasObject):
         return self._constructor._simple_new(res_values, name=self.name)
 
     def insert(self, loc: int, item) -> Index:
+        # [FUNCTION DOC]
+        # Parameters: loc (integer position; negative counts from the end like
+        # numpy insertion) and item (value to insert). A missing-value marker
+        # is normalized to the dtype's marker (non-object dtypes). Under the
+        # string-dtype option an empty object index may be cast to the item's
+        # dtype first. Extension-array data insert natively. For numpy data
+        # the item is validated; if it cannot be held without changing dtype,
+        # the index is cast to the common dtype (often object) and the insert
+        # retried (re-raising if no wider dtype exists). Tuples and datetime64/
+        # timedelta64 items in object arrays are inserted through a placeholder
+        # to avoid numpy mis-casting. Returns a new Index with the same name;
+        # no dtype inference is performed on the result.
         """
         Make new Index inserting new item at location.
 
@@ -7224,6 +8587,13 @@ class Index(IndexOpsMixin, PandasObject):
         labels: Index | np.ndarray | Iterable[Hashable],
         errors: IgnoreRaise = "raise",
     ) -> Index:
+        # [FUNCTION DOC]
+        # Parameters: labels (scalar or array-like of labels to remove) and
+        # errors (raise, default, or ignore). Converts non-Index labels to an
+        # array (object dtype if this index is object), looks them up, and
+        # deletes the matched positions. If any label is missing: with raise,
+        # raises a key error listing them; with ignore, drops only those found.
+        # Returns a new index.
         """
         Make new Index with passed list of labels deleted.
 
@@ -7271,6 +8641,14 @@ class Index(IndexOpsMixin, PandasObject):
 
     @final
     def infer_objects(self, copy: bool = True) -> Index:
+        # [FUNCTION DOC]
+        # Final. Parameter copy (bool, default true) controls copying when no
+        # inference happens. Multi-level indexes raise a not-implemented
+        # error. Non-object indexes return a copy (or self when copy is
+        # false). Object indexes try to convert values to a better dtype
+        # (including non-numeric types); if nothing changes, a copy is
+        # returned when copy is true, else an equivalent index sharing the
+        # reference tracker. Returns the index.
         """
         If we have an object dtype, try to infer a non-object dtype.
 
@@ -7320,6 +8698,11 @@ class Index(IndexOpsMixin, PandasObject):
 
     @final
     def diff(self, periods: int = 1) -> Index:
+        # [FUNCTION DOC]
+        # Final. Parameter periods (int, default 1) is the distance between
+        # compared positions. Converts the index to a Series, takes its
+        # difference with that lag, and wraps the result in an Index (the
+        # first entries are missing, so integer data becomes float).
         """
         Computes the difference between consecutive values in the Index object.
 
@@ -7348,6 +8731,11 @@ class Index(IndexOpsMixin, PandasObject):
         return Index(self.to_series().diff(periods))
 
     def round(self, decimals: int = 0) -> Self:
+        # [FUNCTION DOC]
+        # Parameter decimals (int, default 0; negative rounds left of the
+        # decimal point). Rounds via a Series and rebuilds an index of the
+        # same constructor class. Returns the new index; non-numeric data
+        # errors come from the Series rounding.
         """
         Round each value in the Index to the given number of decimals.
 
@@ -7376,6 +8764,16 @@ class Index(IndexOpsMixin, PandasObject):
     # Generated Arithmetic, Comparison, and Unary Methods
 
     def _cmp_method(self, other, op):
+        # [FUNCTION DOC]
+        # HELPER: backs the comparison operators. Parameters: other (scalar,
+        # array-like, index, series) and op (a binary comparison operator
+        # function). If other is the identical index, equality-like operators
+        # return all true and not-equal all false, with missing entries
+        # flipped for dtypes that can hold missing values (skipped for
+        # multi-level). A length mismatch with an array-like other raises a
+        # value error. Otherwise unwraps other (multi-level to a numpy array)
+        # and applies the shared comparison routine to the values. Returns a
+        # boolean array.
         """
         Wrapper used to dispatch comparison operations.
         """
@@ -7409,6 +8807,12 @@ class Index(IndexOpsMixin, PandasObject):
 
     @final
     def _logical_method(self, other, op):
+        # [FUNCTION DOC]
+        # HELPER: final, backs the and/or/xor operators. Parameters: other
+        # (scalar or array-like) and op (the logical operator function).
+        # Unwraps other, applies the shared logical routine to the values and
+        # builds the result index using the combined operand name. Returns an
+        # Index (or a pair when the routine returns two arrays).
         res_name = ops.get_op_result_name(self, other)
 
         lvalues = self._values
@@ -7419,6 +8823,11 @@ class Index(IndexOpsMixin, PandasObject):
 
     @final
     def _construct_result(self, result, name, other):
+        # [FUNCTION DOC]
+        # HELPER: final. Parameters: result (array, or a pair of arrays from
+        # division-with-remainder), name (label) and other (unused). Returns an
+        # Index (or pair of Index objects) keeping each array's own dtype
+        # without copying.
         if isinstance(result, tuple):
             return (
                 Index(result[0], name=name, dtype=result[0].dtype, copy=False),
@@ -7427,6 +8836,12 @@ class Index(IndexOpsMixin, PandasObject):
         return Index(result, name=name, dtype=result.dtype, copy=False)
 
     def _arith_method(self, other, op):
+        # [FUNCTION DOC]
+        # HELPER: backs the arithmetic operators. Parameters: other and op
+        # (the operator function). If other is an object-dtype instance of an
+        # Index subclass, returns the not-implemented sentinel so the subclass
+        # can handle the operation; otherwise defers to the shared base
+        # implementation.
         if (
             isinstance(other, Index)
             and is_object_dtype(other.dtype)
@@ -7441,19 +8856,33 @@ class Index(IndexOpsMixin, PandasObject):
 
     @final
     def _unary_method(self, op):
+        # [FUNCTION DOC]
+        # HELPER: final. Parameter op is a unary operator function. Applies it
+        # to the values and returns an Index (no copy) with the same name.
         result = op(self._values)
         return Index(result, name=self.name, copy=False)
 
     def __abs__(self) -> Index:
+        # [FUNCTION DOC]
+        # Absolute value operator; returns a new Index of elementwise
+        # absolute values.
         return self._unary_method(operator.abs)
 
     def __neg__(self) -> Index:
+        # [FUNCTION DOC]
+        # Unary minus operator; returns a new Index of negated values.
         return self._unary_method(operator.neg)
 
     def __pos__(self) -> Index:
+        # [FUNCTION DOC]
+        # Unary plus operator; returns a new Index of the values with the
+        # unary-plus operator applied.
         return self._unary_method(operator.pos)
 
     def __invert__(self) -> Index:
+        # [FUNCTION DOC]
+        # Bitwise-inversion operator; returns a new Index of inverted values
+        # (logical negation for booleans).
         # GH#8875
         return self._unary_method(operator.inv)
 
@@ -7461,6 +8890,13 @@ class Index(IndexOpsMixin, PandasObject):
     # Reductions
 
     def any(self, *args, **kwargs):
+        # [FUNCTION DOC]
+        # Extra positional and keyword arguments exist only for numpy
+        # compatibility and are validated (unsupported ones raise). The index
+        # must be of a dtype that supports logical reductions, checked by the
+        # logical-method guard (raises a type error otherwise). Returns
+        # whether any element is truthy as an unboxed scalar; extension data
+        # use their own reduction so unsupported types raise a type error.
         """
         Return whether any element is Truthy.
 
@@ -7506,6 +8942,13 @@ class Index(IndexOpsMixin, PandasObject):
         return maybe_unbox_numpy_scalar(np.any(vals))
 
     def all(self, *args, **kwargs):
+        # [FUNCTION DOC]
+        # Extra positional and keyword arguments exist only for numpy
+        # compatibility and are validated (unsupported ones raise). Raises a
+        # type error for multi-level indexes (via the logical-method guard).
+        # Returns whether all elements are truthy as an unboxed scalar;
+        # extension data use their own reduction so unsupported types raise a
+        # type error.
         """
         Return whether all elements are Truthy.
 
@@ -7555,6 +8998,10 @@ class Index(IndexOpsMixin, PandasObject):
 
     @final
     def _maybe_disable_logical_methods(self, opname: str_t) -> None:
+        # [FUNCTION DOC]
+        # HELPER: final guard for the any/all reductions. Parameter opname is
+        # the operation name for the message. Raises a type error for
+        # multi-level indexes; otherwise returns nothing.
         """
         raise if this Index subclass does not support any or all.
         """
@@ -7564,6 +9011,12 @@ class Index(IndexOpsMixin, PandasObject):
     def argmin(
         self, axis: AxisInt | None = None, skipna: bool = True, *args, **kwargs
     ) -> int:
+        # [FUNCTION DOC]
+        # Parameters: axis (must be none; validated), skipna (bool, default
+        # true) and extra numpy-compat arguments (validated). For flat
+        # indexes with missing values, raises a value error if skipna is
+        # false, or if every element is missing. Returns the position of the
+        # first smallest value via the shared base implementation.
         """
         Return int position of the smallest value in the Index.
 
@@ -7624,6 +9077,12 @@ class Index(IndexOpsMixin, PandasObject):
     def argmax(
         self, axis: AxisInt | None = None, skipna: bool = True, *args, **kwargs
     ) -> int:
+        # [FUNCTION DOC]
+        # Parameters: axis (must be none; validated), skipna (bool, default
+        # true) and extra numpy-compat arguments (validated). For flat
+        # indexes with missing values, raises a value error if skipna is
+        # false, or if every element is missing. Returns the position of the
+        # first largest value via the shared base implementation.
         """
         Return int position of the largest value in the Index.
 
@@ -7681,6 +9140,15 @@ class Index(IndexOpsMixin, PandasObject):
         return super().argmax(skipna=skipna)
 
     def min(self, axis: AxisInt | None = None, skipna: bool = True, *args, **kwargs):
+        # [FUNCTION DOC]
+        # Parameters: axis (none or zero; validated), skipna (bool, default
+        # true) and numpy-compat arguments (validated). An empty index returns
+        # the dtype's missing marker. A monotonic increasing index whose first
+        # element is not missing returns it directly. A flat index with
+        # missing values returns the missing marker if skipna is false or all
+        # are missing. Extension data use their own minimum reduction; numpy
+        # data use the missing-aware minimum. Returns an unboxed scalar
+        # (tuple for multi-level).
         """
         Return the minimum value of the Index.
 
@@ -7744,6 +9212,15 @@ class Index(IndexOpsMixin, PandasObject):
         return maybe_unbox_numpy_scalar(nanops.nanmin(self._values, skipna=skipna))
 
     def max(self, axis: AxisInt | None = None, skipna: bool = True, *args, **kwargs):
+        # [FUNCTION DOC]
+        # Parameters: axis (none or zero; validated), skipna (bool, default
+        # true) and numpy-compat arguments (validated). An empty index returns
+        # the dtype's missing marker. A monotonic increasing index whose last
+        # element is not missing returns it directly. A flat index with
+        # missing values returns the missing marker if skipna is false or all
+        # are missing. Extension data use their own maximum reduction; numpy
+        # data use the missing-aware maximum. Returns an unboxed scalar
+        # (tuple for multi-level).
         """
         Return the maximum value of the Index.
 
@@ -7812,6 +9289,8 @@ class Index(IndexOpsMixin, PandasObject):
     @final
     @property
     def shape(self) -> Shape:
+        # [FUNCTION DOC]
+        # Final property. Returns a one-element tuple holding the length.
         """
         Return a tuple of the shape of the underlying data.
 
@@ -7835,6 +9314,16 @@ class Index(IndexOpsMixin, PandasObject):
 
 
 def maybe_sequence_to_range(sequence) -> Any | range:
+    # [FUNCTION DOC]
+    # Parameter sequence is a one-dimensional non-pandas sequence (a pandas
+    # Series/Index of non-signed-integer dtype is also returned unchanged).
+    # Returns it unchanged if it is already a range or extension array, has a
+    # single element, is not inferred as all integers, or has a zero or
+    # irregular step, or integers too large for 64-bit. An empty sequence
+    # yields an empty range. A regular arithmetic sequence of at least two
+    # elements yields a range with the same start, step and extent.
+    # KNOWN ISSUE: the docstring lists a names parameter that the function
+    # does not accept.
     """
     Convert a 1D, non-pandas sequence to a range if possible.
 
@@ -7873,6 +9362,13 @@ def maybe_sequence_to_range(sequence) -> Any | range:
 
 
 def ensure_index_from_sequences(sequences, names=None) -> Index:
+    # [FUNCTION DOC]
+    # Parameters: sequences (a sequence of sequences) and names (optional
+    # sequence of labels, one per sequence). No sequences gives the default
+    # empty range index. One sequence gives an Index (compacted to a range
+    # when it is a regular integer progression) named with the first name.
+    # Several give a multi-level index built from arrays with all the names.
+    # Returns the index.
     """
     Construct an index from sequences of data.
 
@@ -7917,6 +9413,15 @@ def ensure_index_from_sequences(sequences, names=None) -> Index:
 
 
 def ensure_index(index_like: Axes, copy: bool = False) -> Index:
+    # [FUNCTION DOC]
+    # Parameters: index_like (an Index, Series, iterator or sequence) and
+    # copy (bool, default false). An Index is returned as is (copied if
+    # requested). A Series becomes an Index with its name. Iterators and list
+    # subclasses are materialized to plain lists. A non-empty list whose
+    # items are all array-like becomes a multi-level index from arrays; any
+    # other list becomes a flat Index without combining tuples into levels;
+    # anything else is passed to the Index constructor. Returns an Index
+    # (or multi-level index).
     """
     Ensure that we have an index from some index-like object.
 
@@ -7976,6 +9481,11 @@ def ensure_index(index_like: Axes, copy: bool = False) -> Index:
 
 
 def trim_front(strings: list[str]) -> list[str]:
+    # [FUNCTION DOC]
+    # HELPER: for index repr formatting. Parameter strings is a list of
+    # strings. Removes the smallest common number of leading spaces from
+    # every string. An empty list, or one where some string has no leading
+    # space, is returned unchanged (same object).
     """
     Trims leading spaces evenly among all strings.
 
@@ -7996,11 +9506,19 @@ def trim_front(strings: list[str]) -> list[str]:
 
 
 def _validate_join_method(method: str) -> None:
+    # [FUNCTION DOC]
+    # HELPER: for join. Parameter method is the join kind. Raises a value
+    # error unless it is left, right, inner or outer; returns nothing.
     if method not in ["left", "right", "inner", "outer"]:
         raise ValueError(f"do not recognize join method {method}")
 
 
 def maybe_extract_name(name, obj, cls) -> Hashable:
+    # [FUNCTION DOC]
+    # Parameters: name (label or none), obj (the data being wrapped) and cls
+    # (the index class, for the message). If name is none and obj is an Index
+    # or Series, the name is taken from obj. Raises a type error if the
+    # resulting name is not hashable. Returns the name.
     """
     If no name is passed, then extract it from data, validating hashability.
     """
@@ -8017,6 +9535,12 @@ def maybe_extract_name(name, obj, cls) -> Hashable:
 
 
 def get_unanimous_names(*indexes: Index) -> tuple[Hashable, ...]:
+    # [FUNCTION DOC]
+    # Parameter indexes: any number of Index objects. For each level position
+    # (shorter indexes are padded with missing names) returns the common name
+    # if all indexes agree on it, otherwise none. Returns a tuple.
+    # KNOWN ISSUE: the docstring says the result is a list, but a tuple is
+    # returned.
     """
     Return common name if all indices agree, otherwise None (level-by-level).
 
@@ -8036,6 +9560,11 @@ def get_unanimous_names(*indexes: Index) -> tuple[Hashable, ...]:
 
 
 def _unpack_nested_dtype(other: Index) -> DtypeObj:
+    # [FUNCTION DOC]
+    # HELPER: for comparability checks. Parameter other is an Index. Returns
+    # its dtype, except that a categorical dtype yields the dtype of its
+    # categories, and an arrow dictionary-encoded dtype yields the dtype of
+    # its value type.
     """
     When checking if our dtype is comparable with another, we need
     to unpack CategoricalDtype to look at its categories.dtype.
@@ -8063,6 +9592,13 @@ def _unpack_nested_dtype(other: Index) -> DtypeObj:
 
 
 def _maybe_try_sort(result: Index | ArrayLike, sort: bool | None):
+    # [FUNCTION DOC]
+    # HELPER: for set operations. Parameters: result (index or array) and sort
+    # (none, true or false). With sort false returns result untouched.
+    # Otherwise tries the safe sort; if values are incomparable (type error):
+    # re-raises when sort is true, else emits a runtime warning that sort
+    # order is undefined and returns the unsorted result. Returns the
+    # (possibly sorted) result.
     if sort is not False:
         try:
             # error: Incompatible types in assignment (expression has type
@@ -8091,6 +9627,21 @@ def get_values_for_csv(
     float_format=None,
     decimal: str = ".",
 ) -> npt.NDArray[np.object_]:
+    # [FUNCTION DOC]
+    # Parameters: values (array, possibly extension or datetime-like; one or
+    # two dimensional for datetime-like), and keyword-only date_format
+    # (required; format or none), na_rep (text for missing, default "nan"),
+    # quoting (csv quoting mode or none), float_format (optional) and decimal
+    # (decimal separator, default period). Returns an object array of values
+    # converted for csv writing, with missing entries replaced by na_rep.
+    # Categorical datetimes are first expanded to their values. Datetime and
+    # timedelta arrays (each column separately if two-dimensional), periods
+    # and intervals use their own native formatting (intervals as strings
+    # unless quoting is on). Floats without special formatting are stringified
+    # directly; otherwise the float formatter applies. Other extension
+    # arrays are converted to objects. Remaining numpy data are converted to
+    # strings when not object and not quoted, widening the string width to fit
+    # na_rep, else kept as objects.
     """
     Convert to types which can be consumed by the standard library's
     csv.writer.writerows.

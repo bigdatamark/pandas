@@ -1,3 +1,15 @@
+# [MODULE DOC]
+# Defines the public CategoricalIndex class, an Index whose values are stored
+# as a Categorical (integer codes plus a categories Index). Public content:
+# CategoricalIndex only. It subclasses the array-backed extension index base
+# from the extension module and builds on the generic Index base class; the
+# data container and the membership helper come from the categorical array
+# module. Many Categorical attributes and methods are attached to the class
+# by the name-inheriting class decorators applied at import time (delegating
+# properties/methods, some wrapped so they return a new index). The class is
+# registered for display under the top-level pandas namespace via a module
+# decorator. No other import-time side effects.
+
 from __future__ import annotations
 
 from typing import (
@@ -76,6 +88,15 @@ if TYPE_CHECKING:
 )
 @set_module("pandas")
 class CategoricalIndex(NDArrayBackedExtensionIndex):
+    # [CLASS DOC]
+    # Immutable one-dimensional index whose values are categorical. Subclass
+    # of the array-backed extension index; the underlying data (both the data
+    # and values attributes) is always a Categorical, exposing integer codes,
+    # the categories Index and an ordered flag. Lookups use an integer engine
+    # chosen to match the codes dtype. Invariant: values not among the
+    # categories are stored as missing (code -1). Key members: construction
+    # via the new method, equality, containment, reindex (limited), map, and
+    # category-manipulation methods inherited from Categorical by decorators.
     """
     Index based on an underlying :class:`Categorical`.
 
@@ -173,10 +194,19 @@ class CategoricalIndex(NDArrayBackedExtensionIndex):
 
     @property
     def _can_hold_strings(self):
+        # [FUNCTION DOC]
+        # HELPER: property used by generic Index string-handling logic.
+        # Returns whether the index can hold strings, delegating to the
+        # categories index (so the answer depends on the category dtype).
         return self.categories._can_hold_strings
 
     @cache_readonly
     def _should_fallback_to_positional(self) -> bool:
+        # [FUNCTION DOC]
+        # HELPER: cached property for integer-key indexing semantics.
+        # Returns a bool: whether integer keys given to getitem-style lookups
+        # should be treated as positions. Delegates to the categories index,
+        # so it is true when the categories are not integer-like.
         return self.categories._should_fallback_to_positional
 
     codes: np.ndarray
@@ -187,6 +217,11 @@ class CategoricalIndex(NDArrayBackedExtensionIndex):
 
     @property
     def _engine_type(self) -> type[libindex.IndexEngine]:
+        # [FUNCTION DOC]
+        # HELPER: property telling the base Index which hash-engine class to
+        # instantiate. Returns the signed-integer engine class (8, 16, 32 or
+        # 64 bit) matching the dtype of the codes array. Raises a key error
+        # if the codes dtype is not one of those four integer types.
         # self.codes can have dtype int8, int16, int32 or int64, so we need
         # to return the corresponding engine type (libindex.Int8Engine, etc.).
         return {
@@ -208,6 +243,19 @@ class CategoricalIndex(NDArrayBackedExtensionIndex):
         copy: bool = False,
         name: Hashable | None = None,
     ) -> Self:
+        # [FUNCTION DOC]
+        # Constructor. Parameters: data is a one-dimensional array-like (or
+        # Categorical/Series/Index) of values, default none; categories is an
+        # optional index-like of unique categories, default none (inferred
+        # from data); ordered is an optional bool, default none (unordered
+        # unless dtype says otherwise); dtype is an optional categorical
+        # dtype or the string category, which cannot be combined with
+        # categories/ordered; copy is a bool, default false, whether to copy
+        # the input; name is an optional hashable label, default none (taken
+        # from data if it has a name). Returns a new CategoricalIndex built
+        # from a Categorical. Raises a type error (via the scalar-data
+        # helper) when data is a scalar, including none; the Categorical
+        # constructor may raise value or type errors for invalid categories.
         name = maybe_extract_name(name, data, cls)
 
         if is_scalar(data):
@@ -223,6 +271,16 @@ class CategoricalIndex(NDArrayBackedExtensionIndex):
     # --------------------------------------------------------------------
 
     def _is_dtype_compat(self, other: Index) -> Categorical:
+        # [FUNCTION DOC]
+        # HELPER: used by equality and append logic to coerce another index
+        # to a Categorical compatible with this one. If other is categorical,
+        # its categories must match this index's up to permutation, else a
+        # type error is raised; it is returned as a Categorical. A
+        # MultiIndex raises a type error. Otherwise every non-missing value
+        # of other must be among this index's categories (else type error),
+        # and the values are converted to a Categorical with this dtype;
+        # a type error is also raised if any value would not be preserved.
+        # Returns the Categorical. No mutation.
         """
         *this is an internal non-public method*
 
@@ -272,6 +330,13 @@ class CategoricalIndex(NDArrayBackedExtensionIndex):
         return cat
 
     def equals(self, other: object) -> bool:
+        # [FUNCTION DOC]
+        # Checks equality with other. Returns true when other is the same
+        # object; false when other is not an Index; otherwise coerces other
+        # to a compatible Categorical and compares the underlying data
+        # (element order, orderedness, and categories all matter; category
+        # order matters only for ordered data). Incompatible dtypes (type or
+        # value errors from coercion) yield false rather than raising.
         """
         Determine if two CategoricalIndex objects contain the same elements.
 
@@ -347,9 +412,17 @@ class CategoricalIndex(NDArrayBackedExtensionIndex):
 
     @property
     def _formatter_func(self):
+        # [FUNCTION DOC]
+        # HELPER: property for repr formatting. Returns the element formatter
+        # of the categories index, used to render each value.
         return self.categories._formatter_func
 
     def _format_attrs(self):
+        # [FUNCTION DOC]
+        # HELPER: for the repr. Returns a list of (name, formatted value)
+        # pairs: first the categories (comma-joined truncated repr, in
+        # brackets), then the ordered flag, followed by the attributes added
+        # by the base class implementation (e.g. dtype, length, name).
         """
         Return a list of tuples of the (attr,formatted_value)
         """
@@ -369,9 +442,22 @@ class CategoricalIndex(NDArrayBackedExtensionIndex):
 
     @property
     def inferred_type(self) -> str:
+        # [FUNCTION DOC]
+        # Property; always returns the constant string "categorical",
+        # regardless of the contents.
         return "categorical"
 
     def __contains__(self, key: Any) -> bool:
+        # [FUNCTION DOC]
+        # Membership test. Parameter key is any label. Returns a bool. If key
+        # is a missing-value marker valid for the categories dtype, returns
+        # whether the index contains any missing values. Otherwise delegates
+        # to the categorical containment helper, using the categories index
+        # itself as lookup container when it is a range index, else this
+        # index's engine. Unhashable keys raise a type error (as documented).
+        # KNOWN ISSUE: the docstring example uses a plain integer Index
+        # rather than a CategoricalIndex, so it does not demonstrate this
+        # method's categorical behavior.
         """
         Return a boolean indicating whether the provided key is in the index.
 
@@ -420,6 +506,16 @@ class CategoricalIndex(NDArrayBackedExtensionIndex):
     def reindex(
         self, target, method=None, level=None, limit: int | None = None, tolerance=None
     ) -> tuple[Index, npt.NDArray[np.intp] | None]:
+        # [FUNCTION DOC]
+        # Conform the index to target. Parameters: target is the new labels
+        # (array-like or Index); method, level and limit must all be none;
+        # tolerance is accepted but ignored. Raises a not-implemented error
+        # if method, level or limit is given. Returns a pair of the new index
+        # and an optional integer indexer into the original (none if the
+        # index already matches), computed by the base class implementation
+        # called with target only.
+        # KNOWN ISSUE: the tolerance parameter is silently ignored and is not
+        # rejected like the other unsupported arguments.
         """
         Create index with target's values (move/add/delete values as necessary)
 
@@ -449,6 +545,13 @@ class CategoricalIndex(NDArrayBackedExtensionIndex):
     # Indexing Methods
 
     def _maybe_cast_indexer(self, key) -> int:
+        # [FUNCTION DOC]
+        # HELPER: for scalar label lookup. Converts key into its integer
+        # code via the categorical array's unboxing (which handles partial
+        # indexing on interval categories). Returns the code as an int. If
+        # the key is not a category but is a missing marker valid for the
+        # categories dtype, returns minus one; otherwise re-raises the key
+        # error.
         # GH#41933: we have to do this instead of self._data._validate_scalar
         #  because this will correctly get partial-indexing on Interval categories
         try:
@@ -459,6 +562,13 @@ class CategoricalIndex(NDArrayBackedExtensionIndex):
             raise
 
     def _maybe_cast_listlike_indexer(self, values) -> CategoricalIndex:
+        # [FUNCTION DOC]
+        # HELPER: for list-like lookup. Converts values into a
+        # CategoricalIndex expressed in this index's categories. A
+        # categorical input (index or array) is re-encoded with this index's
+        # categories; any other input is mapped to category positions through
+        # the categories index (missing for absent labels) and cast to the
+        # codes dtype. Returns a new CategoricalIndex; no mutation.
         if isinstance(values, CategoricalIndex):
             values = values._data
         if isinstance(values, Categorical):
@@ -476,9 +586,22 @@ class CategoricalIndex(NDArrayBackedExtensionIndex):
     # --------------------------------------------------------------------
 
     def _is_comparable_dtype(self, dtype: DtypeObj) -> bool:
+        # [FUNCTION DOC]
+        # HELPER: Parameter dtype is a dtype object. Returns whether values
+        # of that dtype are comparable with this index, delegating to the
+        # categories index.
         return self.categories._is_comparable_dtype(dtype)
 
     def map(self, mapper, na_action: Literal["ignore"] | None = None):
+        # [FUNCTION DOC]
+        # Map the categories through mapper (a function, dict or Series).
+        # na_action is either ignore (missing values are not passed to the
+        # mapper) or none. Delegates to the categorical array's map, then
+        # wraps the result in an Index with the same name (no copy). Returns
+        # a CategoricalIndex when the mapping is one-to-one, otherwise a
+        # plain Index (determined by the array result type).
+        # KNOWN ISSUE: the docstring says na_action defaults to ignore, but
+        # the signature default is none.
         """
         Map values using input an input mapping or function.
 
