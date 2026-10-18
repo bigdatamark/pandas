@@ -1,3 +1,16 @@
+# [MODULE DOC]
+# Main tests for JSON reading and writing of frames and series (read_json and
+# the to_json methods): round trips for every orientation, non-unique labels,
+# dtype handling and conversion options, date formats and units (including the
+# deprecated default epoch format, which emits a version-4 warning), timedelta
+# handling, default handlers for unsupported objects, indentation, index
+# inclusion options, nullable and Arrow dtype backends, lines (JSON Lines)
+# mode, large numbers, URL and S3 access (network tests), and error messages.
+# Many tests use the shared orient fixture from the sibling conftest and the
+# fixtures for sample frames and series from the top-level test configuration.
+# The module-level helper compares round-trip results and a few top-level
+# tests follow the test class.
+
 import datetime
 from datetime import timedelta
 from io import (
@@ -36,6 +49,11 @@ from pandas.io.json import ujson_dumps
 
 
 def test_literal_json_raises():
+    # [FUNCTION DOC]
+    # PR 53409. Passing literal JSON text (single or multi-line, with or without
+    # lines mode, including escaped backslashes) to the reader is no longer
+    # interpreted as data; each variant must raise a file-not-found error saying
+    # the path does not exist.
     # PR 53409
     jsonl = """{"a": 1, "b": 2}
         {"a": 3, "b": 4}
@@ -61,6 +79,13 @@ def test_literal_json_raises():
 
 
 def assert_json_roundtrip_equal(result, expected, orient):
+    # [FUNCTION DOC]
+    # HELPER: shared comparison for round-trip tests. Parameters: result, the frame
+    # read back; expected, the original frame (modified in place for values orient);
+    # orient, the orientation used. For records and values orientations the expected
+    # index is replaced by a default range index (labels are not stored); for values
+    # orientation the expected column labels are also replaced by a default range.
+    # Then asserts the two frames are equal. Raises an assertion error on mismatch.
     if orient in ("records", "values"):
         expected = expected.reset_index(drop=True)
     if orient == "values":
@@ -70,7 +95,15 @@ def assert_json_roundtrip_equal(result, expected, orient):
 
 class TestPandasContainer:
     @pytest.fixture
+    # [CLASS DOC]
+    # Main collection of tests for JSON serialization and deserialization of frames
+    # and series. Defines two fixtures with sample time-indexed data; the rest are
+    # test methods.
     def datetime_series(self):
+        # [FUNCTION DOC]
+        # HELPER: fixture returning a ten-element float series named ts with a
+        # nanosecond datetime index whose frequency is cleared (frequency does not
+        # round-trip, GH#33711).
         # Same as usual datetime_series, but with index freq set to None,
         #  since that doesn't round-trip, see GH#33711
         ser = Series(
@@ -83,6 +116,10 @@ class TestPandasContainer:
 
     @pytest.fixture
     def datetime_frame(self):
+        # [FUNCTION DOC]
+        # HELPER: fixture returning a 30 by 4 random normal frame with business-day
+        # nanosecond datetime index whose frequency is cleared (does not round-trip,
+        # GH#33711).
         # Same as usual datetime_frame, but with index freq set to None,
         #  since that doesn't round-trip, see GH#33711
         df = DataFrame(
@@ -94,6 +131,9 @@ class TestPandasContainer:
         return df
 
     def test_frame_double_encoded_labels(self, orient):
+        # [FUNCTION DOC]
+        # Frame whose labels contain quotes, slashes and backslashes round-trips for each
+        # orientation (via the orient fixture), using the shared comparison helper.
         df = DataFrame(
             [["a", "b"], ["c", "d"]],
             index=['index " 1', "index / 2"],
@@ -107,6 +147,9 @@ class TestPandasContainer:
 
     @pytest.mark.parametrize("orient", ["split", "records", "values"])
     def test_frame_non_unique_index(self, orient):
+        # [FUNCTION DOC]
+        # Parametrized on split, records and values orients. A frame with a duplicated
+        # index round-trips; these orientations store the index as a list or not at all.
         df = DataFrame([["a", "b"], ["c", "d"]], index=[1, 1], columns=["x", "y"])
         data = StringIO(df.to_json(orient=orient))
         result = read_json(data, orient=orient)
@@ -116,6 +159,10 @@ class TestPandasContainer:
 
     @pytest.mark.parametrize("orient", ["index", "columns"])
     def test_frame_non_unique_index_raises(self, orient):
+        # [FUNCTION DOC]
+        # Parametrized on index and columns orients. Writing a frame with duplicate index
+        # labels raises a value error stating the index must be unique for that
+        # orientation.
         df = DataFrame([["a", "b"], ["c", "d"]], index=[1, 1], columns=["x", "y"])
         msg = f"DataFrame index must be unique for orient='{orient}'"
         with pytest.raises(ValueError, match=msg):
@@ -135,6 +182,16 @@ class TestPandasContainer:
         ],
     )
     def test_frame_non_unique_columns(self, orient, data, request):
+        # [FUNCTION DOC]
+        # Parametrized on split/values orient and four data layouts (strings, floats,
+        # mixed numbers, timestamps with floats). A frame with duplicated column names
+        # is written and read with date conversion for the column. A pandas-4 deprecation
+        # warning is expected only when the first column is second-resolution datetime.
+        # For values orientation the expected frame has default column labels (and
+        # timestamps are expressed as millisecond integers); for split orientation the
+        # duplicate column gets a numeric suffix and datetimes become millisecond
+        # resolution.
+        # KNOWN ISSUE: the request fixture parameter is accepted but never used.
         df = DataFrame(data, index=[1, 2], columns=["x", "x"])
 
         expected_warning = None
@@ -167,6 +224,10 @@ class TestPandasContainer:
 
     @pytest.mark.parametrize("orient", ["index", "columns", "records"])
     def test_frame_non_unique_columns_raises(self, orient):
+        # [FUNCTION DOC]
+        # Parametrized on index, columns and records orients. Writing a frame with
+        # duplicate column names raises a value error saying columns must be unique for
+        # the orientation.
         df = DataFrame([["a", "b"], ["c", "d"]], index=[1, 2], columns=["x", "x"])
 
         msg = f"DataFrame columns must be unique for orient='{orient}'"
@@ -174,11 +235,17 @@ class TestPandasContainer:
             df.to_json(orient=orient)
 
     def test_frame_default_orient(self, float_frame):
+        # [FUNCTION DOC]
+        # The default orientation of the frame writer is columns: output equals the
+        # explicit columns orientation.
         assert float_frame.to_json() == float_frame.to_json(orient="columns")
 
     @pytest.mark.parametrize("dtype", [False, float])
     @pytest.mark.parametrize("convert_axes", [True, False])
     def test_roundtrip_simple(self, orient, convert_axes, dtype, float_frame):
+        # [FUNCTION DOC]
+        # Parametrized on orient fixture, convert_axes flag and dtype argument (false or
+        # float). A float fixture frame round-trips equal.
         data = StringIO(float_frame.to_json(orient=orient))
         result = read_json(data, orient=orient, convert_axes=convert_axes, dtype=dtype)
 
@@ -189,6 +256,9 @@ class TestPandasContainer:
     @pytest.mark.parametrize("dtype", [False, np.int64])
     @pytest.mark.parametrize("convert_axes", [True, False])
     def test_roundtrip_intframe(self, orient, convert_axes, dtype, int_frame):
+        # [FUNCTION DOC]
+        # Parametrized on orient, convert_axes and dtype (false or 64-bit integer). An
+        # integer fixture frame round-trips equal.
         data = StringIO(int_frame.to_json(orient=orient))
         result = read_json(data, orient=orient, convert_axes=convert_axes, dtype=dtype)
         expected = int_frame
@@ -197,6 +267,13 @@ class TestPandasContainer:
     @pytest.mark.parametrize("dtype", [None, np.float64, int, "U3"])
     @pytest.mark.parametrize("convert_axes", [True, False])
     def test_roundtrip_str_axes(self, orient, convert_axes, dtype):
+        # [FUNCTION DOC]
+        # Parametrized on orient, convert_axes and dtype (none, float, int, short
+        # string). A zero frame with numeric-looking string labels is written and read.
+        # Expected result: values integer unless a dtype is given; when axes are
+        # converted, labels that look numeric become integers for index/columns
+        # orientation (both axes), records orientation (columns) and split orientation
+        # (columns), because JSON keys are strings and numeric interpretation wins.
         df = DataFrame(
             np.zeros((200, 4)),
             columns=[str(i) for i in range(4)],
@@ -230,6 +307,12 @@ class TestPandasContainer:
     def test_roundtrip_categorical(
         self, request, orient, convert_axes, using_infer_string
     ):
+        # [FUNCTION DOC]
+        # Parametrized on orient and convert_axes. Expected to fail for index and columns
+        # orients (duplicate index values). A frame with a categorical index (with
+        # repeated categories) is written and read back; the categorical is not
+        # preserved so the index becomes a string index (string dtype when inference is
+        # on) and the index name is lost. A TODO asks for a better frame.
         # TODO: create a better frame to test with and improve coverage
         if orient in ("index", "columns"):
             request.applymarker(
@@ -258,6 +341,11 @@ class TestPandasContainer:
 
     @pytest.mark.parametrize("convert_axes", [True, False])
     def test_roundtrip_empty(self, orient, convert_axes):
+        # [FUNCTION DOC]
+        # Parametrized on orient and convert_axes. An empty frame round-trips: for split
+        # orientation to an empty frame with empty float (or object when axes are not
+        # converted) labels, for index and columns to an empty frame, for others to the
+        # original.
         empty_frame = DataFrame()
         data = StringIO(empty_frame.to_json(orient=orient))
         result = read_json(data, orient=orient, convert_axes=convert_axes)
@@ -278,6 +366,13 @@ class TestPandasContainer:
     def test_roundtrip_timestamp(
         self, orient, convert_axes, dtype_backend, datetime_frame
     ):
+        # [FUNCTION DOC]
+        # Parametrized on orient, convert_axes and dtype backend (none or pyarrow). A
+        # frame with datetime index is written (optionally after converting the index
+        # to an Arrow-backed type) and read. With convert_axes false the index arrives
+        # as millisecond epoch integers (strings except for split orientation); with it
+        # true, as datetimes of millisecond resolution. A TODO asks for coverage of the
+        # date format parameter.
         # TODO: improve coverage with date_format parameter
         expected = datetime_frame.copy()
         if dtype_backend is not None:
@@ -301,6 +396,10 @@ class TestPandasContainer:
 
     @pytest.mark.parametrize("convert_axes", [True, False])
     def test_roundtrip_mixed(self, orient, convert_axes):
+        # [FUNCTION DOC]
+        # Parametrized on orient and convert_axes. A frame of floats, strings and bools
+        # with string index round-trips; numeric columns whose values are integral come
+        # back as 64-bit integers.
         index = Index(["a", "b", "c", "d", "e"])
         values = {
             "A": [0.0, 1.0, 2.0, 3.0, 4.0],
@@ -332,6 +431,10 @@ class TestPandasContainer:
         ],
     )
     def test_roundtrip_multiindex(self, columns):
+        # [FUNCTION DOC]
+        # Expected to fail (issue 50456; assertion error). Parametrized on three layouts
+        # of two-level columns. Writing with split orientation and reading back does not
+        # reproduce the multi-index columns.
         df = DataFrame(
             [[1, 2], [3, 4]],
             columns=pd.MultiIndex.from_arrays(columns),
@@ -375,12 +478,20 @@ class TestPandasContainer:
         ],
     )
     def test_frame_from_json_bad_data_raises(self, data, msg, orient):
+        # [FUNCTION DOC]
+        # Parametrized on JSON text, expected message and orientation: malformed text,
+        # data rows too many for the index, more column labels than data columns, and an
+        # unexpected key in split format. Each must raise a value error with the message.
         with pytest.raises(ValueError, match=msg):
             read_json(StringIO(data), orient=orient)
 
     @pytest.mark.parametrize("dtype", [True, False])
     @pytest.mark.parametrize("convert_axes", [True, False])
     def test_frame_from_json_missing_data(self, orient, convert_axes, dtype):
+        # [FUNCTION DOC]
+        # Parametrized on orient, convert_axes and dtype flag. Ragged rows (numeric and
+        # string) are written and read; the missing trailing entry of the short row is
+        # NaN.
         num_df = DataFrame([[1, 2], [4, 5, 6]])
 
         result = read_json(
@@ -402,6 +513,9 @@ class TestPandasContainer:
 
     @pytest.mark.parametrize("dtype", [True, False])
     def test_frame_read_json_dtype_missing_value(self, dtype):
+        # [FUNCTION DOC]
+        # GH28501. Parametrized on dtype true/false. Reading a one-element list with a
+        # null yields NaN; with dtype conversion off the column keeps object dtype.
         # GH28501 Parse missing values using read_json with dtype=False
         # to NaN instead of None
         result = read_json(StringIO("[null]"), dtype=dtype)
@@ -412,6 +526,9 @@ class TestPandasContainer:
     @pytest.mark.parametrize("inf", [np.inf, -np.inf])
     @pytest.mark.parametrize("dtype", [True, False])
     def test_frame_infinity(self, inf, dtype):
+        # [FUNCTION DOC]
+        # Parametrized on positive and negative infinity and dtype flag. An infinite
+        # float is serialized as null and read back as NaN.
         # infinities get mapped to nulls which get mapped to NaNs during
         # deserialisation
         df = DataFrame([[1, 2], [4, 5, 6]])
@@ -434,17 +551,26 @@ class TestPandasContainer:
         ],
     )
     def test_frame_to_json_float_precision(self, value, precision, expected_val):
+        # [FUNCTION DOC]
+        # Skipped on 32-bit platforms. Parametrized on value, double precision and
+        # expected rounded value. Writing a float with limited decimal precision rounds
+        # it as expected in the exact output text.
         df = DataFrame([{"a_float": value}])
         encoded = df.to_json(double_precision=precision)
         assert encoded == f'{{"a_float":{{"0":{expected_val}}}}}'
 
     def test_frame_to_json_except(self):
+        # [FUNCTION DOC]
+        # An invalid orient name raises a value error naming the invalid option value.
         df = DataFrame([1, 2, 3])
         msg = "Invalid value 'garbage' for option 'orient'"
         with pytest.raises(ValueError, match=msg):
             df.to_json(orient="garbage")
 
     def test_frame_empty(self):
+        # [FUNCTION DOC]
+        # A frame with columns but no rows is not mixed-type and round-trips when the
+        # dtypes are provided back to the reader (index type check relaxed).
         df = DataFrame(columns=["jim", "joe"])
         assert not df._is_mixed_type
 
@@ -453,6 +579,9 @@ class TestPandasContainer:
         tm.assert_frame_equal(result, df, check_index_type=False)
 
     def test_frame_empty_to_json(self):
+        # [FUNCTION DOC]
+        # GH 7445. An empty frame with a column and empty index is serialized as an
+        # object holding the column mapped to an empty mapping.
         # GH 7445
         df = DataFrame({"test": []}, index=[])
         result = df.to_json(orient="columns")
@@ -460,6 +589,9 @@ class TestPandasContainer:
         assert result == expected
 
     def test_frame_empty_mixedtype(self):
+        # [FUNCTION DOC]
+        # An empty frame with one column cast to 64-bit integer is mixed-type and
+        # round-trips when dtypes are passed to the reader.
         # mixed type
         df = DataFrame(columns=["jim", "joe"])
         df["joe"] = df["joe"].astype("i8")
@@ -472,6 +604,10 @@ class TestPandasContainer:
         )
 
     def test_frame_mixedtype_orient(self):  # GH10289
+        # [FUNCTION DOC]
+        # GH10289. A mixed-type frame round-trips for split, index and columns orients
+        # without axis conversion; then for records orient with a default row index; then
+        # for values orient with default row and column labels.
         vals = [
             [10, 1, "foo", 0.1, 0.01],
             [20, 2, "bar", 0.2, 0.02],
@@ -502,6 +638,11 @@ class TestPandasContainer:
         tm.assert_frame_equal(left, right)
 
     def test_v12_compat(self, datapath):
+        # [FUNCTION DOC]
+        # Reads two stored JSON files written by a very old version (epoch dates and ISO
+        # dates) and compares with a frame constructed in code: the epoch file yields
+        # nanosecond date columns, the ISO file yields microsecond units and lacks the
+        # modified column. Depends on the data path fixture.
         dti = date_range("2000-01-03", "2000-01-07", unit="ns")
         # freq doesn't roundtrip
         dti = DatetimeIndex(np.asarray(dti), freq=None)
@@ -538,6 +679,11 @@ class TestPandasContainer:
         tm.assert_frame_equal(result_iso, expected_iso, check_column_type=False)
 
     def test_blocks_compat_GH9037(self, using_infer_string):
+        # [FUNCTION DOC]
+        # A ten-row frame with floats, integers and strings (hex strings), hourly
+        # datetime index, written with split orientation and read back; compared
+        # strictly (exact values, block-wise, index and column types) after converting
+        # the expected columns to string type and the index to millisecond resolution.
         index = date_range("20000101", periods=10, freq="h", unit="ns")
         # freq doesn't round-trip
         index = DatetimeIndex(list(index), freq=None)
@@ -639,12 +785,28 @@ class TestPandasContainer:
     def test_frame_nonprintable_bytes(self):
         # GH14256: failing column caused segfaults, if it is not the last one
 
+        # [FUNCTION DOC]
+        # GH14256. Objects whose string form is hexadecimal text but whose binary payload
+        # is not valid UTF-8: printable content serializes fine; an object column
+        # holding such objects raises an overflow error for unsupported UTF-8 length,
+        # also with multiple columns (formerly segfaulted); with a default handler of
+        # string conversion the output contains the hex text.
         class BinaryThing:
+            # [CLASS DOC]
+            # HELPER: test double used by the enclosing test: an object that remembers a
+            # hex text and the corresponding binary bytes, and whose string form is the hex
+            # text.
             def __init__(self, hexed) -> None:
+                # [FUNCTION DOC]
+                # HELPER: stores the given hex text and the bytes decoded from it. Parameter
+                # hexed: a string of hexadecimal digits; raises a value error if it is not
+                # valid hexadecimal. Returns nothing.
                 self.hexed = hexed
                 self.binary = bytes.fromhex(hexed)
 
             def __str__(self) -> str:
+                # [FUNCTION DOC]
+                # HELPER: returns the stored hex text.
                 return self.hexed
 
         hexed = "574b4454ba8c5eb4f98a8f45"
@@ -675,12 +837,19 @@ class TestPandasContainer:
         )
 
     def test_label_overflow(self):
+        # [FUNCTION DOC]
+        # GH14256. A column label of 300000 characters is written without overflowing
+        # the encoder's buffer; exact output compared.
         # GH14256: buffer length not checked when writing label
         result = DataFrame({"bar" * 100000: [1], "foo": [1337]}).to_json()
         expected = f'{{"{"bar" * 100000}":{{"0":1}},"foo":{{"0":1337}}}}'
         assert result == expected
 
     def test_series_non_unique_index(self):
+        # [FUNCTION DOC]
+        # A series with duplicate index: index orientation raises a value error (index
+        # must be unique). Split orientation round-trips equal, records orientation
+        # returns the same values.
         s = Series(["a", "b"], index=[1, 1])
 
         msg = "Series index must be unique for orient='index'"
@@ -699,9 +868,16 @@ class TestPandasContainer:
         tm.assert_equal(s.values, unserialized.values)
 
     def test_series_default_orient(self, string_series):
+        # [FUNCTION DOC]
+        # The default series orientation is index.
         assert string_series.to_json() == string_series.to_json(orient="index")
 
     def test_series_roundtrip_simple(self, orient, string_series, using_infer_string):
+        # [FUNCTION DOC]
+        # Parametrized on orient. A fixture string-indexed series round-trips; for
+        # values and records the index is reset; for non-split orientations the name is
+        # lost; under string inference the index becomes string dtype for orientations
+        # that store labels as keys.
         data = StringIO(string_series.to_json(orient=orient))
         result = read_json(data, typ="series", orient=orient)
 
@@ -718,6 +894,10 @@ class TestPandasContainer:
 
     @pytest.mark.parametrize("dtype", [False, None])
     def test_series_roundtrip_object(self, orient, dtype, object_series):
+        # [FUNCTION DOC]
+        # Parametrized on orient and dtype (false or none). An object series round-trips
+        # with the same index and name rules; if the string dtype is the default the
+        # expected is converted to string dtype.
         data = StringIO(object_series.to_json(orient=orient))
         result = read_json(data, typ="series", orient=orient, dtype=dtype)
 
@@ -733,6 +913,9 @@ class TestPandasContainer:
         tm.assert_series_equal(result, expected)
 
     def test_series_roundtrip_empty(self, orient):
+        # [FUNCTION DOC]
+        # Parametrized on orient. An empty float series round-trips; for split the
+        # expected index is float typed.
         empty_series = Series([], index=[], dtype=np.float64)
         data = StringIO(empty_series.to_json(orient=orient))
         result = read_json(data, typ="series", orient=orient)
@@ -747,6 +930,10 @@ class TestPandasContainer:
         "dtype_backend", [None, pytest.param("pyarrow", marks=td.skip_if_no("pyarrow"))]
     )
     def test_series_roundtrip_timeseries(self, dtype_backend, orient, datetime_series):
+        # [FUNCTION DOC]
+        # Parametrized on dtype backend (none or pyarrow) and orient. A datetime-indexed
+        # series round-trips; the index becomes millisecond resolution except for values
+        # and records, where it is reset; the name is kept only for split.
         expected = datetime_series.copy()
         if dtype_backend is not None:
             datetime_series.index = Series(datetime_series.index).convert_dtypes(
@@ -767,6 +954,10 @@ class TestPandasContainer:
 
     @pytest.mark.parametrize("dtype", [np.float64, int])
     def test_series_roundtrip_numeric(self, orient, dtype):
+        # [FUNCTION DOC]
+        # Parametrized on a dtype (float or int) and orient. A six-element integer series
+        # with letter labels round-trips equal (index reset for values and records).
+        # KNOWN ISSUE: the dtype parameter is never used in the body, so both parametrizations run identical code.
         s = Series(range(6), index=["a", "b", "c", "d", "e", "f"])
         data = StringIO(s.to_json(orient=orient))
         result = read_json(data, typ="series", orient=orient)
@@ -778,17 +969,23 @@ class TestPandasContainer:
         tm.assert_series_equal(result, expected)
 
     def test_series_to_json_except(self):
+        # [FUNCTION DOC]
+        # An invalid orient name raises a value error naming the invalid option value.
         s = Series([1, 2, 3])
         msg = "Invalid value 'garbage' for option 'orient'"
         with pytest.raises(ValueError, match=msg):
             s.to_json(orient="garbage")
 
     def test_series_from_json_precise_float(self):
+        # [FUNCTION DOC]
+        # Reading a float series with the precise float option gives an equal series.
         s = Series([4.56, 4.56, 4.56])
         result = read_json(StringIO(s.to_json()), typ="series", precise_float=True)
         tm.assert_series_equal(result, s, check_index_type=False)
 
     def test_series_with_dtype(self):
+        # [FUNCTION DOC]
+        # GH 21986. Reading a float series with an integer dtype truncates to integers.
         # GH 21986
         s = Series([4.56, 4.56, 4.56])
         result = read_json(StringIO(s.to_json()), typ="series", dtype=np.int64)
@@ -806,6 +1003,11 @@ class TestPandasContainer:
         ],
     )
     def test_series_with_dtype_datetime(self, dtype, expected, dtype_backend):
+        # [FUNCTION DOC]
+        # Parametrized on dtype backend and on dtype flag. A datetime series written with
+        # the default (deprecated epoch) format emits the pandas-4 warning; reading with
+        # dtype true converts to millisecond datetimes, with false leaves the epoch
+        # integer.
         s = Series(["2000-01-01"], dtype="datetime64[ns]")
         if dtype_backend is not None:
             s = s.convert_dtypes(dtype_backend=dtype_backend)
@@ -819,16 +1021,22 @@ class TestPandasContainer:
         tm.assert_series_equal(result, expected)
 
     def test_frame_from_json_precise_float(self):
+        # [FUNCTION DOC]
+        # Reading a float frame with the precise float option gives an equal frame.
         df = DataFrame([[4.56, 4.56, 4.56], [4.56, 4.56, 4.56]])
         result = read_json(StringIO(df.to_json()), precise_float=True)
         tm.assert_frame_equal(result, df)
 
     def test_typ(self):
+        # [FUNCTION DOC]
+        # Reading with series typ returns an equal 64-bit integer series.
         s = Series(range(6), index=["a", "b", "c", "d", "e", "f"], dtype="int64")
         result = read_json(StringIO(s.to_json()), typ="series")
         tm.assert_series_equal(result, s)
 
     def test_reconstruction_index(self):
+        # [FUNCTION DOC]
+        # Default frame round trips with default and with string index.
         df = DataFrame([[1, 2, 3], [4, 5, 6]])
         result = read_json(StringIO(df.to_json()))
         tm.assert_frame_equal(result, df)
@@ -838,11 +1046,17 @@ class TestPandasContainer:
         tm.assert_frame_equal(result, df)
 
     def test_path(self, float_frame, int_frame, datetime_frame, temp_file):
+        # [FUNCTION DOC]
+        # Float, integer and datetime fixture frames can be written to a path and read back
+        # without error. Nothing is compared.
         for df in [float_frame, int_frame, datetime_frame]:
             df.to_json(temp_file)
             read_json(temp_file)
 
     def test_axis_dates(self, datetime_series, datetime_frame):
+        # [FUNCTION DOC]
+        # Datetime-indexed frame and series round-trip with default orientation; index
+        # becomes millisecond resolution and the series name is lost.
         # frame
         json = StringIO(datetime_frame.to_json())
         result = read_json(json)
@@ -859,6 +1073,11 @@ class TestPandasContainer:
         assert result.name is None
 
     def test_convert_dates(self, datetime_series, datetime_frame):
+        # [FUNCTION DOC]
+        # A frame with an extra date column written with default settings (deprecated
+        # epoch warning) reads back with millisecond dates in the column and index; with
+        # date conversion disabled the epoch values stay integers; a series of dates
+        # round-trips similarly.
         # frame
         df = datetime_frame
         df["date"] = Timestamp("20130101").as_unit("ns")
@@ -898,6 +1117,11 @@ class TestPandasContainer:
     @pytest.mark.parametrize("as_object", [True, False])
     @pytest.mark.parametrize("date_typ", [datetime.date, datetime.datetime, Timestamp])
     def test_date_index_and_values(self, date_format, as_object, date_typ):
+        # [FUNCTION DOC]
+        # Parametrized on date format (epoch, iso), whether data are object dtype, and
+        # date type (date, datetime, timestamp). A series whose index and values are
+        # dates with a missing value (and optionally a string) is serialized; the exact
+        # expected JSON depends on the format (epoch emits the deprecation warning).
         data = [date_typ(year=2020, month=1, day=1), pd.NaT]
         if as_object:
             data.append("a")
@@ -944,6 +1168,11 @@ class TestPandasContainer:
     def test_convert_dates_infer(self, infer_word):
         # GH10747
 
+        # [FUNCTION DOC]
+        # GH10747. Parametrized on column names that suggest dates (time, date,
+        # datetime, sold_at, modified, timestamp, timestamps). An integer epoch value in
+        # such a column is converted to a datetime (millisecond) with missing values for
+        # absent rows, while the id column is left alone.
         data = [{"id": 1, infer_word: 1036713600000}, {"id": 2}]
         expected = DataFrame(
             [[1, Timestamp("2002-11-08")], [2, pd.NaT]], columns=["id", infer_word]
@@ -964,6 +1193,11 @@ class TestPandasContainer:
         ],
     )
     def test_date_format_frame(self, date, date_unit, datetime_frame):
+        # [FUNCTION DOC]
+        # Parametrized on a date text and date unit (none, s, ms, us, ns). A frame with a
+        # date column containing missing values is written in ISO format with that unit and
+        # read back; with units other than nanoseconds the result has microsecond
+        # resolution for the column and index.
         df = datetime_frame
 
         df["date"] = Timestamp(date).as_unit("ns")
@@ -982,6 +1216,8 @@ class TestPandasContainer:
         tm.assert_frame_equal(result, expected)
 
     def test_date_format_frame_raises(self, datetime_frame):
+        # [FUNCTION DOC]
+        # An invalid date unit raises a value error naming the invalid option value.
         df = datetime_frame
         msg = "Invalid value 'foo' for option 'date_unit'"
         with pytest.raises(ValueError, match=msg):
@@ -998,6 +1234,8 @@ class TestPandasContainer:
         ],
     )
     def test_date_format_series(self, date, date_unit, datetime_series):
+        # [FUNCTION DOC]
+        # Same as the frame test for a series with datetime values and index.
         ts = Series(Timestamp(date), index=datetime_series.index)
         ts.iloc[1] = pd.NaT
         ts.iloc[5] = pd.NaT
@@ -1013,12 +1251,20 @@ class TestPandasContainer:
         tm.assert_series_equal(result, expected)
 
     def test_date_format_series_raises(self, datetime_series):
+        # [FUNCTION DOC]
+        # An invalid date unit for a series raises a value error.
         ts = Series(Timestamp("20130101 20:43:42.123"), index=datetime_series.index)
         msg = "Invalid value 'foo' for option 'date_unit'"
         with pytest.raises(ValueError, match=msg):
             ts.to_json(date_format="iso", date_unit="foo")
 
     def test_date_unit(self, unit, datetime_frame):
+        # [FUNCTION DOC]
+        # Given the unit fixture. A frame whose date column has varied values including
+        # dates before 1970 and after 2100 and a missing value is written with epoch
+        # format and that date unit (deprecation warning expected); reading with automatic
+        # unit detection must reproduce dates at that unit. A commented-out line shows an
+        # earlier check with a forced unit.
         df = datetime_frame
         df["date"] = Timestamp("20130101 20:43:42").as_unit("ns")
         dl = df.columns.get_loc("date")
@@ -1064,6 +1310,10 @@ class TestPandasContainer:
         ],
     )
     def test_default_epoch_date_format_deprecated(self, df, warn):
+        # [FUNCTION DOC]
+        # GH 57063. Parametrized on frame and expected warning. Writing with the default
+        # date format emits the pandas-4 deprecation warning only when the frame holds
+        # datetime or timedelta columns (not for strings, numbers, booleans).
         # GH 57063
         msg = (
             "The default 'epoch' date format is deprecated and will be removed "
@@ -1077,6 +1327,11 @@ class TestPandasContainer:
     )
     @pytest.mark.parametrize("unit", ["s", "ms", "us"])
     def test_iso_non_nano_datetimes(self, dtype_backend, unit):
+        # [FUNCTION DOC]
+        # GH53686. Parametrized on dtype backend and unit (s, ms, us). A frame with
+        # datetime columns and index of non-nanosecond resolution (one object-typed) is
+        # written in ISO format with that unit and read with date conversion for both
+        # columns; result equals the original converted to microsecond resolution.
         # Test that numpy datetimes
         # in an Index or a column with non-nano resolution can be serialized
         # correctly
@@ -1112,6 +1367,8 @@ class TestPandasContainer:
         tm.assert_frame_equal(result, expected)
 
     def test_weird_nested_json(self):
+        # [FUNCTION DOC]
+        # A nested JSON document that used to crash the parser can be read without error.
         # this used to core dump the parser
         s = r"""{
         "status": "success",
@@ -1133,6 +1390,11 @@ class TestPandasContainer:
         read_json(StringIO(s))
 
     def test_doc_example(self):
+        # [FUNCTION DOC]
+        # Builds the documentation example frame (floats, a date, ints, bools, date index),
+        # serializes it with the deprecated default (warning expected) and reads it with
+        # specific dtypes.
+        # KNOWN ISSUE: the final assertion compares the result with itself, so it can never fail and does not verify the round trip.
         dfj2 = DataFrame(
             np.random.default_rng(2).standard_normal((5, 2)), columns=list("AB")
         )
@@ -1151,6 +1413,10 @@ class TestPandasContainer:
         tm.assert_frame_equal(result, result)
 
     def test_round_trip_exception(self, datapath):
+        # [FUNCTION DOC]
+        # GH 3867. A frame read from a stored CSV file is written to JSON and read back;
+        # after reindexing to the original labels and filling missing values the frame
+        # equals the original.
         # GH 3867
         path = datapath("io", "json", "data", "teams.csv")
         df = pd.read_csv(path)
@@ -1164,6 +1430,10 @@ class TestPandasContainer:
     @pytest.mark.network
     @pytest.mark.single_cpu
     def test_url(self, httpserver):
+        # [FUNCTION DOC]
+        # Network, single-CPU test. Serves JSON text from a local test server and reads it
+        # from the URL with date conversion; created and updated fields become UTC
+        # timezone-aware microsecond datetimes and the closed field naive microsecond.
         data = '{"created_at": ["2023-06-23T18:21:36Z"], "closed_at": ["2023-06-23T18:21:36"], "updated_at": ["2023-06-23T18:21:36Z"]}\n'  # noqa: E501
         httpserver.serve_content(content=data)
         result = read_json(httpserver.url, convert_dates=True)
@@ -1175,6 +1445,10 @@ class TestPandasContainer:
             assert result[field].dtype == dtype
 
     def test_timedelta(self, unit):
+        # [FUNCTION DOC]
+        # Given the unit fixture. Timedelta series and frame at given units are written with
+        # the default format (deprecation warning expected), read back and converted with
+        # a millisecond converter; result equals the original cast to milliseconds.
         converter = lambda x: pd.to_timedelta(x, unit="ms")
 
         ser = Series([timedelta(23), timedelta(seconds=5)], dtype=f"m8[{unit}]")
@@ -1205,6 +1479,10 @@ class TestPandasContainer:
         tm.assert_frame_equal(frame.astype("m8[ms]"), result)
 
     def test_timedelta2(self):
+        # [FUNCTION DOC]
+        # A frame with timedelta, integer and datetime columns written with nanosecond date
+        # unit (deprecation warning expected) and read back; after converting the
+        # timedelta and date columns it equals the original.
         frame = DataFrame(
             {
                 "a": [timedelta(days=23), timedelta(seconds=5)],
@@ -1225,6 +1503,9 @@ class TestPandasContainer:
         tm.assert_frame_equal(frame, result)
 
     def test_mixed_timedelta_datetime(self):
+        # [FUNCTION DOC]
+        # An object column mixing a timedelta and a timestamp, written with nanosecond unit
+        # and read with an integer dtype, gives the integer nanosecond values of both.
         td = timedelta(23)
         ts = Timestamp("20130101")
         frame = DataFrame({"a": [td, ts]}, dtype=object)
@@ -1240,6 +1521,12 @@ class TestPandasContainer:
     @pytest.mark.parametrize("date_format", ["iso", "epoch"])
     @pytest.mark.parametrize("timedelta_typ", [pd.Timedelta, timedelta])
     def test_timedelta_to_json(self, as_object, date_format, timedelta_typ):
+        # [FUNCTION DOC]
+        # GH28156. Parametrized on object versus timedelta dtype, date format and
+        # timedelta class. Timedeltas as both values and index are serialized as ISO
+        # duration strings (iso) or millisecond integers (epoch, with deprecation
+        # warning); missing values become null; an extra string element is appended for
+        # object data.
         # GH28156: to_json not correctly formatting Timedelta
         data = [timedelta_typ(days=1), timedelta_typ(days=2), pd.NaT]
         if as_object:
@@ -1272,6 +1559,10 @@ class TestPandasContainer:
     @pytest.mark.parametrize("as_object", [True, False])
     @pytest.mark.parametrize("timedelta_typ", [pd.Timedelta, timedelta])
     def test_timedelta_to_json_fractional_precision(self, as_object, timedelta_typ):
+        # [FUNCTION DOC]
+        # Parametrized on object versus timedelta dtype and timedelta class. A 42
+        # millisecond timedelta as value and index is written as the integer 42; the
+        # deprecation warning is expected only for timedelta dtype.
         data = [timedelta_typ(milliseconds=42)]
         ser = Series(data, index=data).astype("m8[ns]")
         ser.index = ser.index.astype("m8[ns]")
@@ -1290,6 +1581,9 @@ class TestPandasContainer:
         assert result == expected
 
     def test_default_handler(self):
+        # [FUNCTION DOC]
+        # An object with no JSON form in a column is converted to its string form when a
+        # string conversion default handler is given; round trips to that string.
         value = object()
         frame = DataFrame({"a": [7, value]})
         expected = DataFrame({"a": [7, str(value)]})
@@ -1297,7 +1591,17 @@ class TestPandasContainer:
         tm.assert_frame_equal(expected, result, check_index_type=False)
 
     def test_default_handler_indirect(self):
+        # [FUNCTION DOC]
+        # Using the low-level dump function with values orientation and a custom
+        # default handler that encodes complex numbers as a list of pairs and other
+        # objects as strings, a list holding a number and a frame with mixed content is
+        # encoded to the exact expected text (the forward slash escaped).
         def default(obj):
+            # [FUNCTION DOC]
+            # HELPER: default handler used by the enclosing test. Parameter obj: any
+            # unsupported object. Returns, for a complex number, a list of three key-value
+            # pairs (a marker pair, real part, imaginary part); for anything else returns its
+            # string form.
             if isinstance(obj, complex):
                 return [("mathjs", "Complex"), ("re", obj.real), ("im", obj.imag)]
             return str(obj)
@@ -1318,6 +1622,10 @@ class TestPandasContainer:
         )
 
     def test_default_handler_numpy_unsupported_dtype(self):
+        # [FUNCTION DOC]
+        # GH12554. Complex-valued columns (an unsupported numpy dtype) are written with a
+        # string default handler in values orientation, giving each element as its string
+        # form.
         # GH12554 to_json raises 'Unhandled numpy dtype 15'
         df = DataFrame(
             {"a": [1, 2.3, complex(4, -5)], "b": [float("nan"), None, complex(1.2, 0)]},
@@ -1329,9 +1637,15 @@ class TestPandasContainer:
         assert df.to_json(default_handler=str, orient="values") == expected
 
     def test_default_handler_raises(self):
+        # [FUNCTION DOC]
+        # An exception raised by a user-supplied default handler propagates, both for an
+        # arbitrary object and for a complex number.
         msg = "raisin"
 
         def my_handler_raises(obj):
+            # [FUNCTION DOC]
+            # HELPER: default handler used by the enclosing test. Parameter obj: ignored.
+            # Always raises a type error with the message defined in the enclosing test.
             raise TypeError(msg)
 
         with pytest.raises(TypeError, match=msg):
@@ -1344,6 +1658,10 @@ class TestPandasContainer:
             )
 
     def test_categorical(self):
+        # [FUNCTION DOC]
+        # GH4377. Writing a frame with a categorical column gives the same output as with
+        # the plain column, and likewise for a series (previously segfaulted with
+        # non-ndarray blocks).
         # GH4377 df.to_json segfaults with non-ndarray blocks
         df = DataFrame({"A": ["a", "b", "c", "a", "b", "b", "a"]})
         df["B"] = df["A"]
@@ -1357,6 +1675,10 @@ class TestPandasContainer:
         assert s.to_json() == sc.to_json()
 
     def test_datetime_tz(self):
+        # [FUNCTION DOC]
+        # GH4377. A frame and series with timezone-aware datetimes serialize the same as
+        # the UTC-converted naive values, with the deprecation warning for the default
+        # epoch format.
         # GH4377 df.to_json segfaults with non-ndarray blocks
         tz_range = date_range("20130101", periods=3, tz="US/Eastern", unit="ns")
         tz_naive = tz_range.tz_convert("utc").tz_localize(None)
@@ -1381,6 +1703,9 @@ class TestPandasContainer:
             assert stz.to_json() == s_naive.to_json()
 
     def test_sparse(self):
+        # [FUNCTION DOC]
+        # GH4377. A mostly-missing sparse frame and series serialize to the same text as
+        # their dense versions.
         # GH4377 df.to_json segfaults with non-ndarray blocks
         df = DataFrame(np.random.default_rng(2).standard_normal((10, 4)))
         df.loc[:8] = np.nan
@@ -1405,6 +1730,10 @@ class TestPandasContainer:
         ],
     )
     def test_tz_is_utc(self, ts):
+        # [FUNCTION DOC]
+        # Parametrized on three timestamps representing the same instant (UTC, Eastern,
+        # fixed offset). Low-level encoding with ISO dates gives the UTC string with a
+        # trailing Z, for both the timestamp and the converted standard datetime.
         exp = '"2013-01-10T05:00:00.000Z"'
 
         assert ujson_dumps(ts, iso_dates=True) == exp
@@ -1412,6 +1741,9 @@ class TestPandasContainer:
         assert ujson_dumps(dt, iso_dates=True) == exp
 
     def test_tz_is_naive(self):
+        # [FUNCTION DOC]
+        # A naive timestamp and standard datetime encode as an ISO string with no zone
+        # suffix.
         ts = Timestamp("2013-01-10 05:00:00")
         exp = '"2013-01-10T05:00:00.000"'
 
@@ -1428,6 +1760,12 @@ class TestPandasContainer:
         ],
     )
     def test_tz_range_is_utc(self, tz_range):
+        # [FUNCTION DOC]
+        # Parametrized on three equivalent timezone-aware date ranges. Low-level ISO
+        # encoding of the range, of a datetime index, of the same as object array, and of
+        # a frame holding it all gives UTC strings with Z. The last statement only checks
+        # that encoding a frame with an object column returns something non-empty.
+        # KNOWN ISSUE: the final assertion is only a truthiness check on the encoded text, not a comparison with the expected output.
         exp = '["2013-01-01T05:00:00.000Z","2013-01-02T05:00:00.000Z"]'
         dfexp = '{"DT":{"0":"2013-01-01T05:00:00.000Z","1":"2013-01-02T05:00:00.000Z"}}'
 
@@ -1443,6 +1781,9 @@ class TestPandasContainer:
         assert ujson_dumps(df.astype({"DT": object}), iso_dates=True)
 
     def test_tz_range_is_naive(self):
+        # [FUNCTION DOC]
+        # A naive date range encodes as ISO strings without zone suffix, as an index,
+        # object array, and in a frame.
         dti = date_range("2013-01-01 05:00:00", periods=2, unit="ns")
 
         exp = '["2013-01-01T05:00:00.000","2013-01-02T05:00:00.000"]'
@@ -1460,6 +1801,9 @@ class TestPandasContainer:
     def test_read_inline_jsonl(self):
         # GH9180
 
+        # [FUNCTION DOC]
+        # GH9180. Reading JSON Lines text from a buffer in lines mode yields a two-row
+        # frame regardless of key order and spacing.
         result = read_json(StringIO('{"a": 1, "b": 2}\n{"b":2, "a" :1}\n'), lines=True)
         expected = DataFrame([[1, 2], [1, 2]], columns=["a", "b"])
         tm.assert_frame_equal(result, expected)
@@ -1468,6 +1812,9 @@ class TestPandasContainer:
     @pytest.mark.network
     @td.skip_if_not_us_locale
     def test_read_s3_jsonl(self, s3_bucket_public_with_data, s3so):
+        # [FUNCTION DOC]
+        # GH17200. Network, single-CPU, US-locale test. Reads a JSON Lines object from a
+        # mock S3 bucket using a non-standard URL scheme and storage options.
         # GH17200
         result = read_json(
             f"s3n://{s3_bucket_public_with_data.name}/items.jsonl",
@@ -1478,6 +1825,8 @@ class TestPandasContainer:
         tm.assert_frame_equal(result, expected)
 
     def test_read_local_jsonl(self, temp_file):
+        # [FUNCTION DOC]
+        # GH17200. Reading JSON Lines from a local file path in lines mode.
         # GH17200
         with open(temp_file, "w", encoding="utf-8") as infile:
             infile.write('{"a": 1, "b": 2}\n{"b":2, "a" :1}\n')
@@ -1489,6 +1838,9 @@ class TestPandasContainer:
         # GH15132: non-ascii unicode characters
         # \u201d == RIGHT DOUBLE QUOTATION MARK
 
+        # [FUNCTION DOC]
+        # GH15132. JSON Lines text with a non-ASCII quotation mark is read correctly from
+        # a buffer (tested twice, the second time with identical construction).
         # simulate file handle
         json = '{"a": "foo”", "b": "bar"}\n{"a": "foo", "b": "bar"}\n'
         json = StringIO(json)
@@ -1504,6 +1856,9 @@ class TestPandasContainer:
 
     @pytest.mark.parametrize("bigNum", [sys.maxsize + 1, -(sys.maxsize + 2)])
     def test_to_json_large_numbers(self, bigNum):
+        # [FUNCTION DOC]
+        # GH34473. Parametrized on integers just beyond the 64-bit signed range. An
+        # object-dtype series and frame holding them serialize with exact digits.
         # GH34473
         series = Series(bigNum, dtype=object, index=["articleId"])
         json = series.to_json()
@@ -1517,6 +1872,10 @@ class TestPandasContainer:
 
     @pytest.mark.parametrize("bigNum", [-(2**63) - 1, 2**64])
     def test_read_json_large_numbers(self, bigNum):
+        # [FUNCTION DOC]
+        # GH20599, 26068. Parametrized on integers outside 64-bit range. Reading raises a
+        # value error saying the value is too small or too big, both for series-like and
+        # frame-like documents.
         # GH20599, 26068
         json = StringIO('{"articleId":' + str(bigNum) + "}")
         msg = r"Value is too small|Value is too big"
@@ -1528,6 +1887,9 @@ class TestPandasContainer:
             read_json(json)
 
     def test_read_json_large_numbers2(self):
+        # [FUNCTION DOC]
+        # GH18842. A numeric string too large for 64-bit integers is read as a float for
+        # series and frame.
         # GH18842
         json = '{"articleId": "1404366058080022500245"}'
         json = StringIO(json)
@@ -1542,6 +1904,10 @@ class TestPandasContainer:
         tm.assert_frame_equal(result, expected)
 
     def test_to_jsonl(self):
+        # [FUNCTION DOC]
+        # GH9180 and GH15096. Records orientation with lines mode writes one object per
+        # line with trailing newline; braces, quotes and backslashes in data and labels
+        # are escaped correctly and read back equal.
         # GH9180
         df = DataFrame([[1, 2], [1, 2]], columns=["a", "b"])
         result = df.to_json(orient="records", lines=True)
@@ -1580,6 +1946,12 @@ class TestPandasContainer:
     )
     @pytest.mark.parametrize("dtype", ["category", object])
     def test_latin_encoding(self, dtype, val, temp_file):
+        # [FUNCTION DOC]
+        # GH 13774. Expected to fail with a type error (encoding keyword not supported).
+        # Parametrized on lists of byte strings with Latin-1 characters and on category or
+        # object dtype. Writes a series with Latin-1 encoding and attempts to read back.
+        # A TODO mentions a similar test for the HDF store.
+        # KNOWN ISSUE: the read-back wraps a file path in a text buffer constructor instead of opening the file, so the test would be wrong even if the encoding keyword were supported.
         # GH 13774
         ser = Series(
             [x.decode("latin-1") if isinstance(x, bytes) else x for x in val],
@@ -1591,6 +1963,8 @@ class TestPandasContainer:
         tm.assert_series_equal(ser, retr, check_categorical=False)
 
     def test_data_frame_size_after_to_json(self):
+        # [FUNCTION DOC]
+        # GH15344. Serializing a frame does not change its deep memory usage.
         # GH15344
         df = DataFrame({"a": [str(1)]})
 
@@ -1605,6 +1979,10 @@ class TestPandasContainer:
     )
     @pytest.mark.parametrize("columns", [["a", "b"], ["1", "2"], ["1.", "2."]])
     def test_from_json_to_json_table_index_and_columns(self, index, columns):
+        # [FUNCTION DOC]
+        # GH25433, GH25435. Parametrized on six index choices and three column label choices
+        # (including numeric-looking strings and floats). A frame round-trips through the
+        # table orientation preserving label types.
         # GH25433 GH25435
         expected = DataFrame([[1, 2], [3, 4]], index=index, columns=columns)
         dfjson = expected.to_json(orient="table")
@@ -1613,6 +1991,9 @@ class TestPandasContainer:
         tm.assert_frame_equal(result, expected)
 
     def test_from_json_to_json_table_dtypes(self):
+        # [FUNCTION DOC]
+        # GH21345. Integer, float and string-of-digits columns keep their dtypes in a
+        # table orientation round trip.
         # GH21345
         expected = DataFrame({"a": [1, 2], "b": [3.0, 4.0], "c": ["5", "6"]})
         dfjson = expected.to_json(orient="table")
@@ -1621,6 +2002,13 @@ class TestPandasContainer:
 
     @pytest.mark.parametrize("orient", ["split", "records", "index", "columns"])
     def test_to_json_from_json_columns_dtypes(self, orient, using_infer_string):
+        # [FUNCTION DOC]
+        # GH21892, GH33205. Parametrized on split, records, index and columns orients.
+        # A frame of integer, float with missing, object with missing, bool,
+        # categorical with missing and datetime with missing is written (deprecation
+        # warning for epoch) and read back with explicit dtypes for each column; the
+        # result equals the original (with the missing object entry becoming NaN when
+        # string inference is on).
         # GH21892 GH33205
         expected = DataFrame.from_dict(
             {
@@ -1661,6 +2049,9 @@ class TestPandasContainer:
         tm.assert_frame_equal(result, expected)
 
     def test_to_json_with_index_as_a_column_name(self):
+        # [FUNCTION DOC]
+        # A frame with a column named index written with table orientation raises a value
+        # error about overlapping names.
         df = DataFrame(data={"index": [1, 2], "a": [2, 3]})
         with pytest.raises(
             ValueError, match="Overlapping names between the index and columns"
@@ -1669,6 +2060,9 @@ class TestPandasContainer:
 
     @pytest.mark.parametrize("dtype", [True, {"b": int, "c": int}])
     def test_read_json_table_dtype_raises(self, dtype):
+        # [FUNCTION DOC]
+        # GH21345. Parametrized on dtype true or a mapping. Passing a dtype along with
+        # table orientation raises a value error saying both cannot be passed.
         # GH21345
         df = DataFrame({"a": [1, 2], "b": [3.0, 4.0], "c": ["5", "6"]})
         dfjson = df.to_json(orient="table")
@@ -1680,12 +2074,18 @@ class TestPandasContainer:
     def test_read_json_table_empty_axes_dtype(self, orient):
         # GH28558
 
+        # [FUNCTION DOC]
+        # GH28558. Parametrized on four orients. Reading an empty object with axes
+        # conversion gives empty default index and columns.
         expected = DataFrame()
         result = read_json(StringIO("{}"), orient=orient, convert_axes=True)
         tm.assert_index_equal(result.index, expected.index)
         tm.assert_index_equal(result.columns, expected.columns)
 
     def test_read_json_table_convert_axes_raises(self):
+        # [FUNCTION DOC]
+        # GH25433, GH25435. Passing convert_axes along with table orientation raises a
+        # value error saying both cannot be passed.
         # GH25433 GH25435
         df = DataFrame([[1, 2], [3, 4]], index=[1.0, 2.0], columns=["1.", "2."])
         dfjson = df.to_json(orient="table")
@@ -1725,6 +2125,10 @@ class TestPandasContainer:
         # GH 17394
         # Testing index=False in to_json with orient='split'
 
+        # [FUNCTION DOC]
+        # GH 17394. Parametrized on frames and series (plain, named index, multi-index).
+        # With split orientation and index off, the output has only columns (or name) and
+        # data, no index.
         result = data.to_json(orient="split", index=False)
         result = json.loads(result)
 
@@ -1749,6 +2153,9 @@ class TestPandasContainer:
         # GH 17394
         # Testing index=False in to_json with orient='table'
 
+        # [FUNCTION DOC]
+        # GH 17394. Parametrized on the same objects. With table orientation and index
+        # off, the parsed output equals a schema built without index plus records.
         result = data.to_json(orient="table", index=False)
         result = json.loads(result)
 
@@ -1764,6 +2171,9 @@ class TestPandasContainer:
         # GH 17394, 25513
         # Testing error message from to_json with index=False
 
+        # [FUNCTION DOC]
+        # GH 17394, 25513. Parametrized on index and columns orients. Index false raises a
+        # value error saying it is valid only for split, table, records or values.
         df = DataFrame([[1, 2], [4, 5]], columns=["a", "b"])
 
         msg = (
@@ -1778,6 +2188,9 @@ class TestPandasContainer:
         # GH 25513
         # Testing error message from to_json with index=True
 
+        # [FUNCTION DOC]
+        # GH 25513. Parametrized on records and values. Index true raises a value error
+        # saying it is valid only for split, table, index or columns.
         df = DataFrame([[1, 2], [4, 5]], columns=["a", "b"])
 
         msg = (
@@ -1790,6 +2203,9 @@ class TestPandasContainer:
     @pytest.mark.parametrize("orient", ["split", "table"])
     @pytest.mark.parametrize("index", [True, False])
     def test_index_false_from_json_to_json(self, orient, index):
+        # [FUNCTION DOC]
+        # GH25170. Parametrized on split/table orients and the index flag. Writing with the
+        # flag and reading back without index equals the original frame.
         # GH25170
         # Test index=False in from_json to_json
         expected = DataFrame({"a": [1, 2], "b": [3, 4]})
@@ -1798,6 +2214,9 @@ class TestPandasContainer:
         tm.assert_frame_equal(result, expected)
 
     def test_read_timezone_information(self):
+        # [FUNCTION DOC]
+        # GH 25546. A series keyed by an ISO timestamp with Z read with index orientation
+        # gets a UTC timezone-aware microsecond index.
         # GH 25546
         result = read_json(
             StringIO('{"2019-01-01T11:00:00.000Z":88}'), typ="series", orient="index"
@@ -1817,6 +2236,9 @@ class TestPandasContainer:
         ],
     )
     def test_read_json_with_url_value(self, url):
+        # [FUNCTION DOC]
+        # GH 36271. Parametrized on URL-like strings (several protocols). A value that
+        # looks like a URL inside a JSON document is treated as data, not fetched.
         # GH 36271
         result = read_json(StringIO(f'{{"url":{{"0":"{url}"}}}}'))
         expected = DataFrame({"url": [url]})
@@ -1827,6 +2249,9 @@ class TestPandasContainer:
         ["", ".gz", ".bz2", ".tar"],
     )
     def test_read_json_with_very_long_file_path(self, compression):
+        # [FUNCTION DOC]
+        # GH 46718. Parametrized on compression suffixes. A path of a thousand characters
+        # raises a file-not-found error with the path in the message.
         # GH 46718
         long_json_path = f"{'a' * 1000}.json{compression}"
         with pytest.raises(
@@ -1840,6 +2265,10 @@ class TestPandasContainer:
         "date_format,key", [("epoch", 86400000), ("iso", "1970-01-02T00:00:00.000")]
     )
     def test_datetime_as_label(self, date_format, key, unit):
+        # [FUNCTION DOC]
+        # Given the unit fixture. Parametrized on epoch versus ISO. A datetime used as a
+        # column label is written as a quoted epoch number (with deprecation warning) or
+        # ISO string key.
         df = DataFrame(
             [[1]], columns=[(Timestamp(0) + pd.Timedelta("1D")).as_unit(unit)]
         )
@@ -1862,6 +2291,9 @@ class TestPandasContainer:
         "date_format,key", [("epoch", 86400000), ("iso", "P1DT0H0M0S")]
     )
     def test_timedelta_as_label(self, date_format, key, unit):
+        # [FUNCTION DOC]
+        # Given the unit fixture. A timedelta column label is written as epoch
+        # milliseconds (with deprecation warning) or an ISO duration key.
         df = DataFrame([[1]], columns=[pd.Timedelta("1D").as_unit(unit)])
         expected = f'{{"{key}":{{"0":1}}}}'
 
@@ -1901,6 +2333,11 @@ class TestPandasContainer:
         ],
     )
     def test_tuple_labels(self, orient, expected):
+        # [FUNCTION DOC]
+        # GH 20500. Parametrized on orients. Tuple labels are written as the tuple's text
+        # for index and columns orients; split and table are expected to fail (output is
+        # inconsistent), with empty expected text. A TODO mentions separate encoding
+        # procedures.
         # GH 20500
         df = DataFrame([[1]], index=[("a", "b")], columns=[("c", "d")])
         result = df.to_json(orient=orient)
@@ -1908,6 +2345,9 @@ class TestPandasContainer:
 
     @pytest.mark.parametrize("indent", [1, 2, 4])
     def test_to_json_indent(self, indent):
+        # [FUNCTION DOC]
+        # GH 12004. Parametrized on indentation of 1, 2, 4. Output is pretty-printed with
+        # that many spaces per level.
         # GH 12004
         df = DataFrame([["foo", "bar"], ["baz", "qux"]], columns=["a", "b"])
 
@@ -2049,16 +2489,26 @@ class TestPandasContainer:
         ],
     )
     def test_json_indent_all_orients(self, orient, expected):
+        # [FUNCTION DOC]
+        # GH 12004. Skipped when string dtype is the default. Parametrized on all six
+        # orients. Writing a small string frame with indentation of four spaces gives the
+        # expected pretty-printed text; table orientation includes a schema with the
+        # fixed version string.
         # GH 12004
         df = DataFrame([["foo", "bar"], ["baz", "qux"]], columns=["a", "b"])
         result = df.to_json(orient=orient, indent=4)
         assert result == expected
 
     def test_json_negative_indent_raises(self):
+        # [FUNCTION DOC]
+        # A negative indent raises a value error saying it must be a nonnegative integer.
         with pytest.raises(ValueError, match="must be a nonnegative integer"):
             DataFrame().to_json(indent=-1)
 
     def test_emca_262_nan_inf_support(self):
+        # [FUNCTION DOC]
+        # GH 12213. Reading a list including unquoted NaN, Infinity and negative Infinity
+        # tokens gives missing and infinite numbers while quoted forms stay strings.
         # GH 12213
         data = StringIO(
             '["a", NaN, "NaN", Infinity, "Infinity", -Infinity, "-Infinity"]'
@@ -2070,6 +2520,8 @@ class TestPandasContainer:
         tm.assert_frame_equal(result, expected)
 
     def test_frame_int_overflow(self):
+        # [FUNCTION DOC]
+        # GH 30320. A numeric string too large for integers stays a string.
         # GH 30320
         encoded_json = json.dumps([{"col": "31900441201190696999"}, {"col": "Text"}])
         expected = DataFrame({"col": ["31900441201190696999", "Text"]})
@@ -2077,6 +2529,9 @@ class TestPandasContainer:
         tm.assert_frame_equal(result, expected)
 
     def test_json_multiindex(self):
+        # [FUNCTION DOC]
+        # A series with a two-level index (from stacking) written with index orientation
+        # uses the text of each label tuple as the key.
         dataframe = DataFrame({"x": [1, 2, 3], "y": ["a", "b", "c"]})
         expected = (
             '{"(0, \'x\')":1,"(0, \'y\')":"a","(1, \'x\')":2,'
@@ -2089,6 +2544,9 @@ class TestPandasContainer:
     @pytest.mark.single_cpu
     @pytest.mark.network
     def test_to_s3(self, s3_bucket_public, s3so):
+        # [FUNCTION DOC]
+        # GH 28375. Network, single-CPU test. Writing a frame to a mock S3 URI with storage
+        # options and reading it back gives an equal frame.
         # GH 28375
         mock_bucket_name = s3_bucket_public.name
         target_file = f"{uuid.uuid4()}.json"
@@ -2099,6 +2557,9 @@ class TestPandasContainer:
         tm.assert_frame_equal(result, df)
 
     def test_json_pandas_nulls(self, nulls_fixture):
+        # [FUNCTION DOC]
+        # GH 31615. Parametrized on the null fixture. Any null-like value serializes as
+        # null; the not-a-time value additionally emits the epoch deprecation warning.
         # GH 31615
         expected_warning = None
         msg = (
@@ -2113,12 +2574,17 @@ class TestPandasContainer:
         assert result == '{"0":{"0":null}}'
 
     def test_readjson_bool_series(self):
+        # [FUNCTION DOC]
+        # GH31464. A JSON list of booleans read as a series gives a boolean series.
         # GH31464
         result = read_json(StringIO("[true, true, false]"), typ="series")
         expected = Series([True, True, False])
         tm.assert_series_equal(result, expected)
 
     def test_to_json_multiindex_escape(self):
+        # [FUNCTION DOC]
+        # GH 15273. A stacked series with a timestamp-and-string two-level index is written
+        # with each key being the tuple's text, including timestamp reprs.
         # GH 15273
         df = DataFrame(
             True,
@@ -2139,14 +2605,26 @@ class TestPandasContainer:
         assert result == expected
 
     def test_to_json_series_of_objects(self):
+        # [FUNCTION DOC]
+        # Series of arbitrary objects: keys are all non-callable, non-underscore
+        # attributes (GH-42768).
         class _TestObject:
+            # [CLASS DOC]
+            # HELPER: plain test object with public attributes a, b, d, a private attribute
+            # and a method; used to show which attributes are serialized.
             def __init__(self, a, b, _c, d) -> None:
+                # [FUNCTION DOC]
+                # HELPER: stores the four given values as attributes with the same names (the third
+                # one with a leading underscore). Returns nothing.
                 self.a = a
                 self.b = b
                 self._c = _c
                 self.d = d
 
             def e(self):
+                # [FUNCTION DOC]
+                # HELPER: a method that returns the constant five; present to show callable
+                # attributes are not serialized.
                 return 5
 
         # JSON keys should be all non-callable non-underscore attributes, see GH-42768
@@ -2187,11 +2665,17 @@ class TestPandasContainer:
         ],
     )
     def test_complex_data_tojson(self, data, expected):
+        # [FUNCTION DOC]
+        # GH41174. Parametrized on complex series and frames. Complex numbers are written
+        # as objects with imaginary and real parts.
         # GH41174
         result = data.to_json()
         assert result == expected
 
     def test_json_uint64(self):
+        # [FUNCTION DOC]
+        # GH21073. Values above the signed 64-bit range are written exactly with split
+        # orientation.
         # GH21073
         expected = (
             '{"columns":["col1"],"index":[0,1],'
@@ -2204,6 +2688,12 @@ class TestPandasContainer:
     def test_read_json_dtype_backend(
         self, string_storage, dtype_backend, orient, using_infer_string
     ):
+        # [FUNCTION DOC]
+        # GH#50750. Parametrized (fixtures) on string storage, dtype backend and orient. A
+        # frame with nullable integers, floats, booleans and strings, with missing values,
+        # is written and read with the dtype backend: nullable types for numpy_nullable,
+        # Arrow-backed arrays for pyarrow. For values orientation column labels become
+        # integers. Column index type check is relaxed.
         # GH#50750
         df = DataFrame(
             {
@@ -2264,6 +2754,10 @@ class TestPandasContainer:
     @td.skip_if_no("pyarrow")
     @pytest.mark.filterwarnings("ignore:Passing a BlockManager:DeprecationWarning")
     def test_read_json_pyarrow_with_dtype(self):
+        # [FUNCTION DOC]
+        # Requires pyarrow. Reading lines from bytes with the Arrow engine and Arrow
+        # dtype backend with an explicit dtype mapping gives columns of exactly those
+        # Arrow integer types.
         dtype = {"a": "int32[pyarrow]", "b": "int64[pyarrow]"}
         json = b'{"a": 1, "b": 2}\n'
 
@@ -2287,6 +2781,10 @@ class TestPandasContainer:
 
     @pytest.mark.parametrize("orient", ["split", "records", "index"])
     def test_read_json_nullable_series(self, string_storage, dtype_backend, orient):
+        # [FUNCTION DOC]
+        # GH#50750. Parametrized on split, records, index orients. A nullable integer
+        # series round-trips with the given dtype backend and string storage option; with
+        # pyarrow backend the result is Arrow-backed.
         # GH#50750
         pa = pytest.importorskip("pyarrow")
         ser = Series([1, NA, 3], dtype="Int64")
@@ -2307,6 +2805,8 @@ class TestPandasContainer:
         tm.assert_series_equal(result, expected)
 
     def test_invalid_dtype_backend(self):
+        # [FUNCTION DOC]
+        # An unknown dtype backend name raises a value error listing the allowed values.
         msg = (
             "dtype_backend numpy is invalid, only 'numpy_nullable' and "
             "'pyarrow' are allowed."
@@ -2316,6 +2816,8 @@ class TestPandasContainer:
 
 
 def test_invalid_engine():
+    # [FUNCTION DOC]
+    # GH 48893. An unknown engine name raises a value error mentioning the engine type.
     # GH 48893
     ser = Series(range(1))
     out = ser.to_json()
@@ -2324,6 +2826,9 @@ def test_invalid_engine():
 
 
 def test_pyarrow_engine_lines_false():
+    # [FUNCTION DOC]
+    # GH 48893. The Arrow engine without lines mode raises a value error saying only
+    # lines is currently supported.
     # GH 48893
     ser = Series(range(1))
     out = ser.to_json()
@@ -2332,6 +2837,11 @@ def test_pyarrow_engine_lines_false():
 
 
 def test_json_roundtrip_string_inference(orient):
+    # [FUNCTION DOC]
+    # Parametrized by the orient fixture. Reading a string-only frame under the
+    # future string inference option produces string dtype for data, index and
+    # columns, matching an explicitly typed frame.
+    # KNOWN ISSUE: the orient parameter is accepted but the writer is always called with the default orientation, so every parametrization runs the same test.
     df = DataFrame(
         [["a", "b"], ["c", "d"]], index=["row 1", "row 2"], columns=["col 1", "col 2"]
     )
@@ -2350,6 +2860,9 @@ def test_json_roundtrip_string_inference(orient):
 
 @td.skip_if_no("pyarrow")
 def test_to_json_ea_null():
+    # [FUNCTION DOC]
+    # GH#57224. Requires pyarrow. Arrow-backed and nullable integer columns with a
+    # missing value are written as lines; missing becomes null.
     # GH#57224
     df = DataFrame(
         {
@@ -2365,6 +2878,9 @@ def test_to_json_ea_null():
 
 
 def test_read_json_lines_rangeindex():
+    # [FUNCTION DOC]
+    # GH 57429. Reading lines mode produces a default range index (exact type
+    # checked).
     # GH 57429
     data = """
 {"a": 1, "b": 2}
@@ -2376,6 +2892,9 @@ def test_read_json_lines_rangeindex():
 
 
 def test_large_number():
+    # [FUNCTION DOC]
+    # GH#20608. A list with a 16-digit number string read as a series with values
+    # orientation and no date conversion gives a 64-bit integer series.
     # GH#20608
     result = read_json(
         StringIO('["9999999999999999"]'),

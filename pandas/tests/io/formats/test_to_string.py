@@ -1,3 +1,12 @@
+# [MODULE DOC]
+# Tests for the plain-text rendering methods on frames and series (to_string):
+# custom formatters, column spacing, header options, line width wrapping,
+# numeric formatting (floats, complex, infinities, missing values), truncation by
+# rows or columns, unicode handling, and series-specific options (name, dtype,
+# length, na_rep, float_format, header). Tests are grouped in classes by theme and
+# compare against exact expected text. Contains one private helper for
+# platform-specific exponent width.
+
 from datetime import (
     datetime,
     timedelta,
@@ -33,11 +42,23 @@ import pandas._testing as tm
 
 
 def _three_digit_exp():
+    # [FUNCTION DOC]
+    # HELPER: platform probe used by the numeric formatting tests. Takes no inputs;
+    # returns true when formatting a floating-point number in general format on this
+    # platform yields a three-digit exponent (as on some old Windows runtimes), so
+    # tests can pick the matching expected text. Returns false on normal platforms.
     return f"{1.7e8:.4g}" == "1.7e+008"
 
 
 class TestDataFrameToStringFormatters:
+    # [CLASS DOC]
+    # Tests for the formatters argument and keyword handling of the frame text
+    # writer.
     def test_keyword_deprecation(self):
+        # [FUNCTION DOC]
+        # GH 57280. Passing arguments beyond the buffer positionally to the series text
+        # writer must emit the version-4 keyword-only deprecation warning with the
+        # expected message (buffer given as none and a missing-value string).
         # GH 57280
         msg = (
             "Starting with pandas version 4.0 all arguments of to_string "
@@ -48,6 +69,10 @@ class TestDataFrameToStringFormatters:
             s.to_string(None, "NaN")
 
     def test_to_string_masked_ea_with_formatter(self):
+        # [FUNCTION DOC]
+        # GH#39336. A frame with nullable Float64 and Int64 columns formatted with a
+        # two-decimal formatter per column (given as a list) shows both columns with two
+        # decimals, including the integer column shown as a float-like value.
         # GH#39336
         df = DataFrame(
             {
@@ -65,6 +90,11 @@ class TestDataFrameToStringFormatters:
         assert result == expected
 
     def test_to_string_with_formatters(self):
+        # [FUNCTION DOC]
+        # Frame with int, float and object columns formatted by per-column functions
+        # given either as a mapping or as a sequence in column order. Both forms must
+        # give identical, exactly aligned text where each function result replaces the
+        # cell text.
         df = DataFrame(
             {
                 "int": [1, 2, 3],
@@ -90,10 +120,16 @@ class TestDataFrameToStringFormatters:
         assert result == result2
 
     def test_to_string_with_datetime64_monthformatter(self):
+        # [FUNCTION DOC]
+        # A formatter for a datetime column that returns year-month text is applied.
+        # Output (stripped) is the header and two rows with that text.
         months = [datetime(2016, 1, 1), datetime(2016, 2, 2)]
         x = DataFrame({"months": months})
 
         def format_func(x):
+            # [FUNCTION DOC]
+            # HELPER: formatter used by the enclosing test. Takes a datetime-like value and
+            # returns it formatted as four-digit year, dash, two-digit month.
             return x.strftime("%Y-%m")
 
         result = x.to_string(formatters={"months": format_func})
@@ -106,11 +142,17 @@ class TestDataFrameToStringFormatters:
         assert result.strip() == expected
 
     def test_to_string_with_datetime64_hourformatter(self):
+        # [FUNCTION DOC]
+        # A formatter for a time-of-day datetime column returning hour:minute text is
+        # applied; the stripped output has the header and two rows with that text.
         x = DataFrame(
             {"hod": to_datetime(["10:10:10.100", "12:12:12.120"], format="%H:%M:%S.%f")}
         )
 
         def format_func(x):
+            # [FUNCTION DOC]
+            # HELPER: formatter used by the enclosing test. Takes a datetime-like value and
+            # returns hour and minute separated by a colon.
             return x.strftime("%H:%M")
 
         result = x.to_string(formatters={"hod": format_func})
@@ -123,6 +165,9 @@ class TestDataFrameToStringFormatters:
         assert result.strip() == expected
 
     def test_to_string_with_formatters_unicode(self):
+        # [FUNCTION DOC]
+        # A column label containing a non-ASCII letter with a formatter that converts to
+        # text must render with correct alignment of the header over the values.
         df = DataFrame({"c/\u03c3": [1, 2, 3]})
         result = df.to_string(formatters={"c/\u03c3": str})
         expected = dedent(
@@ -135,6 +180,10 @@ class TestDataFrameToStringFormatters:
         assert result == expected
 
     def test_to_string_index_formatter(self):
+        # [FUNCTION DOC]
+        # The special formatter key for the index applies to index labels: a function
+        # mapping integer positions to letters replaces the index display. Expected text
+        # shows letters a, b, c as row labels.
         df = DataFrame([range(5), range(5, 10), range(10, 15)])
         rs = df.to_string(formatters={"__index__": lambda x: "abc"[x]})
         xp = dedent(
@@ -147,6 +196,10 @@ class TestDataFrameToStringFormatters:
         assert rs == xp
 
     def test_no_extra_space(self):
+        # [FUNCTION DOC]
+        # GH#52690. With the index and header suppressed and left-justified fixed-width
+        # formatters per column, the output must equal the formatted values joined by
+        # single spaces with no extra leading or trailing padding.
         # GH#52690: Check that no extra space is given
         col1 = "TEST"
         col2 = "PANDAS"
@@ -159,7 +212,14 @@ class TestDataFrameToStringFormatters:
 
 
 class TestDataFrameToStringColSpace:
+    # [CLASS DOC]
+    # Tests for the col_space option.
     def test_to_string_with_column_specific_col_space_raises(self):
+        # [FUNCTION DOC]
+        # A sequence of column spacings whose length differs from the number of columns
+        # (shorter or longer) raises a value error reporting the length mismatch; a
+        # mapping naming a column that does not exist raises a value error saying
+        # unknown column.
         df = DataFrame(
             np.random.default_rng(2).random(size=(3, 3)), columns=["a", "b", "c"]
         )
@@ -179,6 +239,10 @@ class TestDataFrameToStringColSpace:
             df.to_string(col_space={"a": "foo", "b": 23, "d": 34})
 
     def test_to_string_with_column_specific_col_space(self):
+        # [FUNCTION DOC]
+        # Per-column spacing as a mapping or as a sequence makes the second output line
+        # (first data row) have the total width of index width plus the separators plus
+        # the sum of the minimum widths.
         df = DataFrame(
             np.random.default_rng(2).random(size=(3, 3)), columns=["a", "b", "c"]
         )
@@ -191,6 +255,10 @@ class TestDataFrameToStringColSpace:
         assert len(result.split("\n")[1]) == (3 + 1 + 10 + 11 + 12)
 
     def test_to_string_with_col_space(self):
+        # [FUNCTION DOC]
+        # Larger scalar col_space values must give strictly longer lines. GH#8230: the
+        # spacing must also be applied when the header is suppressed, so the first data
+        # line with header equals the whole output length without header.
         df = DataFrame(np.random.default_rng(2).random(size=(1, 3)))
         c10 = len(df.to_string(col_space=10).split("\n")[1])
         c20 = len(df.to_string(col_space=20).split("\n")[1])
@@ -205,6 +273,9 @@ class TestDataFrameToStringColSpace:
         assert len(with_header_row1) == len(no_header)
 
     def test_to_string_repr_tuples(self):
+        # [FUNCTION DOC]
+        # Smoke test: a column of tuples can be rendered through repr and through the text
+        # writer with col_space into a buffer without error.
         buf = StringIO()
 
         df = DataFrame({"tups": list(zip(range(10), range(10)))})
@@ -213,7 +284,13 @@ class TestDataFrameToStringColSpace:
 
 
 class TestDataFrameToStringHeader:
+    # [CLASS DOC]
+    # Tests for the header option.
     def test_to_string_header_false(self):
+        # [FUNCTION DOC]
+        # GH#49230. With the header off and a named index, the output starts with a line
+        # showing the index name padded to the row width, followed by data rows; checked
+        # for a one-column and a two-column frame.
         # GH#49230
         df = DataFrame([1, 2])
         df.index.name = "a"
@@ -228,6 +305,10 @@ class TestDataFrameToStringHeader:
         assert s == expected
 
     def test_to_string_multindex_header(self):
+        # [FUNCTION DOC]
+        # GH#16718. A frame with a two-level index and a header given as a list of
+        # aliases for the two data columns shows those aliases as column labels and the
+        # index names on the following line.
         # GH#16718
         df = DataFrame({"a": [0], "b": [1], "c": [2], "d": [3]}).set_index(["a", "b"])
         res = df.to_string(header=["r1", "r2"])
@@ -235,6 +316,8 @@ class TestDataFrameToStringHeader:
         assert res == exp
 
     def test_to_string_no_header(self):
+        # [FUNCTION DOC]
+        # With header false the output has only data rows with index and values.
         df = DataFrame({"x": [1, 2, 3], "y": [4, 5, 6]})
 
         df_s = df.to_string(header=False)
@@ -243,6 +326,10 @@ class TestDataFrameToStringHeader:
         assert df_s == expected
 
     def test_to_string_specified_header(self):
+        # [FUNCTION DOC]
+        # A header list with one alias per column replaces column labels. A list with
+        # fewer aliases than columns raises a value error saying it is writing 2 columns
+        # but got 1 alias.
         df = DataFrame({"x": [1, 2, 3], "y": [4, 5, 6]})
 
         df_s = df.to_string(header=["X", "Y"])
@@ -256,12 +343,22 @@ class TestDataFrameToStringHeader:
 
 
 class TestDataFrameToStringLineWidth:
+    # [CLASS DOC]
+    # Tests for wrapping output with the line_width option.
     def test_to_string_line_width(self):
+        # [FUNCTION DOC]
+        # A wide constant frame with line width 80 produces lines of which the longest
+        # is exactly 80 characters.
         df = DataFrame(123, index=range(10, 15), columns=range(30))
         lines = df.to_string(line_width=80)
         assert max(len(line) for line in lines.split("\n")) == 80
 
     def test_to_string_line_width_no_index(self):
+        # [FUNCTION DOC]
+        # GH#13998, GH#22505. With line width one and the index off, each column is
+        # printed in its own block separated by a blank line, with a continuation
+        # backslash on the first block's header line. Checked for single-digit,
+        # two-digit and negative values, which affect padding.
         # GH#13998, GH#22505
         df = DataFrame({"x": [1, 2, 3], "y": [4, 5, 6]})
 
@@ -285,6 +382,9 @@ class TestDataFrameToStringLineWidth:
         assert df_s == expected
 
     def test_to_string_line_width_no_header(self):
+        # [FUNCTION DOC]
+        # GH#53054. Same wrapping with header off and index on, for single-digit,
+        # two-digit and negative values.
         # GH#53054
         df = DataFrame({"x": [1, 2, 3], "y": [4, 5, 6]})
 
@@ -308,6 +408,9 @@ class TestDataFrameToStringLineWidth:
         assert df_s == expected
 
     def test_to_string_line_width_with_both_index_and_header(self):
+        # [FUNCTION DOC]
+        # GH#53054. Same wrapping with both index and header displayed, for the three
+        # value kinds.
         # GH#53054
         df = DataFrame({"x": [1, 2, 3], "y": [4, 5, 6]})
 
@@ -337,6 +440,9 @@ class TestDataFrameToStringLineWidth:
         assert df_s == expected
 
     def test_to_string_line_width_no_index_no_header(self):
+        # [FUNCTION DOC]
+        # GH#53054. Same wrapping with both index and header suppressed, for the three
+        # value kinds.
         # GH#53054
         df = DataFrame({"x": [1, 2, 3], "y": [4, 5, 6]})
 
@@ -361,7 +467,12 @@ class TestDataFrameToStringLineWidth:
 
 
 class TestToStringNumericFormatting:
+    # [CLASS DOC]
+    # Tests for how numbers are formatted by the text writer.
     def test_to_string_float_format_no_fixed_width(self):
+        # [FUNCTION DOC]
+        # GH#21625 and GH#22270. A percent float format with three decimals and one with
+        # zero decimals must be applied without fixed-width padding beyond alignment.
         # GH#21625
         df = DataFrame({"x": [0.19999]})
         expected = "      x\n0 0.200"
@@ -373,6 +484,12 @@ class TestToStringNumericFormatting:
         assert df.to_string(float_format="%.0f") == expected
 
     def test_to_string_small_float_values(self):
+        # [FUNCTION DOC]
+        # A column mixing a normal value, a tiny value and a small negative value is
+        # rendered in scientific notation; the expected exponent width depends on the
+        # platform helper. A second part multiplies the frame by zero and prepares an
+        # expected text.
+        # KNOWN ISSUE: the second part computes a result and an expected string but never asserts anything about them (there is even a TODO asking whether they should match), so that half of the test checks nothing.
         df = DataFrame({"a": [1.5, 1e-17, -5.5e-7]})
 
         result = df.to_string()
@@ -394,6 +511,10 @@ class TestToStringNumericFormatting:
         # TODO: assert that these match??
 
     def test_to_string_complex_float_formatting(self):
+        # [FUNCTION DOC]
+        # GH #25514, 25745. With display precision five, complex numbers (including a
+        # purely imaginary one) are shown with five decimals in the real and imaginary
+        # parts, aligned in the column.
         # GH #25514, 25745
         with option_context("display.precision", 5):
             df = DataFrame(
@@ -416,6 +537,9 @@ class TestToStringNumericFormatting:
             assert result == expected
 
     def test_to_string_complex_float_formatting_with_exponents(self):
+        # [FUNCTION DOC]
+        # GH #60393. With display precision six, complex values with very small parts
+        # are shown in scientific notation for both parts, consistently in each row.
         # GH #60393
         with option_context("display.precision", 6):
             df = DataFrame(
@@ -434,6 +558,10 @@ class TestToStringNumericFormatting:
             assert result == expected
 
     def test_to_string_format_inf(self):
+        # [FUNCTION DOC]
+        # GH#24861. Infinities in float columns mixed with strings in an object column
+        # are shown as inf text and aligned; checked for a float column with non-integer
+        # values (four decimals) and one with integer-valued floats (one decimal).
         # GH#24861
         df = DataFrame(
             {
@@ -474,6 +602,9 @@ class TestToStringNumericFormatting:
         assert result == expected
 
     def test_to_string_int_formatting(self):
+        # [FUNCTION DOC]
+        # An integer column including negatives is right-aligned with the sign counted in
+        # the width. The test also confirms the dtype is an integer type.
         df = DataFrame({"x": [-15, 20, 25, -35]})
         assert issubclass(df["x"].dtype.type, np.integer)
 
@@ -482,6 +613,13 @@ class TestToStringNumericFormatting:
         assert output == expected
 
     def test_to_string_float_formatting(self):
+        # [FUNCTION DOC]
+        # With display precision five and notebook HTML repr off, a column with a very
+        # large value and fractions is rendered in scientific notation (platform
+        # dependent exponent width); a column mixing a large integer-like and a fraction
+        # is shown in fixed notation. After the option context ends, the precision option
+        # must be back to six, and a column with a billion and a fraction is shown in
+        # scientific notation with six decimals.
         with option_context(
             "display.precision",
             5,
@@ -529,19 +667,30 @@ class TestToStringNumericFormatting:
 
 
 class TestDataFrameToString:
+    # [CLASS DOC]
+    # General tests for the frame text writer.
     def test_to_string_decimal(self):
+        # [FUNCTION DOC]
+        # GH#23614. A decimal separator argument replaces the point in float output.
         # GH#23614
         df = DataFrame({"A": [6.0, 3.1, 2.2]})
         expected = "     A\n0  6,0\n1  3,1\n2  2,2"
         assert df.to_string(decimal=",") == expected
 
     def test_to_string_left_justify_cols(self):
+        # [FUNCTION DOC]
+        # Left justification of column headers: a mixed integer-and-fraction column has
+        # its header left-aligned over right-aligned values.
         df = DataFrame({"x": [3234, 0.253]})
         df_s = df.to_string(justify="left")
         expected = "   x       \n0  3234.000\n1     0.253"
         assert df_s == expected
 
     def test_to_string_format_na(self):
+        # [FUNCTION DOC]
+        # Missing values in float and object columns are displayed as NaN; checked for a
+        # non-integer float column (four decimals) and an integer-valued float column
+        # (one decimal).
         df = DataFrame(
             {
                 "A": [np.nan, -1, -2.1234, 3, 4],
@@ -579,6 +728,9 @@ class TestDataFrameToString:
         assert result == expected
 
     def test_to_string_with_dict_entries(self):
+        # [FUNCTION DOC]
+        # A cell holding a dictionary is rendered with its element text, so the output
+        # contains the key-value pairs.
         df = DataFrame({"A": [{"a": 1, "b": 2}]})
 
         val = df.to_string()
@@ -586,6 +738,9 @@ class TestDataFrameToString:
         assert "'b': 2" in val
 
     def test_to_string_with_categorical_columns(self):
+        # [FUNCTION DOC]
+        # GH#35439. A frame whose columns are a categorical index renders identically to
+        # the same frame with ordinary columns.
         # GH#35439
         data = [[4, 2], [3, 2], [4, 3]]
         cols = ["aaaaaaaaa", "b"]
@@ -595,6 +750,10 @@ class TestDataFrameToString:
         assert df.to_string() == df_cat_cols.to_string()
 
     def test_repr_embedded_ndarray(self):
+        # [FUNCTION DOC]
+        # A frame built from a structured array with an object field holding arrays of
+        # varying length can be rendered through repr of the column, repr of the frame
+        # and the text writer without error.
         arr = np.empty(10, dtype=[("err", object)])
         for i in range(len(arr)):
             arr["err"][i] = np.random.default_rng(2).standard_normal(i)
@@ -605,6 +764,11 @@ class TestDataFrameToString:
         df.to_string()
 
     def test_to_string_truncate(self):
+        # [FUNCTION DOC]
+        # GH 9784. Long cell content is not truncated by the text writer, and the global
+        # column width display option has no effect on it. An explicit max_colwidth
+        # argument of 20 truncates the long cell with an ellipsis and narrows the layout.
+        # KNOWN ISSUE: the result of setting a three-column index on the frame is discarded, so that statement has no effect on the test.
         # GH 9784 - dont truncate when calling DataFrame.to_string
         df = DataFrame(
             [
@@ -652,6 +816,10 @@ class TestDataFrameToString:
         ],
     )
     def test_format_remove_leading_space_dataframe(self, input_array, expected):
+        # [FUNCTION DOC]
+        # GH#24980. Parametrized on dictionary data. With the index off, no extra leading
+        # space is added to the output of columns, including mixed string and integer
+        # columns.
         # GH#24980
         df = DataFrame(input_array).to_string(index=False)
         assert df == expected
@@ -674,6 +842,9 @@ class TestDataFrameToString:
         ],
     )
     def test_to_string_max_rows_zero(self, data, expected):
+        # [FUNCTION DOC]
+        # GH#35394. Parametrized on frames of integers, mixed string and float, and
+        # object with missing values. A max_rows of zero must still show all rows.
         # GH#35394
         result = DataFrame(data=data).to_string(max_rows=0)
         assert result == expected
@@ -722,12 +893,21 @@ class TestDataFrameToString:
         ],
     )
     def test_truncation_no_index(self, max_cols, max_rows, expected):
+        # [FUNCTION DOC]
+        # Parametrized on max_cols and max_rows combinations (columns only, rows only,
+        # both, and 1 by 1). With the index off, a four by eleven frame of zeros must be
+        # truncated with ellipsis column and/or row markers exactly as in the expected
+        # text.
         df = DataFrame([[0] * 11] * 4)
         assert (
             df.to_string(index=False, max_cols=max_cols, max_rows=max_rows) == expected
         )
 
     def test_to_string_no_index(self):
+        # [FUNCTION DOC]
+        # GH#16839, GH#13032. With index off, positive numbers keep a leading space,
+        # whitespace-only strings are kept; and reordering columns changes the layout
+        # accordingly.
         # GH#16839, GH#13032
         df = DataFrame({"x": [11, 22], "y": [33, -44], "z": ["AAA", "   "]})
 
@@ -741,6 +921,10 @@ class TestDataFrameToString:
         assert df_s == expected
 
     def test_to_string_unicode_columns(self, float_frame):
+        # [FUNCTION DOC]
+        # Smoke test: a frame with a non-ASCII column label is written to a buffer through
+        # the text writer and the info method, and a standard float fixture frame is
+        # rendered to a string. Only the type of the last result is asserted.
         df = DataFrame({"\u03c3": np.arange(10.0)})
 
         buf = StringIO()
@@ -756,6 +940,10 @@ class TestDataFrameToString:
 
     @pytest.mark.parametrize("na_rep", ["NaN", "Ted"])
     def test_to_string_na_rep_and_float_format(self, na_rep):
+        # [FUNCTION DOC]
+        # GH#13828. Parametrized on the missing representation (NaN or another word).
+        # A float column with a missing value, formatted with a two-decimal format and
+        # the representation, shows the formatted number and the representation text.
         # GH#13828
         df = DataFrame([["A", 1.2225], ["A", None]], columns=["Group", "Data"])
         result = df.to_string(na_rep=na_rep, float_format="{:.2f}".format)
@@ -768,6 +956,10 @@ class TestDataFrameToString:
         assert result == expected
 
     def test_to_string_string_dtype(self):
+        # [FUNCTION DOC]
+        # GH#50099. Requires pyarrow. Converting a frame to arrow string, python string
+        # and arrow integer dtypes and rendering its dtypes series gives right-aligned
+        # dtype names in the expected text.
         # GH#50099
         pytest.importorskip("pyarrow")
         df = DataFrame(
@@ -786,6 +978,10 @@ class TestDataFrameToString:
         assert result == expected
 
     def test_to_string_utf8_columns(self):
+        # [FUNCTION DOC]
+        # A frame whose column label is a bytes value (of a non-ASCII character
+        # encoded as UTF-8) with a display row limit of one can be shown by repr without
+        # error.
         n = "\u05d0".encode()
         df = DataFrame([1, 2], columns=[n])
 
@@ -793,16 +989,25 @@ class TestDataFrameToString:
             repr(df)
 
     def test_to_string_unicode_two(self):
+        # [FUNCTION DOC]
+        # Smoke test: an empty frame with a non-ASCII column label can be written to a
+        # buffer.
         dm = DataFrame({"c/\u03c3": []})
         buf = StringIO()
         dm.to_string(buf)
 
     def test_to_string_unicode_three(self):
+        # [FUNCTION DOC]
+        # Smoke test: a frame with a string with a non-ASCII byte-like character can be
+        # written to a buffer.
         dm = DataFrame(["\xc2"])
         buf = StringIO()
         dm.to_string(buf)
 
     def test_to_string_with_float_index(self):
+        # [FUNCTION DOC]
+        # A float index with integer-valued entries is displayed with one decimal for
+        # all labels.
         index = Index([1.5, 2, 3, 4, 5])
         df = DataFrame(np.arange(5), index=index)
 
@@ -811,6 +1016,15 @@ class TestDataFrameToString:
         assert result == expected
 
     def test_to_string(self):
+        # [FUNCTION DOC]
+        # Uses a 200-row frame with float and string columns, the first 21 rows missing.
+        # Writing to a buffer returns none and matches the string result. With
+        # a column selection in a different order, column spacing and a percent float
+        # format, the output re-read as a whitespace-separated table has the same string
+        # column, the same count of non-missing floats, and floats within 0.1. Further
+        # calls with column selection, formatters, string conversion as float format and
+        # an empty-column frame must simply not fail.
+        # KNOWN ISSUE: a FIXME comment says a commented-out assertion about the header order should not be left commented out; the header order check is never made.
         # big mixed
         biggie = DataFrame(
             {
@@ -862,6 +1076,13 @@ class TestDataFrameToString:
     # TODO: split or simplify this test?
     @pytest.mark.xfail(using_string_dtype(), reason="fix when arrow is default")
     def test_to_string_index_with_nan(self):
+        # [FUNCTION DOC]
+        # GH#2850. Expected to fail when string dtype is the default. Frame with
+        # missing values in id columns set as multi-index (three levels), as single
+        # index, with append, with an all-missing level, partially missing multi-index,
+        # and all-missing in the first row. In each case the rendering shows NaN for
+        # missing labels with expected alignment and blank header line for index names.
+        # (A TODO in the code questions whether this test should be split.)
         # GH#2850
         df = DataFrame(
             {
@@ -939,16 +1160,26 @@ class TestDataFrameToString:
         assert result == expected
 
     def test_to_string_nonunicode_nonascii_alignment(self):
+        # [FUNCTION DOC]
+        # A frame with a string containing non-ASCII characters and one without gives
+        # data lines of equal length, i.e. alignment accounts for character width.
         df = DataFrame([["aa\xc3\xa4\xc3\xa4", 1], ["bbbb", 2]])
         rep_str = df.to_string()
         lines = rep_str.split("\n")
         assert len(lines[1]) == len(lines[2])
 
     def test_unicode_problem_decoding_as_ascii(self):
+        # [FUNCTION DOC]
+        # A frame with a non-ASCII column label and a missing value can be converted
+        # to text and then to a string without error.
         df = DataFrame({"c/\u03c3": Series({"test": np.nan})})
         str(df.to_string())
 
     def test_to_string_repr_unicode(self):
+        # [FUNCTION DOC]
+        # Smoke test: a column of identical non-ASCII strings can be written with
+        # col_space to a buffer and shown with repr, including while standard input is
+        # temporarily set to none (restored in a finally block).
         buf = StringIO()
 
         unicode_values = ["\u03c3"] * 10
@@ -967,6 +1198,10 @@ class TestDataFrameToString:
             sys.stdin = _stdin
 
     def test_nested_dataframe(self):
+        # [FUNCTION DOC]
+        # A frame holding a dictionary which contains another frame holding lists renders
+        # with the nested objects shown by their simple string forms; compared with
+        # expected text.
         df1 = DataFrame({"level1": [["row1"], ["row2"]]})
         df2 = DataFrame({"level3": [{"level2": df1}]})
         result = df2.to_string()
@@ -975,7 +1210,11 @@ class TestDataFrameToString:
 
 
 class TestSeriesToString:
+    # [CLASS DOC]
+    # Tests for the series text writer.
     def test_to_string_without_index(self):
+        # [FUNCTION DOC]
+        # GH#11729. With the index off, the output is just the values on separate lines.
         # GH#11729 Test index=False option
         ser = Series([1, 2, 3, 4])
         result = ser.to_string(index=False)
@@ -983,6 +1222,9 @@ class TestSeriesToString:
         assert result == expected
 
     def test_to_string_name(self):
+        # [FUNCTION DOC]
+        # A 100-element series with max_rows two and name true ends with the name line;
+        # with name false it does not.
         ser = Series(range(100), dtype="int64")
         ser.name = "myser"
         res = ser.to_string(max_rows=2, name=True)
@@ -993,6 +1235,8 @@ class TestSeriesToString:
         assert res == exp
 
     def test_to_string_dtype(self):
+        # [FUNCTION DOC]
+        # Same truncated series; dtype true appends the dtype line, false omits it.
         ser = Series(range(100), dtype="int64")
         res = ser.to_string(max_rows=2, dtype=True)
         exp = "0      0\n      ..\n99    99\ndtype: int64"
@@ -1002,24 +1246,35 @@ class TestSeriesToString:
         assert res == exp
 
     def test_to_string_length(self):
+        # [FUNCTION DOC]
+        # Same truncated series; length true appends a length line giving the full length.
         ser = Series(range(100), dtype="int64")
         res = ser.to_string(max_rows=2, length=True)
         exp = "0      0\n      ..\n99    99\nLength: 100"
         assert res == exp
 
     def test_to_string_na_rep(self):
+        # [FUNCTION DOC]
+        # An all-missing float series truncated to two rows uses the given missing
+        # representation in the shown values.
         ser = Series(index=range(100), dtype=np.float64)
         res = ser.to_string(na_rep="foo", max_rows=2)
         exp = "0    foo\n      ..\n99   foo"
         assert res == exp
 
     def test_to_string_float_format(self):
+        # [FUNCTION DOC]
+        # A callable float format is applied to the shown values of a truncated float
+        # series.
         ser = Series(range(10), dtype="float64")
         res = ser.to_string(float_format=lambda x: f"{x:2.1f}", max_rows=2)
         exp = "0   0.0\n     ..\n9   9.0"
         assert res == exp
 
     def test_to_string_header(self):
+        # [FUNCTION DOC]
+        # With a named index, header true shows the index name as heading line; header
+        # false omits it.
         ser = Series(range(10), dtype="int64")
         ser.index.name = "foo"
         res = ser.to_string(header=True, max_rows=2)
@@ -1030,6 +1285,10 @@ class TestSeriesToString:
         assert res == exp
 
     def test_to_string_empty_col(self):
+        # [FUNCTION DOC]
+        # GH#13653. A series with empty strings, with index off, keeps the empty entries
+        # as padded blanks of the common width; the output is matched against the
+        # expected text as a pattern.
         # GH#13653
         ser = Series(["", "Hello", "World", "", "", "Mooooo", "", ""])
         res = ser.to_string(index=False)
@@ -1037,6 +1296,13 @@ class TestSeriesToString:
         assert re.match(exp, res)
 
     def test_to_string_timedelta64(self):
+        # [FUNCTION DOC]
+        # Covers series of timedeltas: a bare nanosecond-based series renders; NaT from a
+        # shifted difference appears with day-only values; fractional seconds, hour and
+        # minute offsets, negative values, negative offsets rendered as day-and-time
+        # text; a subtraction of a small timedelta from datetime values; and a timedelta
+        # range renders without boxing of elements (exact expected text).
+        # KNOWN ISSUE: in the negative time block, a shifted series s2 is built from a microsecond timedelta but never used; the subtraction uses the timedelta scalar directly, so s2 is dead code.
         Series(np.array([1100, 20], dtype="timedelta64[ns]")).to_string()
 
         ser = Series(date_range("2012-1-1", periods=3, freq="D"))
@@ -1094,6 +1360,13 @@ class TestSeriesToString:
         assert result == "0   1 days\n1   2 days\n2   3 days"
 
     def test_to_string(self):
+        # [FUNCTION DOC]
+        # Series with business-day date index. Writing to a buffer returns none and the
+        # buffer content (stripped) equals the returned string. With a percent float format
+        # every value's second token equals the formatted value. An empty slice renders as
+        # an empty series with its frequency, with or without the length argument. With
+        # length, name and dtype enabled the last line lists frequency, name, length and
+        # dtype.
         ts = Series(
             np.arange(10, dtype=np.float64),
             index=date_range("2020-01-01", periods=10, freq="B"),
@@ -1142,12 +1415,19 @@ class TestSeriesToString:
         ],
     )
     def test_format_remove_leading_space_series(self, input_array, expected):
+        # [FUNCTION DOC]
+        # GH: 24980. Parametrized on scalars and lists of strings and numbers. With index
+        # off, no extra leading space is added, but negative numbers and leading-space
+        # strings keep their natural padding.
         # GH: 24980
         ser = Series(input_array)
         result = ser.to_string(index=False)
         assert result == expected
 
     def test_to_string_complex_number_trims_zeros(self):
+        # [FUNCTION DOC]
+        # Complex values are shown with two decimals for both parts, with trailing zeros
+        # trimmed to the minimum common count.
         ser = Series([1.000000 + 1.000000j, 1.0 + 1.0j, 1.05 + 1.0j])
         result = ser.to_string()
         expected = dedent(
@@ -1159,6 +1439,9 @@ class TestSeriesToString:
         assert result == expected
 
     def test_nullable_float_to_string(self, float_ea_dtype):
+        # [FUNCTION DOC]
+        # Parametrized on nullable float dtypes (fixture). A series with a missing value
+        # shows the NA marker and aligned floats.
         # https://github.com/pandas-dev/pandas/issues/36775
         dtype = float_ea_dtype
         ser = Series([0.0, 1.0, None], dtype=dtype)
@@ -1172,6 +1455,9 @@ class TestSeriesToString:
         assert result == expected
 
     def test_nullable_int_to_string(self, any_int_ea_dtype):
+        # [FUNCTION DOC]
+        # Parametrized on nullable integer dtypes (fixture). A series with a missing
+        # value shows the NA marker and aligned integers.
         # https://github.com/pandas-dev/pandas/issues/36775
         dtype = any_int_ea_dtype
         ser = Series([0, 1, None], dtype=dtype)
@@ -1185,6 +1471,11 @@ class TestSeriesToString:
         assert result == expected
 
     def test_to_string_mixed(self):
+        # [FUNCTION DOC]
+        # Object series mixing strings, missing values and floats: floats are formatted
+        # with two decimals and missing as NaN; but a series of strings with a missing
+        # value is not treated as floats, and one of strings and an integer shows the
+        # integer as is.
         ser = Series(["foo", np.nan, -1.23, 4.56])
         result = ser.to_string()
         expected = "".join(["0     foo\n", "1     NaN\n", "2   -1.23\n", "3    4.56"])
@@ -1202,6 +1493,9 @@ class TestSeriesToString:
         assert result == expected
 
     def test_to_string_float_na_spacing(self):
+        # [FUNCTION DOC]
+        # A float series with every other value set missing shows NaN aligned with the
+        # four-decimal formatted numbers.
         ser = Series([0.0, 1.5678, 2.0, -3.0, 4.0])
         ser[::2] = np.nan
 
@@ -1210,6 +1504,10 @@ class TestSeriesToString:
         assert result == expected
 
     def test_to_string_with_datetimeindex(self):
+        # [FUNCTION DOC]
+        # A series with a datetime index shows the date text. After concatenating with a
+        # series having a missing timestamp label, the output contains NaT, and the string
+        # of that series's index also contains NaT.
         index = date_range("20130102", periods=6)
         ser = Series(1, index=index)
         result = ser.to_string()

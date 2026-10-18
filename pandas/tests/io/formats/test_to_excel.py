@@ -3,6 +3,14 @@
 ExcelFormatter is tested implicitly in pandas/tests/io/excel
 """
 
+# [MODULE DOC]
+# Tests for the CSS to Excel style conversion used by the Excel formatter:
+# CSSToExcelConverter (maps CSS declarations to a nested dictionary of font,
+# fill, border, alignment and number format settings) and CssExcelCell (applies
+# cached conversion for a cell). The ExcelFormatter itself is exercised
+# indirectly in the excel tests elsewhere. Also checks the named color table and
+# its caching behaviour.
+
 import string
 
 import pytest
@@ -232,11 +240,29 @@ from pandas.io.formats.excel import (
     ],
 )
 def test_css_to_excel(css, expected):
+    # [FUNCTION DOC]
+    # Large table-driven test, parametrized on a CSS declaration string and the
+    # expected style dictionary. Groups: font (family name parsing with quotes,
+    # escapes, commas and generic family codes; sizes from keywords, em and
+    # percent; bold from numeric and keyword weights; italic; underline versus
+    # unsupported overline; strike through; color names and short or long hex;
+    # shadow presence), fill (background color gives a solid fill), border (style
+    # and width combinations mapping to medium, thin, thick, none, dotted and dashed
+    # variants, per-side versus all-sides, color handling, passthrough of
+    # spreadsheet-native style names), alignment (horizontal, vertical, wrap from
+    # white-space) and number format (including a replacement of a special
+    # separator character, GH 46152). Each case converts the CSS and compares the
+    # whole result with the expectation.
     convert = CSSToExcelConverter()
     assert expected == convert(css)
 
 
 def test_css_to_excel_multiple():
+    # [FUNCTION DOC]
+    # Converts a multi-line CSS block with bold, underline, red color, thin border
+    # width, centered and top alignment, and one unknown property. Expects a font
+    # entry (bold, single underline, red), borders on all four sides in thin style,
+    # alignment for both axes, and nothing for the unknown property.
     convert = CSSToExcelConverter()
     actual = convert(
         """
@@ -269,6 +295,10 @@ def test_css_to_excel_multiple():
     ],
 )
 def test_css_to_excel_unhandled_border_style_warns(css):
+    # [FUNCTION DOC]
+    # Parametrized on CSS with an unrecognized border style, either per side or for
+    # all sides. Conversion must emit the CSS warning saying the border style format
+    # is unhandled.
     """Test that unhandled border styles raise a CSSWarning."""
     convert = CSSToExcelConverter()
     with tm.assert_produces_warning(CSSWarning, match="Unhandled border style format"):
@@ -295,6 +325,12 @@ def test_css_to_excel_unhandled_border_style_warns(css):
     ],
 )
 def test_css_to_excel_inherited(css, inherited, expected):
+    # [FUNCTION DOC]
+    # Parametrized on CSS, an inherited CSS string given to the converter
+    # constructor, and the expected result. Checks that inherited declarations are
+    # used when absent, merged with new ones, overridden by explicit values, and
+    # that the inherit keyword resolves to the inherited value (or to nothing if
+    # none is inherited).
     convert = CSSToExcelConverter(inherited)
     assert expected == convert(css)
 
@@ -308,6 +344,12 @@ def test_css_to_excel_inherited(css, inherited, expected):
     ),
 )
 def test_css_to_excel_good_colors(input_color, output_color):
+    # [FUNCTION DOC]
+    # See gh-18392. Parametrized on every named color with its hex value, every hex
+    # value written with a leading hash, and two short hex forms. The same color is
+    # applied to all four border colors, the background and the text color; expects
+    # solid fill with that foreground, font color, and per-side border color with
+    # style none, and no warning is emitted.
     # see gh-18392
     css = (
         f"border-top-color: {input_color}; "
@@ -336,6 +378,11 @@ def test_css_to_excel_good_colors(input_color, output_color):
 
 @pytest.mark.parametrize("input_color", [None, "not-a-color"])
 def test_css_to_excel_bad_colors(input_color):
+    # [FUNCTION DOC]
+    # See gh-18392. Parametrized on a missing value or a non-color word used as color
+    # everywhere. Conversion must emit the warning for unhandled color format; the
+    # result contains a solid pattern fill without a color only when the value was
+    # not missing, and nothing else.
     # see gh-18392
     css = (
         f"border-top-color: {input_color}; "
@@ -358,6 +405,9 @@ def test_css_to_excel_bad_colors(input_color):
 
 @pytest.mark.parametrize("input_color", ["#", "#1234567"])
 def test_css_to_excel_invalid_color_raises(input_color):
+    # [FUNCTION DOC]
+    # Parametrized on malformed hex colors (a bare hash and a seven-digit value).
+    # Conversion must raise a value error saying the color is unexpected.
     """Test that invalid colors raise a ValueError."""
     css = (
         f"border-top-color: {input_color}; "
@@ -374,12 +424,20 @@ def test_css_to_excel_invalid_color_raises(input_color):
 
 
 def tests_css_named_colors_valid():
+    # [FUNCTION DOC]
+    # Checks every value in the converter's named-color table is a six-character
+    # string consisting only of hexadecimal digits in upper case (digits count as
+    # valid).
     upper_hexs = set(map(str.upper, string.hexdigits))
     for color in CSSToExcelConverter.NAMED_COLORS.values():
         assert len(color) == 6 and all(c in upper_hexs for c in color)
 
 
 def test_css_named_colors_from_mpl_present():
+    # [FUNCTION DOC]
+    # Skipped when matplotlib is missing. Every CSS4 color name in matplotlib's
+    # table must be present in the converter's table with the same hex value once
+    # the leading hash is removed.
     mpl_colors = pytest.importorskip("matplotlib.colors")
 
     pd_colors = CSSToExcelConverter.NAMED_COLORS
@@ -396,6 +454,13 @@ def test_css_named_colors_from_mpl_present():
     ],
 )
 def test_css_excel_cell_precedence(styles, expected):
+    # [FUNCTION DOC]
+    # See GH 47371. Parametrized on lists of style pairs where a property repeats,
+    # and the CSS text expected to win. Builds a cell with a converter whose style
+    # cache was cleared before and after construction, with those styles at its
+    # position, and expects the cell's style to equal the direct conversion of the
+    # expected text; later declarations (and property names compared without regard
+    # to case) override earlier ones.
     """It applies favors latter declarations over former declarations"""
     # See GH 47371
     converter = CSSToExcelConverter()
@@ -449,6 +514,13 @@ def test_css_excel_cell_precedence(styles, expected):
     ],
 )
 def test_css_excel_cell_cache(styles, cache_hits, cache_misses):
+    # [FUNCTION DOC]
+    # See GH 47371. Parametrized on a list of style lists and the expected cache
+    # hit and miss counts. Clears the converter's cache, creates one cell for each
+    # style list position, reads the cache statistics, clears the cache again, and
+    # asserts exact hit and miss counts. Identical effective styles (after
+    # normalizing case and overridden duplicates) should hit the cache, different
+    # ones miss.
     """It caches unique cell styles"""
     # See GH 47371
     converter = CSSToExcelConverter()

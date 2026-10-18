@@ -1,3 +1,11 @@
+# [MODULE DOC]
+# Tests for flattening nested JSON-like data into frames: the public
+# normalization function (records, record paths, metadata, prefixes,
+# separators, level limits, error handling, series and generator input) and the
+# private nested-to-record flattening helper it relies on. Three data fixtures
+# (a deeply nested country/state/city list, a state/county list and a list with
+# missing metadata) are shared by the tests.
+
 import json
 
 import numpy as np
@@ -16,6 +24,9 @@ from pandas.io.json._normalize import nested_to_record
 
 @pytest.fixture
 def deep_nested():
+    # [FUNCTION DOC]
+    # HELPER: fixture returning two countries (USA and Germany), each with a list of
+    # states, each state with a list of cities carrying names and populations.
     # deeply nested data
     return [
         {
@@ -55,6 +66,10 @@ def deep_nested():
 
 @pytest.fixture
 def state_data():
+    # [FUNCTION DOC]
+    # HELPER: fixture returning two state records (Florida and Ohio), each with a
+    # list of county records (name, population), an info mapping with a governor, a
+    # short name and a state name.
     return [
         {
             "counties": [
@@ -80,6 +95,10 @@ def state_data():
 
 @pytest.fixture
 def missing_metadata():
+    # [FUNCTION DOC]
+    # HELPER: fixture returning two person records with address lists and previous
+    # residence city lists; the second record lacks the name key, so metadata for it
+    # is missing.
     return [
         {
             "name": "Alice",
@@ -110,7 +129,12 @@ def missing_metadata():
 
 
 class TestJSONNormalize:
+    # [CLASS DOC]
+    # Tests for the public normalization function.
     def test_simple_records(self):
+        # [FUNCTION DOC]
+        # A list of flat dictionaries normalizes to the same frame as building a frame
+        # directly.
         recs = [
             {"a": 1, "b": 2, "c": 3},
             {"a": 4, "b": 5, "c": 6},
@@ -124,6 +148,10 @@ class TestJSONNormalize:
         tm.assert_frame_equal(result, expected)
 
     def test_simple_normalize(self, state_data):
+        # [FUNCTION DOC]
+        # With a record path naming a list, one record gives a frame of its list elements;
+        # multiple records are concatenated; adding a metadata key adds a column repeating
+        # each parent's value for its children.
         result = json_normalize(state_data[0], "counties")
         expected = DataFrame(state_data[0]["counties"])
         tm.assert_frame_equal(result, expected)
@@ -143,6 +171,10 @@ class TestJSONNormalize:
         tm.assert_frame_equal(result, expected)
 
     def test_fields_list_type_normalize(self):
+        # [FUNCTION DOC]
+        # A record path of scalars with a metadata path whose value is a list: the
+        # metadata column holds the same list in every row, and the record column is named
+        # zero.
         parse_metadata_fields_list_type = [
             {"values": [1, 2, 3], "metadata": {"listdata": [1, 2]}}
         ]
@@ -157,6 +189,8 @@ class TestJSONNormalize:
         tm.assert_frame_equal(result, expected)
 
     def test_empty_array(self):
+        # [FUNCTION DOC]
+        # An empty list normalizes to an empty frame.
         result = json_normalize([])
         expected = DataFrame()
         tm.assert_frame_equal(result, expected)
@@ -171,6 +205,10 @@ class TestJSONNormalize:
         ],
     )
     def test_accepted_input(self, data, record_path, exception_type):
+        # [FUNCTION DOC]
+        # Parametrized on data, record path and expected exception. A list of flat
+        # dictionaries, or a dictionary with a record path, produce a one-column frame.
+        # A JSON string or none raises a not-implemented error with an empty message.
         if exception_type is not None:
             with pytest.raises(exception_type, match="^$"):
                 json_normalize(data, record_path=record_path)
@@ -180,6 +218,10 @@ class TestJSONNormalize:
             tm.assert_frame_equal(result, expected)
 
     def test_simple_normalize_with_separator(self, deep_nested):
+        # [FUNCTION DOC]
+        # GH 14883. Nested keys are joined with a dot by default, and with a custom
+        # separator including a non-ASCII one; and a deep record path with metadata and an
+        # underscore separator yields the expected set of column names.
         # GH 14883
         result = json_normalize({"A": {"A": 1, "B": 2}})
         expected = DataFrame([[1, 2]], columns=["A.A", "A.B"])
@@ -203,6 +245,9 @@ class TestJSONNormalize:
         assert result.columns.sort_values().equals(expected)
 
     def test_normalize_with_multichar_separator(self):
+        # [FUNCTION DOC]
+        # GH #43831. A separator of more than one character is accepted; list and tuple
+        # values are kept as cell values.
         # GH #43831
         data = {"a": [1, 2], "b": {"b_1": 2, "b_2": (3, 4)}}
         result = json_normalize(data, sep="__")
@@ -210,12 +255,18 @@ class TestJSONNormalize:
         tm.assert_frame_equal(result, expected)
 
     def test_value_array_record_prefix(self):
+        # [FUNCTION DOC]
+        # GH 21536. A record path of scalars with a record prefix names the single column
+        # with the prefix followed by zero.
         # GH 21536
         result = json_normalize({"A": [1, 2]}, "A", record_prefix="Prefix.")
         expected = DataFrame([[1], [2]], columns=["Prefix.0"])
         tm.assert_frame_equal(result, expected)
 
     def test_nested_object_record_path(self):
+        # [FUNCTION DOC]
+        # GH 22706. A record path that goes through a nested mapping to a list of counties
+        # produces a frame of the county records.
         # GH 22706
         data = {
             "state": "Florida",
@@ -236,6 +287,9 @@ class TestJSONNormalize:
         tm.assert_frame_equal(result, expected)
 
     def test_more_deeply_nested(self, deep_nested):
+        # [FUNCTION DOC]
+        # A two-level record path with metadata for country and state name: seven city
+        # rows with repeated parent values; column order taken from the result.
         result = json_normalize(
             deep_nested, ["states", "cities"], meta=["country", ["states", "name"]]
         )
@@ -266,6 +320,9 @@ class TestJSONNormalize:
         tm.assert_frame_equal(result, expected)
 
     def test_shallow_nested(self):
+        # [FUNCTION DOC]
+        # A record path of counties with metadata of state, short name and a nested
+        # governor: five rows with repeated metadata and a dotted nested column name.
         data = [
             {
                 "state": "Florida",
@@ -302,6 +359,9 @@ class TestJSONNormalize:
         tm.assert_frame_equal(result, expected)
 
     def test_nested_meta_path_with_nested_record_path(self, state_data):
+        # [FUNCTION DOC]
+        # GH 27220. Record path given as a one-element list and nested metadata with errors
+        # ignored gives the same shape as the shallow case.
         # GH 27220
         result = json_normalize(
             data=state_data,
@@ -322,6 +382,10 @@ class TestJSONNormalize:
         tm.assert_frame_equal(result, expected)
 
     def test_meta_name_conflict(self):
+        # [FUNCTION DOC]
+        # A metadata key that collides with a record key raises a value error asking for a
+        # distinguishing prefix; supplying a metadata prefix resolves it and both prefixed
+        # and unprefixed names are present.
         data = [
             {
                 "foo": "hello",
@@ -343,6 +407,9 @@ class TestJSONNormalize:
             assert val in result
 
     def test_meta_parameter_not_modified(self):
+        # [FUNCTION DOC]
+        # GH 18610. The metadata list passed in is not modified by the call, and the
+        # prefixed columns are present.
         # GH 18610
         data = [
             {
@@ -363,6 +430,9 @@ class TestJSONNormalize:
             assert val in result
 
     def test_record_prefix(self, state_data):
+        # [FUNCTION DOC]
+        # Without metadata a record path gives plain record columns; with a record prefix
+        # the record columns are prefixed but the metadata column is not.
         result = json_normalize(state_data[0], "counties")
         expected = DataFrame(state_data[0]["counties"])
         tm.assert_frame_equal(result, expected)
@@ -381,6 +451,9 @@ class TestJSONNormalize:
         tm.assert_frame_equal(result, expected)
 
     def test_record_prefix_no_record_path_series(self):
+        # [FUNCTION DOC]
+        # A series of flat records with no record path and a record prefix gets the prefix
+        # on all columns.
         # Ensure record_prefix is applied when record_path is None for Series input
         s = Series([{"k": f"{i}", "m": "q"} for i in range(3)])
         result = json_normalize(s, record_prefix="T.")
@@ -394,6 +467,9 @@ class TestJSONNormalize:
         tm.assert_frame_equal(result, expected)
 
     def test_non_ascii_key(self):
+        # [FUNCTION DOC]
+        # Keys with non-ASCII characters and nested mapping keys are handled; the result
+        # equals a frame with those column names.
         testjson = (
             b'[{"\xc3\x9cnic\xc3\xb8de":0,"sub":{"A":1, "B":2}},'
             b'{"\xc3\x9cnic\xc3\xb8de":1,"sub":{"A":3, "B":4}}]'
@@ -410,6 +486,10 @@ class TestJSONNormalize:
         tm.assert_frame_equal(result, expected)
 
     def test_missing_field(self):
+        # [FUNCTION DOC]
+        # GH20030. A record where the info field is null and a record with nested info:
+        # the null record gets missing values in every flattened column (including the
+        # info column itself) while the second record keeps its own null-valued info entry.
         # GH20030:
         author_missing_data = [
             {"info": None},
@@ -480,6 +560,10 @@ class TestJSONNormalize:
         ],
     )
     def test_max_level_with_records_path(self, max_level, expected):
+        # [FUNCTION DOC]
+        # GH23843. Parametrized on a maximum nesting level (0 or 1). With a record path
+        # and mapping metadata, nested mappings inside records are flattened only up to
+        # that level, remaining nested values stay as mappings.
         # GH23843: Enhanced JSON normalize
         test_input = [
             {
@@ -513,6 +597,10 @@ class TestJSONNormalize:
 
     @pytest.mark.parametrize("max_level", [0, None])
     def test_json_normalize_non_dict_items(self, max_level):
+        # [FUNCTION DOC]
+        # gh-62829, gh-64188. Parametrized on max level (zero or none). A list containing
+        # a missing value among dictionaries gives a missing row; a list with a non-NA-like
+        # float raises a type error saying all items must be dict or NA-like.
         # gh-62829, gh-64188
         data_list = [np.nan, {"id": 12}, {"id": 13}]
 
@@ -525,6 +613,9 @@ class TestJSONNormalize:
             json_normalize([1.0, {"id": 12}], max_level=max_level)
 
     def test_nested_flattening_consistent(self):
+        # [FUNCTION DOC]
+        # See gh-21537. A single nested record and the same record reached through a
+        # record path produce equal frames.
         # see gh-21537
         df1 = json_normalize([{"A": {"B": 1}}])
         df2 = json_normalize({"dummy": [{"A": {"B": 1}}]}, "dummy")
@@ -533,6 +624,10 @@ class TestJSONNormalize:
         tm.assert_frame_equal(df1, df2)
 
     def test_nonetype_record_path(self, nulls_fixture):
+        # [FUNCTION DOC]
+        # See gh-30148. Parametrized on null-like fixture values. A record whose value at
+        # the record path is null-like is skipped without a type error, leaving only the
+        # other record's rows.
         # see gh-30148
         # should not raise TypeError
         result = json_normalize(
@@ -547,6 +642,10 @@ class TestJSONNormalize:
 
     @pytest.mark.parametrize("value", ["false", "true", "{}", "1", '"text"'])
     def test_non_list_record_path_errors(self, value):
+        # [FUNCTION DOC]
+        # See gh-30148, GH 26284. Parametrized on JSON texts for boolean, mapping, number
+        # and string. A record path value that is neither list nor null raises a type
+        # error naming the actual type and the path.
         # see gh-30148, GH 26284
         parsed_value = json.loads(value)
         test_input = {"state": "Texas", "info": parsed_value}
@@ -559,6 +658,8 @@ class TestJSONNormalize:
             json_normalize([test_input], record_path=[test_path])
 
     def test_meta_non_iterable(self):
+        # [FUNCTION DOC]
+        # GH 31507. A numeric metadata value is added as an object-dtype column.
         # GH 31507
         data = """[{"id": 99, "data": [{"one": 1, "two": 2}]}]"""
 
@@ -569,9 +670,15 @@ class TestJSONNormalize:
         tm.assert_frame_equal(result, expected)
 
     def test_generator(self, state_data):
+        # [FUNCTION DOC]
+        # GH35923. A generator of records as input does not lose its first element; the
+        # result equals the frame from the same records as a list.
         # GH35923 Fix pd.json_normalize to not skip the first element of a
         # generator input
         def generator_data():
+            # [FUNCTION DOC]
+            # HELPER: generator used by the enclosing test. Takes no inputs and yields each
+            # county record of the first state fixture entry.
             yield from state_data[0]["counties"]
 
         result = json_normalize(generator_data())
@@ -580,6 +687,9 @@ class TestJSONNormalize:
         tm.assert_frame_equal(result, expected)
 
     def test_top_column_with_leading_underscore(self):
+        # [FUNCTION DOC]
+        # Issue 49861. A top-level key with a leading underscore and a custom separator of
+        # underscore flattens correctly without losing the leading underscore.
         # 49861
         data = {"_id": {"a1": 10, "l2": {"l3": 0}}, "gg": 4}
         result = json_normalize(data, sep="_")
@@ -588,6 +698,9 @@ class TestJSONNormalize:
         tm.assert_frame_equal(result, expected)
 
     def test_series_index(self, state_data):
+        # [FUNCTION DOC]
+        # A series of records with a custom index keeps the index in the output, and with
+        # a record path the index values are repeated per child record.
         idx = Index([7, 8])
         series = Series(state_data, index=idx)
         result = json_normalize(series)
@@ -597,13 +710,21 @@ class TestJSONNormalize:
 
 
 class TestNestedToRecord:
+    # [CLASS DOC]
+    # Tests for the private flattening helper, plus several tests of the public
+    # normalization function that cover missing-metadata handling and index handling.
+    # KNOWN ISSUE: despite the class name, many tests here (error handling for missing metadata, missing nested metadata, series with a non-zero index, metadata validation) exercise the public normalization function rather than the flattening helper, so the grouping is misleading.
     def test_flat_stays_flat(self):
+        # [FUNCTION DOC]
+        # A list of flat dictionaries is returned unchanged.
         recs = [{"flat1": 1, "flat2": 2}, {"flat3": 3, "flat2": 4}]
         result = nested_to_record(recs)
         expected = recs
         assert result == expected
 
     def test_one_level_deep_flattens(self):
+        # [FUNCTION DOC]
+        # A nested mapping one level deep is flattened to dotted keys.
         data = {"flat1": 1, "dict1": {"c": 1, "d": 2}}
 
         result = nested_to_record(data)
@@ -612,6 +733,8 @@ class TestNestedToRecord:
         assert result == expected
 
     def test_nested_flattens(self):
+        # [FUNCTION DOC]
+        # Multiple levels of nesting are all flattened to dotted keys.
         data = {
             "flat1": 1,
             "dict1": {"c": 1, "d": 2},
@@ -635,6 +758,9 @@ class TestNestedToRecord:
         # If meta keys are not always present a new option to set
         # errors='ignore' has been implemented
 
+        # [FUNCTION DOC]
+        # GH14583. Metadata missing in one record with the default error mode raises a key
+        # error saying the key was not found and suggesting to ignore errors.
         msg = (
             "Key 'name' not found. To replace missing values of "
             "'name' with np.nan, pass in errors='ignore'"
@@ -648,6 +774,9 @@ class TestNestedToRecord:
             )
 
     def test_missing_meta(self, missing_metadata):
+        # [FUNCTION DOC]
+        # GH25468. With errors ignored, missing metadata become missing values in the
+        # metadata column.
         # GH25468
         # If metadata is nullable with errors set to ignore, the null values
         # should be numpy.nan values
@@ -663,6 +792,10 @@ class TestNestedToRecord:
         tm.assert_frame_equal(result, expected)
 
     def test_missing_nested_meta(self):
+        # [FUNCTION DOC]
+        # GH44312. With errors ignored, nested metadata whose parent is null produces a
+        # missing value in an object column; with errors raising it raises a key error
+        # naming the missing leaf key.
         # GH44312
         # If errors="ignore" and nested metadata is null, we should return nan
         data = {"meta": "foo", "nested_meta": None, "value": [{"rec": 1}, {"rec": 2}]}
@@ -690,6 +823,9 @@ class TestNestedToRecord:
             )
 
     def test_missing_meta_multilevel_record_path_errors_raise(self, missing_metadata):
+        # [FUNCTION DOC]
+        # GH41876. The key-error behaviour for missing metadata also holds when the record
+        # path has more than one element.
         # GH41876
         # Ensure errors='raise' works as intended even when a record_path of length
         # greater than one is passed in
@@ -706,6 +842,9 @@ class TestNestedToRecord:
             )
 
     def test_missing_meta_multilevel_record_path_errors_ignore(self, missing_metadata):
+        # [FUNCTION DOC]
+        # GH41876. With errors ignored and a multi-element record path, missing metadata
+        # become missing values.
         # GH41876
         # Ensure errors='ignore' works as intended even when a record_path of length
         # greater than one is passed in
@@ -724,6 +863,9 @@ class TestNestedToRecord:
         tm.assert_frame_equal(result, expected)
 
     def test_donot_drop_nonevalues(self):
+        # [FUNCTION DOC]
+        # GH21356. A null value for a key that would be expanded is kept as null under the
+        # key itself, and other records are still flattened.
         # GH21356
         data = [
             {"info": None, "author_name": {"first": "Smith", "last_name": "Appleseed"}},
@@ -750,6 +892,9 @@ class TestNestedToRecord:
         assert result == expected
 
     def test_nonetype_top_level_bottom_level(self):
+        # [FUNCTION DOC]
+        # GH21158. Null values at various depths, and keys containing a dot, are flattened
+        # without error (guards against removing a key twice).
         # GH21158: If inner level json has a key with a null value
         # make sure it does not do a new_d.pop twice and except
         data = {
@@ -782,6 +927,8 @@ class TestNestedToRecord:
         assert result == expected
 
     def test_nonetype_multiple_levels(self):
+        # [FUNCTION DOC]
+        # GH21158. Null values at several levels are flattened with full dotted paths.
         # GH21158: If inner level json has a key with a null value
         # make sure it does not do a new_d.pop twice and except
         data = {
@@ -857,6 +1004,9 @@ class TestNestedToRecord:
         ],
     )
     def test_with_max_level(self, max_level, expected):
+        # [FUNCTION DOC]
+        # GH23843. Parametrized on max level none, 0 and 1. A record with nested mappings
+        # is flattened to unlimited depth, not at all, or one level.
         # GH23843: Enhanced JSON normalize
         max_level_test_input_data = [
             {
@@ -872,6 +1022,8 @@ class TestNestedToRecord:
         assert output == expected
 
     def test_with_large_max_level(self):
+        # [FUNCTION DOC]
+        # GH23843. A max level of 100 flattens a deeply nested record completely.
         # GH23843: Enhanced JSON normalize
         max_level = 100
         input_data = [
@@ -909,6 +1061,9 @@ class TestNestedToRecord:
         assert output == expected
 
     def test_series_non_zero_index(self):
+        # [FUNCTION DOC]
+        # GH 19020. A series of records with index starting at one normalizes to a frame
+        # with that index, with missing values for absent nested keys (float columns).
         # GH 19020
         data = {
             0: {"id": 1, "name": "Foo", "elements": {"a": 1}},
@@ -931,6 +1086,9 @@ class TestNestedToRecord:
         tm.assert_frame_equal(result, expected)
 
     def test_json_normalize_meta_string_validation(self):
+        # [FUNCTION DOC]
+        # GH 63019. Non-string metadata entries raise a type error saying they must be
+        # strings, both without and with a record path.
         # GH 63019
         data = [{"a": 1, 12: "meta_value", "nested": [{"b": 2}]}]
 

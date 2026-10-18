@@ -1,3 +1,14 @@
+# [MODULE DOC]
+# Tests for HTML output of frames (to_html) and the notebook representation
+# (the private repr hook used by notebooks). Most tests compare against
+# reference HTML files stored under the formats data directory, read through the
+# module-level helper expected_html and the datapath fixture. Covers column
+# spacing, escaping, indexes and multi-indexes (sparsify, index off, names),
+# truncation, formatters, borders, justify, CSS classes, links, display options
+# (min rows, max rows, mathjax, dimensions), and a few exact-string cases.
+# Module-level data: a long placeholder-text constant used by the column width
+# test. Imports the formatting module under the short name fmt.
+
 from datetime import datetime
 from io import StringIO
 import itertools
@@ -30,6 +41,13 @@ lorem_ipsum = (
 
 
 def expected_html(datapath, name):
+    # [FUNCTION DOC]
+    # HELPER: loads a reference HTML file for the tests. Parameters: datapath, the
+    # pytest fixture that builds paths inside the test data folder; name, the file
+    # name without its extension. Opens the file named with the html extension under
+    # the io, formats, data, html data subdirectory as utf-8 and returns the content
+    # with trailing whitespace removed. Raises the usual file-not-found error if the
+    # file is missing.
     """
     Read HTML file from formats data directory.
 
@@ -53,6 +71,11 @@ def expected_html(datapath, name):
 
 @pytest.fixture(params=["mixed", "empty"])
 def biggie_df_fixture(request):
+    # [FUNCTION DOC]
+    # Fixture parametrized over the names mixed and empty. Mixed returns a 200-row
+    # frame with a random float column and a string column, whose first 21 rows are
+    # set to missing in both columns; empty returns a frame with a 200-row index and
+    # no columns.
     """Fixture for a big mixed Dataframe and an empty Dataframe"""
     if request.param == "mixed":
         df = DataFrame(
@@ -72,11 +95,18 @@ def biggie_df_fixture(request):
 
 @pytest.fixture(params=fmt.VALID_JUSTIFY_PARAMETERS)
 def justify(request):
+    # [FUNCTION DOC]
+    # Fixture parametrized over all justify values accepted by the formatting module
+    # (its tuple of valid justify parameters); returns the current value.
     return request.param
 
 
 @pytest.mark.parametrize("col_space", [30, 50])
 def test_to_html_with_col_space(col_space):
+    # [FUNCTION DOC]
+    # Parametrized on col_space of 30 or 50. Renders a one-row frame and tries to find
+    # header cells lines that carry a minimum width equal to the spacing.
+    # KNOWN ISSUE: the output is split on a literal backslash-n (raw string) rather than a real newline, so there is only one chunk containing the whole document and the per-line header checks are weaker than intended.
     df = DataFrame(np.random.default_rng(2).random(size=(1, 3)))
     # check that col_space affects HTML generation
     # and be very brittle about it.
@@ -89,6 +119,10 @@ def test_to_html_with_col_space(col_space):
 
 
 def test_to_html_with_column_specific_col_space_raises():
+    # [FUNCTION DOC]
+    # A col_space sequence whose length differs from the column count raises a value
+    # error about the length mismatch; a mapping with an unknown column name raises a
+    # value error saying unknown column.
     df = DataFrame(
         np.random.default_rng(2).random(size=(3, 3)), columns=["a", "b", "c"]
     )
@@ -108,6 +142,10 @@ def test_to_html_with_column_specific_col_space_raises():
 
 
 def test_to_html_with_column_specific_col_space():
+    # [FUNCTION DOC]
+    # Per-column spacing: a mapping gives the em string and pixel number only for the
+    # named columns (others unstyled); a sequence gives each column its own minimum
+    # width, with numbers converted to pixels.
     df = DataFrame(
         np.random.default_rng(2).random(size=(3, 3)), columns=["a", "b", "c"]
     )
@@ -126,6 +164,9 @@ def test_to_html_with_column_specific_col_space():
 
 
 def test_to_html_with_empty_string_label():
+    # [FUNCTION DOC]
+    # GH 3547. In a two-level index, an empty-string label must not be treated as a
+    # repeated label, so no row-span attribute appears in the output.
     # GH 3547, to_html regards empty string labels as repeated labels
     data = {"c1": ["a", "b"], "c2": ["a", ""], "data": [1, 2]}
     df = DataFrame(data).set_index(["c1", "c2"])
@@ -141,6 +182,9 @@ def test_to_html_with_empty_string_label():
     ],
 )
 def test_to_html_unicode(df_data, expected, datapath):
+    # [FUNCTION DOC]
+    # Parametrized on frame data (a non-ASCII column label and a non-ASCII cell)
+    # and the matching reference file name. The output must equal the reference.
     df = DataFrame(df_data)
     expected = expected_html(datapath, expected)
     result = df.to_html()
@@ -148,6 +192,9 @@ def test_to_html_unicode(df_data, expected, datapath):
 
 
 def test_to_html_encoding(float_frame, temp_file):
+    # [FUNCTION DOC]
+    # GH 28663. Writing to a path with the gbk encoding and reading the file back
+    # with that encoding must equal the string output.
     # GH 28663
     float_frame.to_html(temp_file, encoding="gbk")
     expected = temp_file.read_text(encoding="gbk")
@@ -155,6 +202,9 @@ def test_to_html_encoding(float_frame, temp_file):
 
 
 def test_to_html_decimal(datapath):
+    # [FUNCTION DOC]
+    # GH 12031. The decimal separator argument is applied; output equals the
+    # reference file.
     # GH 12031
     df = DataFrame({"A": [6.0, 3.1, 2.2]})
     result = df.to_html(decimal=",")
@@ -170,6 +220,10 @@ def test_to_html_decimal(datapath):
     ],
 )
 def test_to_html_escaped(kwargs, string, expected, datapath):
+    # [FUNCTION DOC]
+    # Parametrized on keyword arguments, a cell text and the reference name. Column
+    # and index labels and cell text containing angle brackets and ampersands are
+    # escaped by default and left raw when escape is false.
     a = "str<ing1 &amp;"
     b = "stri>ng2 &amp;"
 
@@ -181,6 +235,9 @@ def test_to_html_escaped(kwargs, string, expected, datapath):
 
 @pytest.mark.parametrize("index_is_named", [True, False])
 def test_to_html_multiindex_index_false(index_is_named, datapath):
+    # [FUNCTION DOC]
+    # GH 8452. Parametrized on whether the index is named. A frame with two-level
+    # columns written with index off equals the reference file in both cases.
     # GH 8452
     df = DataFrame(
         {"a": range(2), "b": range(3, 5), "c": range(5, 7), "d": range(3, 5)}
@@ -203,6 +260,10 @@ def test_to_html_multiindex_index_false(index_is_named, datapath):
     ],
 )
 def test_to_html_multiindex_sparsify(multi_sparse, expected, datapath):
+    # [FUNCTION DOC]
+    # Parametrized on the multi-sparse option and the reference name. A frame with a
+    # two-level named row index, and (for names ending in 2) a multi-index as
+    # columns, is rendered under the option and compared to the reference.
     index = MultiIndex.from_arrays([[0, 0, 1, 1], [0, 1, 0, 1]], names=["foo", None])
     df = DataFrame([[0, 1], [2, 3], [4, 5], [6, 7]], index=index)
     if expected.endswith("2"):
@@ -222,6 +283,10 @@ def test_to_html_multiindex_sparsify(multi_sparse, expected, datapath):
     ],
 )
 def test_to_html_multiindex_odd_even_truncate(max_rows, expected, datapath):
+    # [FUNCTION DOC]
+    # GH 14882. Parametrized on max_rows (60 and 56) and the reference. A frame
+    # indexed by a three-level product of 63 rows is truncated, including at a
+    # middle level for the smaller limit.
     # GH 14882 - Issue on truncation with odd length DataFrame
     index = MultiIndex.from_product(
         [[100, 200, 300], [10, 20, 30], [1, 2, 3, 4, 5, 6, 7]], names=["a", "b", "c"]
@@ -278,12 +343,20 @@ def test_to_html_multiindex_odd_even_truncate(max_rows, expected, datapath):
     ],
 )
 def test_to_html_formatters(df, formatters, expected, datapath):
+    # [FUNCTION DOC]
+    # Parametrized on a frame, a formatters argument and a reference name: an index
+    # formatter mapping, datetime formatters in month and hour forms, and one
+    # callable per column for a frame covering many dtypes. The output must equal the
+    # reference.
     expected = expected_html(datapath, expected)
     result = df.to_html(formatters=formatters)
     assert result == expected
 
 
 def test_to_html_regression_GH6098():
+    # [FUNCTION DOC]
+    # Smoke test: a pivot table over a frame with non-ASCII labels can produce its
+    # notebook HTML without error.
     df = DataFrame(
         {
             "clé1": ["a", "a", "b", "b", "a"],
@@ -298,6 +371,9 @@ def test_to_html_regression_GH6098():
 
 
 def test_to_html_truncate(datapath):
+    # [FUNCTION DOC]
+    # A 20 by 20 frame with a date index rendered with eight rows and four columns
+    # maximum equals the reference file.
     index = pd.date_range(start="20010101", freq="D", periods=20)
     df = DataFrame(index=index, columns=range(20))
     result = df.to_html(max_rows=8, max_cols=4)
@@ -307,6 +383,10 @@ def test_to_html_truncate(datapath):
 
 @pytest.mark.parametrize("size", [1, 5])
 def test_html_invalid_formatters_arg_raises(size):
+    # [FUNCTION DOC]
+    # Issue 28469. Parametrized on length one or five. A formatters sequence whose
+    # length differs from the three columns raises a value error whose message gives
+    # the supplied length and the column count.
     # issue-28469
     df = DataFrame(columns=["a", "b", "c"])
     msg = "Formatters length({}) should match DataFrame number of columns(3)"
@@ -315,6 +395,11 @@ def test_html_invalid_formatters_arg_raises(size):
 
 
 def test_to_html_truncate_formatter(datapath):
+    # [FUNCTION DOC]
+    # Issue 25955. Formatters given as a sequence (two callables and two none) with
+    # the maximum column count of three; the output must equal the reference,
+    # showing that formatting aligns with the truncated columns.
+    # KNOWN ISSUE: the local variable named fmt shadows the module-level import of the formatting module within this test; harmless, but misleading.
     # issue-25955
     data = [
         {"A": 1, "B": 2, "C": 3, "D": 4},
@@ -336,6 +421,9 @@ def test_to_html_truncate_formatter(datapath):
     [(True, "truncate_multi_index"), (False, "truncate_multi_index_sparse_off")],
 )
 def test_to_html_truncate_multi_index(sparsify, expected, datapath):
+    # [FUNCTION DOC]
+    # Parametrized on sparsify. A frame with a two-level index on both axes,
+    # rendered with at most seven rows and columns, equals the matching reference.
     arrays = [
         ["bar", "bar", "baz", "baz", "foo", "foo", "qux", "qux"],
         ["one", "two", "one", "two", "one", "two", "one", "two"],
@@ -356,6 +444,11 @@ def test_to_html_truncate_multi_index(sparsify, expected, datapath):
     ],
 )
 def test_to_html_border(option, result, expected):
+    # [FUNCTION DOC]
+    # Parametrized on an option value, a callable producing output, and the expected
+    # border value. Checks the border attribute in the output: default 1; the border
+    # argument 2; and the display option set to 2 through both to_html and the
+    # notebook repr.
     df = DataFrame({"A": [1, 2]})
     if option is None:
         result = result(df)
@@ -368,6 +461,11 @@ def test_to_html_border(option, result, expected):
 
 @pytest.mark.parametrize("biggie_df_fixture", ["mixed"], indirect=True)
 def test_to_html(biggie_df_fixture):
+    # [FUNCTION DOC]
+    # Uses the mixed big frame. Writing into a buffer returns none and equals the
+    # string result, which is a string; various calls with column selection, spacing,
+    # formatters and a string float format must not fail. A comment notes the test
+    # should be split.
     # TODO: split this test
     df = biggie_df_fixture
     s = df.to_html()
@@ -388,11 +486,16 @@ def test_to_html(biggie_df_fixture):
 
 @pytest.mark.parametrize("biggie_df_fixture", ["empty"], indirect=True)
 def test_to_html_empty_dataframe(biggie_df_fixture):
+    # [FUNCTION DOC]
+    # Uses the empty frame; rendering must not fail.
     df = biggie_df_fixture
     df.to_html()
 
 
 def test_to_html_filename(biggie_df_fixture, tmpdir):
+    # [FUNCTION DOC]
+    # Rendering to a path (the legacy temp directory object) writes the same text as
+    # the string output.
     df = biggie_df_fixture
     expected = df.to_html()
     path = tmpdir.join("test.html")
@@ -402,6 +505,9 @@ def test_to_html_filename(biggie_df_fixture, tmpdir):
 
 
 def test_to_html_with_no_bold():
+    # [FUNCTION DOC]
+    # Intended to check that bold_rows false produces no strong tags in the body.
+    # KNOWN ISSUE: the code indexes the string with the position found for the head-closing tag, yielding a single character instead of a slice, so the assertion that no strong tag appears is trivially true and checks nothing.
     df = DataFrame({"x": np.random.default_rng(2).standard_normal(5)})
     html = df.to_html(bold_rows=False)
     result = html[html.find("</thead>")]
@@ -409,6 +515,8 @@ def test_to_html_with_no_bold():
 
 
 def test_to_html_columns_arg(float_frame):
+    # [FUNCTION DOC]
+    # Selecting only column A means the header cell for column B is absent.
     result = float_frame.to_html(columns=["A"])
     assert "<th>B</th>" not in result
 
@@ -432,6 +540,10 @@ def test_to_html_columns_arg(float_frame):
     ],
 )
 def test_to_html_multiindex(columns, justify, expected, datapath):
+    # [FUNCTION DOC]
+    # Parametrized on a column multi-index, justify and reference name. A two-row
+    # text frame with multi-level columns is rendered with that justify and compared
+    # to the reference.
     df = DataFrame([list("abcd"), list("efgh")], columns=columns)
     result = df.to_html(justify=justify)
     expected = expected_html(datapath, expected)
@@ -439,6 +551,10 @@ def test_to_html_multiindex(columns, justify, expected, datapath):
 
 
 def test_to_html_justify(justify, datapath):
+    # [FUNCTION DOC]
+    # Parametrized by the justify fixture. A numeric frame is rendered with each
+    # valid justify value and compared with the reference text with the justify
+    # value substituted into its placeholder.
     df = DataFrame(
         {"A": [6, 30000, 2], "B": [1, 2, 70000], "C": [223442, 0, 1]},
         columns=["A", "B", "C"],
@@ -452,6 +568,9 @@ def test_to_html_justify(justify, datapath):
     "justify", ["super-right", "small-left", "noinherit", "tiny", "pandas"]
 )
 def test_to_html_invalid_justify(justify):
+    # [FUNCTION DOC]
+    # GH 17527. Parametrized on invalid justify names; raises a value error saying
+    # invalid value for justify parameter.
     # GH 17527
     df = DataFrame()
     msg = "Invalid value for justify parameter"
@@ -462,7 +581,13 @@ def test_to_html_invalid_justify(justify):
 
 class TestHTMLIndex:
     @pytest.fixture
+    # [CLASS DOC]
+    # Tests of index display options for the HTML writer, sharing a small three-row
+    # frame fixture and a reference for the no-index output.
     def df(self):
+        # [FUNCTION DOC]
+        # Fixture: a three-row frame with integer, float and string-with-missing columns
+        # and string index foo, bar, baz.
         index = ["foo", "bar", "baz"]
         df = DataFrame(
             {"A": [1, 2, 3], "B": [1.2, 3.4, 5.6], "C": ["one", "two", np.nan]},
@@ -473,11 +598,16 @@ class TestHTMLIndex:
 
     @pytest.fixture
     def expected_without_index(self, datapath):
+        # [FUNCTION DOC]
+        # Fixture: the reference HTML for output with the index suppressed.
         return expected_html(datapath, "index_2")
 
     def test_to_html_flat_index_without_name(
         self, datapath, df, expected_without_index
     ):
+        # [FUNCTION DOC]
+        # Default output equals the indexed reference. With index off no index label
+        # appears in the output and the result equals the no-index reference.
         expected_with_index = expected_html(datapath, "index_1")
         assert df.to_html() == expected_with_index
 
@@ -487,6 +617,9 @@ class TestHTMLIndex:
         assert result == expected_without_index
 
     def test_to_html_flat_index_with_name(self, datapath, df, expected_without_index):
+        # [FUNCTION DOC]
+        # With a named flat index the default output equals the named reference, and index
+        # off still gives the shared no-index reference.
         df.index = Index(["foo", "bar", "baz"], name="idx")
         expected_with_index = expected_html(datapath, "index_3")
         assert df.to_html() == expected_with_index
@@ -495,6 +628,9 @@ class TestHTMLIndex:
     def test_to_html_multiindex_without_names(
         self, datapath, df, expected_without_index
     ):
+        # [FUNCTION DOC]
+        # With an unnamed two-level index the default equals its reference; with index off
+        # none of the level labels appear and the result equals the no-index reference.
         tuples = [("foo", "car"), ("foo", "bike"), ("bar", "car")]
         df.index = MultiIndex.from_tuples(tuples)
 
@@ -508,6 +644,9 @@ class TestHTMLIndex:
         assert result == expected_without_index
 
     def test_to_html_multiindex_with_names(self, datapath, df, expected_without_index):
+        # [FUNCTION DOC]
+        # With a named two-level index the default equals its reference; index off gives
+        # the shared no-index reference.
         tuples = [("foo", "car"), ("foo", "bike"), ("bar", "car")]
         df.index = MultiIndex.from_tuples(tuples, names=["idx1", "idx2"])
         expected_with_index = expected_html(datapath, "index_5")
@@ -517,6 +656,9 @@ class TestHTMLIndex:
 
 @pytest.mark.parametrize("classes", ["sortable draggable", ["sortable", "draggable"]])
 def test_to_html_with_classes(classes, datapath):
+    # [FUNCTION DOC]
+    # Parametrized on a string and a list of CSS classes. An empty frame rendered with
+    # either form equals the reference with the classes in the table tag.
     df = DataFrame()
     expected = expected_html(datapath, "with_classes")
     result = df.to_html(classes=classes)
@@ -524,6 +666,9 @@ def test_to_html_with_classes(classes, datapath):
 
 
 def test_to_html_no_index_max_rows(datapath):
+    # [FUNCTION DOC]
+    # GH 14998. With index off and a maximum of one row the output equals the
+    # reference.
     # GH 14998
     df = DataFrame({"A": [1, 2, 3, 4]})
     result = df.to_html(index=False, max_rows=1)
@@ -532,6 +677,9 @@ def test_to_html_no_index_max_rows(datapath):
 
 
 def test_to_html_multiindex_max_cols(datapath):
+    # [FUNCTION DOC]
+    # GH 6131. A frame with row and column multi-indexes (the latter with a missing
+    # level name), limited to two columns, equals the reference.
     # GH 6131
     index = MultiIndex(
         levels=[["ba", "bb", "bc"], ["ca", "cb", "cc"]],
@@ -553,6 +701,8 @@ def test_to_html_multiindex_max_cols(datapath):
 
 
 def test_to_html_multi_indexes_index_false(datapath):
+    # [FUNCTION DOC]
+    # GH 22579. Multi-index rows and columns with index off equals the reference.
     # GH 22579
     df = DataFrame(
         {"a": range(10), "b": range(10, 20), "c": range(10, 20), "d": range(10, 20)}
@@ -598,6 +748,12 @@ def test_to_html_multi_indexes_index_false(datapath):
 def test_to_html_basic_alignment(
     datapath, row_index, row_type, column_index, column_type, index, header, index_names
 ):
+    # [FUNCTION DOC]
+    # GH 22747, GH 22579. Heavily parametrized on row index type, column index type
+    # (unnamed or named, flat or two-level), index flag, header flag and index
+    # names flag. Renders a two by two zero frame, derives a reference file name from
+    # the combination (index off gives none; header off gives none; names off turns
+    # named types into unnamed) and compares.
     # GH 22747, GH 22579
     df = DataFrame(np.zeros((2, 2), dtype=int), index=row_index, columns=column_index)
     result = df.to_html(index=index, header=header, index_names=index_names)
@@ -657,6 +813,10 @@ def test_to_html_basic_alignment(
 def test_to_html_alignment_with_truncation(
     datapath, row_index, row_type, column_index, column_type, index, header, index_names
 ):
+    # [FUNCTION DOC]
+    # GH 22747, GH 22579. Same parametrization as the previous test but with three-level
+    # multi-indexes and an eight by eight frame truncated to four rows and four
+    # columns; reference file names have a truncation prefix.
     # GH 22747, GH 22579
     df = DataFrame(np.arange(64).reshape(8, 8), index=row_index, columns=column_index)
     result = df.to_html(
@@ -680,6 +840,9 @@ def test_to_html_alignment_with_truncation(
 
 @pytest.mark.parametrize("index", [False, 0])
 def test_to_html_truncation_index_false_max_rows(datapath, index):
+    # [FUNCTION DOC]
+    # GH 15019. Parametrized on index false or zero. A five-row frame with maximum
+    # four rows and no index equals the reference.
     # GH 15019
     data = [
         [1.764052, 0.400157],
@@ -702,6 +865,10 @@ def test_to_html_truncation_index_false_max_rows(datapath, index):
 def test_to_html_truncation_index_false_max_cols(
     datapath, index, col_index_named, expected_output
 ):
+    # [FUNCTION DOC]
+    # GH 22783. Parametrized on index false or zero and on whether the column index is
+    # named. A two by five frame with maximum four columns and no index equals the
+    # reference for each case.
     # GH 22783
     data = [
         [1.764052, 0.400157, 0.978738, 2.240893, 1.867558],
@@ -717,6 +884,10 @@ def test_to_html_truncation_index_false_max_cols(
 
 @pytest.mark.parametrize("notebook", [True, False])
 def test_to_html_notebook_has_style(notebook):
+    # [FUNCTION DOC]
+    # Parametrized on the notebook flag. When true, the output contains the
+    # embedded style rules (the row header only-of-type selector, middle vertical
+    # alignment, head header rule); when false none are present.
     df = DataFrame({"A": [1, 2, 3]})
     result = df.to_html(notebook=notebook)
 
@@ -731,6 +902,8 @@ def test_to_html_notebook_has_style(notebook):
 
 
 def test_to_html_with_index_names_false():
+    # [FUNCTION DOC]
+    # GH 16493. With index names disabled, the index name is not in the output.
     # GH 16493
     df = DataFrame({"A": [1, 2]}, index=Index(["a", "b"], name="myindexname"))
     result = df.to_html(index_names=False)
@@ -738,6 +911,8 @@ def test_to_html_with_index_names_false():
 
 
 def test_to_html_with_id():
+    # [FUNCTION DOC]
+    # GH 8496. The table_id argument adds an id attribute to the table.
     # GH 8496
     df = DataFrame({"A": [1, 2]}, index=Index(["a", "b"], name="myindexname"))
     result = df.to_html(index_names=False, table_id="TEST_ID")
@@ -752,6 +927,9 @@ def test_to_html_with_id():
     ],
 )
 def test_to_html_float_format_no_fixed_width(value, float_format, expected, datapath):
+    # [FUNCTION DOC]
+    # GH 21625, GH 22270. Parametrized on value, float format and reference. A
+    # single-cell frame rendered with a percent format equals the reference.
     # GH 21625, GH 22270
     df = DataFrame({"x": [value]})
     expected = expected_html(datapath, expected)
@@ -764,6 +942,9 @@ def test_to_html_float_format_no_fixed_width(value, float_format, expected, data
     [(True, "render_links_true"), (False, "render_links_false")],
 )
 def test_to_html_render_links(render_links, expected, datapath):
+    # [FUNCTION DOC]
+    # GH 2679. Parametrized on render_links. Cell text that is a URL becomes an anchor
+    # when true; the output equals the matching reference.
     # GH 2679
     data = [
         [0, "https://pandas.pydata.org/?q1=a&q2=b", "pydata.org"],
@@ -785,6 +966,12 @@ def test_to_html_render_links(render_links, expected, datapath):
 )
 @pytest.mark.parametrize("max_colwidth", [10, 20, 50, 100])
 def test_ignore_display_max_colwidth(method, expected, max_colwidth):
+    # [FUNCTION DOC]
+    # See gh-17004. Parametrized on the method (the HTML writer or the notebook repr)
+    # and on max_colwidth values. A single long text cell is shown in full by the
+    # writer regardless of the display option, while the notebook repr truncates it
+    # to the width minus four characters plus an ellipsis; the expected text must be
+    # contained in the output.
     # see gh-17004
     df = DataFrame([lorem_ipsum])
     with option_context("display.max_colwidth", max_colwidth):
@@ -795,6 +982,9 @@ def test_ignore_display_max_colwidth(method, expected, max_colwidth):
 
 @pytest.mark.parametrize("classes", [True, 0])
 def test_to_html_invalid_classes_type(classes):
+    # [FUNCTION DOC]
+    # GH 25608. A classes argument that is a boolean or integer raises a type error
+    # saying classes must be a string, list or tuple.
     # GH 25608
     df = DataFrame()
     msg = "classes must be a string, list, or tuple"
@@ -804,6 +994,9 @@ def test_to_html_invalid_classes_type(classes):
 
 
 def test_to_html_round_column_headers():
+    # [FUNCTION DOC]
+    # GH 17280. With display precision three, column header floats appear unrounded in
+    # plain output but rounded in notebook output.
     # GH 17280
     df = DataFrame([1], columns=[0.55555])
     with option_context("display.precision", 3):
@@ -815,6 +1008,10 @@ def test_to_html_round_column_headers():
 
 @pytest.mark.parametrize("unit", ["100px", "10%", "5em", 150])
 def test_to_html_with_col_space_units(unit):
+    # [FUNCTION DOC]
+    # GH 25941. Parametrized on col_space values with percent, pixel, em units and a
+    # bare integer (meaning pixels). Every header cell before the body carries the
+    # minimum width style with that unit.
     # GH 25941
     df = DataFrame(np.random.default_rng(2).random(size=(1, 3)))
     result = df.to_html(col_space=unit)
@@ -828,9 +1025,16 @@ def test_to_html_with_col_space_units(unit):
 
 
 class TestReprHTML:
+    # [CLASS DOC]
+    # Tests for the notebook HTML representation hook and the display options that
+    # control it (min rows, max rows and columns, large frame behaviour, dimensions,
+    # mathjax).
     def test_html_repr_min_rows_default(self, datapath):
         # gh-27991
 
+        # [FUNCTION DOC]
+        # gh-27991. By default a 20-row frame is not truncated, and a 61-row frame is
+        # truncated since the default maximum is 60; both compared to references.
         # default setting no truncation even if above min_rows
         df = DataFrame({"a": range(20)})
         result = df._repr_html_()
@@ -859,6 +1063,11 @@ class TestReprHTML:
     def test_html_repr_min_rows(self, datapath, max_rows, min_rows, expected):
         # gh-27991
 
+        # [FUNCTION DOC]
+        # gh-27991. Parametrized on max_rows and min_rows combinations including none
+        # values. A 61-row frame under those options equals the matching reference
+        # (truncated to min rows, to max rows when min is none, min capped by max, and
+        # untruncated when max is none).
         df = DataFrame({"a": range(61)})
         expected = expected_html(datapath, expected)
         with option_context("display.max_rows", max_rows, "display.min_rows", min_rows):
@@ -866,6 +1075,10 @@ class TestReprHTML:
         assert result == expected
 
     def test_repr_html_ipython_config(self, ip):
+        # [FUNCTION DOC]
+        # Uses the interactive shell fixture. Runs a cell that builds a frame, calls the
+        # HTML repr, reads the kernel app config and calls the repr again; the cell must
+        # finish without an execution error.
         code = textwrap.dedent(
             """\
         from pandas import DataFrame
@@ -881,6 +1094,10 @@ class TestReprHTML:
         assert not result.error_in_exec
 
     def test_info_repr_html(self):
+        # [FUNCTION DOC]
+        # With the large-repr option set to info, a frame that is too long (61 rows) or
+        # too wide (21 columns) gives an escaped class listing in the HTML, while with
+        # the default option it does not.
         max_rows = 60
         max_cols = 20
         # Long
@@ -900,9 +1117,17 @@ class TestReprHTML:
             assert "&lt;class" in df._repr_html_()
 
     def test_fake_qtconsole_repr_html(self, float_frame):
+        # [FUNCTION DOC]
+        # Renders a float fixture frame as HTML and again with row and column limits
+        # that force the fallback; the second output must contain the word class (the
+        # summary information fallback).
         df = float_frame
 
         def get_ipython():
+            # [FUNCTION DOC]
+            # HELPER: intended fake of the interactive-shell lookup that returns a nested
+            # configuration naming a qtconsole parent application. Takes no inputs.
+            # KNOWN ISSUE: this fake is defined but never installed or called, so the test does not actually simulate a Qt console.
             return {"config": {"KernelApp": {"parent_appname": "ipython-qtconsole"}}}
 
         repstr = df._repr_html_()
@@ -914,6 +1139,10 @@ class TestReprHTML:
         assert "class" in repstr  # info fallback
 
     def test_repr_html(self, float_frame):
+        # [FUNCTION DOC]
+        # Smoke checks: the repr works for a float frame under small limits and with the
+        # notebook repr option off; for a two by two frame it includes a row count text
+        # when show_dimensions is true and omits it when false.
         df = float_frame
         df._repr_html_()
 
@@ -930,6 +1159,9 @@ class TestReprHTML:
             assert "2 rows" not in df._repr_html_()
 
     def test_repr_html_mathjax(self):
+        # [FUNCTION DOC]
+        # By default the output has no tex2jax or mathjax ignore classes; with the
+        # use_mathjax option set to false both are present.
         df = DataFrame([[1, 2], [3, 4]])
         assert "tex2jax_ignore" not in df._repr_html_()
         assert "mathjax_ignore" not in df._repr_html_()
@@ -939,6 +1171,9 @@ class TestReprHTML:
             assert "mathjax_ignore" in df._repr_html_()
 
     def test_repr_html_wide(self):
+        # [FUNCTION DOC]
+        # A frame with 19 columns is not truncated (no ellipsis) under a 20-column limit;
+        # a 21-column frame is truncated and shows an ellipsis.
         max_cols = 20
         df = DataFrame([["a" * 25] * (max_cols - 1)] * 10)
         with option_context("display.max_rows", 60, "display.max_columns", 20):
@@ -949,6 +1184,9 @@ class TestReprHTML:
             assert "..." in wide_df._repr_html_()
 
     def test_repr_html_wide_multiindex_cols(self):
+        # [FUNCTION DOC]
+        # A frame with 20 column labels from a two-level multi-index is not truncated by
+        # default; with 22 labels and a 20 column limit it is truncated.
         max_cols = 20
 
         mcols = MultiIndex.from_product(
@@ -966,6 +1204,10 @@ class TestReprHTML:
             assert "..." in df._repr_html_()
 
     def test_repr_html_long(self):
+        # [FUNCTION DOC]
+        # Under a 60-row limit, a 59-row frame is not truncated and shows the middle
+        # value; a 61-row frame is truncated, omits the middle value and reports row and
+        # column counts in a summary.
         with option_context("display.max_rows", 60):
             max_rows = get_option("display.max_rows")
             h = max_rows - 1
@@ -983,6 +1225,10 @@ class TestReprHTML:
             assert "2 columns" in long_repr
 
     def test_repr_html_float(self):
+        # [FUNCTION DOC]
+        # Same long-frame behaviour for a frame with a float index: not truncated at 59
+        # rows (contains the last value as a cell), truncated at 61 rows (summary shows
+        # rows and columns, middle value absent).
         with option_context("display.max_rows", 60):
             max_rows = get_option("display.max_rows")
             h = max_rows - 1
@@ -1012,6 +1258,10 @@ class TestReprHTML:
             assert "2 columns" in long_repr
 
     def test_repr_html_long_multiindex(self):
+        # [FUNCTION DOC]
+        # A frame with 60 rows from a two-level index is not truncated under 60 rows and
+        # 20 columns; with 62 rows (default options at that moment) the output contains
+        # an ellipsis.
         max_rows = 60
         max_L1 = max_rows // 2
 
@@ -1037,6 +1287,9 @@ class TestReprHTML:
         assert "..." in long_repr
 
     def test_repr_html_long_and_wide(self):
+        # [FUNCTION DOC]
+        # A 59 by 19 frame is not truncated under 60 rows and 20 columns; a 61 by 21
+        # frame is truncated with an ellipsis.
         max_cols = 20
         max_rows = 60
 
@@ -1052,6 +1305,9 @@ class TestReprHTML:
 
 
 def test_to_html_multilevel(multiindex_year_month_day_dataframe_random_data):
+    # [FUNCTION DOC]
+    # Uses a year-month-day multi-index fixture frame: after naming its columns,
+    # rendering it and its transpose must not fail.
     ymd = multiindex_year_month_day_dataframe_random_data
 
     ymd.columns.name = "foo"
@@ -1061,6 +1317,10 @@ def test_to_html_multilevel(multiindex_year_month_day_dataframe_random_data):
 
 @pytest.mark.parametrize("na_rep", ["NaN", "Ted"])
 def test_to_html_na_rep_and_float_format(na_rep, datapath):
+    # [FUNCTION DOC]
+    # GH 13828. Parametrized on the missing representation. Combining na_rep and a
+    # two-decimal string float format equals the reference with the representation
+    # substituted.
     # https://github.com/pandas-dev/pandas/issues/13828
     df = DataFrame(
         [
@@ -1076,6 +1336,9 @@ def test_to_html_na_rep_and_float_format(na_rep, datapath):
 
 
 def test_to_html_na_rep_non_scalar_data(datapath):
+    # [FUNCTION DOC]
+    # GH47103. A cell containing a list is displayed as the list text and not
+    # treated as missing; compared with the reference.
     # GH47103
     df = DataFrame([{"a": 1, "b": [1, 2, 3]}])
     result = df.to_html(na_rep="-")
@@ -1084,6 +1347,9 @@ def test_to_html_na_rep_non_scalar_data(datapath):
 
 
 def test_to_html_float_format_object_col(datapath):
+    # [FUNCTION DOC]
+    # GH#40024. A float format callable is applied to float entries of an object
+    # column mixing a float with a string; compared with the reference.
     # GH#40024
     df = DataFrame(data={"x": [1000.0, "test"]})
     result = df.to_html(float_format=lambda x: f"{x:,.0f}")
@@ -1092,6 +1358,9 @@ def test_to_html_float_format_object_col(datapath):
 
 
 def test_to_html_multiindex_col_with_colspace():
+    # [FUNCTION DOC]
+    # GH#53885. Two-level integer columns with col_space of 100: every header cell
+    # including blank ones has the minimum width style; exact expected string.
     # GH#53885
     df = DataFrame([[1, 2]])
     df.columns = MultiIndex.from_tuples([(1, 1), (2, 1)])
@@ -1123,6 +1392,9 @@ def test_to_html_multiindex_col_with_colspace():
 
 
 def test_to_html_tuple_col_with_colspace():
+    # [FUNCTION DOC]
+    # GH#53885. A frame with a tuple label column and a plain label column with
+    # col_space of 100: tuple label rendered as text; exact expected string.
     # GH#53885
     df = DataFrame({("a", "b"): [1], "b": [2]})
     result = df.to_html(col_space=100)
@@ -1148,6 +1420,9 @@ def test_to_html_tuple_col_with_colspace():
 
 
 def test_to_html_empty_complex_array():
+    # [FUNCTION DOC]
+    # GH#54167. A frame with an empty complex column and col_space of 100 renders
+    # header cells with the width style and an empty body; exact expected string.
     # GH#54167
     df = DataFrame({"x": np.array([], dtype="complex")})
     result = df.to_html(col_space=100)

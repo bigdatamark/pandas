@@ -32,6 +32,20 @@ run under the older AND the newer version.
 
 """
 
+# [MODULE DOC]
+# Stand-alone script (not a test module) that writes legacy storage files
+# (a pickle of many pandas objects, or HDF5 files of an all-dtypes frame) using
+# whichever pandas version is installed, so the files can later be checked in
+# and loaded by the current test suite. Public contents: the data builders
+# create_pickle_data and create_dataframe_all_types, the naming helper
+# platform_name, the writers write_legacy_pickles and write_legacy_hdf, and the
+# command-line driver write_legacy_file, run when the file is executed as a
+# program. Import-time side effects: it removes the first entry of the module
+# search path (so the sibling json test directory is not mistaken for the
+# standard json module) and then imports numpy and pandas, so it must be
+# imported or run before anything depends on that entry.
+# KNOWN ISSUE: the module docstring only documents the pickle storage type, but the driver also supports an hdf storage type that writes a fixed-format and a table-format file.
+
 from datetime import timedelta
 import os
 import pickle
@@ -88,6 +102,11 @@ from pandas.tseries.offsets import (
 
 
 def _create_sp_series():
+    # [FUNCTION DOC]
+    # HELPER: builds the sparse series used by create_pickle_data. Takes no inputs.
+    # Creates fifteen floating-point values counting up from zero, sets positions
+    # seven through eleven and the last one to missing, wraps them in a block-kind
+    # sparse array inside a series, names it bseries and returns it.
     nan = np.nan
 
     # nan-based
@@ -101,6 +120,12 @@ def _create_sp_series():
 
 
 def _create_sp_tsseries():
+    # [FUNCTION DOC]
+    # HELPER: builds the sparse time-indexed series for create_pickle_data. Same
+    # sparse values as the plain sparse series (fifteen floats, missing at seven
+    # through eleven and the last), but the series has a business-day date index
+    # starting 2011-01-01 with one entry per value, and is named btsseries. Returns
+    # the series.
     nan = np.nan
 
     # nan-based
@@ -115,6 +140,12 @@ def _create_sp_tsseries():
 
 
 def _create_sp_frame():
+    # [FUNCTION DOC]
+    # HELPER: builds the sparse frame for create_pickle_data. Creates four columns
+    # of ten values (two with missing runs at different positions, one int64
+    # range, one with trailing missing values), indexes them by ten business days
+    # starting 2011-01-01, converts every column to a sparse array and returns the
+    # frame.
     nan = np.nan
 
     data = {
@@ -129,6 +160,22 @@ def _create_sp_frame():
 
 
 def create_pickle_data(test: bool = True):
+    # [FUNCTION DOC]
+    # Builds the dictionary of sample pandas objects that is pickled for legacy
+    # compatibility tests. Parameter test (default true): when true, two extra
+    # timestamp entries (one with a frequency, one with timezone) are added because
+    # they exist in legacy pickles from version 1.4 and earlier; write_legacy_pickles
+    # passes false so newly generated files omit them. Returns a dictionary with
+    # the keys series, frame, index, scalars, mi, sp_series, sp_frame, cat,
+    # timestamp and offsets. Each maps names to sample objects: series of float,
+    # int, mixed, datetime, timezone-aware, period, categorical, duplicate-index,
+    # multi-index and string types; frames of float, int, mixed, multi-index,
+    # duplicate columns, categorical, mixed time zones and string types; many index
+    # types (integer, date, period, float, unsigned, timedelta, string, range,
+    # interval); a two-level multi-index; scalar timestamp and period; categoricals
+    # with small, medium and large category counts; timestamp variants including a
+    # missing value; and one instance of many date offset types with assorted
+    # arguments. No side effects.
     """create the pickle data"""
     data = {
         "A": [0.0, 1.0, 2.0, 3.0, np.nan],
@@ -299,6 +346,14 @@ def create_pickle_data(test: bool = True):
 
 
 def create_dataframe_all_types():
+    # [FUNCTION DOC]
+    # Builds a five-row frame with one column per supported dtype family for the
+    # HDF legacy files: python-int, unsigned 64-bit, float, 32-bit float, bool,
+    # datetime at four resolutions (ns, us, ms, s), tz-aware datetime at ns and us,
+    # timedelta at four resolutions, and an integer categorical with one missing
+    # value. The datetime and timedelta columns contain a missing value in the
+    # second row. String and object columns are present only as commented-out
+    # entries. Returns the frame.
     timestamps = Series(
         [
             Timestamp("2013-01-01"),
@@ -345,6 +400,10 @@ def create_dataframe_all_types():
 
 
 def platform_name():
+    # [FUNCTION DOC]
+    # Returns a string identifying the current environment, made of the pandas
+    # version, machine architecture, lowercase system name and Python version
+    # joined by underscores. Used to name generated files.
     return "_".join(
         [
             str(pandas.__version__),
@@ -356,6 +415,11 @@ def platform_name():
 
 
 def write_legacy_pickles(output_dir):
+    # [FUNCTION DOC]
+    # Writes the dictionary from create_pickle_data (called with test false) to a
+    # file in output_dir (a directory path that must exist) named with the platform
+    # name and a pickle extension, using the default pickle protocol. Prints a line
+    # naming the created file. Returns nothing.
     pth = f"{platform_name()}.pickle"
 
     with open(os.path.join(output_dir, pth), "wb") as fh:
@@ -365,6 +429,14 @@ def write_legacy_pickles(output_dir):
 
 
 def write_legacy_hdf(output_dir, format):
+    # [FUNCTION DOC]
+    # Writes the all-dtypes frame to an HDF5 file in output_dir (existing directory).
+    # Parameter format must be fixed or table; it goes into the file name together
+    # with the pytables version and platform name. Imports tables lazily, so a
+    # missing pytables raises an import error. For the fixed format the categorical
+    # integer column is dropped because it is unsupported there; table format uses
+    # compression level 9, fixed uses none. The frame is stored under the key
+    # df_alltypes. Prints the created file name. Returns nothing.
     import tables
 
     pth = f"{platform_name()}_pytables-{tables.__version__}_{format}.h5"
@@ -385,6 +457,17 @@ def write_legacy_hdf(output_dir, format):
 
 
 def write_legacy_file():
+    # [FUNCTION DOC]
+    # Command-line driver. Inserts an empty entry at the front of the module search
+    # path. Expects the argument vector to hold the output directory and the storage
+    # type (pickle or hdf). If the argument count is outside the accepted range it
+    # exits with a usage message. Prints a banner describing the pandas version,
+    # output directory and storage format, creates the output directory (one level
+    # only) if missing, then dispatches: pickle writes one pickle file, hdf writes a
+    # fixed and then a table file, anything else exits with an error message. Side
+    # effects: global search path mutation, console output, file creation, process
+    # exit on bad input.
+    # KNOWN ISSUE: the accepted argument-count check allows up to three user arguments while only two are ever read, so a stray extra argument is silently ignored; also the comment about forcing the current directory to be searched first contradicts the import-time removal of the first search path entry.
     # force our cwd to be the first searched
     sys.path.insert(0, "")
 
