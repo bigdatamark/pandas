@@ -10,6 +10,17 @@ Additional tests should either be added to one of the BaseExtensionTests
 classes (if they are relevant for the extension interface for all dtypes), or
 be added to the array-specific tests in `pandas/tests/arrays/`.
 """
+# [MODULE DOC]
+# Compliance tests for the arrow-backed extension array and its dtype, run through the shared
+# extension-array test suite across every pyarrow type in the shared type list, plus a large number of
+# additional arrow-specific tests: arithmetic and reductions for each type, Kleene logic for booleans, bitwise operations,
+# string methods (the string accessor), datetime and timedelta accessors, time zone handling, unit changes, setitem aliasing
+# and copy-on-write checks, casting, factorizing, interpolation, quantile, describe, pickle compatibility and dtype
+# metadata (item size, type names). The data fixtures build ten-element arrays with nulls per arrow type. The module
+# skips entirely when pyarrow is not installed. Import-time side effects: imports the arrow array class after the
+# import-or-skip check (so the imports follow executable code on purpose) and defines a legacy array subclass used for pickle
+# compatibility. Platform and version gates use pyarrow and Python version flags and a helper that marks tests expected to fail on
+# Windows CI without a time zone database.
 
 from __future__ import annotations
 
@@ -74,6 +85,10 @@ from pandas.core.arrays.arrow.extension_types import ArrowPeriodType
 
 
 def _require_timezone_database(request):
+    # [FUNCTION DOC]
+    # HELPER: applies an expected-failure marker when the test runs on Windows in continuous integration with a pyarrow version
+    # older than 22 (a time zone database environment variable is not set on CI, producing an arrow invalid-data error). Parameter: the
+    # pytest request object; no return value; used by tests with time-zone aware timestamps.
     if is_platform_windows() and is_ci_environment() and pa_version_under22p0:
         mark = pytest.mark.xfail(
             raises=pa.ArrowInvalid,
@@ -87,11 +102,18 @@ def _require_timezone_database(request):
 
 @pytest.fixture(params=tm.ALL_PYARROW_DTYPES, ids=str)
 def dtype(request):
+    # [FUNCTION DOC]
+    # HELPER: fixture parametrized over every pyarrow type in the shared testing list (test ids are the type strings);
+    # returns the arrow-backed dtype for that type.
     return ArrowDtype(pyarrow_dtype=request.param)
 
 
 @pytest.fixture
 def data(dtype):
+    # [FUNCTION DOC]
+    # HELPER: fixture returning an arrow-backed array of ten values for the dtype, with two nulls (positions four and seven) and values
+    # chosen per arrow type category: boolean, floating, signed, unsigned, decimal, date, timestamp, duration, time, string and binary.
+    # Raises not-implemented for any other type.
     pa_dtype = dtype.pyarrow_dtype
     if pa.types.is_boolean(pa_dtype):
         data = [True, False] * 2 + [None] + [True, False] + [None] + [True, False]
@@ -152,12 +174,16 @@ def data(dtype):
 
 @pytest.fixture
 def data_missing(data):
+    # [FUNCTION DOC]
+    # HELPER: fixture returning a two-element array: a null followed by the first element of the data.
     """Length-2 array with [NA, Valid]"""
     return type(data)._from_sequence([None, data[0]], dtype=data.dtype)
 
 
 @pytest.fixture(params=["data", "data_missing"])
 def all_data(request, data, data_missing):
+    # [FUNCTION DOC]
+    # HELPER: fixture parametrized over the names data and data_missing; returns the corresponding fixture value, so tests run with and without missing values.
     """Parametrized fixture returning 'data' or 'data_missing' integer arrays.
 
     Used to test dtype conversion with and without missing values.
@@ -170,6 +196,9 @@ def all_data(request, data, data_missing):
 
 @pytest.fixture
 def data_for_grouping(dtype):
+    # [FUNCTION DOC]
+    # HELPER: fixture returning an eight-element array [B, B, null, null, A, A, B, C] where A < B < C. The three values per arrow type category are
+    # fixed (boolean uses false, true, true so B equals C). Raises not-implemented for unsupported types.
     """
     Data for factorization, grouping, and unique tests.
 
@@ -229,6 +258,8 @@ def data_for_grouping(dtype):
 
 @pytest.fixture
 def data_for_sorting(data_for_grouping):
+    # [FUNCTION DOC]
+    # HELPER: fixture returning a three-element array [B, C, A] taken from positions zero, seven and four of the grouping data.
     """
     Length-3 array with a known sort order.
 
@@ -243,6 +274,8 @@ def data_for_sorting(data_for_grouping):
 
 @pytest.fixture
 def data_missing_for_sorting(data_for_grouping):
+    # [FUNCTION DOC]
+    # HELPER: fixture returning [B, null, A] taken from positions zero, two and four of the grouping data.
     """
     Length-3 array with a known sort order.
 
@@ -257,6 +290,9 @@ def data_missing_for_sorting(data_for_grouping):
 
 @pytest.fixture
 def data_for_twos(data):
+    # [FUNCTION DOC]
+    # HELPER: fixture returning ten twos in the data's dtype for integer, floating, decimal and duration arrow types; otherwise returns the data itself (tests are expected to fail where two is not a valid scalar). A source TODO asks whether to skip otherwise.
+    # KNOWN ISSUE: the docstring says length 100, but the array built has ten elements.
     """Length-100 array in which all the elements are two."""
     pa_dtype = data.dtype.pyarrow_dtype
     if (
@@ -272,7 +308,13 @@ def data_for_twos(data):
 
 
 class TestArrowArray(base.ExtensionTests):
+    # [CLASS DOC]
+    # Extension-suite test class for the arrow-backed extension array across all pyarrow types. Overrides combine, accumulation, reduction, casting, constructors, setitem,
+    # sorting and many other inherited tests with per-type expected failures; contains numerous additional arrow-specific tests (many hundreds of lines).
     def _construct_for_combine_add(self, left, right):
+        # [FUNCTION DOC]
+        # HELPER: builds the expected result of element-wise combine-add. Parameters: left array and right (array of the same class or a scalar). Uses the left's dtype, except that
+        # boolean and (when the right is also an array) 8-bit integer arrow types are widened to 64-bit integer. Returns a new array of the same class from the pairwise sums (for an array right) or the left elements plus the scalar.
         dtype = left.dtype
 
         # in a couple cases, addition is not dtype-preserving
@@ -293,10 +335,14 @@ class TestArrowArray(base.ExtensionTests):
             )
 
     def test_compare_scalar(self, data, comparison_op):
+        # [FUNCTION DOC]
+        # Compares the Series from data with the first element of the data as a scalar, using the comparison operator fixture and the comparison helper.
         ser = pd.Series(data)
         self._compare_other(ser, data, comparison_op, data[0])
 
     def test_compare_range_len(self, data, comparison_op):
+        # [FUNCTION DOC]
+        # GH#63429. Compares the Series from data with a range of the same length (a list-like that is not an array) using the comparison helper.
         # GH#63429
         ser = pd.Series(data)
         range_test = range(len(ser))
@@ -304,6 +350,9 @@ class TestArrowArray(base.ExtensionTests):
 
     @pytest.mark.parametrize("na_action", [None, "ignore"])
     def test_map(self, data_missing, na_action, using_nan_is_na):
+        # [FUNCTION DOC]
+        # Parametrized over missing-value action (none, ignore). Mapping the identity function: for date/time kinds (timedelta and datetime kinds) the result is the object-dtype numpy array of the data;
+        # otherwise the numpy array of the data (for 32-bit arrow floats with NaN as missing the 64-bit float array with NaN, since mapping round-trips through objects).
         if data_missing.dtype.kind in "mM":
             result = data_missing.map(lambda x: x, na_action=na_action)
             expected = data_missing.to_numpy(dtype=object)
@@ -318,6 +367,8 @@ class TestArrowArray(base.ExtensionTests):
             tm.assert_numpy_array_equal(result, expected)
 
     def test_astype_str(self, data, request, using_infer_string):
+        # [FUNCTION DOC]
+        # Expected-to-fail for binary types (casting to string decodes) and, when string inference is off, for timezone-naive timestamps and durations (the repr differs from numpy's). Then delegates to the parent test.
         pa_dtype = data.dtype.pyarrow_dtype
         if pa.types.is_binary(pa_dtype):
             request.applymarker(
@@ -337,6 +388,8 @@ class TestArrowArray(base.ExtensionTests):
         super().test_astype_str(data)
 
     def test_from_dtype(self, data, request):
+        # [FUNCTION DOC]
+        # Expected-to-fail for string (arrow string dtype is not the pyarrow string dtype) and decimal (type for alias cannot infer decimals) types; delegates to the parent test.
         pa_dtype = data.dtype.pyarrow_dtype
         if pa.types.is_string(pa_dtype) or pa.types.is_decimal(pa_dtype):
             if pa.types.is_string(pa_dtype):
@@ -352,6 +405,8 @@ class TestArrowArray(base.ExtensionTests):
         super().test_from_dtype(data)
 
     def test_from_sequence_pa_array(self, data):
+        # [FUNCTION DOC]
+        # Verifies building from the data's chunked arrow array, and from its combined single chunk, returns the original data and the result always holds a chunked array.
         # https://github.com/pandas-dev/pandas/pull/47034#discussion_r955500784
         # data._pa_array = pa.ChunkedArray
         result = type(data)._from_sequence(data._pa_array, dtype=data.dtype)
@@ -365,11 +420,15 @@ class TestArrowArray(base.ExtensionTests):
         assert isinstance(result._pa_array, pa.ChunkedArray)
 
     def test_from_sequence_pa_array_notimplemented(self, request):
+        # [FUNCTION DOC]
+        # Verifies the from-strings constructor on the array class with a month-day-nano interval dtype raises not-implemented with message converting strings.
         dtype = ArrowDtype(pa.month_day_nano_interval())
         with pytest.raises(NotImplementedError, match="Converting strings to"):
             ArrowExtensionArray._from_sequence_of_strings(["12-1"], dtype=dtype)
 
     def test_from_sequence_of_strings_pa_array(self, data, request):
+        # [FUNCTION DOC]
+        # Casts the data's arrow array to string, builds the array from strings with the dtype (also from the combined chunk) and checks the round trip equals the data. For time-zone aware timestamps, applies the time zone database expected-failure helper.
         pa_dtype = data.dtype.pyarrow_dtype
         if pa.types.is_timestamp(pa_dtype) and pa_dtype.tz is not None:
             _require_timezone_database(request)
@@ -383,6 +442,9 @@ class TestArrowArray(base.ExtensionTests):
         tm.assert_extension_array_equal(result, data)
 
     def check_accumulate(self, ser, op_name, skipna):
+        # [FUNCTION DOC]
+        # HELPER: overridden accumulation check. For temporal types it compares via the integer representation (32-bit integer for 32-bit wide types, otherwise 64-bit) after casting both input and result; otherwise
+        # casts both to the nullable 64-bit float and compares the series accumulation result with the float accumulation, ignoring dtype.
         result = getattr(ser, op_name)(skipna=skipna)
 
         pa_type = ser.dtype.pyarrow_dtype
@@ -400,6 +462,9 @@ class TestArrowArray(base.ExtensionTests):
         tm.assert_series_equal(result, expected, check_dtype=False)
 
     def _supports_accumulation(self, ser: pd.Series, op_name: str) -> bool:
+        # [FUNCTION DOC]
+        # HELPER: reports whether the accumulation is supported for the series' arrow type. Binary and decimal: none of cumulative sum, product, max, min. String: not cumulative product. Boolean: not product, max or min.
+        # Temporal: not cumulative sum (except for durations) and not product. Everything else supported.
         # error: Item "dtype[Any]" of "dtype[Any] | ExtensionDtype" has no
         # attribute "pyarrow_dtype"
         pa_type = ser.dtype.pyarrow_dtype  # type: ignore[union-attr]
@@ -422,6 +487,9 @@ class TestArrowArray(base.ExtensionTests):
 
     @pytest.mark.parametrize("skipna", [True, False])
     def test_accumulate_series(self, data, all_numeric_accumulations, skipna, request):
+        # [FUNCTION DOC]
+        # Parametrized over skipna and the numeric accumulation names. Returns early for string types with cumulative sum, min, max (tested in the series cumulative tests, GH 60633). If the accumulation is unsupported, delegates
+        # to the parent test (which checks that an error is raised). Cumulative sum on boolean or decimal is marked expected-to-fail with a type error. Otherwise runs the accumulation check helper.
         pa_type = data.dtype.pyarrow_dtype
         op_name = all_numeric_accumulations
 
@@ -451,6 +519,9 @@ class TestArrowArray(base.ExtensionTests):
         self.check_accumulate(ser, op_name, skipna)
 
     def _supports_reduction(self, ser: pd.Series, op_name: str) -> bool:
+        # [FUNCTION DOC]
+        # HELPER: reports whether a reduction is supported for the series' arrow type. Kurtosis is never supported; skew is unsupported for old pyarrow (before 20). Temporal types do not support sum, variance, product, skew except sum on durations;
+        # binary lacks sum and skew; string and binary lack mean, median, product, std, sem, variance, skew; non-duration temporal types do not support any and all (kept as pyarrow behavior, GH#34479); booleans lack median, std, var, skew, kurt, sem. Otherwise supported.
         if op_name == "kurt" or (pa_version_under20p0 and op_name == "skew"):
             return False
 
@@ -494,6 +565,9 @@ class TestArrowArray(base.ExtensionTests):
         return True
 
     def check_reduce(self, ser: pd.Series, op_name: str, skipna: bool):
+        # [FUNCTION DOC]
+        # HELPER: overridden reduction check. For integer and floating arrow types, the expected value comes from the series cast to nullable 64-bit float; otherwise the series itself is the alternative. Count takes no skipna. Compares the results with almost-equal.
+        # A source TODO notes the non-numeric case compares the series with itself, so tests almost nothing.
         # error: Item "dtype[Any]" of "dtype[Any] | ExtensionDtype" has no
         # attribute "pyarrow_dtype"
         pa_dtype = ser.dtype.pyarrow_dtype  # type: ignore[union-attr]
@@ -518,6 +592,8 @@ class TestArrowArray(base.ExtensionTests):
     def test_reduce_series_boolean(
         self, data, all_boolean_reductions, skipna, na_value, request
     ):
+        # [FUNCTION DOC]
+        # Parametrized over skipna. Marks expected-to-fail with a type error for string and binary arrow types (boolean reductions not implemented in pyarrow; undecided whether to behave like non-pyarrow), then delegates to the parent test and returns its result.
         pa_dtype = data.dtype.pyarrow_dtype
         xfail_mark = pytest.mark.xfail(
             raises=TypeError,
@@ -534,6 +610,9 @@ class TestArrowArray(base.ExtensionTests):
         return super().test_reduce_series_boolean(data, all_boolean_reductions, skipna)
 
     def _get_expected_reduction_dtype(self, arr, op_name: str, skipna: bool):
+        # [FUNCTION DOC]
+        # HELPER: expected result dtype of a reduction. Min/max keep the dtype. Temporal: standard deviation and sem give a duration (same for duration; seconds for date; the type's unit for time and timestamp), other reductions keep the dtype. For the decimal type with precision 7 and scale 3: sum gives decimal with precision 38 for new pyarrow (21+),
+        # other than median/var/std/sem/skew keep the dtype, else 64-bit float. Median, variance, std, mean, skew, sem give 64-bit float; sum/product of booleans give unsigned 64-bit; sum on strings keeps the dtype; otherwise by kind: signed to 64-bit integer, unsigned to 64-bit unsigned, floating to 64-bit float.
         pa_type = arr._pa_array.type
 
         if op_name in ["max", "min"]:
@@ -575,6 +654,8 @@ class TestArrowArray(base.ExtensionTests):
     @pytest.mark.filterwarnings("ignore::RuntimeWarning")
     @pytest.mark.parametrize("skipna", [True, False])
     def test_reduce_series_numeric(self, data, all_numeric_reductions, skipna, request):
+        # [FUNCTION DOC]
+        # Parametrized over skipna. Ignores runtime warnings. For new pyarrow (20+), skew with skipna on integer or floating types is expected to fail (arrow issue 45733). Delegates to the parent test and returns its result.
         if (
             not pa_version_under20p0
             and skipna
@@ -593,6 +674,8 @@ class TestArrowArray(base.ExtensionTests):
 
     @pytest.mark.parametrize("skipna", [True, False])
     def test_reduce_frame(self, data, all_numeric_reductions, skipna, request):
+        # [FUNCTION DOC]
+        # Parametrized over skipna. For skew with old pyarrow (before 20) and numeric dtypes marks expected failure (skew not implemented); delegates to the parent frame reduction test.
         op_name = all_numeric_reductions
         if op_name == "skew" and pa_version_under20p0:
             if data.dtype._is_numeric:
@@ -602,11 +685,15 @@ class TestArrowArray(base.ExtensionTests):
 
     @pytest.mark.parametrize("typ", ["int64", "uint64", "float64"])
     def test_median_not_approximate(self, typ):
+        # [FUNCTION DOC]
+        # GH 52679. Parametrized over int64, uint64, float64 arrow types: the median of a series of one and two is exactly 1.5, not approximated.
         # GH 52679
         result = pd.Series([1, 2], dtype=f"{typ}[pyarrow]").median()
         assert result == 1.5
 
     def test_construct_from_string_own_name(self, dtype, request):
+        # [FUNCTION DOC]
+        # Marks decimal types expected-to-fail with not-implemented (alias cannot infer). For string arrow types, constructing from the dtype's own name raises a type error saying it should be constructed by the string dtype; then returns. Otherwise delegates to the parent test.
         pa_dtype = dtype.pyarrow_dtype
         if pa.types.is_decimal(pa_dtype):
             request.applymarker(
@@ -627,6 +714,8 @@ class TestArrowArray(base.ExtensionTests):
         super().test_construct_from_string_own_name(dtype)
 
     def test_is_dtype_from_name(self, dtype, request):
+        # [FUNCTION DOC]
+        # For arrow string types, asserts the dtype name is not recognized as this dtype (the string dtype is preferred); for decimals marks expected failure with not-implemented; otherwise delegates to the parent test.
         pa_dtype = dtype.pyarrow_dtype
         if pa.types.is_string(pa_dtype):
             # We still support StringDtype('pyarrow') over ArrowDtype(pa.string())
@@ -642,11 +731,15 @@ class TestArrowArray(base.ExtensionTests):
             super().test_is_dtype_from_name(dtype)
 
     def test_construct_from_string_another_type_raises(self, dtype):
+        # [FUNCTION DOC]
+        # Verifies constructing from an unrelated string raises a type error saying the name must end with the pyarrow suffix.
         msg = r"'another_type' must end with '\[pyarrow\]'"
         with pytest.raises(TypeError, match=msg):
             type(dtype).construct_from_string("another_type")
 
     def test_get_common_dtype(self, dtype, request):
+        # [FUNCTION DOC]
+        # Marks expected-to-fail for date, time, tz-aware timestamp, binary and decimal types (no associated numpy dtype findable by the common-type lookup); delegates to the parent test.
         pa_dtype = dtype.pyarrow_dtype
         if (
             pa.types.is_date(pa_dtype)
@@ -666,6 +759,8 @@ class TestArrowArray(base.ExtensionTests):
         super().test_get_common_dtype(dtype)
 
     def test_is_not_string_type(self, dtype):
+        # [FUNCTION DOC]
+        # For string arrow types asserts the dtype is a string dtype; otherwise delegates to the parent test.
         pa_dtype = dtype.pyarrow_dtype
         if pa.types.is_string(pa_dtype):
             assert is_string_dtype(dtype)
@@ -676,9 +771,13 @@ class TestArrowArray(base.ExtensionTests):
         reason="GH 45419: pyarrow.ChunkedArray does not support views.", run=False
     )
     def test_view(self, data):
+        # [FUNCTION DOC]
+        # Expected-to-fail and not run (GH 45419: pyarrow chunked arrays do not support views). Delegates to the parent test.
         super().test_view(data)
 
     def test_fillna_no_op_returns_copy(self, data):
+        # [FUNCTION DOC]
+        # Verifies filling a missing-free copy of the data with its first valid value returns a different object equal to the data.
         data = data[~data.isna()]
 
         valid = data[0]
@@ -687,6 +786,9 @@ class TestArrowArray(base.ExtensionTests):
         tm.assert_extension_array_equal(result, data)
 
     def test_fillna_readonly(self, data_missing):
+        # [FUNCTION DOC]
+        # Makes a read-only copy of the missing-data array. Filling with the valid value returns a result with the valid first element and leaves the original unchanged. Then (as the comment says, no-copy is not honored by arrow arrays but new data is returned) repeats the same fill and checks the same.
+        # KNOWN ISSUE: the comment says it tests the no-copy option but the second call does not pass any no-copy option, so it duplicates the first check.
         data = data_missing.copy()
         data._readonly = True
 
@@ -705,17 +807,24 @@ class TestArrowArray(base.ExtensionTests):
         reason="GH 45419: pyarrow.ChunkedArray does not support views", run=False
     )
     def test_transpose(self, data):
+        # [FUNCTION DOC]
+        # Expected-to-fail and not run (GH 45419: views not supported). Delegates to the parent test.
         super().test_transpose(data)
 
     @pytest.mark.xfail(
         reason="GH 45419: pyarrow.ChunkedArray does not support views", run=False
     )
     def test_setitem_preserves_views(self, data):
+        # [FUNCTION DOC]
+        # Expected-to-fail and not run (GH 45419: views not supported). Delegates to the parent test.
         super().test_setitem_preserves_views(data)
 
     @pytest.mark.parametrize("dtype_backend", ["pyarrow", no_default])
     @pytest.mark.parametrize("engine", ["c", "python"])
     def test_EA_types(self, engine, data, dtype_backend, request, using_nan_is_na):
+        # [FUNCTION DOC]
+        # Parametrized over parser engine (c, python) and the dtype backend (pyarrow, default). Marks expected failure for decimal (parameterized types not supported), timestamps with microsecond or nanosecond unit (issue 49767, value error), and binary
+        # (CSV parsers mishandle binary). Writes a frame of the data to CSV text (or bytes for binary), with NA or NaN as the missing marker depending on the NaN-is-NA mode, reads it back with the dtype name, engine and backend and compares with the original frame.
         pa_dtype = data.dtype.pyarrow_dtype
         if pa.types.is_decimal(pa_dtype):
             request.applymarker(
@@ -754,6 +863,8 @@ class TestArrowArray(base.ExtensionTests):
         tm.assert_frame_equal(result, expected)
 
     def test_invert(self, data, request):
+        # [FUNCTION DOC]
+        # Marks expected-to-fail (arrow not-implemented) for types other than boolean, integer and string. For booleans on Python 3.12+ expects a deprecation warning about bitwise inversion (stack level not checked); delegates to the parent invert test.
         pa_dtype = data.dtype.pyarrow_dtype
         if not (
             pa.types.is_boolean(pa_dtype)
@@ -776,6 +887,8 @@ class TestArrowArray(base.ExtensionTests):
 
     @pytest.mark.parametrize("periods", [1, -2])
     def test_diff(self, data, periods, request):
+        # [FUNCTION DOC]
+        # Parametrized over periods one and negative two. Marks expected-to-fail (arrow invalid-data error) for unsigned integer types with period one (overflow); delegates to the parent diff test.
         pa_dtype = data.dtype.pyarrow_dtype
         if pa.types.is_unsigned_integer(pa_dtype) and periods == 1:
             request.applymarker(
@@ -789,6 +902,8 @@ class TestArrowArray(base.ExtensionTests):
         super().test_diff(data, periods)
 
     def test_value_counts_returns_pyarrow_int64(self, data):
+        # [FUNCTION DOC]
+        # GH 51462. Verifies value counts of the first ten elements have the arrow 64-bit integer dtype.
         # GH 51462
         data = data[:10]
         result = data.value_counts()
@@ -797,11 +912,15 @@ class TestArrowArray(base.ExtensionTests):
     _combine_le_expected_dtype = "bool[pyarrow]"
 
     def get_op_from_name(self, op_name):
+        # [FUNCTION DOC]
+        # HELPER: maps an operator name to a function. After stripping underscores, reflected true division and reflected floor division map to numpy functions applied with swapped arguments (the numpy versions do not raise on division by zero); all others use the testing module's mapping.
         short_opname = op_name.strip("_")
         if short_opname == "rtruediv":
             # use the numpy version that won't raise on division by zero
 
             def rtruediv(x, y):
+                # [FUNCTION DOC]
+                # HELPER: swapped-argument numpy divide used for reflected true division.
                 return np.divide(y, x)
 
             return rtruediv
@@ -813,6 +932,11 @@ class TestArrowArray(base.ExtensionTests):
     # TODO: use EA._cast_pointwise_result, same with other test files that
     #  override this
     def _cast_pointwise_result(self, op_name: str, obj, other, pointwise_result):
+        # [FUNCTION DOC]
+        # HELPER: adjusts the expected result of the pointwise (combine) path. A source TODO says to use the array's own cast method instead. Parameters: op_name, obj, other, pointwise_result. Comparison operators: returns the result cast to
+        # the pyarrow boolean. Otherwise, for plain integer others (except floor division) returns the result cast to 64-bit float (when the original is floating) or 64-bit integer; for plain float others returns 64-bit float. For other cases, results are
+        # returned unchanged (the base class upcasts to 64-bit while the arrow array keeps its type) unless the arrow type is a case where the result type should be kept: for a Series other (not frame): floating, integer (except true division and its reflection), duration, timestamp, date and
+        # decimal types; otherwise floor division of integers, durations, timestamps, dates and decimals. For these it rebuilds the expected from the arrow array: decimals cast the expected to the dtype that the real operation produces (a 64-bit float for power with a decimal scalar or a same-dtype Series), else the arrow array is cast to the original arrow type, wrapped in the original array class and returned as a Series or DataFrame (with index and columns kept).
         # BaseOpsUtil._combine can upcast expected dtype
         # (because it generates expected on python scalars)
         # while ArrowExtensionArray maintains original type
@@ -905,6 +1029,8 @@ class TestArrowArray(base.ExtensionTests):
         return expected
 
     def _is_temporal_supported(self, opname, pa_dtype):
+        # [FUNCTION DOC]
+        # HELPER: reports whether the operation is supported for temporal arrow types: addition and reflected addition on durations; true and floor division (and reflected) on durations with pyarrow 14 or newer; subtraction and reflected subtraction on any temporal type.
         return (
             (
                 opname in ("__add__", "__radd__")
@@ -920,6 +1046,8 @@ class TestArrowArray(base.ExtensionTests):
     def _get_expected_exception(
         self, op_name: str, obj, other
     ) -> type[Exception] | tuple[type[Exception], ...] | None:
+        # [FUNCTION DOC]
+        # HELPER: the expected exception for an operation on arrow data. Divmod forms expect not-implemented or type error; modulus forms the same; temporal-supported operations expect none; addition on string and binary expects none; any type other than floating, integer and decimal expects a type error; the rest none.
         if op_name in ("__divmod__", "__rdivmod__"):
             return (NotImplementedError, TypeError)
 
@@ -952,6 +1080,9 @@ class TestArrowArray(base.ExtensionTests):
         return exc
 
     def _get_arith_xfail_marker(self, opname, pa_dtype):
+        # [FUNCTION DOC]
+        # HELPER: returns an expected-failure marker (or none) for an arithmetic operator and arrow type. Reflected power with float, integer or decimal: fails because of NA power semantics (GH#29997). Temporal-supported operations on time types, or division operators on durations: type error. Reflected floor division with integer or decimal and reflected true division with decimals: arrow invalid error (divide by zero).
+        # KNOWN ISSUE: the type error reason message lacks a space (between and pd.NA run together).
         mark = None
 
         arrow_temporal_supported = self._is_temporal_supported(opname, pa_dtype)
@@ -997,6 +1128,8 @@ class TestArrowArray(base.ExtensionTests):
         return mark
 
     def test_arith_series_with_scalar(self, data, all_arithmetic_operators, request):
+        # [FUNCTION DOC]
+        # Skips reflected modulus for binary types (Python string formatting); applies the marker from the helper if any; delegates to the parent series-scalar arithmetic test.
         pa_dtype = data.dtype.pyarrow_dtype
 
         if all_arithmetic_operators == "__rmod__" and pa.types.is_binary(pa_dtype):
@@ -1009,6 +1142,8 @@ class TestArrowArray(base.ExtensionTests):
         super().test_arith_series_with_scalar(data, all_arithmetic_operators)
 
     def test_arith_frame_with_scalar(self, data, all_arithmetic_operators, request):
+        # [FUNCTION DOC]
+        # Skips reflected modulus for string and binary types; applies the helper's expected-failure marker; delegates to the parent frame-scalar arithmetic test.
         pa_dtype = data.dtype.pyarrow_dtype
 
         if all_arithmetic_operators == "__rmod__" and (
@@ -1023,6 +1158,8 @@ class TestArrowArray(base.ExtensionTests):
         super().test_arith_frame_with_scalar(data, all_arithmetic_operators)
 
     def test_arith_series_with_array(self, data, all_arithmetic_operators, request):
+        # [FUNCTION DOC]
+        # Marks expected-to-fail (arrow invalid error: the checked subtraction raises on overflow) for subtraction and reflected subtraction with unsigned integers; applies the helper's marker. Builds a Series of the data and another Series of the first element repeated with the same dtype (using a Series-constructed array because a scalar may be a Python scalar), then runs the parent's opname check.
         pa_dtype = data.dtype.pyarrow_dtype
 
         if all_arithmetic_operators in (
@@ -1052,6 +1189,8 @@ class TestArrowArray(base.ExtensionTests):
         self.check_opname(ser, op_name, other)
 
     def test_add_series_with_extension_array(self, data, request):
+        # [FUNCTION DOC]
+        # Marks expected-to-fail (arrow invalid error, overflow) for 8-bit integers; delegates to the parent test.
         pa_dtype = data.dtype.pyarrow_dtype
 
         if pa_dtype.equals("int8"):
@@ -1064,6 +1203,8 @@ class TestArrowArray(base.ExtensionTests):
         super().test_add_series_with_extension_array(data)
 
     def test_invalid_other_comp(self, data, comparison_op):
+        # [FUNCTION DOC]
+        # GH 48833. Comparing the data with a plain object using the comparison operator fixture raises not-implemented with a message that the comparison is not implemented for the object class.
         # GH 48833
         with pytest.raises(
             NotImplementedError, match=".* not implemented for <class 'object'>"
@@ -1072,6 +1213,8 @@ class TestArrowArray(base.ExtensionTests):
 
     @pytest.mark.parametrize("masked_dtype", ["boolean", "Int64", "Float64"])
     def test_comp_masked_numpy(self, masked_dtype, comparison_op):
+        # [FUNCTION DOC]
+        # GH 52625. Parametrized over masked dtypes boolean, Int64, Float64: compares a pyarrow-backed Series [1, 0, missing] with a masked Series using the comparison fixture. The result is an arrow boolean Series: [False, False, missing] for less-than, greater-than, not-equal and [True, True, missing] for others.
         # GH 52625
         data = [1, 0, None]
         ser_masked = pd.Series(data, dtype=masked_dtype)
@@ -1085,6 +1228,8 @@ class TestArrowArray(base.ExtensionTests):
         tm.assert_series_equal(result, expected)
 
     def test_loc_setitem_with_expansion_preserves_ea_index_dtype(self, data, request):
+        # [FUNCTION DOC]
+        # Marks expected-to-fail for date types (GH#62343 incorrectly casts to millisecond timestamp), then delegates to the parent test.
         pa_dtype = data.dtype.pyarrow_dtype
         if pa.types.is_date(pa_dtype):
             mark = pytest.mark.xfail(
@@ -1095,9 +1240,13 @@ class TestArrowArray(base.ExtensionTests):
 
 
 class TestLogicalOps:
+    # [CLASS DOC]
+    # Test class for Kleene (three-valued) logical operators on arrow boolean Series.
     """Various Series and DataFrame logical ops methods."""
 
     def test_kleene_or(self):
+        # [FUNCTION DOC]
+        # Verifies the or of two boolean arrow Series covering all nine combinations of true, false, missing gives the Kleene result, is commutative, and does not mutate either input.
         a = pd.Series([True] * 3 + [False] * 3 + [None] * 3, dtype="boolean[pyarrow]")
         b = pd.Series([True, False, None] * 3, dtype="boolean[pyarrow]")
         result = a | b
@@ -1131,6 +1280,8 @@ class TestLogicalOps:
         ],
     )
     def test_kleene_or_scalar(self, other, expected):
+        # [FUNCTION DOC]
+        # Parametrized over scalar other (None, NA, True, false and numpy bools) and expected list. Verifies or of a [true, false, missing] arrow Series with the scalar in both operand orders gives the expected Kleene result and does not mutate the Series.
         a = pd.Series([True, False, None], dtype="boolean[pyarrow]")
         result = a | other
         expected = pd.Series(expected, dtype="boolean[pyarrow]")
@@ -1145,6 +1296,8 @@ class TestLogicalOps:
         )
 
     def test_kleene_and(self):
+        # [FUNCTION DOC]
+        # Verifies the and of two boolean arrow Series covering all nine combinations gives the Kleene result, is commutative, and does not mutate inputs.
         a = pd.Series([True] * 3 + [False] * 3 + [None] * 3, dtype="boolean[pyarrow]")
         b = pd.Series([True, False, None] * 3, dtype="boolean[pyarrow]")
         result = a & b
@@ -1178,6 +1331,8 @@ class TestLogicalOps:
         ],
     )
     def test_kleene_and_scalar(self, other, expected):
+        # [FUNCTION DOC]
+        # Parametrized over scalar other (None, NA, True, false and numpy bools). Verifies and with the scalar in both orders gives the expected Kleene result and does not mutate the Series.
         a = pd.Series([True, False, None], dtype="boolean[pyarrow]")
         result = a & other
         expected = pd.Series(expected, dtype="boolean[pyarrow]")
@@ -1192,6 +1347,8 @@ class TestLogicalOps:
         )
 
     def test_kleene_xor(self):
+        # [FUNCTION DOC]
+        # Verifies the exclusive or of two boolean arrow Series covering all nine combinations: missing whenever either side is missing.
         a = pd.Series([True] * 3 + [False] * 3 + [None] * 3, dtype="boolean[pyarrow]")
         b = pd.Series([True, False, None] * 3, dtype="boolean[pyarrow]")
         result = a ^ b
@@ -1224,6 +1381,8 @@ class TestLogicalOps:
         ],
     )
     def test_kleene_xor_scalar(self, other, expected):
+        # [FUNCTION DOC]
+        # Parametrized over scalar others (None, NA, True and numpy true/false). Verifies exclusive or of a [true, false, missing] arrow Series with the scalar in both operand orders gives the expected results (all missing for a missing scalar, negation for true, identity for false) and does not mutate the Series.
         a = pd.Series([True, False, None], dtype="boolean[pyarrow]")
         result = a ^ other
         expected = pd.Series(expected, dtype="boolean[pyarrow]")
@@ -1246,6 +1405,8 @@ class TestLogicalOps:
         ],
     )
     def test_logical_masked_numpy(self, op, exp):
+        # [FUNCTION DOC]
+        # GH 52625. Parametrized over the and, or, exclusive-or operator method names with expected first element. Applies the operator of an arrow boolean Series [true, false, missing] with a masked boolean Series; the result is an arrow boolean Series with the expected first value, false, and missing.
         # GH 52625
         data = [True, False, None]
         ser_masked = pd.Series(data, dtype="boolean")
@@ -1257,6 +1418,8 @@ class TestLogicalOps:
 
 @pytest.mark.parametrize("pa_type", tm.ALL_INT_PYARROW_DTYPES)
 def test_bitwise(pa_type):
+    # [FUNCTION DOC]
+    # GH 54495. Parametrized over every integer arrow type. Verifies bitwise or, and, exclusive or of two Series with nulls give nulls where either is null and the plain integer result elsewhere, and bitwise inversion equals the inversion of the zero-filled values with nulls restored by a mask.
     # GH 54495
     dtype = ArrowDtype(pa_type)
     left = pd.Series([1, None, 3, 4], dtype=dtype)
@@ -1281,6 +1444,8 @@ def test_bitwise(pa_type):
 
 
 def test_arrowdtype_construct_from_string_type_with_unsupported_parameters():
+    # [FUNCTION DOC]
+    # Verifies constructing the arrow dtype from a string that carries unsupported type parameters (an unknown type name with unit and time zone, or a decimal with precision and scale) raises not-implemented with a message about passing pyarrow type parameters.
     with pytest.raises(NotImplementedError, match="Passing pyarrow type"):
         ArrowDtype.construct_from_string("not_a_real_dype[s, tz=UTC][pyarrow]")
 
@@ -1289,6 +1454,8 @@ def test_arrowdtype_construct_from_string_type_with_unsupported_parameters():
 
 
 def test_arrowdtype_construct_from_string_supports_dt64tz():
+    # [FUNCTION DOC]
+    # GH#50689: verifies constructing the dtype from a second-resolution UTC timestamp type string equals the dtype built from the corresponding arrow timestamp type.
     # as of GH#50689, timestamptz is supported
     dtype = ArrowDtype.construct_from_string("timestamp[s, tz=UTC][pyarrow]")
     expected = ArrowDtype(pa.timestamp("s", "UTC"))
@@ -1296,6 +1463,8 @@ def test_arrowdtype_construct_from_string_supports_dt64tz():
 
 
 def test_arrowdtype_construct_from_string_type_only_one_pyarrow():
+    # [FUNCTION DOC]
+    # GH#51225. Constructing a Series with a dtype string that has a second pyarrow suffix raises not-implemented with the message that pyarrow type specific parameters in the string are not supported.
     # GH#51225
     invalid = "int64[pyarrow]foobar[pyarrow]"
     msg = (
@@ -1307,6 +1476,8 @@ def test_arrowdtype_construct_from_string_type_only_one_pyarrow():
 
 
 def test_arrow_string_multiplication():
+    # [FUNCTION DOC]
+    # GH 56537. Multiplying a string arrow Series by an arrow integer Series repeats strings (negative counts give the empty string) and is commutative.
     # GH 56537
     binary = pd.Series(["abc", "defg"], dtype=ArrowDtype(pa.string()))
     repeat = pd.Series([2, -2], dtype="int64[pyarrow]")
@@ -1318,6 +1489,8 @@ def test_arrow_string_multiplication():
 
 
 def test_arrow_string_multiplication_scalar_repeat():
+    # [FUNCTION DOC]
+    # Multiplying a string arrow Series by an integer scalar repeats each string, in both operand orders.
     binary = pd.Series(["abc", "defg"], dtype=ArrowDtype(pa.string()))
     result = binary * 2
     expected = pd.Series(["abcabc", "defgdefg"], dtype=ArrowDtype(pa.string()))
@@ -1327,6 +1500,8 @@ def test_arrow_string_multiplication_scalar_repeat():
 
 
 def test_arrow_string_addition_mixed_string_types():
+    # [FUNCTION DOC]
+    # GH issue 65220. Adding a regular-string arrow Series and a large-string arrow Series gives the large-string dtype, concatenated in operand order, with missing propagating.
     # https://github.com/pandas-dev/pandas/issues/65220
     left = pd.Series(["a", None], dtype=ArrowDtype(pa.string()))
     right = pd.Series(["b", "c"], dtype=ArrowDtype(pa.large_string()))
@@ -1342,6 +1517,8 @@ def test_arrow_string_addition_mixed_string_types():
 
 @pytest.mark.parametrize("string_type", [pa.string(), pa.large_string()])
 def test_arrow_string_addition_mixed_with_binary_raises(string_type):
+    # [FUNCTION DOC]
+    # Parametrized over the string and large-string arrow types. Adding a string Series and a binary arrow Series raises a type error with the message that the add operation is not supported for the two dtypes, in both operand orders (messages in matching order).
     left = pd.Series(["a", None], dtype=ArrowDtype(string_type))
     right = pd.Series([b"b", b"c"], dtype=ArrowDtype(pa.binary()))
 
@@ -1365,6 +1542,9 @@ def test_arrow_string_addition_mixed_with_binary_raises(string_type):
 )
 @pytest.mark.parametrize("quantile", [0.5, [0.5, 0.5]])
 def test_quantile(data, interpolation, quantile, request):
+    # [FUNCTION DOC]
+    # Parametrized over interpolation methods (linear, lower, higher, nearest, midpoint) and scalar or list quantile. On three copies of the first element. For string, binary and boolean types expects an arrow not-implemented error about no kernel matching input types, then returns. For types other than numeric and temporal marks expected failure. Computes the quantile:
+    # for timestamp types with interpolation other than lower/higher the result is compared to the numpy datetime analogue (to avoid rounding error; microsecond handling differs for scalar and list); otherwise a scalar quantile equals the first element and a list quantile equals a Series of the element repeated indexed by the quantiles (numeric types cast to 64-bit float).
     pa_dtype = data.dtype.pyarrow_dtype
 
     data = data.take([0, 0, 0])
@@ -1443,6 +1623,8 @@ def test_quantile(data, interpolation, quantile, request):
     ids=["multi_mode", "single_mode"],
 )
 def test_mode_dropna_true(data_for_grouping, take_idx, exp_idx):
+    # [FUNCTION DOC]
+    # Parametrized over (take indices, expected indices) with ids multi_mode and single_mode. Takes elements of the grouping data, computes the mode dropping missing values, and compares with the Series of the expected elements.
     data = data_for_grouping.take(take_idx)
     ser = pd.Series(data)
     result = ser.mode(dropna=True)
@@ -1451,6 +1633,8 @@ def test_mode_dropna_true(data_for_grouping, take_idx, exp_idx):
 
 
 def test_mode_dropna_false_mode_na(data):
+    # [FUNCTION DOC]
+    # GH 50982. A Series with two nulls and one value has mode null when missing values are not dropped; a Series of one value and null has both as modes.
     # GH 50982
     more_nans = pd.Series([None, None, data[0]], dtype=data.dtype)
     result = more_nans.mode(dropna=False)
@@ -1477,12 +1661,16 @@ def test_mode_dropna_false_mode_na(data):
     ],
 )
 def test_arrow_dtype_type(arrow_dtype, expected_type):
+    # [FUNCTION DOC]
+    # GH 51845. Parametrized over binary (fixed and variable size, large), large string, list, large list, map, struct and dictionary arrow types: verifies the dtype's scalar type is bytes, string, list, dict, or the categorical type respectively. A TODO says it is redundant with the scalar-get test once the dtype exists in the data fixture.
     # GH 51845
     # TODO: Redundant with test_getitem_scalar once arrow_dtype exists in data fixture
     assert ArrowDtype(arrow_dtype).type == expected_type
 
 
 def test_is_bool_dtype():
+    # [FUNCTION DOC]
+    # GH 22667. An arrow boolean array is recognized as a boolean dtype and as a boolean indexer, and indexing a Series with it equals indexing with the numpy conversion.
     # GH 22667
     data = ArrowExtensionArray(pa.array([True, False, True]))
     assert is_bool_dtype(data)
@@ -1494,6 +1682,8 @@ def test_is_bool_dtype():
 
 
 def test_is_numeric_dtype(data):
+    # [FUNCTION DOC]
+    # GH 50563. For floating, integer and decimal arrow types the data is numeric; other types are not.
     # GH 50563
     pa_type = data.dtype.pyarrow_dtype
     if (
@@ -1507,6 +1697,8 @@ def test_is_numeric_dtype(data):
 
 
 def test_is_integer_dtype(data):
+    # [FUNCTION DOC]
+    # GH 50667. The data is an integer dtype exactly when the arrow type is an integer type.
     # GH 50667
     pa_type = data.dtype.pyarrow_dtype
     if pa.types.is_integer(pa_type):
@@ -1516,6 +1708,8 @@ def test_is_integer_dtype(data):
 
 
 def test_is_signed_integer_dtype(data):
+    # [FUNCTION DOC]
+    # The data is a signed-integer dtype exactly when the arrow type is signed integer.
     pa_type = data.dtype.pyarrow_dtype
     if pa.types.is_signed_integer(pa_type):
         assert is_signed_integer_dtype(data)
@@ -1524,6 +1718,8 @@ def test_is_signed_integer_dtype(data):
 
 
 def test_is_unsigned_integer_dtype(data):
+    # [FUNCTION DOC]
+    # The data is an unsigned-integer dtype exactly when the arrow type is unsigned integer.
     pa_type = data.dtype.pyarrow_dtype
     if pa.types.is_unsigned_integer(pa_type):
         assert is_unsigned_integer_dtype(data)
@@ -1532,6 +1728,8 @@ def test_is_unsigned_integer_dtype(data):
 
 
 def test_is_datetime64_any_dtype(data):
+    # [FUNCTION DOC]
+    # The data is a datetime64-any dtype exactly when the arrow type is a timestamp or date.
     pa_type = data.dtype.pyarrow_dtype
     if pa.types.is_timestamp(pa_type) or pa.types.is_date(pa_type):
         assert is_datetime64_any_dtype(data)
@@ -1540,6 +1738,8 @@ def test_is_datetime64_any_dtype(data):
 
 
 def test_is_float_dtype(data):
+    # [FUNCTION DOC]
+    # The data is a float dtype exactly when the arrow type is floating.
     pa_type = data.dtype.pyarrow_dtype
     if pa.types.is_floating(pa_type):
         assert is_float_dtype(data)
@@ -1548,6 +1748,8 @@ def test_is_float_dtype(data):
 
 
 def test_pickle_roundtrip(data):
+    # [FUNCTION DOC]
+    # GH 42600. Pickling a Series of the data and its two-element head: the full pickle is larger than the sliced one, and both round trip to equal Series.
     # GH 42600
     expected = pd.Series(data)
     expected_sliced = expected.head(2)
@@ -1564,6 +1766,8 @@ def test_pickle_roundtrip(data):
 
 
 def test_astype_from_non_pyarrow(data):
+    # [FUNCTION DOC]
+    # GH49795. Casting a non-arrow array created from the data's numpy conversion to the arrow dtype gives an arrow-typed array equal to the data.
     # GH49795
     np_arr = data.to_numpy()
     pd_array = pd.array(np_arr, dtype=np_arr.dtype)
@@ -1574,6 +1778,8 @@ def test_astype_from_non_pyarrow(data):
 
 
 def test_astype_float_from_non_pyarrow_str():
+    # [FUNCTION DOC]
+    # GH50430. Casting a Series of numeric strings to the 64-bit float arrow dtype parses them into floats.
     # GH50430
     ser = pd.Series(["1.0"])
     result = ser.astype("float64[pyarrow]")
@@ -1582,6 +1788,8 @@ def test_astype_float_from_non_pyarrow_str():
 
 
 def test_astype_errors_ignore():
+    # [FUNCTION DOC]
+    # GH 55399. Casting a 32-bit integer arrow frame to a float arrow type with errors set to ignore gives the original frame unchanged (the target dtype is not a valid type, so the ignore returns the input).
     # GH 55399
     expected = pd.DataFrame({"col": [17000000]}, dtype="int32[pyarrow]")
     result = expected.astype("float[pyarrow]", errors="ignore")
@@ -1589,6 +1797,8 @@ def test_astype_errors_ignore():
 
 
 def test_to_numpy_with_defaults(data, using_nan_is_na):
+    # [FUNCTION DOC]
+    # GH49973. Default numpy conversion: skipped for duration and timestamp (tested elsewhere); dates expect an object array of date objects, others the numpy view of the arrow array; if the data has nulls and either the dtype is not numeric or NaN is not treated as NA, the expected is converted to object with NA at the missing positions.
     # GH49973
     result = data.to_numpy()
 
@@ -1608,6 +1818,8 @@ def test_to_numpy_with_defaults(data, using_nan_is_na):
 
 
 def test_to_numpy_int_with_na(using_nan_is_na):
+    # [FUNCTION DOC]
+    # GH51227. A 64-bit integer arrow array with a null converts to a numpy object array with NA when NaN is not treated as NA, else to a float array with NaN whose first element is a float.
     # GH51227: ensure to_numpy does not convert int to float
     data = [1, None]
     arr = pd.array(data, dtype="int64[pyarrow]")
@@ -1622,6 +1834,8 @@ def test_to_numpy_int_with_na(using_nan_is_na):
 
 @pytest.mark.parametrize("na_val, exp", [(lib.no_default, np.nan), (1, 1)])
 def test_to_numpy_null_array(na_val, exp):
+    # [FUNCTION DOC]
+    # GH#52443. Parametrized over (missing-value argument unspecified/1, expected fill: NaN/1). Converting an all-NA null-typed arrow array to numpy 64-bit float uses NaN by default or the given value.
     # GH#52443
     arr = pd.array([pd.NA, pd.NA], dtype="null[pyarrow]")
     result = arr.to_numpy(dtype="float64", na_value=na_val)
@@ -1630,6 +1844,8 @@ def test_to_numpy_null_array(na_val, exp):
 
 
 def test_to_numpy_null_array_no_dtype():
+    # [FUNCTION DOC]
+    # GH#52443. Converting an all-NA null-typed arrow array to numpy with no dtype gives an object array of NA values.
     # GH#52443
     arr = pd.array([pd.NA, pd.NA], dtype="null[pyarrow]")
     result = arr.to_numpy(dtype=None)
@@ -1638,6 +1854,8 @@ def test_to_numpy_null_array_no_dtype():
 
 
 def test_to_numpy_without_dtype():
+    # [FUNCTION DOC]
+    # GH 54808. Converting arrow boolean [true, NA] to numpy with an NA replacement of false gives a boolean array; converting arrow 32-bit float [1.0, NA] with replacement 0.0 gives a 32-bit float array.
     # GH 54808
     arr = pd.array([True, pd.NA], dtype="boolean[pyarrow]")
     result = arr.to_numpy(na_value=False)
@@ -1651,6 +1869,8 @@ def test_to_numpy_without_dtype():
 
 
 def test_setitem_null_slice(data):
+    # [FUNCTION DOC]
+    # GH50248. Assigning to a full slice of a copy of the data: a scalar (first element) fills every slot; the reversed data replaces it; a list of the data's values gives back the data.
     # GH50248
     orig = data.copy()
 
@@ -1684,6 +1904,8 @@ def test_setitem_null_slice(data):
     ],
 )
 def test_setitem_null_slice_no_alias(dtype, np_dtype):
+    # [FUNCTION DOC]
+    # GH#67990. Parametrized over (arrow dtype string, numpy dtype) for int64, uint8, double, timestamp ns, duration ns. Assigning a numpy array or a Series to a full slice of an all-null arrow array copies the data: later mutation of the source (first element set to the second) must not change the array.
     # GH#67990 the null-slice fast path must not adopt a buffer the caller owns
     expected = pd.array(np.array([10, 20, 30]).astype(np_dtype), dtype=dtype)
 
@@ -1701,6 +1923,8 @@ def test_setitem_null_slice_no_alias(dtype, np_dtype):
 
 
 def test_setitem_null_slice_no_alias_masked():
+    # [FUNCTION DOC]
+    # GH#67990. Assigning a masked 64-bit integer array to a full slice of an arrow array copies it (masked arrays are zero-copy through the arrow conversion), so mutating the masked array afterwards does not alter the arrow array.
     # GH#67990 masked arrays are zero-copy through __arrow_array__
     arr = pd.array([None] * 3, dtype="int64[pyarrow]")
     values = pd.array([10, 20, 30], dtype="Int64")
@@ -1724,6 +1948,8 @@ def test_setitem_null_slice_no_alias_masked():
     ids=["array", "chunked", "chunked_multi", "extension_array", "series"],
 )
 def test_setitem_null_slice_no_alias_pyarrow(wrap):
+    # [FUNCTION DOC]
+    # GH#67990. Parametrized over ways to wrap numpy values (arrow array, one-chunk chunked array, two-chunk chunked array, arrow extension array, Series of arrow extension array). A pyarrow array is immutable but may be zero-copy over caller-owned numpy memory; after assigning to a full slice of an all-null arrow array and mutating the numpy array, the array still holds the original values, and the number of chunks matches the value's (extension comparison ignores chunking).
     # GH#67990 a pyarrow array is immutable, but its buffers can still be
     #  zero-copy over a numpy array the caller owns
     np_values = np.array([10, 20, 30], dtype="int64")
@@ -1748,6 +1974,8 @@ def test_setitem_null_slice_no_alias_pyarrow(wrap):
     ],
 )
 def test_setitem_null_slice_string_stays_zero_copy(dtype):
+    # [FUNCTION DOC]
+    # GH#67990. Parametrized over string and binary arrow dtypes (string with NaN, string, binary, large string, large binary). Assigning values to a full slice of an all-null array keeps the character data buffer zero-copy: the last buffer address of the first chunk is the same as the source's (the aliasing fix must not undo GH#64529/64530).
     # GH#67990 the aliasing fix must not undo GH#64529/GH#64530: pa.array never
     #  packs character data into caller-owned memory, so it is not copied here
     is_binary = "binary" in str(dtype)
@@ -1764,6 +1992,8 @@ def test_setitem_null_slice_string_stays_zero_copy(dtype):
 
 
 def test_setitem_null_slice_no_alias_dictionary():
+    # [FUNCTION DOC]
+    # GH#67990. For a dictionary arrow type with 32-bit indices and 64-bit values, assigning a dictionary array over itself then mutating the caller-owned numpy values does not change the array (the dictionary child, which concatenation reuses, needs copying too).
     # GH#67990 pa.concat_arrays reuses the dictionary child, so the values half
     #  of a dictionary type needs copying too
     dtype = ArrowDtype(pa.dictionary(pa.int32(), pa.int64()))
@@ -1783,6 +2013,8 @@ def test_setitem_null_slice_no_alias_dictionary():
 
 @pytest.mark.parametrize("kind", ["list", "struct"])
 def test_setitem_null_slice_no_alias_nested(kind):
+    # [FUNCTION DOC]
+    # GH#67990. Parametrized over list and struct kinds. Assigning a nested arrow array over itself and mutating the caller-owned child numpy data leaves the list-of-values unchanged (concatenation copies the children of nested types, so only dictionaries need a special case).
     # GH#67990 pa.concat_arrays does copy a nested type's children, which is why
     #  only dictionary needs the special case above
     np_values = np.array([1, 2, 3, 4], dtype="int64")
@@ -1802,6 +2034,8 @@ def test_setitem_null_slice_no_alias_nested(kind):
 
 
 def test_setitem_null_slice_cow():
+    # [FUNCTION DOC]
+    # GH#67990. Assigning another frame's column to a full column slice of an arrow-backed frame by label does not tie the two frames together: mutating the source afterwards leaves the target as the original values.
     # GH#67990 full-slice assignment must not tie the two frames together
     df = pd.DataFrame({"a": pd.array([1, 2, 3], dtype="int64[pyarrow]")})
     other = pd.DataFrame({"b": [10, 20, 30]})
@@ -1812,6 +2046,8 @@ def test_setitem_null_slice_cow():
 
 
 def test_setitem_invalid_dtype(data):
+    # [FUNCTION DOC]
+    # GH50248. Assigning an invalid fill value to a full slice of the data raises: strings and binary with the integer 123 give a type error about invalid value for dtype; integer, floating and boolean with the string foo give an arrow invalid error saying it could not convert; other types with foo give a type error about invalid value.
     # GH50248
     pa_type = data._pa_array.type
     if pa.types.is_string(pa_type) or pa.types.is_binary(pa_type):
@@ -1835,6 +2071,8 @@ def test_setitem_invalid_dtype(data):
 
 
 def test_from_arrow_respecting_given_dtype():
+    # [FUNCTION DOC]
+    # The arrow-to-pandas conversion with a types mapper that maps a 32-bit date to a 64-bit date arrow dtype respects the given dtype.
     date_array = pa.array(
         [pd.Timestamp("2019-12-31"), pd.Timestamp("2019-12-31")], type=pa.date32()
     )
@@ -1849,12 +2087,16 @@ def test_from_arrow_respecting_given_dtype():
 
 
 def test_from_arrow_respecting_given_dtype_unsafe():
+    # [FUNCTION DOC]
+    # Converting arrow floats 1.5 and 2.5 with a mapper to a 64-bit integer arrow dtype raises an arrow invalid error (an external error from arrow, unsafe cast).
     array = pa.array([1.5, 2.5], type=pa.float64())
     with tm.external_error_raised(pa.ArrowInvalid):
         array.to_pandas(types_mapper={pa.float64(): ArrowDtype(pa.int64())}.get)
 
 
 def test_round():
+    # [FUNCTION DOC]
+    # Rounding a 64-bit float arrow Series to one decimal place and to the tens place (negative digits) gives expected values with NA preserved.
     dtype = "float64[pyarrow]"
 
     ser = pd.Series([0.0, 1.23, 2.56, pd.NA], dtype=dtype)
@@ -1869,6 +2111,8 @@ def test_round():
 
 
 def test_searchsorted_with_na_raises(data_for_sorting, as_series):
+    # [FUNCTION DOC]
+    # GH50447. Searching in an arrow array (or Series) with a trailing NA raises a value error saying searchsorted requires an array sorted, impossible with NAs present.
     # GH50447
     b, c, a = data_for_sorting
     arr = data_for_sorting.take([2, 0, 1])  # to get [a, b, c]
@@ -1886,6 +2130,8 @@ def test_searchsorted_with_na_raises(data_for_sorting, as_series):
 
 
 def test_sort_values_dictionary():
+    # [FUNCTION DOC]
+    # Sorting a frame with a dictionary-typed arrow string column and an integer column by both leaves an already-sorted frame unchanged.
     df = pd.DataFrame(
         {
             "a": pd.Series(
@@ -1901,6 +2147,8 @@ def test_sort_values_dictionary():
 
 @pytest.mark.parametrize("pat", ["abc", "a[a-z]{2}"])
 def test_str_count(pat):
+    # [FUNCTION DOC]
+    # Parametrized over patterns abc and a regular expression. Counting occurrences in an arrow string Series [abc, null] gives [1, null] with arrow 32-bit integer dtype.
     ser = pd.Series(["abc", None], dtype=ArrowDtype(pa.string()))
     result = ser.str.count(pat)
     expected = pd.Series([1, None], dtype=ArrowDtype(pa.int32()))
@@ -1908,6 +2156,8 @@ def test_str_count(pat):
 
 
 def test_str_count_flags_unsupported():
+    # [FUNCTION DOC]
+    # Counting with flags set raises not-implemented with message that count is not supported.
     ser = pd.Series(["abc", None], dtype=ArrowDtype(pa.string()))
     with pytest.raises(NotImplementedError, match="count not"):
         ser.str.count("abc", flags=1)
@@ -1917,6 +2167,8 @@ def test_str_count_flags_unsupported():
     "side, str_func", [["left", "rjust"], ["right", "ljust"], ["both", "center"]]
 )
 def test_str_pad(side, str_func):
+    # [FUNCTION DOC]
+    # Parametrized over (side, matching string method): left/right-justify, right/left-justify, both/center. Padding an arrow string Series to width three with fill x gives results matching the corresponding Python string method on a, with null kept.
     ser = pd.Series(["a", None], dtype=ArrowDtype(pa.string()))
     result = ser.str.pad(width=3, side=side, fillchar="x")
     expected = pd.Series(
@@ -1926,6 +2178,8 @@ def test_str_pad(side, str_func):
 
 
 def test_str_pad_invalid_side():
+    # [FUNCTION DOC]
+    # Padding with an invalid side raises a value error saying invalid side foo.
     ser = pd.Series(["a", None], dtype=ArrowDtype(pa.string()))
     with pytest.raises(ValueError, match="Invalid side: foo"):
         ser.str.pad(3, "foo", "x")
@@ -1942,6 +2196,8 @@ def test_str_pad_invalid_side():
     ],
 )
 def test_str_contains(pat, case, na, regex, exp):
+    # [FUNCTION DOC]
+    # Parametrized over (pattern, case sensitive, NA fill, regex, expected). Verifies contains on an arrow string Series [abc, null] gives arrow booleans as expected.
     ser = pd.Series(["abc", None], dtype=ArrowDtype(pa.string()))
     result = ser.str.contains(pat, case=case, na=na, regex=regex)
     expected = pd.Series(exp, dtype=ArrowDtype(pa.bool_()))
@@ -1949,12 +2205,16 @@ def test_str_contains(pat, case, na, regex, exp):
 
 
 def test_str_contains_flags_unsupported():
+    # [FUNCTION DOC]
+    # Contains with flags set raises not-implemented with the message that contains is not supported.
     ser = pd.Series(["abc", None], dtype=ArrowDtype(pa.string()))
     with pytest.raises(NotImplementedError, match="contains not"):
         ser.str.contains("a", flags=1)
 
 
 def test_str_contains_re2_unicode_escape():
+    # [FUNCTION DOC]
+    # GH 63901. Contains with a regular expression using a unicode range escape finds the Thai character: [false, true, null].
     # GH 63901
     ser = pd.Series(["a", "\u0e01", None], dtype=ArrowDtype(pa.string()))
     result = ser.str.contains(r"[\x{0e00}-\x{0e7f}]")
@@ -1976,6 +2236,8 @@ def test_str_contains_re2_unicode_escape():
     ],
 )
 def test_str_start_ends_with(side, pat, na, exp):
+    # [FUNCTION DOC]
+    # Parametrized over (startswith/endswith, pattern, NA fill, expected). Verifies prefix/suffix tests on [abc, null, efg] including tuple patterns and the empty tuple (always false).
     ser = pd.Series(["abc", None, "efg"], dtype=ArrowDtype(pa.string()))
     result = getattr(ser.str, side)(pat, na=na)
     expected = pd.Series(exp, dtype=ArrowDtype(pa.bool_()))
@@ -1984,6 +2246,8 @@ def test_str_start_ends_with(side, pat, na, exp):
 
 @pytest.mark.parametrize("side", ("startswith", "endswith"))
 def test_str_starts_ends_with_all_nulls_empty_tuple(side):
+    # [FUNCTION DOC]
+    # Parametrized over startswith and endswith: with an empty tuple on an all-null arrow string Series, the result is all null but retains the arrow boolean dtype.
     ser = pd.Series([None, None], dtype=ArrowDtype(pa.string()))
     result = getattr(ser.str, side)(())
 
@@ -1997,6 +2261,8 @@ def test_str_starts_ends_with_all_nulls_empty_tuple(side):
     [["pat", re.compile("b")], ["repl", str], ["case", False], ["flags", 1]],
 )
 def test_str_replace_unsupported(arg_name, arg):
+    # [FUNCTION DOC]
+    # Parametrized over unsupported replace arguments (compiled pattern, callable replacement, case-insensitive flag, flags): replacing raises not-implemented with a message that replace is not supported.
     ser = pd.Series(["abc", None], dtype=ArrowDtype(pa.string()))
     kwargs = {"pat": "b", "repl": "x", "regex": True}
     kwargs[arg_name] = arg
@@ -2013,6 +2279,8 @@ def test_str_replace_unsupported(arg_name, arg):
     ],
 )
 def test_str_replace(pat, repl, n, regex, exp):
+    # [FUNCTION DOC]
+    # Parametrized over (pattern, replacement, count, regex, expected). Verifies string replace on [abac, null] returns arrow strings as expected.
     ser = pd.Series(["abac", None], dtype=ArrowDtype(pa.string()))
     result = ser.str.replace(pat, repl, n=n, regex=regex)
     expected = pd.Series(exp, dtype=ArrowDtype(pa.string()))
@@ -2020,6 +2288,8 @@ def test_str_replace(pat, repl, n, regex, exp):
 
 
 def test_str_replace_re2_unicode_property():
+    # [FUNCTION DOC]
+    # Replacing with a regular expression using a unicode uppercase property class gives the expected result with null kept.
     ser = pd.Series(["Jan", "Feb", None], dtype=ArrowDtype(pa.string()))
     result = ser.str.replace(r"\p{Lu}", "U", regex=True)
     expected = pd.Series(["Uan", "Ueb", None], dtype=ArrowDtype(pa.string()))
@@ -2027,6 +2297,8 @@ def test_str_replace_re2_unicode_property():
 
 
 def test_str_replace_negative_n():
+    # [FUNCTION DOC]
+    # GH 56404. Replacing with a negative count replaces every match for arrow strings, and (GH#59628) for pyarrow-backed string dtypes with NA and with NaN missing values.
     # GH 56404
     ser = pd.Series(["abc", "aaaaaa"], dtype=ArrowDtype(pa.string()))
     actual = ser.str.replace("a", "", -3, True)
@@ -2046,6 +2318,8 @@ def test_str_replace_negative_n():
 
 
 def test_str_replace_empty_pattern():
+    # [FUNCTION DOC]
+    # GH issue 64941. Replacing the empty pattern with an empty string leaves the string unchanged; replacing it with X inserts X before every character and at the end.
     # https://github.com/pandas-dev/pandas/issues/64941
     ser = pd.Series(["abcd"], dtype=ArrowDtype(pa.string()))
 
@@ -2059,12 +2333,16 @@ def test_str_replace_empty_pattern():
 
 
 def test_str_repeat_unsupported():
+    # [FUNCTION DOC]
+    # Repeating with a list of repeat counts raises not-implemented with a message that repeat is not supported.
     ser = pd.Series(["abc", None], dtype=ArrowDtype(pa.string()))
     with pytest.raises(NotImplementedError, match="repeat is not"):
         ser.str.repeat([1, 2])
 
 
 def test_str_repeat():
+    # [FUNCTION DOC]
+    # Repeating each string of an arrow string Series twice, with null preserved.
     ser = pd.Series(["abc", None], dtype=ArrowDtype(pa.string()))
     result = ser.str.repeat(2)
     expected = pd.Series(["abcabc", None], dtype=ArrowDtype(pa.string()))
@@ -2083,6 +2361,8 @@ def test_str_repeat():
     ],
 )
 def test_str_match(pat, case, na, exp):
+    # [FUNCTION DOC]
+    # Parametrized over (pattern, case sensitive, NA fill, expected). Match anchors at the start of the string; verifies results on [abc, null] including regular expression patterns and the NA fill (arrow boolean dtype).
     ser = pd.Series(["abc", None], dtype=ArrowDtype(pa.string()))
     result = ser.str.match(pat, case=case, na=na)
     expected = pd.Series(exp, dtype=ArrowDtype(pa.bool_()))
@@ -2111,6 +2391,8 @@ def test_str_match(pat, case, na, exp):
     ],
 )
 def test_str_fullmatch(pat, case, na, exp):
+    # [FUNCTION DOC]
+    # Parametrized over (pattern, case sensitive, NA fill, expected) with cases kept in sync with the string-method tests of the same name (including dollar-anchored patterns, GH Issue #56652 and alternation patterns, issue 61072). Fullmatch on [abc, abc$, $abc, null] gives the expected arrow booleans.
     ser = pd.Series(["abc", "abc$", "$abc", None], dtype=ArrowDtype(pa.string()))
     result = ser.str.fullmatch(pat, case=case, na=na)
     expected = pd.Series(exp, dtype=ArrowDtype(pa.bool_()))
@@ -2127,6 +2409,8 @@ def test_str_fullmatch(pat, case, na, exp):
     ],
 )
 def test_str_find(sub, start, end, exp):
+    # [FUNCTION DOC]
+    # Parametrized over (substring, start, end, expected). Find on [abc, null] with the arrow 64-bit integer dtype and nulls preserved, including out-of-range negative bounds.
     ser = pd.Series(["abc", None], dtype=ArrowDtype(pa.string()))
     result = ser.str.find(sub, start=start, end=end)
     expected = pd.Series(exp, dtype=ArrowDtype(pa.int64()))
@@ -2134,6 +2418,8 @@ def test_str_find(sub, start, end, exp):
 
 
 def test_str_find_negative_start():
+    # [FUNCTION DOC]
+    # GH 56411. Find with a very negative start and end of three finds the substring at index one.
     # GH 56411
     ser = pd.Series(["abc", None], dtype=ArrowDtype(pa.string()))
     result = ser.str.find(sub="b", start=-1000, end=3)
@@ -2142,6 +2428,8 @@ def test_str_find_negative_start():
 
 
 def test_str_find_no_end():
+    # [FUNCTION DOC]
+    # Find with a start but no end returns negative one when the substring is before start.
     ser = pd.Series(["abc", None], dtype=ArrowDtype(pa.string()))
     result = ser.str.find("ab", start=1)
     expected = pd.Series([-1, None], dtype="int64[pyarrow]")
@@ -2149,6 +2437,8 @@ def test_str_find_no_end():
 
 
 def test_str_find_negative_start_negative_end():
+    # [FUNCTION DOC]
+    # GH 56791. Find with negative start and end indexes counts from the end and finds the substring (index three).
     # GH 56791
     ser = pd.Series(["abcdefg", None], dtype=ArrowDtype(pa.string()))
     result = ser.str.find(sub="d", start=-6, end=-3)
@@ -2157,6 +2447,8 @@ def test_str_find_negative_start_negative_end():
 
 
 def test_str_find_large_start():
+    # [FUNCTION DOC]
+    # GH 56791. Find with a start beyond the string length returns negative one.
     # GH 56791
     ser = pd.Series(["abcdefg", None], dtype=ArrowDtype(pa.string()))
     result = ser.str.find(sub="d", start=16)
@@ -2168,6 +2460,8 @@ def test_str_find_large_start():
 @pytest.mark.parametrize("end", [-15, -1, 0, 3, 15, None])
 @pytest.mark.parametrize("sub", ["", "az", "abce", "a", "caa"])
 def test_str_find_e2e(start, end, sub):
+    # [FUNCTION DOC]
+    # Parametrized over start (six values), end (six values) and substring (five values). End-to-end comparison: find on an arrow string Series equals the python-storage string dtype result cast to the result's dtype, and the pyarrow-storage string dtype result agrees as well.
     s = pd.Series(
         ["abcaadef", "abc", "abcdeddefgj8292", "ab", "a", ""],
         dtype=ArrowDtype(pa.string()),
@@ -2183,6 +2477,8 @@ def test_str_find_e2e(start, end, sub):
 
 
 def test_str_find_negative_start_negative_end_no_match():
+    # [FUNCTION DOC]
+    # GH 56791. Find with a negative start after a negative end (empty range) returns negative one.
     # GH 56791
     ser = pd.Series(["abcdefg", None], dtype=ArrowDtype(pa.string()))
     result = ser.str.find(sub="d", start=-3, end=-6)
@@ -2202,6 +2498,8 @@ def test_str_find_negative_start_negative_end_no_match():
     ],
 )
 def test_str_get(idx, expected_values):
+    # [FUNCTION DOC]
+    # Parametrized over (index, expected). Get character at positions (including negative and out-of-range) for [abc, de, null] gives arrow strings with null for missing positions.
     ser = pd.Series(["abc", "de", None], dtype=ArrowDtype(pa.string()))
     result = ser.str.get(idx)
     expected = pd.Series(expected_values, dtype=ArrowDtype(pa.string()))
@@ -2220,6 +2518,8 @@ def test_str_get(idx, expected_values):
     ],
 )
 def test_str_getitem(idx, expected_values):
+    # [FUNCTION DOC]
+    # GH 65112. Same cases as the get test but using item lookup on the string accessor with an integer index.
     # GH 65112
     ser = pd.Series(["abc", "de", None], dtype=ArrowDtype(pa.string()))
     result = ser.str[idx]
@@ -2232,6 +2532,8 @@ def test_str_getitem(idx, expected_values):
     raises=AttributeError,
 )
 def test_str_join():
+    # [FUNCTION DOC]
+    # Expected-to-fail with an attribute error (the string-method validation should support arrow list types, a TODO): joining list elements of an arrow list array with an equal sign.
     ser = pd.Series(ArrowExtensionArray(pa.array([list("abc"), list("123"), None])))
     result = ser.str.join("=")
     expected = pd.Series(["a=b=c", "1=2=3", None], dtype=ArrowDtype(pa.string()))
@@ -2239,6 +2541,8 @@ def test_str_join():
 
 
 def test_str_join_string_type():
+    # [FUNCTION DOC]
+    # Joining the characters of each arrow string (null preserved) with an equal sign.
     ser = pd.Series(ArrowExtensionArray(pa.array(["abc", "123", None])))
     result = ser.str.join("=")
     expected = pd.Series(["a=b=c", "1=2=3", None], dtype=ArrowDtype(pa.string()))
@@ -2257,6 +2561,8 @@ def test_str_join_string_type():
     ],
 )
 def test_str_slice(start, stop, step, expected_values):
+    # [FUNCTION DOC]
+    # Parametrized over (start, stop, step, expected) including negative steps. Slicing each string of [abcd, null].
     ser = pd.Series(["abcd", None], dtype=ArrowDtype(pa.string()))
     result = ser.str.slice(start, stop, step)
     expected = pd.Series(expected_values, dtype=ArrowDtype(pa.string()))
@@ -2275,6 +2581,8 @@ def test_str_slice(start, stop, step, expected_values):
     ],
 )
 def test_str_getitem_range(start, stop, step, expected_values):
+    # [FUNCTION DOC]
+    # GH 65112. Same cases as the slice test but using item lookup on the string accessor with a slice object.
     # GH 65112
     ser = pd.Series(["abcd", None], dtype=ArrowDtype(pa.string()))
     result = ser.str[slice(start, stop, step)]
@@ -2291,6 +2599,8 @@ def test_str_getitem_range(start, stop, step, expected_values):
     ],
 )
 def test_str_slice_replace(start, stop, repl, exp):
+    # [FUNCTION DOC]
+    # Parametrized over (start, stop, replacement, expected). Replacing a slice of each string (a missing replacement deletes the slice).
     ser = pd.Series(["abcd", None], dtype=ArrowDtype(pa.string()))
     result = ser.str.slice_replace(start, stop, repl)
     expected = pd.Series(exp, dtype=ArrowDtype(pa.string()))
@@ -2321,6 +2631,8 @@ def test_str_slice_replace(start, stop, repl, exp):
     ],
 )
 def test_str_is_functions(value, method, exp):
+    # [FUNCTION DOC]
+    # Parametrized over (value, predicate method, expected). The predicate methods (alphanumeric, alphabetic, decimal, digit, lower, numeric, space, title, upper) give the expected arrow boolean for the value, with null for missing.
     ser = pd.Series([value, None], dtype=ArrowDtype(pa.string()))
     result = getattr(ser.str, method)()
     expected = pd.Series([exp, None], dtype=ArrowDtype(pa.bool_()))
@@ -2339,6 +2651,8 @@ def test_str_is_functions(value, method, exp):
     ],
 )
 def test_str_transform_functions(method, exp):
+    # [FUNCTION DOC]
+    # Parametrized over (case method, expected). Applying capitalize, title, swapcase, lower, upper, casefold to the mixed-case string gives the expected string with null preserved.
     ser = pd.Series(["aBc dEF", None], dtype=ArrowDtype(pa.string()))
     result = getattr(ser.str, method)()
     expected = pd.Series([exp, None], dtype=ArrowDtype(pa.string()))
@@ -2346,6 +2660,8 @@ def test_str_transform_functions(method, exp):
 
 
 def test_str_len():
+    # [FUNCTION DOC]
+    # String lengths of [abcd, null] are [4, null] with the arrow 32-bit integer dtype.
     ser = pd.Series(["abcd", None], dtype=ArrowDtype(pa.string()))
     result = ser.str.len()
     expected = pd.Series([4, None], dtype=ArrowDtype(pa.int32()))
@@ -2364,6 +2680,8 @@ def test_str_len():
     ],
 )
 def test_str_strip(method, to_strip, val):
+    # [FUNCTION DOC]
+    # Parametrized over (strip method, characters to strip, input). Strip, left-strip and right-strip of whitespace or x yield abc with null preserved.
     ser = pd.Series([val, None], dtype=ArrowDtype(pa.string()))
     result = getattr(ser.str, method)(to_strip=to_strip)
     expected = pd.Series(["abc", None], dtype=ArrowDtype(pa.string()))
@@ -2372,6 +2690,8 @@ def test_str_strip(method, to_strip, val):
 
 @pytest.mark.parametrize("val", ["abc123", "abc"])
 def test_str_removesuffix(val):
+    # [FUNCTION DOC]
+    # Parametrized over strings with and without the 123 suffix. Removing that suffix yields abc with null preserved.
     ser = pd.Series([val, None], dtype=ArrowDtype(pa.string()))
     result = ser.str.removesuffix("123")
     expected = pd.Series(["abc", None], dtype=ArrowDtype(pa.string()))
@@ -2380,6 +2700,8 @@ def test_str_removesuffix(val):
 
 @pytest.mark.parametrize("val", ["123abc", "abc"])
 def test_str_removeprefix(val):
+    # [FUNCTION DOC]
+    # Parametrized over strings with and without the 123 prefix. Removing that prefix yields abc with null preserved.
     ser = pd.Series([val, None], dtype=ArrowDtype(pa.string()))
     result = ser.str.removeprefix("123")
     expected = pd.Series(["abc", None], dtype=ArrowDtype(pa.string()))
@@ -2402,6 +2724,9 @@ def test_str_removeprefix(val):
     ids=["utf8", "utf32"],
 )
 def test_str_encode(errors, encoding, exp):
+    # [FUNCTION DOC]
+    # Parametrized over errors mode (ignore, strict) and encoding (utf8, utf32). Encoding [abc, null] gives arrow binary values; the expected bytes depend on the platform byte order.
+    # KNOWN ISSUE: for the little-endian utf8 case the expected bytes are bytes while the big-endian entry for utf8 is a plain string rather than bytes, so the big-endian expectation would not equal the binary result.
     ser = pd.Series(["abc", None], dtype=ArrowDtype(pa.string()))
     result = ser.str.encode(encoding, errors)
     expected = pd.Series([exp[sys.byteorder], None], dtype=ArrowDtype(pa.binary()))
@@ -2410,6 +2735,8 @@ def test_str_encode(errors, encoding, exp):
 
 @pytest.mark.parametrize("flags", [0, 2])
 def test_str_findall(flags):
+    # [FUNCTION DOC]
+    # Parametrized over regular expression flags 0 and 2. Findall of b gives lists of matches as arrow list of strings, [[b], [], null].
     ser = pd.Series(["abc", "efg", None], dtype=ArrowDtype(pa.string()))
     result = ser.str.findall("b", flags=flags)
     expected = pd.Series([["b"], [], None], dtype=ArrowDtype(pa.list_(pa.string())))
@@ -2425,6 +2752,8 @@ def test_str_findall(flags):
     ],
 )
 def test_str_r_index(method, start, end):
+    # [FUNCTION DOC]
+    # Parametrized over index or rindex and (start, end). The index of c is two (null preserved, 64-bit integer); searching for a missing substring raises a value error saying substring not found.
     ser = pd.Series(["abcba", None], dtype=ArrowDtype(pa.string()))
     result = getattr(ser.str, method)("c", start, end)
     expected = pd.Series([2, None], dtype=ArrowDtype(pa.int64()))
@@ -2436,6 +2765,8 @@ def test_str_r_index(method, start, end):
 
 @pytest.mark.parametrize("form", ["NFC", "NFKC"])
 def test_str_normalize(form):
+    # [FUNCTION DOC]
+    # Parametrized over normalization forms NFC and NFKC. Normalizing an ASCII string leaves the Series unchanged.
     ser = pd.Series(["abc", None], dtype=ArrowDtype(pa.string()))
     result = ser.str.normalize(form)
     expected = ser.copy()
@@ -2450,6 +2781,8 @@ def test_str_normalize(form):
     ],
 )
 def test_str_rfind(start, end):
+    # [FUNCTION DOC]
+    # Parametrized over (start, end). Right-find of c in [abcba, foo, null] gives [2, -1, null] with 64-bit integer dtype.
     ser = pd.Series(["abcba", "foo", None], dtype=ArrowDtype(pa.string()))
     result = ser.str.rfind("c", start, end)
     expected = pd.Series([2, -1, None], dtype=ArrowDtype(pa.int64()))
@@ -2457,6 +2790,8 @@ def test_str_rfind(start, end):
 
 
 def test_str_translate():
+    # [FUNCTION DOC]
+    # Translating by a mapping of character code ninety-seven to b turns a to b in the arrow strings, null preserved.
     ser = pd.Series(["abcba", None], dtype=ArrowDtype(pa.string()))
     result = ser.str.translate({97: "b"})
     expected = pd.Series(["bbcbb", None], dtype=ArrowDtype(pa.string()))
@@ -2464,6 +2799,8 @@ def test_str_translate():
 
 
 def test_str_wrap():
+    # [FUNCTION DOC]
+    # Wrapping at width three splits abcba into abc and ba separated by a newline; null preserved.
     ser = pd.Series(["abcba", None], dtype=ArrowDtype(pa.string()))
     result = ser.str.wrap(3)
     expected = pd.Series(["abc\nba", None], dtype=ArrowDtype(pa.string()))
@@ -2471,6 +2808,8 @@ def test_str_wrap():
 
 
 def test_get_dummies():
+    # [FUNCTION DOC]
+    # Expanding the pipe-separated strings [a|b, null, a|c] into indicator columns gives a boolean arrow frame with columns a, b, c (null row all false).
     ser = pd.Series(["a|b", None, "a|c"], dtype=ArrowDtype(pa.string()))
     result = ser.str.get_dummies()
     expected = pd.DataFrame(
@@ -2482,6 +2821,8 @@ def test_get_dummies():
 
 
 def test_str_partition():
+    # [FUNCTION DOC]
+    # Partition and right-partition of [abcba, null] on b: expanded output is a frame of three arrow-string columns (before, separator, after; all null for the null row; default range column index); with expand disabled the output is a Series of arrow lists of three strings. Right-partition splits at the last separator.
     ser = pd.Series(["abcba", None], dtype=ArrowDtype(pa.string()))
     result = ser.str.partition("b")
     expected = pd.DataFrame(
@@ -2510,6 +2851,8 @@ def test_str_partition():
 
 @pytest.mark.parametrize("method", ["rsplit", "split"])
 def test_str_split_pat_none(method):
+    # [FUNCTION DOC]
+    # GH 56271. Parametrized over split and right-split. With no pattern, splitting on whitespace (including newline) gives a list of fields; null stays null (arrow list Series).
     # GH 56271
     ser = pd.Series(["a1 cbc\nb", None], dtype=ArrowDtype(pa.string()))
     result = getattr(ser.str, method)()
@@ -2518,6 +2861,8 @@ def test_str_split_pat_none(method):
 
 
 def test_str_split():
+    # [FUNCTION DOC]
+    # GH 52401. Split of [a1cbcb, a2cbcb, null] on c with no limit; with a limit of one; on a regular expression of digits (list result, and expanded into two columns of arrow strings); on a literal one with expansion (shorter rows padded with null).
     # GH 52401
     ser = pd.Series(["a1cbcb", "a2cbcb", None], dtype=ArrowDtype(pa.string()))
     result = ser.str.split("c")
@@ -2558,6 +2903,8 @@ def test_str_split():
 
 
 def test_str_rsplit():
+    # [FUNCTION DOC]
+    # GH 52401. Right-split on c with no limit, with a limit of one (splitting at the last separator), expanded with a limit, and on a literal one with expansion.
     # GH 52401
     ser = pd.Series(["a1cbcb", "a2cbcb", None], dtype=ArrowDtype(pa.string()))
     result = ser.str.rsplit("c")
@@ -2592,6 +2939,8 @@ def test_str_rsplit():
 
 
 def test_str_extract_non_symbolic():
+    # [FUNCTION DOC]
+    # Extracting with a pattern lacking a named group raises a value error saying the pattern must contain a symbolic group name.
     ser = pd.Series(["a1", "b2", "c3"], dtype=ArrowDtype(pa.string()))
     with pytest.raises(ValueError, match="pat=.* must contain a symbolic group name."):
         ser.str.extract(r"[ab](\d)")
@@ -2599,6 +2948,8 @@ def test_str_extract_non_symbolic():
 
 @pytest.mark.parametrize("expand", [True, False])
 def test_str_extract(expand):
+    # [FUNCTION DOC]
+    # Parametrized over expand true/false. Extracting two named groups from [a1, b2, c3] gives a frame with columns letter and digit as arrow strings, null where not matching.
     ser = pd.Series(["a1", "b2", "c3"], dtype=ArrowDtype(pa.string()))
     result = ser.str.extract(r"(?P<letter>[ab])(?P<digit>\d)", expand=expand)
     expected = pd.DataFrame(
@@ -2611,6 +2962,8 @@ def test_str_extract(expand):
 
 
 def test_str_extract_expand():
+    # [FUNCTION DOC]
+    # Extracting one named group: with expansion a one-column frame named digit; without expansion a Series named digit (both arrow strings with null for non-matches).
     ser = pd.Series(["a1", "b2", "c3"], dtype=ArrowDtype(pa.string()))
     result = ser.str.extract(r"[ab](?P<digit>\d)", expand=True)
     expected = pd.DataFrame(
@@ -2627,6 +2980,8 @@ def test_str_extract_expand():
 
 @pytest.mark.parametrize("unit", ["ns", "us", "ms", "s"])
 def test_duration_from_strings_with_nat(unit):
+    # [FUNCTION DOC]
+    # GH51175. Parametrized over duration units ns, us, ms, s. Building from the strings 1000 and NaT gives an arrow duration array of value 1000 and null.
     # GH51175
     strings = ["1000", "NaT"]
     pa_type = pa.duration(unit)
@@ -2637,6 +2992,8 @@ def test_duration_from_strings_with_nat(unit):
 
 
 def test_unsupported_dt(data):
+    # [FUNCTION DOC]
+    # For non-temporal arrow types, accessing the datetime accessor on a Series raises an attribute error saying it can only be used with datetimelike values; temporal types are not checked.
     pa_dtype = data.dtype.pyarrow_dtype
     if not pa.types.is_temporal(pa_dtype):
         with pytest.raises(
@@ -2668,6 +3025,8 @@ def test_unsupported_dt(data):
     ],
 )
 def test_dt_properties(prop, expected):
+    # [FUNCTION DOC]
+    # Parametrized over (datetime property, expected): year, day, day of week (three aliases), day of year (two aliases), hour, minute, leap year flag, microsecond, month, nanosecond, quarter, second, date and time. A Series of a nanosecond timestamp (2023-01-02 03:04:07.002000006) and a null; the property result equals an arrow Series of the expected and null (date32 type for date, 64-bit nanosecond time for time).
     ser = pd.Series(
         [
             pd.Timestamp(
@@ -2696,6 +3055,8 @@ def test_dt_properties(prop, expected):
 
 @pytest.mark.parametrize("microsecond", [2000, 5, 0])
 def test_dt_microsecond(microsecond):
+    # [FUNCTION DOC]
+    # GH 59183. Parametrized over microsecond values 2000, 5, 0: the microsecond property of a nanosecond arrow timestamp returns it as arrow 64-bit integer with null kept.
     # GH 59183
     ser = pd.Series(
         [
@@ -2717,6 +3078,8 @@ def test_dt_microsecond(microsecond):
 
 
 def test_dt_is_month_start_end():
+    # [FUNCTION DOC]
+    # The month-start and month-end flags of three microsecond timestamps and a null are arrow booleans [false, true, false, null] and [false, false, true, null].
     ser = pd.Series(
         [
             datetime(year=2023, month=12, day=2, hour=3),
@@ -2736,6 +3099,8 @@ def test_dt_is_month_start_end():
 
 
 def test_dt_is_year_start_end():
+    # [FUNCTION DOC]
+    # The year-start and year-end flags of three timestamps and a null: [false, true, false, null] and [true, false, false, null].
     ser = pd.Series(
         [
             datetime(year=2023, month=12, day=31, hour=3),
@@ -2755,6 +3120,8 @@ def test_dt_is_year_start_end():
 
 
 def test_dt_is_quarter_start_end():
+    # [FUNCTION DOC]
+    # The quarter-start and quarter-end flags of three timestamps and a null: [false, true, false, null] and [false, false, true, null].
     ser = pd.Series(
         [
             datetime(year=2023, month=11, day=30, hour=3),
@@ -2775,6 +3142,8 @@ def test_dt_is_quarter_start_end():
 
 @pytest.mark.parametrize("method", ["days_in_month", "daysinmonth"])
 def test_dt_days_in_month(method):
+    # [FUNCTION DOC]
+    # Parametrized over the two property names days_in_month and daysinmonth: values 31, 30, 28 and null as arrow 64-bit integers.
     ser = pd.Series(
         [
             datetime(year=2023, month=3, day=30, hour=3),
@@ -2790,6 +3159,8 @@ def test_dt_days_in_month(method):
 
 
 def test_dt_normalize():
+    # [FUNCTION DOC]
+    # Normalizing timestamps to midnight keeps the microsecond arrow timestamp dtype and null.
     ser = pd.Series(
         [
             datetime(year=2023, month=3, day=30),
@@ -2814,6 +3185,8 @@ def test_dt_normalize():
 
 @pytest.mark.parametrize("unit", ["us", "ns"])
 def test_dt_time_preserve_unit(unit):
+    # [FUNCTION DOC]
+    # Parametrized over timestamp units us and ns. The accessor's unit equals the dtype unit, and the time-of-day property preserves the unit as a 64-bit time with the same unit.
     ser = pd.Series(
         [datetime(year=2023, month=1, day=2, hour=3), None],
         dtype=ArrowDtype(pa.timestamp(unit)),
@@ -2829,6 +3202,8 @@ def test_dt_time_preserve_unit(unit):
 
 @pytest.mark.parametrize("tz", [None, "UTC", "US/Pacific"])
 def test_dt_tz(tz):
+    # [FUNCTION DOC]
+    # Parametrized over no time zone, UTC and US/Pacific. The time zone property of the accessor equals the time zone object resolved from the name.
     ser = pd.Series(
         [datetime(year=2023, month=1, day=2, hour=3), None],
         dtype=ArrowDtype(pa.timestamp("ns", tz=tz)),
@@ -2838,6 +3213,8 @@ def test_dt_tz(tz):
 
 
 def test_dt_isocalendar():
+    # [FUNCTION DOC]
+    # The ISO calendar of a timestamp (2023-01-02) and null gives a frame with columns year, week, day of arrow 64-bit integers, with the null row as zeros.
     ser = pd.Series(
         [datetime(year=2023, month=1, day=2, hour=3), None],
         dtype=ArrowDtype(pa.timestamp("ns")),
@@ -2855,6 +3232,8 @@ def test_dt_isocalendar():
     "method, exp", [["day_name", "Sunday"], ["month_name", "January"]]
 )
 def test_dt_day_month_name(method, exp, request):
+    # [FUNCTION DOC]
+    # GH 52388. Parametrized over day name (Sunday) and month name (January). After applying the time zone database expected-failure helper, naming a millisecond timestamp 2023-01-01 gives an arrow string, null kept.
     # GH 52388
     _require_timezone_database(request)
 
@@ -2865,6 +3244,8 @@ def test_dt_day_month_name(method, exp, request):
 
 
 def test_dt_strftime(request):
+    # [FUNCTION DOC]
+    # After applying the time zone database expected-failure helper, strftime with an ISO format on a nanosecond timestamp gives the string with nine fractional digits and null for null.
     _require_timezone_database(request)
 
     ser = pd.Series(
@@ -2880,6 +3261,8 @@ def test_dt_strftime(request):
 
 @pytest.mark.parametrize("method", ["ceil", "floor", "round"])
 def test_dt_roundlike_tz_options_not_supported(method):
+    # [FUNCTION DOC]
+    # Parametrized over ceil, floor, round. Passing the ambiguous or nonexistent options raises not-implemented with messages saying each option is not supported.
     ser = pd.Series(
         [datetime(year=2023, month=1, day=2, hour=3), None],
         dtype=ArrowDtype(pa.timestamp("ns")),
@@ -2893,6 +3276,8 @@ def test_dt_roundlike_tz_options_not_supported(method):
 
 @pytest.mark.parametrize("method", ["ceil", "floor", "round"])
 def test_dt_roundlike_unsupported_freq(method):
+    # [FUNCTION DOC]
+    # Parametrized over ceil, floor, round. An unsupported business-day frequency raises a value error saying that frequency is not supported; a frequency of none raises a value error saying a valid frequency must be specified.
     ser = pd.Series(
         [datetime(year=2023, month=1, day=2, hour=3), None],
         dtype=ArrowDtype(pa.timestamp("ns")),
@@ -2907,6 +3292,8 @@ def test_dt_roundlike_unsupported_freq(method):
 @pytest.mark.parametrize("freq", ["D", "h", "min", "s", "ms", "us", "ns"])
 @pytest.mark.parametrize("method", ["ceil", "floor", "round"])
 def test_dt_ceil_year_floor(freq, method):
+    # [FUNCTION DOC]
+    # Parametrized over frequency (day, hour, minute, second, ms, us, ns) and ceil/floor/round. Rounding a nanosecond arrow timestamp Series at the frequency equals the numpy-backed result cast to the arrow dtype.
     ser = pd.Series(
         [datetime(year=2023, month=1, day=1), None],
     )
@@ -2917,6 +3304,8 @@ def test_dt_ceil_year_floor(freq, method):
 
 
 def test_dt_to_pydatetime():
+    # [FUNCTION DOC]
+    # GH 51859. Converting an arrow timestamp Series to python datetimes gives an object Series of datetime objects, equal to the numpy-backed result.
     # GH 51859
     data = [datetime(2022, 1, 1), datetime(2023, 1, 1)]
     ser = pd.Series(data, dtype=ArrowDtype(pa.timestamp("ns")))
@@ -2931,6 +3320,8 @@ def test_dt_to_pydatetime():
 
 @pytest.mark.parametrize("date_type", [32, 64])
 def test_dt_to_pydatetime_date_error(date_type):
+    # [FUNCTION DOC]
+    # GH 52812. Parametrized over 32-bit and 64-bit date types. Converting dates to python datetimes raises a value error saying the conversion cannot be called with the date type.
     # GH 52812
     ser = pd.Series(
         [date(2022, 12, 31)],
@@ -2941,6 +3332,8 @@ def test_dt_to_pydatetime_date_error(date_type):
 
 
 def test_dt_tz_localize_unsupported_tz_options():
+    # [FUNCTION DOC]
+    # Localizing time zone with ambiguous or nonexistent set to NaT raises not-implemented with messages that those options are not supported.
     ser = pd.Series(
         [datetime(year=2023, month=1, day=2, hour=3), None],
         dtype=ArrowDtype(pa.timestamp("ns")),
@@ -2953,6 +3346,8 @@ def test_dt_tz_localize_unsupported_tz_options():
 
 
 def test_dt_tz_localize_none(request):
+    # [FUNCTION DOC]
+    # After applying the time zone database expected-failure helper: removing the time zone from a US/Pacific nanosecond arrow Series gives the naive timestamps (equal to the scalar's naive version) with null kept.
     _require_timezone_database(request)
 
     ser = pd.Series(
@@ -2969,6 +3364,8 @@ def test_dt_tz_localize_none(request):
 
 @pytest.mark.parametrize("unit", ["us", "ns"])
 def test_dt_tz_localize(unit, request):
+    # [FUNCTION DOC]
+    # Parametrized over timestamp units us and ns. After the time zone helper, localizing a naive Series to US/Pacific equals assuming the time zone with the arrow compute function on the same array.
     _require_timezone_database(request)
 
     ser = pd.Series(
@@ -2992,6 +3389,8 @@ def test_dt_tz_localize(unit, request):
     ],
 )
 def test_dt_tz_localize_nonexistent(nonexistent, exp_date, request):
+    # [FUNCTION DOC]
+    # Parametrized over shift_forward and shift_backward with expected timestamps. After the time zone helper, localizing a nonexistent daylight-saving wall time (2023-03-12 02:30) to US/Pacific shifts it forward to 03:00 or backward to 01:59:59.999999999, null kept.
     _require_timezone_database(request)
 
     ser = pd.Series(
@@ -3006,6 +3405,8 @@ def test_dt_tz_localize_nonexistent(nonexistent, exp_date, request):
 
 
 def test_dt_tz_convert_not_tz_raises():
+    # [FUNCTION DOC]
+    # Converting a naive timestamp Series to a time zone raises a type error saying it cannot convert tz-naive timestamps.
     ser = pd.Series(
         [datetime(year=2023, month=1, day=2, hour=3), None],
         dtype=ArrowDtype(pa.timestamp("ns")),
@@ -3015,6 +3416,8 @@ def test_dt_tz_convert_not_tz_raises():
 
 
 def test_dt_tz_convert_none():
+    # [FUNCTION DOC]
+    # Converting a US/Pacific Series to no time zone gives naive timestamps in UTC, equal to the scalar's conversion, null kept.
     ser = pd.Series(
         [datetime(year=2023, month=1, day=2, hour=3), None],
         dtype=ArrowDtype(pa.timestamp("ns", "US/Pacific")),
@@ -3029,6 +3432,8 @@ def test_dt_tz_convert_none():
 
 @pytest.mark.parametrize("unit", ["us", "ns"])
 def test_dt_tz_convert(unit):
+    # [FUNCTION DOC]
+    # Parametrized over units us and ns. Converting a US/Pacific Series to US/Eastern gives the scalar's conversion in that time zone, null kept.
     ser = pd.Series(
         [datetime(year=2023, month=1, day=2, hour=3), None],
         dtype=ArrowDtype(pa.timestamp(unit, "US/Pacific")),
@@ -3043,6 +3448,8 @@ def test_dt_tz_convert(unit):
 
 @pytest.mark.parametrize("dtype", ["timestamp[ms][pyarrow]", "duration[ms][pyarrow]"])
 def test_as_unit(dtype):
+    # [FUNCTION DOC]
+    # GH 52284. Parametrized over millisecond timestamp and duration. Changing the unit to nanoseconds equals casting to the nanosecond dtype.
     # GH 52284
     ser = pd.Series([1000, None], dtype=dtype)
     result = ser.dt.as_unit("ns")
@@ -3068,6 +3475,8 @@ def test_as_unit(dtype):
     ],
 )
 def test_as_unit_duration_truncation(from_unit, to_unit):
+    # [FUNCTION DOC]
+    # Parametrized over twelve (from-unit, to-unit) pairs. Changing the unit of an arrow duration Series equals the numpy-backed result (truncation toward the coarser unit).
     # Test that as_unit truncates correctly (matches NumPy behavior)
     # Value with sub-unit precision to test truncation
     ser_numpy = pd.Series(
@@ -3092,6 +3501,8 @@ def test_as_unit_duration_truncation(from_unit, to_unit):
     ],
 )
 def test_as_unit_timestamp(from_unit, to_unit):
+    # [FUNCTION DOC]
+    # Parametrized over six unit pairs. Changing the unit of an arrow timestamp Series gives values equal to the numpy-backed result (comparing non-null values), and null counts are preserved.
     # Test timestamp as_unit matches NumPy behavior
     # Create Arrow series directly to preserve nulls correctly
     ser_arrow = pd.Series(
@@ -3113,6 +3524,8 @@ def test_as_unit_timestamp(from_unit, to_unit):
 
 @pytest.mark.parametrize("to_unit", ["s", "ms", "us", "ns"])
 def test_as_unit_timestamp_with_timezone(to_unit):
+    # [FUNCTION DOC]
+    # Parametrized over target units s, ms, us, ns. Changing the unit of a time-zone-aware (US/Eastern) arrow timestamp keeps the time zone and equals the numpy-backed result cast to the arrow dtype; the dtype string reflects the new unit and zone.
     # Test that timezone is preserved
     ser_numpy = pd.Series(
         pd.to_datetime(["2024-01-15 12:30:45.123456789"])
@@ -3130,6 +3543,8 @@ def test_as_unit_timestamp_with_timezone(to_unit):
 
 
 def test_as_unit_date_raises():
+    # [FUNCTION DOC]
+    # Changing the unit of date-typed data raises not-implemented with the message that as_unit is not implemented.
     # as_unit should raise for date types
     ser = pd.Series([1, 2], dtype=ArrowDtype(pa.date32()))
     with pytest.raises(NotImplementedError, match="as_unit not implemented"):
@@ -3146,6 +3561,8 @@ def test_as_unit_date_raises():
     ],
 )
 def test_dt_timedelta_properties(prop, expected):
+    # [FUNCTION DOC]
+    # GH 52284. Parametrized over (days, seconds, microseconds, nanoseconds) of a duration of one day, two seconds, three microseconds, four nanoseconds: the property returns the expected component as an arrow 32-bit integer Series, null kept.
     # GH 52284
     ser = pd.Series(
         [
@@ -3167,6 +3584,8 @@ def test_dt_timedelta_properties(prop, expected):
 
 
 def test_dt_timedelta_total_seconds():
+    # [FUNCTION DOC]
+    # GH 52284. Total seconds of the same duration is 86402.000003 as an arrow 64-bit float, null kept.
     # GH 52284
     ser = pd.Series(
         [
@@ -3188,6 +3607,8 @@ def test_dt_timedelta_total_seconds():
 
 
 def test_dt_to_pytimedelta():
+    # [FUNCTION DOC]
+    # GH 52284. Converting arrow durations to python timedeltas gives an object array of timedelta objects and emits a deprecation warning (version four warning class) for the arrow accessor; the numpy-backed accessor emits its own deprecation warning and returns the same.
     # GH 52284
     data = [timedelta(1, 2, 3), timedelta(1, 2, 4)]
     ser = pd.Series(data, dtype=ArrowDtype(pa.duration("ns")))
@@ -3206,6 +3627,8 @@ def test_dt_to_pytimedelta():
 
 
 def test_dt_components():
+    # [FUNCTION DOC]
+    # GH 52284. The components of the one-day-two-seconds duration give a frame with columns days, hours, minutes, seconds, milliseconds, microseconds, nanoseconds of arrow 32-bit integers (1, 0, 0, 2, 0, 3, 4) with a missing row.
     # GH 52284
     ser = pd.Series(
         [
@@ -3237,6 +3660,8 @@ def test_dt_components():
 
 
 def test_dt_components_large_values():
+    # [FUNCTION DOC]
+    # Components of a 365-day, 23:59:59.999 duration: days 365, hours 23, minutes 59, seconds 59, milliseconds 999, microseconds and nanoseconds zero; missing row.
     ser = pd.Series(
         [
             pd.Timedelta("365 days 23:59:59.999000"),
@@ -3266,6 +3691,8 @@ def test_dt_components_large_values():
 
 @pytest.mark.parametrize("skipna", [True, False])
 def test_boolean_reduce_series_all_null(all_boolean_reductions, skipna):
+    # [FUNCTION DOC]
+    # GH51624. Parametrized over skipna and the boolean reductions. For an all-null float arrow Series: with skipna the result is true for all and false for any; without skipna the result is NA (identity checked).
     # GH51624
     ser = pd.Series([None], dtype="float64[pyarrow]")
     result = getattr(ser, all_boolean_reductions)(skipna=skipna)
@@ -3277,6 +3704,8 @@ def test_boolean_reduce_series_all_null(all_boolean_reductions, skipna):
 
 
 def test_from_sequence_of_strings_boolean():
+    # [FUNCTION DOC]
+    # Building a boolean arrow array from strings: true spellings (true, TRUE, True, 1, 1.0) give true, false spellings give false, a null stays null; an unparsable string raises an arrow invalid error saying it failed to parse.
     true_strings = ["true", "TRUE", "True", "1", "1.0"]
     false_strings = ["false", "FALSE", "False", "0", "0.0"]
     nulls = [None]
@@ -3296,6 +3725,8 @@ def test_from_sequence_of_strings_boolean():
 
 
 def test_concat_empty_arrow_backed_series(dtype):
+    # [FUNCTION DOC]
+    # GH#51734. For every arrow dtype, concatenating an empty Series selected by an empty boolean mask returns an empty Series equal to the original.
     # GH#51734
     ser = pd.Series([], dtype=dtype)
     expected = ser.copy()
@@ -3305,6 +3736,8 @@ def test_concat_empty_arrow_backed_series(dtype):
 
 @pytest.mark.parametrize("dtype", ["string", "string[pyarrow]"])
 def test_series_from_string_array(dtype):
+    # [FUNCTION DOC]
+    # Parametrized over string and pyarrow string dtype names. A Series built from an arrow string array with that dtype equals one built from the arrow extension array with that dtype.
     arr = pa.array("the quick brown fox".split())
     ser = pd.Series(arr, dtype=dtype)
     expected = pd.Series(ArrowExtensionArray(arr), dtype=dtype)
@@ -3313,13 +3746,19 @@ def test_series_from_string_array(dtype):
 
 # _data was renamed to _pa_data
 class OldArrowExtensionArray(ArrowExtensionArray):
+    # [CLASS DOC]
+    # HELPER: test-only subclass of the arrow extension array that mimics the old pickle format, in which the underlying array was stored under the name data (it was renamed). Used for the pickle compatibility test.
     def __getstate__(self):
+        # [FUNCTION DOC]
+        # HELPER: returns the parent pickle state with the private arrow array entry renamed to the old name data.
         state = super().__getstate__()
         state["_data"] = state.pop("_pa_array")
         return state
 
 
 def test_pickle_old_arrowextensionarray():
+    # [FUNCTION DOC]
+    # Verifies unpickling an old-format array (state with the old data name) loads correctly: the result equals the original, its arrow array is a chunked array of the data, and no old data attribute remains.
     data = pa.array([1])
     expected = OldArrowExtensionArray(data)
     result = pickle.loads(pickle.dumps(expected))
@@ -3329,6 +3768,8 @@ def test_pickle_old_arrowextensionarray():
 
 
 def test_setitem_boolean_replace_with_mask_segfault():
+    # [FUNCTION DOC]
+    # GH#52059. Assigning false through an all-false mask of 145,000 elements to a chunked boolean array (large enough to have triggered a segmentation fault) leaves the array unchanged.
     # GH#52059
     N = 145_000
     arr = ArrowExtensionArray(pa.chunked_array([np.ones((N,), dtype=np.bool_)]))
@@ -3338,6 +3779,8 @@ def test_setitem_boolean_replace_with_mask_segfault():
 
 
 def test_setitem_na_chunked_string_if_else():
+    # [FUNCTION DOC]
+    # GH#64320. Frame concatenated from two chunks of string columns; five repeated assignments of NA to the first row by label do not corrupt: row zero is missing, the other rows of that column and the whole other column remain x.
     # GH#64320
     df = pd.concat(
         [
@@ -3361,6 +3804,8 @@ def test_setitem_na_chunked_string_if_else():
     ],
 )
 def test_conversion_large_dtypes_from_numpy_array(data, arrow_dtype):
+    # [FUNCTION DOC]
+    # Parametrized over (values, arrow type): large binary and large string. Building an arrow array from a numpy array of the values with the large dtype equals building from the python list.
     dtype = ArrowDtype(arrow_dtype)
     result = pd.array(np.array(data), dtype=dtype)
     expected = pd.array(data, dtype=dtype)
@@ -3368,6 +3813,8 @@ def test_conversion_large_dtypes_from_numpy_array(data, arrow_dtype):
 
 
 def test_concat_null_array():
+    # [FUNCTION DOC]
+    # Concatenating a frame with a null-typed column and a frame with a 64-bit arrow integer column gives an integer arrow column with nulls first.
     df = pd.DataFrame({"a": [None, None]}, dtype=ArrowDtype(pa.null()))
     df2 = pd.DataFrame({"a": [0, 1]}, dtype="int64[pyarrow]")
 
@@ -3378,6 +3825,8 @@ def test_concat_null_array():
 
 @pytest.mark.parametrize("pa_type", tm.ALL_INT_PYARROW_DTYPES + tm.FLOAT_PYARROW_DTYPES)
 def test_describe_numeric_data(pa_type):
+    # [FUNCTION DOC]
+    # GH 52470. Parametrized over every integer and floating arrow type. Describing the Series 1, 2, 3 gives count, mean, std, min, quartiles and max as arrow 64-bit float.
     # GH 52470
     data = pd.Series([1, 2, 3], dtype=ArrowDtype(pa_type))
     result = data.describe()
@@ -3391,6 +3840,8 @@ def test_describe_numeric_data(pa_type):
 
 @pytest.mark.parametrize("pa_type", tm.TIMEDELTA_PYARROW_DTYPES)
 def test_describe_timedelta_data(pa_type):
+    # [FUNCTION DOC]
+    # GH53001. Parametrized over arrow duration types. Describing the Series 1..9 gives object-dtype results: count nine and timedelta values for mean, std, min and quartiles and max in the type's unit.
     # GH53001
     data = pd.Series(range(1, 10), dtype=ArrowDtype(pa_type))
     result = data.describe()
@@ -3404,6 +3855,8 @@ def test_describe_timedelta_data(pa_type):
 
 @pytest.mark.parametrize("pa_type", tm.DATETIME_PYARROW_DTYPES)
 def test_describe_datetime_data(pa_type):
+    # [FUNCTION DOC]
+    # GH53001. Parametrized over arrow timestamp types. Describing the Series 1..9 gives object results: count nine and timestamps (with the type's time zone and unit) for mean, min, quartiles and max (no std).
     # GH53001
     data = pd.Series(range(1, 10), dtype=ArrowDtype(pa_type))
     result = data.describe()
@@ -3423,6 +3876,8 @@ def test_describe_datetime_data(pa_type):
     "pa_type", tm.DATETIME_PYARROW_DTYPES + tm.TIMEDELTA_PYARROW_DTYPES
 )
 def test_quantile_temporal(pa_type):
+    # [FUNCTION DOC]
+    # GH52678. Parametrized over datetime and duration arrow types. The 0.1 quantile of the Series 1, 2, 3 equals the first element.
     # GH52678
     data = [1, 2, 3]
     ser = pd.Series(data, dtype=ArrowDtype(pa_type))
@@ -3432,6 +3887,8 @@ def test_quantile_temporal(pa_type):
 
 
 def test_date32_repr():
+    # [FUNCTION DOC]
+    # GH48238. The Series representation of a 32-bit date arrow value is the date followed by the dtype line date32[day][pyarrow].
     # GH48238
     arrow_dt = pa.array([date.fromisoformat("2020-01-01")], type=pa.date32())
     ser = pd.Series(arrow_dt, dtype=ArrowDtype(arrow_dt.type))
@@ -3439,6 +3896,8 @@ def test_date32_repr():
 
 
 def test_duration_overflow_from_ndarray_containing_nat():
+    # [FUNCTION DOC]
+    # GH52843. Adding a nanosecond-timestamp arrow Series built from numpy datetimes containing NaT and a duration Series with a missing value gives timestamps 2 and null (no overflow).
     # GH52843
     data_ts = pd.to_datetime([1, None])
     data_td = pd.to_timedelta([1, None])
@@ -3450,6 +3909,8 @@ def test_duration_overflow_from_ndarray_containing_nat():
 
 
 def test_infer_dtype_pyarrow_dtype(data, request):
+    # [FUNCTION DOC]
+    # For every arrow dtype, inferring the data's type does not return unknown-array, and equals the inferred type of the python list of its elements (skipping missing values); data with missing values that infer as datetime64 or timedelta64 is expected to fail because NA is not ignored in the list check.
     res = lib.infer_dtype(data)
     assert res != "unknown-array"
 
@@ -3467,6 +3928,8 @@ def test_infer_dtype_pyarrow_dtype(data, request):
     "pa_type", tm.DATETIME_PYARROW_DTYPES + tm.TIMEDELTA_PYARROW_DTYPES
 )
 def test_from_sequence_temporal(pa_type):
+    # [FUNCTION DOC]
+    # GH 53171. Parametrized over datetime and duration arrow types. Building from one timestamp or timedelta scalar in the same unit gives the same array as built from the integer value.
     # GH 53171
     val = 3
     unit = pa_type.unit
@@ -3484,6 +3947,8 @@ def test_from_sequence_temporal(pa_type):
     "pa_type", tm.DATETIME_PYARROW_DTYPES + tm.TIMEDELTA_PYARROW_DTYPES
 )
 def test_setitem_temporal(pa_type):
+    # [FUNCTION DOC]
+    # GH 53171. Parametrized over temporal arrow types. Assigning a scalar timestamp or timedelta to a full slice of an array [1, 2, 3] gives [1, 1, 1].
     # GH 53171
     unit = pa_type.unit
     if pa.types.is_duration(pa_type):
@@ -3503,6 +3968,8 @@ def test_setitem_temporal(pa_type):
     "pa_type", tm.DATETIME_PYARROW_DTYPES + tm.TIMEDELTA_PYARROW_DTYPES
 )
 def test_arithmetic_temporal(pa_type, request):
+    # [FUNCTION DOC]
+    # GH 53171. Subtracting a one-unit timedelta from an array [1, 2, 3] of timestamps or durations gives [0, 1, 2] in the same arrow type. The request fixture is unused.
     # GH 53171
     arr = ArrowExtensionArray(pa.array([1, 2, 3], type=pa_type))
     unit = pa_type.unit
@@ -3515,6 +3982,8 @@ def test_arithmetic_temporal(pa_type, request):
     "pa_type", tm.DATETIME_PYARROW_DTYPES + tm.TIMEDELTA_PYARROW_DTYPES
 )
 def test_comparison_temporal(pa_type):
+    # [FUNCTION DOC]
+    # GH 53171. Comparing greater-than a scalar of value one with an array [1, 2, 3] gives booleans [false, true, true].
     # GH 53171
     unit = pa_type.unit
     if pa.types.is_duration(pa_type):
@@ -3533,6 +4002,8 @@ def test_comparison_temporal(pa_type):
     "pa_type", tm.DATETIME_PYARROW_DTYPES + tm.TIMEDELTA_PYARROW_DTYPES
 )
 def test_getitem_temporal(pa_type):
+    # [FUNCTION DOC]
+    # GH 53326. Item lookup returns a Timedelta (durations) or Timestamp (timestamps) scalar with the same unit and time zone as the type and the expected value.
     # GH 53326
     arr = ArrowExtensionArray(pa.array([1, 2, 3], type=pa_type))
     result = arr[1]
@@ -3552,6 +4023,8 @@ def test_getitem_temporal(pa_type):
     "pa_type", tm.DATETIME_PYARROW_DTYPES + tm.TIMEDELTA_PYARROW_DTYPES
 )
 def test_iter_temporal(pa_type):
+    # [FUNCTION DOC]
+    # GH 53326. Iterating over an array [1, null] yields the scalar Timedelta or Timestamp (matching unit) followed by NA.
     # GH 53326
     arr = ArrowExtensionArray(pa.array([1, None], type=pa_type))
     result = list(arr)
@@ -3572,6 +4045,8 @@ def test_iter_temporal(pa_type):
 
 
 def test_groupby_series_size_returns_pa_int(data):
+    # [FUNCTION DOC]
+    # GH 54132. Grouping the first three data elements by index level and taking sizes gives arrow 64-bit integers [2, 1] indexed by a and b.
     # GH 54132
     ser = pd.Series(data[:3], index=["a", "a", "b"])
     result = ser.groupby(level=0).size()
@@ -3584,6 +4059,8 @@ def test_groupby_series_size_returns_pa_int(data):
 )
 @pytest.mark.parametrize("dtype", [None, object])
 def test_to_numpy_temporal(pa_type, dtype):
+    # [FUNCTION DOC]
+    # GH 53326 and GH 55997. Parametrized over datetime and duration arrow types and the numpy dtype requested (default or object). Converting [1, null] to numpy: with object dtype (NA) or tz-aware timestamps (NaT) gives an object array of the scalars with matching unit; otherwise a numpy datetime or timedelta array with NaT in the type's unit.
     # GH 53326
     # GH 55997: Return datetime64/timedelta64 types with NaT if possible
     arr = ArrowExtensionArray(pa.array([1, None], type=pa_type))
@@ -3609,6 +4086,8 @@ def test_to_numpy_temporal(pa_type, dtype):
 
 
 def test_groupby_count_return_arrow_dtype(data_missing):
+    # [FUNCTION DOC]
+    # Counting non-missing values per group of a frame with two arrow columns [missing, valid] grouped by a constant key gives an arrow 64-bit integer frame.
     df = pd.DataFrame({"A": [1, 1], "B": data_missing, "C": data_missing})
     result = df.groupby("A").count()
     expected = pd.DataFrame(
@@ -3621,6 +4100,8 @@ def test_groupby_count_return_arrow_dtype(data_missing):
 
 
 def test_fixed_size_list():
+    # [FUNCTION DOC]
+    # GH#55000. A Series of fixed-size list arrow type has the python list class as its dtype scalar type.
     # GH#55000
     ser = pd.Series(
         [[1, 2], [3, 4]], dtype=ArrowDtype(pa.list_(pa.int64(), list_size=2))
@@ -3630,6 +4111,8 @@ def test_fixed_size_list():
 
 
 def test_arrowextensiondtype_dataframe_repr():
+    # [FUNCTION DOC]
+    # GH 54062. The frame representation of an arrow-extension dtype wrapping a period type shows the underlying ordinal integers. A TODO notes the representation may not be as expected.
     # GH 54062
     df = pd.DataFrame(
         pd.period_range("2012", periods=3),
@@ -3644,6 +4127,8 @@ def test_arrowextensiondtype_dataframe_repr():
 
 
 def test_pow_missing_operand():
+    # [FUNCTION DOC]
+    # GH 55512. The power method with a missing operand and a fill value of three on [2, null] gives [8, null] in arrow 64-bit integer.
     # GH 55512
     k = pd.Series([2, None], dtype="int64[pyarrow]")
     result = k.pow(None, fill_value=3)
@@ -3652,6 +4137,8 @@ def test_pow_missing_operand():
 
 
 def test_decimal_parse_raises():
+    # [FUNCTION DOC]
+    # GH 56984. Casting the string 1.2345 to a decimal with precision 1 and scale 0 raises an arrow invalid error saying rescaling would lose data.
     # GH 56984
     ser = pd.Series(["1.2345"], dtype=ArrowDtype(pa.string()))
     with pytest.raises(
@@ -3661,6 +4148,8 @@ def test_decimal_parse_raises():
 
 
 def test_decimal_parse_succeeds():
+    # [FUNCTION DOC]
+    # GH 56984. Casting the string 1.2345 to decimal with precision 5 and scale 4 gives the decimal value.
     # GH 56984
     ser = pd.Series(["1.2345"], dtype=ArrowDtype(pa.string()))
     dtype = ArrowDtype(pa.decimal128(5, 4))
@@ -3671,6 +4160,8 @@ def test_decimal_parse_succeeds():
 
 @pytest.mark.parametrize("pa_type", tm.TIMEDELTA_PYARROW_DTYPES)
 def test_duration_fillna_numpy(pa_type):
+    # [FUNCTION DOC]
+    # GH 54707. Parametrized over arrow duration types. Filling nulls in an arrow duration Series with values from a numpy timedelta Series of the same unit gives [1, 2].
     # GH 54707
     ser1 = pd.Series([None, 2], dtype=ArrowDtype(pa_type))
     ser2 = pd.Series(np.array([1, 3], dtype=f"m8[{pa_type.unit}]"))
@@ -3680,6 +4171,8 @@ def test_duration_fillna_numpy(pa_type):
 
 
 def test_comparison_not_propagating_arrow_error():
+    # [FUNCTION DOC]
+    # GH#54944. Comparing an unsigned arrow value that does not fit signed 64-bit (2 to the 63rd) with a null signed Series raises an arrow invalid error (message about the integer value) instead of being swallowed.
     # GH#54944
     a = pd.Series([1 << 63], dtype="uint64[pyarrow]")
     b = pd.Series([None], dtype="int64[pyarrow]")
@@ -3688,6 +4181,8 @@ def test_comparison_not_propagating_arrow_error():
 
 
 def test_factorize_chunked_dictionary():
+    # [FUNCTION DOC]
+    # GH 54844. Factorizing a Series made of two chunks each dictionary-encoded gives integer codes [0, 1] and uniques equal to the combined dictionary array as an index.
     # GH 54844
     pa_array = pa.chunked_array(
         [pa.array(["a"]).dictionary_encode(), pa.array(["b"]).dictionary_encode()]
@@ -3701,6 +4196,8 @@ def test_factorize_chunked_dictionary():
 
 
 def test_factorize_dictionary_with_na():
+    # [FUNCTION DOC]
+    # GH#60567. Factorizing a dictionary-typed array of [a1, NA] without the NA sentinel gives codes [0, 1] and uniques [a1, null] as arrow strings.
     # GH#60567
     arr = pd.array(
         ["a1", pd.NA], dtype=ArrowDtype(pa.dictionary(pa.int32(), pa.utf8()))
@@ -3713,6 +4210,8 @@ def test_factorize_dictionary_with_na():
 
 
 def test_dictionary_astype_categorical():
+    # [FUNCTION DOC]
+    # GH#56672. Casting a Series from chunked dictionary-encoded strings to category gives a categorical with categories in order of appearance, a, x, c, d (as an arrow-string index).
     # GH#56672
     arrs = [
         pa.array(np.array(["a", "x", "c", "a"])).dictionary_encode(),
@@ -3729,6 +4228,8 @@ def test_dictionary_astype_categorical():
 
 
 def test_arrow_floordiv():
+    # [FUNCTION DOC]
+    # GH 55561. Floor division of -7 by 4 for arrow 64-bit integers gives -2 (rounding toward negative infinity).
     # GH 55561
     a = pd.Series([-7], dtype="int64[pyarrow]")
     b = pd.Series([4], dtype="int64[pyarrow]")
@@ -3738,6 +4239,8 @@ def test_arrow_floordiv():
 
 
 def test_arrow_floordiv_large_values():
+    # [FUNCTION DOC]
+    # GH 56645. Floor division of a large nanosecond integer by one million gives the exact integer result.
     # GH 56645
     a = pd.Series([1425801600000000000], dtype="int64[pyarrow]")
     expected = pd.Series([1425801600000], dtype="int64[pyarrow]")
@@ -3747,6 +4250,8 @@ def test_arrow_floordiv_large_values():
 
 @pytest.mark.parametrize("dtype", ["int64[pyarrow]", "uint64[pyarrow]"])
 def test_arrow_floordiv_large_integral_result(dtype):
+    # [FUNCTION DOC]
+    # GH 56676. Parametrized over int64 and uint64. Floor division of a large integral value by one returns the same value without loss of precision.
     # GH 56676
     a = pd.Series([18014398509481983], dtype=dtype)
     result = a // 1
@@ -3755,6 +4260,8 @@ def test_arrow_floordiv_large_integral_result(dtype):
 
 @pytest.mark.parametrize("pa_type", tm.SIGNED_INT_PYARROW_DTYPES)
 def test_arrow_floordiv_larger_divisor(pa_type):
+    # [FUNCTION DOC]
+    # GH 56676. Parametrized over signed integer arrow types. Floor division of -23 by 24 yields -1.
     # GH 56676
     dtype = ArrowDtype(pa_type)
     a = pd.Series([-23], dtype=dtype)
@@ -3765,6 +4272,8 @@ def test_arrow_floordiv_larger_divisor(pa_type):
 
 @pytest.mark.parametrize("pa_type", tm.SIGNED_INT_PYARROW_DTYPES)
 def test_arrow_floordiv_integral_invalid(pa_type):
+    # [FUNCTION DOC]
+    # GH 56676. Parametrized over signed integer types. Floor dividing the minimum value by negative one raises an arrow invalid error mentioning overflow or range; dividing by zero raises one mentioning divide by zero.
     # GH 56676
     min_value = np.iinfo(pa_type.to_pandas_dtype()).min
     a = pd.Series([min_value], dtype=ArrowDtype(pa_type))
@@ -3776,6 +4285,10 @@ def test_arrow_floordiv_integral_invalid(pa_type):
 
 @pytest.mark.parametrize("dtype", tm.FLOAT_PYARROW_DTYPES_STR_REPR)
 def test_arrow_floordiv_floating_0_divisor(dtype):
+    # [FUNCTION DOC]
+    # GH 56676. Parametrized over floating arrow dtype strings. Floor dividing 2 by zero yields positive infinity of the same dtype.
+    # [FUNCTION DOC]
+    # GH 56676. Parametrized over floating dtype strings (continues).
     # GH 56676
     a = pd.Series([2], dtype=dtype)
     result = a // 0
@@ -3785,6 +4298,8 @@ def test_arrow_floordiv_floating_0_divisor(dtype):
 
 @pytest.mark.parametrize("dtype", ["float64", "datetime64[ns]", "timedelta64[ns]"])
 def test_astype_int_with_null_to_numpy_dtype(dtype):
+    # [FUNCTION DOC]
+    # GH 57093. Parametrized over float64, datetime64 and timedelta64 numpy dtypes. Casting an arrow integer Series with a null to that numpy dtype gives the matching values with NaN/NaT for the null.
     # GH 57093
     ser = pd.Series([1, None], dtype="int64[pyarrow]")
     result = ser.astype(dtype)
@@ -3794,6 +4309,8 @@ def test_astype_int_with_null_to_numpy_dtype(dtype):
 
 @pytest.mark.parametrize("pa_type", tm.ALL_INT_PYARROW_DTYPES)
 def test_arrow_integral_floordiv_large_values(pa_type):
+    # [FUNCTION DOC]
+    # GH 56676. Parametrized over every integer arrow type. Floor dividing the type's maximum value by one returns the maximum unchanged.
     # GH 56676
     max_value = np.iinfo(pa_type.to_pandas_dtype()).max
     dtype = ArrowDtype(pa_type)
@@ -3805,6 +4322,8 @@ def test_arrow_integral_floordiv_large_values(pa_type):
 
 @pytest.mark.parametrize("dtype", ["int64[pyarrow]", "uint64[pyarrow]"])
 def test_arrow_true_division_large_divisor(dtype):
+    # [FUNCTION DOC]
+    # GH 56706. Parametrized over int64 and uint64. True division of zero by a very large integer gives zero as arrow 64-bit float.
     # GH 56706
     a = pd.Series([0], dtype=dtype)
     b = pd.Series([18014398509481983], dtype=dtype)
@@ -3815,6 +4334,8 @@ def test_arrow_true_division_large_divisor(dtype):
 
 @pytest.mark.parametrize("dtype", ["int64[pyarrow]", "uint64[pyarrow]"])
 def test_arrow_floor_division_large_divisor(dtype):
+    # [FUNCTION DOC]
+    # GH 56706. Parametrized over int64 and uint64. Floor division of zero by a very large integer gives zero in the same dtype.
     # GH 56706
     a = pd.Series([0], dtype=dtype)
     b = pd.Series([18014398509481983], dtype=dtype)
@@ -3824,6 +4345,8 @@ def test_arrow_floor_division_large_divisor(dtype):
 
 
 def test_string_to_datetime_parsing_cast():
+    # [FUNCTION DOC]
+    # GH 56266. Building a second-resolution arrow timestamp Series from date strings equals parsing the strings with the datetime parser, setting unit seconds and converting to arrow.
     # GH 56266
     string_dates = ["2020-01-01 04:30:00", "2020-01-02 00:00:00", "2020-01-03 00:00:00"]
     result = pd.Series(string_dates, dtype="timestamp[s][pyarrow]")
@@ -3834,6 +4357,8 @@ def test_string_to_datetime_parsing_cast():
 
 
 def test_interpolate_not_numeric(data):
+    # [FUNCTION DOC]
+    # For non-numeric arrow types, interpolating a Series raises a type error with a message that it cannot interpolate with that dtype; numeric types are not tested.
     if not data.dtype._is_numeric:
         ser = pd.Series(data)
         msg = re.escape(f"Cannot interpolate with {ser.dtype} dtype")
@@ -3843,6 +4368,8 @@ def test_interpolate_not_numeric(data):
 
 @pytest.mark.parametrize("dtype", ["int64[pyarrow]", "float64[pyarrow]"])
 def test_interpolate_linear(dtype):
+    # [FUNCTION DOC]
+    # GH#65345. Parametrized over int64 and float64 arrow types. Linear interpolation of [null, 1, 2, null, 4, null] gives [null, 1.0, 2.0, 3.0, 4.0, 4.0] as arrow 64-bit float (results match the masked dtypes: upcast to float, fill the trailing null forward).
     # GH#65345 results should match the masked (e.g. Int64) dtypes:
     # upcast to float, and fill the trailing NA going forward
     ser = pd.Series([None, 1, 2, None, 4, None], dtype=dtype)
@@ -3852,6 +4379,8 @@ def test_interpolate_linear(dtype):
 
 
 def test_interpolate_linear_consecutive_na():
+    # [FUNCTION DOC]
+    # GH#65345. Interpolating consecutive interior nulls in an integer arrow Series forward gives a continuous float sequence (they were previously left unfilled).
     # GH#65345 consecutive interior NAs were left unfilled
     ser = pd.Series([1, 2, 3, None, None, 6, 7], dtype="int64[pyarrow]")
     result = ser.interpolate(method="linear", limit_direction="forward")
@@ -3860,6 +4389,8 @@ def test_interpolate_linear_consecutive_na():
 
 
 def test_interpolate_linear_int_fractional():
+    # [FUNCTION DOC]
+    # GH#65345. Linear interpolation of an integer arrow Series [1, null, 2] gives 1.5 (not truncated) as float.
     # GH#65345 result should not truncate the interpolated value (1 instead of 1.5)
     ser = pd.Series([1, None, 2], dtype="int64[pyarrow]")
     result = ser.interpolate(method="linear")
@@ -3868,6 +4399,8 @@ def test_interpolate_linear_int_fractional():
 
 
 def test_string_to_time_parsing_cast():
+    # [FUNCTION DOC]
+    # GH 56463. A Series of a time string with microsecond precision built with the 64-bit time arrow dtype equals the arrow time array of the same value.
     # GH 56463
     string_times = ["11:41:43.076160"]
     result = pd.Series(string_times, dtype="time64[us][pyarrow]")
@@ -3878,6 +4411,8 @@ def test_string_to_time_parsing_cast():
 
 
 def test_to_numpy_float():
+    # [FUNCTION DOC]
+    # GH#56267. Casting a float arrow Series with a null to numpy 64-bit float gives NaN for the null.
     # GH#56267
     ser = pd.Series([32, 40, None], dtype="float[pyarrow]")
     result = ser.astype("float64")
@@ -3886,6 +4421,8 @@ def test_to_numpy_float():
 
 
 def test_to_numpy_timestamp_to_int():
+    # [FUNCTION DOC]
+    # GH 55997. Converting a nanosecond arrow timestamp to numpy 64-bit integer gives the number of nanoseconds since the epoch.
     # GH 55997
     ser = pd.Series(["2020-01-01 04:30:00"], dtype="timestamp[ns][pyarrow]")
     result = ser.to_numpy(dtype=np.int64)
@@ -3895,6 +4432,8 @@ def test_to_numpy_timestamp_to_int():
 
 @pytest.mark.parametrize("arrow_type", [pa.large_string(), pa.string()])
 def test_cast_dictionary_different_value_dtype(arrow_type):
+    # [FUNCTION DOC]
+    # Parametrized over large string and string value types. Casting a pyarrow string frame column to a dictionary type whose values are the given string type gives that dtype.
     df = pd.DataFrame({"a": ["x", "y"]}, dtype="string[pyarrow]")
     data_type = ArrowDtype(pa.dictionary(pa.int32(), arrow_type))
     result = df.astype({"a": data_type})
@@ -3902,6 +4441,8 @@ def test_cast_dictionary_different_value_dtype(arrow_type):
 
 
 def test_map_numeric_na_action(using_nan_is_na):
+    # [FUNCTION DOC]
+    # Mapping a constant function with the ignore action over a 64-bit integer arrow Series with a null: valid values map to 42.0; the null stays NA (object result) or NaN (float64 result) depending on the NaN-is-NA mode.
     ser = pd.Series([32, 40, None], dtype="int64[pyarrow]")
     result = ser.map(lambda x: 42, na_action="ignore")
     if not using_nan_is_na:
@@ -3912,6 +4453,8 @@ def test_map_numeric_na_action(using_nan_is_na):
 
 
 def test_categorical_from_arrow_dictionary():
+    # [FUNCTION DOC]
+    # GH 60563. Counting value combinations (not dropping NA) in a frame with a dictionary-typed column gives counts of one for each, with a one-level multi-index of arrow strings and 64-bit integer count named count.
     # GH 60563
     df = pd.DataFrame(
         {"A": ["a1", "a2"]}, dtype=ArrowDtype(pa.dictionary(pa.int32(), pa.utf8()))
@@ -3932,6 +4475,8 @@ def test_categorical_from_arrow_dictionary():
     pa_version_under19p0, reason="pa.json_ was introduced in pyarrow v19.0"
 )
 def test_arrow_json_type():
+    # [FUNCTION DOC]
+    # Skipped on pyarrow older than version 19 (the JSON type is not available). GH 60958: the scalar type of the arrow JSON dtype is the string class.
     # GH 60958
     dtype = ArrowDtype(pa.json_(pa.string()))
     result = dtype.type
@@ -3939,6 +4484,8 @@ def test_arrow_json_type():
 
 
 def test_timestamp_dtype_disallows_decimal():
+    # [FUNCTION DOC]
+    # GH#61773. Creating an arrow microsecond timestamp array containing a Timestamp and a decimal NaN raises a type error saying the decimal class is not convertible to datetime, the same as the datetime parser.
     # GH#61773 constructing with pyarrow timestamp dtype should disallow
     #  Decimal NaN, just like pd.to_datetime
     vals = [pd.Timestamp("2016-01-02 03:04:05"), Decimal("NaN")]
@@ -3953,6 +4500,8 @@ def test_timestamp_dtype_disallows_decimal():
 
 
 def test_timestamp_dtype_matches_to_datetime():
+    # [FUNCTION DOC]
+    # GH#61775. A Series with the arrow tz-aware nanosecond timestamp dtype equals converting a numpy-backed tz-aware Series to the arrow backend.
     # GH#61775
     dtype1 = "datetime64[ns, US/Eastern]"
     dtype2 = "timestamp[ns, US/Eastern][pyarrow]"
@@ -3966,6 +4515,8 @@ def test_timestamp_dtype_matches_to_datetime():
 
 
 def test_timestamp_vs_dt64_comparison():
+    # [FUNCTION DOC]
+    # GH#60937. Equality between an arrow timestamp Series and the equal numpy datetime Series is [true] with arrow boolean dtype, in both operand orders.
     # GH#60937
     left = pd.Series(["2016-01-01"], dtype="timestamp[ns][pyarrow]")
     right = left.astype("datetime64[ns]")
@@ -3980,6 +4531,8 @@ def test_timestamp_vs_dt64_comparison():
 
 # TODO: reuse assert_invalid_comparison?
 def test_date_vs_timestamp_scalar_comparison():
+    # [FUNCTION DOC]
+    # GH#62157. A date arrow Series never equals a timestamp scalar (and vice versa), nor does a timestamp Series equal a date scalar in either operand order; this matches non-pyarrow behavior. A TODO suggests reusing the invalid-comparison helper.
     # GH#62157 match non-pyarrow behavior
     ser = pd.Series(["2016-01-01"], dtype="date32[pyarrow]")
     ser2 = ser.astype("timestamp[ns][pyarrow]")
@@ -3998,6 +4551,8 @@ def test_date_vs_timestamp_scalar_comparison():
 
 # TODO: reuse assert_invalid_comparison?
 def test_date_vs_timestamp_array_comparison():
+    # [FUNCTION DOC]
+    # GH#62157. A date arrow Series compared with timestamp arrow and numpy datetime Series is never equal and always unequal, in both orders. A TODO suggests reusing the invalid-comparison helper; the issue comment in the source is incomplete.
     # GH#62157 match non-pyarrow behavior
     # GH#
     ser = pd.Series(["2016-01-01"], dtype="date32[pyarrow]")
@@ -4016,6 +4571,8 @@ def test_date_vs_timestamp_array_comparison():
 
 
 def test_ops_with_nan_is_na(using_nan_is_na):
+    # [FUNCTION DOC]
+    # GH#61732. Subtracting or multiplying by NaN on a 64-bit integer arrow Series gives all-NA results when NaN is treated as NA, else non-NA values; division by zero yields NA at the zero element only in NA mode.
     # GH#61732
     ser = pd.Series([-1, 0, 1], dtype="int64[pyarrow]")
 
@@ -4039,6 +4596,8 @@ def test_ops_with_nan_is_na(using_nan_is_na):
 
 
 def test_setitem_float_nan_is_na(using_nan_is_na):
+    # [FUNCTION DOC]
+    # GH#61732. Setting NaN into an integer arrow Series makes the element NA in NA mode, else raises an arrow invalid error about converting nan to int64. In a float arrow Series, NaN is NA (and stays NA after setting) in NA mode, else it stays a float NaN, including after assignment.
     # GH#61732
     ser = pd.Series([-1, 0, 1], dtype="int64[pyarrow]")
 
@@ -4069,6 +4628,8 @@ def test_setitem_float_nan_is_na(using_nan_is_na):
 
 
 def test_pow_with_all_na_float():
+    # [FUNCTION DOC]
+    # GH#62520. The power method with exponent two on an all-null float arrow Series gives all NA.
     # GH#62520
 
     s = pd.Series([None, None], dtype="float64[pyarrow]")
@@ -4078,6 +4639,8 @@ def test_pow_with_all_na_float():
 
 
 def test_mul_numpy_nullable_with_pyarrow_float():
+    # [FUNCTION DOC]
+    # GH#58602. Multiplying a masked 64-bit float Series by an arrow float Series (either order) gives squares as arrow 64-bit float; equality between them gives all true arrow booleans.
     # GH#58602
     left = pd.Series(range(5), dtype="Float64")
     right = pd.Series(range(5), dtype="float64[pyarrow]")
@@ -4130,6 +4693,8 @@ def test_mul_numpy_nullable_with_pyarrow_float():
     ],
 )
 def test_arrow_dtype_itemsize_fixed_width(type_name, expected_size):
+    # [FUNCTION DOC]
+    # GH 57948. Parametrized over fixed-width arrow type names with expected byte sizes (integers, floats, boolean, date, timestamp, time, decimal types). The dtype's item size equals the expected size (for boolean it is the numpy dtype item size), with a diagnostic message on failure.
     # GH 57948
 
     parametric_type_map = {
@@ -4157,6 +4722,8 @@ def test_arrow_dtype_itemsize_fixed_width(type_name, expected_size):
 
 @pytest.mark.parametrize("type_name", ["string", "binary", "large_string"])
 def test_arrow_dtype_itemsize_variable_width(type_name):
+    # [FUNCTION DOC]
+    # GH 57948. Parametrized over string, binary and large string. The dtype's item size equals the numpy dtype's item size.
     # GH 57948
 
     arrow_type = getattr(pa, type_name)()
@@ -4166,6 +4733,8 @@ def test_arrow_dtype_itemsize_variable_width(type_name):
 
 
 def test_cast_pontwise_result_decimal_nan():
+    # [FUNCTION DOC]
+    # GH#62522. The array's private cast-pointwise-result applied to a list holding a decimal NaN gives an arrow decimal type (not a null type). The function name contains a spelling slip (pontwise).
     # GH#62522 we don't want to get back null[pyarrow] here
     ser = pd.Series([], dtype="float64[pyarrow]")
     arr = ser.array
@@ -4178,6 +4747,8 @@ def test_cast_pontwise_result_decimal_nan():
 
 
 def test_ufunc_retains_missing():
+    # [FUNCTION DOC]
+    # GH#62800. Applying a numpy sine function to an arrow float Series with a missing value gives the sine of the value and NA, retaining the dtype.
     # GH#62800
     ser = pd.Series([0.1, pd.NA], dtype="float64[pyarrow]")
 
@@ -4189,6 +4760,8 @@ def test_ufunc_retains_missing():
 
 @pytest.mark.parametrize("method", ["sum", "min", "max", "mean", "median"])
 def test_duration_reduction_consistency(unit, method):
+    # [FUNCTION DOC]
+    # GH#63170. The unit fixture parametrizes durations; parametrized over sum, min, max, mean, median. Reductions of a duration arrow Series return a Timedelta whose unit equals the dtype's unit.
     # GH#63170
     dtype = f"duration[{unit}][pyarrow]"
     ser = pd.Series([timedelta(seconds=1), timedelta(seconds=2)], dtype=dtype)
@@ -4201,6 +4774,8 @@ def test_duration_reduction_consistency(unit, method):
 
 @pytest.mark.parametrize("method", ["min", "max", "median"])
 def test_timestamp_reduction_consistency(unit, method):
+    # [FUNCTION DOC]
+    # GH#63170. The unit fixture parametrizes timestamps; parametrized over min, max, median. Reductions of a timestamp arrow Series return a Timestamp whose unit equals the dtype's unit.
     # GH#63170
     dtype = f"timestamp[{unit}][pyarrow]"
     ser = pd.Series([datetime(2024, 1, 1), datetime(2024, 1, 3)], dtype=dtype)

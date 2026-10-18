@@ -1,3 +1,13 @@
+# [MODULE DOC]
+# Large test module for DataFrame indexing and assignment: getitem, setitem, boolean masks,
+# label (loc), position (iloc), scalar (at, iat) and related accessors, plus many regression
+# tests keyed by issue number. The main class covers general behavior; further classes cover
+# specific topics (for example loc and iloc corner cases, mixed dtypes, slicing, setting with
+# enlargement, boolean-mask assignment). Defines a module-level private message constant used for
+# slice error matching: it is chosen at import time depending on whether the running interpreter
+# is at least version 3.15, because the message text raised from numpy differs
+# (the newer one omits the none option). Uses fixtures float_frame, mixed_float_frame,
+# mixed_int_frame, datetime_frame, using_infer_string and others.
 from collections import namedtuple
 from datetime import (
     datetime,
@@ -38,7 +48,13 @@ else:
 
 
 class TestDataFrameIndexing:
+    # [CLASS DOC]
+    # Main test class collecting general DataFrame indexing and setitem tests.
     def test_getitem(self, float_frame):
+        # [FUNCTION DOC]
+        # Verifies slicing the float frame to twenty rows keeps each column with that many rows and
+        # the same index; every stored column is retrievable; and a missing label is reported as not
+        # contained and raises a key error.
         # Slicing
         sl = float_frame[:20]
         assert len(sl.index) == 20
@@ -56,6 +72,10 @@ class TestDataFrameIndexing:
             float_frame["random"]
 
     def test_getitem_numeric_should_not_fallback_to_positional(self, any_numeric_dtype):
+        # [FUNCTION DOC]
+        # Regression test for GH51053: with a column index of every numeric dtype (parametrized) holding
+        # duplicated label one and zero, selecting label one returns the two matching columns by label,
+        # not by position, and the result compares exactly.
         # GH51053
         dtype = any_numeric_dtype
         idx = Index([1, 0, 1], dtype=dtype)
@@ -65,6 +85,10 @@ class TestDataFrameIndexing:
         tm.assert_frame_equal(result, expected, check_exact=True)
 
     def test_getitem2(self, float_frame):
+        # [FUNCTION DOC]
+        # Verifies columns whose names look like code or domain strings can be created and read back:
+        # a column named with a dollar sign and a column named with an at sign. A lookup of an invented
+        # string key raises a key error showing the string.
         df = float_frame.copy()
         df["$10"] = np.random.default_rng(2).standard_normal(len(df))
 
@@ -78,6 +102,9 @@ class TestDataFrameIndexing:
         tm.assert_numpy_array_equal(ad, res.values)
 
     def test_setitem_numeric_should_not_fallback_to_positional(self, any_numeric_dtype):
+        # [FUNCTION DOC]
+        # Companion to the getitem case for GH51053: assigning a scalar to label one on a numeric index
+        # with duplicates sets all matching columns by label, not by position; exact comparison.
         # GH51053
         dtype = any_numeric_dtype
         idx = Index([1, 0, 1], dtype=dtype)
@@ -87,6 +114,11 @@ class TestDataFrameIndexing:
         tm.assert_frame_equal(df, expected, check_exact=True)
 
     def test_setitem_list(self, float_frame):
+        # [FUNCTION DOC]
+        # Verifies assigning a list of two labels from a two-column frame swaps data; assigning a
+        # single-column key from a two-column frame raises a value error saying columns must be the same
+        # length as the key; assigning a too-short range to one column raises a value error that the
+        # length of values does not match the length of the index.
         float_frame["E"] = "foo"
         data = float_frame[["A", "B"]]
         float_frame[["B", "A"]] = data
@@ -106,6 +138,9 @@ class TestDataFrameIndexing:
             data["A"] = newcolumndata
 
     def test_setitem_list2(self):
+        # [FUNCTION DOC]
+        # Verifies label-based setting of a row for a list of columns with integer then string
+        # values, reading back a Series named for the row with matching dtype (integer then object).
         df = DataFrame(0, index=range(3), columns=["tt1", "tt2"], dtype=int)
         df.loc[1, ["tt1", "tt2"]] = [1, 2]
 
@@ -120,6 +155,14 @@ class TestDataFrameIndexing:
         tm.assert_series_equal(result, expected)
 
     def test_getitem_boolean(self, mixed_float_frame, mixed_int_frame, datetime_frame):
+        # [FUNCTION DOC]
+        # Boolean indexing tests using the datetime, mixed float and mixed int frame fixtures.
+        # Checks selection by boolean index; a too short boolean array raises a value error about
+        # wrong item length; an object-dtype boolean array and a boolean Series give the same
+        # result; a frame as the key raises a type error about a boolean array being expected; a Series
+        # key with a reversed index is reindexed with a user warning about reindexing; and for each of
+        # the three frames, masking with the positive condition equals a manual where-like frame
+        # with missing values (dtype of unchanged columns is preserved).
         # boolean indexing
         d = datetime_frame.index[len(datetime_frame) // 2]
         indexer = datetime_frame.index > d
@@ -179,6 +222,11 @@ class TestDataFrameIndexing:
                     assert bif[c].dtype == df[c].dtype
 
     def test_getitem_boolean_casting(self, datetime_frame):
+        # [FUNCTION DOC]
+        # Verifies masking with a positive condition does not upcast integer columns that have no
+        # missing result: 32-bit and 64-bit integer columns stay integer, while after setting some
+        # rows of a copy of each to zero, those columns are split and become float (integer block
+        # splitting).
         # don't upcast if we don't need to
         df = datetime_frame.copy()
         df["E"] = 1
@@ -216,12 +264,18 @@ class TestDataFrameIndexing:
         "lst", [[True, False, True], [True, True, True], [False, False, False]]
     )
     def test_getitem_boolean_list(self, lst):
+        # [FUNCTION DOC]
+        # Parametrized over three boolean lists (mixed, all true, all false). Verifies row selection by a
+        # boolean list equals label-based selection of the chosen positions.
         df = DataFrame(np.arange(12).reshape(3, 4))
         result = df[lst]
         expected = df.loc[df.index[lst]]
         tm.assert_frame_equal(result, expected)
 
     def test_getitem_boolean_iadd(self):
+        # [FUNCTION DOC]
+        # Verifies in-place addition through a boolean frame mask adds one only where entries are
+        # negative, matching the same operation on the raw array.
         arr = np.random.default_rng(2).standard_normal((5, 5))
 
         df = DataFrame(arr.copy(), columns=["A", "B", "C", "D", "E"])
@@ -232,6 +286,9 @@ class TestDataFrameIndexing:
         tm.assert_almost_equal(df.values, arr)
 
     def test_boolean_index_empty_corner(self):
+        # [FUNCTION DOC]
+        # Regression test for issue 2096: an empty float frame with an empty datetime index accepts
+        # an empty boolean numpy array as both a getitem key and a setitem key without raising.
         # #2096
         blah = DataFrame(np.empty([0, 1]), columns=["A"], index=DatetimeIndex([]))
 
@@ -242,6 +299,9 @@ class TestDataFrameIndexing:
         blah[k] = 0
 
     def test_getitem_ix_mixed_integer(self):
+        # [FUNCTION DOC]
+        # Verifies on a frame with a mixed integer and string row index that positional slicing and
+        # label selection with a list of integer labels agree with label-based selection.
         df = DataFrame(
             np.random.default_rng(2).standard_normal((4, 3)),
             index=[1, 10, "C", "E"],
@@ -257,6 +317,10 @@ class TestDataFrameIndexing:
         tm.assert_frame_equal(result, expected)
 
     def test_getitem_ix_mixed_integer2(self):
+        # [FUNCTION DOC]
+        # Regression test for issue 11320: on a frame with columns of mixed type labels (a string
+        # and integers including negative and large values), selecting a list of integer labels returns
+        # columns by label, not by position.
         # 11320
         df = DataFrame(
             {
@@ -275,18 +339,28 @@ class TestDataFrameIndexing:
         tm.assert_frame_equal(result, expected)
 
     def test_getattr(self, float_frame):
+        # [FUNCTION DOC]
+        # Verifies attribute access returns the column Series; a nonexistent attribute raises an
+        # attribute error with the standard message.
         tm.assert_series_equal(float_frame.A, float_frame["A"])
         msg = "'DataFrame' object has no attribute 'NONEXISTENT_NAME'"
         with pytest.raises(AttributeError, match=msg):
             float_frame.NONEXISTENT_NAME
 
     def test_setattr_column(self):
+        # [FUNCTION DOC]
+        # Verifies assigning through attribute access to an existing column replaces all of its values.
         df = DataFrame({"foobar": 1}, index=range(10))
 
         df.foobar = 5
         assert (df.foobar == 5).all()
 
     def test_setitem(self, float_frame, using_infer_string):
+        # [FUNCTION DOC]
+        # Verifies setitem with a stepped Series (alignment fills missing with NaN), an aligned
+        # Series, an array, scalars (integer, float, string) and, on a sliced partial view, a list of
+        # strings creating an object (or string, if inferring) column. Row count of the frame stays
+        # unchanged.
         # not sure what else to do here
         series = float_frame["A"][::2]
         float_frame["col5"] = series
@@ -330,6 +404,9 @@ class TestDataFrameIndexing:
         assert (smaller["col10"] == ["1", "2"]).all()
 
     def test_setitem2(self):
+        # [FUNCTION DOC]
+        # Regression test for GH4204: assigning not-a-number to the first row by position and by label
+        # on an integer frame converts the values to float NaN.
         # dtype changing GH4204
         df = DataFrame([[0, 0]])
         df.iloc[0] = np.nan
@@ -341,6 +418,12 @@ class TestDataFrameIndexing:
         tm.assert_frame_equal(df, expected)
 
     def test_setitem_boolean(self, float_frame):
+        # [FUNCTION DOC]
+        # Verifies boolean setitem forms against a numpy array model: assigning by a boolean Series
+        # (rows), a reindexed Series, boolean frames (with greater-than, equal), a frame needing alignment,
+        # and a row-reversed frame. A non-boolean frame key raises a type error about needing a frame or
+        # a two-dimensional array with boolean values only. Also verifies setting masked positions to
+        # NaN and from another frame.
         df = float_frame.copy()
         values = float_frame.values.copy()
 
@@ -393,6 +476,10 @@ class TestDataFrameIndexing:
         tm.assert_frame_equal(df, expected)
 
     def test_setitem_cast(self, float_frame):
+        # [FUNCTION DOC]
+        # Verifies column dtype follows the assigned value type: casting to 64-bit integer, assigning an
+        # integer scalar produces integer (replaces the column rather than casting it), arrays cast,
+        # and replacing a string column with an integer or a float scalar gives integer or float dtype.
         float_frame["D"] = float_frame["D"].astype("i8")
         assert float_frame["D"].dtype == np.int64
 
@@ -422,6 +509,11 @@ class TestDataFrameIndexing:
         assert float_frame["something"].dtype == np.float64
 
     def test_setitem_corner(self, float_frame, using_infer_string):
+        # [FUNCTION DOC]
+        # Corner cases of setitem on new frames: delete and re-add a column; adding columns with
+        # datetime keys; an empty frame with an index gaining string columns (object values) then an
+        # integer and a float column (upcast to their dtypes); replacing an existing column; and string
+        # columns being object dtype, or the string dtype when inferring strings.
         # corner case
         df = DataFrame({"B": [1.0, 2.0, 3.0], "C": ["a", "b", "c"]}, index=np.arange(3))
         del df["B"]
@@ -470,6 +562,9 @@ class TestDataFrameIndexing:
             assert dm["coercible"].dtype == np.object_
 
     def test_setitem_corner2(self):
+        # [FUNCTION DOC]
+        # Verifies setting values through a label list in a frame with duplicate title text and a numeric
+        # column: a row selected by a condition has its title and numeric entries replaced.
         data = {
             "title": ["foobar", "bar", "foobar"] + ["foobar"] * 17,
             "cruft": np.random.default_rng(2).random(20),
@@ -485,6 +580,9 @@ class TestDataFrameIndexing:
         assert df.loc[1, "cruft"] == 0
 
     def test_setitem_ambig(self, using_infer_string):
+        # [FUNCTION DOC]
+        # Verifies setting columns of an empty-valued frame (object columns) from a float array, a
+        # decimal Series and a string Series keeps three columns; the string one is object (or string).
         # Difficulties with mixed-type data
         # Created as float type
         dm = DataFrame(index=range(3), columns=range(3))
@@ -506,6 +604,9 @@ class TestDataFrameIndexing:
             assert dm[2].dtype == np.object_
 
     def test_setitem_None(self, float_frame):
+        # [FUNCTION DOC]
+        # Regression test for GH 766: assigning a column using None as the label works, and the new
+        # column can be retrieved by position, by label and by item with the same data.
         # GH #766
         float_frame[None] = float_frame["A"]
         tm.assert_series_equal(
@@ -517,6 +618,9 @@ class TestDataFrameIndexing:
         tm.assert_series_equal(float_frame[None], float_frame["A"], check_names=False)
 
     def test_loc_setitem_boolean_mask_allfalse(self):
+        # [FUNCTION DOC]
+        # Regression test for GH 9596: assigning a column onto itself by label with an all-false
+        # boolean mask (derived from a missing-value check) on a frame of string columns leaves the frame unchanged.
         # GH 9596
         df = DataFrame(
             {"a": ["1", "2", "3"], "b": ["11", "22", "33"], "c": ["111", "222", "333"]}
@@ -527,6 +631,9 @@ class TestDataFrameIndexing:
         tm.assert_frame_equal(result, df)
 
     def test_getitem_slice_empty(self):
+        # [FUNCTION DOC]
+        # Verifies full slicing of a frame with multi-index columns returns an equal frame that is a
+        # different object than the original.
         df = DataFrame([[1]], columns=MultiIndex.from_product([["A"], ["a"]]))
         result = df[:]
 
@@ -537,6 +644,9 @@ class TestDataFrameIndexing:
         assert result is not df
 
     def test_getitem_fancy_slice_integers_step(self):
+        # [FUNCTION DOC]
+        # Verifies a stepped positional slice can be read and assigned missing values, and the assigned
+        # rows are all missing.
         df = DataFrame(np.random.default_rng(2).standard_normal((10, 5)))
 
         # this is OK
@@ -545,6 +655,11 @@ class TestDataFrameIndexing:
         assert isna(df.iloc[:8:2]).values.all()
 
     def test_getitem_setitem_integer_slice_keyerrors(self):
+        # [FUNCTION DOC]
+        # Verifies positional slice assignment and reading with out-of-range bounds on a frame indexed
+        # by even integers, and that label slicing between absent labels selects intermediate present
+        # labels. On a non-monotonic index, label slicing or slice assignment with a bound missing from
+        # the index raises a key error mentioning a non-monotonic index with a missing label.
         df = DataFrame(
             np.random.default_rng(2).standard_normal((10, 5)), index=range(0, 20, 2)
         )
@@ -575,6 +690,10 @@ class TestDataFrameIndexing:
             df2.loc[3:11] = 0
 
     def test_fancy_getitem_slice_mixed(self, float_frame, float_string_frame):
+        # [FUNCTION DOC]
+        # Verifies a column slice of a mixed float and string frame keeps float dtype for a float
+        # column, and that a column slice of the single-block float frame shares memory with it, so that
+        # assigning through the slice (which triggers copy on write) leaves the original frame unchanged.
         sliced = float_string_frame.iloc[:, -3:]
         assert sliced["D"].dtype == np.float64
 
@@ -589,6 +708,9 @@ class TestDataFrameIndexing:
         tm.assert_frame_equal(float_frame, original)
 
     def test_getitem_setitem_non_ix_labels(self):
+        # [FUNCTION DOC]
+        # Verifies on a date-indexed frame that label slicing via label location and via plain getitem
+        # (date bounds, inclusive) equals positional slicing, and the same for slice assignment.
         df = DataFrame(range(20), index=date_range("2020-01-01", periods=20))
 
         start, end = df.index[[5, 10]]
@@ -609,6 +731,9 @@ class TestDataFrameIndexing:
         tm.assert_frame_equal(result2, expected)
 
     def test_ix_multi_take(self):
+        # [FUNCTION DOC]
+        # Verifies selecting with a boolean array for rows and a boolean array for columns via label
+        # location equals reindexing; second part regression for GH#1321 combining a row and column condition.
         df = DataFrame(np.random.default_rng(2).standard_normal((3, 2)))
         rs = df.loc[df.index == 0, :]
         xp = df.reindex([0])
@@ -621,6 +746,8 @@ class TestDataFrameIndexing:
         tm.assert_frame_equal(rs, xp)
 
     def test_getitem_fancy_scalar(self, float_frame):
+        # [FUNCTION DOC]
+        # Verifies label location of scalar row and column pairs equals Series lookup, over every fifth row.
         f = float_frame
         ix = f.loc
 
@@ -631,6 +758,9 @@ class TestDataFrameIndexing:
                 assert ix[idx, col] == ts[idx]
 
     def test_setitem_fancy_scalar(self, float_frame):
+        # [FUNCTION DOC]
+        # Verifies scalar assignment through label location, at every fifth row of each column, equals
+        # positional assignment on a copy of the frame.
         f = float_frame
         expected = float_frame.copy()
         ix = f.loc
@@ -647,6 +777,9 @@ class TestDataFrameIndexing:
                 tm.assert_frame_equal(f, expected)
 
     def test_getitem_fancy_boolean(self, float_frame):
+        # [FUNCTION DOC]
+        # Verifies label location with boolean lists and boolean arrays for columns, rows, and combined
+        # with a column label slice, each equal to reindexing results.
         f = float_frame
         ix = f.loc
 
@@ -670,6 +803,9 @@ class TestDataFrameIndexing:
         tm.assert_frame_equal(result, expected)
 
     def test_setitem_fancy_boolean(self, float_frame):
+        # [FUNCTION DOC]
+        # Verifies assigning zero through label location with a boolean row mask, over all columns and
+        # over two columns, equals the same change on a numpy array copy.
         # from 2d, set with booleans
         frame = float_frame.copy()
         expected = float_frame.copy()
@@ -690,6 +826,9 @@ class TestDataFrameIndexing:
         tm.assert_frame_equal(frame, expected)
 
     def test_getitem_fancy_ints(self, float_frame):
+        # [FUNCTION DOC]
+        # Verifies positional selection by integer list for rows or columns equals label-based selection
+        # of the same positions.
         result = float_frame.iloc[[1, 4, 7]]
         expected = float_frame.loc[float_frame.index[[1, 4, 7]]]
         tm.assert_frame_equal(result, expected)
@@ -699,6 +838,9 @@ class TestDataFrameIndexing:
         tm.assert_frame_equal(result, expected)
 
     def test_getitem_setitem_boolean_misaligned(self, float_frame):
+        # [FUNCTION DOC]
+        # Verifies a boolean Series with a reversed index used with label location is aligned to the
+        # frame for reading and assigning; the result equals using the reordered mask.
         # boolean index misaligned labels
         mask = float_frame["A"][::-1] > 1
 
@@ -713,6 +855,9 @@ class TestDataFrameIndexing:
         tm.assert_frame_equal(cp, expected)
 
     def test_getitem_setitem_boolean_multi(self):
+        # [FUNCTION DOC]
+        # Verifies label location with two boolean numpy arrays (rows and columns) selects and assigns
+        # the intersection, equal to selecting by the corresponding lists of labels.
         df = DataFrame(np.random.default_rng(2).standard_normal((3, 2)))
 
         # get
@@ -728,6 +873,9 @@ class TestDataFrameIndexing:
         tm.assert_frame_equal(df, expected)
 
     def test_getitem_float_label_positional(self):
+        # [FUNCTION DOC]
+        # Regression test for GH 53338: slicing with integers on a frame with a float index behaves
+        # positionally (slice from one to two selects the second row) and keeps the float index.
         # GH 53338
         index = Index([1.5, 2])
         df = DataFrame(range(2), index=index)
@@ -736,6 +884,16 @@ class TestDataFrameIndexing:
         tm.assert_frame_equal(result, expected)
 
     def test_getitem_setitem_float_labels(self):
+        # [FUNCTION DOC]
+        # Verifies label and positional slicing with float labels on a float index: label slices include
+        # bounds, may use integer bounds, and compare to reindex results. For an index of non-integral
+        # floats, positional slicing with a float bound raises a type error about positional indexing
+        # with float indexers (message changes with interpreter version via the module constant for
+        # assignment), positional integer slices read and assign correctly, and label float bounds select
+        # the expected ranges (issue 2727).
+        # KNOWN ISSUE: the later check of the final result is outside the context that raises: the
+        # comparison inside the error-raising block never assigns the name, so the assertion uses a
+        # stale value from an earlier unrelated slice.
         index = Index([1.5, 2, 3, 4, 5])
         df = DataFrame(np.random.default_rng(2).standard_normal((5, 5)), index=index)
 
@@ -819,6 +977,10 @@ class TestDataFrameIndexing:
         assert (result == 0).values.all()
 
     def test_setitem_single_column_mixed_datetime(self):
+        # [FUNCTION DOC]
+        # Verifies adding a column of seconds-unit timestamps to a float frame gives a datetime64
+        # second-unit dtype; assigning the integer sentinel for not-a-time raises a type error about an
+        # invalid value (GH#16674); assigning NaN to one cell or a whole row is allowed (GH#3216).
         df = DataFrame(
             np.random.default_rng(2).standard_normal((5, 3)),
             index=["a", "b", "c", "d", "e"],
@@ -848,6 +1010,9 @@ class TestDataFrameIndexing:
         assert not isna(df.loc["c", :]).all()
 
     def test_setitem_mixed_datetime(self):
+        # [FUNCTION DOC]
+        # Regression test for GH 9336: a column set to NaT accepts a datetime for one cell, and
+        # assigning an integer raises a type error about an invalid value.
         # GH 9336
         df = DataFrame(0, columns=list("ab"), index=range(6))
         df["b"] = pd.NaT
@@ -856,6 +1021,9 @@ class TestDataFrameIndexing:
             df.loc[1, "b"] = 1
 
     def test_setitem_frame_float(self, float_frame):
+        # [FUNCTION DOC]
+        # Verifies assigning values from the first two rows of two columns into the last two rows
+        # through label location (values only, no alignment) gives matching values.
         piece = float_frame.loc[float_frame.index[:2], ["A", "B"]]
         float_frame.loc[float_frame.index[-2] :, ["A", "B"]] = piece.values
         result = float_frame.loc[float_frame.index[-2:], ["A", "B"]].values
@@ -863,6 +1031,9 @@ class TestDataFrameIndexing:
         tm.assert_almost_equal(result, expected)
 
     def test_setitem_frame_mixed(self, float_string_frame):
+        # [FUNCTION DOC]
+        # Regression test for GH 3216: assigning a two-by-two frame aligned on both axes into a mixed
+        # float and string frame via a tuple key of labels sets the values.
         # GH 3216
 
         # already aligned
@@ -875,6 +1046,9 @@ class TestDataFrameIndexing:
         tm.assert_almost_equal(f.loc[f.index[0:2], ["A", "B"]].values, piece.values)
 
     def test_setitem_frame_mixed_rows_unaligned(self, float_string_frame):
+        # [FUNCTION DOC]
+        # Regression test for GH#3216: assigning a four-row frame with only two rows matching the target
+        # rows (the other labels are foo and bar) sets matching rows; extra rows ignored.
         # GH#3216 rows unaligned
         f = float_string_frame.copy()
         piece = DataFrame(
@@ -889,6 +1063,9 @@ class TestDataFrameIndexing:
         )
 
     def test_setitem_frame_mixed_key_unaligned(self, float_string_frame):
+        # [FUNCTION DOC]
+        # Regression test for GH#3216: when the key rows differ from the value frame's index, assignment
+        # aligns on labels, so the missing second column becomes missing values in the target.
         # GH#3216 key is unaligned with values
         f = float_string_frame.copy()
         piece = f.loc[f.index[:2], ["A"]]
@@ -899,6 +1076,9 @@ class TestDataFrameIndexing:
         tm.assert_almost_equal(f.loc[f.index[-2:], ["A", "B"]].values, piece.values)
 
     def test_setitem_frame_mixed_ndarray(self, float_string_frame):
+        # [FUNCTION DOC]
+        # Regression test for GH#3216: assigning a plain numpy array into the last two rows of two
+        # columns bypasses alignment and sets values positionally.
         # GH#3216 ndarray
         f = float_string_frame.copy()
         piece = float_string_frame.loc[f.index[:2], ["A", "B"]]
@@ -907,6 +1087,10 @@ class TestDataFrameIndexing:
         tm.assert_almost_equal(f.loc[f.index[-2:], ["A", "B"]].values, piece.values)
 
     def test_setitem_frame_upcast(self):
+        # [FUNCTION DOC]
+        # Verifies assigning a float frame into integer columns via label location raises a type error
+        # about an invalid value; after explicitly casting both frames' columns to float it succeeds and
+        # equals the expected frame.
         # needs upcasting
         df = DataFrame([[1, 2, "foo"], [3, 4, "bar"]], columns=["A", "B", "C"])
         df2 = df.copy()
@@ -922,6 +1106,8 @@ class TestDataFrameIndexing:
         tm.assert_frame_equal(df2, expected)
 
     def test_setitem_frame_align(self, float_frame):
+        # [FUNCTION DOC]
+        # Verifies assigning a frame whose index is relabeled to the target rows aligns and sets values.
         piece = float_frame.loc[float_frame.index[:2], ["A", "B"]]
         piece.index = float_frame.index[-2:]
         piece.columns = ["A", "B"]
@@ -931,6 +1117,9 @@ class TestDataFrameIndexing:
         tm.assert_almost_equal(result, expected)
 
     def test_getitem_setitem_ix_duplicates(self):
+        # [FUNCTION DOC]
+        # Regression test for issue 1201: label location on an index with duplicates returns a frame
+        # for repeated labels and a Series for a unique label.
         # #1201
         df = DataFrame(
             np.random.default_rng(2).standard_normal((5, 3)),
@@ -950,6 +1139,9 @@ class TestDataFrameIndexing:
         tm.assert_series_equal(result, expected)
 
     def test_getitem_ix_boolean_duplicates_multiple(self):
+        # [FUNCTION DOC]
+        # Regression test for issue 1201: label location with a list of duplicate labels and with
+        # boolean Series conditions on a frame with duplicate index labels equals the matching row selections.
         # #1201
         df = DataFrame(
             np.random.default_rng(2).standard_normal((5, 3)),
@@ -970,6 +1162,10 @@ class TestDataFrameIndexing:
 
     @pytest.mark.parametrize("bool_value", [True, False])
     def test_getitem_setitem_ix_bool_keyerror(self, bool_value):
+        # [FUNCTION DOC]
+        # Regression test for issue 2199, parametrized over true and false. A single boolean used as a
+        # label raises a key error saying a boolean label cannot be used without a boolean index, and
+        # assigning to it raises a key error saying a single bool cannot index setitem.
         # #2199
         df = DataFrame({"a": [1, 2, 3]})
         message = f"{bool_value}: boolean label can not be used without a boolean index"
@@ -982,6 +1178,10 @@ class TestDataFrameIndexing:
 
     # TODO: rename?  remove?
     def test_single_element_ix_dont_upcast(self, float_frame):
+        # [FUNCTION DOC]
+        # Verifies a column set to an integer stays integer and a scalar read from it is an integer, and
+        # GH 11617: a list lookup of that single element returns an integer Series (no upcast to float).
+        # A source comment questions whether the test should be renamed or removed.
         float_frame["E"] = 1
         assert issubclass(float_frame["E"].dtype.type, (int, np.integer))
 
@@ -1000,6 +1200,10 @@ class TestDataFrameIndexing:
         tm.assert_series_equal(result, expected)
 
     def test_iloc_callable_tuple_return_value_raises(self):
+        # [FUNCTION DOC]
+        # Enforced in version 3.0 (GH53769): positional indexing with a callable returning a tuple
+        # raises a value error for both reading and assigning, with a message starting with the
+        # returning-a-tuple text.
         # GH53769: Enforced pandas 3.0
         df = DataFrame(np.arange(40).reshape(10, 4), index=range(0, 20, 2))
         msg = "Returning a tuple from"
@@ -1009,6 +1213,9 @@ class TestDataFrameIndexing:
             df.iloc[lambda _: (0,)] = 1
 
     def test_iloc_row(self):
+        # [FUNCTION DOC]
+        # Verifies positional row selection by integer, by slice and by integer list equals the label
+        # selection on a frame indexed by even integers.
         df = DataFrame(
             np.random.default_rng(2).standard_normal((10, 4)), index=range(0, 20, 2)
         )
@@ -1032,6 +1239,9 @@ class TestDataFrameIndexing:
         tm.assert_frame_equal(result, expected)
 
     def test_iloc_row_slice_view(self):
+        # [FUNCTION DOC]
+        # Verifies a positional row slice of a frame indexed by even integers shares memory with the
+        # parent column; assigning to the subset through label location (copy on write) leaves the parent unchanged.
         df = DataFrame(
             np.random.default_rng(2).standard_normal((10, 4)), index=range(0, 20, 2)
         )
@@ -1048,6 +1258,9 @@ class TestDataFrameIndexing:
         tm.assert_series_equal(df[2], exp_col)
 
     def test_iloc_col(self):
+        # [FUNCTION DOC]
+        # Verifies positional column selection by integer, slice and list on a frame with even integer
+        # column labels equals the label-based selection.
         df = DataFrame(
             np.random.default_rng(2).standard_normal((4, 10)), columns=range(0, 20, 2)
         )
@@ -1071,6 +1284,10 @@ class TestDataFrameIndexing:
         tm.assert_frame_equal(result, expected)
 
     def test_iloc_col_slice_view(self):
+        # [FUNCTION DOC]
+        # Verifies a positional column slice is initially a view (shares memory with the parent), but
+        # assigning a new column in the subset replaces the whole column in the subset only: the subset
+        # changes while the parent equals its original copy.
         df = DataFrame(
             np.random.default_rng(2).standard_normal((4, 10)), columns=range(0, 20, 2)
         )
@@ -1086,6 +1303,10 @@ class TestDataFrameIndexing:
         tm.assert_frame_equal(df, original)
 
     def test_loc_duplicates(self):
+        # [FUNCTION DOC]
+        # Regression test for gh-17105: a datetime index with an inserted duplicate final date; assigning
+        # with a boolean mask selecting the duplicated label sets both matching rows, and in-place
+        # addition produces the same expected frame.
         # gh-17105
 
         # insert a duplicate element to the index
@@ -1113,6 +1334,9 @@ class TestDataFrameIndexing:
         tm.assert_frame_equal(df, expected)
 
     def test_setitem_with_unaligned_tz_aware_datetime_column(self):
+        # [FUNCTION DOC]
+        # Regression test for GH 12981: assigning a timezone-aware UTC datetime Series with shuffled index
+        # (via setitem or label location) aligns on the index and keeps the time zone.
         # GH 12981
         # Assignment of unaligned offset-aware datetime series.
         # Make sure timezone isn't lost
@@ -1126,6 +1350,10 @@ class TestDataFrameIndexing:
         tm.assert_series_equal(df["dates"], column)
 
     def test_loc_setitem_datetimelike_with_inference(self):
+        # [FUNCTION DOC]
+        # Regression test for GH 7592: building timedelta and datetime columns incrementally with various
+        # setters (full column, partial rows creating missing values, NaT scalars) infers six timedelta
+        # nanosecond columns and two datetime nanosecond columns.
         # GH 7592
         # assignment of timedeltas with NaT
 
@@ -1148,6 +1376,10 @@ class TestDataFrameIndexing:
         tm.assert_series_equal(result, expected)
 
     def test_getitem_boolean_indexing_mixed(self):
+        # [FUNCTION DOC]
+        # Verifies boolean-frame setitem on a mixed int/float frame with many missing values: entries
+        # above a threshold are set to one, equal to explicit expected edits. After adding a string column,
+        # the same assignment raises a type error about unsupported or invalid comparison.
         df = DataFrame(
             {
                 0: {35: np.nan, 40: np.nan, 43: np.nan, 49: np.nan, 50: np.nan},
@@ -1194,6 +1426,10 @@ class TestDataFrameIndexing:
             df[df > 0.3] = 1
 
     def test_type_error_multiindex(self):
+        # [FUNCTION DOC]
+        # Regression test for gh-12218: on a frame with two-level columns, getitem with a slice and
+        # scalar tuple raises an invalid-index error mentioning slice; label location with a slice and
+        # level value selects matching columns keeping level names; a tuple key of two scalars gives a Series named by the tuple.
         # See gh-12218
         mi = MultiIndex.from_product([["x", "y"], [0, 1]], names=[None, "c"])
         dg = DataFrame(
@@ -1219,6 +1455,9 @@ class TestDataFrameIndexing:
         tm.assert_series_equal(result, expected)
 
     def test_getitem_interval_index_partial_indexing(self):
+        # [FUNCTION DOC]
+        # Regression test for GH#36490: a frame with an interval index for columns selected with a
+        # scalar inside an interval returns that column, both by getitem and label location.
         # GH#36490
         df = DataFrame(
             np.ones((3, 4)), columns=pd.IntervalIndex.from_breaks(np.arange(5))
@@ -1233,6 +1472,9 @@ class TestDataFrameIndexing:
         tm.assert_series_equal(res, expected)
 
     def test_setitem_array_as_cell_value(self):
+        # [FUNCTION DOC]
+        # Regression test for GH#43422: assigning a row dictionary whose values are numpy arrays of
+        # different shapes into an empty object frame stores each array as a single cell value.
         # GH#43422
         df = DataFrame(columns=["a", "b"], dtype=object)
         df.loc[0] = {"a": np.zeros((2,)), "b": np.zeros((2, 2))}
@@ -1240,6 +1482,9 @@ class TestDataFrameIndexing:
         tm.assert_frame_equal(df, expected)
 
     def test_iloc_setitem_nullable_2d_values(self):
+        # [FUNCTION DOC]
+        # Verifies assigning the reversed values, a numpy extension array, or a copy of the frame into
+        # all rows of a masked integer frame leaves it unchanged (single column so reversal is a no-op).
         df = DataFrame({"A": [1, 2, 3]}, dtype="Int64")
         orig = df.copy()
 
@@ -1253,6 +1498,9 @@ class TestDataFrameIndexing:
         tm.assert_frame_equal(df, orig)
 
     def test_getitem_segfault_with_empty_like_object(self):
+        # [FUNCTION DOC]
+        # Regression test for GH#46848 (segfault): assigning an empty-like object array to a column and
+        # then selecting it with a list must not crash.
         # GH#46848
         df = DataFrame(np.empty((1, 1), dtype=object))
         df[0] = np.empty_like(df[0])
@@ -1266,6 +1514,12 @@ class TestDataFrameIndexing:
     def test_setting_mismatched_na_into_nullable_fails(
         self, null, any_numeric_ea_dtype
     ):
+        # [FUNCTION DOC]
+        # Regression test for GH#44514, parametrized over three null kinds (NaT, a datetime64 NaT and a
+        # timedelta64 NaT) and every numeric extension dtype: setting such a mismatched null into a
+        # masked numeric array, Series (by item or position, scalar or slice) or frame (single or multiple
+        # blocks) raises a type error with one of several alternative messages (cannot convert to
+        # Floating/Integer dtype, non-numeric NA, or invalid value). Warnings about setting on a view are ignored.
         # GH#44514 don't cast mismatched nulls to pd.NA
         df = DataFrame({"A": [1, 2, 3]}, dtype=any_numeric_ea_dtype)
         ser = df["A"].copy()
@@ -1313,6 +1567,9 @@ class TestDataFrameIndexing:
             df2.iloc[:2, 0] = [null, null]
 
     def test_loc_expand_empty_frame_keep_index_name(self):
+        # [FUNCTION DOC]
+        # Regression test for GH#45621: enlarging an empty frame with a named index by label location
+        # keeps the index name.
         # GH#45621
         df = DataFrame(columns=["b"], index=Index([], name="a"))
         df.loc[0] = 1
@@ -1320,6 +1577,9 @@ class TestDataFrameIndexing:
         tm.assert_frame_equal(df, expected)
 
     def test_loc_expand_empty_frame_keep_midx_names(self):
+        # [FUNCTION DOC]
+        # Regression test for GH#46317: enlarging an empty frame with a named three-level multi-index
+        # via a tuple label keeps all level names.
         # GH#46317
         df = DataFrame(
             columns=["d"], index=MultiIndex.from_tuples([], names=["a", "b", "c"])
@@ -1341,6 +1601,10 @@ class TestDataFrameIndexing:
         ],
     )
     def test_loc_setitem_rhs_frame(self, idxr, val):
+        # [FUNCTION DOC]
+        # Regression test for GH#47578, parametrized over (string or integer value, scalar or list column
+        # key): assigning a frame whose values include a mismatching type and index labels not equal to the
+        # target raises a type error about an invalid value.
         # GH#47578
         df = DataFrame({"a": [1, 2]})
 
@@ -1348,6 +1612,9 @@ class TestDataFrameIndexing:
             df.loc[:, idxr] = DataFrame({"a": [val, 11]}, index=[1, 2])
 
     def test_iloc_setitem_enlarge_no_warning(self):
+        # [FUNCTION DOC]
+        # Regression test for GH#47381: assigning a float array to the first column positionally on an
+        # empty two-column frame (enlarging) does not emit a warning and does not change a full-slice view taken earlier.
         # GH#47381
         df = DataFrame(columns=["a", "b"])
         expected = df.copy()
@@ -1356,6 +1623,12 @@ class TestDataFrameIndexing:
         tm.assert_frame_equal(view, expected)
 
     def test_loc_internals_not_updated_correctly(self):
+        # [FUNCTION DOC]
+        # Regression test for GH#47867 (all steps needed to reproduce the original bug): after
+        # adding a column and repeatedly setting and reading a multi-index entry by label list, the final value read
+        # equals the expected Series.
+        # KNOWN ISSUE: the expected variable is chained-assigned to the name of the frame, silently rebinding
+        # the frame name to the Series; harmless but unintended.
         # GH#47867 all steps are necessary to reproduce the initial bug
         df = DataFrame(
             {"bool_col": True, "a": 1, "b": 2.5},
@@ -1380,6 +1653,9 @@ class TestDataFrameIndexing:
 
     @pytest.mark.parametrize("val", [None, [None], pd.NA, [pd.NA]])
     def test_iloc_setitem_string_list_na(self, val):
+        # [FUNCTION DOC]
+        # Regression test for GH#45469, parametrized over four missing-value forms (none, list with none, NA,
+        # list with NA): positional row assignment on a string-dtype column sets the first element to NA.
         # GH#45469
         df = DataFrame({"a": ["a", "b", "c"]}, dtype="string")
         df.iloc[[0], :] = val
@@ -1388,6 +1664,9 @@ class TestDataFrameIndexing:
 
     @pytest.mark.parametrize("val", [None, pd.NA])
     def test_iloc_setitem_string_na(self, val):
+        # [FUNCTION DOC]
+        # Regression test for GH#45469, parametrized over none and NA: assigning the missing value to row
+        # zero over all columns (positional) of a string-dtype frame sets NA.
         # GH#45469
         df = DataFrame({"a": ["a", "b", "c"]}, dtype="string")
         df.iloc[0, :] = val
@@ -1396,6 +1675,9 @@ class TestDataFrameIndexing:
 
     @pytest.mark.parametrize("func", [list, Series, np.array])
     def test_iloc_setitem_ea_null_slice_length_one_list(self, func):
+        # [FUNCTION DOC]
+        # Regression test for GH#48016, parametrized over list, Series and array constructors: assigning five
+        # via a positional column indexer that is a one-element container on a masked integer frame fills the column.
         # GH#48016
         df = DataFrame({"a": [1, 2, 3]}, dtype="Int64")
         df.iloc[:, func([0])] = 5
@@ -1403,6 +1685,9 @@ class TestDataFrameIndexing:
         tm.assert_frame_equal(df, expected)
 
     def test_loc_named_tuple_for_midx(self):
+        # [FUNCTION DOC]
+        # Regression test for GH#48124: label location with a named tuple whose fields match multi-index
+        # level names selects the rows (one value, one list) and gives the expected two-row index.
         # GH#48124
         df = DataFrame(
             index=MultiIndex.from_product(
@@ -1422,6 +1707,10 @@ class TestDataFrameIndexing:
     @pytest.mark.parametrize("indexer", [["a"], "a"])
     @pytest.mark.parametrize("col", [{}, {"b": 1}])
     def test_set_2d_casting_date_to_int(self, col, indexer):
+        # [FUNCTION DOC]
+        # Regression test for GH#49159, parametrized over single or list key and whether an additional
+        # column exists: assigning a shifted date Series into one row via label location keeps date values
+        # and does not cast dates to integers.
         # GH#49159
         df = DataFrame(
             {"a": [Timestamp("2022-12-29"), Timestamp("2022-12-30")], **col},
@@ -1435,6 +1724,10 @@ class TestDataFrameIndexing:
     @pytest.mark.parametrize("has_ref", [True, False])
     @pytest.mark.parametrize("col", [{}, {"name": "a"}])
     def test_loc_setitem_reordering_with_all_true_indexer(self, col, has_ref):
+        # [FUNCTION DOC]
+        # Regression test for GH#48701, parametrized over an extra column and whether another reference
+        # (view) exists: assigning the same values with an all-true row indexer and a reordered column list
+        # leaves the frame unchanged.
         # GH#48701
         n = 17
         df = DataFrame({**col, "x": range(n), "y": range(n)})
@@ -1446,6 +1739,9 @@ class TestDataFrameIndexing:
         tm.assert_frame_equal(df, expected)
 
     def test_loc_rhs_empty_warning(self):
+        # [FUNCTION DOC]
+        # Regression test for GH48480: assigning an empty frame to a column of an empty two-column frame
+        # via label location produces no warning and leaves the frame unchanged.
         # GH48480
         df = DataFrame(columns=["a", "b"])
         expected = df.copy()
@@ -1455,6 +1751,9 @@ class TestDataFrameIndexing:
         tm.assert_frame_equal(df, expected)
 
     def test_iloc_ea_series_indexer(self):
+        # [FUNCTION DOC]
+        # Regression test for GH#49521: positional selection of rows and columns with masked integer Series
+        # (or their underlying values) selects the expected block.
         # GH#49521
         df = DataFrame([[0, 1, 2, 3, 4], [5, 6, 7, 8, 9]])
         indexer = Series([0, 1], dtype="Int64")
@@ -1467,6 +1766,9 @@ class TestDataFrameIndexing:
         tm.assert_frame_equal(result, expected)
 
     def test_iloc_ea_series_indexer_with_na(self):
+        # [FUNCTION DOC]
+        # Regression test for GH#49521: positional column selection with an indexer containing NA raises a
+        # value error with message about being unable to convert, for both the Series and its values.
         # GH#49521
         df = DataFrame([[0, 1, 2, 3, 4], [5, 6, 7, 8, 9]])
         indexer = Series([0, pd.NA], dtype="Int64")
@@ -1479,6 +1781,10 @@ class TestDataFrameIndexing:
     @pytest.mark.parametrize("indexer", [True, (True,)])
     @pytest.mark.parametrize("dtype", [bool, "boolean"])
     def test_loc_bool_multiindex(self, performance_warning, dtype, indexer):
+        # [FUNCTION DOC]
+        # Regression test for GH#47687, parametrized over scalar or tuple indexers and bool or masked boolean
+        # dtype: label location on a two-level boolean multi-index selects the matching rows and drops the first
+        # level; a tuple key may emit a performance warning (uses the performance_warning fixture).
         # GH#47687
         midx = MultiIndex.from_arrays(
             [
@@ -1498,6 +1804,9 @@ class TestDataFrameIndexing:
     @pytest.mark.parametrize("utc", [False, True])
     @pytest.mark.parametrize("indexer", ["date", ["date"]])
     def test_loc_datetime_assignment_dtype_does_not_change(self, utc, indexer):
+        # [FUNCTION DOC]
+        # Regression test for GH#49837, parametrized over naive or UTC and scalar or list column key:
+        # assigning a selected datetime column onto itself through a boolean row mask keeps values and dtype unchanged.
         # GH#49837
         df = DataFrame(
             {
@@ -1517,6 +1826,10 @@ class TestDataFrameIndexing:
 
     @pytest.mark.parametrize("indexer, idx", [(tm.loc, 1), (tm.iloc, 2)])
     def test_setitem_value_coercing_dtypes(self, indexer, idx):
+        # [FUNCTION DOC]
+        # Regression test for GH#50467, parametrized over label vs positional accessor (with the row
+        # extent): assigning an integer frame into the leading rows of an object frame coerces those cells
+        # while the remaining row keeps its string.
         # GH#50467
         df = DataFrame([["1", np.nan], ["2", np.nan], ["3", np.nan]], dtype=object)
         rhs = DataFrame([[1, np.nan], [2, np.nan]])
@@ -1525,6 +1838,9 @@ class TestDataFrameIndexing:
         tm.assert_frame_equal(df, expected)
 
     def test_big_endian_support_selecting_columns(self):
+        # [FUNCTION DOC]
+        # Regression test for GH#57457: selecting all columns of a frame with big-endian float columns
+        # works and equals the result on an equivalent frame built from the dtype.
         # GH#57457
         columns = ["a"]
         data = [np.array([1, 2], dtype=">f8")]
@@ -1536,7 +1852,15 @@ class TestDataFrameIndexing:
 
 
 class TestDataFrameIndexingUInt64:
+    # [CLASS DOC]
+    # Test class for indexing of frames with unsigned 64-bit integers.
     def test_setitem(self):
+        # [FUNCTION DOC]
+        # Verifies adding a column by assigning a renamed Series to an unsigned frame keeps the values and
+        # takes the new name, including replacing an existing string column; and that assigning NaT into an
+        # unsigned integer cell raises a type error about an invalid value.
+        # KNOWN ISSUE: the comment says the column should be cast to object because unsigned integers have
+        # no NaN, but the test asserts a type error instead; the second assignment in that block is never run.
         df = DataFrame(
             {"A": np.arange(3), "B": [2**63, 2**63 + 5, 2**63 + 10]},
             dtype=np.uint64,
@@ -1563,6 +1887,12 @@ class TestDataFrameIndexingUInt64:
 
 
 def test_object_casting_indexing_wraps_datetimelike():
+    # [FUNCTION DOC]
+    # Regression test for GH#31649: rows retrieved from a mixed integer, datetime and timedelta frame
+    # via label location, positional location, cross-section and internal fast cross-section
+    # contain Timestamp and Timedelta objects rather than raw numbers; the datetime block is
+    # nanosecond datetime dtype and the timedelta block is microsecond timedelta dtype, and each
+    # block returns the wrapped scalar for its first cell.
     # GH#31649, check the indexing methods all the way down the stack
     df = DataFrame(
         {
@@ -1606,8 +1936,17 @@ msg2 = "Cannot set a Categorical with another, without identical categories"
 
 
 class TestLocILocDataFrameCategorical:
+    # [CLASS DOC]
+    # Test class for assignment into categorical columns of a two-column frame (categorical column
+    # cats with categories a and b, and an integer values column) through label and positional accessors.
+    # Uses fixtures giving the original frame and two expected frames. The module-level patterns
+    # msg1 (new category cannot be set) and msg2 (categoricals must have identical categories to set)
+    # are used to match errors.
     @pytest.fixture
     def orig(self):
+        # [FUNCTION DOC]
+        # HELPER: fixture returning the original frame: seven rows labeled h through n, categorical
+        # column of all a with categories a and b, and an integer column of ones.
         cats = Categorical(["a", "a", "a", "a", "a", "a", "a"], categories=["a", "b"])
         idx = Index(["h", "i", "j", "k", "l", "m", "n"])
         values = [1, 1, 1, 1, 1, 1, 1]
@@ -1616,6 +1955,9 @@ class TestLocILocDataFrameCategorical:
 
     @pytest.fixture
     def exp_parts_cats_col(self):
+        # [FUNCTION DOC]
+        # HELPER: fixture returning the expected frame after changing the third and fourth rows of
+        # the categorical column to b (values column unchanged).
         # changed part of the cats column
         cats3 = Categorical(["a", "a", "b", "b", "a", "a", "a"], categories=["a", "b"])
         idx3 = Index(["h", "i", "j", "k", "l", "m", "n"])
@@ -1625,6 +1967,9 @@ class TestLocILocDataFrameCategorical:
 
     @pytest.fixture
     def exp_single_cats_value(self):
+        # [FUNCTION DOC]
+        # HELPER: fixture returning the expected frame after changing only the third row of the
+        # categorical column to b (values column unchanged).
         # changed single value in cats col
         cats4 = Categorical(["a", "a", "b", "a", "a", "a", "a"], categories=["a", "b"])
         idx4 = Index(["h", "i", "j", "k", "l", "m", "n"])
@@ -1635,6 +1980,10 @@ class TestLocILocDataFrameCategorical:
         return exp_single_cats_value
 
     def test_loc_iloc_setitem_list_of_lists(self, orig, indexer_li):
+        # [FUNCTION DOC]
+        # Parametrized over the label and positional accessors (indexer_li fixture). Assigning a list of
+        # two rows with a category that exists (b) and a number sets the two rows (categorical and integer
+        # change); a row list with a category not in the categories (c) raises a type error with the msg1 pattern.
         #   - assign multiple rows (mixed values) -> exp_multi_row
         df = orig.copy()
 
@@ -1658,6 +2007,10 @@ class TestLocILocDataFrameCategorical:
     def test_loc_iloc_at_iat_setitem_single_value_in_categories(
         self, orig, exp_single_cats_value, indexer
     ):
+        # [FUNCTION DOC]
+        # Parametrized over label, positional, scalar-label and scalar-positional accessors. Assigning an
+        # existing category to a single cell sets it as expected; a category not among the categories
+        # raises a type error with the msg1 pattern.
         #   - assign a single value -> exp_single_cats_value
         df = orig.copy()
 
@@ -1676,6 +2029,9 @@ class TestLocILocDataFrameCategorical:
     def test_loc_iloc_setitem_mask_single_value_in_categories(
         self, orig, exp_single_cats_value, indexer_li
     ):
+        # [FUNCTION DOC]
+        # Parametrized over label and positional accessors. A boolean mask selecting one row combined with
+        # the categorical column, assigned an existing category, changes just that cell as expected.
         # mask with single True
         df = orig.copy()
 
@@ -1688,6 +2044,10 @@ class TestLocILocDataFrameCategorical:
         tm.assert_frame_equal(df, exp_single_cats_value)
 
     def test_loc_iloc_setitem_full_row_non_categorical_rhs(self, orig, indexer_li):
+        # [FUNCTION DOC]
+        # Parametrized over label and positional accessors. Assigning a plain (non categorical) full row
+        # with an existing category and a number sets that row (categorical and integer); a category not
+        # in the categories raises a type error with the msg1 pattern.
         #   - assign a complete row (mixed values) -> exp_single_row
         df = orig.copy()
 
@@ -1710,6 +2070,11 @@ class TestLocILocDataFrameCategorical:
     def test_loc_iloc_setitem_partial_col_categorical_rhs(
         self, orig, exp_parts_cats_col, indexer_li
     ):
+        # [FUNCTION DOC]
+        # Parametrized over label and positional accessors. Assigning a categorical with the same
+        # categories to a slice of the categorical column succeeds. Assigning a categorical with different
+        # categories raises a type error with the msg2 pattern, even if values are holdable (the comment
+        # is unsure if this should fail), and also if values are not holdable.
         # assign a part of a column with dtype == categorical ->
         # exp_parts_cats_col
         df = orig.copy()
@@ -1739,6 +2104,10 @@ class TestLocILocDataFrameCategorical:
     def test_loc_iloc_setitem_non_categorical_rhs(
         self, orig, exp_parts_cats_col, indexer_li
     ):
+        # [FUNCTION DOC]
+        # Parametrized over label and positional accessors. Assigning a plain list of existing category
+        # values to a slice of the categorical column succeeds; a list with a new category raises a type
+        # error with the msg1 pattern.
         # assign a part of a column with dtype != categorical -> exp_parts_cats_col
         df = orig.copy()
 
@@ -1756,6 +2125,10 @@ class TestLocILocDataFrameCategorical:
 
     @pytest.mark.parametrize("indexer", [tm.getitem, tm.loc, tm.iloc])
     def test_getitem_preserve_object_index_with_dates(self, indexer):
+        # [FUNCTION DOC]
+        # Parametrized over item, label and positional getters. Per PR 42950: selecting a column from
+        # a frame with an object-dtype index of datetimes yields a Series whose index stays object
+        # dtype (no inference).
         # https://github.com/pandas-dev/pandas/pull/42950 - when selecting a column
         # from dataframe, don't try to infer object dtype index on Series construction
         idx = date_range("2012", periods=3).astype(object)
@@ -1770,6 +2143,9 @@ class TestLocILocDataFrameCategorical:
         assert ser.index.dtype == object
 
     def test_loc_on_multiindex_one_level(self):
+        # [FUNCTION DOC]
+        # Regression test for GH#45779: label location with a scalar on a one-level multi-index returns a
+        # frame with a one-level multi-index containing only the matching key and level name.
         # GH#45779
         df = DataFrame(
             data=[[0], [1]],
@@ -1783,10 +2159,17 @@ class TestLocILocDataFrameCategorical:
 
 
 class TestDeprecatedIndexers:
+    # [CLASS DOC]
+    # Test class for indexers (dictionaries and sets) that are rejected in current versions.
     @pytest.mark.parametrize(
         "key", [{1}, {1: 1}, ({1}, "a"), ({1: 1}, "a"), (1, {"a"}), (1, {"a": "a"})]
     )
     def test_getitem_dict_and_set_deprecated(self, key):
+        # [FUNCTION DOC]
+        # KNOWN ISSUE: the name says deprecated, but the comment says the deprecation was enforced in 2.0,
+        # so the test checks an error.
+        # Parametrized over sets, dictionaries, tuples containing them. Verifies label location getitem
+        # with such a key raises a type error saying it is not supported as an indexer.
         # GH#42825 enforced in 2.0
         df = DataFrame([[1, 2], [3, 4]], columns=["a", "b"])
         with pytest.raises(TypeError, match="as an indexer is not supported"):
@@ -1804,6 +2187,11 @@ class TestDeprecatedIndexers:
         ],
     )
     def test_getitem_dict_and_set_deprecated_multiindex(self, key):
+        # [FUNCTION DOC]
+        # KNOWN ISSUE: the name says deprecated, but the comment says the deprecation was enforced in 2.0,
+        # so the test checks an error.
+        # Same as the previous test for a frame with a two-level row index and nested tuple keys: raises a
+        # type error saying it is not supported as an indexer.
         # GH#42825 enforced in 2.0
         df = DataFrame(
             [[1, 2], [3, 4]],
@@ -1817,6 +2205,9 @@ class TestDeprecatedIndexers:
         "key", [{1}, {1: 1}, ({1}, "a"), ({1: 1}, "a"), (1, {"a"}), (1, {"a": "a"})]
     )
     def test_setitem_dict_and_set_disallowed(self, key):
+        # [FUNCTION DOC]
+        # Parametrized over sets, dictionaries and tuples containing them: label location assignment with
+        # such a key raises a type error saying it is not supported as an indexer (enforced in 2.0).
         # GH#42825 enforced in 2.0
         df = DataFrame([[1, 2], [3, 4]], columns=["a", "b"])
         with pytest.raises(TypeError, match="as an indexer is not supported"):
@@ -1834,6 +2225,8 @@ class TestDeprecatedIndexers:
         ],
     )
     def test_setitem_dict_and_set_disallowed_multiindex(self, key):
+        # [FUNCTION DOC]
+        # Same as the previous test for a frame with a two-level row index and nested tuple keys.
         # GH#42825 enforced in 2.0
         df = DataFrame(
             [[1, 2], [3, 4]],
@@ -1845,6 +2238,10 @@ class TestDeprecatedIndexers:
 
 
 def test_adding_new_conditional_column() -> None:
+    # [FUNCTION DOC]
+    # Regression test for issue 55025: assigning a string through a boolean row mask to a new column
+    # creates it with the string and missing values elsewhere; assigning a function object creates an
+    # object column holding the function.
     # https://github.com/pandas-dev/pandas/issues/55025
     df = DataFrame({"x": [1]})
     df.loc[df["x"] == 1, "y"] = "1"
@@ -1867,6 +2264,10 @@ def test_adding_new_conditional_column() -> None:
     ],
 )
 def test_adding_new_conditional_column_with_string(dtype, infer_string) -> None:
+    # [FUNCTION DOC]
+    # Regression test for issue 56204, parametrized over (object, infer disabled) and (NaN-valued
+    # string dtype, infer enabled): assigning a string to a new column by a boolean row mask (within an option
+    # context) gives a column of the string and NaN with the matching dtype, others integer.
     # https://github.com/pandas-dev/pandas/issues/56204
     df = DataFrame({"a": [1, 2], "b": [3, 4]})
     with pd.option_context("future.infer_string", infer_string):
@@ -1878,6 +2279,9 @@ def test_adding_new_conditional_column_with_string(dtype, infer_string) -> None:
 
 
 def test_add_new_column_infer_string():
+    # [FUNCTION DOC]
+    # Regression test for GH#55366: with string inference enabled, creating a new column through a
+    # boolean mask assignment of a string gives a string-dtype column and a string-dtype column index.
     # GH#55366
     df = DataFrame({"x": [1]})
     with pd.option_context("future.infer_string", True):
@@ -1890,8 +2294,20 @@ def test_add_new_column_infer_string():
 
 
 class TestSetitemValidation:
+    # [CLASS DOC]
+    # Test class validating that scalar assignment rejects invalid values for numpy bool, integer and float
+    # dtypes through label and positional accessors and many indexer forms. Adapted from the masked-array
+    # indexing tests. Class attributes list invalid scalars (complex, strings, NaT variants) and the
+    # indexers (scalar, list, slice, boolean list, full slice).
     # This is adapted from pandas/tests/arrays/masked/test_indexing.py
     def _check_setitem_invalid(self, df, invalid, indexer):
+        # [FUNCTION DOC]
+        # HELPER: asserts that assigning the given invalid value to the first column using the given indexer
+        # raises a type error with an invalid value message, for positional and for label access. Parameters:
+        # df frame with column a, invalid value, indexer.
+        # KNOWN ISSUE: the statement restoring the frame from the original copy is inside the block
+        # that is expected to raise, after the raising line, so it never runs (the second check uses the
+        # possibly modified frame).
         orig_df = df.copy()
 
         # iloc
@@ -1905,6 +2321,11 @@ class TestSetitemValidation:
             df = orig_df.copy()
 
     def _check_setitem_valid(self, df, value, indexer):
+        # [FUNCTION DOC]
+        # HELPER: assigns the given valid value to the first column with the indexer, using positional then
+        # label access. Passes if no error is raised.
+        # KNOWN ISSUE: the frame is rebound to a copy after each assignment but never used afterwards, so
+        # those lines have no effect.
         orig_df = df.copy()
 
         # iloc
@@ -1931,12 +2352,20 @@ class TestSetitemValidation:
     )
     @pytest.mark.parametrize("indexer", _indexers)
     def test_setitem_validation_scalar_bool(self, invalid, indexer):
+        # [FUNCTION DOC]
+        # Parametrized over invalid scalars (plus integers and floats, which are invalid for booleans) and
+        # indexers. Assigning to a boolean frame must raise a type error about an invalid value.
         df = DataFrame({"a": [True, False, False]}, dtype="bool")
         self._check_setitem_invalid(df, invalid, indexer)
 
     @pytest.mark.parametrize("invalid", [*_invalid_scalars, True, 1.5, np.float64(1.5)])
     @pytest.mark.parametrize("indexer", _indexers)
     def test_setitem_validation_scalar_int(self, invalid, any_int_numpy_dtype, indexer):
+        # [FUNCTION DOC]
+        # Parametrized over invalid scalars, True and fractional floats, any signed or unsigned integer dtype
+        # and indexers. Assigning must raise a type error about an invalid value.
+        # KNOWN ISSUE: the branch that expects a valid assignment is only taken for missing values that are not
+        # NaT forms, but none of the listed invalid scalars qualifies, so it is never reached.
         df = DataFrame({"a": [1, 2, 3]}, dtype=any_int_numpy_dtype)
         if isna(invalid) and invalid is not pd.NaT and not np.isnat(invalid):
             self._check_setitem_valid(df, invalid, indexer)
@@ -1946,5 +2375,8 @@ class TestSetitemValidation:
     @pytest.mark.parametrize("invalid", [*_invalid_scalars, True])
     @pytest.mark.parametrize("indexer", _indexers)
     def test_setitem_validation_scalar_float(self, invalid, float_numpy_dtype, indexer):
+        # [FUNCTION DOC]
+        # Parametrized over invalid scalars plus True, each float dtype and indexers. Assigning must raise a
+        # type error about an invalid value on a float frame with a missing value.
         df = DataFrame({"a": [1, 2, None]}, dtype=float_numpy_dtype)
         self._check_setitem_invalid(df, invalid, indexer)

@@ -3,6 +3,10 @@ test_insert is specifically for the DataFrame.insert method; not to be
 confused with tests with "insert" in their names that are really testing
 __setitem__.
 """
+# [MODULE DOC]
+# Tests for the DataFrame insert method specifically (not setitem operations that merely have
+# insert in their names). Covers position handling, duplicate names, name preservation, error
+# messages and regression cases. No import-time side effects.
 
 import numpy as np
 import pytest
@@ -18,7 +22,14 @@ import pandas._testing as tm
 
 
 class TestDataFrameInsert:
+    # [CLASS DOC]
+    # Test class for the insert method.
     def test_insert(self):
+        # [FUNCTION DOC]
+        # Verifies inserting copies of existing columns at the start and middle places them at the given
+        # position and values match their source. Inserting an existing name raises a value error saying
+        # it already exists (message includes a cannot-insert text). The columns index name is preserved
+        # by insertion.
         df = DataFrame(
             np.random.default_rng(2).standard_normal((5, 3)),
             index=np.arange(5),
@@ -46,6 +57,10 @@ class TestDataFrameInsert:
         assert df.columns.name == "some_name"
 
     def test_insert_column_bug_4032(self):
+        # [FUNCTION DOC]
+        # Regression test for GH#4032: inserting a new column at the front, with renames by an empty
+        # mapping before and after, gives the expected frame with the columns in order, both for an
+        # integer column and then a float column.
         # GH#4032, inserting a column and renaming causing errors
         df = DataFrame({"b": [1.1, 2.2]})
 
@@ -63,6 +78,9 @@ class TestDataFrameInsert:
         tm.assert_frame_equal(result, expected)
 
     def test_insert_with_columns_dups(self):
+        # [FUNCTION DOC]
+        # Regression test for GH#14291: inserting a column named A three times at position zero with
+        # duplicates allowed gives three A columns with the latest inserted first.
         # GH#14291
         df = DataFrame()
         df.insert(0, "A", ["g", "h", "i"], allow_duplicates=True)
@@ -74,6 +92,10 @@ class TestDataFrameInsert:
         tm.assert_frame_equal(df, exp)
 
     def test_insert_EA_no_warning(self):
+        # [FUNCTION DOC]
+        # KNOWN ISSUE: the name refers to insert but the operation under test is an item assignment.
+        # Verifies that assigning a new numpy column to a frame of masked 64-bit integer columns does not
+        # emit any warning (no fragmentation performance warning for extension arrays, GH 44098).
         # PerformanceWarning about fragmented frame should not be raised when
         # using EAs (https://github.com/pandas-dev/pandas/issues/44098)
         df = DataFrame(
@@ -83,6 +105,9 @@ class TestDataFrameInsert:
             df["a"] = np.array([1, 2, 3])
 
     def test_insert_frame(self):
+        # [FUNCTION DOC]
+        # Regression test for GH#42403: inserting a multi-column frame as a column raises a value error
+        # stating a one-dimensional object was expected and a frame with two columns was given.
         # GH#42403
         df = DataFrame({"col1": [1, 2], "col2": [3, 4]})
 
@@ -93,12 +118,19 @@ class TestDataFrameInsert:
             df.insert(1, "newcol", df)
 
     def test_insert_int64_loc(self):
+        # [FUNCTION DOC]
+        # Regression test for GH#53193: insert accepts a numpy 64-bit integer position, adding the
+        # scalar broadcast column at the front.
         # GH#53193
         df = DataFrame({"a": [1, 2]})
         df.insert(np.int64(0), "b", 0)
         tm.assert_frame_equal(df, DataFrame({"b": [0, 0], "a": [1, 2]}))
 
     def test_insert_delete_mixed_multiindex_columns(self):
+        # [FUNCTION DOC]
+        # Regression test for GH#56853: on a frame with a two-level column label containing a timestamp,
+        # inserting a plain column yields a multi-index whose second element is missing (NaT); deleting
+        # that column afterwards must not raise a recursion error and gives back the original frame.
         # GH#56853
 
         df = DataFrame({("A", Timestamp("2024-01-01")): [0]})

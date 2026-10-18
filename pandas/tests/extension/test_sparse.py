@@ -13,6 +13,12 @@ classes (if they are relevant for the extension interface for all dtypes), or
 be added to the array-specific tests in `pandas/tests/arrays/`.
 
 """
+# [MODULE DOC]
+# Compliance tests for the sparse extension dtype and array, run through the shared extension-array
+# test suite. Data fixtures are parametrized over fill values zero and NaN. The test class overrides
+# many inherited tests: skipping unsupported integer-sparse cases, expected failures for reductions and
+# fills, custom comparison and arithmetic handling, and a few sparse-specific checks. Full sparse array
+# tests live elsewhere. No import-time side effects.
 
 import numpy as np
 import pytest
@@ -25,6 +31,11 @@ from pandas.tests.extension import base
 
 
 def make_data(fill_value, n: int):
+    # [FUNCTION DOC]
+    # HELPER: generates data for fixtures. Parameters: fill_value (zero or NaN) and n (length). Draws from a
+    # fixed-seed generator: uniform floats when the fill value is NaN, else integers from one to 99 (ensuring the first
+    # two values differ by incrementing the first if equal). Every third element starting at position two is set to the
+    # fill value. Returns the numpy array.
     rng = np.random.default_rng(2)
     if np.isnan(fill_value):
         data = rng.uniform(size=n)
@@ -39,11 +50,16 @@ def make_data(fill_value, n: int):
 
 @pytest.fixture
 def dtype():
+    # [FUNCTION DOC]
+    # HELPER: fixture returning a default sparse dtype.
     return SparseDtype()
 
 
 @pytest.fixture(params=[0, np.nan])
 def data(request):
+    # [FUNCTION DOC]
+    # HELPER: fixture parametrized over fill values zero and NaN; returns a ten-element sparse array from the data helper
+    # with that fill value.
     """Length-10 SparseArray for semantics test."""
     res = SparseArray(make_data(request.param, 10), fill_value=request.param)
     return res
@@ -51,20 +67,30 @@ def data(request):
 
 @pytest.fixture
 def data_for_twos():
+    # [FUNCTION DOC]
+    # HELPER: fixture returning a sparse array of ten twos.
     return SparseArray(np.ones(10) * 2)
 
 
 @pytest.fixture(params=[0, np.nan])
 def data_missing(request):
+    # [FUNCTION DOC]
+    # HELPER: fixture parametrized over fill values zero and NaN; returns a two-element sparse array with NaN then one.
     """Length 2 array with [NA, Valid]"""
     return SparseArray([np.nan, 1], fill_value=request.param)
 
 
 @pytest.fixture(params=[0, np.nan])
 def data_repeated(request):
+    # [FUNCTION DOC]
+    # HELPER: fixture parametrized over fill values zero and NaN; returns a generator function which, given a count, yields
+    # that many sparse arrays of ten generated values with the fill value.
     """Return different versions of data for count times"""
 
     def gen(count):
+        # [FUNCTION DOC]
+        # HELPER: generator yielding count sparse arrays of ten generated values using the parameter's fill value
+        # (from the enclosing fixture).
         for _ in range(count):
             yield SparseArray(make_data(request.param, 10), fill_value=request.param)
 
@@ -73,35 +99,53 @@ def data_repeated(request):
 
 @pytest.fixture(params=[0, np.nan])
 def data_for_sorting(request):
+    # [FUNCTION DOC]
+    # HELPER: fixture parametrized over fill value zero or NaN; returns sparse array of 2, 3, 1 for sorting.
     return SparseArray([2, 3, 1], fill_value=request.param)
 
 
 @pytest.fixture(params=[0, np.nan])
 def data_missing_for_sorting(request):
+    # [FUNCTION DOC]
+    # HELPER: fixture parametrized over fill value zero or NaN; returns sparse array 2, NaN, 1 for sorting with missing.
     return SparseArray([2, np.nan, 1], fill_value=request.param)
 
 
 @pytest.fixture
 def na_cmp():
+    # [FUNCTION DOC]
+    # HELPER: fixture returning a comparison function true when both arguments are missing.
     return lambda left, right: pd.isna(left) and pd.isna(right)
 
 
 @pytest.fixture(params=[0, np.nan])
 def data_for_grouping(request):
+    # [FUNCTION DOC]
+    # HELPER: fixture parametrized over fill values; returns the eight-element sparse array 1, 1, NaN, NaN, 2, 2, 1, 3 for group-by tests.
     return SparseArray([1, 1, np.nan, np.nan, 2, 2, 1, 3], fill_value=request.param)
 
 
 @pytest.fixture(params=[0, np.nan])
 def data_for_compare(request):
+    # [FUNCTION DOC]
+    # HELPER: fixture parametrized over fill values; returns a ten-element sparse array 0, 0, NaN, -2, -1, 4, 2, 3, 0, 0 for comparison tests.
     return SparseArray([0, 0, np.nan, -2, -1, 4, 2, 3, 0, 0], fill_value=request.param)
 
 
 class TestSparseArray(base.ExtensionTests):
+    # [CLASS DOC]
+    # Extension-suite test class for the sparse array. Overrides reductions, fill, concat, align, merge, comparison, arithmetic, repr and group-by
+    # tests. Class attributes: expected-dtype for combine less-or-equal is sparse boolean; the four arithmetic exception attributes are none.
     def _supports_reduction(self, obj, op_name: str) -> bool:
+        # [FUNCTION DOC]
+        # HELPER: all reductions are reported as supported.
         return True
 
     @pytest.mark.parametrize("skipna", [True, False])
     def test_reduce_series_numeric(self, data, all_numeric_reductions, skipna, request):
+        # [FUNCTION DOC]
+        # Parametrized over skipna. Marks expected failure for product, median, variance, standard deviation, sem, skew and kurtosis
+        # (viable but not implemented), and for sum, max, min, mean on float data without skipna (getting a non-NaN float); then delegates to the parent test.
         if all_numeric_reductions in [
             "prod",
             "median",
@@ -127,6 +171,9 @@ class TestSparseArray(base.ExtensionTests):
 
     @pytest.mark.parametrize("skipna", [True, False])
     def test_reduce_frame(self, data, all_numeric_reductions, skipna, request):
+        # [FUNCTION DOC]
+        # Parametrized over skipna. Same expectations as the series version, except the second reason is that extension array NA masks differ;
+        # then delegates to the parent frame reduction test.
         if all_numeric_reductions in [
             "prod",
             "median",
@@ -151,10 +198,15 @@ class TestSparseArray(base.ExtensionTests):
         super().test_reduce_frame(data, all_numeric_reductions, skipna)
 
     def _check_unsupported(self, data):
+        # [FUNCTION DOC]
+        # HELPER: skips the test (reason: cannot store NaN in an integer array) when the data's dtype is integer-sparse with fill value zero.
         if data.dtype == SparseDtype(int, 0):
             pytest.skip("Can't store nan in int array.")
 
     def test_concat_mixed_dtypes(self, data):
+        # [FUNCTION DOC]
+        # Regression test for issue 20762: concatenating frames holding a sparse column, an integer column and a categorical column gives the same result as
+        # concatenating frames whose columns were first converted to object arrays (aside from sparse and float).
         # https://github.com/pandas-dev/pandas/issues/20762
         # This should be the same, aside from concat([sparse, float])
         df1 = pd.DataFrame({"A": data[:3]})
@@ -183,33 +235,51 @@ class TestSparseArray(base.ExtensionTests):
     )
     @pytest.mark.parametrize("future_stack", [True, False])
     def test_stack(self, data, columns, future_stack):
+        # [FUNCTION DOC]
+        # Parametrized over plain or multi-index columns and the future-stack option (a warning about the previous stack implementation being deprecated is
+        # ignored). Delegates to the parent stack test.
         super().test_stack(data, columns, future_stack)
 
     def test_concat_columns(self, data, na_value):
+        # [FUNCTION DOC]
+        # Skips integer-sparse data via the helper then delegates to the parent test.
         self._check_unsupported(data)
         super().test_concat_columns(data, na_value)
 
     def test_concat_extension_arrays_copy_false(self, data, na_value):
+        # [FUNCTION DOC]
+        # Skips integer-sparse data via the helper then delegates to the parent test.
         self._check_unsupported(data)
         super().test_concat_extension_arrays_copy_false(data, na_value)
 
     def test_align(self, data, na_value):
+        # [FUNCTION DOC]
+        # Skips integer-sparse data via the helper then delegates to the parent test.
         self._check_unsupported(data)
         super().test_align(data, na_value)
 
     def test_align_frame(self, data, na_value):
+        # [FUNCTION DOC]
+        # Skips integer-sparse data via the helper then delegates to the parent test.
         self._check_unsupported(data)
         super().test_align_frame(data, na_value)
 
     def test_align_series_frame(self, data, na_value):
+        # [FUNCTION DOC]
+        # Skips integer-sparse data via the helper then delegates to the parent test.
         self._check_unsupported(data)
         super().test_align_series_frame(data, na_value)
 
     def test_merge(self, data, na_value):
+        # [FUNCTION DOC]
+        # Skips integer-sparse data via the helper then delegates to the parent test.
         self._check_unsupported(data)
         super().test_merge(data, na_value)
 
     def test_get(self, data):
+        # [FUNCTION DOC]
+        # Overrides the get test: builds a Series with the data indexed by even numbers; if the fill value is NaN, both the label lookup and the positional
+        # lookup give NaN, otherwise they are equal; label two equals position one.
         ser = pd.Series(data, index=[2 * i for i in range(len(data))])
         if np.isnan(ser.values.fill_value):
             assert np.isnan(ser.get(4)) and np.isnan(ser.iloc[2])
@@ -218,15 +288,22 @@ class TestSparseArray(base.ExtensionTests):
         assert ser.get(2) == ser.iloc[1]
 
     def test_array_item_with_index(self, data, request):
+        # [FUNCTION DOC]
+        # Marks the test expected-to-fail (sparse getitem is buggy; source references a pull request) then delegates to the parent test.
         # TODO https://github.com/pandas-dev/pandas/pull/64183
         request.node.add_marker(pytest.mark.xfail(reason="SparseArray getitem buggy"))
         super().test_array_item_with_index(data)
 
     def test_reindex(self, data, na_value):
+        # [FUNCTION DOC]
+        # Skips integer-sparse data via the helper then delegates to the parent test.
         self._check_unsupported(data)
         super().test_reindex(data, na_value)
 
     def test_isna(self, data_missing):
+        # [FUNCTION DOC]
+        # Verifies the missing mask is a sparse boolean array whose fill value reflects whether the data's fill value is missing, with values true, false; after filling with zero, the mask
+        # is all false with false fill value (dtype from the fill value of the data).
         sarr = SparseArray(data_missing)
         expected_dtype = SparseDtype(bool, pd.isna(data_missing.dtype.fill_value))
         expected = SparseArray([True, False], dtype=expected_dtype)
@@ -240,9 +317,14 @@ class TestSparseArray(base.ExtensionTests):
         tm.assert_equal(sarr.isna(), expected)
 
     def test_fillna_no_op_returns_copy(self, data, request):
+        # [FUNCTION DOC]
+        # Delegates to the parent test of no-op fill returning a copy; request fixture unused.
         super().test_fillna_no_op_returns_copy(data)
 
     def test_fillna_readonly(self, data_missing):
+        # [FUNCTION DOC]
+        # Verifies filling a read-only copy returns a result whose first element is the filled value while the original is unchanged,
+        # and that the no-copy keyword is ignored (same result), as copy is ignored by sparse fill.
         # copy keyword is ignored by SparseArray.fillna
         # -> copy=True vs False doesn't make a difference
         data = data_missing.copy()
@@ -259,12 +341,18 @@ class TestSparseArray(base.ExtensionTests):
 
     @pytest.mark.xfail(reason="Unsupported")
     def test_fillna_series(self, data_missing):
+        # [FUNCTION DOC]
+        # Expected-to-fail (unsupported). Calls the parent test without the data argument (so it does not pass through data_missing). A source comment says it looks doable and
+        # the zero-fill case would then pass unexpectedly.
         # this one looks doable.
         # TODO: this fails bc we do not pass through data_missing. If we did,
         #  the 0-fill case would xpass
         super().test_fillna_series()
 
     def test_fillna_frame(self, data_missing):
+        # [FUNCTION DOC]
+        # Overrides the parent: fills missing values of a frame with a sparse column and an integer column with the valid element; expected is a sparse column
+        # filled with that value, where the dtype gains the fill value as its fill when the original fill value is missing, else keeps the dtype.
         # Have to override to specify that fill_value will change.
         fill_value = data_missing[1]
 
@@ -285,11 +373,16 @@ class TestSparseArray(base.ExtensionTests):
         tm.assert_frame_equal(result, expected)
 
     def test_fillna_limit_frame(self, data_missing):
+        # [FUNCTION DOC]
+        # Regression test for GH#58001: expected to raise a value error saying the limit must be none when calling the parent frame fill-limit test.
         # GH#58001
         with pytest.raises(ValueError, match="limit must be None"):
             super().test_fillna_limit_frame(data_missing)
 
     def test_fillna_limit_series(self, data_missing):
+        # [FUNCTION DOC]
+        # Regression test for GH#58001: expected to raise a value error saying the limit must be none.
+        # KNOWN ISSUE: the series test calls the parent frame variant of the fill-limit test, so the series path is not exercised.
         # GH#58001
         with pytest.raises(ValueError, match="limit must be None"):
             super().test_fillna_limit_frame(data_missing)
@@ -297,6 +390,9 @@ class TestSparseArray(base.ExtensionTests):
     _combine_le_expected_dtype = "Sparse[bool]"
 
     def test_fillna_copy_frame(self, data_missing):
+        # [FUNCTION DOC]
+        # Verifies filling a frame built without copying from a sparse array of the valid element does not copy: values share a base with the result (block managers) and the
+        # dense array of the column is the same object as the original's dense array.
         arr = data_missing.take([1, 1])
         df = pd.DataFrame({"A": arr}, copy=False)
 
@@ -308,6 +404,8 @@ class TestSparseArray(base.ExtensionTests):
         assert df.A._values.to_dense() is arr.to_dense()
 
     def test_fillna_copy_series(self, data_missing):
+        # [FUNCTION DOC]
+        # Verifies filling a non-copying Series returns a result sharing the same underlying values object and the same dense array as the original.
         arr = data_missing.take([1, 1])
         ser = pd.Series(arr, copy=False)
 
@@ -319,9 +417,14 @@ class TestSparseArray(base.ExtensionTests):
 
     @pytest.mark.xfail(reason="Not Applicable")
     def test_fillna_length_mismatch(self, data_missing):
+        # [FUNCTION DOC]
+        # Expected-to-fail (not applicable); delegates to the parent test.
         super().test_fillna_length_mismatch(data_missing)
 
     def test_where_series(self, data, na_value):
+        # [FUNCTION DOC]
+        # Verifies where on a Series of sparse values with a boolean condition gives a Series of float sparse values with fill value zero and missing where false; with another sparse
+        # array as the replacement gives the expected combination keeping the dtype.
         assert data[0] != data[1]
         cls = type(data)
         a, b = data[:2]
@@ -344,10 +447,14 @@ class TestSparseArray(base.ExtensionTests):
         tm.assert_series_equal(result, expected)
 
     def test_searchsorted(self, performance_warning, data_for_sorting, as_series):
+        # [FUNCTION DOC]
+        # Delegates to the parent sorted-search test inside a context asserting the performance warning fixture's warning is produced (stack level not checked).
         with tm.assert_produces_warning(performance_warning, check_stacklevel=False):
             super().test_searchsorted(data_for_sorting, as_series)
 
     def test_shift_0_periods(self, data):
+        # [FUNCTION DOC]
+        # Regression test for GH#33856: shifting by zero periods returns a copy; changing the original's sparse values afterwards does not alter the result.
         # GH#33856 shifting with periods=0 should return a copy, not same obj
         result = data.shift(0)
 
@@ -356,6 +463,8 @@ class TestSparseArray(base.ExtensionTests):
 
     @pytest.mark.parametrize("method", ["argmax", "argmin"])
     def test_argmin_argmax_all_na(self, method, data, na_value):
+        # [FUNCTION DOC]
+        # Parametrized over argmax and argmin. Skips integer-sparse data (it cannot hold NA), else delegates to the parent test.
         # overriding because Sparse[int64, 0] cannot handle na_value
         self._check_unsupported(data)
         super().test_argmin_argmax_all_na(method, data, na_value)
@@ -363,11 +472,15 @@ class TestSparseArray(base.ExtensionTests):
     @pytest.mark.fails_arm_wheels
     @pytest.mark.parametrize("box", [pd.array, pd.Series, pd.DataFrame])
     def test_equals(self, data, na_value, as_series, box):
+        # [FUNCTION DOC]
+        # Marked to fail on ARM wheels. Parametrized over containers (array, Series, DataFrame). Skips integer-sparse data then delegates to the parent equality test.
         self._check_unsupported(data)
         super().test_equals(data, na_value, as_series, box)
 
     @pytest.mark.fails_arm_wheels
     def test_equals_same_data_different_object(self, data):
+        # [FUNCTION DOC]
+        # Marked to fail on ARM wheels. Delegates to the parent test of equal data in different objects.
         super().test_equals_same_data_different_object(data)
 
     @pytest.mark.parametrize(
@@ -380,6 +493,9 @@ class TestSparseArray(base.ExtensionTests):
         ],
     )
     def test_map(self, func, na_action, expected):
+        # [FUNCTION DOC]
+        # GH52096. Parametrized over (function, na action, expected): identity with no action or ignore gives a sparse float array with NaN; converting to string gives a
+        # sparse string array with fill value the text nan (action none) or one with NaN preserved (ignore). Mapping the sparse array one and NaN must equal the expected extension array.
         # GH52096
         data = SparseArray([1, np.nan])
         result = data.map(func, na_action=na_action)
@@ -387,6 +503,8 @@ class TestSparseArray(base.ExtensionTests):
 
     @pytest.mark.parametrize("na_action", [None, "ignore"])
     def test_map_raises(self, data, na_action):
+        # [FUNCTION DOC]
+        # GH52096. Parametrized over na action. Mapping a function returning NaN raises a value error saying a fill value in the sparse values is not supported.
         # GH52096
         msg = "fill value in the sparse values not supported"
         with pytest.raises(ValueError, match=msg):
@@ -394,6 +512,9 @@ class TestSparseArray(base.ExtensionTests):
 
     @pytest.mark.xfail(raises=TypeError, reason="no sparse StringDtype")
     def test_astype_string(self, data, nullable_string_dtype):
+        # [FUNCTION DOC]
+        # Expected-to-fail with a type error (no sparse string dtype). Delegates to the parent test without the string dtype argument; a source TODO says the zero-fill
+        # cases would pass unexpectedly if it were passed through.
         # TODO: this fails bc we do not pass through nullable_string_dtype;
         #  If we did, the 0-cases would xpass
         super().test_astype_string(data)
@@ -404,6 +525,9 @@ class TestSparseArray(base.ExtensionTests):
     series_array_exc = None
 
     def _skip_if_different_combine(self, data):
+        # [FUNCTION DOC]
+        # HELPER: skips the test when the data's fill value is zero (arithmetic uses the dtype's fill value so sparsity is kept, but combine cannot be called on a dtype, so the
+        # expected cannot be produced; tested elsewhere).
         if data.fill_value == 0:
             # arith ops call on dtype.fill_value so that the sparsity
             # is maintained. Combine can't be called on a dtype in
@@ -411,14 +535,21 @@ class TestSparseArray(base.ExtensionTests):
             pytest.skip("Incorrected expected from Series.combine and tested elsewhere")
 
     def test_arith_series_with_scalar(self, data, all_arithmetic_operators):
+        # [FUNCTION DOC]
+        # Skips fill-value-zero data via the helper then delegates to the parent series-scalar arithmetic test.
         self._skip_if_different_combine(data)
         super().test_arith_series_with_scalar(data, all_arithmetic_operators)
 
     def test_arith_series_with_array(self, data, all_arithmetic_operators):
+        # [FUNCTION DOC]
+        # Skips fill-value-zero data via the helper then delegates to the parent series-array arithmetic test.
         self._skip_if_different_combine(data)
         super().test_arith_series_with_array(data, all_arithmetic_operators)
 
     def test_arith_frame_with_scalar(self, data, all_arithmetic_operators, request):
+        # [FUNCTION DOC]
+        # For fill value zero, marks expected-to-fail (result fill value mismatch) all arithmetic operators except multiply, floor division, true division, power and modulus (with and without
+        # reflection); then delegates to the parent frame-scalar arithmetic test.
         if data.dtype.fill_value != 0:
             pass
         elif all_arithmetic_operators.strip("_") not in [
@@ -439,6 +570,10 @@ class TestSparseArray(base.ExtensionTests):
     def _compare_other(
         self, ser: pd.Series, data_for_compare: SparseArray, comparison_op, other
     ):
+        # [FUNCTION DOC]
+        # HELPER: overrides the comparison check. Parameters: series (unused), sparse data to compare, comparison operator and other operand. Applies the operator to the sparse data and other; the result must
+        # be a sparse array (a Series with sparse dtype if other is a Series) of booleans. The expected is a sparse boolean array from the dense comparison, whose fill value is the comparison of the fill
+        # values (for a Series other, with the other's fill value; for a scalar or array, whether all of them hold), wrapped in a Series when other is a Series; compared with assert-equal.
         op = comparison_op
 
         result = op(data_for_compare, other)
@@ -473,6 +608,8 @@ class TestSparseArray(base.ExtensionTests):
         tm.assert_equal(result, expected)
 
     def test_scalar(self, data_for_compare: SparseArray, comparison_op):
+        # [FUNCTION DOC]
+        # Compares the sparse data with scalars zero, one, negative one and NaN using the comparison operator fixture and the helper.
         ser = pd.Series(data_for_compare)
         self._compare_other(ser, data_for_compare, comparison_op, 0)
         self._compare_other(ser, data_for_compare, comparison_op, 1)
@@ -480,6 +617,8 @@ class TestSparseArray(base.ExtensionTests):
         self._compare_other(ser, data_for_compare, comparison_op, np.nan)
 
     def test_array(self, data_for_compare: SparseArray, comparison_op, request):
+        # [FUNCTION DOC]
+        # For fill value zero and equal, greater-or-equal or less-or-equal operators marks expected failure (wrong fill value). Compares the sparse data with a numpy array of ten evenly spaced values from -4 to 5.
         if data_for_compare.dtype.fill_value == 0 and comparison_op.__name__ in [
             "eq",
             "ge",
@@ -493,6 +632,8 @@ class TestSparseArray(base.ExtensionTests):
         self._compare_other(ser, data_for_compare, comparison_op, arr)
 
     def test_sparse_array(self, data_for_compare: SparseArray, comparison_op, request):
+        # [FUNCTION DOC]
+        # For fill value zero and any operator but greater-than marks expected failure (wrong fill value). Compares the data against the data plus one and the data times two (sparse arrays).
         if data_for_compare.dtype.fill_value == 0 and comparison_op.__name__ != "gt":
             mark = pytest.mark.xfail(reason="Wrong fill_value")
             request.applymarker(mark)
@@ -505,13 +646,19 @@ class TestSparseArray(base.ExtensionTests):
 
     @pytest.mark.xfail(reason="Different repr")
     def test_array_repr(self, data, size):
+        # [FUNCTION DOC]
+        # Expected-to-fail (different repr); delegates to the parent array repr test.
         super().test_array_repr(data, size)
 
     @pytest.mark.xfail(reason="result does not match expected")
     @pytest.mark.parametrize("as_index", [True, False])
     def test_groupby_extension_agg(self, as_index, data_for_grouping):
+        # [FUNCTION DOC]
+        # Expected-to-fail (result does not match expected). Parametrized over whether the key is an index; delegates to the parent test.
         super().test_groupby_extension_agg(as_index, data_for_grouping)
 
 
 def test_array_type_with_arg(dtype):
+    # [FUNCTION DOC]
+    # Verifies that the dtype fixture's array-type constructor returns the sparse array class.
     assert dtype.construct_array_type() is SparseArray

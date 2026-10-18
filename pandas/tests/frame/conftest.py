@@ -1,3 +1,8 @@
+# [MODULE DOC]
+# Pytest fixtures local to the DataFrame tests: random-valued frames of various column
+# dtypes and indexes (datetime, float plus string, mixed float, mixed int, time zones).
+# All random data come from a generator seeded with a fixed value, so fixtures are
+# deterministic. No import-time side effects.
 import numpy as np
 import pytest
 
@@ -11,6 +16,9 @@ from pandas import (
 
 @pytest.fixture
 def datetime_frame() -> DataFrame:
+    # [FUNCTION DOC]
+    # Fixture returning a ten-row, four-column (labels A to D) frame of standard normal floats
+    # indexed by a business-day date range starting 2000-01-01.
     """
     Fixture for DataFrame of floats with DatetimeIndex
 
@@ -25,6 +33,10 @@ def datetime_frame() -> DataFrame:
 
 @pytest.fixture
 def float_string_frame():
+    # [FUNCTION DOC]
+    # Fixture returning a thirty-row frame with float columns A to D (standard normal data)
+    # indexed by object-dtype strings foo_0 through foo_29, plus a fifth column named foo whose
+    # every value is the string bar.
     """
     Fixture for DataFrame of floats and strings with index of unique strings
 
@@ -41,6 +53,10 @@ def float_string_frame():
 
 @pytest.fixture
 def mixed_float_frame():
+    # [FUNCTION DOC]
+    # Fixture returning a thirty-row frame of columns A to D with random floats in the unit
+    # interval, string index foo_0 to foo_29. Columns A to C start as 32-bit floats and D as
+    # 64-bit; column C is then cast to 16-bit float (numpy random cannot generate it).
     """
     Fixture for DataFrame of different float types with index of unique strings
 
@@ -62,6 +78,10 @@ def mixed_float_frame():
 
 @pytest.fixture
 def mixed_int_frame():
+    # [FUNCTION DOC]
+    # Fixture returning a thirty-row frame of columns A to D filled with ones, with dtypes
+    # 32-bit int, 64-bit unsigned, 8-bit unsigned and 64-bit int respectively, and string
+    # index foo_0 to foo_29.
     """
     Fixture for DataFrame of different int types with index of unique strings
 
@@ -78,6 +98,10 @@ def mixed_int_frame():
 
 @pytest.fixture
 def timezone_frame():
+    # [FUNCTION DOC]
+    # Fixture returning a three-row frame with date columns A (naive), B (US/Eastern) and C
+    # (CET), all daily from 2013-01-01 at nanosecond unit. The second-row values of B and C
+    # are then set to missing (NaT).
     """
     Fixture for DataFrame of date_range Series with different time zones
 
