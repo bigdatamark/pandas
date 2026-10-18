@@ -7,6 +7,16 @@ Numba 1D mean kernels that can be shared by
 Mirrors pandas/_libs/window/aggregation.pyx
 """
 
+# [MODULE DOC]
+# HELPER: internal numba kernels for the arithmetic mean, used by the numba engine of
+# rolling/expanding windows and groupby.
+# Public contents: add_mean and remove_mean (single-step accumulator updates using
+# Kahan compensated summation), sliding_mean (window kernel driven by start/end
+# bound arrays) and grouped_mean (groupby kernel driven by integer group labels).
+# Relationships: uses the monotonic bounds check from the shared kernels module
+# and the compensated grouped sum from the sum kernels module; results are
+# consumed by the looper in the executor module. Importing requires numba, and all
+# functions are compiled lazily on first call (no other import-time side effects).
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
@@ -31,6 +41,18 @@ def add_mean(
     num_consecutive_same_value: int,
     prev_value: float,
 ) -> tuple[int, float, int, float, int, float]:
+    # [FUNCTION DOC]
+    # HELPER: adds one observation to the running mean state of a window.
+    # Inputs: val (the new value), nobs (count of non-missing values), sum_x
+    # (running sum), neg_ct (count of negative values), compensation (Kahan
+    # compensation term), num_consecutive_same_value (length of the current run of
+    # equal values) and prev_value (previous non-missing value).
+    # Missing (NaN) values leave all state unchanged. Otherwise the count is
+    # incremented, the value is added with compensated summation, the negative
+    # count is incremented for negative values and the run length is extended (if
+    # equal to the previous value) or reset to one; the previous value is updated.
+    # Returns the updated tuple (nobs, sum_x, neg_ct, compensation,
+    # num_consecutive_same_value, prev_value).
     if not np.isnan(val):
         nobs += 1
         y = val - compensation
@@ -53,6 +75,13 @@ def add_mean(
 def remove_mean(
     val: float, nobs: int, sum_x: float, neg_ct: int, compensation: float
 ) -> tuple[int, float, int, float]:
+    # [FUNCTION DOC]
+    # HELPER: removes one observation from the running mean state when it leaves a
+    # window. Inputs: val, nobs, sum_x, neg_ct and compensation, as in the add
+    # step. A missing value changes nothing; otherwise the count is decremented,
+    # the value is subtracted with compensated summation and the negative count is
+    # decremented for negative values. Returns the updated tuple (nobs, sum_x,
+    # neg_ct, compensation).
     if not np.isnan(val):
         nobs -= 1
         y = -val - compensation
@@ -72,6 +101,21 @@ def sliding_mean(
     end: np.ndarray,
     min_periods: int,
 ) -> tuple[np.ndarray, list[int]]:
+    # [FUNCTION DOC]
+    # Window mean kernel for one 1D array of floats.
+    # Inputs: values (1D array), result_dtype (dtype of the output array), start and
+    # end (integer arrays with one window each, half open ranges), min_periods
+    # (minimum non-missing observations needed for a result).
+    # Behavior: when the bounds are monotonically increasing, the window state is
+    # updated incrementally (remove values that left, add values that entered);
+    # otherwise the state is recomputed from scratch for every window. The mean is
+    # the compensated sum divided by the count, but it is replaced by the repeated
+    # value when all observations are equal, and clamped to zero when its sign
+    # contradicts the signs of the inputs (all non-negative inputs but negative
+    # result, or all negative inputs but positive result). Windows with fewer
+    # than min_periods observations, or no observations, give NaN.
+    # Returns a pair: the output array (one entry per window) and an empty list of
+    # integer positions (no positions need masking as floats hold NaN).
     N = len(start)
     nobs = 0
     sum_x = 0.0
@@ -171,6 +215,22 @@ def grouped_mean(
     min_periods: int,
     skipna: bool,
 ) -> tuple[np.ndarray, list[int]]:
+    # [FUNCTION DOC]
+    # Groupby mean kernel for one 1D array.
+    # Inputs: values (1D array), result_dtype (output dtype), labels (group code per
+    # element; negative codes are ignored), ngroups (number of groups),
+    # min_periods (minimum observations per group) and skipna (whether missing
+    # values are skipped; if false a group containing a missing value gives NaN).
+    # Behavior: computes per-group compensated sums, counts, and runs of equal
+    # values via the shared grouped sum helper, then for each group divides by the
+    # count; groups with fewer than min_periods observations become NaN, and a
+    # group whose values are all equal uses the repeated value times the count to
+    # avoid rounding error.
+    # Returns the per-group output array and an empty list of positions to mask.
+    # KNOWN ISSUE: the division by the count is applied to every group, including
+    # groups already set to NaN and groups with zero observations (when
+    # min_periods is zero this is zero divided by zero), instead of only to groups
+    # that satisfied min_periods.
     output, nobs_arr, comp_arr, consecutive_counts, prev_vals = grouped_kahan_sum(
         values, result_dtype, labels, ngroups, skipna
     )

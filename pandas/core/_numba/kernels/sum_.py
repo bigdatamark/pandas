@@ -7,6 +7,14 @@ Numba 1D sum kernels that can be shared by
 Mirrors pandas/_libs/window/aggregation.pyx
 """
 
+# [MODULE DOC]
+# HELPER: internal numba kernels for the sum, used by the numba engine of
+# rolling/expanding windows and groupby, with Kahan compensated summation.
+# Public contents: add_sum and remove_sum (single-step accumulator updates),
+# sliding_sum (window kernel driven by start/end bounds), grouped_kahan_sum
+# (reusable jittable helper returning the per-group sums and bookkeeping arrays,
+# also used by the mean kernel) and grouped_sum (groupby kernel driven by labels).
+# Importing requires numba; functions are compiled lazily on first call.
 from __future__ import annotations
 
 from typing import (
@@ -33,6 +41,15 @@ def add_sum(
     num_consecutive_same_value: int,
     prev_value: Any,
 ) -> tuple[int, Any, Any, int, Any]:
+    # [FUNCTION DOC]
+    # HELPER: adds one observation to the running sum state of a window or group.
+    # Inputs: val, nobs (count), sum_x (running sum), compensation (Kahan term),
+    # num_consecutive_same_value (length of the current run of equal values) and
+    # prev_value. A missing value changes nothing. Otherwise the count is
+    # incremented, the value is added with compensated summation and the run
+    # length is extended or reset to one; prev_value is updated.
+    # Returns the updated tuple (nobs, sum_x, compensation,
+    # num_consecutive_same_value, prev_value).
     if not np.isnan(val):
         nobs += 1
         y = val - compensation
@@ -53,6 +70,11 @@ def add_sum(
 def remove_sum(
     val: Any, nobs: int, sum_x: Any, compensation: Any
 ) -> tuple[int, Any, Any]:
+    # [FUNCTION DOC]
+    # HELPER: removes one observation from the running sum state when it leaves a
+    # window. Inputs: val, nobs, sum_x and compensation. A missing value changes
+    # nothing; otherwise the count is decremented and the value subtracted with
+    # compensated summation. Returns the updated tuple (nobs, sum_x, compensation).
     if not np.isnan(val):
         nobs -= 1
         y = -val - compensation
@@ -70,6 +92,20 @@ def sliding_sum(
     end: np.ndarray,
     min_periods: int,
 ) -> tuple[np.ndarray, list[int]]:
+    # [FUNCTION DOC]
+    # Window sum kernel for one 1D array.
+    # Inputs: values (1D array of floats or integers), result_dtype (output dtype),
+    # start and end (integer arrays, one half open window each), min_periods
+    # (minimum non-missing observations).
+    # Behavior: with monotonically increasing bounds the state is updated
+    # incrementally (values leaving are removed, values entering are added),
+    # otherwise recomputed per window. A window with zero observations and zero
+    # min_periods gives zero; a window with enough observations gives the
+    # compensated sum, or the repeated value times the count if all observations
+    # are equal (to avoid rounding drift); otherwise the result is NaN for floats,
+    # and for integer input a placeholder zero is stored and the position is
+    # recorded for masking.
+    # Returns a pair: the output array and the list of positions to mask.
     dtype = values.dtype
 
     na_val: object = np.nan
@@ -168,6 +204,16 @@ def grouped_kahan_sum(
 ) -> tuple[
     np.ndarray, npt.NDArray[np.int64], np.ndarray, npt.NDArray[np.int64], np.ndarray
 ]:
+    # [FUNCTION DOC]
+    # HELPER: shared jittable routine computing per-group compensated sums, used by
+    # the grouped sum and grouped mean kernels.
+    # Inputs: values (1D array), result_dtype (dtype of the sums), labels (group
+    # code per element; negative codes are ignored), ngroups and skipna (if false,
+    # a missing value poisons its group: the sum becomes NaN and later elements of
+    # that group are skipped).
+    # Returns five arrays of length ngroups: sums, observation counts, Kahan
+    # compensation terms, lengths of the trailing run of equal values, and the last
+    # value seen per group. Groups already NaN are skipped.
     N = len(labels)
 
     nobs_arr = np.zeros(ngroups, dtype=np.int64)
@@ -229,6 +275,16 @@ def grouped_sum(
     min_periods: int,
     skipna: bool,
 ) -> tuple[np.ndarray, list[int]]:
+    # [FUNCTION DOC]
+    # Groupby sum kernel for one 1D array.
+    # Inputs: values, result_dtype, labels (negative codes ignored), ngroups,
+    # min_periods (minimum observations per group) and skipna (see the shared
+    # grouped helper).
+    # Behavior: computes per-group compensated sums; a group whose values are all
+    # equal uses the repeated value times the count. Groups with fewer than
+    # min_periods observations keep their sum but their position is recorded.
+    # Returns a pair: the output array and the list of group positions that the
+    # caller must mask as missing.
     na_pos = []
 
     output, nobs_arr, comp_arr, consecutive_counts, prev_vals = grouped_kahan_sum(

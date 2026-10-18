@@ -1,3 +1,9 @@
+# [MODULE DOC]
+# HELPER: internal module with a small helper shared by the numba kernels. Public
+# contents: is_monotonic_increasing, an eagerly compiled numba function (the
+# signature is declared up front, so compilation happens at import time and
+# requires numba). Used by the sum, mean and variance window kernels to decide
+# whether window bounds allow incremental updates.
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
@@ -16,6 +22,11 @@ if TYPE_CHECKING:
     parallel=False,
 )
 def is_monotonic_increasing(bounds: np.ndarray) -> bool:
+    # [FUNCTION DOC]
+    # HELPER: input is a one dimensional array of 64-bit integers. Returns true if
+    # the values never decrease (equal neighbours are allowed; arrays with fewer
+    # than two elements are considered increasing), false otherwise. No side
+    # effects.
     """Check if int64 values are monotonically increasing."""
     n = len(bounds)
     if n < 2:

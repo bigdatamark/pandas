@@ -1,3 +1,13 @@
+# [MODULE DOC]
+# Quantile computation for numpy arrays and extension arrays, skipping missing
+# values.
+# Public contents: quantile_compat (dispatcher: numpy arrays are handled here,
+# extension arrays use their own quantile method) and quantile_with_mask (core
+# routine for two dimensional data with an explicit missing-value mask and fill
+# value). Private helpers wrap numpy quantile for a row and for a 2D block, with
+# special handling for datetime-like data (computed on the integer
+# representation) and for restoring integer dtypes. Import-time side effects:
+# none.
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
@@ -20,6 +30,14 @@ if TYPE_CHECKING:
 def quantile_compat(
     values: ArrayLike, qs: npt.NDArray[np.float64], interpolation: str
 ) -> ArrayLike:
+    # [FUNCTION DOC]
+    # Computes quantiles of an array for each requested quantile level. Inputs:
+    # values (numpy array or extension array), qs (1D float array of levels
+    # between zero and one) and interpolation (method name passed on to numpy).
+    # For a numpy array it builds the missing mask and the missing fill value for
+    # its dtype and delegates to the mask-based routine; for an extension array it
+    # calls the array's own quantile method. Returns an array of quantiles (the
+    # array type depends on the input kind).
     """
     Compute the quantiles of the given values for each quantile in `qs`.
 
@@ -48,6 +66,17 @@ def quantile_with_mask(
     qs: npt.NDArray[np.float64],
     interpolation: str,
 ) -> np.ndarray:
+    # [FUNCTION DOC]
+    # Core quantile routine with an explicit missing mask. Inputs: values (numpy
+    # array, one or two dimensional), mask (boolean array of the same shape, true
+    # means missing; an assertion error is raised if shapes differ), fill_value
+    # (value used for rows with no valid data), qs (levels) and interpolation.
+    # Behavior: a 1D input is promoted to 2D, processed, and the single result row
+    # returned. For 2D input quantiles are taken along the second axis: if there are
+    # no columns, the result is filled with fill_value; otherwise it is computed by
+    # the private 2D helper and transposed.
+    # Returns an array whose first dimension is the number of rows (or, in 1D, just
+    # the quantile levels) and second the number of levels.
     """
     Compute the quantiles of the given values for each quantile in `qs`.
 
@@ -115,6 +144,12 @@ def _nanquantile_1d(
     na_value: Scalar,
     interpolation: str,
 ) -> Scalar | np.ndarray:
+    # [FUNCTION DOC]
+    # HELPER: quantiles of a single 1D row ignoring masked entries, used by the 2D
+    # helper. Inputs: values, mask (true is missing), qs, na_value (returned for
+    # every level when no valid values remain) and interpolation method. Returns an
+    # array of one result per level (filled with na_value if the row has no valid
+    # values).
     """
     Wrapper for np.quantile that skips missing values, specialized to
     1-dimensional case.
@@ -160,6 +195,19 @@ def _nanquantile(
     mask: npt.NDArray[np.bool_],
     interpolation: str,
 ):
+    # [FUNCTION DOC]
+    # HELPER: quantiles along axis one of a 2D block while skipping masked entries.
+    # Inputs: values (2D array), qs, keyword-only na_value, mask and interpolation.
+    # Behavior: datetime64 / timedelta64 data is processed as 64-bit integers
+    # (recursive call) and the result converted back to the original dtype. If any
+    # entry is masked (shapes must match, assertion error otherwise), each row is
+    # processed separately, floats keep their item size, and for other dtypes the
+    # result is cast back to the input dtype only when not everything is masked and
+    # all result values are exactly representable. If nothing is masked, a single
+    # vectorized numpy quantile call is used.
+    # Returns an array with the quantile levels along the first axis and the
+    # input rows along the second (both the masked and the vectorized paths give
+    # this orientation); the caller transposes it.
     """
     Wrapper for np.quantile that skips missing values.
 

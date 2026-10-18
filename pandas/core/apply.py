@@ -1,3 +1,18 @@
+# [MODULE DOC]
+# Machinery behind apply, agg (aggregate) and transform for Series, DataFrame,
+# groupby, window and resample objects.
+# Public contents: BaseExecutionEngine (abstract base for pluggable map/apply
+# execution engines, exposed in the executors namespace), frame_apply (factory
+# choosing the row-wise or column-wise frame applier), the abstract Apply base
+# class and its subclasses (NDFrameApply, FrameApply with FrameRowApply and
+# FrameColumnApply, SeriesApply, GroupByApply, ResamplerWindowApply), and helper
+# functions for relabeling named aggregations (reconstruct_func,
+# is_multi_agg_with_relabel, normalize_keyword_aggregation, relabel_result,
+# reconstruct_and_relabel_result, maybe_mangle_lambdas, validate_func_kwargs), plus
+# private helpers for making repeated names unique and mangling anonymous
+# functions, and include_axis. Also defines the ResType alias for result mappings.
+# Relationships: used by the apply/agg/transform methods of the pandas
+# objects; may delegate to the numba executor module. Import-time side effects: none.
 from __future__ import annotations
 
 import abc
@@ -80,6 +95,11 @@ ResType: TypeAlias = dict[int, Any]
 
 @set_module("pandas.api.executors")
 class BaseExecutionEngine(abc.ABC):
+    # [CLASS DOC]
+    # Abstract base class for third-party execution engines for the map and apply
+    # methods. Stateless; subclasses implement two static methods: map (run a
+    # function elementwise) and apply (run a function along an axis). Exposed
+    # through the executors public namespace.
     """
     Base class for execution engines for map and apply methods.
 
@@ -102,6 +122,11 @@ class BaseExecutionEngine(abc.ABC):
         decorator: Callable | None,
         skip_na: bool,
     ):
+        # [FUNCTION DOC]
+        # Abstract static method; engines must implement elementwise execution of
+        # the function over the data. Inputs: data, func, args, kwargs, decorator
+        # (optional JIT decorator) and skip_na (whether missing values are skipped).
+        # The base implementation has no behavior (returns nothing).
         """
         Executor method to run functions elementwise.
 
@@ -145,6 +170,11 @@ class BaseExecutionEngine(abc.ABC):
         decorator: Callable,
         axis: Axis,
     ):
+        # [FUNCTION DOC]
+        # Abstract static method; engines must implement execution of the function
+        # along an axis of the data. Inputs: data, func, args, kwargs, decorator and
+        # axis (zero means columns are passed to the function, one means rows). The
+        # base implementation has no behavior (returns nothing).
         """
         Executor method to run functions by an axis.
 
@@ -195,6 +225,18 @@ def frame_apply(
     args=None,
     kwargs=None,
 ) -> FrameApply:
+    # [FUNCTION DOC]
+    # Factory for the frame applier. Inputs: obj (DataFrame), func (function, string,
+    # list or dict), axis (default 0), raw (default false: pass raw arrays), result_type
+    # (default none), by_row (false or the compatibility marker), engine (default
+    # python), engine_kwargs, args (positional arguments for func) and kwargs
+    # (keyword arguments; also searched for named-aggregation specifications).
+    # Behavior: the func is run through the relabeling reconstruction to detect named
+    # aggregation (columns); the axis is normalized to a number; axis zero builds a
+    # row-wise applier, axis one a column-wise applier (named aggregation with axis
+    # one raises a not-implemented error). Returns the applier instance.
+    # KNOWN ISSUE: kwargs defaults to none but is unpacked unconditionally in the
+    # first line, which would fail for that default; callers always pass a mapping.
     """construct and return a row or column based frame apply object"""
     _, func, columns, _ = reconstruct_func(func, **kwargs)
 
@@ -223,6 +265,15 @@ def frame_apply(
 
 
 class Apply(metaclass=abc.ABCMeta):
+    # [CLASS DOC]
+    # Abstract base class holding the shared logic for apply, aggregate and
+    # transform. State: obj (the object being operated on), func (the user
+    # function, string, list or dict), raw, result_type, by_row mode, args and
+    # kwargs (extra arguments, defaulting to empty), engine and engine_kwargs, and
+    # the axis annotation (set by subclasses). Subclasses implement apply and the
+    # list-like/dict-like aggregation or apply hooks; this class provides the
+    # dispatching for agg and transform, the list/dict computation and result
+    # wrapping, and string-method application.
     axis: AxisInt
 
     def __init__(
@@ -238,6 +289,13 @@ class Apply(metaclass=abc.ABCMeta):
         args,
         kwargs,
     ) -> None:
+        # [FUNCTION DOC]
+        # Stores the configuration. Inputs: obj, func, raw, result_type (must be
+        # none or one of reduce, broadcast, expand; otherwise a value error is
+        # raised), keyword-only by_row (false, compat or an internal compat marker;
+        # anything else fails an assertion), engine (default python), engine_kwargs
+        # (default none stored as an empty dict), and args and kwargs (none becomes
+        # empty tuple / dict). No computation is done.
         self.obj = obj
         self.raw = raw
 
@@ -262,21 +320,35 @@ class Apply(metaclass=abc.ABCMeta):
 
     @abc.abstractmethod
     def apply(self) -> DataFrame | Series:
+        # [FUNCTION DOC]
+        # Abstract: subclasses implement the main apply operation and return the
+        # result as a Series or DataFrame.
         pass
 
     @abc.abstractmethod
     def agg_or_apply_list_like(
         self, op_name: Literal["agg", "apply"]
     ) -> DataFrame | Series:
+        # [FUNCTION DOC]
+        # Abstract: subclasses run a list-like of functions for the named operation
+        # (aggregate or apply) and return the combined result.
         pass
 
     @abc.abstractmethod
     def agg_or_apply_dict_like(
         self, op_name: Literal["agg", "apply"]
     ) -> DataFrame | Series:
+        # [FUNCTION DOC]
+        # Abstract: subclasses run a dict-like of functions for the named operation
+        # (aggregate or apply) and return the combined result.
         pass
 
     def agg(self) -> DataFrame | Series | None:
+        # [FUNCTION DOC]
+        # Dispatches aggregation on the type of the function. A string runs the
+        # string-method path; a dict-like runs the dict aggregation; any other
+        # list-like runs the list aggregation. Returns the result, or none for a
+        # callable (or other) so the caller can handle it itself.
         """
         Provide an implementation for the aggregators.
 
@@ -300,6 +372,17 @@ class Apply(metaclass=abc.ABCMeta):
         return None
 
     def transform(self) -> DataFrame | Series:
+        # [FUNCTION DOC]
+        # Applies a transform (a result with the same index as the input).
+        # Behavior: for a frame with axis one, transposes, transforms along zero and
+        # transposes back. A list of functions becomes a dict (by function name for a
+        # Series, or every column mapped to the list for a frame). Dict-likes use the
+        # dict path. For a string or callable, the string-or-callable path runs; a
+        # type error from it propagates but any other failure becomes a value error
+        # saying the transform function failed. A Series/DataFrame result that is
+        # empty while the input is not raises the same value error; a result that is
+        # not a Series/DataFrame, or whose index differs from the input index, raises
+        # a value error saying the function did not transform. Returns the result.
         """
         Transform a DataFrame or Series.
 
@@ -363,6 +446,13 @@ class Apply(metaclass=abc.ABCMeta):
         return result
 
     def transform_dict_like(self, func) -> DataFrame:
+        # [FUNCTION DOC]
+        # Transform with a dict of column to function(s). Input: func (dict-like).
+        # An empty dict raises a value error; the dict is validated (unknown columns
+        # raise a key error, nested renamers a specification error). Each column is
+        # selected as a Series and transformed with its function(s) along axis zero,
+        # passing the stored args and kwargs. Returns the column-wise concatenation
+        # of the per-column results.
         """
         Compute transform in the case of a dict-like func
         """
@@ -387,6 +477,12 @@ class Apply(metaclass=abc.ABCMeta):
         return concat(results, axis=1)
 
     def transform_str_or_callable(self, func) -> DataFrame | Series:
+        # [FUNCTION DOC]
+        # Transform with a string or callable. A string is resolved as a method or
+        # attribute of the object (with the stored args and kwargs). A callable is
+        # first tried through the object's apply method; if that raises any
+        # exception it is called directly on the whole object instead. Returns the
+        # result.
         """
         Compute transform in the case of a string or callable func
         """
@@ -404,6 +500,9 @@ class Apply(metaclass=abc.ABCMeta):
             return func(obj, *args, **kwargs)
 
     def agg_list_like(self) -> DataFrame | Series:
+        # [FUNCTION DOC]
+        # Aggregation for a list of functions; delegates to the shared list-like
+        # routine with the aggregate operation name and returns its result.
         """
         Compute aggregation in the case of a list-like argument.
 
@@ -419,6 +518,15 @@ class Apply(metaclass=abc.ABCMeta):
         selected_obj: Series | DataFrame,
         kwargs: dict[str, Any],
     ) -> tuple[list[Hashable] | Index, list[Any]]:
+        # [FUNCTION DOC]
+        # Runs each function of the list on the selected data. Inputs: op_name (agg
+        # or apply), selected_obj (Series or DataFrame) and kwargs (passed to each
+        # call). For a one-dimensional selection, each function is run on the
+        # selection; for a frame, the whole list is run on each column. The axis is
+        # prepended to the positional arguments when the operation takes one. Keys
+        # are the function names (falling back to the function itself) or the column
+        # labels. Returns a pair: keys and the list of results.
+        # KNOWN ISSUE: the docstring header says "like-like" (a typo for list-like).
         """
         Compute agg/apply results for like-like input.
 
@@ -482,6 +590,14 @@ class Apply(metaclass=abc.ABCMeta):
     def wrap_results_list_like(
         self, keys: Iterable[Hashable], results: list[Series | DataFrame]
     ):
+        # [FUNCTION DOC]
+        # Combines the per-function results of a list-like operation. Inputs: keys
+        # (labels) and results. First tries a column-wise concatenation with the
+        # keys. If that fails with a type error (results are not pandas objects), a
+        # Series of the results indexed by the keys and named like the object is
+        # built; if it contains nested objects a value error is raised saying
+        # transform and aggregation operations cannot be combined. Returns the
+        # combined result.
         from pandas.core.reshape.concat import concat
 
         obj = self.obj
@@ -501,6 +617,9 @@ class Apply(metaclass=abc.ABCMeta):
             return result
 
     def agg_dict_like(self) -> DataFrame | Series:
+        # [FUNCTION DOC]
+        # Aggregation for a dict of functions; delegates to the shared dict-like
+        # routine with the aggregate operation name and returns its result.
         """
         Compute aggregation in the case of a dict-like argument.
 
@@ -517,6 +636,16 @@ class Apply(metaclass=abc.ABCMeta):
         selection: Hashable | Sequence[Hashable],
         kwargs: dict[str, Any],
     ) -> tuple[list[Hashable], list[Any]]:
+        # [FUNCTION DOC]
+        # Runs the function(s) of each dict entry on the matching selection.
+        # Inputs: op_name (agg or apply), selected_obj, selection (used by groupby,
+        # window and resample when a selection exists) and kwargs. The dict is first
+        # normalized (validation and wrapping scalars into lists). Cases: a Series
+        # selection runs each function on the Series; a frame with duplicate column
+        # names selects all columns matching each key; groupby objects select the
+        # column(s) per key (several output keys when the key matches multiple
+        # columns); everything else runs each function on the column selection.
+        # Returns a pair: the output keys and the list of results.
         """
         Compute agg/apply results for dict-like input.
 
@@ -611,6 +740,16 @@ class Apply(metaclass=abc.ABCMeta):
         result_index: list[Hashable],
         result_data: list,
     ):
+        # [FUNCTION DOC]
+        # Combines the results of a dict-like operation. Inputs: selected_obj,
+        # result_index (keys) and result_data (results). If every result is a
+        # pandas object, empty ones are dropped (unless all are empty), keys for a
+        # frame selection keep the column index names, and the results are
+        # concatenated (rows for a Series object, columns otherwise) with the keys
+        # and no sorting. A mix of pandas objects and scalars raises a value error
+        # (cannot perform both aggregation and transformation operations at once).
+        # Otherwise a Series of the scalars indexed by the keys is returned, named
+        # after the object only when it is a Series.
         from pandas import Index
         from pandas.core.reshape.concat import concat
 
@@ -666,6 +805,18 @@ class Apply(metaclass=abc.ABCMeta):
         return result
 
     def apply_str(self) -> DataFrame | Series:
+        # [FUNCTION DOC]
+        # Applies a string-named method or attribute of the object. If the object has
+        # a callable of that name, its signature is inspected: when the axis is not
+        # zero and the method has no axis parameter (or is the correlation-with or
+        # skew method) a value error says the operation does not support axis one; if
+        # it accepts an axis (and the object is not a groupby) the current axis is
+        # added to the stored keyword arguments. SIDE EFFECT: this mutates the stored
+        # keyword dictionary. Then the shared string helper runs with the stored args
+        # and kwargs. Returns its result.
+        # KNOWN ISSUE: the comment says the caller must check the func attribute is a
+        # string, referring to an attribute name that does not exist (func is the
+        # attribute actually used).
         """
         Compute apply in case of a string.
 
@@ -701,6 +852,15 @@ class Apply(metaclass=abc.ABCMeta):
         return self._apply_str(obj, func, *self.args, **self.kwargs)
 
     def apply_list_or_dict_like(self) -> DataFrame | Series:
+        # [FUNCTION DOC]
+        # Apply with a list-like or dict-like of functions. The numba engine raises a
+        # not-implemented error. For a frame with axis one the frame is transposed,
+        # applied along zero and transposed back. Otherwise the dict-like or
+        # list-like apply path runs and the result is passed through relabeling for
+        # named aggregation using the stored kwargs. Returns the result.
+        # KNOWN ISSUE: the docstring says the result may be none when func is neither
+        # list-like nor dict-like, but no code path returns none (every non-dict func
+        # is handled as a list).
         """
         Compute apply in case of a list-like or dict-like.
 
@@ -734,6 +894,14 @@ class Apply(metaclass=abc.ABCMeta):
     def normalize_dictlike_arg(
         self, how: str, obj: DataFrame | Series, func: AggFuncTypeDict
     ) -> AggFuncTypeDict:
+        # [FUNCTION DOC]
+        # Validates and normalizes a dict of functions. Inputs: how (apply, agg or
+        # transform; anything else fails an assertion), obj and func (dict). Raises a
+        # specification error (nested renamer not supported) if, for a Series
+        # aggregation, any value is list-like, or if any value is dict-like. For a
+        # frame, keys missing from the columns raise a key error listing them. If
+        # any value is a list, tuple or dict, all scalar values are wrapped in
+        # one-element lists. Returns the (possibly new) dict.
         """
         Handler for dict-like argument.
 
@@ -778,6 +946,15 @@ class Apply(metaclass=abc.ABCMeta):
         return func
 
     def _apply_str(self, obj, func: str, *args, **kwargs):
+        # [FUNCTION DOC]
+        # HELPER: resolves a string function name against an object. Inputs: obj,
+        # func (string; a non-string fails an assertion) and extra args/kwargs.
+        # If the object has an attribute of that name: a callable is called with the
+        # args and kwargs; a non-callable attribute is returned (assertion errors if
+        # args or an axis keyword were passed). Else, if numpy has a function of that
+        # name and the object is array-like, the numpy function is called with the
+        # object first. Otherwise an attribute error says the string is not a valid
+        # function for the object type.
         """
         if arg is a string, then try to operate on it:
         - try to find a function (or attribute) on obj
@@ -806,6 +983,10 @@ class Apply(metaclass=abc.ABCMeta):
 
 
 class NDFrameApply(Apply):
+    # [CLASS DOC]
+    # Intermediate base class for appliers of Series and DataFrame (not groupby or
+    # window objects). Inherits all of Apply; adds the index and aggregation axis
+    # properties and the list-like and dict-like hooks for frame-like objects.
     """
     Methods shared by FrameApply and SeriesApply but
     not GroupByApply or ResamplerWindowApply
@@ -815,15 +996,26 @@ class NDFrameApply(Apply):
 
     @property
     def index(self) -> Index:
+        # [FUNCTION DOC]
+        # Property returning the index of the wrapped object.
         return self.obj.index
 
     @property
     def agg_axis(self) -> Index:
+        # [FUNCTION DOC]
+        # Property returning the labels of the axis that results are aggregated
+        # over, derived from the current axis of the applier.
         return self.obj._get_agg_axis(self.axis)
 
     def agg_or_apply_list_like(
         self, op_name: Literal["agg", "apply"]
     ) -> DataFrame | Series:
+        # [FUNCTION DOC]
+        # List-like operation for frames and Series. For apply, the row-wise mode is
+        # added to the keyword arguments (the stored mode for frames, the internal
+        # compat marker or false for Series). If the object has an axis attribute of
+        # one, a not-implemented error is raised. Computes the per-function results
+        # with the shared routine and wraps them. Returns the wrapped result.
         obj = self.obj
         kwargs = self.kwargs
 
@@ -847,6 +1039,12 @@ class NDFrameApply(Apply):
     def agg_or_apply_dict_like(
         self, op_name: Literal["agg", "apply"]
     ) -> DataFrame | Series:
+        # [FUNCTION DOC]
+        # Dict-like operation for frames and Series. op_name must be agg or apply
+        # (assertion error otherwise). For apply, the by-row mode keyword is set to
+        # the internal compat marker or false. An object with an axis of one raises
+        # a not-implemented error. Results are computed with no selection and wrapped.
+        # Returns the wrapped result.
         assert op_name in ["agg", "apply"]
         obj = self.obj
 
@@ -867,6 +1065,11 @@ class NDFrameApply(Apply):
 
 
 class FrameApply(NDFrameApply):
+    # [CLASS DOC]
+    # Applier for DataFrame objects; abstract base of the row-wise and column-wise
+    # appliers. Adds frame-specific state/behavior on top of NDFrameApply: the
+    # frame, the function-dispatching apply method, raw and standard apply modes,
+    # and result wrapping. Its constructor restricts by_row to false or compat.
     obj: DataFrame
 
     def __init__(
@@ -882,6 +1085,10 @@ class FrameApply(NDFrameApply):
         args,
         kwargs,
     ) -> None:
+        # [FUNCTION DOC]
+        # Validates by_row (only false or the string compat are allowed; anything
+        # else raises a value error) and forwards all arguments to the base
+        # constructor. Note the default for by_row is false here.
         if by_row is not False and by_row != "compat":
             raise ValueError(f"by_row={by_row} not allowed")
         super().__init__(
@@ -902,16 +1109,25 @@ class FrameApply(NDFrameApply):
     @property
     @abc.abstractmethod
     def result_index(self) -> Index:
+        # [FUNCTION DOC]
+        # Abstract property: subclasses return the index labels of the result
+        # produced when applying the function over the series generator.
         pass
 
     @property
     @abc.abstractmethod
     def result_columns(self) -> Index:
+        # [FUNCTION DOC]
+        # Abstract property: subclasses return the column labels to use for the
+        # result when it is a DataFrame.
         pass
 
     @property
     @abc.abstractmethod
     def series_generator(self) -> Generator[Series]:
+        # [FUNCTION DOC]
+        # Abstract property: subclasses return a generator that yields, one at a time,
+        # the Series (columns or rows) that the function is applied to.
         pass
 
     @staticmethod
@@ -920,13 +1136,26 @@ class FrameApply(NDFrameApply):
     def generate_numba_apply_func(
         func, nogil=True, nopython=True, parallel=False
     ) -> Callable[[npt.NDArray, Index, Index], dict[int, Any]]:
+        # [FUNCTION DOC]
+        # Abstract cached static method: subclasses return a numba-jitted function
+        # that applies the user function to each column or row and returns a
+        # dictionary from position to result. Inputs: func and the jit options
+        # nogil, nopython and parallel (defaults true, true, false). The result is
+        # cached per distinct set of arguments.
         pass
 
     @abc.abstractmethod
     def apply_with_numba(self):
+        # [FUNCTION DOC]
+        # Abstract: subclasses run the numba-compiled apply and return a dictionary
+        # from position to result.
         pass
 
     def validate_values_for_numba(self) -> None:
+        # [FUNCTION DOC]
+        # Checks that every column can be handled by the numba engine. Raises a
+        # value error naming the column if its dtype is not numeric, or if it is
+        # backed by an extension array. Returns nothing.
         # Validate column dtyps all OK
         for colname, dtype in self.obj.dtypes.items():
             if not is_numeric_dtype(dtype):
@@ -944,23 +1173,45 @@ class FrameApply(NDFrameApply):
     def wrap_results_for_axis(
         self, results: ResType, res_index: Index
     ) -> DataFrame | Series:
+        # [FUNCTION DOC]
+        # Abstract: subclasses combine the dictionary of per-element results into a
+        # DataFrame or Series according to the axis. Inputs: results (position to
+        # result) and res_index (labels for the result).
         pass
 
     # ---------------------------------------------------------------
 
     @property
     def res_columns(self) -> Index:
+        # [FUNCTION DOC]
+        # Property: alias for the result columns property.
         return self.result_columns
 
     @property
     def columns(self) -> Index:
+        # [FUNCTION DOC]
+        # Property returning the columns of the wrapped frame.
         return self.obj.columns
 
     @cache_readonly
     def values(self):
+        # [FUNCTION DOC]
+        # Cached property returning the underlying values array of the frame
+        # (computed once per applier instance).
         return self.obj.values
 
     def apply(self) -> DataFrame | Series:
+        # [FUNCTION DOC]
+        # Main entry point for frame apply. Dispatch order: a list-like func goes to
+        # the list/dict path (the numba engine raises a not-implemented error for
+        # it); a frame with both axes empty goes to the empty-result handling; a
+        # string func goes to the string path (not-implemented for numba); a numpy
+        # ufunc is applied block by block with all numpy floating point warnings
+        # suppressed (not-implemented for numba) and wrapped without change of
+        # labels; the broadcast result type goes to the broadcast routine
+        # (not-implemented for numba); a frame with any empty axis goes to the
+        # empty-result handling; the raw option applies to the raw array; otherwise
+        # the standard series-by-series application runs. Returns the result.
         """compute the results"""
 
         # dispatch to handle list-like or dict-like
@@ -1015,6 +1266,15 @@ class FrameApply(NDFrameApply):
         return self.apply_standard()
 
     def agg(self):
+        # [FUNCTION DOC]
+        # Frame aggregation. Temporarily replaces the stored object with its
+        # transpose when the axis is one (and sets the axis to zero) so the base
+        # aggregation works along rows; the original object and axis are restored
+        # afterwards even on errors (this temporary state mutation is a known wart,
+        # per a comment). The result of the transposed aggregation is transposed
+        # back. If the base aggregation could not handle the function (returned
+        # none), the function is run through the frame's apply with the original
+        # axis, args and kwargs. Returns the result.
         obj = self.obj
         axis = self.axis
 
@@ -1038,6 +1298,16 @@ class FrameApply(NDFrameApply):
         return result
 
     def apply_empty_result(self):
+        # [FUNCTION DOC]
+        # Handles apply on a frame with at least one empty axis. The func must be
+        # callable (assertion error otherwise). If result_type is something other
+        # than reduce or unspecified, returns a copy of the frame. Otherwise, unless
+        # a reduction was requested, tries calling the function on an empty
+        # (axis-appropriate) float Series; any exception is ignored; the function is
+        # considered a reduction if the outcome is not a Series. For a reduction,
+        # the function is called on an empty Series if the aggregation axis is
+        # non-empty (else the result is NaN) and a Series indexed by the aggregation
+        # axis is returned; for a non-reduction, a copy of the frame is returned.
         """
         we have an empty result; at least 1 axis is 0
 
@@ -1084,9 +1354,25 @@ class FrameApply(NDFrameApply):
             return self.obj.copy()
 
     def apply_raw(self, engine="python", engine_kwargs=None):
+        # [FUNCTION DOC]
+        # Applies the function to the raw values array. Inputs: engine (python by
+        # default, or numba) and engine_kwargs (jit options for numba).
+        # Python engine: uses numpy's apply-along-axis with a wrapper that converts
+        # string results to object arrays, passing the stored args and kwargs.
+        # Numba engine: prepares the arguments, builds (cached) a compiled looper and
+        # runs it on the values along the axis, squeezing the result back to 1D if
+        # needed. A two dimensional result becomes a frame with the original labels;
+        # otherwise a Series indexed by the aggregation axis.
+        # KNOWN ISSUE: a TODO notes the mixed-type case is not handled; also the
+        # keyword arguments returned by the argument preparation helper are unused in
+        # the numba branch.
         """apply to the values as a numpy array"""
 
         def wrap_function(func):
+            # [FUNCTION DOC]
+            # HELPER: returns a wrapper around the user function that turns a string
+            # result into a zero-dimensional object array (a workaround for a numpy
+            # issue with string results in apply-along-axis).
             """
             Wrap user supplied function to work around numpy issue.
 
@@ -1094,6 +1380,10 @@ class FrameApply(NDFrameApply):
             """
 
             def wrapper(*args, **kwargs):
+                # [FUNCTION DOC]
+                # HELPER: calls the wrapped function with all arguments and wraps
+                # a string result into an object array; other results are returned
+                # unchanged.
                 result = func(*args, **kwargs)
                 if isinstance(result, str):
                     result = np.array(result, dtype=object)
@@ -1135,6 +1425,14 @@ class FrameApply(NDFrameApply):
             return self.obj._constructor_sliced(result, index=self.agg_axis)
 
     def apply_broadcast(self, target: DataFrame) -> DataFrame:
+        # [FUNCTION DOC]
+        # Applies the function column by column and broadcasts each result to the
+        # shape of the input. Input: target (frame to iterate over; the func must be
+        # callable, assertion error otherwise). Each column's result must be a
+        # scalar or one dimensional with the same length as the rows, otherwise a
+        # value error (too many dimensions to broadcast, or cannot broadcast result)
+        # is raised. Returns a frame with the same dtype layout as target values
+        # and the original index and columns of the target.
         assert callable(self.func)
 
         result_values = np.empty_like(target.values)
@@ -1163,6 +1461,10 @@ class FrameApply(NDFrameApply):
         return result
 
     def apply_standard(self):
+        # [FUNCTION DOC]
+        # Standard series-by-series apply. Uses the Python series generator for the
+        # python engine, otherwise the numba path, then wraps the results. Returns
+        # the wrapped Series or DataFrame.
         if self.engine == "python":
             results, res_index = self.apply_series_generator()
         else:
@@ -1172,6 +1474,12 @@ class FrameApply(NDFrameApply):
         return self.wrap_results(results, res_index)
 
     def apply_series_generator(self) -> tuple[ResType, Index]:
+        # [FUNCTION DOC]
+        # Python-engine loop. The func must be callable (assertion error otherwise).
+        # Calls the function on each Series from the generator with the stored args
+        # and kwargs, storing results by position. A returned Series is
+        # shallow-copied because the generator may reuse and swap data in the Series
+        # it yields. Returns a pair: the dictionary of results and the result index.
         assert callable(self.func)
 
         series_gen = self.series_generator
@@ -1189,6 +1497,12 @@ class FrameApply(NDFrameApply):
         return results, res_index
 
     def apply_series_numba(self):
+        # [FUNCTION DOC]
+        # Numba-engine path for the series-by-series apply. Raises a not-implemented
+        # error if the parallel option is set, or if the index or columns are not
+        # unique. Validates column dtypes (value error for non-numeric or extension
+        # backed columns), runs the compiled apply and returns a pair: the dictionary
+        # of results and the result index.
         if self.engine_kwargs.get("parallel", False):
             raise NotImplementedError(
                 "Parallel apply is not supported when raw=False and engine='numba'"
@@ -1202,6 +1516,12 @@ class FrameApply(NDFrameApply):
         return results, self.result_index
 
     def wrap_results(self, results: ResType, res_index: Index) -> DataFrame | Series:
+        # [FUNCTION DOC]
+        # Builds the final object from the per-position results. If the first result
+        # is a sequence (list-like), the axis-specific wrapper decides. Otherwise the
+        # results are scalars and are wrapped into the sliced (one-dimensional)
+        # type indexed by res_index; an empty result for a plain Series is given a
+        # 64-bit float dtype rather than object. Returns the Series or DataFrame.
         from pandas import Series
 
         # see if we can infer the results
@@ -1223,6 +1543,11 @@ class FrameApply(NDFrameApply):
         return result
 
     def apply_str(self) -> DataFrame | Series:
+        # [FUNCTION DOC]
+        # String apply for frames. The size method is special-cased because the
+        # frame's size is a single number: it returns the length of the relevant
+        # axis broadcast into a Series over the aggregation axis. Other strings use
+        # the base implementation.
         # Caller is responsible for checking isinstance(self.func, str)
         # TODO: GH#39993 - Avoid special-casing by replacing with lambda
         if self.func == "size":
@@ -1234,10 +1559,18 @@ class FrameApply(NDFrameApply):
 
 
 class FrameRowApply(FrameApply):
+    # [CLASS DOC]
+    # Frame applier for axis zero: the function is called once per column (each
+    # column passed as a Series indexed by the row index). Sets the axis class
+    # attribute to zero; implements the generator, result labels, numba function and
+    # result wrapping for that orientation.
     axis: AxisInt = 0
 
     @property
     def series_generator(self) -> Generator[Series]:
+        # [FUNCTION DOC]
+        # Property returning a generator expression yielding each column of the frame
+        # as a Series, in order.
         return (self.obj._ixs(i, axis=1) for i in range(len(self.columns)))
 
     @staticmethod
@@ -1245,6 +1578,16 @@ class FrameRowApply(FrameApply):
     def generate_numba_apply_func(
         func, nogil=True, nopython=True, parallel=False
     ) -> Callable[[npt.NDArray, Index, Index], dict[int, Any]]:
+        # [FUNCTION DOC]
+        # Builds (and caches per argument set) the compiled function for applying
+        # func to every column. Requires numba (import error otherwise). Inputs: func
+        # and the jit options nogil and nopython (default true) and parallel
+        # (default false; documented in a comment as effectively disabled because
+        # numba dictionaries are not thread safe). Importing the numba extensions
+        # module here registers the Series/Index support as a side effect. The
+        # returned function takes the 2D values, the column names, the row index
+        # and extra arguments, builds a Series per column named after the column and
+        # collects the user function results into a dictionary by column position.
         numba = import_optional_dependency("numba")
         from pandas import Series
 
@@ -1258,6 +1601,9 @@ class FrameRowApply(FrameApply):
         # (it's disabled) since the dicts in numba aren't thread-safe.
         @numba.jit(nogil=nogil, nopython=nopython, parallel=parallel)
         def numba_func(values, col_names, df_index, *args):
+            # [FUNCTION DOC]
+            # HELPER: the jitted loop; see the builder above. Returns a dictionary
+            # from column position to the user function result.
             results = {}
             for j in range(values.shape[1]):
                 # Create the series
@@ -1270,6 +1616,15 @@ class FrameRowApply(FrameApply):
         return numba_func
 
     def apply_with_numba(self) -> dict[int, Any]:
+        # [FUNCTION DOC]
+        # Runs the numba column-wise apply. Prepares the function arguments, gets the
+        # compiled function using the jit options from the engine kwargs, then runs
+        # it with the index and columns temporarily annotated with numba-friendly
+        # data (string-like labels only, otherwise a value error). Returns a plain
+        # dictionary from column position to result (converted from numba's typed
+        # dictionary).
+        # KNOWN ISSUE: the keyword arguments returned by the argument preparation
+        # step are discarded and never passed on.
         func = cast(Callable, self.func)
         args, kwargs = prepare_function_arguments(
             func, self.args, self.kwargs, num_required_args=1
@@ -1290,15 +1645,29 @@ class FrameRowApply(FrameApply):
 
     @property
     def result_index(self) -> Index:
+        # [FUNCTION DOC]
+        # Property: for column-wise apply the result labels are the frame columns.
         return self.columns
 
     @property
     def result_columns(self) -> Index:
+        # [FUNCTION DOC]
+        # Property: for column-wise apply the result columns are the frame row index.
         return self.index
 
     def wrap_results_for_axis(
         self, results: ResType, res_index: Index
     ) -> DataFrame | Series:
+        # [FUNCTION DOC]
+        # Combines sequence-like per-column results. With the reduce result type,
+        # or when no result type was given and every result is a dictionary, builds a
+        # Series-like object from the results labeled by res_index. Otherwise builds
+        # a frame with the results as columns; if that fails because the result
+        # arrays have different lengths, falls back to the Series-like form (any
+        # other value error is re-raised). When the first result is not a Series and
+        # the row count equals the result columns count, the row labels are set to
+        # the result columns; if the column count matches res_index it is used for
+        # the column labels. Returns the object.
         """return the results for the rows"""
 
         if self.result_type == "reduce":
@@ -1339,14 +1708,32 @@ class FrameRowApply(FrameApply):
 
 
 class FrameColumnApply(FrameApply):
+    # [CLASS DOC]
+    # Frame applier for axis one: the function is called once per row (each row
+    # passed as a Series indexed by the columns). Sets the axis class attribute to
+    # one; implements the generator (which reuses a single Series object for speed),
+    # result labels, numba function and result wrapping for that orientation.
     axis: AxisInt = 1
 
     def apply_broadcast(self, target: DataFrame) -> DataFrame:
+        # [FUNCTION DOC]
+        # Broadcast apply for axis one: applies the base broadcasting to the
+        # transpose and transposes the result back. Input: target frame.
         result = super().apply_broadcast(target.T)
         return result.T
 
     @property
     def series_generator(self) -> Generator[Series]:
+        # [FUNCTION DOC]
+        # Property returning a generator over rows as Series. Datetime-like values
+        # are wrapped first; the frame must have at least one row (assertion error
+        # otherwise). For extension dtypes (where a shared value array would be
+        # wrong) each row is produced by positional row access. Otherwise a single
+        # Series is created and, for each row, its underlying values are swapped for
+        # that row, its name set to the row label without validation, and (when the
+        # Series is not a view) its reference tracking reset so copy-on-write does
+        # not trigger needless copies inside the user function. The same object is
+        # yielded every time, so consumers must copy results that alias it.
         values = self.values
         values = ensure_wrapped_if_datetimelike(values)
         assert len(values) > 0
@@ -1386,6 +1773,14 @@ class FrameColumnApply(FrameApply):
     def generate_numba_apply_func(
         func, nogil=True, nopython=True, parallel=False
     ) -> Callable[[npt.NDArray, Index, Index], dict[int, Any]]:
+        # [FUNCTION DOC]
+        # Builds (and caches per argument set) the compiled function for applying
+        # func to every row. Requires numba (import error otherwise). Inputs: func and
+        # jit options nogil, nopython (default true) and parallel (default false).
+        # The returned function takes the 2D values, the column index, the row index
+        # and extra arguments; for each row it builds a Series (from a copy of the
+        # row, since values were corrupted without copying) named after the row
+        # label and collects the user function results by row position.
         numba = import_optional_dependency("numba")
         from pandas import Series
         from pandas.core._numba.extensions import maybe_cast_str
@@ -1394,6 +1789,9 @@ class FrameColumnApply(FrameApply):
 
         @numba.jit(nogil=nogil, nopython=nopython, parallel=parallel)
         def numba_func(values, col_names_index, index, *args):
+            # [FUNCTION DOC]
+            # HELPER: the jitted loop; see the builder above. Returns a dictionary
+            # from row position to the user function result.
             results = {}
             # Currently the parallel argument doesn't get passed through here
             # (it's disabled) since the dicts in numba aren't thread-safe.
@@ -1412,6 +1810,13 @@ class FrameColumnApply(FrameApply):
         return numba_func
 
     def apply_with_numba(self) -> dict[int, Any]:
+        # [FUNCTION DOC]
+        # Runs the numba row-wise apply: prepares arguments, gets the compiled
+        # function, and runs it with the index and columns temporarily annotated
+        # with numba-friendly data (string-like labels only, otherwise a value
+        # error). Returns a plain dictionary from row position to result.
+        # KNOWN ISSUE: as in the column-wise version, the keyword arguments returned
+        # by the argument preparation step are discarded.
         func = cast(Callable, self.func)
         args, kwargs = prepare_function_arguments(
             func, self.args, self.kwargs, num_required_args=1
@@ -1434,15 +1839,24 @@ class FrameColumnApply(FrameApply):
 
     @property
     def result_index(self) -> Index:
+        # [FUNCTION DOC]
+        # Property: for row-wise apply the result labels are the frame row index.
         return self.index
 
     @property
     def result_columns(self) -> Index:
+        # [FUNCTION DOC]
+        # Property: for row-wise apply the result columns are the frame columns.
         return self.columns
 
     def wrap_results_for_axis(
         self, results: ResType, res_index: Index
     ) -> DataFrame | Series:
+        # [FUNCTION DOC]
+        # Combines per-row results. With the expand result type, or when the first
+        # result is a Series, the results are assembled into a frame shaped like the
+        # input; otherwise (non-Series results with no inference wanted) a Series is
+        # built from the results indexed by res_index. Returns the object.
         """return the results for the columns"""
         result: DataFrame | Series
 
@@ -1462,6 +1876,10 @@ class FrameColumnApply(FrameApply):
         return result
 
     def infer_to_same_shape(self, results: ResType, res_index: Index) -> DataFrame:
+        # [FUNCTION DOC]
+        # Builds a frame from the per-row results: constructs a frame with the
+        # results as columns, transposes it, assigns res_index as the row index and
+        # re-infers dtypes of object columns. Returns the frame.
         """infer the results to the same shape as the input object"""
         result = self.obj._constructor(data=results)
         result = result.T
@@ -1476,6 +1894,13 @@ class FrameColumnApply(FrameApply):
 
 
 class SeriesApply(NDFrameApply):
+    # [CLASS DOC]
+    # Applier for Series objects. Fixed attributes: axis is zero; raw is false and
+    # result_type none (both set in the constructor). by_row (false, compat or the
+    # internal compat marker) controls whether functions are applied per element;
+    # it is only relevant to apply. Implements apply, agg, empty handling, the
+    # compatibility path for functions within list/dict arguments, and the standard
+    # elementwise path.
     obj: Series
     axis: AxisInt = 0
     by_row: Literal[False, "compat", "_compat"]  # only relevant for apply()
@@ -1489,6 +1914,9 @@ class SeriesApply(NDFrameApply):
         args,
         kwargs,
     ) -> None:
+        # [FUNCTION DOC]
+        # Forwards to the base constructor with raw false, result type none and the
+        # given by_row (default compat), args and kwargs.
         super().__init__(
             obj,
             func,
@@ -1500,6 +1928,11 @@ class SeriesApply(NDFrameApply):
         )
 
     def apply(self) -> DataFrame | Series:
+        # [FUNCTION DOC]
+        # Main entry point for Series apply. Empty series use the empty handling.
+        # A list-like func goes to the list/dict path; a string func to the string
+        # path; the internal compat mode to the compat path; any other callable to
+        # the standard path. Returns the result.
         obj = self.obj
 
         if len(obj) == 0:
@@ -1520,6 +1953,11 @@ class SeriesApply(NDFrameApply):
         return self.apply_standard()
 
     def agg(self):
+        # [FUNCTION DOC]
+        # Series aggregation. Uses the base implementation (strings, lists, dicts);
+        # if it returns none the func must be callable (assertion error otherwise)
+        # and is called on the whole Series with the stored args and kwargs. Returns
+        # the result.
         result = super().agg()
         if result is None:
             obj = self.obj
@@ -1530,12 +1968,22 @@ class SeriesApply(NDFrameApply):
         return result
 
     def apply_empty_result(self) -> Series:
+        # [FUNCTION DOC]
+        # Result for an empty Series: a new empty Series with the same dtype and
+        # index, carrying over metadata with the apply method marker.
         obj = self.obj
         return obj._constructor(dtype=obj.dtype, index=obj.index).__finalize__(
             obj, method="apply"
         )
 
     def apply_compat(self):
+        # [FUNCTION DOC]
+        # Compatibility apply used for each callable inside list-like or dict-like
+        # arguments (to keep behavior of versions before 2.1). If func is a callable
+        # that has a known optimized equivalent and no extra args or kwargs were
+        # given, applies it to the whole Series without per-row mode. Otherwise tries
+        # applying per element; if that raises a value, attribute or type error,
+        # retries applying to the whole Series. Returns the result.
         """compat apply method for funcs in listlikes and dictlikes.
 
          Used for each callable when giving listlikes and dictlikes of callables to
@@ -1558,6 +2006,14 @@ class SeriesApply(NDFrameApply):
         return result
 
     def apply_standard(self) -> DataFrame | Series:
+        # [FUNCTION DOC]
+        # Standard apply for a callable. A numpy ufunc is called on the whole Series
+        # with floating point warnings suppressed. With per-row mode off, the func is
+        # called once on the whole Series. Otherwise the function (curried over the
+        # stored args and kwargs if present, since the mapping helper accepts neither)
+        # is mapped elementwise over the values. If the mapped results are Series,
+        # they are combined into an expanded (frame) result sharing the index;
+        # otherwise a Series with the original index and metadata is returned.
         # caller is responsible for ensuring that f is Callable
         func = cast(Callable, self.func)
         obj = self.obj
@@ -1571,6 +2027,9 @@ class SeriesApply(NDFrameApply):
         if self.args or self.kwargs:
             # _map_values does not support args/kwargs
             def curried(x):
+                # [FUNCTION DOC]
+                # HELPER: calls the user function on one element with the stored
+                # extra arguments.
                 return func(x, *self.args, **self.kwargs)
 
         else:
@@ -1588,6 +2047,12 @@ class SeriesApply(NDFrameApply):
 
 
 class GroupByApply(Apply):
+    # [CLASS DOC]
+    # Applier for groupby objects (also used as a base by window and resample
+    # appliers). The axis attribute is derived from the axis keyword argument. Plain
+    # apply and transform are not implemented; implements the list-like and
+    # dict-like hooks by temporarily forcing the as_index setting (where present)
+    # and delegating to the shared computation.
     obj: GroupBy | Resampler | BaseWindow
 
     def __init__(
@@ -1598,6 +2063,11 @@ class GroupByApply(Apply):
         args,
         kwargs,
     ) -> None:
+        # [FUNCTION DOC]
+        # Constructor. Copies kwargs (so the caller's mapping is untouched), sets the
+        # axis number from the axis keyword (default zero) resolved against the
+        # underlying object, and forwards to the base constructor with raw false and
+        # no result type.
         kwargs = kwargs.copy()
         self.axis = obj.obj._get_axis_number(kwargs.get("axis", 0))
         super().__init__(
@@ -1610,14 +2080,26 @@ class GroupByApply(Apply):
         )
 
     def apply(self):
+        # [FUNCTION DOC]
+        # Not supported for this applier; always raises a not-implemented error.
         raise NotImplementedError
 
     def transform(self):
+        # [FUNCTION DOC]
+        # Not supported for this applier; always raises a not-implemented error.
         raise NotImplementedError
 
     def agg_or_apply_list_like(
         self, op_name: Literal["agg", "apply"]
     ) -> DataFrame | Series:
+        # [FUNCTION DOC]
+        # List-like operation for groupby-like objects. For apply, per-row mode is
+        # turned off in the kwargs. An object with axis one raises a not-implemented
+        # error. The selection is the object's selected data (for a one-dimensional
+        # selection) or the data without excluded columns. While computing, the
+        # as-index option is temporarily forced on for objects that have it (not for
+        # window or resample objects). Results are computed and wrapped. Returns the
+        # wrapped result.
         obj = self.obj
         kwargs = self.kwargs
         if op_name == "apply":
@@ -1644,6 +2126,15 @@ class GroupByApply(Apply):
     def agg_or_apply_dict_like(
         self, op_name: Literal["agg", "apply"]
     ) -> DataFrame | Series:
+        # [FUNCTION DOC]
+        # Dict-like operation for groupby-like objects. op_name must be agg or apply
+        # (assertion error otherwise). For apply, the by-row mode keyword is set to
+        # the internal compat marker or false. An object with axis one raises a
+        # not-implemented error. For groupby objects the numba engine and engine
+        # options stored in the kwargs are forwarded to each call. The selected data
+        # and selection of the object are used; while computing, the as-index option
+        # is temporarily forced on for objects that have it. Results are computed
+        # and wrapped. Returns the wrapped result.
         from pandas.core.groupby.generic import (
             DataFrameGroupBy,
             SeriesGroupBy,
@@ -1682,6 +2173,10 @@ class GroupByApply(Apply):
 
 
 class ResamplerWindowApply(GroupByApply):
+    # [CLASS DOC]
+    # Applier for resample and window (rolling, expanding, ewm) objects. Subclass of
+    # the groupby applier with the axis fixed at zero (class attribute) and plain
+    # apply and transform unsupported (raise not-implemented errors).
     axis: AxisInt = 0
     obj: Resampler | BaseWindow
 
@@ -1693,6 +2188,10 @@ class ResamplerWindowApply(GroupByApply):
         args,
         kwargs,
     ) -> None:
+        # [FUNCTION DOC]
+        # Constructor. Deliberately skips the groupby applier constructor (it calls
+        # the grandparent constructor directly) so the axis is not derived from the
+        # kwargs; passes raw false, no result type and the given args and kwargs.
         super(GroupByApply, self).__init__(
             obj,
             func,
@@ -1703,15 +2202,33 @@ class ResamplerWindowApply(GroupByApply):
         )
 
     def apply(self):
+        # [FUNCTION DOC]
+        # Not supported for this applier; always raises a not-implemented error.
         raise NotImplementedError
 
     def transform(self):
+        # [FUNCTION DOC]
+        # Not supported for this applier; always raises a not-implemented error.
         raise NotImplementedError
 
 
 def reconstruct_func(
     func: AggFuncType | None, **kwargs
 ) -> tuple[bool, AggFuncType, tuple[str, ...] | None, npt.NDArray[np.intp] | None]:
+    # [FUNCTION DOC]
+    # Detects and normalizes named aggregation. Inputs: func (aggregation spec, or
+    # none when named aggregation is used) and keyword arguments (named aggregation
+    # specs: pairs of column and function, or named-aggregation objects).
+    # Relabeling is on only if func is none and all kwargs are two-element tuples
+    # (non-empty) or any kwarg is a named-aggregation object. Without relabeling: a
+    # list func with duplicate entries raises a specification error (function names
+    # must be unique without new names), and a none func raises a type error
+    # (must provide func or column/function pairs). With relabeling, named
+    # aggregation objects are converted to pairs (their extra args and kwargs are
+    # bound into the function) and normalized.
+    # Returns a four-tuple: whether relabeling is on, the (normalized) func, the
+    # output column names (tuple, or none) and the order of columns (index array, or
+    # none).
     """
     This is the internal function to reconstruct func given if there is relabeling
     or not and also normalize the keyword to get new order of columns.
@@ -1797,6 +2314,10 @@ def reconstruct_func(
 
 
 def is_multi_agg_with_relabel(**kwargs) -> bool:
+    # [FUNCTION DOC]
+    # Returns true when there is at least one keyword argument and every value is a
+    # tuple of exactly two elements (the shape of a named aggregation); false
+    # otherwise, including for no arguments.
     """
     Check whether kwargs passed to .agg look like multi-agg with relabeling.
 
@@ -1829,6 +2350,15 @@ def normalize_keyword_aggregation(
     tuple[str, ...],
     npt.NDArray[np.intp],
 ]:
+    # [FUNCTION DOC]
+    # Converts named aggregation (output name mapped to a pair of column and
+    # function) to a mapping from column to list of functions. Input: kwargs
+    # (dict of output name to (column, function) pair). Returns a triple: the
+    # column-to-function-list mapping (grouped by column in first-appearance order),
+    # the tuple of user-provided output names, and an index array giving, for each
+    # output name, the position of its (column, function name) pair in the grouped
+    # ordering; duplicate function names (such as several lambdas) are made unique
+    # with numeric suffixes so positions are unambiguous.
     """
     Normalize user-provided "named aggregation" kwargs.
     Transforms from the new ``Mapping[str, NamedAgg]`` style kwargs
@@ -1886,6 +2416,12 @@ def normalize_keyword_aggregation(
 def _make_unique_kwarg_list(
     seq: Sequence[tuple[Any, Any]],
 ) -> Sequence[tuple[Any, Any]]:
+    # [FUNCTION DOC]
+    # HELPER: makes repeated (column, function name) pairs unique. Input: seq (a
+    # sequence of pairs). A pair that occurs more than once gets a numeric suffix
+    # (counting prior identical pairs, starting at zero) appended to its second
+    # element; unique pairs are unchanged. Returns a new list; the input is not
+    # modified.
     """
     Uniquify aggfunc name of the pairs in the order list
 
@@ -1907,6 +2443,18 @@ def relabel_result(
     columns: Iterable[Hashable],
     order: Iterable[int],
 ) -> dict[Hashable, Series]:
+    # [FUNCTION DOC]
+    # Reorders an aggregation result to follow user-provided output names.
+    # Inputs: result (aggregated Series or DataFrame whose index holds function
+    # names), func (mapping from column to list of functions), columns (output
+    # names) and order (for each output name, its position among all aggregated
+    # (column, function) pairs).
+    # Behavior: output names are sorted by that position; for each input column in
+    # func order, the non-missing aggregated values are taken, re-ordered to match the
+    # function order when the frame has several columns (function names resolved
+    # from callables), relabeled with the corresponding output names, and
+    # reindexed against the full list of output names (absent names become missing).
+    # Returns a dictionary from column to Series.
     """
     Internal function to reorder result if relabelling is True for
     dataframe.agg, and return the reordered result in dict.
@@ -1986,6 +2534,12 @@ def relabel_result(
 
 
 def reconstruct_and_relabel_result(result, func, **kwargs) -> DataFrame | Series:
+    # [FUNCTION DOC]
+    # Applies named-aggregation relabeling to an already computed result. Inputs:
+    # result (aggregation result), func (the original aggregation spec or none) and
+    # keyword arguments (named aggregation specs). If relabeling is detected, the
+    # result is reordered and returned as a frame whose index holds the output names;
+    # otherwise the result is returned unchanged.
     from pandas import DataFrame
 
     relabeling, func, columns, order = reconstruct_func(func, **kwargs)
@@ -2013,6 +2567,13 @@ def reconstruct_and_relabel_result(result, func, **kwargs) -> DataFrame | Series
 
 
 def _managle_lambda_list(aggfuncs: Sequence[Any]) -> Sequence[Any]:
+    # [FUNCTION DOC]
+    # HELPER: gives anonymous functions unique names within an aggregation list (for
+    # use by the lambda-mangling function). Input: aggfuncs, a sequence. Sequences of
+    # length zero or one are returned as is. Otherwise returns a new list where each
+    # anonymous function is replaced by a wrapper object named with an increasing
+    # numeric suffix (starting at zero) and other entries are kept.
+    # The function name is misspelled (mangle) in the source.
     """
     Possibly mangle a list of aggfuncs.
 
@@ -2047,6 +2608,14 @@ def _managle_lambda_list(aggfuncs: Sequence[Any]) -> Sequence[Any]:
 
 
 def maybe_mangle_lambdas(agg_spec: Any) -> Any:
+    # [FUNCTION DOC]
+    # Ensures anonymous functions in an aggregation spec have unique names. Input:
+    # agg_spec (anything). Values that are neither dict-like nor list-like are
+    # returned as is. A dict-like spec yields a new mapping of the same type where
+    # each list-like value is mangled; a list-like spec yields a mangled list.
+    # The input is not modified.
+    # KNOWN ISSUE: the docstring example output refers to a different helper name
+    # and is skipped in doctests, so it does not describe the actual wrapper names.
     """
     Make new lambdas with unique names.
 
@@ -2093,6 +2662,12 @@ def maybe_mangle_lambdas(agg_spec: Any) -> Any:
 def validate_func_kwargs(
     kwargs: dict,
 ) -> tuple[list[str], list[str | Callable[..., Any]]]:
+    # [FUNCTION DOC]
+    # Validates keyword aggregation arguments. Input: kwargs (dict of output name to
+    # aggregation function). Raises a type error if any value is neither a string nor
+    # callable (message names the offending type), or if the dict is empty (message
+    # asks for a func or named aggregation keywords). Note that values are checked
+    # before emptiness. Returns a pair: the list of names and the list of functions.
     """
     Validates types of user-provided "named aggregation" kwargs.
     `TypeError` is raised if aggfunc is not `str` or callable.
@@ -2127,6 +2702,10 @@ def validate_func_kwargs(
 
 
 def include_axis(op_name: Literal["agg", "apply"], colg: Series | DataFrame) -> bool:
+    # [FUNCTION DOC]
+    # HELPER: decides whether the axis should be passed as a positional argument
+    # when calling the operation on a column selection. Returns true for a frame, or
+    # for a Series when the operation is aggregation; false otherwise.
     return isinstance(colg, ABCDataFrame) or (
         isinstance(colg, ABCSeries) and op_name == "agg"
     )

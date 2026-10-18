@@ -2,6 +2,9 @@
 transforms.py is for shape-preserving functions.
 """
 
+# [MODULE DOC]
+# Shape-preserving array transforms. Public contents: shift, which moves values
+# along an axis and fills the vacated positions. Import-time side effects: none.
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
@@ -18,6 +21,17 @@ if TYPE_CHECKING:
 def shift(
     values: np.ndarray, periods: int, axis: AxisInt, fill_value: Scalar
 ) -> np.ndarray:
+    # [FUNCTION DOC]
+    # Shifts the values of a numpy array along an axis. Inputs: values (array),
+    # periods (number of positions; positive shifts toward higher indices, negative
+    # toward lower), axis (axis to shift along) and fill_value (assigned to the
+    # vacated positions).
+    # Behavior: zero periods or an empty array just returns a copy. Otherwise the
+    # array is rolled circularly (a Fortran-ordered input is transposed first so the
+    # roll sees C order, and transposed back after), then the wrapped-around
+    # leading (or trailing) slice is overwritten with fill_value. Returns a new
+    # array; the input is not modified. A shift larger than the axis length fills
+    # the whole axis.
     new_values = values
 
     if periods == 0 or values.size == 0:

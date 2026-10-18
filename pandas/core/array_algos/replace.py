@@ -2,6 +2,12 @@
 Methods used by Block.replace and related methods.
 """
 
+# [MODULE DOC]
+# Helpers for value replacement, used by the block level replace machinery.
+# Public contents: should_use_regex (decide whether a pattern is treated as a
+# regular expression), compare_or_regex_search (elementwise equality or regex
+# match against a scalar or pattern) and replace_regex (in-place regex
+# substitution on an object array). Import-time side effects: none.
 from __future__ import annotations
 
 import operator
@@ -30,6 +36,13 @@ if TYPE_CHECKING:
 
 
 def should_use_regex(regex: bool, to_replace: Any) -> bool:
+    # [FUNCTION DOC]
+    # Decides whether to_replace should be interpreted as a regular expression.
+    # Inputs: regex (the user requested flag) and to_replace (any object).
+    # Returns true if to_replace is already a compiled pattern, or regex is true;
+    # in both cases to_replace must also be compilable as a pattern and compile to
+    # a non-empty pattern, else false. May compile the pattern (and could raise a
+    # regex error only for invalid patterns that the compilability check missed).
     """
     Decide whether to treat `to_replace` as a regular expression.
     """
@@ -46,6 +59,20 @@ def should_use_regex(regex: bool, to_replace: Any) -> bool:
 def compare_or_regex_search(
     a: ArrayLike, b: Scalar | Pattern, regex: bool, mask: npt.NDArray[np.bool_]
 ) -> ArrayLike:
+    # [FUNCTION DOC]
+    # Elementwise comparison of an array with a scalar or pattern.
+    # Inputs: a (array-like or scalar), b (scalar or compiled pattern), regex (bool,
+    # whether to attempt regex search) and mask (boolean array or none, true marks
+    # positions that are valid to compare; positions outside it are never compared).
+    # Behavior: if b is missing, returns the inverted mask (callers use this to find
+    # missing positions). Otherwise a comparison is built: equality, unless regex is
+    # requested and should_use_regex agrees, in which case a vectorized regex
+    # search that is true only for string elements matching a string/pattern b. For
+    # numpy arrays with a mask, only masked-in elements are compared and the result
+    # is scattered into a full-shape boolean array (false elsewhere).
+    # A type error is raised if the result is a plain boolean while a is a numpy
+    # array (the comparison was not elementwise), naming the array dtype and type of
+    # b. Returns the boolean result.
     """
     Compare two array-like inputs of the same shape or two scalar values
 
@@ -69,6 +96,13 @@ def compare_or_regex_search(
     def _check_comparison_types(
         result: ArrayLike | bool, a: ArrayLike, b: Scalar | Pattern
     ) -> None:
+        # [FUNCTION DOC]
+        # HELPER: validation step of the comparison. Inputs: result (comparison
+        # outcome), a and b (operands). Raises a type error when the result is a
+        # single boolean although a is a numpy array (meaning numpy could not
+        # compare elementwise). Returns nothing.
+        # KNOWN ISSUE: the docstring claims it returns the comparison result, but
+        # the function returns nothing.
         """
         Raises an error if the two arrays (a,b) cannot be compared.
         Otherwise, returns the comparison result as expected.
@@ -116,6 +150,15 @@ def compare_or_regex_search(
 def replace_regex(
     values: ArrayLike, rx: re.Pattern, value, mask: npt.NDArray[np.bool_] | None
 ) -> None:
+    # [FUNCTION DOC]
+    # Regex substitution on an object array, in place. Inputs: values (object
+    # dtype array, mutated), rx (compiled pattern), value (replacement) and mask
+    # (boolean array or none; when given only masked-in positions are processed,
+    # broadcast to the shape of values if its dimensionality differs).
+    # Behavior: only string elements are touched. If value is missing or not a
+    # string, any element that the pattern matches is replaced wholesale by value;
+    # otherwise matches inside the string are substituted using the normal regex
+    # substitution rules. Non-string elements are kept. Returns nothing.
     """
     Parameters
     ----------
@@ -135,6 +178,10 @@ def replace_regex(
     if isna(value) or not isinstance(value, str):
 
         def re_replacer(s):
+            # [FUNCTION DOC]
+            # HELPER: element function for the whole-value replacement mode.
+            # Returns the replacement value if s is a string the pattern matches,
+            # otherwise returns s unchanged.
             if is_re(rx) and isinstance(s, str):
                 return value if rx.search(s) is not None else s
             else:
@@ -144,6 +191,10 @@ def replace_regex(
         # value is guaranteed to be a string here, s can be either a string
         # or null if it's null it gets returned
         def re_replacer(s):
+            # [FUNCTION DOC]
+            # HELPER: element function for the substring substitution mode.
+            # Returns the string with all pattern matches substituted when s is a
+            # string, otherwise returns s unchanged (including nulls).
             if is_re(rx) and isinstance(s, str):
                 return rx.sub(value, s)
             else:

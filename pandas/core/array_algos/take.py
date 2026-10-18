@@ -1,3 +1,20 @@
+# [MODULE DOC]
+# Positional "take" with fill-value support for numpy and extension arrays: gather
+# elements along an axis by an integer indexer in which minus one marks "missing",
+# producing the missing fill value at those positions in one pass.
+# Public contents: take_nd (general entry point, dispatching extension arrays to
+# their own take) and take_2d_multi (take along both axes of a 2D array).
+# Private contents: the numpy implementation, lookup tables (1D, 2D axis 0, 2D
+# axis 1 and 2D multi) mapping a pair of (input dtype name, output dtype name) to
+# a compiled routine from the algorithms extension module (some wrapped so that
+# boolean and datetime-like data is processed as unsigned/signed integers), wrapper
+# factories, an object-dtype fallback, and promotion/mask preprocessing.
+# KNOWN ISSUE: in the 1D lookup table, the entries for unsigned 16, 32 and 64 bit
+# integers use the signed 64-bit integer as the output dtype in the key while
+# pointing to same-dtype routines, unlike the 2D tables, which key them by the
+# unsigned dtype on both sides; a 1D lookup with unsigned input and output misses
+# and falls back to the generic converting path.
+# Import-time side effects: builds the lookup tables.
 from __future__ import annotations
 
 import functools
@@ -41,7 +58,11 @@ def take_nd(
     axis: AxisInt = ...,
     fill_value=...,
     allow_fill: bool = ...,
-) -> np.ndarray: ...
+) -> np.ndarray:
+    # [FUNCTION DOC]
+    # Typing overload stub for numpy array input (returns a numpy array); see the
+    # implementation below for behavior.
+    ...
 
 
 @overload
@@ -51,7 +72,11 @@ def take_nd(
     axis: AxisInt = ...,
     fill_value=...,
     allow_fill: bool = ...,
-) -> ArrayLike: ...
+) -> ArrayLike:
+    # [FUNCTION DOC]
+    # Typing overload stub for extension array input (returns an array-like); see
+    # the implementation below for behavior.
+    ...
 
 
 def take_nd(
@@ -61,6 +86,22 @@ def take_nd(
     fill_value=lib.no_default,
     allow_fill: bool = True,
 ) -> ArrayLike:
+    # [FUNCTION DOC]
+    # General take along an axis with fill. Inputs: arr (numpy or extension array),
+    # indexer (already validated 1D integer positions, no out-of-bounds values; minus
+    # one means missing; for numpy input it may be none meaning the identity),
+    # axis (default 0), fill_value (default: the missing value appropriate for
+    # the array dtype) and allow_fill (default true; if false, the indexer must
+    # contain no minus-one entries, and the result is undefined otherwise).
+    # Behavior: when a fill value is given for datetime64/timedelta64 numpy data,
+    # the dtype is promoted for it and the array cast first if needed. Extension
+    # arrays dispatch to their own take (passing the axis only for those that
+    # support more than one dimension, i.e. datetime-like arrays). Numpy data goes
+    # through the private numpy implementation.
+    # Returns an array of the same kind as the input (extension input can give an
+    # extension output; numpy may be promoted to hold the fill value).
+    # KNOWN ISSUE: the docstring says the fill_value default is NaN, but the
+    # actual default is a sentinel that selects the dtype-appropriate missing value.
     """
     Specialized Cython take which sets NaN values in one pass
 
@@ -122,6 +163,21 @@ def _take_nd_ndarray(
     fill_value,
     allow_fill: bool,
 ) -> np.ndarray:
+    # [FUNCTION DOC]
+    # HELPER: numpy implementation behind the general take. Inputs: arr (numpy
+    # array), indexer (integer positions or none for identity), axis, fill_value
+    # and allow_fill.
+    # Behavior: a missing indexer becomes the identity positions. Dtype promotion
+    # and the missing-position mask are computed by the preprocessing helper. A
+    # Fortran-ordered 2D input is transposed (and the axis mirrored) so the
+    # compiled routine sees C order, and the output is allocated Fortran-ordered
+    # when the take is along the last axis of a Fortran-contiguous input. The
+    # compiled routine for the dtype combination is looked up (object fallback if
+    # none) and fills a freshly allocated output. Returns the output array
+    # (transposed back if needed).
+    # KNOWN ISSUE: when the indexer is none, the dtype and fill value assigned in
+    # this branch are always overwritten by the preprocessing call below, so those
+    # assignments have no effect.
     if indexer is None:
         indexer = np.arange(arr.shape[axis], dtype=np.intp)
         dtype, fill_value = arr.dtype, arr.dtype.type()
@@ -169,6 +225,17 @@ def take_2d_multi(
     indexer: tuple[npt.NDArray[np.intp], npt.NDArray[np.intp]],
     fill_value=np.nan,
 ) -> np.ndarray:
+    # [FUNCTION DOC]
+    # Take along both axes of a 2D numpy array at once. Inputs: arr (2D array),
+    # indexer (pair of row positions and column positions; neither may be none, an
+    # assertion error otherwise; minus one marks missing) and fill_value (default
+    # NaN).
+    # Behavior: indexers are converted to platform integers; the dtype is promoted
+    # to hold the fill value only if some position is actually missing; a compiled
+    # routine for the dtype pair is looked up (with a conversion wrapper if only the
+    # output dtype has one), falling back to a slow python loop. Returns a new
+    # array of shape (number of rows taken, number of columns taken). Only used by
+    # frame multi-axis reindexing, so the indexer is assumed well-behaved.
     """
     Specialized Cython take which sets NaN values in one pass.
     """
@@ -228,6 +295,16 @@ def take_2d_multi(
 def _get_take_nd_function_cached(
     ndim: int, arr_dtype: np.dtype, out_dtype: np.dtype, axis: AxisInt
 ):
+    # [FUNCTION DOC]
+    # HELPER: cached lookup of the compiled take routine (the cache is keyed on all
+    # four arguments, so no unhashable mask info may be passed). Inputs: ndim (1 or
+    # 2), arr_dtype, out_dtype and axis (for 2D, zero selects the axis-0 table,
+    # anything else the axis-1 table).
+    # Behavior: first looks up the exact dtype pair; if absent, looks up the
+    # (output, output) pair and wraps it to convert the input array to the output
+    # dtype first. Returns the routine, or none if neither exists.
+    # KNOWN ISSUE: for ndim values other than 1 or 2 the local routine variable is
+    # never assigned and the function would fail; callers only pass 1 or 2.
     """
     Part of _get_take_nd_function below that doesn't need `mask_info` and thus
     can be cached (mask_info potentially contains a numpy ndarray which is not
@@ -269,6 +346,14 @@ def _get_take_nd_function(
     axis: AxisInt = 0,
     mask_info=None,
 ):
+    # [FUNCTION DOC]
+    # HELPER: returns the take routine for the dimension, axis and dtypes. Inputs:
+    # ndim, arr_dtype, out_dtype, axis (default 0) and mask_info (optional
+    # precomputed mask and need-flag, only used by the object fallback). For up to
+    # two dimensions the cached lookup is used; if no routine exists (or ndim is
+    # larger), a fallback is returned that converts the indexer to platform
+    # integers and calls the generic object-based routine. The returned callable
+    # takes the array, indexer, output array and fill value, and fills the output.
     """
     Get the appropriate "take" implementation for the given dimension, axis
     and dtypes.
@@ -281,6 +366,9 @@ def _get_take_nd_function(
     if func is None:
 
         def func(arr, indexer, out, fill_value=np.nan) -> None:
+            # [FUNCTION DOC]
+            # HELPER: fallback routine using the generic object-based take; fills
+            # out in place using the surrounding axis and mask info.
             indexer = ensure_platform_int(indexer)
             _take_nd_object(
                 arr, indexer, out, axis=axis, fill_value=fill_value, mask_info=mask_info
@@ -290,9 +378,22 @@ def _get_take_nd_function(
 
 
 def _view_wrapper(f, arr_dtype=None, out_dtype=None, fill_wrap=None):
+    # [FUNCTION DOC]
+    # HELPER: wraps a compiled take routine f so it can run on reinterpreted data
+    # (for example booleans as unsigned bytes, datetime-like as 64-bit integers).
+    # Inputs: f, arr_dtype and out_dtype (dtypes to view the input and output as;
+    # none means no view) and fill_wrap (callable applied to the fill value after
+    # converting a timedelta/datetime fill to nanosecond resolution; none means the
+    # fill value is passed unchanged). Returns the wrapper function.
     def wrapper(
         arr: np.ndarray, indexer: np.ndarray, out: np.ndarray, fill_value=np.nan
     ) -> None:
+        # [FUNCTION DOC]
+        # HELPER: the wrapper; views arr and out as the requested dtypes, converts
+        # the fill value if a wrapping callable was given, then calls the wrapped
+        # routine, which fills out in place. Returns nothing.
+        # KNOWN ISSUE: a FIXME notes the datetime-like fill conversion assumes
+        # nanosecond resolution and does not verify that resolutions match.
         if arr_dtype is not None:
             arr = arr.view(arr_dtype)
         if out_dtype is not None:
@@ -312,9 +413,16 @@ def _view_wrapper(f, arr_dtype=None, out_dtype=None, fill_wrap=None):
 
 
 def _convert_wrapper(f, conv_dtype):
+    # [FUNCTION DOC]
+    # HELPER: wraps a compiled take routine f so that the input array is first
+    # converted to conv_dtype. Returns the wrapper function.
     def wrapper(
         arr: np.ndarray, indexer: np.ndarray, out: np.ndarray, fill_value=np.nan
     ) -> None:
+        # [FUNCTION DOC]
+        # HELPER: the wrapper; for an object target dtype, datetime-like input is
+        # first wrapped so it is not cast to integers; the array is converted to
+        # the target dtype (a copy) and the routine fills out in place.
         if conv_dtype == object:
             # GH#39755 avoid casting dt64/td64 to integers
             arr = ensure_wrapped_if_datetimelike(arr)
@@ -469,6 +577,14 @@ def _take_nd_object(
     fill_value,
     mask_info,
 ) -> None:
+    # [FUNCTION DOC]
+    # HELPER: slow generic take for dtype combinations without a compiled routine.
+    # Inputs: arr, indexer (platform integers, minus one = missing), out (output
+    # array, filled in place), axis, fill_value and mask_info (optional pair of
+    # mask and need-flag; computed from the indexer when none).
+    # Behavior: converts arr to the output dtype if they differ, takes along the
+    # axis into out when the axis is non-empty, then assigns fill_value at the
+    # masked positions if needed. Returns nothing.
     if mask_info is not None:
         mask, needs_masking = mask_info
     else:
@@ -491,6 +607,13 @@ def _take_2d_multi_object(
     fill_value,
     mask_info,
 ) -> None:
+    # [FUNCTION DOC]
+    # HELPER: slow python-loop fallback for the two-axis take. Inputs: arr, indexer
+    # (pair of row and column positions, minus one = missing), out (output array,
+    # filled in place), fill_value and mask_info (optional precomputed pair of masks
+    # and pair of flags; recomputed when none). Behavior: fills the missing rows and
+    # columns with fill_value (unless it is none), then copies each element for
+    # positions where both indexers are valid. Returns nothing.
     # this is not ideal, performance-wise, but it's better than raising
     # an exception (best to optimize in Cython to avoid getting here)
     row_idx, col_idx = indexer  # both np.intp
@@ -520,6 +643,17 @@ def _take_preprocess_indexer_and_fill_value(
     allow_fill: bool,
     mask: npt.NDArray[np.bool_] | None = None,
 ):
+    # [FUNCTION DOC]
+    # HELPER: determines the output dtype, fill value and mask info for a numpy
+    # take. Inputs: arr, indexer (platform integers), fill_value, allow_fill and an
+    # optional precomputed mask of missing positions.
+    # Behavior: if filling is disallowed, uses the input dtype, a dummy fill value
+    # and mask info of (none, false). Otherwise the dtype is promoted to hold the
+    # fill value; if promotion occurred, the mask (computed from minus-one entries
+    # when not given) is evaluated and, if no position is actually missing, the
+    # promotion is undone with a dummy fill value.
+    # Returns a triple: dtype, fill_value and mask info (a pair of mask and a flag
+    # saying masking is needed, or none when no promotion occurred).
     mask_info: tuple[np.ndarray | None, bool] | None = None
 
     if not allow_fill:

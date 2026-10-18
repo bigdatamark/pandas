@@ -5,6 +5,18 @@ that can be mixed into or pinned onto other pandas classes.
 
 """
 
+# [MODULE DOC]
+# Infrastructure for accessor properties (the Series string, datetime and
+# categorical namespaces and user registered extension namespaces).
+# Public contents: DirNamesMixin (controls directory listings), PandasDelegate
+# (base class for accessors that forward properties and methods to a wrapped
+# object), delegate_names (class decorator adding forwarding members),
+# Accessor (descriptor that builds the accessor object on attribute access),
+# CachedAccessor (legacy alias of Accessor), the three public registration
+# functions for DataFrame, Series and Index, and the private shared registration
+# helper plus example text constants used to build docstrings elsewhere.
+# Relationships: the registration functions are exported through the public
+# extension API. Import-time side effects: none beyond defining names.
 from __future__ import annotations
 
 import functools
@@ -29,23 +41,39 @@ if TYPE_CHECKING:
 
 
 class DirNamesMixin:
+    # [CLASS DOC]
+    # Mixin that customizes directory listing (tab completion) of pandas objects.
+    # Class attributes: _accessors, a set of registered accessor names (shared
+    # mutable set unless overridden by subclasses), and _hidden_attrs, a frozen set
+    # of attribute names to hide. Key methods: the two helpers computing names to
+    # remove and add, and the directory listing method.
     _accessors: set[str] = set()
     _hidden_attrs: frozenset[str] = frozenset()
 
     @final
     def _dir_deletions(self) -> set[str]:
+        # [FUNCTION DOC]
+        # HELPER: returns the set of names to hide from the directory listing: the
+        # union of the accessor names and the hidden attribute names. Final.
         """
         Delete unwanted __dir__ for this object.
         """
         return self._accessors | self._hidden_attrs
 
     def _dir_additions(self) -> set[str]:
+        # [FUNCTION DOC]
+        # HELPER: returns the set of registered accessor names that can actually be
+        # accessed on this instance (those for which an attribute lookup succeeds,
+        # so accessors whose constructor raises an attribute error are omitted).
         """
         Add additional __dir__ for this object.
         """
         return {accessor for accessor in self._accessors if hasattr(self, accessor)}
 
     def __dir__(self) -> list[str]:
+        # [FUNCTION DOC]
+        # Returns the sorted list of attribute names: the default names, minus the
+        # deletions, plus the usable accessor names. No side effects.
         """
         Provide method name lookup and completion.
 
@@ -59,17 +87,35 @@ class DirNamesMixin:
 
 
 class PandasDelegate:
+    # [CLASS DOC]
+    # Abstract base for accessor classes that forward named properties and methods
+    # to a wrapped object. Subclasses override the three delegate hooks (property
+    # get, property set, method call); the defaults all raise a type error. The
+    # class method that generates forwarding members is used by the delegate
+    # decorator function.
     """
     Abstract base class for delegating methods/properties.
     """
 
     def _delegate_property_get(self, name: str, *args, **kwargs):
+        # [FUNCTION DOC]
+        # HELPER: hook for reading a delegated property called name. The default
+        # implementation always raises a type error saying the property cannot
+        # be accessed. Extra arguments are ignored.
         raise TypeError(f"You cannot access the property {name}")
 
     def _delegate_property_set(self, name: str, value, *args, **kwargs) -> None:
+        # [FUNCTION DOC]
+        # HELPER: hook for assigning a delegated property called name to value. The
+        # default implementation always raises a type error saying the property
+        # cannot be set.
         raise TypeError(f"The property {name} cannot be set")
 
     def _delegate_method(self, name: str, *args, **kwargs):
+        # [FUNCTION DOC]
+        # HELPER: hook for calling a delegated method called name with the given
+        # arguments. The default implementation always raises a type error saying
+        # the method cannot be called.
         raise TypeError(f"You cannot call method {name}")
 
     @classmethod
@@ -82,6 +128,18 @@ class PandasDelegate:
         accessor_mapping: Callable[[str], str] = lambda x: x,
         raise_on_missing: bool = True,
     ) -> None:
+        # [FUNCTION DOC]
+        # HELPER: class method that attaches forwarding members to the class.
+        # Inputs: delegate (class supplying documentation and member lookup),
+        # accessors (member names), typ (either property or method; any value other
+        # than property is treated as method), overwrite (default false: existing
+        # members of the class are kept), accessor_mapping (maps an accessor name
+        # to the name looked up on the delegate; default identity) and
+        # raise_on_missing (default true; if false, names missing on the delegate
+        # are skipped, otherwise the lookup raises an attribute error).
+        # Side effect: sets attributes on the class. Properties forward get and
+        # set to the delegate hooks and copy the delegate documentation; methods
+        # forward calls to the method hook and copy the delegate method metadata.
         """
         Add accessors to cls from the delegate class.
 
@@ -104,10 +162,19 @@ class PandasDelegate:
         """
 
         def _create_delegator_property(name: str):
+            # [FUNCTION DOC]
+            # HELPER: builds a property object for the given name whose getter and
+            # setter call the delegate hooks, with the documentation of the
+            # delegate member (looked up through the mapping).
             def _getter(self):
+                # [FUNCTION DOC]
+                # HELPER: property getter; forwards to the property get hook.
                 return self._delegate_property_get(name)
 
             def _setter(self, new_values):
+                # [FUNCTION DOC]
+                # HELPER: property setter; forwards the new value to the property
+                # set hook and returns its result.
                 return self._delegate_property_set(name, new_values)
 
             _getter.__name__ = name
@@ -120,10 +187,17 @@ class PandasDelegate:
             )
 
         def _create_delegator_method(name: str):
+            # [FUNCTION DOC]
+            # HELPER: builds a forwarding method for the given name. The delegate
+            # method is looked up first (attribute error if missing) and its
+            # metadata copied onto the wrapper.
             method = getattr(delegate, accessor_mapping(name))
 
             @functools.wraps(method)
             def f(self, *args, **kwargs):
+                # [FUNCTION DOC]
+                # HELPER: forwarding method; passes all arguments to the method
+                # hook along with the name and returns its result.
                 return self._delegate_method(name, *args, **kwargs)
 
             return f
@@ -153,6 +227,10 @@ def delegate_names(
     accessor_mapping: Callable[[str], str] = lambda x: x,
     raise_on_missing: bool = True,
 ):
+    # [FUNCTION DOC]
+    # Returns a class decorator that calls the class method which adds forwarding
+    # members to the decorated class, then returns the class unchanged otherwise.
+    # All parameters are passed through unchanged (see that method for meanings).
     """
     Add delegated names to a class using a class decorator.  This provides
     an alternative usage to directly calling `_add_delegate_accessors`
@@ -186,6 +264,9 @@ def delegate_names(
     """
 
     def add_delegate_accessors(cls):
+        # [FUNCTION DOC]
+        # HELPER: the decorator itself; adds the forwarding members to the given
+        # class (side effect) and returns that class.
         cls._add_delegate_accessors(
             delegate,
             accessors,
@@ -200,6 +281,11 @@ def delegate_names(
 
 
 class Accessor:
+    # [CLASS DOC]
+    # Non-data descriptor that exposes an accessor namespace on a class. State:
+    # _name (the namespace name) and _accessor (the accessor class). Accessing it on
+    # the class returns the accessor class itself; accessing it on an instance
+    # constructs a new accessor object from that instance (no caching).
     """
     Custom property-like object.
 
@@ -220,10 +306,19 @@ class Accessor:
     """
 
     def __init__(self, name: str, accessor) -> None:
+        # [FUNCTION DOC]
+        # Stores the namespace name and the accessor class. No validation.
         self._name = name
         self._accessor = accessor
 
     def __get__(self, obj, cls):
+        # [FUNCTION DOC]
+        # Descriptor protocol. Inputs: obj (the instance, or none when accessed on
+        # the class) and cls (the owning class). Returns the accessor class when obj
+        # is none, otherwise a new accessor instance built from obj; exceptions from
+        # the accessor constructor (typically attribute errors) propagate.
+        # KNOWN ISSUE: the class is called a cached accessor via its legacy alias,
+        # but nothing is cached; a new accessor object is built on every access.
         if obj is None:
             # we're accessing the attribute of the class, i.e., Dataset.geo
             return self._accessor
@@ -238,6 +333,15 @@ CachedAccessor = Accessor
 def _register_accessor(
     name: str, cls: type[NDFrame | Index]
 ) -> Callable[[TypeT], TypeT]:
+    # [FUNCTION DOC]
+    # HELPER: shared implementation of the public registration functions.
+    # Inputs: name (namespace name) and cls (the pandas class to extend).
+    # Returns a class decorator which, when applied to an accessor class, warns
+    # (user warning, attributed to the caller) if the target class already has an
+    # attribute of that name, sets a descriptor under that name on the target class
+    # (replacing any existing attribute), adds the name to the target class
+    # accessor name set (a shared mutable set; side effect), and returns the
+    # accessor class unchanged.
     """
     Register a custom accessor on objects.
 
@@ -281,6 +385,10 @@ def _register_accessor(
     """
 
     def decorator(accessor: TypeT) -> TypeT:
+        # [FUNCTION DOC]
+        # HELPER: the decorator returned by the registration helper; registers the
+        # accessor class under the name (see that function for details) and returns
+        # the accessor class.
         if hasattr(cls, name):
             warnings.warn(
                 f"registration of accessor {accessor!r} under name "
@@ -324,6 +432,11 @@ dtype: int64"""
 
 @set_module("pandas.api.extensions")
 def register_dataframe_accessor(name: str) -> Callable[[TypeT], TypeT]:
+    # [FUNCTION DOC]
+    # Public function. Input: name, the namespace to register. Returns a class
+    # decorator registering the decorated accessor class on DataFrame (see the
+    # shared registration helper for the warning and side effects). The DataFrame
+    # class is imported lazily inside the function.
     """
     Register a custom accessor on DataFrame objects.
 
@@ -421,6 +534,11 @@ AttributeError: The series must contain integer data only.
 
 @set_module("pandas.api.extensions")
 def register_series_accessor(name: str) -> Callable[[TypeT], TypeT]:
+    # [FUNCTION DOC]
+    # Public function. Input: name, the namespace to register. Returns a class
+    # decorator registering the decorated accessor class on Series (see the shared
+    # registration helper for the warning and side effects). The Series class is
+    # imported lazily inside the function.
     """
     Register a custom accessor on Series objects.
 
@@ -517,6 +635,11 @@ AttributeError: The index must only be an integer value.
 
 @set_module("pandas.api.extensions")
 def register_index_accessor(name: str) -> Callable[[TypeT], TypeT]:
+    # [FUNCTION DOC]
+    # Public function. Input: name, the namespace to register. Returns a class
+    # decorator registering the decorated accessor class on Index (see the shared
+    # registration helper for the warning and side effects). The Index class is
+    # imported lazily inside the function.
     """
     Register a custom accessor on Index objects.
 

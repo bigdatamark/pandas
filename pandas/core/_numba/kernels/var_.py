@@ -7,6 +7,14 @@ Numba 1D var kernels that can be shared by
 Mirrors pandas/_libs/window/aggregation.pyx
 """
 
+# [MODULE DOC]
+# HELPER: internal numba kernels for the variance (Welford style online algorithm
+# with compensation), used by the numba engine of rolling/expanding windows and
+# groupby; the standard deviation is derived by callers.
+# Public contents: add_var and remove_var (single-step accumulator updates),
+# sliding_var (window kernel driven by start/end bounds) and grouped_var (groupby
+# kernel driven by labels). Importing requires numba; functions are compiled
+# lazily on first call.
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
@@ -30,6 +38,15 @@ def add_var(
     num_consecutive_same_value: int,
     prev_value: float,
 ) -> tuple[int, float, float, float, int, float]:
+    # [FUNCTION DOC]
+    # HELPER: adds one observation to the running variance state.
+    # Inputs: val, nobs, mean_x (running mean), ssqdm_x (running sum of squared
+    # deviations from the mean), compensation (compensation term),
+    # num_consecutive_same_value and prev_value. A missing value changes nothing.
+    # Otherwise the run length is extended or reset, the count incremented, the mean
+    # updated incrementally and the sum of squared deviations updated.
+    # Returns the updated tuple (nobs, mean_x, ssqdm_x, compensation,
+    # num_consecutive_same_value, prev_value).
     if not np.isnan(val):
         if val == prev_value:
             num_consecutive_same_value += 1
@@ -55,6 +72,13 @@ def add_var(
 def remove_var(
     val: float, nobs: int, mean_x: float, ssqdm_x: float, compensation: float
 ) -> tuple[int, float, float, float]:
+    # [FUNCTION DOC]
+    # HELPER: removes one observation from the running variance state when it
+    # leaves a window. Inputs: val, nobs, mean_x, ssqdm_x and compensation. A
+    # missing value changes nothing; otherwise the count is decremented and, if
+    # observations remain, mean and sum of squared deviations are updated
+    # incrementally; if none remain, both are reset to zero. Returns the updated
+    # tuple (nobs, mean_x, ssqdm_x, compensation).
     if not np.isnan(val):
         nobs -= 1
         if nobs:
@@ -80,6 +104,17 @@ def sliding_var(
     min_periods: int,
     ddof: int = 1,
 ) -> tuple[np.ndarray, list[int]]:
+    # [FUNCTION DOC]
+    # Window variance kernel for one 1D array of floats.
+    # Inputs: values, result_dtype, start and end (integer arrays, one half open
+    # window each), min_periods (at least one is enforced) and ddof (delta degrees
+    # of freedom, default one).
+    # Behavior: with monotonically increasing bounds the state is updated
+    # incrementally, otherwise recomputed per window. A window yields NaN unless it
+    # has at least min_periods observations and more observations than ddof; it
+    # yields zero when there is one observation or all observations are equal;
+    # otherwise the sum of squared deviations divided by the count minus ddof.
+    # Returns a pair: the output array and an empty list (floats hold NaN).
     N = len(start)
     nobs = 0
     mean_x = 0.0
@@ -178,6 +213,19 @@ def grouped_var(
     ddof: int = 1,
     skipna: bool = True,
 ) -> tuple[np.ndarray, list[int]]:
+    # [FUNCTION DOC]
+    # Groupby variance kernel for one 1D array.
+    # Inputs: values, result_dtype, labels (negative codes ignored), ngroups,
+    # min_periods, ddof (default one) and skipna (default true; if false, a missing
+    # value makes its group NaN and later elements of that group are skipped).
+    # Behavior: accumulates per-group count, mean and sum of squared deviations,
+    # then in a second pass converts to variance: NaN if the group has fewer than
+    # min_periods observations or not more than ddof; zero for a single
+    # observation or all-equal values; else the sum of squares divided by the count
+    # minus ddof.
+    # Returns the output array and an empty list.
+    # KNOWN ISSUE: a comment near the end mentions a second pass to compute the
+    # standard deviation, but no standard deviation is computed here.
     N = len(labels)
 
     nobs_arr = np.zeros(ngroups, dtype=np.int64)

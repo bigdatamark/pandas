@@ -1,3 +1,18 @@
+# [MODULE DOC]
+# Aggregation module that gathers the user-facing names of the core package so the
+# top-level pandas namespace can re-export them in one step. It defines no
+# functions or classes of its own.
+# Re-exports (all listed in the module export list): scalar types and missing value
+# markers (NaT, NA, Period, Timedelta, Timestamp), dtype classes (extension,
+# nullable integer, floating, boolean, string, categorical, datetime with time
+# zone, interval, period, Arrow), missing-value predicates, factorize and unique,
+# Categorical, the array constructor, Flags, the groupby Grouper and NamedAgg,
+# all index classes and range/date-range constructors, IndexSlice, Series,
+# DataFrame, conversion functions (to datetime, numeric, timedelta), the engineering
+# float format setter and DateOffset.
+# Import-time side effects: importing it imports most of the core subpackages. The
+# DataFrame import is deliberately last because it must come after the groupby
+# named aggregation import to avoid a circular import.
 from pandas._libs import (
     NaT,
     Period,

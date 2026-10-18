@@ -3,6 +3,24 @@ Generic data algorithms. This module is experimental at the moment and not
 intended for public consumption
 """
 
+# [MODULE DOC]
+# Core generic algorithms operating on array-likes: hashtable-based uniqueness,
+# factorization, membership, value counts, duplicate detection, mode, ranking,
+# take, difference, searchsorted, safe sorting, multiset union and mapping through
+# a lookup. Works for numpy arrays, extension arrays, Index and Series inputs by
+# unwrapping them first and re-wrapping results.
+# Public contents: unique (also aliased as unique1d), unique_with_mask,
+# nunique_ints, isin, factorize, factorize_array, value_counts_internal,
+# value_counts_arraylike, duplicated, mode, rank, take, searchsorted, diff,
+# safe_sort, union_with_duplicates and map_array (unique, factorize and take are
+# exposed in the public API under the top-level or extension namespaces through the
+# module-setting decorator). Private helpers (names starting with an underscore)
+# handle coercion to hashtable-friendly dtypes, reconstruction, validation, hashtable
+# selection and mixed-type sorting.
+# Relationships: relies on the hashtable and algos extension modules, the dtype
+# helpers, the take algorithms and construction helpers; used by Series, Index,
+# DataFrame, groupby and extension arrays.
+# Import-time side effects: builds the dtype-name to hashtable-class lookup table.
 from __future__ import annotations
 
 import decimal
@@ -112,6 +130,17 @@ if TYPE_CHECKING:
 # dtype access    #
 # --------------- #
 def _ensure_data(values: ArrayLike) -> np.ndarray:
+    # [FUNCTION DOC]
+    # HELPER: coerces array data to a numpy dtype that the low-level hashtable and
+    # algorithm routines support. Input: values, numpy array, extension array or
+    # (a MultiIndex, which is not unwrapped). Behavior by dtype: object arrays stay
+    # object; masked arrays without missing entries use their raw data (recursively
+    # coerced), otherwise they become an object array; categoricals become their
+    # integer codes; booleans become unsigned 8-bit integers; integers and most
+    # floats are used as is (float16 and the 12/16-byte floats are converted to
+    # 64-bit floats); complex stays complex; datetime-like data is viewed as 64-bit
+    # integers; anything else is converted to object dtype. Returns a numpy array.
+    # No exceptions are raised by the function itself.
     """
     routine to ensure that our data is of the correct
     input dtype for lower-level routines
@@ -192,6 +221,14 @@ def _ensure_data(values: ArrayLike) -> np.ndarray:
 def _reconstruct_data(
     values: ArrayLikeT, dtype: DtypeObj, original: AnyArrayLike
 ) -> ArrayLikeT:
+    # [FUNCTION DOC]
+    # HELPER: undoes the coercion done to make data hashtable-friendly. Inputs:
+    # values (result array in the coerced representation), dtype (the original
+    # dtype) and original (the original array-like, unused here). If values is
+    # already an extension array of the target dtype it is returned as is.
+    # For a non-numpy target dtype the extension array class of that dtype is
+    # built from the values; for a numpy target dtype the values are converted
+    # without copying when possible. Returns the reconstructed array.
     """
     reverse of _ensure_data
 
@@ -226,6 +263,15 @@ def _reconstruct_data(
 
 
 def _ensure_arraylike(values, func_name: str) -> ArrayLike:
+    # [FUNCTION DOC]
+    # HELPER: validates and converts the input of an algorithm to an array-like.
+    # Inputs: values and func_name (used in the error message and as a flag).
+    # Index, Series, extension array and numpy array inputs are returned as is.
+    # Any other input raises a type error naming the function and the input type,
+    # except when func_name is the special isin-targets marker, in which case the
+    # input is converted: mixed, string and mixed-integer inferred contents become
+    # an object array (tuples are first turned into lists), anything else is
+    # converted with the default array conversion. Returns the array-like.
     """
     ensure that we are arraylike if not already
     """
@@ -274,6 +320,13 @@ _hashtables = {
 def _get_hashtable_algo(
     values: np.ndarray,
 ) -> tuple[type[htable.HashTable], np.ndarray]:
+    # [FUNCTION DOC]
+    # HELPER: picks the hashtable class for the data. Input: values (array). The
+    # data is coerced with the data-coercion helper, the table key is the dtype name
+    # (or the string table for object arrays holding only strings), and the matching
+    # class is looked up in the module level table (a key error if the dtype has
+    # no entry). Returns a pair: the hashtable class (not an instance) and the
+    # coerced values.
     """
     Parameters
     ----------
@@ -292,6 +345,11 @@ def _get_hashtable_algo(
 
 
 def _check_object_for_strings(values: np.ndarray) -> str:
+    # [FUNCTION DOC]
+    # HELPER: returns the hashtable key name for an array: its dtype name, except
+    # that an object array consisting entirely of strings (missing values counted
+    # as non-strings) is reported as the string key, since the string hashtable is
+    # cheaper than the object one.
     """
     Check if we can use string hashtable instead of object hashtable.
 
@@ -319,13 +377,28 @@ def _check_object_for_strings(values: np.ndarray) -> str:
 
 
 @overload
-def unique(values: T) -> T: ...
+def unique(values: T) -> T:
+    # [FUNCTION DOC]
+    # Typing overload stub: Index, Categorical and extension array in, same type out.
+    # See the implementation below.
+    ...
 @overload
-def unique(values: np.ndarray | Series) -> np.ndarray: ...
+def unique(values: np.ndarray | Series) -> np.ndarray:
+    # [FUNCTION DOC]
+    # Typing overload stub: numpy array or Series in, numpy array out. See the
+    # implementation below.
+    ...
 
 
 @set_module("pandas")
 def unique(values):
+    # [FUNCTION DOC]
+    # Public top-level function. Input: values, a one dimensional Series, Index,
+    # extension array or numpy array (other input types such as plain lists raise
+    # a type error). Returns the distinct values in order of first appearance,
+    # including missing values, without sorting; for an Index an Index, for a
+    # categorical or other extension data an extension array, otherwise a numpy
+    # array. Simply forwards to the masked variant with no mask.
     """
     Return unique values based on a hash table.
 
@@ -434,6 +507,11 @@ def unique(values):
 
 
 def nunique_ints(values: ArrayLike) -> int:
+    # [FUNCTION DOC]
+    # Counts distinct values of an integer array-like using a bin count. Input:
+    # values (assumed integral; this is not checked, and negative values would make
+    # the bin count fail). Returns zero for empty input; otherwise the number of
+    # non-empty bins as a numpy integer.
     """
     Return the number of unique values for integer array-likes.
 
@@ -457,6 +535,14 @@ def nunique_ints(values: ArrayLike) -> int:
 
 
 def unique_with_mask(values, mask: npt.NDArray[np.bool_] | None = None):
+    # [FUNCTION DOC]
+    # Implementation of the unique function that also supports masked data.
+    # Inputs: values (array-like as for unique) and mask (optional boolean array,
+    # true marks missing entries, for masked extension arrays). Extension dtypes and
+    # Index inputs dispatch to their own unique method. Otherwise the data is
+    # coerced, a hashtable is built, and the uniques are computed and converted back
+    # to the original dtype. Returns the uniques, or, when a mask was given, a pair
+    # of the uniques and the boolean mask of the uniques.
     """See algorithms.unique for docs. Takes a mask for masked arrays."""
     values = _ensure_arraylike(values, func_name="unique")
 
@@ -491,6 +577,24 @@ _MINIMUM_COMP_ARR_LEN = 1_000_000
 
 
 def isin(comps: ListLike, values: ListLike) -> npt.NDArray[np.bool_]:
+    # [FUNCTION DOC]
+    # Elementwise membership test. Inputs: comps (list-like of elements to test)
+    # and values (list-like of allowed values). Raises a type error if either is not
+    # list-like (naming the offending type). Plain sequences used as values are
+    # converted to arrays, falling back to object arrays in some mixed-type cases to
+    # avoid unwanted upcasting to float; MultiIndex values become an array of
+    # tuples. Extension array comps use their own method; datetime-like comps
+    # dispatch to the datetime array method; datetime-like values against
+    # non-object comps give all false; datetime-like or extension-typed values are
+    # converted (to object, or to plain arrays) and the test recurses.
+    # For numpy data: for very large comps (over one million elements) and few
+    # values (at most 26) without the NA singleton, uses numpy membership (taking
+    # care of NaN equality when values contain missing); otherwise both sides are
+    # cast to a common dtype and the hashtable membership routine is used.
+    # Returns a boolean numpy array with the length of comps.
+    # KNOWN ISSUE: the comment about not being quite right for sparse and
+    # categorical data sits after a return statement and the branch it refers to is
+    # unreachable code beyond the return.
     """
     Compute the isin boolean array.
 
@@ -573,6 +677,9 @@ def isin(comps: ListLike, values: ListLike) -> npt.NDArray[np.bool_]:
         if isna(values).any():
 
             def f(c, v):
+                # [FUNCTION DOC]
+                # HELPER: membership with NaN awareness; true where the element is
+                # in v by numpy membership or where the element itself is NaN.
                 return np.logical_or(np.isin(c, v).ravel(), np.isnan(c))
 
         else:
@@ -594,6 +701,18 @@ def factorize_array(
     na_value: object = None,
     mask: npt.NDArray[np.bool_] | None = None,
 ) -> tuple[npt.NDArray[np.intp], np.ndarray]:
+    # [FUNCTION DOC]
+    # Factorizes a numpy array into integer codes and unique values using a
+    # hashtable, without type coercion by the caller. Inputs: values (numpy array),
+    # use_na_sentinel (default true: missing values get code minus one and are
+    # dropped from the uniques; if false they get ordinary codes and appear in the
+    # uniques), size_hint (optional expected number of uniques; default the array
+    # length), na_value (optional value treated as missing; for datetime-like data
+    # it is replaced by the integer missing sentinel, assuming the caller passed a
+    # proper not-a-time) and mask (optional boolean array, true = missing, used
+    # instead of na_value/NaN detection).
+    # Returns a pair: platform integer codes and the uniques converted back to the
+    # original dtype.
     """
     Factorize a numpy array to codes and uniques.
 
@@ -656,6 +775,26 @@ def factorize(
     use_na_sentinel: bool = True,
     size_hint: int | None = None,
 ) -> tuple[np.ndarray, np.ndarray | Index]:
+    # [FUNCTION DOC]
+    # Public top-level function: encodes values as integer codes plus the array of
+    # distinct values. Inputs: values (one dimensional sequence; a Series or Index
+    # dispatches to its own factorize method; other non-array inputs raise a type
+    # error), sort (default false; if true the uniques are sorted and the codes
+    # remapped accordingly), use_na_sentinel (default true: missing values get
+    # code minus one and are excluded from the uniques; if false they receive a
+    # normal code and appear in the uniques) and size_hint (optional hashtable size
+    # hint, used only for plain numpy input).
+    # Behavior: datetime-like arrays with a frequency use a fast path on the array;
+    # other extension arrays use their own factorize; numpy arrays are factorized
+    # with the hashtable routine (for object arrays with the no-sentinel option,
+    # all null flavors are first normalized to the dtype's own missing value
+    # without modifying the caller's array). If sort is requested and there are
+    # uniques, they are sorted with the safe sort helper. The uniques are then
+    # converted back to the original dtype.
+    # Returns a pair: codes (integer array) and uniques (numpy array, or an
+    # extension array for extension input).
+    # Note: the datetime-like frequency fast path does not forward the sentinel
+    # option, which is harmless because such arrays cannot contain missing values.
     """
     Encode the object as an enumerated type or categorical variable.
 
@@ -846,6 +985,23 @@ def value_counts_internal(
     bins=None,
     dropna: bool = True,
 ) -> Series:
+    # [FUNCTION DOC]
+    # Implementation behind counting distinct values. Inputs: values (array-like,
+    # Series or Index), sort (default true: order by count), ascending (default
+    # false), normalize (default false: return proportions rather than counts),
+    # bins (optional; if given, values are cut into bins first and the intervals are
+    # counted; non-numeric data raises a type error saying bins only work with
+    # numeric data) and dropna (default true: exclude missing values).
+    # Behavior: with bins, counts per interval are computed, missing intervals
+    # dropped, ordered by interval, and normalization uses the length of all
+    # binned values. For extension arrays the array's own value counts is used; for
+    # a MultiIndex a groupby size is used; otherwise the hashtable counting routine
+    # is used (half precision keys are widened to single precision) and the keys
+    # form an index of the same dtype, preserving the inferred frequency of
+    # datetime-like indexes when unsorted and equal. The result is a Series named
+    # by count or proportion, indexed by the distinct values (index named after the
+    # input's name), sorted with a stable sort if requested, and divided by the
+    # total (or the bin denominator) if normalizing.
     from pandas import (
         DatetimeIndex,
         Index,
@@ -936,6 +1092,18 @@ def value_counts_internal(
 def value_counts_arraylike(
     values: np.ndarray, dropna: bool, mask: npt.NDArray[np.bool_] | None = None
 ) -> tuple[ArrayLike, npt.NDArray[np.int64], int]:
+    # [FUNCTION DOC]
+    # Counts occurrences of each distinct value using a hashtable. Inputs: values
+    # (array), dropna (whether to exclude missing values) and mask (optional
+    # boolean array, true = missing, for masked data).
+    # Behavior: data is coerced for the hashtable; counting yields keys, counts and
+    # the number of missing entries seen. For datetime-like dtypes with dropna, the
+    # entries whose key is the integer missing sentinel are removed. Keys are
+    # converted back to the original dtype.
+    # Returns a triple: the keys, the 64-bit counts and the missing-entry counter.
+    # KNOWN ISSUE: the docstring lists only two return values, but a third (the
+    # missing count) is returned.
+    # Called once from SparseArray, otherwise could be private (per a comment).
     """
     Parameters
     ----------
@@ -969,6 +1137,12 @@ def duplicated(
     keep: Literal["first", "last", False] = "first",
     mask: npt.NDArray[np.bool_] | None = None,
 ) -> npt.NDArray[np.bool_]:
+    # [FUNCTION DOC]
+    # Marks duplicated entries. Inputs: values (numpy or extension array; coerced to
+    # a hashtable-friendly dtype), keep (first, last, or false; default first:
+    # which occurrence is NOT marked, false marks all duplicates) and mask
+    # (optional boolean array of elements to exclude from the check). Returns a
+    # boolean array of the same length.
     """
     Return boolean ndarray denoting duplicate values.
 
@@ -996,6 +1170,21 @@ def duplicated(
 def mode(
     values: ArrayLike, dropna: bool = True, mask: npt.NDArray[np.bool_] | None = None
 ) -> tuple[np.ndarray, npt.NDArray[np.bool_]] | ExtensionArray:
+    # [FUNCTION DOC]
+    # Computes the most frequent value(s). Inputs: values (array-like; other types
+    # raise a type error), dropna (default true: do not count missing values) and
+    # mask (optional boolean array of missing entries for masked data).
+    # Behavior: datetime-like data is wrapped and dispatched to the array's own
+    # mode method, whose result (an extension array) is returned directly. Other
+    # data is coerced and the hashtable mode routine run; if it returns a result
+    # mask (masked input) the pair is returned immediately without sorting or
+    # type restoration. Otherwise an all-false mask is created, the modes are
+    # sorted with the safe sort helper (a failure to sort emits a warning that the
+    # modes could not be sorted, attributed to the caller, and leaves them
+    # unsorted), and the result is converted back to the original dtype.
+    # Returns a pair of modes and a boolean mask, except for datetime-like input.
+    # KNOWN ISSUE: the docstring omits the mask parameter and claims the return type
+    # is a union where the pair is returned in almost all cases.
     """
     Returns the mode(s) of an array.
 
@@ -1048,6 +1237,19 @@ def rank(
     pct: bool = False,
     mask: npt.NDArray[np.bool_] | None = None,
 ) -> npt.NDArray[np.float64]:
+    # [FUNCTION DOC]
+    # Ranks values along an axis. Inputs: values (array of one or two dimensions),
+    # axis (default 0; used for 2D only), method (tie-breaking: average, min, max,
+    # first, dense; default average), na_option (keep or top; default keep),
+    # ascending (default true), pct (default false: return percentile ranks) and
+    # mask (optional boolean array of entries to exclude; only supported for 1D,
+    # an assertion error is raised for 2D input with a mask).
+    # Datetime-like data is flagged and converted to integers. Dispatches to the
+    # one or two dimensional compiled rank routine. Raises a type error for more
+    # than two dimensions. Returns a float array of ranks.
+    # KNOWN ISSUE: the docstring has no Returns section, and describes na_option as
+    # only keep or top while the compiled routine may accept other values (such as
+    # bottom).
     """
     Rank the values along a given axis.
 
@@ -1116,6 +1318,19 @@ def take(
     allow_fill: bool = False,
     fill_value=None,
 ):
+    # [FUNCTION DOC]
+    # Public function (exposed in the extension API) that takes elements by
+    # position. Inputs: arr (numpy array, extension array, Index, Series or numpy
+    # wrapper array; otherwise a type error), indices (integer sequence or array),
+    # axis (default 0), allow_fill (default false) and fill_value (default none,
+    # meaning the dtype's missing value; only used if allow_fill).
+    # Behavior: indices are converted to platform integers. With allow_fill false,
+    # the object's own take is used and negative indices count from the end (numpy
+    # style). With allow_fill true, the indices are validated against the axis
+    # length (negative values other than minus one raise a value error, out of
+    # bounds raises an index error) and the low-level take with fill is used, in
+    # which minus one produces the fill value.
+    # Returns an array of the same kind as the input.
     """
     Take elements from an array.
 
@@ -1232,6 +1447,18 @@ def searchsorted(
     side: Literal["left", "right"] = "left",
     sorter: NumpySorter | None = None,
 ) -> npt.NDArray[np.intp] | np.intp:
+    # [FUNCTION DOC]
+    # Finds insertion positions that keep a sorted array sorted. Inputs: arr (numpy
+    # array, extension array or Series; ascending unless a sorter is given), value
+    # (scalar or array-like to insert), side (left or right; default left) and
+    # sorter (optional integer indexer that sorts arr; converted to platform
+    # integers).
+    # Behavior: for integer numpy arrays with integer values, the value is cast to
+    # the array's dtype (to avoid slow recasting of the array by numpy) unless it
+    # would overflow, in which case the value's own dtype is used. Otherwise
+    # datetime-like arrays are wrapped so that Timestamp-like values compare
+    # properly. The search is then delegated to the array's own method.
+    # Returns an integer for scalar value, else an integer array.
     """
     Find indices where elements should be inserted to maintain order.
 
@@ -1318,6 +1545,27 @@ _diff_special = {"float64", "float32", "int64", "int32", "int16", "int8"}
 
 
 def diff(arr, n: int | float | np.integer | np.floating, axis: AxisInt = 0):
+    # [FUNCTION DOC]
+    # Computes the difference between each element and the element n positions
+    # earlier along an axis (the equivalent of subtracting a shifted copy); for
+    # booleans the exclusive-or is used instead of subtraction.
+    # Inputs: arr (numpy array or extension array), n (number of periods; an
+    # integer or a float with an integer value; any other value raises a value
+    # error saying periods must be an integer; negative values look forward) and
+    # axis (default 0; for one dimensional input it is effectively ignored).
+    # Behavior: numpy-wrapper extension arrays are converted to numpy first.
+    # Other extension arrays must support the needed operator (else a type error
+    # says there is no diff method) and only axis zero (else a value error); the
+    # result is the operator applied to the array and its shifted copy. For numpy
+    # data: datetime-like values are processed as integers using the integer missing
+    # sentinel and the result is viewed as timedelta; booleans produce an object
+    # result; small integers produce single-precision floats and other integers
+    # double floats (so NaN can be held). The first (or last) n positions along the
+    # axis are filled with the missing value. Common dtypes use a compiled routine;
+    # others use slicing arithmetic. Returns a new array of the same shape (for 2D
+    # input; 1D input gives 1D output).
+    # KNOWN ISSUE: the docstring documents a parameter called stacklevel that the
+    # function does not accept, and describes n as an int only.
     """
     difference of n between self,
     analogous to s-s.shift(n)
@@ -1442,6 +1690,25 @@ def safe_sort(
     assume_unique: bool = False,
     verify: bool = True,
 ) -> AnyArrayLike | tuple[AnyArrayLike, np.ndarray]:
+    # [FUNCTION DOC]
+    # Sorts values robustly (supports mixed int/str, tuples, and missing values) and
+    # optionally remaps integer codes that refer to positions in the values.
+    # Inputs: values (numpy array, extension array or Index; anything else raises a
+    # type error), codes (optional integer array of positions into values; if given
+    # it must be list-like else a type error, and values must be unique else a value
+    # error unless assume_unique), use_na_sentinel (default true: minus one in
+    # codes is preserved as missing; if false, codes are remapped with wrap-around
+    # indexing), assume_unique (default false; skips the uniqueness check) and
+    # verify (default true; out-of-range codes are first replaced by minus one, which
+    # mutates the codes array produced from the input).
+    # Behavior: integer-and-string mixtures are ordered by a dedicated helper
+    # (numbers, then strings, then nulls); otherwise the values are sorted normally,
+    # falling back to the tuple sorter for tuple elements or to the mixed sorter
+    # when ordinary sorting fails.
+    # Returns the sorted values alone when codes is none, otherwise a pair of sorted
+    # values and the remapped platform-integer codes.
+    # KNOWN ISSUE: the verification step modifies the caller's codes array in place
+    # when it is already a platform-integer numpy array (no copy is made).
     """
     Sort ``values`` and reorder corresponding ``codes``.
 
@@ -1558,6 +1825,12 @@ def safe_sort(
 
 
 def _sort_mixed(values) -> AnyArrayLike:
+    # [FUNCTION DOC]
+    # HELPER: sorting for one dimensional data of mixed types, used by the safe sort.
+    # Input: values (array-like supporting boolean indexing and take). Partitions
+    # entries into strings, nulls and everything else (assumed numeric), sorts the
+    # strings and the numbers separately, and returns the values taken in the order
+    # numbers, strings, nulls (nulls in original order).
     """order ints before strings before nulls in 1d arrays"""
     str_pos = np.array([isinstance(x, str) for x in values], dtype=bool)
     null_pos = np.array([isna(x) for x in values], dtype=bool)
@@ -1573,6 +1846,13 @@ def _sort_mixed(values) -> AnyArrayLike:
 
 
 def _sort_tuples(values: np.ndarray) -> np.ndarray:
+    # [FUNCTION DOC]
+    # HELPER: sorts a one dimensional array of tuples lexicographically, used by the
+    # safe sort. Input: values (array of tuples). The tuples are split into one
+    # array per position (so each column keeps its own types and missing values),
+    # a lexicographic sorting indexer over those columns is computed (ascending) and
+    # the original values are reordered by it. Returns the sorted array. The
+    # imports of the conversion and sorting helpers are deferred to call time.
     """
     Convert array of tuples (1d) to array of arrays (2d).
     We need to keep the columns separately as they contain different types and
@@ -1590,6 +1870,15 @@ def _sort_tuples(values: np.ndarray) -> np.ndarray:
 def union_with_duplicates(
     lvals: ArrayLike | Index, rvals: ArrayLike | Index
 ) -> ArrayLike | Index:
+    # [FUNCTION DOC]
+    # Computes a multiset union of two arrays. Inputs: lvals and rvals (numpy or
+    # extension arrays or Index objects of identical dtype; the caller guarantees
+    # this). For each distinct value (missing values counted too) the result holds
+    # as many copies as the larger of its counts in the two inputs. The distinct
+    # values come from the combined values in order of first appearance (left
+    # first); for two MultiIndex inputs, the unique entries of their concatenation.
+    # Returns the repeated unique values, unsorted, as an array (or Index for
+    # MultiIndex input).
     """
     Extracts the union from lvals and rvals with respect to duplicates and nans in
     both arrays.
@@ -1639,6 +1928,21 @@ def map_array(
     mapper,
     na_action: Literal["ignore"] | None = None,
 ) -> np.ndarray | ExtensionArray | Index:
+    # [FUNCTION DOC]
+    # Maps each element of an array through a function, dictionary or Series.
+    # Inputs: arr (array-like to map; the docstring below omits it), mapper
+    # (callable, dict, dict subclass with a default-value hook, or Series) and
+    # na_action (none or the string ignore; any other value raises a value error).
+    # Behavior: dictionaries with a missing-key hook become a lookup function that
+    # normalizes NaN keys; other dict-likes become a Series (an empty mapping gives a
+    # float Series so the result is all missing floats; tuple keys are kept as
+    # tuples). With a Series mapper (optionally dropping null index entries first
+    # when ignoring missing), the result is a lookup of each element in the mapper
+    # index, with missing keys giving the missing value. An empty array returns a
+    # copy. Otherwise the elements are converted to objects and the function is
+    # applied elementwise; with ignore, missing elements are skipped and kept.
+    # Returns an array (possibly an Index or extension array if the lookup produced
+    # one).
     """
     Map values using an input mapping or function.
 

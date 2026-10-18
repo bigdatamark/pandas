@@ -1,3 +1,11 @@
+# [PACKAGE DOC]
+# Package implementing pandas array containers: the extension array base class and
+# operator mixins, the Arrow-backed array, nullable boolean/integer/floating
+# arrays and their shared masked base, categorical, datetime, timedelta, period and
+# interval arrays, the numpy wrapper array, sparse arrays and the string arrays.
+# This initializer re-exports the main classes and the period array constructor
+# (all names are listed in the export list). Import-time side effects: importing it
+# imports all of those submodules.
 from pandas.core.arrays.arrow import ArrowExtensionArray
 from pandas.core.arrays.base import (
     ExtensionArray,

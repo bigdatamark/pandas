@@ -1,3 +1,14 @@
+# [MODULE DOC]
+# HELPER: internal module of the numba engine. It builds and caches numba-compiled
+# loopers that apply a 1D aggregation kernel to every row of a 2D array (pandas
+# passes the transposed block so rows are columns), and defines dtype mappings
+# from input dtype to result dtype.
+# Public contents: generate_apply_looper, make_looper, generate_shared_aggregator
+# and the three dictionaries default_dtype_mapping, float_dtype_mapping and
+# identity_dtype_mapping. Used by the window and groupby numba code paths and by
+# the kernels subpackage. Numba is imported lazily (optional dependency) inside
+# the functions, so importing this module has no side effects beyond
+# creating the mappings and the caches.
 from __future__ import annotations
 
 import functools
@@ -19,6 +30,18 @@ from pandas.core.util.numba_ import jit_user_function
 
 @functools.cache
 def generate_apply_looper(func, nopython=True, nogil=True, parallel=False):
+    # [FUNCTION DOC]
+    # Builds (and caches, keyed on all arguments) a numba-jitted looper that applies
+    # a user function along one axis of a 2D array.
+    # Parameters: func is the user function applied to each 1D slice; nopython,
+    # nogil and parallel (defaults true, true, false) are forwarded to the jit
+    # decorator. The user function is first wrapped to be numba compatible.
+    # Returns the jitted looper taking the 2D values, an axis (0 means apply to each
+    # column, otherwise to each row) and extra positional arguments. The looper
+    # evaluates the function on the first slice to discover the output shape, then
+    # allocates a float buffer with one entry (or one row/column of the output
+    # length) per slice and fills the rest using parallel range loops.
+    # Raises an import error if numba is not installed. No other side effects.
     if TYPE_CHECKING:
         import numba
     else:
@@ -27,6 +50,12 @@ def generate_apply_looper(func, nopython=True, nogil=True, parallel=False):
 
     @numba.jit(nopython=nopython, nogil=nogil, parallel=parallel)
     def nb_looper(values, axis, *args):
+        # [FUNCTION DOC]
+        # HELPER: the jitted loop returned by generate_apply_looper.
+        # Inputs: values is a 2D array, axis selects whether columns (zero) or rows
+        # (non-zero) are the slices, args are extra arguments passed to the user
+        # function. Returns a float array holding the stacked per-slice results
+        # (transposed layout when applying along columns).
         # Operate on the first row/col in order to get
         # the output shape
         if axis == 0:
@@ -59,6 +88,21 @@ def generate_apply_looper(func, nopython=True, nogil=True, parallel=False):
 
 @functools.cache
 def make_looper(func, result_dtype, is_grouped_kernel, nopython, nogil, parallel):
+    # [FUNCTION DOC]
+    # Builds (and caches on all arguments) a numba-jitted column looper around a 1D
+    # kernel.
+    # Parameters: func is the kernel, called per row of a 2D array with the row,
+    # the result dtype, either (labels, ngroups) or (start, end) bounds, the
+    # minimum periods and extra arguments; it must return an output array and
+    # an array of positions that should become missing. result_dtype is the
+    # dtype of the allocated result; is_grouped_kernel chooses the groupby
+    # signature (labels, number of groups, minimum periods) versus the window
+    # signature (start, end, minimum periods); nopython, nogil, parallel are
+    # forwarded to the jit decorator.
+    # Returns the jitted looper, which returns a pair: the 2D result (one row per
+    # input row; width is the number of groups or the number of windows) and a
+    # dictionary mapping row index to the array of missing positions (only for
+    # rows that have any). Raises an import error if numba is missing.
     if TYPE_CHECKING:
         import numba
     else:
@@ -74,6 +118,10 @@ def make_looper(func, result_dtype, is_grouped_kernel, nopython, nogil, parallel
             min_periods: int,
             *args,
         ):
+            # [FUNCTION DOC]
+            # HELPER: jitted looper (grouped variant) returned by make_looper;
+            # applies the kernel to every row of values using group labels and
+            # returns the result array plus the dictionary of missing positions.
             result = np.empty((values.shape[0], ngroups), dtype=result_dtype)
             na_positions = {}
             for i in numba.prange(values.shape[0]):
@@ -99,6 +147,11 @@ def make_looper(func, result_dtype, is_grouped_kernel, nopython, nogil, parallel
             min_periods: int,
             *args,
         ):
+            # [FUNCTION DOC]
+            # HELPER: jitted looper (window variant) returned by make_looper;
+            # applies the kernel to every row of values using start/end window
+            # bounds and returns the result array (one column per window) plus the
+            # dictionary of missing positions.
             result = np.empty((values.shape[0], len(start)), dtype=result_dtype)
             na_positions = {}
             for i in numba.prange(values.shape[0]):
@@ -170,6 +223,15 @@ def generate_shared_aggregator(
     nogil: bool,
     parallel: bool,
 ):
+    # [FUNCTION DOC]
+    # Returns a plain python wrapper (looper_wrapper) around the cached numba
+    # looper for the given kernel. Parameters are as in make_looper, plus
+    # dtype_mapping, a dictionary from input dtype to result dtype, looked up at
+    # call time.
+    # KNOWN ISSUE: the docstring says dtype_mapping may be None with a fallback to a
+    # default mapping, but the code never handles None; a missing mapping would
+    # fail on lookup. The docstring also lists a default for is_grouped_kernel that
+    # the signature does not have.
     """
     Generate a Numba function that loops over the columns 2D object and applies
     a 1D numba kernel over each column.
@@ -214,6 +276,19 @@ def generate_shared_aggregator(
         min_periods: int = 0,
         **kwargs,
     ):
+        # [FUNCTION DOC]
+        # HELPER: the wrapper returned by generate_shared_aggregator.
+        # Inputs: values is a 2D array (rows are series); start and end are window
+        # bound arrays (used by non-grouped kernels); labels and ngroups are group
+        # codes and group count (used by grouped kernels); min_periods (default 0)
+        # is the minimum observation count; extra keyword arguments are passed
+        # positionally (in order) to the kernel since numba only takes positional
+        # arguments.
+        # Behavior: picks the result dtype from the mapping by the dtype of values
+        # (a missing dtype raises a key error), runs the cached looper, and then
+        # post-processes missing positions: if the result is integer and any row
+        # has missing positions, the whole result is converted to 64-bit float; the
+        # missing positions are then set to NaN. Returns the 2D result array.
         result_dtype = dtype_mapping[values.dtype]
         column_looper = make_looper(
             func, result_dtype, is_grouped_kernel, nopython, nogil, parallel
