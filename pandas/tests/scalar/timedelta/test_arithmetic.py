@@ -2,6 +2,11 @@
 Tests for scalar Timedelta arithmetic ops
 """
 
+# [MODULE DOC]
+# Tests for arithmetic and comparison operators on the Timedelta scalar: addition and subtraction with datetimes, timestamps, timedeltas, numpy values, offsets,
+# arrays and the not-a-time scalar; multiplication, division, floor division, modulo and divmod (and their reflected forms) with numbers, time-like scalars, arrays and missing values;
+# rich comparisons including out-of-range standard library timedeltas; and generic unsupported-operand behavior. Uses the unit and tick-class fixtures and the private operator helpers for reflected operators.
+
 from datetime import (
     datetime,
     timedelta,
@@ -28,6 +33,8 @@ from pandas.core import ops
 
 
 class TestTimedeltaAdditionSubtraction:
+    # [CLASS DOC]
+    # Groups tests of addition and subtraction (forward and reflected) involving a Timedelta.
     """
     Tests for Timedelta methods:
 
@@ -36,6 +43,8 @@ class TestTimedeltaAdditionSubtraction:
     """
 
     def test_td_add_sub_pydatetime(self, unit):
+        # [FUNCTION DOC]
+        # GH#53643. Parametrized over the resolution fixture. Adding a Timedelta of 23 hours to a standard library datetime, in either order, gives the datetime 23 hours later; subtracting it gives 23 hours earlier than the day before.
         # GH#53643
         td = Timedelta(hours=23).as_unit(unit)
         dt = datetime(2016, 1, 1)
@@ -61,6 +70,8 @@ class TestTimedeltaAdditionSubtraction:
         ],
     )
     def test_td_add_sub_ten_seconds(self, ten_seconds):
+        # [FUNCTION DOC]
+        # GH#6808. Parametrized over five representations of ten seconds (Timedelta, standard timedelta, numpy timedelta in seconds and in nanoseconds, second offset). Adding to and subtracting from a timestamp shifts it by ten seconds.
         # GH#6808
         base = Timestamp("20130101 09:01:12.123456")
         expected_add = Timestamp("20130101 09:01:22.123456")
@@ -83,6 +94,8 @@ class TestTimedeltaAdditionSubtraction:
         ],
     )
     def test_td_add_sub_one_day_ten_seconds(self, one_day_ten_secs):
+        # [FUNCTION DOC]
+        # GH#6808. Parametrized over five representations of one day plus ten seconds. Adding to and subtracting from a timestamp shifts it by that amount.
         # GH#6808
         base = Timestamp("20130102 09:01:12.123456")
         expected_add = Timestamp("20130103 09:01:22.123456")
@@ -96,6 +109,9 @@ class TestTimedeltaAdditionSubtraction:
 
     @pytest.mark.parametrize("op", [operator.add, ops.radd])
     def test_td_add_datetimelike_scalar(self, op):
+        # [FUNCTION DOC]
+        # GH#19738. Parametrized over forward and reflected addition. A ten-day timedelta combined with a datetime, a timestamp or a numpy datetime gives a Timestamp with the right value; with NaT gives NaT.
+        # For forward addition the datetime case is also checked to be a Timestamp (not a plain datetime).
         # GH#19738
         td = Timedelta(10, unit="D")
 
@@ -118,6 +134,8 @@ class TestTimedeltaAdditionSubtraction:
         assert result is NaT
 
     def test_td_add_timestamp_overflow(self):
+        # [FUNCTION DOC]
+        # Adding a day-scale Timedelta or standard timedelta to a nanosecond-resolution timestamp in 1700 whose result is out of range must raise the out-of-bounds timedelta error stating the cast to nanoseconds without overflow.
         ts = Timestamp("1700-01-01").as_unit("ns")
         msg = "Cannot cast 259987 days 00:00:00 to unit='ns' without overflow."
         with pytest.raises(OutOfBoundsTimedelta, match=msg):
@@ -129,6 +147,8 @@ class TestTimedeltaAdditionSubtraction:
 
     @pytest.mark.parametrize("op", [operator.add, ops.radd])
     def test_td_add_td(self, op):
+        # [FUNCTION DOC]
+        # Parametrized over forward and reflected addition. Two Timedeltas add to a Timedelta of the summed duration.
         td = Timedelta(10, unit="D")
 
         result = op(td, Timedelta(days=10))
@@ -137,6 +157,8 @@ class TestTimedeltaAdditionSubtraction:
 
     @pytest.mark.parametrize("op", [operator.add, ops.radd])
     def test_td_add_pytimedelta(self, op):
+        # [FUNCTION DOC]
+        # Parametrized over forward and reflected addition. A Timedelta plus a standard timedelta gives a Timedelta of the summed duration.
         td = Timedelta(10, unit="D")
         result = op(td, timedelta(days=9))
         assert isinstance(result, Timedelta)
@@ -144,6 +166,8 @@ class TestTimedeltaAdditionSubtraction:
 
     @pytest.mark.parametrize("op", [operator.add, ops.radd])
     def test_td_add_timedelta64(self, op):
+        # [FUNCTION DOC]
+        # Parametrized over forward and reflected addition. A Timedelta plus a numpy timedelta (negative days) gives a Timedelta of the summed duration.
         td = Timedelta(10, unit="D")
         result = op(td, np.timedelta64(-4, "D"))
         assert isinstance(result, Timedelta)
@@ -151,6 +175,8 @@ class TestTimedeltaAdditionSubtraction:
 
     @pytest.mark.parametrize("op", [operator.add, ops.radd])
     def test_td_add_offset(self, op):
+        # [FUNCTION DOC]
+        # Parametrized over forward and reflected addition. A Timedelta plus an hour offset gives a Timedelta including the hours.
         td = Timedelta(10, unit="D")
 
         result = op(td, offsets.Hour(6))
@@ -158,6 +184,8 @@ class TestTimedeltaAdditionSubtraction:
         assert result == Timedelta(days=10, hours=6)
 
     def test_td_sub_td(self):
+        # [FUNCTION DOC]
+        # Subtracting a Timedelta from itself gives a zero Timedelta.
         td = Timedelta(10, unit="D")
         expected = Timedelta(0, unit="ns")
         result = td - td
@@ -165,6 +193,8 @@ class TestTimedeltaAdditionSubtraction:
         assert result == expected
 
     def test_td_sub_pytimedelta(self):
+        # [FUNCTION DOC]
+        # Subtracting a standard timedelta from an equal Timedelta, in both orders, gives a zero Timedelta.
         td = Timedelta(10, unit="D")
         expected = Timedelta(0, unit="ns")
 
@@ -177,6 +207,8 @@ class TestTimedeltaAdditionSubtraction:
         assert result == expected
 
     def test_td_sub_timedelta64(self):
+        # [FUNCTION DOC]
+        # Subtracting a numpy timedelta from an equal Timedelta, in both orders, gives a zero Timedelta.
         td = Timedelta(10, unit="D")
         expected = Timedelta(0, unit="ns")
 
@@ -189,12 +221,16 @@ class TestTimedeltaAdditionSubtraction:
         assert result == expected
 
     def test_td_sub_nat(self):
+        # [FUNCTION DOC]
+        # Subtracting NaT from a Timedelta gives NaT (NaT is treated as time-delta-like here).
         # In this context pd.NaT is treated as timedelta-like
         td = Timedelta(10, unit="D")
         result = td - NaT
         assert result is NaT
 
     def test_td_sub_td64_nat(self):
+        # [FUNCTION DOC]
+        # Subtracting a missing numpy timedelta from a Timedelta, in either order, gives NaT.
         td = Timedelta(10, unit="D")
         td_nat = np.timedelta64("NaT", "ns")
 
@@ -205,12 +241,16 @@ class TestTimedeltaAdditionSubtraction:
         assert result is NaT
 
     def test_td_sub_offset(self):
+        # [FUNCTION DOC]
+        # Subtracting an hour offset from a ten-day Timedelta gives 239 hours.
         td = Timedelta(10, unit="D")
         result = td - offsets.Hour(1)
         assert isinstance(result, Timedelta)
         assert result == Timedelta(239, unit="h")
 
     def test_td_add_sub_numeric_raises(self):
+        # [FUNCTION DOC]
+        # Adding or subtracting a plain integer or float (Python or numpy), in either operand order, must raise a type error for unsupported operand types.
         td = Timedelta(10, unit="D")
         msg = "unsupported operand type"
         for other in [2, 2.0, np.int64(2), np.float64(2)]:
@@ -224,6 +264,8 @@ class TestTimedeltaAdditionSubtraction:
                 other - td
 
     def test_td_add_sub_int_ndarray(self):
+        # [FUNCTION DOC]
+        # Adding or subtracting a one-element integer array and a Timedelta, in both orders, must raise a type error with message about unsupported operand types (the array-plus-Timedelta message may alternatively be about concatenation not being implemented for arrays).
         td = Timedelta("1 day")
         other = np.array([1])
 
@@ -252,6 +294,8 @@ class TestTimedeltaAdditionSubtraction:
             other - td
 
     def test_td_rsub_nat(self):
+        # [FUNCTION DOC]
+        # Subtracting a Timedelta from NaT, or from a missing numpy datetime, gives NaT.
         td = Timedelta(10, unit="D")
         result = NaT - td
         assert result is NaT
@@ -260,11 +304,15 @@ class TestTimedeltaAdditionSubtraction:
         assert result is NaT
 
     def test_td_rsub_offset(self):
+        # [FUNCTION DOC]
+        # Subtracting a Timedelta from an hour offset gives a Timedelta of minus 239 hours.
         result = offsets.Hour(1) - Timedelta(10, unit="D")
         assert isinstance(result, Timedelta)
         assert result == Timedelta(-239, unit="h")
 
     def test_td_sub_timedeltalike_object_dtype_array(self):
+        # [FUNCTION DOC]
+        # GH#21980. An object array of timestamps minus a Timedelta gives an object array of timestamps shifted back by that duration.
         # GH#21980
         arr = np.array([Timestamp("20130101 9:01"), Timestamp("20121230 9:02")])
         exp = np.array([Timestamp("20121231 9:01"), Timestamp("20121229 9:02")])
@@ -272,6 +320,8 @@ class TestTimedeltaAdditionSubtraction:
         tm.assert_numpy_array_equal(res, exp)
 
     def test_td_sub_mixed_most_timedeltalike_object_dtype_array(self):
+        # [FUNCTION DOC]
+        # GH#21980. An object array mixing a timestamp, a Timedelta and a numpy timedelta, minus a Timedelta, subtracts element-wise: the timestamp shifts, the Timedelta becomes zero, and the numpy timedelta is reduced.
         # GH#21980
         now = Timestamp("2021-11-09 09:54:00")
         arr = np.array([now, Timedelta("1D"), np.timedelta64(2, "h")])
@@ -286,6 +336,8 @@ class TestTimedeltaAdditionSubtraction:
         tm.assert_numpy_array_equal(res, exp)
 
     def test_td_rsub_mixed_most_timedeltalike_object_dtype_array(self):
+        # [FUNCTION DOC]
+        # GH#21980. Subtracting a mixed object array (containing a timestamp) from a Timedelta must raise a type error naming the unsupported operand types.
         # GH#21980
         now = Timestamp("2021-11-09 09:54:00")
         arr = np.array([now, Timedelta("1D"), np.timedelta64(2, "h")])
@@ -295,6 +347,8 @@ class TestTimedeltaAdditionSubtraction:
 
     @pytest.mark.parametrize("op", [operator.add, ops.radd])
     def test_td_add_timedeltalike_object_dtype_array(self, op):
+        # [FUNCTION DOC]
+        # GH#21980. Parametrized over forward and reflected addition. An object array of timestamps plus a Timedelta gives an object array of shifted timestamps.
         # GH#21980
         arr = np.array([Timestamp("20130101 9:01"), Timestamp("20121230 9:02")])
         exp = np.array([Timestamp("20130102 9:01"), Timestamp("20121231 9:02")])
@@ -303,6 +357,8 @@ class TestTimedeltaAdditionSubtraction:
 
     @pytest.mark.parametrize("op", [operator.add, ops.radd])
     def test_td_add_mixed_timedeltalike_object_dtype_array(self, op):
+        # [FUNCTION DOC]
+        # GH#21980. Parametrized over forward and reflected addition. An object array mixing a timestamp and a Timedelta plus a Timedelta adds element-wise.
         # GH#21980
         now = Timestamp("2021-11-09 09:54:00")
         arr = np.array([now, Timedelta("1D")])
@@ -311,6 +367,8 @@ class TestTimedeltaAdditionSubtraction:
         tm.assert_numpy_array_equal(res, exp)
 
     def test_td_add_sub_td64_ndarray(self):
+        # [FUNCTION DOC]
+        # A numpy timedelta array of one element plus or minus a Timedelta, in both orders, returns a numpy array: the doubled duration for sums and zero for differences.
         td = Timedelta("1 day")
 
         other = np.array([td.to_timedelta64()])
@@ -327,6 +385,8 @@ class TestTimedeltaAdditionSubtraction:
         tm.assert_numpy_array_equal(result, expected * 0)
 
     def test_td_add_sub_dt64_ndarray(self):
+        # [FUNCTION DOC]
+        # A numpy datetime array plus a Timedelta (either order) is shifted forward by a day; subtracting the Timedelta (and adding its negation) shifts it back by a day. Results are numpy arrays of the same datetime dtype.
         td = Timedelta("1 day")
         other = np.array(["2000-01-01"], dtype="M8[ns]")
 
@@ -339,6 +399,8 @@ class TestTimedeltaAdditionSubtraction:
         tm.assert_numpy_array_equal(other - td, expected)
 
     def test_td_add_sub_ndarray_0d(self):
+        # [FUNCTION DOC]
+        # A zero-dimensional array holding a numpy timedelta, added or subtracted with a Timedelta in either order, gives a Timedelta scalar (not an array): double the duration for sums and zero for differences.
         td = Timedelta("1 day")
         other = np.array(td.asm8)
 
@@ -360,6 +422,8 @@ class TestTimedeltaAdditionSubtraction:
 
 
 class TestTimedeltaMultiplicationDivision:
+    # [CLASS DOC]
+    # Groups tests of multiplication, division, floor division, modulo and divmod (forward and reflected) involving a Timedelta.
     """
     Tests for Timedelta methods:
 
@@ -377,6 +441,8 @@ class TestTimedeltaMultiplicationDivision:
     @pytest.mark.parametrize("td_nat", [NaT, np.timedelta64("NaT", "ns")])
     @pytest.mark.parametrize("op", [operator.mul, ops.rmul])
     def test_td_mul_nat(self, op, td_nat):
+        # [FUNCTION DOC]
+        # GH#19819. Parametrized over multiplication forward and reflected, and over NaT and a missing numpy timedelta. Multiplying a Timedelta by a time-like missing value must raise a type error about unsupported operand types or a numpy multiply ufunc that cannot use these operand types.
         # GH#19819
         td = Timedelta(10, unit="D")
         typs = "|".join(["numpy.timedelta64", "NaTType", "Timedelta"])
@@ -392,6 +458,8 @@ class TestTimedeltaMultiplicationDivision:
     @pytest.mark.parametrize("nan", [np.nan, np.float64("NaN"), float("nan")])
     @pytest.mark.parametrize("op", [operator.mul, ops.rmul])
     def test_td_mul_nan(self, op, nan):
+        # [FUNCTION DOC]
+        # Parametrized over forward and reflected multiplication and over three kinds of nan. Multiplying a Timedelta by nan gives NaT (the numpy float variant is checked to not be treated as an array).
         # np.float64('NaN') has a 'dtype' attr, avoid treating as array
         td = Timedelta(10, unit="D")
         result = op(td, nan)
@@ -399,6 +467,8 @@ class TestTimedeltaMultiplicationDivision:
 
     @pytest.mark.parametrize("op", [operator.mul, ops.rmul])
     def test_td_mul_scalar(self, op):
+        # [FUNCTION DOC]
+        # GH#19738. Parametrized over forward and reflected multiplication. Multiplying by integers and floats scales the duration (including negative factors, compared on the internal value), by nan gives NaT; multiplying by a timestamp or by another Timedelta must raise a type error for unsupported operands.
         # GH#19738
         td = Timedelta(minutes=3)
 
@@ -423,6 +493,8 @@ class TestTimedeltaMultiplicationDivision:
             op(td, td)
 
     def test_td_mul_numeric_ndarray(self):
+        # [FUNCTION DOC]
+        # Multiplying a Timedelta by a one-element integer array, in either order, gives a numpy timedelta array with the scaled duration.
         td = Timedelta("1 day")
         other = np.array([2])
         expected = np.array([Timedelta("2 Days").to_timedelta64()])
@@ -434,6 +506,8 @@ class TestTimedeltaMultiplicationDivision:
         tm.assert_numpy_array_equal(result, expected)
 
     def test_td_mul_numeric_ndarray_0d(self):
+        # [FUNCTION DOC]
+        # Multiplying a Timedelta by a zero-dimensional integer array, in either order, gives a plain Timedelta scalar equal to the scaled duration.
         td = Timedelta("1 day")
         other = np.array(2, dtype=np.int64)
         assert other.ndim == 0
@@ -448,6 +522,8 @@ class TestTimedeltaMultiplicationDivision:
         assert res == expected
 
     def test_td_mul_td64_ndarray_invalid(self):
+        # [FUNCTION DOC]
+        # Multiplying a Timedelta by an array of numpy timedeltas, in either order, must raise a type error whose message says the multiply ufunc cannot use operands with two timedelta microsecond dtypes.
         td = Timedelta("1 day")
         other = np.array([Timedelta("2 Days").to_timedelta64()])
 
@@ -464,6 +540,8 @@ class TestTimedeltaMultiplicationDivision:
     # Timedelta.__div__, __truediv__
 
     def test_td_div_timedeltalike_scalar(self):
+        # [FUNCTION DOC]
+        # GH#19738. True division of a Timedelta by a time-like value (hour offset, Timedelta, numpy timedelta) gives the ratio as a float (for example 240, 1 and 4); dividing by NaT gives not-a-number.
         # GH#19738
         td = Timedelta(10, unit="D")
 
@@ -476,6 +554,8 @@ class TestTimedeltaMultiplicationDivision:
         assert np.isnan(td / NaT)
 
     def test_td_div_td64_non_nano(self):
+        # [FUNCTION DOC]
+        # True division and floor division by numpy timedeltas of day, second and nanosecond units give ratios computed from the internal nanosecond value (floor division gives integers). The Timedelta has a nanosecond component so resolution is nanoseconds.
         # truediv
         td = Timedelta("1 days 2 hours 3 ns")
         result = td / np.timedelta64(1, "D")
@@ -495,6 +575,8 @@ class TestTimedeltaMultiplicationDivision:
         assert result == td._value
 
     def test_td_div_numeric_scalar(self):
+        # [FUNCTION DOC]
+        # GH#19738. Dividing a Timedelta by an integer gives a Timedelta of the divided duration.
         # GH#19738
         td = Timedelta(10, unit="D")
 
@@ -515,6 +597,8 @@ class TestTimedeltaMultiplicationDivision:
         ],
     )
     def test_td_div_nan(self, nan):
+        # [FUNCTION DOC]
+        # Parametrized over three kinds of nan. True division and floor division of a Timedelta by nan both give NaT (the numpy float variant is checked to not be treated as an array).
         # np.float64('NaN') has a 'dtype' attr, avoid treating as array
         td = Timedelta(10, unit="D")
         result = td / nan
@@ -524,6 +608,8 @@ class TestTimedeltaMultiplicationDivision:
         assert result is NaT
 
     def test_td_div_td64_ndarray(self):
+        # [FUNCTION DOC]
+        # A Timedelta divided by an array of numpy timedeltas gives a float array of ratios (one half for a double duration); the reverse division gives the inverse ratios (four times the previous expected array).
         td = Timedelta("1 day")
 
         other = np.array([Timedelta("2 Days").to_timedelta64()])
@@ -536,6 +622,8 @@ class TestTimedeltaMultiplicationDivision:
         tm.assert_numpy_array_equal(result, expected * 4)
 
     def test_td_div_ndarray_0d(self):
+        # [FUNCTION DOC]
+        # Dividing a Timedelta by a zero-dimensional integer array holding one returns a Timedelta equal to the original (scalar result, not an array).
         td = Timedelta("1 day")
 
         other = np.array(1)
@@ -547,6 +635,8 @@ class TestTimedeltaMultiplicationDivision:
     # Timedelta.__rdiv__
 
     def test_td_rdiv_timedeltalike_scalar(self):
+        # [FUNCTION DOC]
+        # GH#19738. Reflected true division: an hour offset divided by a ten-day Timedelta and a numpy timedelta divided by it give the expected float ratios.
         # GH#19738
         td = Timedelta(10, unit="D")
         result = offsets.Hour(1) / td
@@ -555,6 +645,8 @@ class TestTimedeltaMultiplicationDivision:
         assert np.timedelta64(60, "h") / td == 0.25
 
     def test_td_rdiv_na_scalar(self):
+        # [FUNCTION DOC]
+        # GH#31869. Dividing NaT, None, or a missing numpy timedelta by a Timedelta gives not-a-number; dividing a missing numpy datetime or a float nan by it must raise a type error for unsupported operands.
         # GH#31869 None gets cast to NaT
         td = Timedelta(10, unit="D")
 
@@ -576,6 +668,8 @@ class TestTimedeltaMultiplicationDivision:
             np.nan / td
 
     def test_td_rdiv_ndarray(self):
+        # [FUNCTION DOC]
+        # Dividing an object array holding a Timedelta by a Timedelta gives a float array of ones; an array holding None gives not-a-number; an object array holding a float nan or a float array of nan must raise a type error (unsupported operand or ufunc operand dtype).
         td = Timedelta(10, unit="D")
 
         arr = np.array([td], dtype=object)
@@ -599,6 +693,8 @@ class TestTimedeltaMultiplicationDivision:
             arr / td
 
     def test_td_rdiv_ndarray_0d(self):
+        # [FUNCTION DOC]
+        # A zero-dimensional numpy timedelta array divided by an equal Timedelta gives one.
         td = Timedelta(10, unit="D")
 
         arr = np.array(td.asm8)
@@ -609,6 +705,8 @@ class TestTimedeltaMultiplicationDivision:
     # Timedelta.__floordiv__
 
     def test_td_floordiv_timedeltalike_scalar(self):
+        # [FUNCTION DOC]
+        # GH#18846. Floor division of a Timedelta by a Timedelta, standard timedelta and numpy timedelta gives integers (including a negative dividend rounding toward minus infinity).
         # GH#18846
         td = Timedelta(hours=3, minutes=4)
         scalar = Timedelta(hours=3, minutes=3)
@@ -618,6 +716,8 @@ class TestTimedeltaMultiplicationDivision:
         assert (2 * td) // scalar.to_timedelta64() == 2
 
     def test_td_floordiv_null_scalar(self):
+        # [FUNCTION DOC]
+        # GH#18846. Floor division by nan gives NaT; by NaT or a missing numpy timedelta gives not-a-number.
         # GH#18846
         td = Timedelta(hours=3, minutes=4)
 
@@ -626,12 +726,16 @@ class TestTimedeltaMultiplicationDivision:
         assert np.isnan(td // np.timedelta64("NaT", "ns"))
 
     def test_td_floordiv_offsets(self):
+        # [FUNCTION DOC]
+        # GH#19738. Floor division of a Timedelta by hour and minute offsets gives integer counts.
         # GH#19738
         td = Timedelta(hours=3, minutes=4)
         assert td // offsets.Hour(1) == 3
         assert td // offsets.Minute(2) == 92
 
     def test_td_floordiv_invalid_scalar(self):
+        # [FUNCTION DOC]
+        # GH#18846. Floor division by a numpy datetime must raise a type error (message varies by numpy version) about an invalid dtype or unsupported operand types.
         # GH#18846
         td = Timedelta(hours=3, minutes=4)
 
@@ -647,6 +751,8 @@ class TestTimedeltaMultiplicationDivision:
             td // np.datetime64("2016-01-01", dtype="datetime64[us]")
 
     def test_td_floordiv_numeric_scalar(self):
+        # [FUNCTION DOC]
+        # GH#18846. Floor division of a Timedelta by integers and floats of several types (Python and numpy) gives a Timedelta of half the duration.
         # GH#18846
         td = Timedelta(hours=3, minutes=4)
 
@@ -658,6 +764,8 @@ class TestTimedeltaMultiplicationDivision:
         assert td // np.uint8(2.0) == expected
 
     def test_td_floordiv_timedeltalike_array(self):
+        # [FUNCTION DOC]
+        # GH#18846. Floor division by zero-dimensional and one-dimensional numpy timedelta arrays gives an integer or integer array; an array containing a missing value gives a float array with nan for the missing element.
         # GH#18846
         td = Timedelta(hours=3, minutes=4)
         scalar = Timedelta(hours=3, minutes=3)
@@ -676,6 +784,8 @@ class TestTimedeltaMultiplicationDivision:
         tm.assert_numpy_array_equal(res, expected)
 
     def test_td_floordiv_numeric_series(self):
+        # [FUNCTION DOC]
+        # GH#18846. Floor division of a Timedelta by an integer series gives a series of timedelta dtype.
         # GH#18846
         td = Timedelta(hours=3, minutes=4)
         ser = pd.Series([1], dtype=np.int64)
@@ -686,6 +796,8 @@ class TestTimedeltaMultiplicationDivision:
     # Timedelta.__rfloordiv__
 
     def test_td_rfloordiv_timedeltalike_scalar(self):
+        # [FUNCTION DOC]
+        # GH#18846. Calls the reflected floor-division method directly with a Timedelta, standard timedelta and numpy timedelta, returning integers (including negative dividends rounding toward minus infinity).
         # GH#18846
         td = Timedelta(hours=3, minutes=3)
         scalar = Timedelta(hours=3, minutes=4)
@@ -701,6 +813,8 @@ class TestTimedeltaMultiplicationDivision:
         assert (2 * td).__rfloordiv__(scalar.to_timedelta64()) == 0
 
     def test_td_rfloordiv_null_scalar(self):
+        # [FUNCTION DOC]
+        # GH#18846. The reflected floor-division method with NaT or a missing numpy timedelta returns not-a-number.
         # GH#18846
         td = Timedelta(hours=3, minutes=3)
 
@@ -708,10 +822,14 @@ class TestTimedeltaMultiplicationDivision:
         assert np.isnan(td.__rfloordiv__(np.timedelta64("NaT", "ns")))
 
     def test_td_rfloordiv_offsets(self):
+        # [FUNCTION DOC]
+        # GH#19738. An hour offset floor-divided by a 25-minute Timedelta gives two.
         # GH#19738
         assert offsets.Hour(1) // Timedelta(minutes=25) == 2
 
     def test_td_rfloordiv_invalid_scalar(self):
+        # [FUNCTION DOC]
+        # GH#18846. The reflected floor-division method with a numpy datetime returns the not-implemented marker, and the operator itself raises a type error for unsupported operand types.
         # GH#18846
         td = Timedelta(hours=3, minutes=3)
 
@@ -726,6 +844,8 @@ class TestTimedeltaMultiplicationDivision:
             dt64 // td
 
     def test_td_rfloordiv_numeric_scalar(self):
+        # [FUNCTION DOC]
+        # GH#18846. The reflected floor-division method with numbers (floats, ints, numpy numbers, nan) returns the not-implemented marker, and the operator raises a type error (the integer case was deprecated in GH#19761 and enforced in GH#29797).
         # GH#18846
         td = Timedelta(hours=3, minutes=3)
 
@@ -746,6 +866,8 @@ class TestTimedeltaMultiplicationDivision:
             np.int32(2.0) // td
 
     def test_td_rfloordiv_timedeltalike_array(self):
+        # [FUNCTION DOC]
+        # GH#18846. The reflected floor-division method applied to zero-dimensional, one-dimensional and nan-containing numpy timedelta arrays returns integer or float results as appropriate.
         # GH#18846
         td = Timedelta(hours=3, minutes=3)
         scalar = Timedelta(hours=3, minutes=4)
@@ -763,6 +885,8 @@ class TestTimedeltaMultiplicationDivision:
         tm.assert_numpy_array_equal(res, expected)
 
     def test_td_rfloordiv_intarray(self):
+        # [FUNCTION DOC]
+        # Deprecated in GH#19761 and enforced in GH#29797. Floor-dividing an integer array by a Timedelta must raise a type error about an invalid dtype.
         # deprecated GH#19761, enforced GH#29797
         ints = np.array([1349654400, 1349740800, 1349827200, 1349913600]) * 10**9
 
@@ -771,6 +895,8 @@ class TestTimedeltaMultiplicationDivision:
             ints // Timedelta(1, unit="s")
 
     def test_td_rfloordiv_numeric_series(self):
+        # [FUNCTION DOC]
+        # GH#18846. The reflected floor-division method with an integer series returns the not-implemented marker, and the operator raises a type error about an invalid dtype (deprecated GH#19761, enforced GH#29797).
         # GH#18846
         td = Timedelta(hours=3, minutes=3)
         ser = pd.Series([1], dtype=np.int64)
@@ -786,6 +912,8 @@ class TestTimedeltaMultiplicationDivision:
     # Timedelta.__mod__, __rmod__
 
     def test_mod_timedeltalike(self):
+        # [FUNCTION DOC]
+        # GH#19365. Modulo of a 37-hour Timedelta by a Timedelta or standard timedelta gives a Timedelta remainder; by NaT gives NaT.
         # GH#19365
         td = Timedelta(hours=37)
 
@@ -802,6 +930,8 @@ class TestTimedeltaMultiplicationDivision:
         assert result is NaT
 
     def test_mod_timedelta64_nat(self):
+        # [FUNCTION DOC]
+        # GH#19365. Modulo by a missing numpy timedelta gives NaT.
         # GH#19365
         td = Timedelta(hours=37)
 
@@ -809,6 +939,8 @@ class TestTimedeltaMultiplicationDivision:
         assert result is NaT
 
     def test_mod_timedelta64(self):
+        # [FUNCTION DOC]
+        # GH#19365. Modulo by a numpy timedelta gives a Timedelta remainder.
         # GH#19365
         td = Timedelta(hours=37)
 
@@ -817,6 +949,8 @@ class TestTimedeltaMultiplicationDivision:
         assert result == Timedelta(hours=1)
 
     def test_mod_offset(self):
+        # [FUNCTION DOC]
+        # GH#19365. Modulo by an hour offset gives a Timedelta remainder.
         # GH#19365
         td = Timedelta(hours=37)
 
@@ -825,6 +959,8 @@ class TestTimedeltaMultiplicationDivision:
         assert result == Timedelta(hours=2)
 
     def test_mod_numeric(self):
+        # [FUNCTION DOC]
+        # GH#19365. Modulo by numbers (an integer, a float, an integer-valued float count) treats the number as nanoseconds and gives a Timedelta remainder.
         # GH#19365
         td = Timedelta(hours=37)
 
@@ -842,6 +978,8 @@ class TestTimedeltaMultiplicationDivision:
         assert result == Timedelta(minutes=3, seconds=20)
 
     def test_mod_invalid(self):
+        # [FUNCTION DOC]
+        # GH#19365. Modulo by a timestamp or by a list must raise a type error for unsupported operands.
         # GH#19365
         td = Timedelta(hours=37)
         msg = "unsupported operand type"
@@ -852,6 +990,8 @@ class TestTimedeltaMultiplicationDivision:
             td % []
 
     def test_rmod_pytimedelta(self):
+        # [FUNCTION DOC]
+        # GH#19365. A standard timedelta modulo a Timedelta gives a Timedelta remainder.
         # GH#19365
         td = Timedelta(minutes=3)
 
@@ -860,6 +1000,8 @@ class TestTimedeltaMultiplicationDivision:
         assert result == Timedelta(minutes=1)
 
     def test_rmod_timedelta64(self):
+        # [FUNCTION DOC]
+        # GH#19365. A numpy timedelta modulo a Timedelta gives a Timedelta remainder.
         # GH#19365
         td = Timedelta(minutes=3)
         result = np.timedelta64(5, "m") % td
@@ -867,6 +1009,8 @@ class TestTimedeltaMultiplicationDivision:
         assert result == Timedelta(minutes=2)
 
     def test_rmod_invalid(self):
+        # [FUNCTION DOC]
+        # GH#19365. A timestamp, integer or float modulo a Timedelta must raise a type error for unsupported operands; an integer numpy array must raise a type error about an invalid integer dtype.
         # GH#19365
         td = Timedelta(minutes=3)
 
@@ -888,6 +1032,9 @@ class TestTimedeltaMultiplicationDivision:
     # Timedelta.__divmod__, __rdivmod__
 
     def test_divmod_numeric(self):
+        # [FUNCTION DOC]
+        # GH#19365. Divmod by a number treats it as nanoseconds: the quotient is a Timedelta and the remainder a Timedelta; divmod by nan gives NaT for both.
+        # KNOWN ISSUE: the line asserting the truthiness of the result is a no-op (a non-empty tuple is always true) and checks nothing.
         # GH#19365
         td = Timedelta(days=2, hours=6)
 
@@ -902,6 +1049,8 @@ class TestTimedeltaMultiplicationDivision:
         assert result[1] is NaT
 
     def test_divmod(self):
+        # [FUNCTION DOC]
+        # GH#19365. Divmod by a standard timedelta gives an integer quotient and Timedelta remainder; by an integer gives a Timedelta quotient; by NaT gives not-a-number and NaT.
         # GH#19365
         td = Timedelta(days=2, hours=6)
 
@@ -920,6 +1069,8 @@ class TestTimedeltaMultiplicationDivision:
         assert result[1] is NaT
 
     def test_divmod_offset(self):
+        # [FUNCTION DOC]
+        # GH#19365. Divmod by a negative hour offset gives a negative integer quotient and a negative Timedelta remainder.
         # GH#19365
         td = Timedelta(days=2, hours=6)
 
@@ -929,6 +1080,8 @@ class TestTimedeltaMultiplicationDivision:
         assert result[1] == Timedelta(hours=-2)
 
     def test_divmod_invalid(self):
+        # [FUNCTION DOC]
+        # GH#19365. Divmod by a timestamp must raise a type error mentioning the floor-division operator with the Timedelta and Timestamp types.
         # GH#19365
         td = Timedelta(days=2, hours=6)
 
@@ -937,6 +1090,8 @@ class TestTimedeltaMultiplicationDivision:
             divmod(td, Timestamp("2018-01-22"))
 
     def test_rdivmod_pytimedelta(self):
+        # [FUNCTION DOC]
+        # GH#19365. Reflected divmod with a standard timedelta numerator gives an integer quotient and Timedelta remainder.
         # GH#19365
         result = divmod(timedelta(days=2, hours=6), Timedelta(days=1))
         assert result[0] == 2
@@ -944,12 +1099,16 @@ class TestTimedeltaMultiplicationDivision:
         assert result[1] == Timedelta(hours=6)
 
     def test_rdivmod_offset(self):
+        # [FUNCTION DOC]
+        # Reflected divmod with an hour offset numerator and a negative-hour Timedelta gives a negative integer quotient and negative Timedelta remainder.
         result = divmod(offsets.Hour(54), Timedelta(hours=-4))
         assert result[0] == -14
         assert isinstance(result[1], Timedelta)
         assert result[1] == Timedelta(hours=-2)
 
     def test_rdivmod_invalid(self):
+        # [FUNCTION DOC]
+        # GH#19365. Divmod with a timestamp, integer or float numerator and a Timedelta must raise a type error for unsupported operands; with an integer array it must raise a type error about an invalid integer dtype.
         # GH#19365
         td = Timedelta(minutes=3)
         msg = "unsupported operand type"
@@ -980,12 +1139,16 @@ class TestTimedeltaMultiplicationDivision:
         ],
     )
     def test_td_op_timedelta_timedeltalike_array(self, op, arr):
+        # [FUNCTION DOC]
+        # Parametrized over multiplication, reflected multiplication, true division, reflected division and reflected subtraction, and two object arrays containing timestamps (and a Timedelta). Applying the operator between the array and a Timedelta must raise a type error for unsupported operands or an unsupported ufunc operand type.
         arr = np.array(arr)
         msg = "unsupported operand type|cannot use operands with types"
         with pytest.raises(TypeError, match=msg):
             op(arr, Timedelta("1D"))
 
     def test_mul_bool_invalid(self):
+        # [FUNCTION DOC]
+        # GH#62316. Multiplying a Timedelta by a boolean must raise a type error telling the user to cast to an integer explicitly.
         # GH#62316
         msg = "Cannot multiply Timedelta by bool. Explicitly cast to integer"
         with pytest.raises(TypeError, match=msg):
@@ -993,7 +1156,12 @@ class TestTimedeltaMultiplicationDivision:
 
 
 class TestTimedeltaComparison:
+    # [CLASS DOC]
+    # Groups tests of the rich comparison operators on Timedelta.
     def test_compare_pytimedelta_bounds(self):
+        # [FUNCTION DOC]
+        # GH#49021. Comparing the maximum and minimum Timedelta at nanosecond and microsecond resolution with the extreme standard timedelta values must not overflow: the Timedelta extremes are strictly inside. For millisecond and second resolution the extremes extend beyond the standard bounds.
+        # All six comparison operators are checked.
         # GH#49021 don't overflow on comparison with very large pytimedeltas
 
         for unit in ["ns", "us"]:
@@ -1034,6 +1202,8 @@ class TestTimedeltaComparison:
             assert not tdmin == timedelta.min
 
     def test_compare_pytimedelta_bounds2(self):
+        # [FUNCTION DOC]
+        # A standard timedelta of nearly the maximum days (outside microsecond bounds) is rebuilt as a Timedelta via a numpy sum of days and seconds, with matching days and seconds fields and equal under all comparisons. One second less compares as smaller and unequal.
         # a pytimedelta outside the microsecond bounds
         pytd = timedelta(days=999999999, seconds=86399)
         # NB: np.timedelta64(td, "s"") incorrectly overflows
@@ -1058,6 +1228,8 @@ class TestTimedeltaComparison:
         assert not td2 >= pytd
 
     def test_compare_tick(self, tick_classes):
+        # [FUNCTION DOC]
+        # Parametrized over the fixed-length offset class fixture. A Timedelta made from an offset of four units compares equal, less-or-equal and greater-or-equal to it, and orders properly against twice the offset.
         cls = tick_classes
 
         off = cls(4)
@@ -1079,6 +1251,8 @@ class TestTimedeltaComparison:
         assert not td > 2 * off
 
     def test_comparison_object_array(self):
+        # [FUNCTION DOC]
+        # Comparing an object array of Timedeltas (one- and two-dimensional) with a Timedelta by equality and inequality gives boolean arrays of the same shape with the expected pattern (analogous to GH#15183).
         # analogous to GH#15183
         td = Timedelta("2 days")
         other = Timedelta("3 hours")
@@ -1096,6 +1270,8 @@ class TestTimedeltaComparison:
         assert (res == expected).all()
 
     def test_compare_timedelta_ndarray(self):
+        # [FUNCTION DOC]
+        # GH#11835. Comparing one element of an object array of equal Timedeltas with the whole array using greater-than gives all false.
         # GH#11835
         periods = [Timedelta("0 days 01:00:00"), Timedelta("0 days 01:00:00")]
         arr = np.array(periods)
@@ -1104,6 +1280,8 @@ class TestTimedeltaComparison:
         tm.assert_numpy_array_equal(result, expected)
 
     def test_compare_td64_ndarray(self):
+        # [FUNCTION DOC]
+        # GG#33441 (sic). Equality and inequality between a Timedelta and a numpy timedelta array, in either order, give boolean arrays flagging only the matching element.
         # GG#33441
         arr = np.arange(5).astype("timedelta64[ns]")
         td = Timedelta(arr[1])
@@ -1123,25 +1301,38 @@ class TestTimedeltaComparison:
         tm.assert_numpy_array_equal(result, ~expected)
 
     def test_compare_custom_object(self):
+        # [FUNCTION DOC]
+        # GH#20829. Unsupported comparisons return the not-implemented marker so the other operand's reflected method decides. Uses a local helper class whose comparison results are configurable. Unequal to strings, integers, and to helper instances that defer or return false;
+        # less than a helper that says true; equal to a helper that returns true.
         """
         Make sure non supported operations on Timedelta returns NonImplemented
         and yields to other operand (GH#20829).
         """
 
         class CustomClass:
+            # [CLASS DOC]
+            # HELPER: local class used by the custom-object comparison test. Stores a configurable result and defines equality and greater-than that return that result, or the not-implemented marker when none is configured.
             def __init__(self, cmp_result=None) -> None:
+                # [FUNCTION DOC]
+                # HELPER: constructor storing the configured comparison result (default none, meaning defer to the other operand).
                 self.cmp_result = cmp_result
 
             def generic_result(self):
+                # [FUNCTION DOC]
+                # HELPER: returns the stored comparison result, or the not-implemented marker when none is stored.
                 if self.cmp_result is None:
                     return NotImplemented
                 else:
                     return self.cmp_result
 
             def __eq__(self, other):
+                # [FUNCTION DOC]
+                # HELPER: equality operator returning the generic result regardless of the other operand.
                 return self.generic_result()
 
             def __gt__(self, other):
+                # [FUNCTION DOC]
+                # HELPER: greater-than operator returning the generic result regardless of the other operand (used when a Timedelta is compared with less-than).
                 return self.generic_result()
 
         t = Timedelta("1s")
@@ -1158,6 +1349,8 @@ class TestTimedeltaComparison:
 
     @pytest.mark.parametrize("val", ["string", 1])
     def test_compare_unknown_type(self, val):
+        # [FUNCTION DOC]
+        # GH#20829. Parametrized over a string and an integer. Ordering comparisons (all four) with a Timedelta must raise a type error naming the unsupported comparison between the types.
         # GH#20829
         t = Timedelta("1s")
         msg = "not supported between instances of 'Timedelta' and '(int|str)'"
@@ -1172,7 +1365,11 @@ class TestTimedeltaComparison:
 
 
 def test_ops_notimplemented():
+    # [FUNCTION DOC]
+    # For an unrelated plain object, the special methods for addition, subtraction, true division, multiplication and floor division of a Timedelta each return the not-implemented marker.
     class Other:
+        # [CLASS DOC]
+        # HELPER: empty local class representing an unrelated type, used by the not-implemented test above.
         pass
 
     other = Other()
@@ -1186,6 +1383,8 @@ def test_ops_notimplemented():
 
 
 def test_ops_error_str():
+    # [FUNCTION DOC]
+    # GH#13624. A Timedelta and a string, in either order: addition must raise a type error (message varies by Python version), ordering comparison must raise a type error, equality is false and inequality is true.
     # GH#13624
     td = Timedelta("1 day")
 
@@ -1210,6 +1409,9 @@ def test_ops_error_str():
 
 @pytest.mark.parametrize("box", [True, False])
 def test_ops_str_deprecated(box):
+    # [FUNCTION DOC]
+    # GH#59653. Parametrized over a plain string and a one-element object array containing it. Adding, subtracting and reflected operations between a Timedelta and the numeric-looking string emit the major-version deprecation warning about scalar operations with strings.
+    # For the plain string, true and floor division in both orders also warn. For the array, the remaining divisions must raise a type error (message varies by operator and numpy version).
     # GH#59653
     td = Timedelta("1 day")
     item = "1"

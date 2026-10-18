@@ -1,3 +1,8 @@
+# [MODULE DOC]
+# Tests for the DataFrame pivot and pivot-table operations when the index or columns arguments are list-like
+# or when the frame has multi-level rows or columns. Each test builds a small frame of integer columns and compares the
+# pivoted frame to an expected frame built from parametrized values, columns and index.
+
 import numpy as np
 import pytest
 
@@ -92,6 +97,11 @@ def test_pivot_list_like_index(
     expected_columns,
     expected_index,
 ):
+    # [FUNCTION DOC]
+    # GH 21425. Parametrized over the index argument (list-like), the columns argument, the values argument (a name or the
+    # sentinel meaning unspecified) and the expected data, columns and index. Pivots an eight-row frame with four key
+    # columns and a values column; the result must equal the expected frame. When values is unspecified all remaining columns
+    # are pivoted, producing multi-level columns with an unnamed top level.
     # GH 21425, test when index is given a list
     df = pd.DataFrame(
         {
@@ -179,6 +189,9 @@ def test_pivot_list_like_columns(
     expected_columns,
     expected_index,
 ):
+    # [FUNCTION DOC]
+    # GH 21425. Same setup as the list-like index test but with a list-like columns argument. A list of one column gives plain
+    # columns; several index or columns keys give multi-level row or column labels, with missing combinations filled with missing values.
     # GH 21425, test when columns is given a list
     df = pd.DataFrame(
         {
@@ -198,6 +211,11 @@ def test_pivot_list_like_columns(
 
 
 def test_pivot_multiindexed_rows_and_cols():
+    # [FUNCTION DOC]
+    # GH 36360. A frame with multi-level rows and multi-level columns is pivot-tabled with a single index level, a
+    # single columns level and values given as a tuple column key, aggregating with a custom sum function. The result is
+    # expected to have three-level columns (the two original column levels plus the pivoted level), a float result with
+    # missing values where no rows exist, and an integer index named by the index level.
     # GH 36360
 
     df = pd.DataFrame(
@@ -231,6 +249,9 @@ def test_pivot_multiindexed_rows_and_cols():
 
 
 def test_pivot_df_multiindex_index_none():
+    # [FUNCTION DOC]
+    # GH 23955. Pivots a frame whose index is a two-level multi-index, passing no index argument and only columns and values.
+    # The existing multi-index is used as the result index, with float values and missing entries for absent combinations.
     # GH 23955
     df = pd.DataFrame(
         [
@@ -288,6 +309,10 @@ def test_pivot_df_multiindex_index_none():
 def test_pivot_table_multiindex_values_as_two_params(
     index, columns, e_data, e_index, e_cols
 ):
+    # [FUNCTION DOC]
+    # GH#61292. Parametrized (with readable ids) over index and columns arguments where one of them contains the value column
+    # as well as its own key, plus expected data, index and columns. A pivot table with the same name as value and as an index or
+    # columns key must produce multi-level labels that include the value, with the other axis as a single-level index.
     # GH#61292
     data = [
         ["A", 1, 50, -1],

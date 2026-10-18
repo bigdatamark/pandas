@@ -1,3 +1,8 @@
+# [MODULE DOC]
+# Tests for constructing the Timedelta scalar: keyword-based construction, the unit argument (supported, deprecated, removed and parsed names),
+# the resulting resolution (unit) for each kind of input, overflow and out-of-bounds handling for numpy values and keywords, string and ISO 8601 parsing,
+# offsets, numpy dtypes, identity and subclass behavior, and round trips through text. Also covers the comparable conversion helper to_timedelta where it shares behavior.
+
 from datetime import timedelta
 from itertools import product
 
@@ -24,14 +29,20 @@ import pandas._testing as tm
 
 
 class TestTimedeltaConstructorKeywordBased:
+    # [CLASS DOC]
+    # Groups tests of constructing a Timedelta from keyword arguments like the standard library timedelta.
     # Tests for constructing a Timedelta from keywords like the pytimedelta
     # base class
     def test_nanosecond_keyword(self):
+        # [FUNCTION DOC]
+        # GH#63216. Constructing from a nanoseconds keyword yields nanosecond resolution.
         # GH#63216
         td = Timedelta(nanoseconds=1000)
         assert td.unit == "ns"
 
     def test_noninteger_microseconds(self):
+        # [FUNCTION DOC]
+        # GH#63216. A non-integer microseconds keyword is converted exactly and yields nanosecond resolution, equal to the corresponding number of nanoseconds.
         # GH#63216
         td = Timedelta(microseconds=1.5)
         assert td.unit == "ns"
@@ -39,7 +50,11 @@ class TestTimedeltaConstructorKeywordBased:
 
 
 class TestTimedeltaConstructorUnitKeyword:
+    # [CLASS DOC]
+    # Groups tests of the unit argument of the Timedelta constructor and the to_timedelta function.
     def test_result_unit(self):
+        # [FUNCTION DOC]
+        # For units second, millisecond, microsecond and nanosecond the result's resolution equals the unit; for week, day, hour and minute it is seconds (the closest supported). Checked for both the constructor and to_timedelta.
         # For supported units, we get result.unit == unit
         for unit in ["s", "ms", "us", "ns"]:
             td = Timedelta(1, unit=unit)
@@ -58,6 +73,8 @@ class TestTimedeltaConstructorUnitKeyword:
 
     @pytest.mark.parametrize("unit", ["Y", "y", "M"])
     def test_unit_m_y_raises(self, unit):
+        # [FUNCTION DOC]
+        # Parametrized over year and month units. Using them in the constructor, to_timedelta with a scalar or with a list must raise a value error saying these units are no longer supported.
         msg = "Units 'M', 'Y', and 'y' are no longer supported"
 
         with pytest.raises(ValueError, match=msg):
@@ -82,6 +99,8 @@ class TestTimedeltaConstructorUnitKeyword:
         ],
     )
     def test_unit_deprecated(self, unit, unit_depr):
+        # [FUNCTION DOC]
+        # GH#52536. Parametrized over a unit and a deprecated spelling of it (such as lowercase week or uppercase hour). The constructor with the old spelling emits the major-version deprecation warning naming the spelling and returns a value equal to the one built with the new spelling.
         # GH#52536
         msg = f"'{unit_depr}' is deprecated and will be removed in a future version."
 
@@ -163,6 +182,10 @@ class TestTimedeltaConstructorUnitKeyword:
     )
     @pytest.mark.parametrize("wrapper", [np.array, list, Index])
     def test_unit_parser(self, unit, np_unit, wrapper):
+        # [FUNCTION DOC]
+        # GH 6855, GH 21762. Parametrized over many spellings of unit names (with the matching numpy unit) and over wrapping in a numpy array, list or index. Checks array-likes of integers with the unit, strings with the unit suffix (resolution microseconds, or nanoseconds for nanosecond units),
+        # and scalars via to_timedelta and the constructor, both with the unit argument and with unit text in a string. Week, day and minute units give second-resolution results for numeric input.
+        # KNOWN ISSUE: the string-with-suffix conversion and its comparison are performed twice with identical arguments, so the second pair of statements is redundant.
         # validate all units, GH 6855, GH 21762
         # array-likes
         exp_unit = np_unit if np_unit not in ["W", "D", "m"] else "s"
@@ -195,6 +218,8 @@ class TestTimedeltaConstructorUnitKeyword:
 
     @pytest.mark.parametrize("unit", ["T", "t", "L", "l", "U", "u", "N", "n"])
     def test_unit_T_L_N_U_raises(self, unit):
+        # [FUNCTION DOC]
+        # Parametrized over removed single-letter abbreviations. The constructor, and to_timedelta for scalar and list, must raise a value error saying the unit abbreviation is invalid.
         msg = f"invalid unit abbreviation: {unit}"
         with pytest.raises(ValueError, match=msg):
             Timedelta(1, unit=unit)
@@ -206,6 +231,8 @@ class TestTimedeltaConstructorUnitKeyword:
             to_timedelta([1, 2], unit)
 
     def test_unit_round_float(self):
+        # [FUNCTION DOC]
+        # A float with an integral value and the second unit is treated like an integer: resolution seconds and equal value, for both the constructor and to_timedelta.
         # When the float is round, we give the requested unit
         #  (or nearest-supported) like we do with integers
         td = Timedelta(45.0, unit="s")
@@ -217,6 +244,8 @@ class TestTimedeltaConstructorUnitKeyword:
         assert td == Timedelta(45, unit="s")
 
     def test_unit_non_round_float(self):
+        # [FUNCTION DOC]
+        # A float with a fractional part and the second unit requires nanosecond resolution and equals the value in milliseconds, for both the constructor and to_timedelta.
         # With non-round floats, we have to give nanosecond
         td = Timedelta(45.5, unit="s")
         assert td.unit == "ns"
@@ -228,6 +257,8 @@ class TestTimedeltaConstructorUnitKeyword:
 
 
 def test_construct_from_kwargs_overflow():
+    # [FUNCTION DOC]
+    # GH#55503. Constructing from day or minute keywords too large for the bounds must raise the out-of-bounds timedelta error whose message lists the computed seconds, milliseconds, microseconds and nanoseconds.
     # GH#55503
     msg = "seconds=86400000000000000000, milliseconds=0, microseconds=0, nanoseconds=0"
     with pytest.raises(OutOfBoundsTimedelta, match=msg):
@@ -238,6 +269,8 @@ def test_construct_from_kwargs_overflow():
 
 
 def test_construct_with_weeks_unit_overflow():
+    # [FUNCTION DOC]
+    # GH#47268. A huge number of weeks (integer or float) must raise the out-of-bounds timedelta error naming the weeks instead of silently wrapping.
     # GH#47268 don't silently wrap around
     msg = "1000000000000000000 weeks"
     with pytest.raises(OutOfBoundsTimedelta, match=msg):
@@ -248,6 +281,8 @@ def test_construct_with_weeks_unit_overflow():
 
 
 def test_construct_from_td64_with_unit():
+    # [FUNCTION DOC]
+    # GH#46827. Passing a unit argument with a numpy timedelta value is ignored with a user warning that the unit is only used for non-timedelta input; a huge hours value raises the out-of-bounds error naming the hours, with or without the unit argument.
     # ignore the unit, as it may cause silently overflows leading to incorrect
     #  results, and in non-overflow cases is irrelevant GH#46827
     obj = np.timedelta64(123456789000000000, "h")
@@ -267,6 +302,8 @@ def test_construct_from_td64_with_unit():
 
 
 def test_from_td64_retain_resolution():
+    # [FUNCTION DOC]
+    # Constructing from a numpy timedelta keeps millisecond resolution; one in days is cast to second resolution with the right day count; a microsecond value that would overflow nanoseconds keeps microsecond resolution and gives correct total seconds.
     # case where we retain millisecond resolution
     obj = np.timedelta64(12345, "ms")
 
@@ -289,6 +326,8 @@ def test_from_td64_retain_resolution():
 
 
 def test_from_pytimedelta_us_reso():
+    # [FUNCTION DOC]
+    # Constructing from a standard library timedelta inherits microsecond resolution and converts back to an equal timedelta.
     # pytimedelta has microsecond resolution, so Timedelta(pytd) inherits that
     td = timedelta(days=4, minutes=3)
     result = Timedelta(td)
@@ -297,6 +336,8 @@ def test_from_pytimedelta_us_reso():
 
 
 def test_from_tick_reso():
+    # [FUNCTION DOC]
+    # The resolution of a Timedelta built from a fixed-length offset: nano, micro, milli and second ticks keep their resolution; minute and hour are cast to seconds; a day offset (no longer a tick, GH#41943) must raise a value error stating the accepted input types.
     tick = offsets.Nano()
     assert Timedelta(tick)._creso == NpyDatetimeUnit.NPY_FR_ns.value
 
@@ -327,6 +368,10 @@ def test_from_tick_reso():
 
 
 def test_construction():
+    # [FUNCTION DOC]
+    # Large catch-all test of construction. Checks internal values for numeric, string and keyword inputs; rounding cases; strings with and without leading zeros and negative signs; many unit abbreviations and spellings (GH#9570, GH#8190); combinations of components and fractional parts;
+    # errors for misplaced negative signs, missing units, no arguments, bad text and unknown keywords; floats; offsets; and the equality of a string-built value.
+    # KNOWN ISSUE: the negative combination string with minutes and seconds is asserted twice identically, and the section labeled unicode builds the same value twice from the same string and compares them, which checks nothing.
     expected = np.timedelta64(10, "D").astype("m8[ns]").view("i8")
     assert Timedelta(10, unit="D")._value == expected // 10**9
     assert Timedelta(10.0, unit="D")._value == expected // 10**9
@@ -468,6 +513,8 @@ def test_construction():
     "npdtype", [np.int64, np.int32, np.int16, np.float64, np.float32, np.float16]
 )
 def test_td_construction_with_np_dtypes(npdtype, item):
+    # [FUNCTION DOC]
+    # GH#8757. Parametrized over a duration keyword name with its numpy unit and over integer and float numpy dtypes of several widths. Passing the numpy scalar one with that keyword gives an internal value equal to one such unit expressed in microseconds.
     # GH#8757: test construction with np dtypes
     pykwarg, npkwarg = item
     expected = np.timedelta64(1, npkwarg).astype("m8[us]").view("i8")
@@ -491,6 +538,8 @@ def test_td_construction_with_np_dtypes(npdtype, item):
     ],
 )
 def test_td_from_repr_roundtrip(val):
+    # [FUNCTION DOC]
+    # Parametrized over text values including negative and nanosecond values. A timedelta parsed from the text equals one built from its integer value, from its string form, and from its base representation in the all format and the default format.
     # round-trip both for string and value
     td = Timedelta(val)
     assert Timedelta(td.value) == td
@@ -501,6 +550,8 @@ def test_td_from_repr_roundtrip(val):
 
 
 def test_overflow_on_construction():
+    # [FUNCTION DOC]
+    # GH#3374. A huge integer nanosecond count must raise the out-of-bounds error stating the failed cast to nanoseconds. Large day counts that used to overflow (xref GH#17637) now construct fine: a numeric day input gives seconds resolution, and a standard timedelta with many days gives microsecond resolution and the right days.
     # GH#3374
     value = Timedelta("1day").as_unit("ns")._value * 20169940
     msg = "Cannot cast 1742682816000000000000 from ns to 'ns' without overflow"
@@ -529,6 +580,10 @@ def test_overflow_on_construction():
     ],
 )
 def test_construction_out_of_bounds_td64ns(val, unit):
+    # [FUNCTION DOC]
+    # Parametrized over values just beyond the maximum for week, day, hour, minute and second units. A numpy timedelta of that size silently overflows when cast to nanoseconds (or raises an overflow error on recent numpy); constructing a Timedelta from it works and keeps second resolution, but converting to nanoseconds must raise the out-of-bounds error mentioning about 1067xx days.
+    # Values one unit smaller are in bounds, in both the positive and negative directions.
+    # KNOWN ISSUE: the branch guarded by a unit equal to month can never run because month is not among the parametrized units. The leading TODO notes a pending change to test just-below/above the bounds.
     # TODO: parametrize over units just above/below the implementation bounds
     #  once GH#38964 is resolved
 
@@ -581,6 +636,8 @@ def test_construction_out_of_bounds_td64ns(val, unit):
     ],
 )
 def test_construction_out_of_bounds_td64s(val, unit):
+    # [FUNCTION DOC]
+    # Parametrized over very large values for week, day, hour and minute units that exceed even second resolution. Construction must raise the out-of-bounds error whose message contains the numpy value; subtracting a large offset brings it back in bounds.
     td64 = np.timedelta64(val, unit)
     with pytest.raises(OutOfBoundsTimedelta, match=str(td64)):
         Timedelta(td64)
@@ -635,6 +692,8 @@ def test_construction_out_of_bounds_td64s(val, unit):
     ],
 )
 def test_iso_constructor(fmt, exp):
+    # [FUNCTION DOC]
+    # Parametrized over ISO 8601 duration strings (with fractions, negative parts, weeks, overflowing components such as sixty-one minutes, leading minus signs) and the expected Timedelta. Parsing the string must give an equal value.
     assert Timedelta(fmt) == exp
 
 
@@ -651,6 +710,8 @@ def test_iso_constructor(fmt, exp):
     ],
 )
 def test_iso_constructor_raises(fmt):
+    # [FUNCTION DOC]
+    # Parametrized over malformed ISO 8601 strings. Parsing must raise a value error with a message stating the format is invalid and including the string.
     msg = f"Invalid ISO 8601 Duration format - {fmt}"
     with pytest.raises(ValueError, match=msg):
         Timedelta(fmt)
@@ -679,17 +740,23 @@ def test_iso_constructor_raises(fmt):
     ],
 )
 def test_td_constructor_on_nanoseconds(constructed_td, conversion):
+    # [FUNCTION DOC]
+    # GH#9273. Parametrized over a Timedelta built from keywords or arithmetic and an equivalent string or integer nanosecond count. The two values must be equal.
     # GH#9273
     assert constructed_td == Timedelta(conversion)
 
 
 def test_td_constructor_value_error():
+    # [FUNCTION DOC]
+    # A non-numeric text value for the nanoseconds keyword must raise a type error saying the type must be int or float.
     msg = "Invalid type <class 'str'>. Must be int or float."
     with pytest.raises(TypeError, match=msg):
         Timedelta(nanoseconds="abc")
 
 
 def test_timedelta_constructor_identity():
+    # [FUNCTION DOC]
+    # Issue #30543. Constructing a Timedelta from an existing Timedelta returns the very same object.
     # Test for #30543
     expected = Timedelta(np.timedelta64(1, "s"))
     result = Timedelta(expected)
@@ -697,6 +764,8 @@ def test_timedelta_constructor_identity():
 
 
 def test_timedelta_pass_td_and_kwargs_raises():
+    # [FUNCTION DOC]
+    # GH#48898. Passing both a Timedelta and keyword arguments must raise a value error listing the keywords instead of ignoring them.
     # don't silently ignore the kwargs GH#48898
     td = Timedelta(days=1)
     msg = (
@@ -719,6 +788,8 @@ def test_timedelta_pass_td_and_kwargs_raises():
     ],
 )
 def test_string_with_unit(constructor, value, unit):
+    # [FUNCTION DOC]
+    # Parametrized over the constructor and to_timedelta with text (or a list containing text) and a unit. Specifying a unit with string input must raise a value error saying unit must not be specified. The user warning about the unit keyword is filtered.
     with pytest.raises(ValueError, match="unit must not be specified"):
         constructor(value, unit=unit)
 
@@ -732,6 +803,8 @@ def test_string_with_unit(constructor, value, unit):
     ],
 )
 def test_string_without_numbers(value):
+    # [FUNCTION DOC]
+    # GH39710. Parametrized over strings made only of plus, minus, comma and space characters (length one and two). Parsing must raise a value error: saying symbols without a number, except for the double minus string which says only leading negative signs are allowed.
     # GH39710 Timedelta input string with only symbols and no digits raises an error
     msg = (
         "symbols w/o a number"
@@ -743,14 +816,20 @@ def test_string_without_numbers(value):
 
 
 def test_timedelta_new_npnat():
+    # [FUNCTION DOC]
+    # GH#48898. A missing numpy timedelta of hour unit gives the not-a-time singleton.
     # GH#48898
     nat = np.timedelta64("NaT", "h")
     assert Timedelta(nat) is NaT
 
 
 def test_subclass_respected():
+    # [FUNCTION DOC]
+    # GH#49579. Constructing through a subclass of Timedelta returns an instance of that subclass.
     # GH#49579
     class MyCustomTimedelta(Timedelta):
+        # [CLASS DOC]
+        # HELPER: trivial local subclass of Timedelta used only by the subclass test above; adds no behavior.
         pass
 
     td = MyCustomTimedelta("1 minute")
@@ -758,6 +837,8 @@ def test_subclass_respected():
 
 
 def test_non_nano_value():
+    # [FUNCTION DOC]
+    # GH 49076. The value attribute of a second-resolution timedelta shows nanoseconds. For a timedelta too large to express in nanoseconds, reading it must raise an overflow error suggesting viewing the numpy form as integers; that suggested workaround returns the count in the timedelta's own unit.
     # https://github.com/pandas-dev/pandas/issues/49076
     result = Timedelta(10, unit="D").as_unit("s").value
     # `.value` shows nanoseconds, even though unit is 's'
@@ -778,6 +859,8 @@ def test_non_nano_value():
 
 
 def test_parsed_unit():
+    # [FUNCTION DOC]
+    # The resolution inferred from text: only days or up to six fractional digits gives microseconds; any nanosecond component or more than six fractional digits (including trailing zeros) gives nanoseconds.
     td = Timedelta("1 Day")
     assert td.unit == "us"
 

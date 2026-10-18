@@ -1,3 +1,8 @@
+# [MODULE DOC]
+# Tests for the Timedelta rounding methods (round, floor, ceil): correctness for many frequencies,
+# invalid frequency errors, overflow at the representable bounds, a property-based sanity check, preservation of
+# non-nanosecond resolution, and frequencies finer than the resolution.
+
 from hypothesis import (
     given,
     strategies as st,
@@ -13,6 +18,8 @@ from pandas import Timedelta
 
 
 class TestTimedeltaRound:
+    # [CLASS DOC]
+    # Groups tests of Timedelta rounding.
     @pytest.mark.parametrize(
         "freq,s1,s2",
         [
@@ -42,6 +49,10 @@ class TestTimedeltaRound:
         ],
     )
     def test_round(self, freq, s1, s2):
+        # [FUNCTION DOC]
+        # Parametrized over a frequency string and the expected rounded values for a positive and a negative timedelta
+        # with a nanosecond-precision fractional part. Rounding each of them to the frequency must give the expected values
+        # (frequencies include ns, us, ms, multiples of seconds and minutes, hours and days).
         s1 = Timedelta(s1)
         s2 = Timedelta(s2)
         t1 = Timedelta("1 days 02:34:56.789123456")
@@ -53,6 +64,9 @@ class TestTimedeltaRound:
         assert r2 == s2
 
     def test_round_invalid(self):
+        # [FUNCTION DOC]
+        # Rounding to a non-fixed frequency (year end, month end) must raise a value error saying the frequency is non-fixed,
+        # and an unrecognized frequency string must raise a value error saying the frequency is invalid.
         t1 = Timedelta("1 days 02:34:56.789123456")
 
         for freq, msg in [
@@ -64,6 +78,10 @@ class TestTimedeltaRound:
                 t1.round(freq)
 
     def test_round_implementation_bounds(self):
+        # [FUNCTION DOC]
+        # GH#38964. Near the representable limits, ceiling the minimum timedelta to seconds and flooring the maximum to seconds
+        # give results offset from the extremes by the sub-second remainder. Flooring or rounding the minimum, and ceiling or
+        # rounding the maximum, to seconds must raise the out-of-bounds timedelta error mentioning that rounding overflows.
         # See also: analogous test for Timestamp
         # GH#38964
         result = Timedelta.min.ceil("s")
@@ -94,6 +112,9 @@ class TestTimedeltaRound:
         "method", [Timedelta.round, Timedelta.floor, Timedelta.ceil]
     )
     def test_round_sanity(self, val, method):
+        # [FUNCTION DOC]
+        # Slow property-based test (hypothesis integers across the valid nanosecond range, parametrized over round, floor
+        # and ceil). Builds a timedelta from the integer and runs the nested checker for units from nanoseconds to days.
         cls = Timedelta
         err_cls = OutOfBoundsTimedelta
 
@@ -101,6 +122,13 @@ class TestTimedeltaRound:
         td = cls(val)
 
         def checker(ts, nanos, unit):
+            # [FUNCTION DOC]
+            # HELPER: nested checker for the sanity test above.
+            # Arguments: the timedelta, the number of nanoseconds per unit, and the unit string. It first predicts, using
+            # exact integer arithmetic, whether the lower or upper rounding boundary would exceed the representable range and,
+            # if so, asserts the out-of-bounds error is raised and returns. Otherwise it applies the method and asserts the
+            # result is a multiple of the unit, differs from the input by less than one unit, is within half a unit for round,
+            # is not above the input for floor, and is not below it for ceil. A unit of one nanosecond skips the overflow prediction.
             # First check that we do raise in cases where we should
             if nanos == 1:
                 pass
@@ -172,6 +200,10 @@ class TestTimedeltaRound:
         checker(td, nanos, "D")
 
     def test_round_non_nano(self, unit):
+        # [FUNCTION DOC]
+        # Parametrized over the unit fixture. A timedelta of one day, two hours, thirty-four minutes and fifty-seven seconds converted
+        # to the given unit is rounded, floored and ceiled to minutes; results must equal the expected nanosecond-resolution
+        # timedelta values and keep the original resolution.
         td = Timedelta("1 days 02:34:57").as_unit(unit)
 
         res = td.round("min")
@@ -187,6 +219,9 @@ class TestTimedeltaRound:
         assert res._creso == td._creso
 
     def test_round_freq_finer_than_resolution(self):
+        # [FUNCTION DOC]
+        # GH#64828. For a timedelta at second resolution, rounding, flooring and ceiling to a frequency of one hundred
+        # milliseconds (finer than the resolution) must leave the value unchanged and the unit remains seconds.
         # GH#64828
         td = Timedelta(1.0, unit="days").as_unit("s")
         assert td.unit == "s"

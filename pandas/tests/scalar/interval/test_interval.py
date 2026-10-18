@@ -1,3 +1,7 @@
+# [MODULE DOC]
+# General tests for the Interval scalar: properties, hashing, length and emptiness.
+# Defines a local fixture providing a default interval.
+
 import numpy as np
 import pytest
 
@@ -10,17 +14,25 @@ from pandas import (
 
 @pytest.fixture
 def interval():
+    # [FUNCTION DOC]
+    # Fixture returning a right-closed interval from 0 to 1, used by the property and hash tests in this module.
     return Interval(0, 1)
 
 
 class TestInterval:
+    # [CLASS DOC]
+    # Groups general behavior tests for Interval.
     def test_properties(self, interval):
+        # [FUNCTION DOC]
+        # A default interval reports closed side right, left endpoint 0, right endpoint 1 and midpoint 0.5.
         assert interval.closed == "right"
         assert interval.left == 0
         assert interval.right == 1
         assert interval.mid == 0.5
 
     def test_hash(self, interval):
+        # [FUNCTION DOC]
+        # Hashing an interval must not raise (intervals are hashable).
         # should not raise
         hash(interval)
 
@@ -40,6 +52,9 @@ class TestInterval:
         ],
     )
     def test_length(self, left, right, expected):
+        # [FUNCTION DOC]
+        # GH 18789. The length is the right endpoint minus the left endpoint. Parametrized over numeric cases
+        # (including infinite endpoints giving infinite length) and timedelta cases (length is a timedelta).
         # GH 18789
         iv = Interval(left, right)
         result = iv.length
@@ -56,6 +71,9 @@ class TestInterval:
     )
     @pytest.mark.parametrize("tz", (None, "UTC", "CET", "US/Eastern"))
     def test_length_timestamp(self, tz, left, right, expected):
+        # [FUNCTION DOC]
+        # GH 18789. For timestamp endpoints parsed from strings, optionally localized to a time zone, the length must equal
+        # the expected time delta; parametrized over several endpoint pairs and four time zone options (none, UTC, CET, US Eastern).
         # GH 18789
         iv = Interval(Timestamp(left, tz=tz), Timestamp(right, tz=tz))
         result = iv.length
@@ -75,6 +93,9 @@ class TestInterval:
         ],
     )
     def test_is_empty(self, left, right, closed):
+        # [FUNCTION DOC]
+        # GH27219. A non-empty interval is never empty, for any closed side and for numeric, timedelta, naive timestamp
+        # and aware timestamp endpoints. An interval whose two endpoints coincide is empty unless it is closed on both sides.
         # GH27219
         # non-empty always return False
         iv = Interval(left, right, closed)

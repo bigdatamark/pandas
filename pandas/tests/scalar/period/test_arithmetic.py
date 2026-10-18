@@ -1,3 +1,8 @@
+# [MODULE DOC]
+# Tests for arithmetic and comparison operators on the Period scalar: adding integers, offsets and time deltas,
+# subtracting periods and offsets, interaction with the not-a-time scalar, frequency-mismatch errors, and rich comparisons.
+# Uses the tick-class fixture for multiples of fixed-length offsets.
+
 from datetime import timedelta
 
 import numpy as np
@@ -15,7 +20,12 @@ from pandas import (
 
 
 class TestPeriodArithmetic:
+    # [CLASS DOC]
+    # Groups arithmetic tests (addition and subtraction) for Period.
     def test_add_overflow_raises(self):
+        # [FUNCTION DOC]
+        # GH#55503. A nanosecond-frequency period at the latest timestamp cannot be shifted forward: adding the integer one raises an overflow error
+        # (message differs by platform), and adding a one-nanosecond timedelta or nanosecond offset raises an overflow error saying the value is too large.
         # GH#55503
         per = Timestamp.max.to_period("ns")
 
@@ -36,12 +46,16 @@ class TestPeriodArithmetic:
             per + offsets.Nano(1)
 
     def test_period_add_integer(self):
+        # [FUNCTION DOC]
+        # Adding an integer moves a daily period forward by that many periods, in either operand order.
         per1 = Period(freq="D", year=2008, month=1, day=1)
         per2 = Period(freq="D", year=2008, month=1, day=2)
         assert per1 + 1 == per2
         assert 1 + per1 == per2
 
     def test_period_add_invalid(self):
+        # [FUNCTION DOC]
+        # GH#4731. Adding a string (either order) or adding two periods must raise a type error about unsupported operands or string concatenation.
         # GH#4731
         per1 = Period(freq="D", year=2008, month=1, day=1)
         per2 = Period(freq="D", year=2008, month=1, day=2)
@@ -61,6 +75,9 @@ class TestPeriodArithmetic:
             per1 + per2
 
     def test_period_sub_period_annual(self):
+        # [FUNCTION DOC]
+        # Subtracting annual periods returns a multiple of the frequency offset (four years). Subtracting a period with a different frequency
+        # must raise the incompatible-frequency error naming both frequencies.
         left, right = Period("2011", freq="Y"), Period("2007", freq="Y")
         result = left - right
         assert result == 4 * right.freq
@@ -70,6 +87,8 @@ class TestPeriodArithmetic:
             left - Period("2007-01", freq="M")
 
     def test_period_sub_period(self):
+        # [FUNCTION DOC]
+        # Subtracting daily periods gives a signed multiple of the day offset (fourteen days, either sign); subtracting a monthly period raises the incompatible-frequency error.
         per1 = Period("2011-01-01", freq="D")
         per2 = Period("2011-01-15", freq="D")
 
@@ -83,6 +102,9 @@ class TestPeriodArithmetic:
 
     @pytest.mark.parametrize("n", [1, 2, 3, 4])
     def test_sub_n_gt_1_ticks(self, tick_classes, n):
+        # [FUNCTION DOC]
+        # GH#23878. Parametrized over a fixed-length offset class (from the fixture) and a multiplier of one to four. Periods with a multiple-unit
+        # tick frequency subtract to the same result as periods built with the base (single-unit) frequency from the same date strings.
         # GH#23878
         p1 = Period("19910905", freq=tick_classes(n))
         p2 = Period("19920406", freq=tick_classes(n))
@@ -105,6 +127,9 @@ class TestPeriodArithmetic:
         ],
     )
     def test_sub_n_gt_1_offsets(self, offset, kwd_name, n, normalize):
+        # [FUNCTION DOC]
+        # GH#23878. Parametrized over year-end, quarter-end, month-end and weekly offsets (with a keyword argument where needed), a multiplier of one to four,
+        # and the normalize flag. Periods with a multiple frequency subtract to the same result as periods with the base frequency from the same dates.
         # GH#23878
         kwds = {kwd_name: 3} if kwd_name is not None else {}
         p1_d = "19910905"
@@ -117,6 +142,10 @@ class TestPeriodArithmetic:
         assert (p2 - p1) == expected
 
     def test_period_add_offset(self):
+        # [FUNCTION DOC]
+        # Adding date offsets to periods, in both operand orders. For annual, monthly, daily and hourly periods (including multiples) an offset whose
+        # unit is a multiple of the period frequency (or a compatible timedelta) shifts the period, while offsets or time deltas that are not a whole multiple of the period
+        # frequency (such as a year-begin offset for a month period, or a minute for a day period) must raise the incompatible-frequency error.
         # freq is DateOffset
         for freq in ["Y", "2Y", "3Y"]:
             per = Period("2011", freq=freq)
@@ -261,6 +290,9 @@ class TestPeriodArithmetic:
                     off + per
 
     def test_period_sub_offset(self):
+        # [FUNCTION DOC]
+        # Subtracting offsets and time deltas from periods, analogous to the addition test: compatible offsets and time deltas for annual, monthly, daily and hourly frequencies
+        # (including multiples) shift the period backwards, incompatible ones raise the incompatible-frequency error (messages may say the frequency differs or the input cannot be converted).
         # freq is DateOffset
         msg = "|".join(
             [
@@ -345,6 +377,8 @@ class TestPeriodArithmetic:
 
     @pytest.mark.parametrize("freq", ["M", "2M", "3M"])
     def test_period_addsub_nat(self, freq):
+        # [FUNCTION DOC]
+        # GH#13071. Parametrized over monthly frequencies. Combining a period with the not-a-time scalar returns not-a-time for both addition and subtraction in either order.
         # GH#13071
         per = Period("2011-01", freq=freq)
 
@@ -358,6 +392,9 @@ class TestPeriodArithmetic:
 
     @pytest.mark.parametrize("unit", ["ns", "us", "ms", "s", "m"])
     def test_period_add_sub_td64_nat(self, unit):
+        # [FUNCTION DOC]
+        # GH#47196. Parametrized over numpy timedelta units. Adding a missing timedelta to a period in either order, or subtracting it from a period, returns not-a-time;
+        # subtracting a period from a missing timedelta raises a type error for unsupported operands.
         # GH#47196
         per = Period("2022-06-01", "D")
         nat = np.timedelta64("NaT", unit)
@@ -370,6 +407,8 @@ class TestPeriodArithmetic:
             nat - per
 
     def test_period_ops_offset(self):
+        # [FUNCTION DOC]
+        # Adding or subtracting a day offset moves a daily period by that many days; an hour offset (not a whole number of days) must raise the incompatible-frequency error for both operators.
         per = Period("2011-04-01", freq="D")
         result = per + offsets.Day()
         exp = Period("2011-04-02", freq="D")
@@ -387,6 +426,8 @@ class TestPeriodArithmetic:
             per - offsets.Hour(2)
 
     def test_period_add_timestamp_raises(self):
+        # [FUNCTION DOC]
+        # GH#17983. Adding a timestamp and a period, in either order, must raise a type error naming the unsupported operand types.
         # GH#17983
         ts = Timestamp("2017")
         per = Period("2017", freq="M")
@@ -401,7 +442,11 @@ class TestPeriodArithmetic:
 
 
 class TestPeriodComparisons:
+    # [CLASS DOC]
+    # Groups comparison tests for Period.
     def test_period_comparison_same_freq(self):
+        # [FUNCTION DOC]
+        # For two monthly periods the earlier one is not equal, is unequal, less than and less-or-equal to the later one, and not greater.
         jan = Period("2000-01", "M")
         feb = Period("2000-02", "M")
 
@@ -413,6 +458,8 @@ class TestPeriodComparisons:
         assert not jan >= feb
 
     def test_period_comparison_same_period_different_object(self):
+        # [FUNCTION DOC]
+        # Two separately constructed periods for the same month are equal, greater-or-equal and less-or-equal, but neither less nor greater.
         # Separate Period objects for the same period
         left = Period("2000-01", "M")
         right = Period("2000-01", "M")
@@ -424,6 +471,8 @@ class TestPeriodComparisons:
         assert not left > right
 
     def test_period_comparison_mismatched_freq(self):
+        # [FUNCTION DOC]
+        # A monthly and a daily period compare as not equal; ordering comparisons must raise the incompatible-frequency error naming the two frequencies.
         jan = Period("2000-01", "M")
         day = Period("2012-01-01", "D")
 
@@ -440,6 +489,8 @@ class TestPeriodComparisons:
             jan >= day
 
     def test_period_comparison_invalid_type(self):
+        # [FUNCTION DOC]
+        # Comparing a period to an integer: equality is false and inequality true, and all ordering comparisons (either operand order) must raise a type error about unsupported comparison between the two types.
         jan = Period("2000-01", "M")
 
         assert not jan == 1
@@ -458,6 +509,8 @@ class TestPeriodComparisons:
                 left <= right
 
     def test_period_comparison_nat(self):
+        # [FUNCTION DOC]
+        # Comparing a period or timestamp with the not-a-time scalar (in either order) is false for all comparisons except inequality, which is true.
         per = Period("2011-01-01", freq="D")
 
         ts = Timestamp("2011-01-01")
@@ -480,6 +533,9 @@ class TestPeriodComparisons:
         ((0, False), (Period("2000-01", "M"), True)),
     )
     def test_period_comparison_numpy_zerodim_arr(self, scalar, expected):
+        # [FUNCTION DOC]
+        # Parametrized over a scalar (the integer zero, or a matching period) and the expected boolean. Compares a period with a zero-dimensional numpy array wrapping the scalar,
+        # in both operand orders; the result must be a plain boolean (identical to the expected value), not an array.
         zerodim_arr = np.array(scalar)
         per = Period("2000-01", "M")
 

@@ -1,3 +1,8 @@
+# [MODULE DOC]
+# Tests for pivot_table and pivot (both the function form and the DataFrame method form). Two classes: TestPivotTable (aggregation-based pivot tables, margins, categorical and datetime
+# handling, time groupers, aggregation functions with keyword arguments, missing-value groups, extension dtypes) and TestPivot (reshaping pivot without aggregation: errors on duplicates, defaults for missing arguments,
+# empty frames, pyarrow-backed categoricals, period dtypes). Uses the observed, dropna, closed and unit fixtures from the shared conftest, and the unstacker class from the reshape module for one overflow test.
+
 from datetime import (
     date,
     datetime,
@@ -30,8 +35,12 @@ from pandas.core.reshape.pivot import pivot_table
 
 
 class TestPivotTable:
+    # [CLASS DOC]
+    # Groups tests of pivot_table and its DataFrame method form (aggregation, margins, categorical inputs, grouper inputs, datetime-like data, string/callable aggregation functions and edge cases). Most tests use the shared data fixture.
     @pytest.fixture
     def data(self):
+        # [FUNCTION DOC]
+        # Fixture: returns an eleven-row frame with three string key columns (A with foo and bar, B with one and two, C with dull and shiny) and three float columns (D, E, F) of random normal values from a fixed seed (identical columns D, E, F because each uses the same seed).
         return DataFrame(
             {
                 "A": [
@@ -80,6 +89,10 @@ class TestPivotTable:
         )
 
     def test_pivot_table(self, observed, data):
+        # [FUNCTION DOC]
+        # Parametrized over the observed fixture. Computes a pivot table of column D with a two-column index and one columns key through the function and through the method; they must be equal and equal to the group-by mean unstacked.
+        # Also checks the function works without columns, and that index and column names are set from the arguments.
+        # KNOWN ISSUE: the index has two entries so the branch for a single index name can never run, and the columns argument is a plain string whose length is one so the multi-name branch can never run; those branches are dead code.
         index = ["A", "B"]
         columns = "C"
         table = pivot_table(
@@ -108,6 +121,8 @@ class TestPivotTable:
         tm.assert_frame_equal(table, expected)
 
     def test_pivot_table_categorical_observed_equal(self, observed):
+        # [FUNCTION DOC]
+        # Issue #24923. Parametrized over the observed fixture. A sum pivot table with fill value zero over two string columns is first computed on strings, then both key columns are converted to categoricals; the result with the given observed flag must equal the string result with categorical axes.
         # issue #24923
         df = DataFrame(
             {"col1": list("abcde"), "col2": list("fghij"), "col3": [1, 2, 3, 4, 5]}
@@ -135,6 +150,8 @@ class TestPivotTable:
         tm.assert_frame_equal(result, expected)
 
     def test_pivot_table_nocols(self):
+        # [FUNCTION DOC]
+        # Pivot table with only a columns key and a sum aggregation must equal the transposed pivot table with that key as the index; the same with a per-column mapping aggregation (mean of the values column).
         df = DataFrame(
             {"rows": ["a", "b", "c"], "cols": ["x", "y", "z"], "values": [1, 2, 3]}
         )
@@ -147,6 +164,8 @@ class TestPivotTable:
         tm.assert_frame_equal(rs, xp)
 
     def test_pivot_table_dropna(self):
+        # [FUNCTION DOC]
+        # With dropna turned off, pivot tables with two column keys (customer and product) on either axis keep all combinations: the multi-level columns (or index) cover all customer and product pairs, including those not present in the data.
         df = DataFrame(
             {
                 "amount": {0: 60000, 1: 100000, 2: 50000, 3: 30000},
@@ -184,6 +203,8 @@ class TestPivotTable:
         tm.assert_index_equal(pv_ind.index, m)
 
     def test_pivot_table_categorical(self):
+        # [FUNCTION DOC]
+        # Ordered categorical keys with unobserved categories and dropna on but observed off: the pivot table keeps the observed key pairs as a categorical multi-index, with float aggregated values.
         cat1 = Categorical(
             ["a", "a", "b", "b"], categories=["a", "b", "z"], ordered=True
         )
@@ -200,6 +221,8 @@ class TestPivotTable:
         tm.assert_frame_equal(result, expected)
 
     def test_pivot_table_dropna_categoricals(self, dropna):
+        # [FUNCTION DOC]
+        # GH 15193. Parametrized over dropna. Categorical column key with an unused category: the result columns are the observed categories; when dropna is off the unobserved category is added back as a column. Values are floats.
         # GH 15193
         categories = ["a", "b", "c", "d"]
 
@@ -232,6 +255,8 @@ class TestPivotTable:
         tm.assert_frame_equal(result, expected)
 
     def test_pivot_with_non_observable_dropna(self, dropna):
+        # [FUNCTION DOC]
+        # gh-21133. Parametrized over dropna. An ordered categorical index containing missing values and a numeric column: the missing group is dropped in either case; when dropna is off the result also has a row with zero for the missing group (GH 10772), represented by code minus one.
         # gh-21133
         df = DataFrame(
             {
@@ -263,6 +288,8 @@ class TestPivotTable:
         tm.assert_frame_equal(result, expected)
 
     def test_pivot_with_non_observable_dropna_multi_cat(self, dropna):
+        # [FUNCTION DOC]
+        # gh-21378. Parametrized over dropna. Ordered categorical with three categories where one only appears first; the pivot table has all three categories in category order; with dropna off values are float.
         # gh-21378
         df = DataFrame(
             {
@@ -294,6 +321,8 @@ class TestPivotTable:
         "left_right", [([0] * 4, [1] * 4), (range(3), range(1, 4))]
     )
     def test_pivot_with_interval_index(self, left_right, dropna, closed):
+        # [FUNCTION DOC]
+        # GH 25814. Parametrized over interval endpoint pairs (a duplicated and a distinct set), dropna and the closed side fixture. A pivot table indexed by a categorical of intervals gives one row per unique interval with value one as float.
         # GH 25814
         left, right = left_right
         interval_values = Categorical(pd.IntervalIndex.from_arrays(left, right, closed))
@@ -308,6 +337,8 @@ class TestPivotTable:
         tm.assert_frame_equal(result, expected)
 
     def test_pivot_with_interval_index_margins(self):
+        # [FUNCTION DOC]
+        # GH 25815. A pivot table with an interval categorical index, a columns key, sum aggregation and margins gives an "All" column equal to the row totals with a last total row, indexed by the intervals and the margins label.
         # GH 25815
         ordered_cat = pd.IntervalIndex.from_arrays([0, 0, 1, 1], [1, 1, 2, 2])
         df = DataFrame(
@@ -340,16 +371,22 @@ class TestPivotTable:
         tm.assert_series_equal(result, expected)
 
     def test_pass_array(self, data):
+        # [FUNCTION DOC]
+        # Passing the key columns as arrays rather than names gives the same pivot table as passing their names.
         result = data.pivot_table("D", index=data.A, columns=data.C)
         expected = data.pivot_table("D", index="A", columns="C")
         tm.assert_frame_equal(result, expected)
 
     def test_pass_function(self, data):
+        # [FUNCTION DOC]
+        # Passing a function as the index computes groups by applying it to the row labels; result equals using the equivalent labels array.
         result = data.pivot_table("D", index=lambda x: x // 5, columns=data.C)
         expected = data.pivot_table("D", index=data.index // 5, columns="C")
         tm.assert_frame_equal(result, expected)
 
     def test_pivot_table_multiple(self, data):
+        # [FUNCTION DOC]
+        # A pivot table with two index keys and one columns key and no explicit values or aggregation equals the group-by mean of all numeric columns, unstacked.
         index = ["A", "B"]
         columns = "C"
         table = pivot_table(data, index=index, columns=columns)
@@ -357,6 +394,8 @@ class TestPivotTable:
         tm.assert_frame_equal(table, expected)
 
     def test_pivot_dtypes(self):
+        # [FUNCTION DOC]
+        # Pivot table dtype retention: integers aggregated with sum and fill value zero stay int64; floats aggregated with mean stay float64.
         # can convert dtypes
         f = DataFrame(
             {
@@ -400,6 +439,8 @@ class TestPivotTable:
         ],
     )
     def test_pivot_preserve_dtypes(self, columns, values):
+        # [FUNCTION DOC]
+        # GH 7142 regression test. Parametrized over a boolean columns key and value column lists (including boolean ones). All result columns are float64 regardless of boolean inputs.
         # GH 7142 regression test
         v = np.arange(5, dtype=np.float64)
         df = DataFrame(
@@ -415,6 +456,9 @@ class TestPivotTable:
         assert result == expected
 
     def test_pivot_no_values(self):
+        # [FUNCTION DOC]
+        # GH 14380. Pivot table without specifying values: a datetime index with month and day group keys gives multi-level columns with integer-32 index; with a time grouper columns, the column level is a datetime; and with grouper on both axes the index is a year-end datetime index.
+        # Results equal the expected frames of mean aggregation.
         # GH 14380
         idx = pd.DatetimeIndex(
             ["2011-01-01", "2011-02-01", "2011-01-02", "2011-01-01", "2011-01-02"]
@@ -461,6 +505,8 @@ class TestPivotTable:
         tm.assert_frame_equal(res, exp)
 
     def test_pivot_multi_values(self, data):
+        # [FUNCTION DOC]
+        # A pivot table with an explicit list of values and a fill value equals a pivot table of the data with the unused column dropped.
         result = pivot_table(
             data, values=["D", "E"], index="A", columns=["B", "C"], fill_value=0
         )
@@ -470,6 +516,9 @@ class TestPivotTable:
         tm.assert_frame_equal(result, expected)
 
     def test_pivot_multi_functions(self, data):
+        # [FUNCTION DOC]
+        # Aggregation functions given as a list produce a column concatenation of the individual aggregations keyed by function name; the same with margins turned on.
+        # KNOWN ISSUE: the inline comment questions whether margins are supported but the test asserts that they work.
         f = lambda func: pivot_table(
             data, values=["D", "E"], index=["A", "B"], columns="C", aggfunc=func
         )
@@ -496,6 +545,8 @@ class TestPivotTable:
 
     @pytest.mark.parametrize("method", [True, False])
     def test_pivot_index_with_nan(self, method):
+        # [FUNCTION DOC]
+        # GH 3588. Parametrized over the DataFrame method and the top-level function. Pivoting with a missing label in the index key keeps the missing key as a row (sorted first); swapping index and columns gives the transposed frame.
         # GH 3588
         nan = np.nan
         df = DataFrame(
@@ -524,6 +575,8 @@ class TestPivotTable:
 
     @pytest.mark.parametrize("method", [True, False])
     def test_pivot_index_with_nan_dates(self, method):
+        # [FUNCTION DOC]
+        # GH9491. Parametrized over method versus function. Datetime and timedelta key columns containing missing values: the pivot has as many non-missing cells as rows, each value is found at its label, and swapping axes gives the transposed frame.
         # GH9491
         df = DataFrame(
             {
@@ -552,6 +605,8 @@ class TestPivotTable:
 
     @pytest.mark.parametrize("method", [True, False])
     def test_pivot_with_tz(self, method, unit):
+        # [FUNCTION DOC]
+        # GH 5878. Parametrized over method versus function and the unit fixture. Two time-zone-aware datetime columns (different zones) as index and columns: with all remaining columns as values, the result has multi-level columns with the aware level; with one values column, a single-level aware columns index.
         # GH 5878
         df = DataFrame(
             {
@@ -615,6 +670,8 @@ class TestPivotTable:
         tm.assert_frame_equal(pv, expected)
 
     def test_pivot_tz_in_values(self):
+        # [FUNCTION DOC]
+        # GH 14948. Time-zone-aware timestamps as the value column with a minimum aggregation and the column key a series of midnight timestamps. The result's columns are the aware midnights and the cells the earliest timestamp per day.
         # GH 14948
         df = DataFrame(
             [
@@ -671,6 +728,8 @@ class TestPivotTable:
 
     @pytest.mark.parametrize("method", [True, False])
     def test_pivot_periods(self, method):
+        # [FUNCTION DOC]
+        # Parametrized over method versus function. Period-typed key columns: pivoting gives period indexes for index and columns (daily and monthly), both with all values columns and with a single values column.
         df = DataFrame(
             {
                 "p1": [
@@ -716,6 +775,8 @@ class TestPivotTable:
         tm.assert_frame_equal(pv, expected)
 
     def test_pivot_periods_with_margins(self):
+        # [FUNCTION DOC]
+        # GH 28323. A pivot table with period columns and margins on gives a frame with the margins label appended to both axes and values 1.0.
         # GH 28323
         df = DataFrame(
             {
@@ -742,6 +803,8 @@ class TestPivotTable:
     @pytest.mark.parametrize("box", [list, np.array, Series, Index])
     @pytest.mark.parametrize("method", [True, False])
     def test_pivot_with_list_like_values(self, box, method):
+        # [FUNCTION DOC]
+        # Issue #17160. Parametrized over list, array, series and index containers for values and over method versus function. Pivoting a mix of numeric and string value columns gives multi-level columns; the numeric values column is cast to object to align with the mixed block.
         # issue #17160
         values = box(["baz", "zoo"])
         df = DataFrame(
@@ -780,6 +843,8 @@ class TestPivotTable:
     )
     @pytest.mark.parametrize("method", [True, False])
     def test_pivot_with_list_like_values_nans(self, values, method):
+        # [FUNCTION DOC]
+        # Issue #17160. Parametrized over containers for values and method versus function. Pivoting with a different index and columns key gives a frame with missing values where combinations are absent and multi-level columns (values name, column key); numeric column cast to object.
         # issue #17160
         df = DataFrame(
             {
@@ -814,6 +879,8 @@ class TestPivotTable:
         tm.assert_frame_equal(result, expected)
 
     def test_pivot_columns_none_raise_error(self):
+        # [FUNCTION DOC]
+        # GH 30924. Calling the method form of pivot with index and values but no columns key must raise a type error stating that the keyword-only columns argument is missing.
         # GH 30924
         df = DataFrame({"col1": ["a", "b", "c"], "col2": [1, 2, 3], "col3": [1, 2, 3]})
         msg = r"pivot\(\) missing 1 required keyword-only argument: 'columns'"
@@ -825,6 +892,8 @@ class TestPivotTable:
     )
     @pytest.mark.parametrize("method", [True, False])
     def test_pivot_with_multiindex(self, method):
+        # [FUNCTION DOC]
+        # Issue #17160. Marked as an expected failure (unstacking with tuple names raises a key error, GH#19966). Pivoting a frame with multi-level columns using tuple keys for index, columns and values should give columns A, B and C.
         # issue #17160
         index = Index(data=[0, 1, 2, 3, 4, 5])
         data = [
@@ -864,6 +933,8 @@ class TestPivotTable:
 
     @pytest.mark.parametrize("method", [True, False])
     def test_pivot_with_tuple_of_values(self, method):
+        # [FUNCTION DOC]
+        # Issue #17160. Parametrized over method versus function. A tuple passed as values is treated as a single column name, and since no such column exists a key error is raised naming the tuple.
         # issue #17160
         df = DataFrame(
             {
@@ -889,6 +960,12 @@ class TestPivotTable:
         columns=None,
         margins_col="All",
     ):
+        # [FUNCTION DOC]
+        # HELPER: assertion helper for the margins tests. Takes a pivot result, the values column name, the source data,
+        # optional index key names (default A and B), optional columns key names (default C) and the margins label (default All).
+        # It checks three things: the margins column (excluding the total row) equals the mean of the values grouped by the index keys,
+        # and its name is the margins label; the margins row (sorted, excluding the last cell) equals the mean grouped by the columns keys,
+        # and its name is the margins label with an empty second level; and the grand total cell equals the overall mean of the values.
         if index is None:
             index = ["A", "B"]
         if columns is None:
@@ -910,6 +987,8 @@ class TestPivotTable:
         assert grand_total_margins == expected_total_margins
 
     def test_margins(self, data):
+        # [FUNCTION DOC]
+        # Pivot table with margins on and mean aggregation: with a values column, the helper check passes for the default margins label and for a custom margins name; with no values column, the check passes for each top-level values column of the result.
         # column specified
         result = data.pivot_table(
             values="D", index=["A", "B"], columns="C", margins=True, aggfunc="mean"
@@ -935,6 +1014,9 @@ class TestPivotTable:
             self._check_output(table[value_col], value_col, data)
 
     def test_no_col(self, data, using_infer_string):
+        # [FUNCTION DOC]
+        # Pivot table with no columns key and margins: first renames all data columns to doubled names. Aggregating including the string column must raise a type error about the aggregation function failing (message differs when string inference is on). After dropping the string column the total row of each value column equals the column mean.
+        # KNOWN ISSUE: the sequence of raising on the string column, then building the table and checking totals is performed twice; the second block repeats the first (checking the named columns explicitly), so it adds no coverage.
         # no col
 
         # to help with a buglet
@@ -993,6 +1075,8 @@ class TestPivotTable:
     def test_margin_with_only_columns_defined(
         self, columns, aggfunc, values, expected_columns, using_infer_string
     ):
+        # [FUNCTION DOC]
+        # GH 31016. Parametrized over a single columns key with mean and a list of two keys with sum, plus the values and expected column index. Mean aggregation over the frame including a string column must raise a type error; after dropping the string column (and the other key where unused) the margins-only pivot table has the expected values with margins label appended to column levels.
         # GH 31016
         df = DataFrame(
             {
@@ -1029,6 +1113,8 @@ class TestPivotTable:
         tm.assert_frame_equal(result, expected)
 
     def test_margins_dtype(self, data):
+        # [FUNCTION DOC]
+        # GH 17013. Sum with margins and fill value zero over integer columns keeps integer dtype, including the margins row and the margins column.
         # GH 17013
 
         df = data.copy()
@@ -1053,6 +1139,8 @@ class TestPivotTable:
         tm.assert_frame_equal(expected, result)
 
     def test_margins_dtype_len(self, data):
+        # [FUNCTION DOC]
+        # Counting with the built-in length function as aggregation, with margins and fill value zero, gives integer counts including margins.
         mi_val = [*list(product(["bar", "foo"], ["one", "two"])), ("All", "")]
         mi = MultiIndex.from_tuples(mi_val, names=("A", "B"))
         expected = DataFrame(
@@ -1073,6 +1161,8 @@ class TestPivotTable:
 
     @pytest.mark.parametrize("cols", [(1, 2), ("a", "b"), (1, "b"), ("a", 1)])
     def test_pivot_table_multiindex_only(self, cols):
+        # [FUNCTION DOC]
+        # GH 17038. Parametrized over four combinations of integer and string column names. Pivot table with a columns tuple (two key columns) and no index gives a single-row frame whose columns are a multi-index of the key pairs; the row label is the values column name (string dtype for the all-string case, else object).
         # GH 17038
         df2 = DataFrame({cols[0]: [1, 2, 3], cols[1]: [1, 2, 3], "v": [4, 5, 6]})
 
@@ -1086,6 +1176,8 @@ class TestPivotTable:
         tm.assert_frame_equal(result, expected)
 
     def test_pivot_table_retains_tz(self):
+        # [FUNCTION DOC]
+        # A pivot table indexed by a float column and a time-zone-aware datetime column, with dropna off, keeps the time zone in the second index level.
         dti = date_range("2016-01-01", periods=3, tz="Europe/Amsterdam")
         df = DataFrame(
             {
@@ -1100,6 +1192,8 @@ class TestPivotTable:
         assert result.index.levels[1].equals(dti)
 
     def test_pivot_integer_columns(self):
+        # [FUNCTION DOC]
+        # Regression for an upstream unstack bug: a frame with integer column names built from a product of keys and dates gives the same pivot table as the version with string column names (names not compared).
         # caused by upstream bug in unstack
 
         d = date.min
@@ -1121,6 +1215,8 @@ class TestPivotTable:
         tm.assert_frame_equal(table, table2, check_names=False)
 
     def test_pivot_no_level_overlap(self):
+        # [FUNCTION DOC]
+        # GH #1181. A pivot table with two columns keys equals group-by mean unstacked on each level in turn, with all-missing columns dropped.
         # GH #1181
 
         data = DataFrame(
@@ -1139,6 +1235,8 @@ class TestPivotTable:
         tm.assert_frame_equal(table, expected)
 
     def test_pivot_columns_lexsorted(self):
+        # [FUNCTION DOC]
+        # Builds a ten thousand row frame of random product, date and price records; a mean pivot table with several columns keys must have monotonic increasing (lexicographically sorted) columns.
         n = 10000
 
         dtype = np.dtype(
@@ -1190,6 +1288,8 @@ class TestPivotTable:
         assert pivoted.columns.is_monotonic_increasing
 
     def test_pivot_complex_aggfunc(self, data):
+        # [FUNCTION DOC]
+        # Aggregation given as a mapping from column to list of functions equals the group-by aggregation with the same mapping unstacked.
         f = {"D": ["std"], "E": ["sum"]}
         expected = data.groupby(["A", "B"]).agg(f).unstack("B")
         result = data.pivot_table(index="A", columns="B", aggfunc=f)
@@ -1197,6 +1297,8 @@ class TestPivotTable:
         tm.assert_frame_equal(result, expected)
 
     def test_margins_no_values_no_cols(self, data):
+        # [FUNCTION DOC]
+        # Regression: pivot table of key columns only (no values or columns key) using the length function and margins; the last row equals the sum of the other rows.
         # Regression test on pivot table: no values or cols passed.
         result = data[["A", "B"]].pivot_table(
             index=["A", "B"], aggfunc=len, margins=True
@@ -1205,6 +1307,8 @@ class TestPivotTable:
         assert sum(result_list[:-1]) == result_list[-1]
 
     def test_margins_no_values_two_rows(self, data):
+        # [FUNCTION DOC]
+        # Regression: counts with a two-level row index and a columns key without values; the margins column has the expected counts.
         # Regression test on pivot table: no values passed but rows are a
         # multi-index
         result = data[["A", "B", "C"]].pivot_table(
@@ -1213,6 +1317,8 @@ class TestPivotTable:
         assert result.All.tolist() == [3.0, 1.0, 4.0, 3.0, 11.0]
 
     def test_margins_no_values_one_row_one_col(self, data):
+        # [FUNCTION DOC]
+        # Regression: counts with one row key and one columns key without values; the margins column has the expected counts.
         # Regression test on pivot table: no values passed but row and col
         # defined
         result = data[["A", "B"]].pivot_table(
@@ -1221,6 +1327,8 @@ class TestPivotTable:
         assert result.All.tolist() == [4.0, 7.0, 11.0]
 
     def test_margins_no_values_two_row_two_cols(self, data):
+        # [FUNCTION DOC]
+        # Regression: counts with two row keys and two column keys (after adding a unique string column) without values; the margins column has the expected counts.
         # Regression test on pivot table: no values passed but rows and cols
         # are multi-indexed
         data["D"] = ["a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k"]
@@ -1231,6 +1339,8 @@ class TestPivotTable:
 
     @pytest.mark.parametrize("margin_name", ["foo", "one", 666, None, ["a", "b"]])
     def test_pivot_table_with_margins_set_margin_name(self, margin_name, data):
+        # [FUNCTION DOC]
+        # see gh-3335. Parametrized over margins names that conflict with existing labels (foo, one), or are not strings (a number, none, a list). Pivot table calls with multi-level rows, multi-level columns and single-level keys must each raise a value error about a conflicting name or a margins name that is not a string.
         # see gh-3335
         msg = (
             f'Conflicting name "{margin_name}" in margins|'
@@ -1268,6 +1378,8 @@ class TestPivotTable:
             )
 
     def test_pivot_timegrouper(self):
+        # [FUNCTION DOC]
+        # Pivot table with a time grouper on index or columns: yearly and six-month-start frequencies give the expected sums per buyer (and transposes); the grouper may refer to the column by key or index level name; an unknown key raises a key error saying the grouper name is not found, and an unknown level raises a value error saying the level is not valid.
         df = DataFrame(
             {
                 "Branch": "A A A A A A A B".split(),
@@ -1417,6 +1529,8 @@ class TestPivotTable:
             )
 
     def test_pivot_timegrouper_double(self):
+        # [FUNCTION DOC]
+        # Two time groupers (month-end frequency on date and on pay day) on index and columns give the expected square table with missing cells, and transpose when swapped; two groupers on the index with a string columns key give a two-level date index and transposed result when swapped.
         # double grouper
         df = DataFrame(
             {
@@ -1544,6 +1658,8 @@ class TestPivotTable:
         tm.assert_frame_equal(result, expected.T)
 
     def test_pivot_datetime_tz(self):
+        # [FUNCTION DOC]
+        # Pivot table with time-zone-aware datetime key columns in two zones: index by one, columns by a string label, one values column gives float values; with index by one aware column, columns by the other, two values columns and two aggregation functions the column labels keep the aware level (sum block integer, mean block float).
         dates1 = pd.DatetimeIndex(
             [
                 "2011-07-19 07:00:00",
@@ -1635,6 +1751,8 @@ class TestPivotTable:
         tm.assert_frame_equal(result, expected)
 
     def test_pivot_dtaccessor(self):
+        # [FUNCTION DOC]
+        # GH 8103. Using values from the date accessor (hour, month, year) as pivot keys, passed as series, arrays or lists: columns by hour, rows by month, multi-level columns by hour and month with year rows, and an array of strings as rows; labels are 32-bit integers where derived from the accessor. Missing combinations are missing values.
         # GH 8103
         dates1 = pd.DatetimeIndex(
             [
@@ -1726,6 +1844,8 @@ class TestPivotTable:
         tm.assert_frame_equal(result, expected)
 
     def test_daily(self):
+        # [FUNCTION DOC]
+        # A daily range over five years as a one-column frame pivoted with year as rows and day of year as columns (after dropping the values level of columns) equals the expected float frame built per year, with 32-bit integer year index.
         rng = date_range("1/1/2000", "12/31/2004", freq="D")
         ts = Series(np.arange(len(rng)), index=rng)
 
@@ -1745,6 +1865,8 @@ class TestPivotTable:
         tm.assert_frame_equal(result, expected)
 
     def test_monthly(self):
+        # [FUNCTION DOC]
+        # A month-end range over five years pivoted with year as rows and month as columns equals the expected float frame built per year, with 32-bit integer year index.
         rng = date_range("1/1/2000", "12/31/2004", freq="ME")
         ts = Series(np.arange(len(rng)), index=rng)
 
@@ -1761,6 +1883,8 @@ class TestPivotTable:
         tm.assert_frame_equal(result, expected)
 
     def test_pivot_table_with_iterator_values(self, data):
+        # [FUNCTION DOC]
+        # GH 12017. Values given as a list, a dictionary keys view or a generator all give the same result with a per-column aggregation mapping.
         # GH 12017
         aggs = {"D": "sum", "E": "mean"}
 
@@ -1780,6 +1904,8 @@ class TestPivotTable:
         tm.assert_frame_equal(pivot_values_gen, pivot_values_list)
 
     def test_pivot_table_margins_name_with_aggfunc_list(self):
+        # [FUNCTION DOC]
+        # GH 13354. With a custom margins name and a list of two aggregation functions, the result has multi-level columns (function, value, day) where the margins name appears in the last column level of each function, and an index with the margins name last.
         # GH 13354
         margins_name = "Weekly"
         costs = DataFrame(
@@ -1810,6 +1936,8 @@ class TestPivotTable:
         tm.assert_frame_equal(table, expected)
 
     def test_categorical_margins(self, observed):
+        # [FUNCTION DOC]
+        # GH 10989. Pivot table with mean and margins on integer keys, using the observed fixture as the dropna argument, equals the expected frame with the margins label added to both axes.
         # GH 10989
         df = DataFrame(
             {"x": np.arange(8), "y": np.arange(8) // 4, "z": np.arange(8) % 2}
@@ -1823,6 +1951,8 @@ class TestPivotTable:
         tm.assert_frame_equal(table, expected)
 
     def test_categorical_margins_category(self, observed):
+        # [FUNCTION DOC]
+        # Same expected frame as the previous test, but the two key columns are converted to categoricals and observed is off; the margins pivot table still matches.
         df = DataFrame(
             {"x": np.arange(8), "y": np.arange(8) // 4, "z": np.arange(8) % 2}
         )
@@ -1839,6 +1969,8 @@ class TestPivotTable:
         tm.assert_frame_equal(table, expected)
 
     def test_margins_casted_to_float(self):
+        # [FUNCTION DOC]
+        # GH 24893. A pivot table over an index key with margins and no explicit aggregation (mean) gives float values, including the margins row, even when the inputs are integers.
         # GH 24893
         df = DataFrame(
             {
@@ -1857,6 +1989,8 @@ class TestPivotTable:
         tm.assert_frame_equal(result, expected)
 
     def test_pivot_with_categorical(self, observed, ordered):
+        # [FUNCTION DOC]
+        # gh-21370. Parametrized over observed and ordered. Categorical index and columns keys with missing entries: the pivot table drops the missing keys and has categorical index and columns with the original category order and orderedness. With only a columns key, a single row labelled by the values column holds the per-column means.
         # gh-21370
         idx = [np.nan, "low", "high", "low", np.nan]
         col = [np.nan, "A", "B", np.nan, "A"]
@@ -1892,6 +2026,8 @@ class TestPivotTable:
         tm.assert_frame_equal(result, expected)
 
     def test_categorical_aggfunc(self, observed):
+        # [FUNCTION DOC]
+        # GH 9534. Parametrized over the observed fixture used as dropna. A count pivot table with a categorical index keeps all categories (observed off) and gives integer counts, with zero for absent combinations.
         # GH 9534
         df = DataFrame(
             {"C1": ["A", "B", "C", "C"], "C2": ["a", "a", "b", "b"], "V": [1, 2, 3, 4]}
@@ -1917,6 +2053,8 @@ class TestPivotTable:
         tm.assert_frame_equal(result, expected)
 
     def test_categorical_pivot_index_ordering(self, observed):
+        # [FUNCTION DOC]
+        # GH 8731. Parametrized over observed. A sales pivot table indexed by a categorical month with all twelve categories gives all twelve months in category order with zero sums for unused ones; with observed on, only the used month remains.
         # GH 8731
         df = DataFrame(
             {
@@ -1961,6 +2099,8 @@ class TestPivotTable:
         tm.assert_frame_equal(result, expected)
 
     def test_pivot_table_not_series(self):
+        # [FUNCTION DOC]
+        # GH 4386. A pivot table with a scalar values name and no columns key (or a single aggregation in a list) always returns a data frame, not a series: checked for a two-level index, for index plus columns key, and for aggregation given as a list (multi-level columns).
         # GH 4386
         # pivot_table always returns a DataFrame
         # when values is not list like and columns is None
@@ -1989,6 +2129,8 @@ class TestPivotTable:
         tm.assert_frame_equal(result, expected)
 
     def test_pivot_margins_name_unicode(self):
+        # [FUNCTION DOC]
+        # Issue #13292. A non-ASCII margins name is accepted: counting by length with margins gives an index of the key values plus the non-ASCII label, and an empty set of columns.
         # issue #13292
         greek = "\u0394\u03bf\u03ba\u03b9\u03bc\u03ae"
         frame = DataFrame({"foo": [1, 2, 3]}, columns=Index(["foo"], dtype=object))
@@ -2000,6 +2142,8 @@ class TestPivotTable:
         tm.assert_frame_equal(table, expected)
 
     def test_pivot_string_as_func(self):
+        # [FUNCTION DOC]
+        # GH #18713. For correctness: aggregation given as a string name (sum) or list of names (sum and mean) gives the expected values for a frame with an index key, columns key and numeric column.
         # GH #18713
         # for correctness purposes
         data = DataFrame(
@@ -2063,11 +2207,17 @@ class TestPivotTable:
 
     @pytest.mark.parametrize("kwargs", [{"a": 2}, {"a": 2, "b": 3}, {"b": 3, "a": 2}])
     def test_pivot_table_kwargs(self, kwargs):
+        # [FUNCTION DOC]
+        # GH#57884. Parametrized over keyword argument dictionaries (including different orders). Extra keyword arguments to the pivot table call are forwarded to the aggregation function; the result must equal that of a wrapper function with the keywords bound.
         # GH#57884
         def f(x, a, b=3):
+            # [FUNCTION DOC]
+            # HELPER: aggregation function for the keyword test. Takes a series x, a required multiplier a and an optional addend b (default three); returns the sum of x times a plus b.
             return x.sum() * a + b
 
         def g(x):
+            # [FUNCTION DOC]
+            # HELPER: wrapper aggregation that calls f with the parametrized keyword arguments already bound, used to build the expected result.
             return f(x, **kwargs)
 
         df = DataFrame(
@@ -2087,11 +2237,17 @@ class TestPivotTable:
         "kwargs", [{}, {"b": 10}, {"a": 3}, {"a": 3, "b": 10}, {"b": 10, "a": 3}]
     )
     def test_pivot_table_kwargs_margin(self, data, kwargs):
+        # [FUNCTION DOC]
+        # GH#57884. Parametrized over keyword argument dictionaries (including an empty one). Extra keyword arguments are forwarded to the aggregation function, including when computing margins, with fill value zero; the result must equal that of a wrapper function with the keywords bound.
         # GH#57884
         def f(x, a=5, b=7):
+            # [FUNCTION DOC]
+            # HELPER: aggregation function for the keyword-with-margins test. Takes a series x, an optional factor a (default five) and an optional addend b (default seven); returns the sum of x plus b, multiplied by a.
             return (x.sum() + b) * a
 
         def g(x):
+            # [FUNCTION DOC]
+            # HELPER: wrapper aggregation that calls f with the parametrized keyword arguments already bound, used to build the expected result.
             return f(x, **kwargs)
 
         result = data.pivot_table(
@@ -2127,6 +2283,8 @@ class TestPivotTable:
         ],
     )
     def test_pivot_string_func_vs_func(self, f, f_numpy, data):
+        # [FUNCTION DOC]
+        # GH #18713. For consistency: parametrized over aggregation names (single and list) and the matching numpy functions. Pivot tables with either spelling are equal (after dropping the string column).
         # GH #18713
         # for consistency purposes
         data = data.drop(columns="C")
@@ -2138,15 +2296,23 @@ class TestPivotTable:
     def test_pivot_number_of_levels_larger_than_int32_warns(
         self, performance_warning, monkeypatch
     ):
+        # [FUNCTION DOC]
+        # GH 20601, GH 26314. Slow test. Replaces the unstacker class in the reshape module (through the monkeypatch fixture) with a mock whose construction raises a generic exception after the base constructor has issued its warning. A pivot table with 65536 distinct index and column values must issue the performance warning (fixture-specified class) that the operation may generate a very large number of cells, and then raise the mock's exception.
         # GH 20601
         # GH 26314: Change ValueError to PerformanceWarning
         class MockUnstacker(reshape_lib._Unstacker):
+            # [CLASS DOC]
+            # HELPER: local test double for the unstacker class used by the overflow-warning test. Subclasses the real unstacker; its constructor calls the real constructor (which emits the performance warning) and then raises a generic exception so the final result is never computed.
             def __init__(self, *args, **kwargs) -> None:
+                # [FUNCTION DOC]
+                # HELPER: constructor of the unstacker test double. Passes all arguments to the parent constructor (which issues the performance warning) and then raises a generic exception saying the final result must not be computed.
                 # __init__ will raise the warning
                 super().__init__(*args, **kwargs)
                 raise Exception("Don't compute final result.")
 
             def _make_selectors(self) -> None:
+                # [FUNCTION DOC]
+                # HELPER: override of the parent's selector-building step that does nothing, so no large index arrays are created.
                 pass
 
         with monkeypatch.context() as m:
@@ -2163,6 +2329,8 @@ class TestPivotTable:
                     )
 
     def test_pivot_table_aggfunc_dropna(self, dropna):
+        # [FUNCTION DOC]
+        # GH 22159. Parametrized over dropna. A pivot table with a list of three custom aggregation functions (sum, always-missing, constant one) and a columns key: the result has multi-level columns (function name, key value); with dropna on the all-missing function columns are dropped.
         # GH 22159
         df = DataFrame(
             {
@@ -2173,12 +2341,18 @@ class TestPivotTable:
         )
 
         def ret_one(x):
+            # [FUNCTION DOC]
+            # HELPER: aggregation function used by the test above; ignores its input and returns the constant one.
             return 1
 
         def ret_sum(x):
+            # [FUNCTION DOC]
+            # HELPER: aggregation function used by the test above; returns the sum of its input using the built-in sum.
             return sum(x)
 
         def ret_none(x):
+            # [FUNCTION DOC]
+            # HELPER: aggregation function used by the test above; ignores its input and returns not-a-number (despite the name suggesting none).
             return np.nan
 
         result = pivot_table(
@@ -2198,6 +2372,8 @@ class TestPivotTable:
         tm.assert_frame_equal(result, expected)
 
     def test_pivot_table_aggfunc_scalar_dropna(self, dropna):
+        # [FUNCTION DOC]
+        # GH 22159. Parametrized over dropna. Mean aggregation with a columns key where one group has only missing values: that group's column holds missing values and is dropped when dropna is on.
         # GH 22159
         df = DataFrame(
             {"A": ["one", "two", "one"], "x": [3, np.nan, 2], "y": [1, np.nan, np.nan]}
@@ -2216,6 +2392,8 @@ class TestPivotTable:
 
     @pytest.mark.parametrize("margins", [True, False])
     def test_pivot_table_empty_aggfunc(self, margins):
+        # [FUNCTION DOC]
+        # GH 9186, GH 13483, GH 49240. Parametrized over margins on and off. A pivot table whose columns key is entirely missing gives an empty frame with an empty named column index and an integer index named by the index key (with or without margins).
         # GH 9186 & GH 13483 & GH 49240
         df = DataFrame(
             {
@@ -2233,8 +2411,12 @@ class TestPivotTable:
         tm.assert_frame_equal(result, expected)
 
     def test_pivot_table_no_column_raises(self):
+        # [FUNCTION DOC]
+        # GH 10326. A values name that does not exist in the frame must raise a key error naming it, with a custom aggregation function.
         # GH 10326
         def agg(arr):
+            # [FUNCTION DOC]
+            # HELPER: aggregation function used by the test above; returns the mean of the array via numpy.
             return np.mean(arr)
 
         df = DataFrame({"X": [0, 0, 1, 1], "Y": [0, 1, 0, 1], "Z": [10, 20, 30, 40]})
@@ -2242,6 +2424,8 @@ class TestPivotTable:
             df.pivot_table("notpresent", "X", "Y", aggfunc=agg)
 
     def test_pivot_table_multiindex_columns_doctest_case(self):
+        # [FUNCTION DOC]
+        # Reproduces the documentation example in which the aggregated result has multi-level columns (a mapping of mean for one column and min, max, mean for another), exercising the dtype-restoring step with a data frame instead of a series. Integer min and max columns are expected to stay integer.
         # The relevant characteristic is that the call
         #  to maybe_downcast_to_dtype(agged[v], data[v].dtype) in
         #  __internal_pivot_table has `agged[v]` a DataFrame instead of Series,
@@ -2294,6 +2478,8 @@ class TestPivotTable:
         tm.assert_frame_equal(table, expected)
 
     def test_pivot_table_sort_false(self):
+        # [FUNCTION DOC]
+        # GH#39143. With sorting turned off, the row keys appear in order of first appearance rather than sorted.
         # GH#39143
         df = DataFrame(
             {
@@ -2316,6 +2502,8 @@ class TestPivotTable:
         tm.assert_frame_equal(result, expected)
 
     def test_pivot_table_nullable_margins(self):
+        # [FUNCTION DOC]
+        # GH#48681. Sum with margins over a nullable integer values column keeps the nullable integer dtype, including the margins row and column.
         # GH#48681
         df = DataFrame(
             {"a": "A", "b": [1, 2], "sales": Series([10, 11], dtype="Int64")}
@@ -2333,6 +2521,8 @@ class TestPivotTable:
         tm.assert_frame_equal(result, expected)
 
     def test_pivot_table_sort_false_with_multiple_values(self):
+        # [FUNCTION DOC]
+        # With sorting off and two values columns, the rows keep first-appearance order and the columns keep the given order.
         df = DataFrame(
             {
                 "firstname": ["John", "Michael"],
@@ -2355,6 +2545,8 @@ class TestPivotTable:
         tm.assert_frame_equal(result, expected)
 
     def test_pivot_table_with_margins_and_numeric_columns(self):
+        # [FUNCTION DOC]
+        # GH 26568. A frame with integer column labels (ten, twenty, thirty) pivoted with index, columns and values labels given as integers, sum, fill value zero and margins gives the expected table with the margins label and the integer names kept on axes.
         # GH 26568
         df = DataFrame([["a", "x", 1], ["a", "y", 2], ["b", "y", 3], ["b", "z", 4]])
         df.columns = [10, 20, 30]
@@ -2375,6 +2567,8 @@ class TestPivotTable:
         "dtype,expected_dtype", [("Int64", "Float64"), ("int64", "float64")]
     )
     def test_pivot_ea_dtype_dropna(self, dropna, dtype, expected_dtype):
+        # [FUNCTION DOC]
+        # GH#47477, GH#47971. Parametrized over dropna and a nullable or numpy integer dtype with the expected float dtype. Mean pivot table of an integer column gives a float (nullable or numpy) result.
         # GH#47477
         # GH#47971
         df = DataFrame({"x": "a", "y": "b", "age": Series([20, 40], dtype=dtype)})
@@ -2390,6 +2584,8 @@ class TestPivotTable:
         tm.assert_frame_equal(result, expected)
 
     def test_pivot_table_datetime_warning(self):
+        # [FUNCTION DOC]
+        # GH#48683. Pivot table with sum and margins whose index keys include a datetime column must produce no warnings, and the margins row has an empty-string label in the date level (object dtype).
         # GH#48683
         df = DataFrame(
             {
@@ -2422,6 +2618,8 @@ class TestPivotTable:
         tm.assert_frame_equal(result, expected)
 
     def test_pivot_table_with_mixed_nested_tuples(self):
+        # [FUNCTION DOC]
+        # GH 50342. Column labels that are tuples of mixed lengths and types are legal keys; passing a one-element list with a tuple key as columns works and gives the expected sums.
         # GH 50342
         df = DataFrame(
             {
@@ -2488,6 +2686,8 @@ class TestPivotTable:
         tm.assert_frame_equal(result, expected)
 
     def test_pivot_table_aggfunc_nunique_with_different_values(self):
+        # [FUNCTION DOC]
+        # Counting unique values with a multi-key pivot table where each value occurs once gives a square float frame with ones on the diagonal and missing elsewhere, with multi-level columns (aggregation, values name, columns key).
         test = DataFrame(
             {
                 "a": range(10),
@@ -2525,6 +2725,8 @@ class TestPivotTable:
         tm.assert_frame_equal(result, expected)
 
     def test_pivot_table_index_and_column_keys_with_nan(self, dropna):
+        # [FUNCTION DOC]
+        # GH#61113. Parametrized over dropna. Missing values in both the index and columns keys: the missing key is kept as a final row and column when dropna is off, and the result is the observed subset when it is on.
         # GH#61113
         data = {"row": [None, *range(4)], "col": [*range(4), None], "val": range(5)}
         df = DataFrame(data)
@@ -2579,6 +2781,8 @@ class TestPivotTable:
     def test_pivot_table_values_as_two_params(
         self, index, columns, e_data, e_index, e_cols
     ):
+        # [FUNCTION DOC]
+        # GH#57876. Parametrized (with named cases) over the values column also being the index or the columns key. Counting the values column while it is also a key gives a table with the key values on one axis and the other key on the other axis.
         # GH#57876
         data = {"Category": ["A", "B", "A", "B"], "Value": [10, 20, 40, 50]}
         df = DataFrame(data)
@@ -2589,6 +2793,8 @@ class TestPivotTable:
         tm.assert_frame_equal(result, expected)
 
     def test_pivot_table_margins_include_nan_groups(self):
+        # [FUNCTION DOC]
+        # GH#61509. Count with margins and dropna off where one key contains missing values: the missing group appears as its own column and is included in the margins.
         # GH#61509
         df = DataFrame(
             {
@@ -2620,7 +2826,11 @@ class TestPivotTable:
 
 
 class TestPivot:
+    # [CLASS DOC]
+    # Groups tests of the reshaping function pivot (no aggregation) and related unstacking behavior, mostly through the DataFrame method.
     def test_pivot(self):
+        # [FUNCTION DOC]
+        # Basic pivot with index, columns and values gives the expected frame with named axes; leaving out values gives multi-level columns whose first level is unnamed.
         data = {
             "index": ["A", "B", "C", "C", "B", "A"],
             "columns": ["One", "One", "One", "Two", "Two", "Two"],
@@ -2650,6 +2860,8 @@ class TestPivot:
         assert pivoted.columns.names == (None, "columns")
 
     def test_pivot_duplicates(self):
+        # [FUNCTION DOC]
+        # Pivoting with duplicated index and column pairs must raise a value error saying there are duplicate entries.
         data = DataFrame(
             {
                 "a": ["bar", "bar", "foo", "foo", "foo"],
@@ -2661,12 +2873,16 @@ class TestPivot:
             data.pivot(index="a", columns="b", values="c")
 
     def test_pivot_empty(self):
+        # [FUNCTION DOC]
+        # Pivoting an empty frame gives an empty frame (names not compared).
         df = DataFrame(columns=["a", "b", "c"])
         result = df.pivot(index="a", columns="b", values="c")
         expected = DataFrame(index=[], columns=[])
         tm.assert_frame_equal(result, expected, check_names=False)
 
     def test_pivot_integer_bug(self, any_string_dtype):
+        # [FUNCTION DOC]
+        # Parametrized over the any string dtype fixture. Pivoting with integer column labels as keys gives string-typed (the dtype fixture) columns named by the integer label.
         df = DataFrame(
             data=[("A", "1", "A1"), ("B", "2", "B2")], dtype=any_string_dtype
         )
@@ -2676,6 +2892,8 @@ class TestPivot:
         tm.assert_index_equal(result.columns, expected_columns)
 
     def test_pivot_index_none(self):
+        # [FUNCTION DOC]
+        # GH#3962. With the index key omitted, the existing frame index is used: values given gives the expected frame with named axes; omitting values gives multi-level columns with the values level unnamed.
         # GH#3962
         data = {
             "index": ["A", "B", "C", "C", "B", "A"],
@@ -2712,6 +2930,8 @@ class TestPivot:
         tm.assert_frame_equal(result, expected)
 
     def test_pivot_index_list_values_none_immutable_args(self):
+        # [FUNCTION DOC]
+        # GH37635. Pivoting with list-valued index and columns and no values gives the expected multi-level result and must not mutate the caller's index and columns lists.
         # GH37635
         df = DataFrame(
             {
@@ -2750,6 +2970,8 @@ class TestPivot:
         assert columns == ["lev3"]
 
     def test_pivot_columns_not_given(self):
+        # [FUNCTION DOC]
+        # GH#48293. Calling the method with no arguments must raise a type error saying a keyword-only argument is missing.
         # GH#48293
         df = DataFrame({"a": [1], "b": 1})
         with pytest.raises(TypeError, match="missing 1 required keyword-only argument"):
@@ -2761,6 +2983,9 @@ class TestPivot:
         using_string_dtype(), reason="TODO(infer_string) None is cast to NaN"
     )
     def test_pivot_columns_is_none(self):
+        # [FUNCTION DOC]
+        # GH#48293. Explicit columns of none selects the column labelled none: with only that, with an index, and with an index and values, the pivot gives the expected frames. Expected failure when string dtype inference is on (none becomes missing).
+        # KNOWN ISSUE: the comment above the test says it still fails since none is passed down as the level but is converted to a missing value; the test itself is only marked as failing when string inference is enabled, so the comment describes a limitation that the decorator does not fully reflect.
         # GH#48293
         df = DataFrame({None: [1], "b": 2, "c": 3})
         result = df.pivot(columns=None)
@@ -2776,6 +3001,8 @@ class TestPivot:
         tm.assert_frame_equal(result, expected)
 
     def test_pivot_index_is_none(self, using_infer_string):
+        # [FUNCTION DOC]
+        # GH#48293. Explicit index of none uses the column labelled none as index: with and without values the pivot gives the expected frame; with string inference the index name becomes missing.
         # GH#48293
         df = DataFrame({None: [1], "b": 2, "c": 3})
 
@@ -2791,6 +3018,8 @@ class TestPivot:
         tm.assert_frame_equal(result, expected)
 
     def test_pivot_values_is_none(self):
+        # [FUNCTION DOC]
+        # GH#48293. Explicit values of none behaves like omitting values: with an index key the remaining columns are used; without an index key a default range index is used.
         # GH#48293
         df = DataFrame({None: [1], "b": 2, "c": 3})
 
@@ -2805,6 +3034,8 @@ class TestPivot:
         tm.assert_frame_equal(result, expected)
 
     def test_pivot_not_changing_index_name(self):
+        # [FUNCTION DOC]
+        # GH#52692. Pivoting must not modify the original frame (compared with a deep copy).
         # GH#52692
         df = DataFrame({"one": ["a"], "two": 0, "three": 1})
         expected = df.copy(deep=True)
@@ -2812,6 +3043,8 @@ class TestPivot:
         tm.assert_frame_equal(df, expected)
 
     def test_pivot_table_empty_dataframe_correct_index(self):
+        # [FUNCTION DOC]
+        # GH 21932. A pivot table of an empty frame with count aggregation has an empty object-dtype columns index named after the columns key.
         # GH 21932
         df = DataFrame([], columns=["a", "b", "value"])
         pivot = df.pivot_table(index="a", columns="b", values="value", aggfunc="count")
@@ -2820,6 +3053,8 @@ class TestPivot:
         tm.assert_index_equal(pivot.columns, expected)
 
     def test_pivot_table_handles_explicit_datetime_types(self):
+        # [FUNCTION DOC]
+        # GH#43574. Pivot table with sum and margins whose index keys include a converted datetime column emits no warnings; the resulting index is a two-level multi-index with the datetime values and a final margins entry with an empty second level.
         # GH#43574
         df = DataFrame(
             [
@@ -2847,6 +3082,8 @@ class TestPivot:
         tm.assert_index_equal(pivot.index, expected)
 
     def test_pivot_table_with_margins_and_numeric_column_names(self):
+        # [FUNCTION DOC]
+        # GH#26568. Same as the earlier numeric-column-labels case but without renaming: default integer column labels as keys with margins give the expected table with integer-named axes and the margins label.
         # GH#26568
         df = DataFrame([["a", "x", 1], ["a", "y", 2], ["b", "y", 3], ["b", "z", 4]])
 
@@ -2863,6 +3100,8 @@ class TestPivot:
 
     @pytest.mark.parametrize("m", [1, 10])
     def test_unstack_copy(self, m):
+        # [FUNCTION DOC]
+        # GH#56633. Parametrized over level counts one and ten. Unstacking with sorting off returns data independent of the original: modifying the result must not change the original frame.
         # GH#56633
         levels = np.arange(m)
         index = MultiIndex.from_product([levels] * 2)
@@ -2874,6 +3113,8 @@ class TestPivot:
         tm.assert_frame_equal(df, df_orig)
 
     def test_pivot_empty_with_datetime(self):
+        # [FUNCTION DOC]
+        # GH#59126. A pivot table over an empty frame whose values column is a time-zone-aware datetime gives an empty result without error.
         # GH#59126
         df = DataFrame(
             {
@@ -2888,6 +3129,8 @@ class TestPivot:
         assert df_pivoted.empty
 
     def test_pivot_margins_with_none_index(self):
+        # [FUNCTION DOC]
+        # GH#58722. A pivot table with index none, a two-key columns list, a values column, count aggregation and margins gives a single-row frame labelled by the values name, with multi-level columns including the margins label.
         # GH#58722
         df = DataFrame(
             {
@@ -2917,6 +3160,8 @@ class TestPivot:
 
     @pytest.mark.filterwarnings("ignore:Passing a BlockManager:DeprecationWarning")
     def test_pivot_with_pyarrow_categorical(self):
+        # [FUNCTION DOC]
+        # GH#53051. Skipped when pyarrow is not installed. Pivoting a frame whose key column is a pyarrow dictionary type and whose values are pyarrow floats gives the expected multi-level columns and values (dtype and column type not compared). A deprecation warning about passing a block manager is filtered.
         # GH#53051
         pa = pytest.importorskip("pyarrow")
 
@@ -2945,6 +3190,8 @@ class TestPivot:
 
     @pytest.mark.parametrize("freq", ["D", "M", "Q", "Y"])
     def test_pivot_empty_dataframe_period_dtype(self, freq):
+        # [FUNCTION DOC]
+        # GH#62705. Parametrized over daily, monthly, quarterly and yearly period frequencies. Pivoting an empty frame whose values column has a period dtype gives an empty frame with float-typed empty named axes and the period dtype for its columns.
         # GH#62705
 
         dtype = pd.PeriodDtype(freq=freq)

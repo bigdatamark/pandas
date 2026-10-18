@@ -1,3 +1,10 @@
+# [MODULE DOC]
+# General tests for the Period scalar: rejected frequencies, construction from strings, integers, ordinals, dates and keyword fields,
+# frequency inference and multiples, deprecated and lowercase frequency aliases, methods (pickling, hashing, conversion to timestamp, text rendering),
+# properties (leap year, start and end time, calendar fields for each frequency), sorting, immutability and edge ordinals.
+# Defines a module-level message for the business-day deprecation warning; the test classes are TestPeriodDisallowedFreqs, TestPeriodConstruction,
+# TestPeriodMethods, TestPeriodProperties and TestPeriodComparisons.
+
 from datetime import (
     date,
     datetime,
@@ -37,6 +44,8 @@ bday_msg = "Period with BDay freq is deprecated"
 
 
 class TestPeriodDisallowedFreqs:
+    # [CLASS DOC]
+    # Groups tests that the Period constructor rejects offsets that are not valid period frequencies.
     @pytest.mark.parametrize(
         "freq, freq_msg",
         [
@@ -47,12 +56,17 @@ class TestPeriodDisallowedFreqs:
         ],
     )
     def test_offsets_not_supported(self, freq, freq_msg):
+        # [FUNCTION DOC]
+        # GH#55785. Parametrized over begin-anchored and business offsets with the text that names them. Constructing a period with such an offset as frequency
+        # must raise a value error saying the offset is not supported as a period frequency.
         # GH#55785
         msg = re.escape(f"{freq} is not supported as period frequency")
         with pytest.raises(ValueError, match=msg):
             Period(year=2014, freq=freq)
 
     def test_custom_business_day_freq_raises(self):
+        # [FUNCTION DOC]
+        # GH#52534. The custom business day frequency, given as a string or as an offset object, must raise a value error saying it is not supported as a period frequency.
         # GH#52534
         msg = "C is not supported as period frequency"
         with pytest.raises(ValueError, match=msg):
@@ -62,18 +76,26 @@ class TestPeriodDisallowedFreqs:
             Period("2023-04-10", freq=offsets.CustomBusinessDay())
 
     def test_invalid_frequency_error_message(self):
+        # [FUNCTION DOC]
+        # A week-of-month frequency string must raise a value error saying it is not supported as a period frequency.
         msg = "WOM-1MON is not supported as period frequency"
         with pytest.raises(ValueError, match=msg):
             Period("2012-01-02", freq="WOM-1MON")
 
     def test_invalid_frequency_period_error_message(self):
+        # [FUNCTION DOC]
+        # The month-end alias is not a period frequency; constructing with it must raise a value error saying the frequency is invalid.
         msg = "Invalid frequency: ME"
         with pytest.raises(ValueError, match=msg):
             Period("2012-01-02", freq="ME")
 
 
 class TestPeriodConstruction:
+    # [CLASS DOC]
+    # Groups tests of the Period constructor with its different argument combinations.
     def test_from_td64nat_raises(self):
+        # [FUNCTION DOC]
+        # GH#44507. A missing timedelta numpy value, with or without a frequency, is not an acceptable value and must raise a value error listing the accepted kinds.
         # GH#44507
         td = NaT.to_numpy("m8[ns]")
 
@@ -85,6 +107,10 @@ class TestPeriodConstruction:
             Period(td, freq="D")
 
     def test_construction(self):
+        # [FUNCTION DOC]
+        # Broad construction checks: equivalence of string spellings, default annual frequency, the now constructor with string and offset frequencies,
+        # deprecated uppercase minute and lowercase day aliases emitting a deprecation warning, keyword-field construction,
+        # sub-second string inference (millisecond, microsecond) and explicit frequencies, an ordinal without frequency raising a value error, and an unknown frequency letter raising a value error.
         i1 = Period("1/1/2005", freq="M")
         i2 = Period("Jan 2005")
 
@@ -152,6 +178,8 @@ class TestPeriodConstruction:
             Period("2007-1-1", freq="X")
 
     def test_tuple_freq_disallowed(self):
+        # [FUNCTION DOC]
+        # GH#34703. A frequency given as a tuple (name and multiplier) must raise a type error telling the caller to pass a string instead, for both keyword and positional frequency.
         # GH#34703 tuple freq disallowed
         with pytest.raises(TypeError, match="pass as a string instead"):
             Period("1982", freq=("Min", 1))
@@ -160,6 +188,8 @@ class TestPeriodConstruction:
             Period("2006-12-31", ("w", 1))
 
     def test_construction_from_timestamp_nanos(self):
+        # [FUNCTION DOC]
+        # GH#46811. A nanosecond-frequency period built from a timestamp or from a numpy datetime value must keep the nanoseconds, so converting back to a timestamp round-trips exactly.
         # GH#46811 don't drop nanos from Timestamp
         ts = Timestamp("2022-04-20 09:23:24.123456789")
         per = Period(ts, freq="ns")
@@ -176,6 +206,9 @@ class TestPeriodConstruction:
 
     @pytest.mark.parametrize("freq", ["ms", "us", "ns"])
     def test_construction_from_min_timestamp(self, freq):
+        # [FUNCTION DOC]
+        # GH-63278. Parametrized over millisecond, microsecond and nanosecond units. A period built from the minimum timestamp value interpreted in that unit has year, month, day, hour, minute
+        # and second equal to those of the timestamp. (Converting back to a timestamp is deliberately not tested because it would be out of bounds.)
         # GH-63278
         ts = Timestamp(Timestamp.min.value, unit=freq)
         per = Period(ts, freq=freq)
@@ -192,6 +225,9 @@ class TestPeriodConstruction:
         assert per.second == ts.second
 
     def test_construction_bday(self):
+        # [FUNCTION DOC]
+        # Business-day construction rolls weekend dates forward to Monday: Saturday, Sunday and Monday strings all equal the daily period converted to business frequency, the lowercase alias works
+        # (with a deprecation warning, extra warnings allowed), and keyword construction on a Saturday equals the Monday period.
         # Biz day construction, roll forward if non-weekday
         with tm.assert_produces_warning(
             Pandas4Warning, match="'b' is deprecated", raise_on_extra_warnings=False
@@ -212,6 +248,8 @@ class TestPeriodConstruction:
             assert i1 == i2
 
     def test_construction_quarter(self):
+        # [FUNCTION DOC]
+        # Quarterly construction from year and quarter, from date strings, and from quarter-string spellings (year-first, quarter-first, two-digit years, lowercase) all agree; a four-digit year string is parsed to the right year.
         i1 = Period(year=2005, quarter=1, freq="Q")
         i2 = Period("1/1/2005", freq="Q")
         assert i1 == i2
@@ -247,6 +285,8 @@ class TestPeriodConstruction:
         assert i1 == lower
 
     def test_construction_month(self):
+        # [FUNCTION DOC]
+        # Monthly construction from compact strings, integers, ordinals (whose year is computed from the ordinal), dates, datetimes, numpy datetimes and datetime strings with trailing zeros, all agree.
         expected = Period("2007-01", freq="M")
         i1 = Period("200701", freq="M")
         assert i1 == expected
@@ -275,6 +315,9 @@ class TestPeriodConstruction:
         assert i1 == i5
 
     def test_period_constructor_offsets(self):
+        # [FUNCTION DOC]
+        # Offset objects as the frequency are equivalent to the matching frequency strings for year, month, quarter, day (with multiples) and business-day (with a deprecation warning) periods, for string, integer, ordinal and keyword construction.
+        # KNOWN ISSUE: the later part of this test (date, datetime, numpy and sub-second checks) duplicates checks in the monthly and general construction tests.
         assert Period("1/1/2005", freq=offsets.MonthEnd()) == Period(
             "1/1/2005", freq="M"
         )
@@ -347,6 +390,9 @@ class TestPeriodConstruction:
         assert i1 == expected
 
     def test_invalid_arguments(self):
+        # [FUNCTION DOC]
+        # Invalid argument combinations raise value errors: missing frequency for a datetime or date, a float value or float ordinal, supplying both value and ordinal, a missing value and a missing frequency,
+        # a negative year string, a year zero string (message depends on the Python version) and an unparsable date string (raised as a date parse error).
         msg = "Must supply freq for datetime value"
         with pytest.raises(ValueError, match=msg):
             Period(datetime.now())
@@ -381,6 +427,8 @@ class TestPeriodConstruction:
             Period("1/1/-2000", "Y")
 
     def test_constructor_corner(self):
+        # [FUNCTION DOC]
+        # Corner cases: year and month with a multiple frequency equal the string form; a missing value yields not-a-time; a period converted by passing a different frequency to the constructor equals the annual period.
         expected = Period("2007-01", freq="2M")
         assert Period(year=2007, month=1, freq="2M") == expected
 
@@ -393,6 +441,8 @@ class TestPeriodConstruction:
         assert result == exp
 
     def test_constructor_infer_freq(self):
+        # [FUNCTION DOC]
+        # The frequency is inferred from the precision of the string: day, hour, minute, second, millisecond (three fractional digits) and microsecond (six or more fractional digits, even if zeros).
         p = Period("2007-01-01")
         assert p.freq == "D"
 
@@ -417,6 +467,8 @@ class TestPeriodConstruction:
         assert p.freq == "us"
 
     def test_multiples(self):
+        # [FUNCTION DOC]
+        # A two-year frequency shares its ordinal with the one-year period, has frequency strings that include the December anchor, equals the matching year-end offset with a multiple, and addition or subtraction of an integer steps by that multiple.
         result1 = Period("1989", freq="2Y")
         result2 = Period("1989", freq="Y")
         assert result1.ordinal == result2.ordinal
@@ -432,6 +484,8 @@ class TestPeriodConstruction:
 
     @pytest.mark.parametrize("month", MONTHS)
     def test_period_cons_quarterly(self, month):
+        # [FUNCTION DOC]
+        # Parametrized over every month. For a quarterly frequency anchored at that month, converting a period to the end timestamp (with plain or multiple day frequency) and constructing a period back gives the original period; the string form contains the quarter text.
         # bugs in scikits.timeseries
         freq = f"Q-{month}"
         exp = Period("1989Q3", freq=freq)
@@ -446,6 +500,8 @@ class TestPeriodConstruction:
 
     @pytest.mark.parametrize("month", MONTHS)
     def test_period_cons_annual(self, month):
+        # [FUNCTION DOC]
+        # Parametrized over every month. An annual period with that anchor, converted to its end timestamp plus thirty days and reconstructed, equals the next period and is a Period.
         # bugs in scikits.timeseries
         freq = f"Y-{month}"
         exp = Period("1989", freq=freq)
@@ -458,6 +514,8 @@ class TestPeriodConstruction:
     @pytest.mark.parametrize("day", DAYS)
     @pytest.mark.parametrize("num", range(10, 17))
     def test_period_cons_weekly(self, num, day):
+        # [FUNCTION DOC]
+        # Parametrized over days of the week and day numbers ten to sixteen. A weekly period built directly from a date string equals the daily period converted to that weekly frequency.
         daystr = f"2011-02-{num}"
         freq = f"W-{day}"
 
@@ -467,6 +525,8 @@ class TestPeriodConstruction:
         assert isinstance(result, Period)
 
     def test_parse_week_str_roundstrip(self):
+        # [FUNCTION DOC]
+        # GH#50803. A week range string yields a weekly frequency anchored on the weekday of the end date (Sunday or Monday); a range that is not six days apart raises a value error saying it could not be parsed as weekly.
         # GH#50803
         per = Period("2017-01-23/2017-01-29")
         assert per.freq.freqstr == "W-SUN"
@@ -480,6 +540,8 @@ class TestPeriodConstruction:
             Period("2016-01-23/2017-01-29")
 
     def test_period_from_ordinal(self):
+        # [FUNCTION DOC]
+        # The private ordinal constructor given an ordinal and frequency from an existing period returns an equal Period.
         p = Period("2011-01", freq="M")
         res = Period._from_ordinal(p.ordinal, freq=p.freq)
         assert p == res
@@ -487,6 +549,8 @@ class TestPeriodConstruction:
 
     @pytest.mark.parametrize("freq", ["Y", "M", "D", "h"])
     def test_construct_from_nat_string_and_freq(self, freq):
+        # [FUNCTION DOC]
+        # Parametrized over year, month, day and hour frequencies. A not-a-time string with the frequency, or with a multiple of it, returns the not-a-time singleton.
         per = Period("NaT", freq=freq)
         assert per is NaT
 
@@ -497,6 +561,8 @@ class TestPeriodConstruction:
         assert per is NaT
 
     def test_period_cons_nat(self):
+        # [FUNCTION DOC]
+        # Not-a-time strings and the missing-integer sentinel return the not-a-time singleton for various frequencies (weekly, multiple day, combined day and hour) and for no frequency.
         p = Period("nat", freq="W-SUN")
         assert p is NaT
 
@@ -516,6 +582,9 @@ class TestPeriodConstruction:
         assert p is NaT
 
     def test_period_cons_mult(self):
+        # [FUNCTION DOC]
+        # A three-month period shares the ordinal of the one-month period, has the multiple month-end offset and frequency string, steps by three months with integer addition and subtraction keeping its frequency,
+        # and a negative or zero multiple raises a value error saying the frequency must be positive.
         p1 = Period("2011-01", freq="3M")
         p2 = Period("2011-01", freq="M")
         assert p1.ordinal == p2.ordinal
@@ -546,6 +615,9 @@ class TestPeriodConstruction:
             Period("2011-01", freq="0M")
 
     def test_period_cons_combined(self):
+        # [FUNCTION DOC]
+        # Combined day-plus-hour frequencies (either order), built from a string or from an ordinal, equal a twenty-five-hour frequency with the same ordinal as plain hourly; integer arithmetic steps by twenty-five hours.
+        # Negative or zero combined frequencies raise a value error saying the frequency must be positive; combining a week with a day raises a value error saying the frequency is invalid.
         p = [
             (
                 Period("2011-01", freq="1D1h"),
@@ -633,12 +705,17 @@ class TestPeriodConstruction:
         ],
     )
     def test_period_constructor_nanosecond(self, day, hour, sec_float, expected):
+        # [FUNCTION DOC]
+        # GH 34621. Parametrized over dates, times and fractional second strings with expected nanosecond component. The start time of the period built from the combined string has the expected nanosecond value;
+        # digits beyond nanosecond precision are dropped like a timestamp does.
         # GH 34621
 
         assert Period(day + hour + sec_float).start_time.nanosecond == expected
 
     @pytest.mark.parametrize("hour", range(24))
     def test_period_large_ordinal(self, hour):
+        # [FUNCTION DOC]
+        # Issue #36430. Parametrized over hour 0 to 23. An hourly period with an ordinal beyond the maximum timestamp's must not overflow and has the expected hour.
         # Issue #36430
         # Integer overflow for Period over the maximum timestamp
         p = Period(ordinal=2562048 + hour, freq="1h")
@@ -652,6 +729,8 @@ class TestPeriodConstruction:
         [("2W", "2w"), ("2W-FRI", "2w-fri"), ("2D", "2d"), ("2B", "2b")],
     )
     def test_period_deprecated_lowercase_freq(self, freq, freq_depr):
+        # [FUNCTION DOC]
+        # GH#58998. Parametrized over a frequency and its lowercase form. Constructing with the lowercase form emits the deprecation warning (message uses the form without its first character; extra warnings allowed) and equals the period with the canonical frequency. Business-day warnings are filtered.
         # GH#58998
         msg = (
             f"'{freq_depr[1:]}' is deprecated and will be removed in a future version."
@@ -667,12 +746,18 @@ class TestPeriodConstruction:
 
 
 class TestPeriodMethods:
+    # [CLASS DOC]
+    # Groups tests of Period methods: pickling, hashing, conversion to timestamp and text rendering.
     def test_round_trip(self, temp_file):
+        # [FUNCTION DOC]
+        # Pickle round trip: a quarterly period written to the temporary file fixture and read back equals the original.
         p = Period("2000Q1")
         new_p = tm.round_trip_pickle(p, temp_file)
         assert new_p == p
 
     def test_hash(self):
+        # [FUNCTION DOC]
+        # Equal periods hash equal; different frequency, different multiple or different position give different hashes.
         assert hash(Period("2011-01", freq="M")) == hash(Period("2011-01", freq="M"))
 
         assert hash(Period("2011-01-01", freq="D")) != hash(Period("2011-01", freq="M"))
@@ -685,6 +770,8 @@ class TestPeriodMethods:
     # to_timestamp
 
     def test_to_timestamp_mult(self):
+        # [FUNCTION DOC]
+        # Conversion to a timestamp with the start convention gives the first instant of the period and with the end convention the last microsecond before the next period, also for a multiple-month frequency.
         p = Period("2011-01", freq="M")
         assert p.to_timestamp(how="S") == Timestamp("2011-01-01")
         expected = Timestamp("2011-02-01") - Timedelta(1, unit="us")
@@ -699,6 +786,9 @@ class TestPeriodMethods:
         "ignore:Period with BDay freq is deprecated:FutureWarning"
     )
     def test_to_timestamp(self):
+        # [FUNCTION DOC]
+        # Conversion to timestamp: accepts case-insensitive aliases for start and end conventions, a multiple-day frequency argument does not change the result, and for every base frequency a round trip through timestamp and back gives the original period;
+        # start and end time properties match the start convention and the expected last microsecond. Also checks converting an annual period with hourly, minutely, secondly and multiple frequencies for both conventions.
         p = Period("1982", freq="Y")
         start_ts = p.to_timestamp(how="S")
         aliases = ["s", "StarT", "BEGIn"]
@@ -716,6 +806,8 @@ class TestPeriodMethods:
         from_lst = ["Y", "Q", "M", "W", "B", "D", "h", "Min", "s"]
 
         def _ex(p):
+            # [FUNCTION DOC]
+            # HELPER: computes the expected end time of a period for the timestamp test above. For business-day frequency it is the start time plus one day minus one microsecond; otherwise it is the microsecond before the start of the next period.
             if p.freq == "B":
                 return p.start_time + Timedelta(days=1) - Timedelta(microseconds=1)
             return Timestamp((p + p.freq).start_time._value - 1, unit="us")
@@ -762,6 +854,8 @@ class TestPeriodMethods:
         assert result == expected
 
     def test_to_timestamp_business_end(self):
+        # [FUNCTION DOC]
+        # A Friday business-day period converted to timestamp with business frequency and the end convention gives the last microsecond of Saturday; construction emits the business-day deprecation warning.
         with tm.assert_produces_warning(FutureWarning, match=bday_msg):
             per = Period("1990-01-05", "B")  # Friday
             result = per.to_timestamp("B", how="E")
@@ -785,6 +879,8 @@ class TestPeriodMethods:
     )
     @pytest.mark.parametrize("freq", [None, "us", "ns"])
     def test_to_timestamp_microsecond(self, ts, expected, freq):
+        # [FUNCTION DOC]
+        # GH 24444. Parametrized over timestamp strings with expected microsecond component and over no frequency, microsecond and nanosecond frequency arguments. The microsecond field of the resulting timestamp equals the expected value.
         # GH 24444
         result = Period(ts).to_timestamp(freq=freq).microsecond
         assert result == expected
@@ -822,15 +918,22 @@ class TestPeriodMethods:
         "ignore:Period with BDay freq is deprecated:FutureWarning"
     )
     def test_repr(self, str_ts, freq, str_res, str_freq):
+        # [FUNCTION DOC]
+        # Parametrized over a timestamp string, a frequency (or none), the expected string form and the expected frequency text. The string of the period equals the expected form and the detailed representation names the class, string form and frequency text.
+        # Business-day deprecation warnings are filtered.
         p = Period(str_ts, freq=freq)
         assert str(p) == str_res
         assert repr(p) == f"Period('{str_res}', '{str_freq}')"
 
     def test_repr_nat(self):
+        # [FUNCTION DOC]
+        # The representation of a not-a-time period (monthly) contains the representation of the not-a-time scalar.
         p = Period("nat", freq="M")
         assert repr(NaT) in repr(p)
 
     def test_strftime(self):
+        # [FUNCTION DOC]
+        # GH#3363. Formatting a seconds-frequency period with a format string returns a plain string with the formatted date and time.
         # GH#3363
         p = Period("2000-1-1 12:34:12", freq="s")
         res = p.strftime("%Y-%m-%d %H:%M:%S")
@@ -839,10 +942,14 @@ class TestPeriodMethods:
 
 
 class TestPeriodProperties:
+    # [CLASS DOC]
+    # Groups tests of Period properties such as year, month, weekday, start and end time.
     """Test properties such as year, month, weekday, etc...."""
 
     @pytest.mark.parametrize("freq", ["Y", "M", "D", "h"])
     def test_is_leap_year(self, freq):
+        # [FUNCTION DOC]
+        # GH 13727. Parametrized over year, month, day and hour frequencies. The leap-year property is a boolean: true for 2000 and 2004, false for 1999 and 2100.
         # GH 13727
         p = Period("2000-01-01 00:00:00", freq=freq)
         assert p.is_leap_year
@@ -858,6 +965,8 @@ class TestPeriodProperties:
         assert not p.is_leap_year
 
     def test_quarterly_negative_ordinals(self):
+        # [FUNCTION DOC]
+        # Periods with negative ordinals (before 1970) have correct year, quarter and month: ordinals negative one and two for quarterly give 1969 quarters four and three; negative two for monthly gives November 1969.
         p = Period(ordinal=-1, freq="Q-DEC")
         assert p.year == 1969
         assert p.quarter == 4
@@ -874,6 +983,8 @@ class TestPeriodProperties:
         assert isinstance(p, Period)
 
     def test_freq_str(self):
+        # [FUNCTION DOC]
+        # A period built with the capitalized minute alias has a minute offset frequency and the canonical frequency string.
         i1 = Period("1982", freq="Min")
         assert i1.freq == offsets.Minute()
         assert i1.freqstr == "min"
@@ -882,6 +993,9 @@ class TestPeriodProperties:
         "ignore:Period with BDay freq is deprecated:FutureWarning"
     )
     def test_period_deprecated_freq(self):
+        # [FUNCTION DOC]
+        # Long-form and mixed-case frequency aliases (monthly, business, daily, hourly, minutely, secondly, and so on) must raise a value error with the invalid-frequency message, both for string and ordinal construction; the supported short aliases still build periods.
+        # KNOWN ISSUE: the name and the variable names refer to deprecated aliases, but the aliases are now rejected outright rather than deprecated.
         cases = {
             "M": ["MTH", "MONTH", "MONTHLY", "Mth", "month", "monthly"],
             "B": ["BUS", "BUSINESS", "BUSINESSLY", "WEEKDAY", "bus"],
@@ -910,6 +1024,8 @@ class TestPeriodProperties:
 
     @staticmethod
     def _period_constructor(bound, offset):
+        # [FUNCTION DOC]
+        # HELPER: static method building a microsecond-frequency period from a timestamp bound, using its year, month, day, hour and minute and its second shifted by an offset (in seconds). Used by the two bounds tests below.
         return Period(
             year=bound.year,
             month=bound.month,
@@ -923,6 +1039,9 @@ class TestPeriodProperties:
     @pytest.mark.parametrize("bound, offset", [(Timestamp.min, -1), (Timestamp.max, 1)])
     @pytest.mark.parametrize("period_property", ["start_time", "end_time"])
     def test_outer_bounds_start_and_end_time(self, bound, offset, period_property):
+        # [FUNCTION DOC]
+        # GH #13346. Parametrized over the minimum and maximum timestamp (with an offset of minus or plus one second) and over the start-time and end-time properties. Reading these properties on the period shifted just outside the bound no longer raises
+        # (since GH#63760). A millisecond period built from the bound's ordinal far outside the range must raise: an overflow error for the end time of the maximum case, otherwise an out-of-bounds datetime error saying the microsecond is out of bounds.
         # GH #13346
         period = TestPeriodProperties._period_constructor(bound, offset)
         # post-GH#63760 this no longer raises OutOfBoundsDatetime
@@ -944,6 +1063,8 @@ class TestPeriodProperties:
     @pytest.mark.parametrize("bound, offset", [(Timestamp.min, -1), (Timestamp.max, 1)])
     @pytest.mark.parametrize("period_property", ["start_time", "end_time"])
     def test_inner_bounds_start_and_end_time(self, bound, offset, period_property):
+        # [FUNCTION DOC]
+        # GH #13346. Parametrized over the minimum and maximum bounds and the start/end properties. A period just inside the bound has start and end times that agree with the period's timestamp after rounding to seconds, and equal to the bound shifted by one second after flooring to seconds.
         # GH #13346
         period = TestPeriodProperties._period_constructor(bound, -offset)
         expected = period.to_timestamp().round(freq="s")
@@ -952,6 +1073,8 @@ class TestPeriodProperties:
         assert getattr(period, period_property).floor("s") == expected
 
     def test_start_time(self):
+        # [FUNCTION DOC]
+        # The start time of 2012 periods in year, quarter, month, day, hour, minute and second frequency is the first of January; the business-day period starts on the second (a Monday, with deprecation warning), and the weekly period starts on the Monday before.
         freq_lst = ["Y", "Q", "M", "D", "h", "min", "s"]
         xp = datetime(2012, 1, 1)
         for f in freq_lst:
@@ -962,6 +1085,8 @@ class TestPeriodProperties:
         assert Period("2012", freq="W").start_time == datetime(2011, 12, 26)
 
     def test_end_time(self):
+        # [FUNCTION DOC]
+        # The end time is the last microsecond of the period for year, quarter, month, day, hour, business day, week, multiple-day (GH 11738) and combined day-and-hour frequencies.
         p = Period("2012", freq="Y")
 
         exp = Timestamp(2012, 12, 31, 23, 59, 59, 999999)
@@ -1006,6 +1131,8 @@ class TestPeriodProperties:
         assert p.end_time == exp
 
     def test_end_time_business_friday(self):
+        # [FUNCTION DOC]
+        # GH#34449. A Friday business-day period's end time is the last microsecond of Saturday; construction emits the business-day warning.
         # GH#34449
         with tm.assert_produces_warning(FutureWarning, match=bday_msg):
             per = Period("1990-01-05", "B")
@@ -1015,16 +1142,23 @@ class TestPeriodProperties:
         assert result == expected
 
     def test_anchor_week_end_time(self):
+        # [FUNCTION DOC]
+        # A weekly period anchored on Saturday has an end time at the last microsecond of that Saturday.
         p = Period("2013-1-1", "W-SAT")
         exp = Timestamp(2013, 1, 5, 23, 59, 59, 999999)
         assert p.end_time == exp
 
     def test_properties_annually(self):
+        # [FUNCTION DOC]
+        # An annual period reports its year.
         # Test properties on Periods with annually frequency.
         a_date = Period(freq="Y", year=2007)
         assert a_date.year == 2007
 
     def test_properties_quarterly(self):
+        # [FUNCTION DOC]
+        # Quarterly periods with December, January and June fiscal year-ends: the fiscal year is 2007 and the quarter is one plus the offset for the first three steps.
+        # KNOWN ISSUE: the comment says daily frequency but the test exercises quarterly periods (copy-paste).
         # Test properties on Periods with daily frequency.
         qedec_date = Period(freq="Q-DEC", year=2007, quarter=1)
         qejan_date = Period(freq="Q-JAN", year=2007, quarter=1)
@@ -1035,6 +1169,9 @@ class TestPeriodProperties:
                 assert (qd + x).quarter == x + 1
 
     def test_properties_monthly(self):
+        # [FUNCTION DOC]
+        # Monthly periods stepped over the first eleven months report year 2007, the right month and quarter.
+        # KNOWN ISSUE: the comment says daily frequency but the test exercises monthly periods, and the loop stops before December.
         # Test properties on Periods with daily frequency.
         m_date = Period(freq="M", year=2007, month=1)
         for x in range(11):
@@ -1051,6 +1188,9 @@ class TestPeriodProperties:
             assert m_ival_x.month == x + 1
 
     def test_properties_weekly(self):
+        # [FUNCTION DOC]
+        # A weekly period reports year, quarter, month, week number (one, and fifty-two one week earlier) and days in month (including leap February).
+        # KNOWN ISSUE: the comment says daily frequency but the test exercises weekly periods.
         # Test properties on Periods with daily frequency.
         w_date = Period(freq="W", year=2007, month=1, day=7)
         assert w_date.year == 2007
@@ -1062,6 +1202,9 @@ class TestPeriodProperties:
         assert Period(freq="W", year=2012, month=2, day=1).days_in_month == 29
 
     def test_properties_weekly_legacy(self):
+        # [FUNCTION DOC]
+        # Same property checks as the weekly test, plus the legacy week alias raising a value error with the invalid-frequency message.
+        # KNOWN ISSUE: the property assertions duplicate the previous test, and the comment wrongly says daily frequency.
         # Test properties on Periods with daily frequency.
         w_date = Period(freq="W", year=2007, month=1, day=7)
         assert w_date.year == 2007
@@ -1079,6 +1222,8 @@ class TestPeriodProperties:
             Period(freq="WK", year=2007, month=1, day=7)
 
     def test_properties_daily(self):
+        # [FUNCTION DOC]
+        # Business-day (with deprecation warning) and daily periods on the first of January 2007 report year, quarter, month, day, weekday zero, day of year one and days in month; leap February has twenty-nine days.
         # Test properties on Periods with daily frequency.
         with tm.assert_produces_warning(FutureWarning, match=bday_msg):
             b_date = Period(freq="B", year=2007, month=1, day=1)
@@ -1104,6 +1249,8 @@ class TestPeriodProperties:
         assert Period(freq="D", year=2012, month=2, day=1).days_in_month == 29
 
     def test_properties_hourly(self):
+        # [FUNCTION DOC]
+        # Hourly periods, with a one-hour and a two-hour frequency, report the calendar fields and hour; leap February has twenty-nine days.
         # Test properties on Periods with hourly frequency.
         h_date1 = Period(freq="h", year=2007, month=1, day=1, hour=0)
         h_date2 = Period(freq="2h", year=2007, month=1, day=1, hour=0)
@@ -1122,6 +1269,9 @@ class TestPeriodProperties:
             )
 
     def test_properties_minutely(self):
+        # [FUNCTION DOC]
+        # A minute-frequency period reports calendar fields, hour and minute.
+        # KNOWN ISSUE: the final leap-February check builds a daily period (with hour and minute fields) rather than a minutely one.
         # Test properties on Periods with minutely frequency.
         t_date = Period(freq="Min", year=2007, month=1, day=1, hour=0, minute=0)
         assert t_date.quarter == 1
@@ -1138,6 +1288,9 @@ class TestPeriodProperties:
         )
 
     def test_properties_secondly(self):
+        # [FUNCTION DOC]
+        # Reports calendar fields and the second field for a period.
+        # KNOWN ISSUE: despite the name, the periods are built with minute frequency rather than seconds frequency.
         # Test properties on Periods with secondly frequency.
         s_date = Period(
             freq="Min", year=2007, month=1, day=1, hour=0, minute=0, second=0
@@ -1161,7 +1314,11 @@ class TestPeriodProperties:
 
 
 class TestPeriodComparisons:
+    # [CLASS DOC]
+    # Groups ordering tests for Period.
     def test_sort_periods(self):
+        # [FUNCTION DOC]
+        # Sorting a list of monthly periods in arbitrary order yields chronological order.
         jan = Period("2000-01", "M")
         feb = Period("2000-02", "M")
         mar = Period("2000-03", "M")
@@ -1171,6 +1328,8 @@ class TestPeriodComparisons:
 
 
 def test_period_immutable():
+    # [FUNCTION DOC]
+    # see gh-17116. Assigning to the ordinal or the frequency of a period must raise an attribute error saying the attribute is not writable.
     # see gh-17116
     msg = "not writable"
 
@@ -1184,12 +1343,16 @@ def test_period_immutable():
 
 
 def test_small_year_parsing():
+    # [FUNCTION DOC]
+    # A daily period in year one parses its year and day correctly.
     per1 = Period("0001-01-07", "D")
     assert per1.year == 1
     assert per1.day == 7
 
 
 def test_negone_ordinals():
+    # [FUNCTION DOC]
+    # Periods with ordinal negative one for year, month, quarter, day, hour, minute, second, business day (with deprecation warning) and week frequency can be represented without errors; the daily one converted to each frequency can also be represented; non-business ones report year 1969.
     freqs = ["Y", "M", "Q", "D", "h", "min", "s"]
 
     period = Period(ordinal=-1, freq="D")

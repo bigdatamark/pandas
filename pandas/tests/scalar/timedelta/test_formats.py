@@ -1,3 +1,8 @@
+# [MODULE DOC]
+# Tests for the text formats of Timedelta: its representation, ISO 8601 duration output and the private
+# base-representation helper in each of its formats (default, sub-day, long, all).
+# Note that the base-representation tests bind a throwaway lambda to a local name; lambdas cannot carry doc blocks.
+
 import pytest
 
 from pandas import Timedelta
@@ -13,6 +18,9 @@ from pandas import Timedelta
     ],
 )
 def test_repr(td, expected_repr):
+    # [FUNCTION DOC]
+    # Parametrized over timedeltas and expected representation strings. The representation must name the class and show
+    # days and time of day, using the negative-days-plus-time form for negative values.
     assert repr(td) == expected_repr
 
 
@@ -41,11 +49,19 @@ def test_repr(td, expected_repr):
     ],
 )
 def test_isoformat(td, expected_iso):
+    # [FUNCTION DOC]
+    # Parametrized over timedeltas with a full mix of components and the expected ISO duration string. Trailing zeros of
+    # the fractional seconds are trimmed to whole microsecond or millisecond groups but a zero seconds field is kept.
     assert td.isoformat() == expected_iso
 
 
 class TestReprBase:
+    # [CLASS DOC]
+    # Groups tests of the private base-representation method with different format arguments.
     def test_none(self):
+        # [FUNCTION DOC]
+        # Default format: whole days omit the time of day, otherwise the time of day follows; fractional seconds show six digits
+        # only when non-zero; negative values use the negative-days-plus-time form.
         delta_1d = Timedelta(1, unit="D")
         delta_0d = Timedelta(0, unit="D")
         delta_1s = Timedelta(1, unit="s")
@@ -63,6 +79,8 @@ class TestReprBase:
         assert drepr(-delta_1d + delta_500ms) == "-1 days +00:00:00.500000"
 
     def test_sub_day(self):
+        # [FUNCTION DOC]
+        # The sub-day format: like the default, but a zero timedelta shows only the time of day and whole days show only days.
         delta_1d = Timedelta(1, unit="D")
         delta_0d = Timedelta(0, unit="D")
         delta_1s = Timedelta(1, unit="s")
@@ -80,6 +98,8 @@ class TestReprBase:
         assert drepr(-delta_1d + delta_500ms) == "-1 days +00:00:00.500000"
 
     def test_long(self):
+        # [FUNCTION DOC]
+        # The long format always shows days and a time of day (and fractional part when non-zero), including for whole days and zero.
         delta_1d = Timedelta(1, unit="D")
         delta_0d = Timedelta(0, unit="D")
         delta_1s = Timedelta(1, unit="s")
@@ -97,6 +117,9 @@ class TestReprBase:
         assert drepr(-delta_1d + delta_500ms) == "-1 days +00:00:00.500000"
 
     def test_all(self):
+        # [FUNCTION DOC]
+        # The all format always shows days and a time of day with nine fractional digits (nanosecond precision),
+        # for whole days, zero, and a single nanosecond, and in the negative-days-plus-time form for negatives.
         delta_1d = Timedelta(1, unit="D")
         delta_0d = Timedelta(0, unit="D")
         delta_1ns = Timedelta(1, unit="ns")

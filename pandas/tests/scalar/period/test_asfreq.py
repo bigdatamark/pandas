@@ -1,3 +1,7 @@
+# [MODULE DOC]
+# Tests for Period frequency conversion (asfreq) and related start/end time behavior, across annual, quarterly, monthly, weekly, business, daily, hourly,
+# minutely, secondly and microsecond frequencies, as well as multiples of frequencies and combined frequencies. Defines a module-level message string for the business-day deprecation warning.
+
 import pytest
 
 from pandas._libs.tslibs.period import INVALID_FREQ_ERR_MSG
@@ -13,11 +17,17 @@ bday_msg = "Period with BDay freq is deprecated"
 
 
 class TestFreqConversion:
+    # [CLASS DOC]
+    # Groups frequency-conversion tests for Period.
     """Test frequency conversion of date objects"""
 
     @pytest.mark.filterwarnings("ignore:Period with BDay:FutureWarning")
     @pytest.mark.parametrize("freq", ["Y", "Q", "M", "W", "B", "D"])
     def test_asfreq_near_zero(self, freq):
+        # [FUNCTION DOC]
+        # GH#19643, GH#19650. Parametrized over several frequencies; periods in year one subtract one step to give the previous ordinal, and the previous period must have an earlier (year, month, day) tuple.
+        # KNOWN ISSUE: the first tuple is built from the year, hour and day of the period rather than year, month and day as the second tuple is, so the comparison mixes fields (likely a typo for month).
+        # Business-day deprecation warnings are filtered.
         # GH#19643, GH#19650
         per = Period("0001-01-01", freq=freq)
         tup1 = (per.year, per.hour, per.day)
@@ -28,6 +38,9 @@ class TestFreqConversion:
         assert tup2 < tup1
 
     def test_asfreq_near_zero_weekly(self):
+        # [FUNCTION DOC]
+        # GH#19834. Periods six days after and before the start of year one, converted to weekly frequency, must differ; converting the weekly periods back to daily with the end convention must be
+        # no earlier than the first daily period, and with the start convention no later than the second.
         # GH#19834
         per1 = Period("0001-01-01", "D") + 6
         per2 = Period("0001-01-01", "D") - 6
@@ -38,6 +51,8 @@ class TestFreqConversion:
         assert week2.asfreq("D", "S") <= per2
 
     def test_to_timestamp_out_of_bounds(self):
+        # [FUNCTION DOC]
+        # GH#19643. Creating a business-day period in year one emits the deprecation future warning, and converting it to a timestamp (formerly gave a wrong 1754 date) also emits that warning without raising.
         # GH#19643, used to incorrectly give Timestamp in 1754
         with tm.assert_produces_warning(FutureWarning, match=bday_msg):
             per = Period("0001-01-01", freq="B")
@@ -45,6 +60,8 @@ class TestFreqConversion:
             per.to_timestamp()
 
     def test_asfreq_corner(self):
+        # [FUNCTION DOC]
+        # Converting an annual period to five-minute or one-minute frequency yields the last minute of the year (end convention is the default); ordinals match and the frequency strings are preserved.
         val = Period(freq="Y", year=2007)
         result1 = val.asfreq("5min")
         result2 = val.asfreq("min")
@@ -55,6 +72,9 @@ class TestFreqConversion:
         assert result2.freqstr == "min"
 
     def test_conv_annual(self):
+        # [FUNCTION DOC]
+        # Conversion from annual frequency (plain and with January, June and November year-ends) to quarterly, monthly, weekly, business, daily, hourly, minutely and secondly frequencies, with both start and end conventions;
+        # checks expected periods at the boundaries of the year, and that an invalid frequency string raises a value error with the standard invalid frequency message.
         # frequency conversion tests: from Annual Frequency
         msg = INVALID_FREQ_ERR_MSG
 
@@ -131,6 +151,8 @@ class TestFreqConversion:
         assert ival_A.asfreq("Y") == ival_A
 
     def test_conv_quarterly(self):
+        # [FUNCTION DOC]
+        # Conversion from quarterly frequency (various fiscal year-ends) to annual, monthly, weekly, business, daily, hourly, minutely and secondly frequencies, checking boundaries of the quarter for each convention.
         # frequency conversion tests: from Quarterly Frequency
 
         ival_Q = Period(freq="Q", year=2007, quarter=1)
@@ -197,6 +219,8 @@ class TestFreqConversion:
         assert ival_Q.asfreq("Q") == ival_Q
 
     def test_conv_monthly(self):
+        # [FUNCTION DOC]
+        # Conversion from monthly frequency to annual, quarterly, weekly, business, daily, hourly, minutely and secondly frequencies, checking boundary results for months with different lengths and the start/end conventions.
         # frequency conversion tests: from Monthly Frequency
 
         ival_M = Period(freq="M", year=2007, month=1)
@@ -248,6 +272,9 @@ class TestFreqConversion:
         assert ival_M.asfreq("M") == ival_M
 
     def test_conv_weekly(self):
+        # [FUNCTION DOC]
+        # Conversion from weekly frequency (with the various week-ending days) to annual, quarterly, monthly, business, daily, hourly, minutely and secondly frequencies, checking weeks that span month and year boundaries.
+        # Also verifies an invalid frequency string raises a value error with the standard invalid frequency message.
         # frequency conversion tests: from Weekly Frequency
         ival_W = Period(freq="W", year=2007, month=1, day=1)
 
@@ -361,6 +388,8 @@ class TestFreqConversion:
             ival_W.asfreq("WK")
 
     def test_conv_weekly_legacy(self):
+        # [FUNCTION DOC]
+        # Legacy weekly frequency aliases (week prefix with a weekday suffix) are no longer supported: constructing a period with any of them must raise a value error with the invalid frequency message.
         # frequency conversion tests: from Weekly Frequency
         msg = INVALID_FREQ_ERR_MSG
         with pytest.raises(ValueError, match=msg):
@@ -380,6 +409,8 @@ class TestFreqConversion:
             Period(freq="WK-MON", year=2007, month=1, day=1)
 
     def test_conv_business(self):
+        # [FUNCTION DOC]
+        # Conversion from business-day frequency to annual, quarterly, monthly, weekly, daily, hourly, minutely and secondly frequencies. Construction of business-day periods emits the deprecation future warning, which is asserted.
         # frequency conversion tests: from Business Frequency"
 
         with tm.assert_produces_warning(FutureWarning, match=bday_msg):
@@ -431,6 +462,8 @@ class TestFreqConversion:
             assert ival_B.asfreq("B") == ival_B
 
     def test_conv_daily(self):
+        # [FUNCTION DOC]
+        # Conversion from daily frequency to annual, quarterly, monthly, weekly, business, hourly, minutely and secondly frequencies, covering year/quarter/month ends and weekends (for business conversion).
         # frequency conversion tests: from Business Frequency"
 
         ival_D = Period(freq="D", year=2007, month=1, day=1)
@@ -508,6 +541,8 @@ class TestFreqConversion:
         assert ival_D.asfreq("D") == ival_D
 
     def test_conv_hourly(self):
+        # [FUNCTION DOC]
+        # Conversion from hourly frequency to annual, quarterly, monthly, weekly, business, daily, minutely and secondly frequencies for both start and end conventions.
         # frequency conversion tests: from Hourly Frequency"
 
         ival_H = Period(freq="h", year=2007, month=1, day=1, hour=0)
@@ -561,6 +596,8 @@ class TestFreqConversion:
         assert ival_H.asfreq("h") == ival_H
 
     def test_conv_minutely(self):
+        # [FUNCTION DOC]
+        # Conversion from minutely frequency to annual, quarterly, monthly, weekly, business, daily, hourly and secondly frequencies for both start and end conventions.
         # frequency conversion tests: from Minutely Frequency"
 
         ival_T = Period(freq="Min", year=2007, month=1, day=1, hour=0, minute=0)
@@ -624,6 +661,8 @@ class TestFreqConversion:
         assert ival_T.asfreq("Min") == ival_T
 
     def test_conv_secondly(self):
+        # [FUNCTION DOC]
+        # Conversion from secondly frequency to annual, quarterly, monthly, weekly, business, daily, hourly and minutely frequencies for both start and end conventions.
         # frequency conversion tests: from Secondly Frequency"
 
         ival_S = Period(freq="s", year=2007, month=1, day=1, hour=0, minute=0, second=0)
@@ -683,6 +722,9 @@ class TestFreqConversion:
         assert ival_S.asfreq("s") == ival_S
 
     def test_conv_microsecond(self):
+        # [FUNCTION DOC]
+        # GH#31475. A microsecond-frequency period has the expected large integer ordinal; its start time equals the timestamp for the same instant, and the timestamp internal value equals the ordinal,
+        # guarding against floating point errors that would move the start earlier.
         # GH#31475 Avoid floating point errors dropping the start_time to
         #  before the beginning of the Period
         per = Period("2020-01-30 15:57:27.576166", freq="us")
@@ -694,6 +736,9 @@ class TestFreqConversion:
         assert start._value == per.ordinal
 
     def test_asfreq_mult(self):
+        # [FUNCTION DOC]
+        # Conversion between plain and multiple-unit frequencies, given as strings or offset objects. Plain annual to a three-year frequency keeps the ordinal for either convention; a three-year period to plain annual moves to the end of the span by default and stays at the start with the start convention;
+        # the same is checked from annual and three-year frequencies to two-month frequency. Results are compared for value, ordinal and frequency.
         # normal freq to mult freq
         p = Period(freq="Y", year=2007)
         # ordinal will not change
@@ -765,6 +810,8 @@ class TestFreqConversion:
             assert result.freq == expected.freq
 
     def test_asfreq_combined(self):
+        # [FUNCTION DOC]
+        # Conversion between plain hourly and combined frequencies (a day plus an hour in either spelling, equal to twenty-five hours). Plain to combined keeps the ordinal; combined to hourly lands on the end (next day) by default and on the start with the start convention.
         # normal freq to combined freq
         p = Period("2007", freq="h")
 
@@ -803,6 +850,8 @@ class TestFreqConversion:
         assert result2.freq == expected.freq
 
     def test_asfreq_MS(self):
+        # [FUNCTION DOC]
+        # Converting a yearly period to monthly with the start convention gives January; month-start frequency is not a valid period frequency, so both converting to it and constructing a period with it must raise a value error with the invalid frequency message.
         initial = Period("2013")
 
         assert initial.asfreq(freq="M", how="S") == Period("2013-01", "M")

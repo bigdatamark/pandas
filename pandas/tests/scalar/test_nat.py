@@ -1,3 +1,10 @@
+# [MODULE DOC]
+# Tests for the not-a-time singleton NaT: text formatting, field access, construction identity, rounding, unsupported and passthrough methods,
+# overlap of its public methods and docstrings with Timestamp and Timedelta, arithmetic with scalars, indexes, arrays and numpy arrays,
+# comparisons (including invalid operands and the date object), conversion to numpy, and pickling.
+# Defines a module-level mapping from operation names to two-argument lambdas (left or right plus, minus, times and division) used by the arithmetic tests;
+# lambdas cannot carry doc blocks. Imports private operator helpers and array classes.
+
 from datetime import (
     datetime,
     timedelta,
@@ -33,13 +40,21 @@ from pandas.core.arrays import (
 
 
 class TestNaTFormatting:
+    # [CLASS DOC]
+    # Groups tests of the text formats of NaT.
     def test_repr(self):
+        # [FUNCTION DOC]
+        # The detailed representation of NaT is the text NaT.
         assert repr(NaT) == "NaT"
 
     def test_str(self):
+        # [FUNCTION DOC]
+        # The string form of NaT is the text NaT.
         assert str(NaT) == "NaT"
 
     def test_isoformat(self):
+        # [FUNCTION DOC]
+        # The ISO format of NaT is the text NaT.
         assert NaT.isoformat() == "NaT"
 
 
@@ -52,6 +67,9 @@ class TestNaTFormatting:
     ],
 )
 def test_nat_fields(nat, idx):
+    # [FUNCTION DOC]
+    # Parametrized over a missing timestamp, timedelta and period and the matching array class. For every calendar field listed in the array class's field operations (except weekday, which is a method on scalars)
+    # both NaT and the typed missing scalar return a not-a-number float; for every boolean property in the class's boolean operations they return false.
     for field in idx._field_ops:
         # weekday is a property of DTI, but a method
         # on NaT/Timestamp for compat with datetime
@@ -73,6 +91,8 @@ def test_nat_fields(nat, idx):
 
 
 def test_nat_vector_field_access():
+    # [FUNCTION DOC]
+    # Calendar fields accessed on a datetime index with missing entries, and on a series through the date accessor, equal the fields collected from each element (weekday skipped); boolean properties are checked through the series accessor.
     idx = DatetimeIndex(["1/1/2000", None, None, "1/4/2000"])
 
     for field in DatetimeArray._field_ops:
@@ -108,6 +128,8 @@ def test_nat_vector_field_access():
     "value", [None, np.nan, iNaT, float("nan"), NaT, "NaT", "nat", "", "NAT"]
 )
 def test_identity(klass, value):
+    # [FUNCTION DOC]
+    # Parametrized over Timestamp, Timedelta and Period and over missing-like inputs (none, nan, the integer sentinel, a float nan, NaT, NaT strings in various cases, empty string). Constructing the class from any of them returns the NaT singleton.
     assert klass(value) is NaT
 
 
@@ -115,6 +137,8 @@ def test_identity(klass, value):
 @pytest.mark.parametrize("method", ["round", "floor", "ceil"])
 @pytest.mark.parametrize("freq", ["s", "5s", "min", "5min", "h", "5h"])
 def test_round_nat(klass, method, freq):
+    # [FUNCTION DOC]
+    # see gh-14940. Parametrized over Timestamp and Timedelta, rounding, flooring and ceiling, and several frequencies. Applying the method to a missing value of that class returns the very same missing object.
     # see gh-14940
     ts = klass("nat")
 
@@ -148,6 +172,8 @@ def test_round_nat(klass, method, freq):
     ],
 )
 def test_nat_methods_raise(method):
+    # [FUNCTION DOC]
+    # see gh-9513, gh-17329. Parametrized over datetime-only method names (conversion, construction from system time, calendar tuples, and so on). Calling each on NaT must raise a value error saying the NaT type does not support that method.
     # see gh-9513, gh-17329
     msg = f"NaTType does not support {method}"
 
@@ -157,6 +183,8 @@ def test_nat_methods_raise(method):
 
 @pytest.mark.parametrize("method", ["weekday", "isoweekday"])
 def test_nat_methods_nan(method):
+    # [FUNCTION DOC]
+    # see gh-9513, gh-17329. Parametrized over weekday and ISO weekday. Calling either on NaT returns a not-a-number float.
     # see gh-9513, gh-17329
     assert np.isnan(getattr(NaT, method)())
 
@@ -165,6 +193,8 @@ def test_nat_methods_nan(method):
     "method", ["date", "now", "replace", "today", "tz_convert", "tz_localize"]
 )
 def test_nat_methods_nat(method):
+    # [FUNCTION DOC]
+    # see gh-8254, gh-9513, gh-17329. Parametrized over date, now, replace, today, time zone conversion and localization. Calling each on NaT with no arguments returns NaT.
     # see gh-8254, gh-9513, gh-17329
     assert getattr(NaT, method)() is NaT
 
@@ -173,6 +203,8 @@ def test_nat_methods_nat(method):
     "get_nat", [lambda x: NaT, lambda x: Timedelta(x), lambda x: Timestamp(x)]
 )
 def test_nat_iso_format(get_nat):
+    # [FUNCTION DOC]
+    # see gh-12300. Parametrized over a factory returning NaT, a missing Timedelta and a missing Timestamp. Their ISO format, with and without a nanosecond precision argument, is the text NaT.
     # see gh-12300
     assert get_nat("NaT").isoformat() == "NaT"
     assert get_nat("NaT").isoformat(timespec="nanoseconds") == "NaT"
@@ -196,6 +228,8 @@ def test_nat_iso_format(get_nat):
     ],
 )
 def test_missing_public_nat_methods(klass, expected):
+    # [FUNCTION DOC]
+    # see gh-17327. Parametrized over Timestamp and Timedelta with the expected list of missing public names. The sorted public attributes present on the class but absent from NaT must equal the expected list (private names ignored).
     # see gh-17327
     #
     # NaT should have *most* of the Timestamp and Timedelta methods.
@@ -211,6 +245,9 @@ def test_missing_public_nat_methods(klass, expected):
 
 
 def _get_overlap_public_nat_methods(klass, as_tuple=False):
+    # [FUNCTION DOC]
+    # HELPER: used by the overlap tests below. Given a class and an option to return pairs, returns the sorted list of public callable names that both NaT and the class have; for Timedelta, names also present on Timestamp are removed (Timestamp takes precedence).
+    # When the option is on, each name is paired with the class as a tuple of class and name.
     """
     Get overlapping public methods between NaT and another class.
 
@@ -297,6 +334,8 @@ def _get_overlap_public_nat_methods(klass, as_tuple=False):
     ],
 )
 def test_overlap_public_nat_methods(klass, expected):
+    # [FUNCTION DOC]
+    # see gh-17327. Parametrized over Timestamp and Timedelta with the expected overlapping method names. The helper's result must equal the expected list (the Timedelta-only overlap is just total seconds).
     # see gh-17327
     #
     # NaT should have *most* of the Timestamp and Timedelta methods.
@@ -314,6 +353,9 @@ def test_overlap_public_nat_methods(klass, expected):
     ids=lambda x: f"{x[0].__name__}.{x[1]}",
 )
 def test_nat_doc_strings(compare):
+    # [FUNCTION DOC]
+    # see gh-17327. Parametrized (at import time) over the pairs of class and overlapping public method from the helper for both classes, with readable ids. The documentation string of the class's method must equal that of NaT's method.
+    # Skipped for the Timestamp ISO format (intentional difference) and for conversion to numpy (intentionally different documentation).
     # see gh-17327
     #
     # The docstrings for overlapping methods should match.
@@ -364,6 +406,10 @@ _ops = {
     ],
 )
 def test_nat_arithmetic_scalar(op_name, value, val_type):
+    # [FUNCTION DOC]
+    # see gh-6873. Parametrized over operation names from the module mapping and values of several kinds (integer, floats, string, timedeltas, timestamps with and without zones).
+    # Each kind has a set of operations that are invalid; those must raise a type error with a kind-specific message (string operands accept several platform messages; multiplying NaT by a timedelta object names the types).
+    # Valid operations return NaT, except division involving a timedelta, which returns a not-a-number float.
     # see gh-6873
     invalid_ops = {
         "scalar": {"right_div_left"},
@@ -425,6 +471,8 @@ def test_nat_arithmetic_scalar(op_name, value, val_type):
     [(np.nan, NaT), (NaT, np.nan), (np.timedelta64("NaT", "ns"), np.nan)],
 )
 def test_nat_rfloordiv_timedelta(val, expected):
+    # [FUNCTION DOC]
+    # see gh-18846. Parametrized over nan, NaT and a missing numpy timedelta. Floor-dividing a timedelta by each returns NaT for nan, and a not-a-number float for NaT and for the numpy missing timedelta.
     # see gh-#18846
     #
     # See also test_timedelta.TestTimedeltaArithmetic.test_floordiv
@@ -451,6 +499,9 @@ def test_nat_rfloordiv_timedelta(val, expected):
     ],
 )
 def test_nat_arithmetic_index(op_name, value):
+    # [FUNCTION DOC]
+    # see gh-11718. Parametrized over addition and subtraction in both operand orders and over datetime indexes (naive and aware), datetime arrays and a timedelta index. NaT combined with the operand gives an all-NaT result of two elements: datetime-typed
+    # (keeping the zone) when adding to datetime-like values, otherwise timedelta-typed; name and resolution are preserved, and arrays stay arrays.
     # see gh-11718
     exp_name = "x"
     exp_data = [NaT] * 2
@@ -475,6 +526,8 @@ def test_nat_arithmetic_index(op_name, value):
 )
 @pytest.mark.parametrize("box", [TimedeltaIndex, Series, TimedeltaArray._from_sequence])
 def test_nat_arithmetic_td64_vector(op_name, box):
+    # [FUNCTION DOC]
+    # see gh-19124. Parametrized over addition and subtraction in both orders and over a timedelta index, series and array. Applying the operation between a timedelta vector and NaT gives a vector of NaT of the same box with timedelta dtype.
     # see gh-19124
     vec = box(["1 day", "2 day"], dtype="timedelta64[ns]")
     box_nat = box([NaT, NaT], dtype="timedelta64[ns]")
@@ -495,6 +548,8 @@ def test_nat_arithmetic_td64_vector(op_name, box):
     ],
 )
 def test_nat_arithmetic_ndarray(dtype, op, out_dtype):
+    # [FUNCTION DOC]
+    # Parametrized over datetime or timedelta dtypes, forward and reflected addition and subtraction, and the resulting dtype. Combining NaT with an array of ten values returns an array of that dtype filled with the missing marker.
     other = np.arange(10).astype(dtype)
     result = op(NaT, other)
 
@@ -504,11 +559,16 @@ def test_nat_arithmetic_ndarray(dtype, op, out_dtype):
 
 
 def test_nat_pinned_docstrings():
+    # [FUNCTION DOC]
+    # see gh-17327. NaT's documentation for ctime is identical to Timestamp's.
     # see gh-17327
     assert NaT.ctime.__doc__ == Timestamp.ctime.__doc__
 
 
 def test_to_numpy_alias():
+    # [FUNCTION DOC]
+    # GH 24653 and GH#44460. Converting NaT to numpy gives a missing datetime value by default; with datetime or timedelta dtype strings gives a missing numpy value of that dtype and unit;
+    # an integer dtype must raise a value error saying the dtype must be a datetime or timedelta type.
     # GH 24653: alias .to_numpy() for scalars
     expected = NaT.to_datetime64()
     result = NaT.to_numpy()
@@ -546,6 +606,8 @@ def test_to_numpy_alias():
     ],
 )
 def test_nat_comparisons(compare_operators_no_eq_ne, other):
+    # [FUNCTION DOC]
+    # GH 26039. Parametrized over the fixture of ordering comparison operators (without equality) and many time-like operands (timedeltas, timestamps, numpy forms, aware timestamp, NaT). The comparison, called as a method and through the operator, in both orders, is false.
     # GH 26039
     opname = compare_operators_no_eq_ne
 
@@ -562,6 +624,8 @@ def test_nat_comparisons(compare_operators_no_eq_ne, other):
     [("<=", operator.le), ("<", operator.lt), (">=", operator.ge), (">", operator.gt)],
 )
 def test_nat_comparisons_invalid(other_and_type, symbol_and_op):
+    # [FUNCTION DOC]
+    # GH#35585. Parametrized over a string, an integer and a float, and the four ordering operators. NaT is never equal to and always unequal to these; ordering comparison in either order must raise a type error naming the operator and both types.
     # GH#35585
     other, other_type = other_and_type
     symbol, op = symbol_and_op
@@ -591,6 +655,9 @@ def test_nat_comparisons_invalid(other_and_type, symbol_and_op):
     ids=["str", "int", "float"],
 )
 def test_nat_comparisons_invalid_ndarray(other):
+    # [FUNCTION DOC]
+    # GH#40722. Parametrized over object, integer and float arrays. Equality with NaT gives an all-false boolean array and inequality all-true (both orders); ordering comparisons raise a type error mentioning the unsupported operator,
+    # except that for the object array in the reversed order any message is accepted because the reverse operator is used.
     # GH#40722
     expected = np.array([False, False])
     result = NaT == other
@@ -623,6 +690,8 @@ def test_nat_comparisons_invalid_ndarray(other):
 
 
 def test_compare_date(fixed_now_ts):
+    # [FUNCTION DOC]
+    # GH#39151. Uses the fixed-now timestamp fixture to get a plain date. Comparing NaT with a date in either order: equality false, inequality true, and each ordering comparison must raise a type error saying NaT cannot be compared with a date object.
     # GH#39151 comparing NaT with date object is deprecated
     # See also: tests.scalar.timestamps.test_comparisons::test_compare_date
 
@@ -673,12 +742,16 @@ def test_compare_date(fixed_now_ts):
     ],
 )
 def test_nat_addsub_tdlike_scalar(obj):
+    # [FUNCTION DOC]
+    # Parametrized over many offsets, numpy timedeltas and standard timedeltas. NaT plus the object (either order) and NaT minus the object all return NaT.
     assert NaT + obj is NaT
     assert obj + NaT is NaT
     assert NaT - obj is NaT
 
 
 def test_pickle(temp_file):
+    # [FUNCTION DOC]
+    # GH#4606. Pickle round trip through the helper using the temporary file fixture returns the same NaT singleton.
     # GH#4606
     p = tm.round_trip_pickle(NaT, temp_file)
     assert p is NaT
