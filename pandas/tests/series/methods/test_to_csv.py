@@ -1,3 +1,8 @@
+# [MODULE DOC]
+# Tests for the Series method that writes comma-separated text, covering round trips through the CSV reader, encodings, compression, float formatting and index types.
+# Uses shared fixtures for a datetime-indexed series, a string-indexed series, a temporary file path and a compression parametrization (provided by conftest files).
+# Defines a single test class; no import-time side effects.
+
 from datetime import datetime
 from io import StringIO
 
@@ -12,7 +17,14 @@ from pandas.io.common import get_handle
 
 
 class TestSeriesToCSV:
+    # [CLASS DOC]
+    # Groups the tests of writing a Series to CSV text or file. Stateless; the only non-test member is a reader helper used to read back written files.
     def read_csv(self, path, **kwargs):
+        # [FUNCTION DOC]
+        # HELPER: reads a CSV file or buffer back into a Series for the round-trip tests in this class.
+        # Takes a path or buffer plus keyword arguments forwarded to the CSV reader; defaults are the first column as index and no header row, and caller keywords override those defaults.
+        # The single resulting column is squeezed into a Series. When the header parameter ends up unset (no header), the series name and index name are both cleared to nothing.
+        # Returns the resulting Series.
         params = {"index_col": 0, "header": None}
         params.update(**kwargs)
 
@@ -25,6 +37,11 @@ class TestSeriesToCSV:
         return out
 
     def test_from_csv(self, datetime_series, string_series, temp_file):
+        # [FUNCTION DOC]
+        # Verifies that a Series written to CSV with and without a header reads back equal to the original.
+        # Uses the datetime series (frequency stripped from its index because it does not survive a round trip; expected index is converted to microsecond resolution) and the string-indexed series.
+        # Checks that names are absent when no header is written and equal the series names ("ts", "series") when a header is written (issue 10483).
+        # Finally writes a pipe-separated file by hand and checks it parses to a Series with datetime keys when date parsing is on and with plain string keys when it is off.
         # freq doesn't round-trip
         datetime_series.index = datetime_series.index._with_freq(None)
 
@@ -66,6 +83,8 @@ class TestSeriesToCSV:
         tm.assert_series_equal(check_series, series)
 
     def test_to_csv(self, datetime_series, temp_file):
+        # [FUNCTION DOC]
+        # Verifies writing the datetime series to a temporary file: the second line of the output is not blank (no spurious blank lines with universal newlines), and writing without index or header yields values that load numerically as almost equal to the series values.
         datetime_series.to_csv(temp_file, header=False)
 
         with open(temp_file, newline=None, encoding="utf-8") as f:
@@ -77,6 +96,8 @@ class TestSeriesToCSV:
         tm.assert_almost_equal(arr, datetime_series.values)
 
     def test_to_csv_unicode_index(self):
+        # [FUNCTION DOC]
+        # Verifies that a Series with non-ASCII (Hebrew) values and index labels written to an in-memory text buffer with UTF-8 encoding and no header reads back equal to the original.
         buf = StringIO()
         s = Series(["\u05d0", "d2"], index=["\u05d0", "\u05d1"])
 
@@ -87,6 +108,8 @@ class TestSeriesToCSV:
         tm.assert_series_equal(s, s2)
 
     def test_to_csv_float_format(self, temp_file):
+        # [FUNCTION DOC]
+        # Verifies that the float format option (two decimal places) is applied when writing: floats are written rounded and read back equal to the rounded values.
         ser = Series([0.123456, 0.234567, 0.567567])
         ser.to_csv(temp_file, float_format="%.2f", header=False)
 
@@ -95,6 +118,8 @@ class TestSeriesToCSV:
         tm.assert_series_equal(rs, xp)
 
     def test_to_csv_list_entries(self):
+        # [FUNCTION DOC]
+        # Smoke test: a Series whose elements are lists (from splitting strings on a pattern) can be written to a text buffer without header without raising. No output assertion is made.
         s = Series(["jack and jill", "jesse and frank"])
 
         split = s.str.split(r"\s+and\s+")
@@ -103,6 +128,8 @@ class TestSeriesToCSV:
         split.to_csv(buf, header=False)
 
     def test_to_csv_path_is_none(self):
+        # [FUNCTION DOC]
+        # Verifies that when the target path is None, writing returns the CSV text as a string instead of None (issue 8215), matching DataFrame behavior.
         # GH 8215
         # Series.to_csv() was returning None, inconsistent with
         # DataFrame.to_csv() which returned string
@@ -127,6 +154,9 @@ class TestSeriesToCSV:
         ],
     )
     def test_to_csv_compression(self, s, encoding, compression, temp_file):
+        # [FUNCTION DOC]
+        # Verifies CSV writing with each compression method and several encodings (none, ascii, gb2312 for Chinese, cp737 for Greek), parametrized over a series and its encoding; the compression comes from a fixture.
+        # Checks three round trips: write to a path then read; write through an opened compression-aware file handle then read; and decompress the raw file to confirm the series name appears in the decoded text and that the decompressed content also reads back equal.
         filename = temp_file
         s.to_csv(filename, compression=compression, encoding=encoding, header=True)
         # test the round trip - to_csv -> read_csv
@@ -164,6 +194,9 @@ class TestSeriesToCSV:
             )
 
     def test_to_csv_interval_index(self, using_infer_string, temp_file):
+        # [FUNCTION DOC]
+        # Verifies writing a Series with an interval index (issue 28210): since an interval index cannot round trip through the reader, the read-back index is compared against the original index cast to string type.
+        # The infer-string fixture parameter is accepted but not used in the body.
         # GH 28210
         s = Series(["foo", "bar", "baz"], index=pd.interval_range(0, 3))
 

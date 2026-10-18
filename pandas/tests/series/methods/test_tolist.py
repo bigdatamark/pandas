@@ -1,3 +1,7 @@
+# [MODULE DOC]
+# Tests that the Series method converting to a Python list yields elements of the expected built-in or pandas scalar type for many dtypes (numpy, nullable, string, interval, period, timedelta, datetime, and pyarrow-backed ones that are skipped when pyarrow is missing).
+# No import-time side effects.
+
 import pytest
 
 import pandas.util._test_decorators as td
@@ -30,6 +34,8 @@ from pandas import (
     ),
 )
 def test_tolist_scalar_dtype(values, dtype, expected_dtype):
+    # [FUNCTION DOC]
+    # Verifies that, for a one-element Series built from the given values and dtype, the first element of the converted list has exactly the expected scalar type (issue 49890). Parametrized over (values, dtype, expected type) triples, e.g. integers give Python int, floats give float, strings give str, intervals, periods, timedeltas and timestamps give their pandas scalar classes. The type comparison is exact equality, not instance checking.
     # GH49890
     ser = Series(values, dtype=dtype)
     result_dtype = type(ser.tolist()[0])

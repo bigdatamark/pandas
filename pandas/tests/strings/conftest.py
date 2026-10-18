@@ -1,3 +1,7 @@
+# [MODULE DOC]
+# Shared fixture for the string-accessor tests: a list of every public method of the string accessor class paired with sample positional and keyword arguments, exposed through a parametrized fixture.
+# Import-time side effects: builds the list (including generated entries for methods needing no arguments), derives fixture ids from method names, and asserts at import that every public attribute of the accessor class is represented, so adding a new accessor method without updating the list makes collection fail.
+
 import pytest
 
 from pandas import Series
@@ -104,6 +108,9 @@ assert not missing_methods
 
 @pytest.fixture(params=_any_string_method, ids=ids)
 def any_string_method(request):
+    # [FUNCTION DOC]
+    # Parametrized fixture (one case per entry of the method list, ids being method names) returning a tuple of the method name, a tuple of sample positional arguments, and a dictionary of sample keyword arguments that make a call valid. Used to call each accessor method generically on a Series.
+    # KNOWN ISSUE: the list of no-argument methods is zipped with lists of length one hundred of empty tuples and dictionaries, which are silently truncated to the number of names; the oversize is harmless but unexplained.
     """
     Fixture for all public methods of `StringMethods`
 

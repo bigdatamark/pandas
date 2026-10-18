@@ -1,3 +1,7 @@
+# [MODULE DOC]
+# Tests for the in-place Series method that updates values from another Series where the other has non-missing values: dtype interplay, non-Series inputs, extension dtypes, categoricals.
+# One parametrization uses pyarrow strings and is skipped when pyarrow is not installed. No import-time side effects.
+
 import numpy as np
 import pytest
 
@@ -14,7 +18,12 @@ import pandas._testing as tm
 
 
 class TestUpdate:
+    # [CLASS DOC]
+    # Groups tests of in-place updating of a Series from another object. Stateless.
     def test_update(self):
+        # [FUNCTION DOC]
+        # Verifies that updating a float Series from another aligned Series overwrites only positions where the other has a non-missing value and ignores NaN in the other (positions beyond the other's length are untouched).
+        # Then (issue 3217) verifies that updating a frame column accessed by label is a chained assignment: it raises the chained-assignment error and leaves the frame unchanged.
         s = Series([1.5, np.nan, 3.0, 4.0, np.nan])
         s2 = Series([np.nan, 3.5, np.nan, 5.0])
         s.update(s2)
@@ -60,6 +69,8 @@ class TestUpdate:
         ],
     )
     def test_update_dtypes(self, other, dtype, expected, raises):
+        # [FUNCTION DOC]
+        # Verifies update across dtype combinations. An integer Series of three values (dtype parametrized: int32, int64, float, object) is updated from a Series with index labels one and three. When the other values can be cast losslessly to the target dtype (including whole-valued floats to ints) the result holds the new values in the original dtype. When they cannot (non-integral floats into ints, tuples into numeric dtypes) the update raises a type error with the message invalid value. The raises flag in each parameter set says which case applies; expected Series are asserted only in non-raising cases.
         ser = Series([10, 11, 12], dtype=dtype)
         other = Series(other, index=[1, 3])
         if raises:
@@ -83,6 +94,8 @@ class TestUpdate:
         ],
     )
     def test_update_from_non_series(self, values, other, expected):
+        # [FUNCTION DOC]
+        # Verifies that update accepts a non-Series other (issue 33215): a dictionary updates by key and a list updates by position, with missing values in the other ignored.
         # GH 33215
         series = Series(values)
         series.update(other)
@@ -117,6 +130,8 @@ class TestUpdate:
         ],
     )
     def test_update_extension_array_series(self, data, other, expected, dtype):
+        # [FUNCTION DOC]
+        # Verifies update for extension dtypes: python and pyarrow strings, nullable Int64, nullable boolean, categorical, and tz-aware datetime. The original and other Series (both of the given dtype) fill each other's missing entries so the result equals the full expected Series.
         result = Series(data, dtype=dtype)
         other = Series(other, dtype=dtype)
         expected = Series(expected, dtype=dtype)
@@ -125,6 +140,8 @@ class TestUpdate:
         tm.assert_series_equal(result, expected)
 
     def test_update_with_categorical_type(self):
+        # [FUNCTION DOC]
+        # Verifies update for categorical Series that share a dtype (issue 25744): the values at matching labels are replaced, retaining the categorical dtype and untouched label unchanged.
         # GH 25744
         dtype = CategoricalDtype(["a", "b", "c", "d"])
         s1 = Series(["a", "b", "c"], index=[1, 2, 3], dtype=dtype)

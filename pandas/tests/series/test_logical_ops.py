@@ -1,3 +1,7 @@
+# [MODULE DOC]
+# Tests for the logical (and, or, xor) operators on Series: alignment and fill semantics, mixed dtypes (bool, integer, float, string, object), scalars, array-likes and Index operands, reflected operators, and consistency with frame behavior.
+# Uses the internal reflected-operator helper functions from the ops module. No import-time side effects.
+
 from datetime import datetime
 import operator
 
@@ -15,8 +19,12 @@ from pandas.core import ops
 
 
 class TestSeriesLogicalOps:
+    # [CLASS DOC]
+    # Groups tests of Series logical operators. Stateless. Key expected rules: operations align on labels and the result index is the union; positions missing on one side are treated as false; dtype-less sequences (lists, tuples) are rejected with a type error; scalars must be compatible with the dtype.
     @pytest.mark.parametrize("bool_op", [operator.and_, operator.or_, operator.xor])
     def test_bool_operators_with_nas(self, bool_op):
+        # [FUNCTION DOC]
+        # Verifies and, or and xor (parametrized) on object Series built from ten business dates with every other entry set to NaN: comparisons yield boolean results where comparison with missing is false; the result equals the same operation on a filled copy with positions that were missing forced to false.
         # boolean &, |, ^ should work with object arrays and propagate NAs
         ser = Series(bdate_range("1/1/2000", periods=10), dtype=object)
         ser[::2] = np.nan
@@ -31,6 +39,8 @@ class TestSeriesLogicalOps:
         tm.assert_series_equal(result, expected)
 
     def test_logical_operators_bool_dtype_with_empty(self):
+        # [FUNCTION DOC]
+        # Verifies (issue 9016) that bitwise and/or of a boolean Series (index b, c, a) with an empty object Series aligns to the union: and gives all false, or gives the original values, both sorted by index.
         # GH#9016: support bitwise op for integer types
         index = list("bca")
 
@@ -47,6 +57,8 @@ class TestSeriesLogicalOps:
         tm.assert_series_equal(res, expected)
 
     def test_logical_operators_int_dtype_with_int_dtype(self):
+        # [FUNCTION DOC]
+        # Verifies (issue 9016) bitwise and/or between integer Series: same-dtype operations give the expected int64 results; and with an int8 operand gives int64; or between int16 and int32 gives int32.
         # GH#9016: support bitwise op for integer types
 
         s_0123 = Series(range(4), dtype="int64")
@@ -71,6 +83,8 @@ class TestSeriesLogicalOps:
         tm.assert_series_equal(res, expected)
 
     def test_logical_operators_int_dtype_with_int_scalar(self):
+        # [FUNCTION DOC]
+        # Verifies (issue 9016) bitwise and of an int64 Series with integer scalars zero and one gives elementwise integer results.
         # GH#9016: support bitwise op for integer types
         s_0123 = Series(range(4), dtype="int64")
 
@@ -83,6 +97,8 @@ class TestSeriesLogicalOps:
         tm.assert_series_equal(res, expected)
 
     def test_logical_operators_int_dtype_with_float(self):
+        # [FUNCTION DOC]
+        # Verifies (issue 9016) that bitwise and of an integer Series with a float operand raises a type error: NaN or a float scalar gives the dtyped-array-and-scalar message; a list of floats gives the dtype-less-sequence message; a float array or float Series gives an unsupported-operand message.
         # GH#9016: support bitwise op for integer types
         s_0123 = Series(range(4), dtype="int64")
 
@@ -105,6 +121,8 @@ class TestSeriesLogicalOps:
             s_0123 & Series([0.1, 4, -3.14, 2])
 
     def test_logical_operators_int_dtype_with_str(self):
+        # [FUNCTION DOC]
+        # Verifies that bitwise and of an int8 Series with a string scalar raises a type error about performing the operation with a dtyped array and scalar of that type, and with a list of strings raises the dtype-less-sequence error.
         s_1111 = Series([1] * 4, dtype="int8")
 
         err_msg = (
@@ -119,6 +137,8 @@ class TestSeriesLogicalOps:
             s_1111 & ["a", "b", "c", "d"]
 
     def test_logical_operators_int_dtype_with_bool(self):
+        # [FUNCTION DOC]
+        # Verifies (issue 9016) that and of an integer Series with scalar false gives all false; lists and tuples of booleans raise the dtype-less-sequence type error; xor with false gives true for non-zero positions and false at zero.
         # GH#9016: support bitwise op for integer types
         s_0123 = Series(range(4), dtype="int64")
 
@@ -142,6 +162,8 @@ class TestSeriesLogicalOps:
         tm.assert_series_equal(result, expected)
 
     def test_logical_operators_int_dtype_with_object(self):
+        # [FUNCTION DOC]
+        # Verifies (issue 9016) that and of an integer Series with a Series of false and NaN gives all false, while and with a Series of strings and NaN raises a type error (unsupported operand integer and string, or the reflected and operation being unsupported).
         # GH#9016: support bitwise op for integer types
         s_0123 = Series(range(4), dtype="int64")
 
@@ -156,6 +178,8 @@ class TestSeriesLogicalOps:
             s_0123 & s_abNd
 
     def test_logical_operators_bool_dtype_with_int(self):
+        # [FUNCTION DOC]
+        # Verifies that and of a boolean Series with integer scalars zero and one gives all false and the original values respectively.
         index = list("bca")
 
         s_tft = Series([True, False, True], index=index)
@@ -170,6 +194,8 @@ class TestSeriesLogicalOps:
         tm.assert_series_equal(res, expected)
 
     def test_logical_ops_bool_dtype_with_ndarray(self):
+        # [FUNCTION DOC]
+        # Verifies that and, or and xor of a boolean Series with list data containing None and NaN raise the dtype-less-sequence error for a list, while a NumPy array, an Index and a Series of the same values each give the same expected result (missing treated as false for and and xor expectations as listed, true where left is true for or).
         # make sure we operate on ndarray the same as Series
         left = Series([True, True, True, False, True])
         right = [True, False, None, True, np.nan]
@@ -210,6 +236,9 @@ class TestSeriesLogicalOps:
         tm.assert_series_equal(result, expected)
 
     def test_logical_operators_int_dtype_with_bool_dtype_and_reindex(self):
+        # [FUNCTION DOC]
+        # Verifies (issues 9016, 52538) alignment of a boolean Series with an integer Series with different indexes: the boolean-on-the-left operation produces an all-false boolean result over the union index; the integer-on-the-left operation raises a type error about unsupported operand types float and bool (the integers are reindexed to float and no longer cast to object). A single-element Series on a subset of labels gives the reindexed results for and and or.
+        # KNOWN ISSUE: the first boolean Series is created twice with identical arguments, so the second assignment is redundant.
         # GH#9016: support bitwise op for integer types
 
         index = list("bca")
@@ -242,6 +271,9 @@ class TestSeriesLogicalOps:
         tm.assert_series_equal(res, expected)
 
     def test_scalar_na_logical_ops_corners(self):
+        # [FUNCTION DOC]
+        # Verifies logical-op corner cases with missing and datetime elements: and with a datetime scalar on an integer Series raises a type error about a dtyped array and scalar. For an object Series with every other value missing, and with a list of its own values raises the dtype-less-sequence error.
+        # KNOWN ISSUE: an expected Series is built (true except false at every other position) but never used in any assertion.
         s = Series([2, 3, 4, 5, 6, 7, 8, 9, 10])
 
         msg = "Cannot perform.+with a dtyped.+array and scalar of type"
@@ -262,6 +294,8 @@ class TestSeriesLogicalOps:
             s & list(s)
 
     def test_scalar_na_logical_ops_corners_aligns(self):
+        # [FUNCTION DOC]
+        # Verifies that and between an object Series (with NaN and a datetime) and a one-column frame, in either operand order, returns an all-false frame whose columns are the union of the frame column name and the Series index positions.
         s = Series([2, 3, 4, 5, 6, 7, 8, 9, datetime(2005, 1, 1)])
         s[::2] = np.nan
         d = DataFrame({"A": s})
@@ -276,6 +310,8 @@ class TestSeriesLogicalOps:
 
     @pytest.mark.parametrize("op", [operator.and_, operator.or_, operator.xor])
     def test_logical_ops_with_index(self, op):
+        # [FUNCTION DOC]
+        # Verifies (issues 22092, 19792) that and, or and xor (parametrized) between a boolean Series and a boolean Index or an integer Index (zeros and ones) work elementwise and return a Series: the boolean index case equals elementwise scalar operations; the integer index case is cast to boolean dtype.
         # GH#22092, GH#19792
         ser = Series([True, True, False, False])
         idx1 = Index([True, False, True, False])
@@ -292,6 +328,8 @@ class TestSeriesLogicalOps:
         tm.assert_series_equal(result, expected)
 
     def test_reversed_xor_with_index_returns_series(self):
+        # [FUNCTION DOC]
+        # Verifies that xor with the Index on the left and the Series on the right (boolean and integer index cases) returns a Series with elementwise xor values rather than a set operation, as it was before version 2.0.
         # GH#22092, GH#19792 pre-2.0 these were aliased to setops
         ser = Series([True, True, False, False])
         idx1 = Index([True, False, True, False], dtype=bool)
@@ -312,6 +350,8 @@ class TestSeriesLogicalOps:
         ],
     )
     def test_reversed_logical_op_with_index_returns_series(self, op):
+        # [FUNCTION DOC]
+        # Verifies the reflected and and or helper functions from the ops module (parametrized) with a boolean Series and Index: for a boolean Index the result equals the helper on raw values wrapped in a Series; for an integer Index it equals the helper applied to the Series and a Series built from the index.
         # GH#22092, GH#19792
         ser = Series([True, True, False, False])
         idx1 = Index([True, False, True, False])
@@ -334,6 +374,8 @@ class TestSeriesLogicalOps:
         ],
     )
     def test_reverse_ops_with_index(self, op, expected):
+        # [FUNCTION DOC]
+        # Verifies the reflected and, or and xor helper functions (parametrized with the expected two-element list) applied to a boolean Series and a boolean Index with distinct values, avoiding duplicates because multi-set Index ops are unreliable (pull request 23628, issue 49503): the result is a Series equal to the expected list.
         # https://github.com/pandas-dev/pandas/pull/23628
         # multi-set Index ops are buggy, so let's avoid duplicates...
         # GH#49503
@@ -345,6 +387,10 @@ class TestSeriesLogicalOps:
         tm.assert_series_equal(result, expected)
 
     def test_logical_ops_label_based(self, using_infer_string):
+        # [FUNCTION DOC]
+        # Verifies (issue 4947) that logical operators are label based: and/or/xor of Series with permuted indexes align by label; a larger right operand gives the union index with absent left labels false; combining with an empty Series or a non-matching single label fills with false while or keeps true values; selection by the or-ed mask returns the original for several right-hand identity cases (empty, non-matching, all-NaN on either index). With a string-valued right operand: when the infer-string option fixture is on, selection raises a type error (not supported for dtype or unsupported operand); otherwise it equals the original selection.
+        # Scalar sections: or with true, one, two gives all true; or with false/zero and and with true/one keep the original; and with false/zero gives all false; NaN or the string foo raise the dtyped-array-and-scalar type error (the string only checked for or; NaN checked for and as well).
+        # KNOWN ISSUE: a comment says the infer-string behavior needs a decision (a referenced TODO), so the type error expected there may be temporary.
         # GH#4947
         # logical ops should be label based
 
@@ -454,6 +500,9 @@ class TestSeriesLogicalOps:
                 t & v
 
     def test_logical_ops_df_compat(self):
+        # [FUNCTION DOC]
+        # Verifies (issue 1134) that Series logical ops fill missing alignment positions with false, while the equivalent frame operations do not: with two same-name boolean Series on partially overlapping indexes, and gives false outside the intersection in either order; or gives true where either side is true and false where the only value present is false; the frame versions agree with the Series versions in the expected frames used. A second pair with differing lengths is tested similarly.
+        # KNOWN ISSUE: the first frame expectation is rebound to a new frame of true, true, NaN, NaN that is never used, since the following assertions use other expectations; and the comments about NaN or-ing are copied between the two blocks in a way that does not match the data in the second block.
         # GH#1134
         s1 = Series([True, False, True], index=list("ABC"), name="x")
         s2 = Series([True, True, False], index=list("ABD"), name="x")
@@ -499,6 +548,8 @@ class TestSeriesLogicalOps:
         tm.assert_frame_equal(s4.to_frame() | s3.to_frame(), exp_or.to_frame())
 
     def test_int_dtype_different_index_not_bool(self):
+        # [FUNCTION DOC]
+        # Verifies (issue 52500) that the NumPy bitwise xor function and the xor operator on two integer Series with the same labels in different order align by label and give integer results, not boolean, indexed in the first Series' order.
         # GH 52500
         ser1 = Series([1, 2, 3], index=[10, 11, 23], name="a")
         ser2 = Series([10, 20, 30], index=[11, 10, 23], name="a")

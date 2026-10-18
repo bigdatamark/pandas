@@ -5,6 +5,10 @@ See also
 --------
 tests.frame.test_cumulative
 """
+# [MODULE DOC]
+# Tests for the cumulative operations of Series (cumulative sum, product, minimum, maximum) across numeric, boolean, object, datetime-like, period, ordered categorical and string extension dtypes, including missing-value skipping.
+# Defines a module-level mapping from method name to the matching NumPy function (sum, product, and the minimum/maximum accumulate functions) used to compute expected results. No other import-time side effects. Inline anonymous functions used in parametrization cannot carry documentation blocks.
+
 
 import re
 
@@ -23,8 +27,12 @@ methods = {
 
 
 class TestSeriesCumulativeOps:
+    # [CLASS DOC]
+    # Groups tests of Series cumulative operations. Stateless.
     @pytest.mark.parametrize("func", [np.cumsum, np.cumprod])
     def test_datetime_series(self, datetime_series, func):
+        # [FUNCTION DOC]
+        # Verifies that NumPy cumulative sum and product applied to the datetime fixture Series match the same function applied to the raw array (including dtype). With every other element set to NaN, the result at the odd positions equals the function applied to the array of non-missing values (dtype not checked). Parametrized over the two functions.
         tm.assert_numpy_array_equal(
             func(datetime_series).values,
             func(np.array(datetime_series)),
@@ -42,6 +50,8 @@ class TestSeriesCumulativeOps:
 
     @pytest.mark.parametrize("method", ["cummin", "cummax"])
     def test_cummin_cummax(self, datetime_series, method):
+        # [FUNCTION DOC]
+        # Verifies the cumulative minimum and maximum methods on the datetime fixture series: values equal the NumPy accumulate function on the raw array; with every other value NaN the odd-position results equal the accumulate function applied to the non-missing Series (index frequency cleared before comparing).
         ufunc = methods[method]
 
         result = getattr(datetime_series, method)().values
@@ -82,6 +92,8 @@ class TestSeriesCumulativeOps:
         ],
     )
     def test_cummin_cummax_datetimelike(self, ts, method, skipna, exp_tdi):
+        # [FUNCTION DOC]
+        # Verifies cumulative minimum and maximum for datetime-like dtypes: a timedelta Series (offset zero), a naive datetime Series and a tz-aware datetime Series are built by adding an offset to a timedelta list with missing values at positions zero, two and four. Parametrized over the offset, method, skipna flag and the expected timedelta list. With skipping on, missing entries stay missing while others hold the running extremum; with skipping off, everything is missing since the first entry is missing.
         # with ts==pd.Timedelta(0), we are testing td64; with naive Timestamp
         #  we are testing datetime64[ns]; with Timestamp[US/Pacific]
         #  we are testing dt64tz
@@ -94,6 +106,8 @@ class TestSeriesCumulativeOps:
         tm.assert_series_equal(expected, result)
 
     def test_cumsum_datetimelike(self):
+        # [FUNCTION DOC]
+        # Verifies cumulative sum on a frame of timedelta columns containing a missing value (issue 57956): missing entries stay missing while later entries keep accumulating over earlier valid values. The test lives in the Series file but exercises the frame method.
         # GH#57956
         df = pd.DataFrame(
             [
@@ -120,6 +134,8 @@ class TestSeriesCumulativeOps:
         ],
     )
     def test_cummin_cummax_period(self, func, exp):
+        # [FUNCTION DOC]
+        # Verifies cumulative minimum or maximum on a daily period Series with a missing middle entry (issue 28385). With skipna off, everything after the missing entry is missing; with skipna on, the missing entry stays missing and the last entry holds the running extremum (first period for minimum, second for maximum). Parametrized over method and expected final period.
         # GH#28385
         ser = pd.Series(
             [pd.Period("2012-1-1", freq="D"), pd.NaT, pd.Period("2012-1-2", freq="D")]
@@ -145,6 +161,8 @@ class TestSeriesCumulativeOps:
     )
     @pytest.mark.parametrize("method", methods.keys())
     def test_cummethods_bool(self, arg, func, method):
+        # [FUNCTION DOC]
+        # Verifies (issue 6270) the four cumulative methods on boolean Series (two patterns, each used as-is and inverted) equal a Series built by applying the matching NumPy function to the underlying values. Parametrized over pattern, transformation and method name.
         # GH#6270
         # checking Series method vs the ufunc applied to the values
 
@@ -168,6 +186,8 @@ class TestSeriesCumulativeOps:
         ],
     )
     def test_cummethods_bool_in_object_dtype(self, method, expected):
+        # [FUNCTION DOC]
+        # Verifies cumulative methods on a Series of booleans with a missing value, which has object dtype: sum gives an object result mixing counts and NaN; product, minimum and maximum give the expected values with NaN at the missing position. Parametrized over method and expected Series.
         ser = pd.Series([False, True, np.nan, False])
         result = getattr(ser, method)()
         tm.assert_series_equal(result, expected)
@@ -180,6 +200,8 @@ class TestSeriesCumulativeOps:
         ],
     )
     def test_cummax_cummin_on_ordered_categorical(self, method, order):
+        # [FUNCTION DOC]
+        # Verifies (issue 52335) cumulative maximum and minimum on an ordered categorical Series where the category order is ascending for the maximum case and reversed for the minimum case, so both yield the same running extremum list of letters.
         # GH#52335
         cat = pd.CategoricalDtype(list(order), ordered=True)
         ser = pd.Series(
@@ -208,6 +230,8 @@ class TestSeriesCumulativeOps:
         ],
     )
     def test_cummax_cummin_ordered_categorical_nan(self, skip, exp, method, order):
+        # [FUNCTION DOC]
+        # Verifies (issue 52335) cumulative maximum and minimum on an ordered categorical with a missing value: with skipna on, the missing entry stays missing and the rest accumulate; with skipna off, all entries after the first missing one are missing. Parametrized over skipna with expected list, and method with category order.
         # GH#52335
         cat = pd.CategoricalDtype(list(order), ordered=True)
         ser = pd.Series(
@@ -225,6 +249,8 @@ class TestSeriesCumulativeOps:
         )
 
     def test_cumprod_timedelta(self):
+        # [FUNCTION DOC]
+        # Verifies (issue 48111) that cumulative product on a timedelta Series raises a type error stating cumprod is not supported for timedelta.
         # GH#48111
         ser = pd.Series([pd.Timedelta(days=1), pd.Timedelta(days=3)])
         with pytest.raises(TypeError, match="cumprod not supported for Timedelta"):
@@ -268,6 +294,8 @@ class TestSeriesCumulativeOps:
     def test_cum_methods_ea_strings(
         self, string_dtype_no_object, data, op, skipna, expected_data
     ):
+        # [FUNCTION DOC]
+        # Verifies cumulative sum (concatenation), minimum and maximum on non-object string extension dtypes (fixture string_dtype_no_object), for empty data, plain strings, and data with missing values at start, middle or everywhere, for both skipna settings. With skipping on, missing entries are kept missing and the accumulation continues; with it off, everything after the first missing entry is missing. References the pull requests that added pyarrow and Python implementations.
         # https://github.com/pandas-dev/pandas/pull/60633 - pyarrow
         # https://github.com/pandas-dev/pandas/pull/60938 - Python
         ser = pd.Series(data, dtype=string_dtype_no_object)
@@ -277,6 +305,8 @@ class TestSeriesCumulativeOps:
         tm.assert_series_equal(result, expected)
 
     def test_cumprod_pyarrow_strings(self, pyarrow_string_dtype, skipna):
+        # [FUNCTION DOC]
+        # Verifies that cumulative product on a pyarrow string Series raises a type error saying the cumprod operation is not supported for the dtype, for both skipna settings (fixtures).
         # https://github.com/pandas-dev/pandas/pull/60633
         ser = pd.Series(list("xyz"), dtype=pyarrow_string_dtype)
         msg = re.escape(f"operation 'cumprod' not supported for dtype '{ser.dtype}'")

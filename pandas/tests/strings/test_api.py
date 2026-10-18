@@ -1,3 +1,7 @@
+# [MODULE DOC]
+# Tests for the string accessor entry point and its dtype gating: the accessor is the expected class, has no circular reference, rejects multi-indexes and invalid inferred dtypes, and every public method works on the allowed inferred dtypes and raises on others.
+# Defines a module-level list of allowed inferred dtype samples (a subset of the full set in the root conftest) and a fixture over it; computes the fixture ids at import. Uses the string-method fixture from the package conftest.
+
 import weakref
 
 import numpy as np
@@ -28,6 +32,9 @@ ids, _ = zip(
 
 @pytest.fixture(params=_any_allowed_skipna_inferred_dtype, ids=ids)
 def any_allowed_skipna_inferred_dtype(request):
+    # [FUNCTION DOC]
+    # Parametrized fixture (ids are the inferred type names) returning a pair of an inferred dtype name (string, bytes, empty, mixed-integer) and an object-dtype NumPy array of sample values that infer to that type when skipping missing values.
+    # KNOWN ISSUE: the docstring lists mixed among the covered inferred types, but the sample list has no mixed entry.
     """
     Fixture for all (inferred) dtypes allowed in StringMethods.__init__
 
@@ -66,12 +73,16 @@ def any_allowed_skipna_inferred_dtype(request):
 
 
 def test_api(any_string_dtype):
+    # [FUNCTION DOC]
+    # Verifies (issues 6106, 9322) that the class-level string accessor attribute of Series is the accessor class and that a Series of any string dtype (fixture) returns an instance of it.
     # GH 6106, GH 9322
     assert Series.str is StringMethods
     assert isinstance(Series([""], dtype=any_string_dtype).str, StringMethods)
 
 
 def test_no_circular_reference(any_string_dtype):
+    # [FUNCTION DOC]
+    # Verifies (issue 47667) that using the string accessor on a Series does not keep a strong reference to the Series: after deleting the only variable, a weak reference to it is dead.
     # GH 47667
     ser = Series([""], dtype=any_string_dtype)
     ref = weakref.ref(ser)
@@ -81,6 +92,8 @@ def test_no_circular_reference(any_string_dtype):
 
 
 def test_api_mi_raises():
+    # [FUNCTION DOC]
+    # Verifies (issue 23679) that accessing the string accessor on a multi-index raises an attribute error saying it is only usable with an Index, not a MultiIndex, and that the attribute check reports it absent.
     # GH 23679
     mi = MultiIndex.from_arrays([["a", "b", "c"]])
     msg = "Can only use .str accessor with Index, not MultiIndex"
@@ -91,6 +104,8 @@ def test_api_mi_raises():
 
 @pytest.mark.parametrize("dtype", [object, "category"])
 def test_api_per_dtype(index_or_series, dtype, any_skipna_inferred_dtype):
+    # [FUNCTION DOC]
+    # Verifies, for Series and Index (fixture) with object or categorical dtype and sample values of each inferred type (fixture), that the accessor is available for string, unicode, empty, bytes, mixed and mixed-integer inferred types (issue 6106), and otherwise raises an attribute error saying it can only be used with string values and is reported absent (issues 9184, 23011, 23163).
     # one instance of parametrized fixture
     box = index_or_series
     inferred_dtype, values = any_skipna_inferred_dtype
@@ -125,6 +140,10 @@ def test_api_per_method(
     request,
     using_infer_string,
 ):
+    # [FUNCTION DOC]
+    # Verifies every public accessor method (fixture) on Series and Index with object or categorical dtype and each allowed inferred sample (fixtures). It does not check correctness, only that the call works on allowed inferred types and raises a type error (naming the method and inferred dtype, or a bytes-like requirement) otherwise.
+    # Allowed types: empty always; string and unicode, except decode on categorical dtype when the infer-string option is on; bytes only for decode, get, length and slice; mixed and mixed-integer for all methods except concatenation.
+    # Known failures are marked expected-to-fail dynamically for empty Index inputs: partition and rpartition with expansion, splitting with expansion, and dummy-variable creation (type or value errors), plus the empty-inferred object Index for dummy-variable creation.
     # this test does not check correctness of the different methods,
     # just that the methods work on the specified (inferred) dtypes,
     # and raise on all others
@@ -195,6 +214,8 @@ def test_api_per_method(
 
 
 def test_api_for_categorical(any_string_method, any_string_dtype):
+    # [FUNCTION DOC]
+    # Verifies (issue 10661) that the accessor on a categorical Series whose categories are plain strings behaves like on the equivalent object Series: for every public method (fixture) on a Series of doubled strings of any string dtype, the result is compared to the method applied to the object-dtype Series, using frame, Series or scalar equality as appropriate.
     # https://github.com/pandas-dev/pandas/issues/10661
     s = Series(list("aabb"), dtype=any_string_dtype)
     s = s + " " + s

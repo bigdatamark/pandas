@@ -1,3 +1,7 @@
+# [MODULE DOC]
+# Tests for localizing the naive datetimes or index of a Series to a time zone, covering ambiguous times, nonexistent (DST gap) times and empty series.
+# Relies on shared fixtures for a Warsaw time zone and a datetime resolution unit. No import-time side effects.
+
 from datetime import timezone
 
 import pytest
@@ -15,7 +19,11 @@ import pandas._testing as tm
 
 
 class TestTZLocalize:
+    # [CLASS DOC]
+    # Groups tests of time-zone localization of Series data and indexes. Stateless.
     def test_series_tz_localize_ambiguous_bool(self):
+        # [FUNCTION DOC]
+        # Verifies that the ambiguous option of datetime-accessor localization accepts booleans and boolean lists (issue 14402): a naive timestamp during the autumn DST overlap in US Central raises a ValueError (from the underlying library) by default, while true or a list with true selects the daylight-time offset and false selects the standard-time offset.
         # make sure that we are correctly accepting bool values as ambiguous
 
         # GH#14402
@@ -43,6 +51,8 @@ class TestTZLocalize:
         tm.assert_series_equal(result, expected1)
 
     def test_series_tz_localize_matching_index(self):
+        # [FUNCTION DOC]
+        # Verifies that localizing a categorical-dtype datetime Series through the datetime accessor keeps the original non-default index on the result, which has a plain tz-aware datetime dtype (issue 43080).
         # Matching the index of the result with that of the original series
         # GH 43080
         dt_series = Series(
@@ -71,6 +81,10 @@ class TestTZLocalize:
         ],
     )
     def test_tz_localize_nonexistent(self, warsaw, method, exp, year, unit):
+        # [FUNCTION DOC]
+        # Verifies the nonexistent option when localizing a one-hour minute-frequency range starting in a DST gap, for a Series, its one-column frame and a datetime index. Parametrized over the year (2015, 2201), the method and the expected value, plus the Warsaw time zone and resolution unit fixtures.
+        # For raise, each object raises a ValueError. For an invalid method name, each raises a ValueError with the message listing allowed options. Otherwise (shift forward, shift backward, NaT) all 60 entries must localize to the single expected timestamp (year substituted), checked for Series, frame and index.
+        # Skips the case for year 2201 unless the time zone is a non-dateutil zone object (zoneinfo passed as string is required).
         # GH 8917
         tz = warsaw
         if year == "2201" and (not isinstance(tz, str) or tz.startswith("dateutil/")):
@@ -120,6 +134,9 @@ class TestTZLocalize:
 
     @pytest.mark.parametrize("tzstr", ["US/Eastern", "dateutil/US/Eastern"])
     def test_series_tz_localize_empty(self, tzstr):
+        # [FUNCTION DOC]
+        # Verifies localizing an empty object-dtype Series: using "utc" yields an index with the UTC timezone; localizing to a named zone (plain and dateutil variants) is compared with the resolved zone.
+        # KNOWN ISSUE: the result of the zone comparison helper is never asserted, so the second check cannot fail on a mismatch.
         # GH#2248
         ser = Series(dtype=object)
 

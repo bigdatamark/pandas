@@ -1,3 +1,7 @@
+# [MODULE DOC]
+# Tests for the string accessor's concatenation method on Series and Index: name preservation, joining with arrays/lists/Series/Index/frames, separators and missing-value replacement, categorical operands, alignment under all join types, error messages for wrong lengths and types, and several special cases.
+# Defines one local fixture aliasing the Series-or-Index box fixture so tests can parametrize over two independent boxes. No import-time side effects.
+
 from datetime import datetime
 import re
 
@@ -19,11 +23,15 @@ from pandas import (
 
 @pytest.fixture
 def index_or_series2(index_or_series):
+    # [FUNCTION DOC]
+    # HELPER: fixture returning the same value as the shared box fixture (Series or Index); exists so a test can combine two independent parametrizations of the container type.
     return index_or_series
 
 
 @pytest.mark.parametrize("other", [None, Series, Index])
 def test_str_cat_name(index_or_series, other):
+    # [FUNCTION DOC]
+    # Verifies (issue 21053) that concatenating a container named name with another operand (none/the raw list, a Series, or an Index of the same values) using a comma separator gives a result carrying the same name. Parametrized over the operand kind and over Series versus Index for the caller.
     # GH 21053
     box = index_or_series
     values = ["a", "b"]
@@ -39,6 +47,9 @@ def test_str_cat_name(index_or_series, other):
     "infer_string", [False, pytest.param(True, marks=td.skip_if_no("pyarrow"))]
 )
 def test_str_cat(index_or_series, infer_string):
+    # [FUNCTION DOC]
+    # Verifies concatenation from Series or Index (fixture) with the future infer-string option off or on (the on case needs pyarrow): with no operand it joins everything into one string skipping NaN; with a missing-value replacement it joins including the replacement; with separator and replacement likewise; with an array or a list of equal length it concatenates elementwise returning the same container kind; and with an operand of the wrong length (array or list) it raises a value error describing the list-like length requirement.
+    # KNOWN ISSUE: a comment says the ndarray-level concatenation is tested in a test above, but no such test exists in this module.
     with option_context("future.infer_string", infer_string):
         box = index_or_series
         # test_cat above tests "str_cat" from ndarray;
@@ -81,6 +92,8 @@ def test_str_cat(index_or_series, infer_string):
 
 
 def test_str_cat_raises_intuitive_error(index_or_series):
+    # [FUNCTION DOC]
+    # Verifies (issue 11334) that supplying a string operand such as a bar or blanks, which a user probably meant as a separator, raises a value error suggesting the separator keyword.
     # GH 11334
     box = index_or_series
     s = box(["a", "b", "c", "d"])
@@ -100,6 +113,8 @@ def test_str_cat_raises_intuitive_error(index_or_series):
 def test_str_cat_categorical(
     index_or_series, dtype_caller, dtype_target, sep, infer_string
 ):
+    # [FUNCTION DOC]
+    # Verifies concatenation with categorical operands, parametrized over caller and target dtype (object or category), separator (empty or none), infer-string option and Series versus Index. Checks: with a plain array of values (positional) the result is elementwise joined with the expected dtype (object, or categorical-derived); with a Series sharing the caller's labels it aligns on labels; with the Series' raw values it again uses position; and with a Series whose labels differ it aligns by label, giving different pairings and an index built from the first letters.
     box = index_or_series
 
     with option_context("future.infer_string", infer_string):
@@ -164,6 +179,8 @@ def test_str_cat_categorical(
     ids=["Series", "Index", "list", "np.array"],
 )
 def test_str_cat_wrong_dtype_raises(box, data):
+    # [FUNCTION DOC]
+    # Verifies (issue 22722) that concatenating a string Series with a non-string list-like (integers, floats or a mixed list, each given as Series, Index, list or object NumPy array) raises a type error that the list-like must contain only strings. Outer join and a replacement are used so Index operands also raise.
     # GH 22722
     s = Series(["a", "b", "c"])
     t = box(data)
@@ -175,6 +192,8 @@ def test_str_cat_wrong_dtype_raises(box, data):
 
 
 def test_str_cat_mixed_inputs(index_or_series):
+    # [FUNCTION DOC]
+    # Verifies concatenation with mixed operand kinds for Series and Index callers: a frame, a two-dimensional array, a list of Series, and a mixed list of Series and arrays give the expected three-part strings; with a Series or frame with a shuffled index, alignment by label changes the pairing. Then verifies error cases: wrong-length arrays, lists of arrays, or mixed lists raise a value error; strings in a list with Series, frames, two-dimensional arrays, nested lists, sets, integers or nested iterators raise a type error listing allowed types. None/NaN in operands do not crash the type checks.
     box = index_or_series
     s = Index(["a", "b", "c", "d"])
     s = s if box == Index else Series(s, index=s)
@@ -277,6 +296,9 @@ def test_str_cat_mixed_inputs(index_or_series):
 
 
 def test_str_cat_align_indexed(index_or_series, join_type):
+    # [FUNCTION DOC]
+    # Verifies (issue 18657) that concatenation of indexed operands aligns according to the join type fixture: the result equals concatenating the manually pre-aligned inputs with a missing-value replacement, for Series and for Index callers.
+    # KNOWN ISSUE: for the Index caller, the aligned left operand is converted to an Index but never used afterwards.
     # https://github.com/pandas-dev/pandas/issues/18657
     box = index_or_series
 
@@ -296,6 +318,8 @@ def test_str_cat_align_indexed(index_or_series, join_type):
 
 
 def test_str_cat_align_mixed_inputs(join_type):
+    # [FUNCTION DOC]
+    # Verifies concatenation with Series, frames, and mixed indexed and unindexed operands under each join type (fixture). The expected result is a subset of an outer-join expectation selected by the joined index; for the mixed case the unindexed array takes the caller's index and the joint index is derived per join type. A nested list raises a type error, and unindexed wrong-length operands (alone or in a list) raise a value error.
     s = Series(["a", "b", "c", "d"])
     t = Series(["d", "a", "e", "b"], index=[3, 0, 4, 1])
     d = concat([t, t], axis=1)
@@ -345,6 +369,8 @@ def test_str_cat_align_mixed_inputs(join_type):
 
 
 def test_str_cat_datetime_index_unsorted(join_type):
+    # [FUNCTION DOC]
+    # Verifies (pull request 62843) concatenation of two Series with datetime indexes in opposite order under every join type: for outer and right joins the result is ordered as the others' index; otherwise it follows the caller's order.
     # https://github.com/pandas-dev/pandas/pull/62843
     values = [datetime(2024, 1, 1), datetime(2024, 1, 2)]
     s = Series(["a", "b"], index=[values[1], values[0]])
@@ -358,6 +384,9 @@ def test_str_cat_datetime_index_unsorted(join_type):
 
 
 def test_str_cat_all_na(index_or_series, index_or_series2):
+    # [FUNCTION DOC]
+    # Verifies (issue 24044) concatenation with all-NaN operands: an all-missing target gives all-missing output (Series with the caller dtype and index, or an object Index) under left join; an all-missing caller (only when the other is a Series) gives an object Series of NaN with the target's index. Parametrized over two independent Series-or-Index boxes.
+    # KNOWN ISSUE: a TODO notes that for the Index case with the string option the result should have a string dtype, but the expected value uses object dtype.
     # GH 24044
     box = index_or_series
     other = index_or_series2
@@ -386,6 +415,8 @@ def test_str_cat_all_na(index_or_series, index_or_series2):
 
 
 def test_str_cat_special_cases():
+    # [FUNCTION DOC]
+    # Verifies concatenation special cases: an iterator holding a Series and an array under outer join with replacement, and a right join with Series restricted to different single labels, giving the expected strings and index.
     s = Series(["a", "b", "c", "d"])
     t = Series(["d", "a", "e", "b"], index=[3, 0, 4, 1])
 
@@ -401,6 +432,8 @@ def test_str_cat_special_cases():
 
 
 def test_cat_on_filtered_index():
+    # [FUNCTION DOC]
+    # Verifies that concatenating string columns from a filtered frame (year and month converted to string, rows with month above one) aligns on the surviving row labels, with a space separator, for one other operand and for a list of two operands.
     df = DataFrame(
         index=MultiIndex.from_product(
             [[2011, 2012], [1, 2, 3]], names=["year", "month"]
@@ -423,6 +456,8 @@ def test_cat_on_filtered_index():
 
 @pytest.mark.parametrize("klass", [tuple, list, np.array, Series, Index])
 def test_cat_different_classes(klass):
+    # [FUNCTION DOC]
+    # Verifies (issue 33425) that concatenation accepts an operand given as a tuple, list, array, Series or Index of equal length, producing the same result.
     # https://github.com/pandas-dev/pandas/issues/33425
     s = Series(["a", "b", "c"])
     result = s.str.cat(klass(["x", "y", "z"]))
@@ -431,6 +466,8 @@ def test_cat_different_classes(klass):
 
 
 def test_cat_on_series_dot_str():
+    # [FUNCTION DOC]
+    # Verifies (issue 28277) that passing the string accessor object itself as the operand raises a type error with the standard message listing allowed operand types.
     # GH 28277
     ps = Series(["AbC", "de", "FGHI", "j", "kLLLm"])
 

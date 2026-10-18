@@ -1,3 +1,7 @@
+# [MODULE DOC]
+# Tests for the unary operators on Series: negation, positive, invert and absolute value, including nullable extension dtypes and mask independence.
+# No import-time side effects.
+
 import pytest
 
 from pandas import Series
@@ -5,13 +9,19 @@ import pandas._testing as tm
 
 
 class TestSeriesUnaryOps:
+    # [CLASS DOC]
+    # Groups tests of the unary operators (negation, positive, invert). Stateless.
     # __neg__, __pos__, __invert__
 
     def test_neg(self):
+        # [FUNCTION DOC]
+        # Verifies that negating a float Series equals multiplying it by minus one, including the name.
         ser = Series(range(5), dtype="float64", name="series")
         tm.assert_series_equal(-ser, -1 * ser)
 
     def test_invert(self):
+        # [FUNCTION DOC]
+        # Verifies that for a boolean Series made from a comparison, applying negation gives the same result as bitwise inversion.
         ser = Series(range(5), dtype="float64", name="series")
         tm.assert_series_equal(-(ser < 0), ~(ser < 0))
 
@@ -25,6 +35,8 @@ class TestSeriesUnaryOps:
     def test_all_numeric_unary_operators(
         self, any_numeric_ea_dtype, source, neg_target, abs_target
     ):
+        # [FUNCTION DOC]
+        # Verifies (issue 38794) negation, positive and absolute value for all nullable numeric dtypes from a fixture, with inputs one, two, three and one, two, missing. Positive returns an equal Series; absolute value equals the expected nonnegative series; negation equals the expected negated series, except that for unsigned dtypes (names starting with an uppercase U) the expected value is itself computed by negating the unsigned series, since wraparound is dtype-defined.
         # GH38794
         dtype = any_numeric_ea_dtype
         ser = Series(source, dtype=dtype)
@@ -42,6 +54,8 @@ class TestSeriesUnaryOps:
 
     @pytest.mark.parametrize("op", ["__neg__", "__abs__"])
     def test_unary_float_op_mask(self, float_ea_dtype, op):
+        # [FUNCTION DOC]
+        # Verifies that the negation and absolute-value operators on nullable float Series return new data whose mask is independent of the source: after setting the first element of the source to missing, the earlier result is unchanged. Parametrized over the operator method name and a float extension dtype fixture.
         dtype = float_ea_dtype
         ser = Series([1.1, 2.2, 3.3], dtype=dtype)
         result = getattr(ser, op)()

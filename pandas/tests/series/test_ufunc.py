@@ -1,3 +1,7 @@
+# [MODULE DOC]
+# Tests for NumPy universal functions (ufuncs) applied to Series: unary, binary (with arrays, indexes, Series, scalars, other sequence types), multi-output, name handling, object dtype, reductions via reduce, outer, matrix multiplication, many-argument ufuncs and truncation. Cases are run for sparse and dense data where applicable.
+# Defines fixtures: a choice of binary ufunc, a sparse/dense switch, a pair of random mostly-zero integer arrays, and a collection of array-likes of many dtypes for reduction tests. No import-time side effects beyond constructing the fixture parameter values.
+
 from collections import deque
 import re
 import string
@@ -12,6 +16,8 @@ from pandas.arrays import SparseArray
 
 @pytest.fixture(params=[np.add, np.logaddexp])
 def ufunc(request):
+    # [FUNCTION DOC]
+    # HELPER: fixture parametrized over two binary ufuncs (addition and log-add-exp); returns the chosen ufunc. The comment calls it the dunder op.
     # dunder op
     return request.param
 
@@ -21,11 +27,16 @@ def ufunc(request):
     ids=["sparse", "dense"],
 )
 def sparse(request):
+    # [FUNCTION DOC]
+    # HELPER: fixture returning true or false for sparse or dense data (ids sparse, dense); the sparse case is marked as failing on ARM wheels.
     return request.param
 
 
 @pytest.fixture
 def arrays_for_binary_ufunc():
+    # [FUNCTION DOC]
+    # HELPER: fixture returning a pair of length-100 int64 arrays of random integers below ten (seeded identically, so the underlying draws coincide), with every third element of the first and every fourth of the second set to zero.
+    # KNOWN ISSUE: both arrays are drawn from separately created generators with the same seed, so before zeroing they are identical, and the pair is less random than the docstring suggests.
     """
     A pair of random, length-100 integer-dtype arrays, that are mostly 0.
     """
@@ -38,6 +49,8 @@ def arrays_for_binary_ufunc():
 
 @pytest.mark.parametrize("ufunc", [np.positive, np.floor, np.exp])
 def test_unary_ufunc(ufunc, sparse):
+    # [FUNCTION DOC]
+    # Verifies that applying a unary ufunc (positive, floor or exponential, parametrized) to a Series of ten small ints (every other zero; a sparse array of int64 with fill zero when the sparse fixture is true) with letter index and a name equals a Series built from the ufunc on the raw data with the same index and name.
     # Test that ufunc(pd.Series) == pd.Series(ufunc)
     arr = np.random.default_rng(2).integers(0, 10, 10, dtype="int64")
     arr[::2] = 0
@@ -55,6 +68,8 @@ def test_unary_ufunc(ufunc, sparse):
 
 @pytest.mark.parametrize("flip", [True, False], ids=["flipped", "straight"])
 def test_binary_ufunc_with_array(flip, sparse, ufunc, arrays_for_binary_ufunc):
+    # [FUNCTION DOC]
+    # Verifies a binary ufunc between a Series and a plain array (sparse or dense, fixtures), in straight order and flipped order (array first): the result equals a Series of the ufunc on the raw arrays and keeps the Series' name.
     # Test that ufunc(pd.Series(a), array) == pd.Series(ufunc(a, b))
     a1, a2 = arrays_for_binary_ufunc
     if sparse:
@@ -79,6 +94,9 @@ def test_binary_ufunc_with_array(flip, sparse, ufunc, arrays_for_binary_ufunc):
 
 @pytest.mark.parametrize("flip", [True, False], ids=["flipped", "straight"])
 def test_binary_ufunc_with_index(flip, sparse, ufunc, arrays_for_binary_ufunc):
+    # [FUNCTION DOC]
+    # Verifies a binary ufunc between a Series and an int64 Index (straight or flipped): the result is a Series, even when the Index is the first argument, equal to the ufunc on the raw arrays with the name preserved.
+    # KNOWN ISSUE: the comment at the top of the test mentions two Series arguments, but the second operand in the body is an Index.
     # Test that
     #   * func(pd.Series(a), pd.Series(b)) == pd.Series(ufunc(a, b))
     #   * ufunc(Index, pd.Series) dispatches to pd.Series (returns a pd.Series)
@@ -109,6 +127,8 @@ def test_binary_ufunc_with_index(flip, sparse, ufunc, arrays_for_binary_ufunc):
 def test_binary_ufunc_with_series(
     flip, shuffle, sparse, ufunc, arrays_for_binary_ufunc
 ):
+    # [FUNCTION DOC]
+    # Verifies a binary ufunc between two Series with equal names, either aligned or with the second shuffled by a random permutation (unaligned), straight or flipped. The expected result is built from the raw arrays and an index taken from aligning the two Series (in the order matching the operand order), so misaligned labels are aligned before the operation.
     # Test that
     #   * func(pd.Series(a), pd.Series(b)) == pd.Series(ufunc(a, b))
     #   with alignment between the indices
@@ -146,6 +166,8 @@ def test_binary_ufunc_with_series(
 
 @pytest.mark.parametrize("flip", [True, False])
 def test_binary_ufunc_scalar(ufunc, sparse, flip, arrays_for_binary_ufunc):
+    # [FUNCTION DOC]
+    # Verifies a binary ufunc between a Series and the scalar two, in both operand orders (parametrized flip, sparse and dense): result equals the ufunc on the raw array with the scalar, with the name preserved.
     # Test that
     #   * ufunc(pd.Series, scalar) == pd.Series(ufunc(array, scalar))
     #   * ufunc(pd.Series, scalar) == ufunc(scalar, pd.Series)
@@ -172,6 +194,8 @@ def test_binary_ufunc_scalar(ufunc, sparse, flip, arrays_for_binary_ufunc):
 @pytest.mark.parametrize("shuffle", [True, False])
 @pytest.mark.filterwarnings("ignore:divide by zero:RuntimeWarning")
 def test_multiple_output_binary_ufuncs(ufunc, sparse, shuffle, arrays_for_binary_ufunc):
+    # [FUNCTION DOC]
+    # Verifies a multiple-output binary ufunc (integer divmod; the TODO lists modf and frexp as untested) between two Series, aligned or with the second randomly sampled-and-shuffled (so alignment is needed). Zeros in the input arrays are replaced with ones in place to avoid a known divide-by-zero issue (26987); divide-by-zero warnings are filtered. The result must be a tuple of two Series equal to the quotient and remainder of the raw arrays.
     # Test that
     #  the same conditions from binary_ufunc_scalar apply to
     #  ufuncs with multiple outputs.
@@ -202,6 +226,8 @@ def test_multiple_output_binary_ufuncs(ufunc, sparse, shuffle, arrays_for_binary
 
 
 def test_multiple_output_ufunc(sparse, arrays_for_binary_ufunc):
+    # [FUNCTION DOC]
+    # Verifies that a multiple-output unary ufunc (splitting into fractional and integral parts) applied to a Series (sparse or dense) returns a tuple of two named Series equal to the ufunc on the raw array.
     # Test that the same conditions from unary input apply to multi-output
     # ufuncs
     arr, _ = arrays_for_binary_ufunc
@@ -221,6 +247,8 @@ def test_multiple_output_ufunc(sparse, arrays_for_binary_ufunc):
 
 
 def test_binary_ufunc_drops_series_name(ufunc, sparse, arrays_for_binary_ufunc):
+    # [FUNCTION DOC]
+    # Verifies that a binary ufunc between two Series with different names (a and b) gives a result with no name.
     # Drop the names when they differ.
     a1, a2 = arrays_for_binary_ufunc
     s1 = pd.Series(a1, name="a")
@@ -231,11 +259,19 @@ def test_binary_ufunc_drops_series_name(ufunc, sparse, arrays_for_binary_ufunc):
 
 
 def test_object_series_ok():
+    # [FUNCTION DOC]
+    # Verifies that the add ufunc works on an object-dtype Series of instances of a locally defined class whose addition returns the sum of their wrapped integer values: adding the Series to itself equals adding the Series to the raw object array, and adding it to a single instance equals the same operation computed again.
     class Dummy:
+        # [CLASS DOC]
+        # HELPER: local class wrapping a single value attribute, whose addition returns the plain sum of the two wrapped values (a number, not an instance).
         def __init__(self, value) -> None:
+            # [FUNCTION DOC]
+            # HELPER: stores the wrapped value.
             self.value = value
 
         def __add__(self, other):
+            # [FUNCTION DOC]
+            # HELPER: returns the sum of this object's value and the other object's value.
             return self.value + other.value
 
     arr = np.array([Dummy(0), Dummy(1)])
@@ -259,14 +295,20 @@ def test_object_series_ok():
     ids=lambda x: str(x.dtype),
 )
 def values_for_np_reduce(request):
+    # [FUNCTION DOC]
+    # HELPER: fixture parametrized over nine array-likes (int64 NumPy, nullable Int64, nullable Float32, sparse int, naive datetimes, tz-aware datetimes in CET, daily periods, timedeltas, intervals; ids are dtype names) returning one. Used by the reduction tests, which assume the values are monotonic increasing.
     # min/max tests assume that these are monotonic increasing
     return request.param
 
 
 class TestNumpyReductions:
+    # [CLASS DOC]
+    # Groups tests of NumPy reduce methods for the add, multiply, maximum and minimum ufuncs applied to Series, Index and DataFrame containers. Each test is run for every container from the array-box fixture and every dtype from the reduction values fixture. A TODO notes missing cases with missing values and the axis argument for frames.
     # TODO: cases with NAs, axis kwarg for DataFrame
 
     def test_multiply(self, values_for_np_reduce, box_with_array, request):
+        # [FUNCTION DOC]
+        # Verifies the multiply-reduce of each container. Constructing the container must raise no warnings; sparse arrays are marked expected-to-fail since they have no product. For integer, unsigned and float values the result equals the container's own product (frame: per-column Series without numeric-only restriction; Index: product of its underlying values). For other dtypes the call raises a type error (does not support operation, unsupported operand, or ufunc cannot use operands).
         box = box_with_array
         values = values_for_np_reduce
 
@@ -301,6 +343,8 @@ class TestNumpyReductions:
                 np.multiply.reduce(obj)
 
     def test_add(self, values_for_np_reduce, box_with_array):
+        # [FUNCTION DOC]
+        # Verifies the add-reduce of each container: constructing it raises no warnings; for timedelta, integer, unsigned and float values the result equals the container's own sum (frame without numeric-only restriction, Index via its underlying values); other dtypes raise a type error with one of the standard unsupported-operation messages.
         box = box_with_array
         values = values_for_np_reduce
 
@@ -331,6 +375,8 @@ class TestNumpyReductions:
                 np.add.reduce(obj)
 
     def test_max(self, values_for_np_reduce, box_with_array, using_python_scalars):
+        # [FUNCTION DOC]
+        # Verifies the maximum-reduce for each container: for a frame, equals the frame maximum without numeric-only restriction; otherwise equals the second element of the values (the maximum, since they are increasing), converted to a Python scalar when the Python-scalar option fixture is on and values are integer or float, and, when the container is not an Index of integers or floats (which become Python numbers), has exactly the same type as that expected value (for example Timestamp rather than a datetime64).
         box = box_with_array
         values = values_for_np_reduce
 
@@ -357,6 +403,8 @@ class TestNumpyReductions:
                 assert type(result) == type(expected)
 
     def test_min(self, values_for_np_reduce, box_with_array, using_python_scalars):
+        # [FUNCTION DOC]
+        # Verifies the minimum-reduce for each container, the mirror of the maximum test: expected is the first element of the values, with the same Python-scalar conversion and type-equality rules.
         box = box_with_array
         values = values_for_np_reduce
 
@@ -384,6 +432,8 @@ class TestNumpyReductions:
 
 @pytest.mark.parametrize("type_", [list, deque, tuple])
 def test_binary_ufunc_other_types(type_):
+    # [FUNCTION DOC]
+    # Verifies that a binary ufunc (addition) between a named Series and a list, deque or tuple of integers gives a Series with the same name equal to the sum with the Series' NumPy values. Parametrized over the sequence type.
     a = pd.Series([1, 2, 3], name="name")
     b = type_([3, 4, 5])
 
@@ -393,18 +443,30 @@ def test_binary_ufunc_other_types(type_):
 
 
 def test_object_dtype_ok():
+    # [FUNCTION DOC]
+    # Verifies that the add ufunc between an object-dtype Series of instances of a local class and one such instance gives a Series of new instances with each value incremented, compared using the class' equality and representation.
     class Thing:
+        # [CLASS DOC]
+        # HELPER: local value-wrapping class whose addition unwraps the other operand's value if it has one and returns a new instance; equality requires exactly this class and equal values; it has a readable representation. Used as object data.
         def __init__(self, value) -> None:
+            # [FUNCTION DOC]
+            # HELPER: stores the wrapped value.
             self.value = value
 
         def __add__(self, other):
+            # [FUNCTION DOC]
+            # HELPER: returns a new instance of the same class holding the sum of this value and the other operand (using its value attribute if it has one, otherwise the operand itself).
             other = getattr(other, "value", other)
             return type(self)(self.value + other)
 
         def __eq__(self, other) -> bool:
+            # [FUNCTION DOC]
+            # HELPER: returns true only when the other object is exactly of this class and holds an equal value.
             return type(other) is Thing and self.value == other.value
 
         def __repr__(self) -> str:
+            # [FUNCTION DOC]
+            # HELPER: returns a text representation naming the class and its value.
             return f"Thing({self.value})"
 
     s = pd.Series([Thing(1), Thing(2)])
@@ -414,6 +476,8 @@ def test_object_dtype_ok():
 
 
 def test_outer():
+    # [FUNCTION DOC]
+    # Verifies (issue 27186) that the outer-product method of a ufunc applied to a Series and an array raises a not-implemented error with an empty message.
     # https://github.com/pandas-dev/pandas/issues/27186
     ser = pd.Series([1, 2, 3])
     obj = np.array([1, 2, 3])
@@ -423,6 +487,8 @@ def test_outer():
 
 
 def test_np_matmul():
+    # [FUNCTION DOC]
+    # Verifies (issue 26650) that NumPy matrix multiplication of a one-row frame by a one-column frame gives a one-by-one frame holding the dot product.
     # GH26650
     df1 = pd.DataFrame(data=[[-1, 1, 10]])
     df2 = pd.DataFrame(data=[-1, 1, 10])
@@ -434,6 +500,8 @@ def test_np_matmul():
 
 @pytest.mark.parametrize("box", [pd.Index, pd.Series])
 def test_np_matmul_1D(box, using_python_scalars):
+    # [FUNCTION DOC]
+    # Verifies matrix multiplication of two one-dimensional Index or Series objects gives eight; its type is Python int when the Python-scalar option fixture is on, and a NumPy 64-bit integer otherwise.
     result = np.matmul(box([1, 2]), box([2, 3]))
     assert result == 8
     if using_python_scalars:
@@ -443,8 +511,12 @@ def test_np_matmul_1D(box, using_python_scalars):
 
 
 def test_array_ufuncs_for_many_arguments():
+    # [FUNCTION DOC]
+    # Verifies (issue 39853) a ufunc built from a three-argument Python function (via frompyfunc): called with two Series and a scalar it returns an object-dtype Series of elementwise sums; called with two Series and a frame it raises a not-implemented error about mixed frame and Series inputs.
     # GH39853
     def add3(x, y, z):
+        # [FUNCTION DOC]
+        # HELPER: nested function taking three values and returning their sum, wrapped into a ufunc by the test.
         return x + y + z
 
     ufunc = np.frompyfunc(add3, 3, 1)
@@ -465,6 +537,8 @@ def test_array_ufuncs_for_many_arguments():
 
 
 def test_np_trunc():
+    # [FUNCTION DOC]
+    # Verifies that the NumPy truncate function (a true ufunc, replacing an older fix function that relied on out and where keywords) rounds floats toward zero for a float Series.
     # This used to test np.fix, which is not a ufunc but is composed of
     # several ufunc calls under the hood with `out` and `where` keywords. But numpy
     # is deprecating that (or at least discussing deprecating) in favor of np.trunc,

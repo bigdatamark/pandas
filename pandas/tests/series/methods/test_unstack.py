@@ -1,3 +1,7 @@
+# [MODULE DOC]
+# Tests for the Series method that pivots an inner index level into columns, producing a DataFrame: dtype preservation, missing labels, tuple and mixed-type level names, categorical values.
+# Module-level test functions only; no import-time side effects.
+
 import numpy as np
 import pytest
 
@@ -13,6 +17,8 @@ import pandas._testing as tm
 
 
 def test_unstack_preserves_object():
+    # [FUNCTION DOC]
+    # Verifies that unstacking an object-dtype Series with a two-level index keeps all resulting columns object dtype, both for the default (last) level and for level zero.
     mi = MultiIndex.from_product([["bar", "foo"], ["one", "two"]])
 
     ser = Series(np.arange(4.0), index=mi, dtype=object)
@@ -25,6 +31,8 @@ def test_unstack_preserves_object():
 
 
 def test_unstack():
+    # [FUNCTION DOC]
+    # Verifies unstacking in several situations. (1) A two-level index with unsorted codes gives a frame with sorted row labels and columns, with missing cells as NaN; unstacking level zero gives the transpose. (2) A three-level index with a single outer label unstacked at level zero equals a frame built from the values with a two-level index, after sorting. (3) Issue 5873: an index containing NaN in a float level places NaN as a column label. (4) A three-level index with NaN in the innermost level, unstacked at level zero, gives rows indexed by the remaining (letter, number) pairs including NaN.
     index = MultiIndex(
         levels=[["bar", "foo"], ["one", "three", "two"]],
         codes=[[1, 1, 0, 0], [0, 1, 0, 2]],
@@ -84,6 +92,8 @@ def test_unstack():
 
 
 def test_unstack_tuplename_in_multiindex():
+    # [FUNCTION DOC]
+    # Verifies unstacking by a level whose name is a tuple (issue 19966): the tuple name is accepted as the level argument, columns become a one-level multi-index named by the tuple, and the remaining level becomes the row index named by its tuple name. All values are one.
     # GH 19966
     idx = MultiIndex.from_product(
         [["a", "b", "c"], [1, 2, 3]], names=[("A", "a"), ("B", "b")]
@@ -121,6 +131,8 @@ def test_unstack_tuplename_in_multiindex():
 def test_unstack_mixed_type_name_in_multiindex(
     unstack_idx, expected_values, expected_index, expected_columns
 ):
+    # [FUNCTION DOC]
+    # Verifies unstacking with level names of mixed types in a three-level index (issue 19966). Parametrized over the level selection (a single tuple-named level, or a tuple-named plus a string-named level), expected values, row index and column index. The result is compared to a frame built from these expectations.
     # GH 19966
     idx = MultiIndex.from_product(
         [["a", "b"], [1, 2], [3, 4]], names=[("A", "a"), "B", "C"]
@@ -135,6 +147,8 @@ def test_unstack_mixed_type_name_in_multiindex(
 
 
 def test_unstack_multi_index_categorical_values():
+    # [FUNCTION DOC]
+    # Verifies that unstacking a categorical-dtype Series with a two-level index (dates by letters, from a stacked random frame with levels renamed major and minor) yields columns that are each categorical with the single category, columns named by the minor level and rows named by the major level.
     df = DataFrame(
         np.random.default_rng(2).standard_normal((10, 4)),
         columns=Index(list("ABCD")),
@@ -156,6 +170,8 @@ def test_unstack_multi_index_categorical_values():
 
 
 def test_unstack_mixed_level_names():
+    # [FUNCTION DOC]
+    # Verifies unstacking by level name when level names mix strings and an integer (issue 48763): unstacking the level named x moves it to columns, and the remaining levels keep their names (the integer 0 and the string y).
     # GH#48763
     arrays = [["a", "a"], [1, 2], ["red", "blue"]]
     idx = MultiIndex.from_arrays(arrays, names=("x", 0, "y"))
