@@ -1,3 +1,14 @@
+# [MODULE DOC]
+# Dummy/indicator-variable encoding for the reshape package.
+# Public contents: get_dummies (converts categorical-like data into 0/1 indicator
+# columns) and from_dummies (the inverse, decoding indicator columns back into
+# categorical columns). Both are exported to the top-level pandas namespace through
+# the reshape api module.
+# Private helper: the one-dimensional dummy builder used by get_dummies.
+# Relationships: uses categorical factorization for level discovery, sparse arrays for
+# sparse output, and the concat function (imported lazily inside the functions to
+# avoid circular imports) to join per-column results.
+# No import-time side effects beyond imports.
 from __future__ import annotations
 
 from collections import defaultdict
@@ -50,6 +61,29 @@ def get_dummies(
     drop_first: bool = False,
     dtype: NpDtype | None = None,
 ) -> DataFrame:
+    # [FUNCTION DOC]
+    # Converts categorical-like data into indicator (dummy) columns, one per distinct
+    # value.
+    # Inputs: data (array-like, Series or DataFrame); prefix (string, list or mapping of
+    # strings used to prefix new column names; for a DataFrame a list must match the
+    # number of encoded columns, a mapping is keyed by column name, a single string
+    # applies to all, and none means use the column names; for non-frame input none
+    # means no prefix); prefix_sep (separator between prefix and value, same shape
+    # options as prefix, default underscore); dummy_na (add an indicator column for
+    # missing values even if none are present; otherwise missing values give all-zero
+    # rows); columns (for a DataFrame, which columns to encode; by default all columns
+    # of object, string or category dtype; must be list-like, else a type error);
+    # sparse (back the indicator columns by sparse arrays); drop_first (drop the first
+    # level to get k-1 columns); dtype (single dtype of the new columns, see the
+    # one-dimensional helper for how the default is chosen).
+    # For a DataFrame, validates that prefix and separator lists match the number of
+    # encoded columns (value error otherwise), encodes each column separately, and
+    # concatenates along columns; non-encoded columns are placed first, unchanged.
+    # If every column is encoded, no leftover columns are prepended.
+    # Returns a DataFrame. Does not modify the input.
+    # KNOWN ISSUE: the docstring gives the default dtype as boolean, but the actual
+    # default depends on the input: Arrow-backed input yields an Arrow boolean, and
+    # string input with missing-value sentinel gives the nullable boolean dtype.
     """
     Convert categorical variable into dummy/indicator variables.
 
@@ -172,6 +206,12 @@ def get_dummies(
 
         # validate prefixes and separator to avoid silently dropping cols
         def check_len(item, name: str) -> None:
+            # [FUNCTION DOC]
+            # HELPER: nested validator inside get_dummies for the frame case.
+            # If item is list-like, its length must equal the number of columns being
+            # encoded; otherwise raises a value error naming the argument (name) and
+            # both lengths. Non-list-like items (strings, none, mappings that are
+            # handled elsewhere) pass silently. Returns nothing.
             if is_list_like(item):
                 if not len(item) == data_to_encode.shape[1]:
                     len_msg = (
@@ -248,6 +288,26 @@ def _get_dummies_1d(
     drop_first: bool = False,
     dtype: NpDtype | None = None,
 ) -> DataFrame:
+    # [FUNCTION DOC]
+    # HELPER: for get_dummies; encodes a single one-dimensional input into indicator
+    # columns.
+    # Inputs: data (array-like or Series), prefix (single string or none), prefix_sep
+    # (single separator used to build column labels from prefix and level), dummy_na,
+    # sparse, drop_first, dtype (as in get_dummies).
+    # Dtype selection when none is given: boolean numpy dtype by default; for Arrow
+    # backed input the Arrow boolean type; for string dtype using the missing-value
+    # sentinel, the nullable boolean dtype; categorical input uses its categories'
+    # dtype for this decision. Object dtype is rejected with a value error.
+    # Levels come from factorizing the input. If there are no levels and dummy_na is
+    # off, or drop_first leaves nothing, returns an empty-column frame with the input's
+    # index (the Series index, or a default range for other input).
+    # With dummy_na, missing values are mapped to an extra last level labeled missing.
+    # Column labels are the levels, or prefix + separator + level when a prefix is given.
+    # Sparse mode builds one sparse array per level (fill value zero/false/0.0 by dtype)
+    # and concatenates them along columns; dense mode fills a column-major matrix and
+    # clears rows of missing values unless dummy_na is set. drop_first removes the first
+    # column in both modes.
+    # Returns a DataFrame indexed like the input Series (or default index otherwise).
     from pandas.core.reshape.concat import concat
 
     # Series avoids inconsistent NaN handling
@@ -278,6 +338,10 @@ def _get_dummies_1d(
         raise ValueError("dtype=object is not a valid dtype for get_dummies")
 
     def get_empty_frame(data) -> DataFrame:
+        # [FUNCTION DOC]
+        # HELPER: nested in the one-dimensional dummy builder; returns a DataFrame with
+        # no columns whose index is the Series index when data is a Series, else a
+        # default integer range as long as data.
         index: Index | np.ndarray
         if isinstance(data, Series):
             index = data.index
@@ -374,6 +438,30 @@ def from_dummies(
     sep: None | str = None,
     default_category: None | Hashable | dict[str, Hashable] = None,
 ) -> DataFrame:
+    # [FUNCTION DOC]
+    # Inverse of get_dummies: decodes indicator columns into categorical columns.
+    # Inputs: data (a DataFrame of dummy columns, boolean or zero/one valued); sep
+    # (string separating a variable prefix from the category in column names; none
+    # means all columns belong to one variable with the whole column name as category);
+    # default_category (category assigned to rows with no indicator set: a single
+    # hashable applied to every variable, or a mapping from prefix to category; none
+    # means unassigned rows are an error).
+    # Validation: type error if data is not a DataFrame, if the data cannot be cast to
+    # nullable boolean, if sep is not a string or none, or if default_category is not
+    # none, a hashable or a mapping; value error if data has missing values, a column
+    # lacks the separator, a mapping's size differs from the number of variables, a row
+    # has more than one indicator set in a group, or a row has none and no default
+    # applies.
+    # Algorithm: groups columns by prefix, strips prefix and separator to get the
+    # categories, checks assignment counts per row, optionally appends the default
+    # category with an extra helper column flagging unassigned rows, then picks the
+    # first true column per row and takes the matching category.
+    # Returns a DataFrame with one column per prefix (named "" when sep is none), the
+    # input's row index, and category values typed like the input's column labels; when
+    # sep is given the result's column labels are cast to the input column label dtype.
+    # KNOWN ISSUE: the docstring says that default_category is coerced to the column
+    # labels dtype with an error if lossy, but the code only uses the labels' dtype when
+    # constructing the category array and does no explicit lossless check.
     """
     Create a categorical ``DataFrame`` from a ``DataFrame`` of dummy variables.
 

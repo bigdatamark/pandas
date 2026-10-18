@@ -1,3 +1,15 @@
+# [MODULE DOC]
+# Wide-to-long reshaping routines.
+# Public contents: melt (unpivot columns into variable/value rows, also reachable as a
+# DataFrame method), lreshape (melt groups of columns under new names, dropping missing
+# rows by default) and wide_to_long (unpivot stub-prefixed column families into a long
+# frame indexed by id and suffix). All three are exported to the top-level namespace
+# via the reshape api module.
+# Also holds ensure_list_vars, a small normalizer for the id/value variable arguments.
+# Relationships: built on concat for joining pieces, a numeric conversion tool for
+# suffixes, array unique and compat-concatenation helpers; wide_to_long is layered on
+# melt and on join and merge methods of DataFrame.
+# No import-time side effects beyond imports.
 from __future__ import annotations
 
 import re
@@ -28,6 +40,13 @@ if TYPE_CHECKING:
 
 
 def ensure_list_vars(arg_vars, variable: str, columns) -> list:
+    # [FUNCTION DOC]
+    # HELPER: for melt; normalizes an id_vars or value_vars argument into a list.
+    # Inputs: arg_vars (none, a scalar, or a list-like), variable (the argument's name,
+    # used in the error message), columns (the frame's column index).
+    # Returns an empty list for none, a one-element list for a scalar, and a new list
+    # copy for list-likes. Raises a value error when the columns are hierarchical and a
+    # list-like arg_vars is not an actual list (the message asks for a list of tuples).
     if arg_vars is not None:
         if not is_list_like(arg_vars):
             return [arg_vars]
@@ -51,6 +70,35 @@ def melt(
     col_level=None,
     ignore_index: bool = True,
 ) -> DataFrame:
+    # [FUNCTION DOC]
+    # Unpivots a DataFrame from wide to long form: identifier columns are repeated and
+    # the measured columns are stacked into one value column plus a variable column
+    # holding the original column labels.
+    # Inputs: frame (the DataFrame); id_vars (column label or list of labels to keep as
+    # identifiers; scalar allowed; default none); value_vars (columns to unpivot;
+    # default is all columns that are not identifiers; when given, the frame is first
+    # restricted to those columns plus the identifiers, deduplicated by position);
+    # var_name (name(s) for the variable column(s); default is the columns' name or the
+    # word variable, or the level names of hierarchical columns, falling back to numbered
+    # names if level names repeat); value_name (name of the value column, default
+    # value; must not already be a column label); col_level (which level of
+    # hierarchical columns to use for label lookup and melting); ignore_index (default
+    # true gives a new default index; false keeps the original index repeated as needed).
+    # Errors: value error if value_name equals an existing column, if id_vars has
+    # duplicate columns, if var_name is list-like for non-hierarchical columns, or if
+    # too many var_name items are given for hierarchical columns; key error listing the
+    # id or value labels that are not found.
+    # Algorithm: id columns are tiled (extension dtypes via concatenation), the value
+    # column is built by concatenating the remaining columns (for extension types that
+    # do not support 2D) or flattening the 2D values column-major, and the variable
+    # columns repeat each column label once per row. Returns a new DataFrame (of the
+    # input's constructor type); the input is not mutated.
+    # KNOWN ISSUE: the docstring says var_name must be a scalar when columns are
+    # hierarchical, but the code does the opposite: list-like var_name is only accepted
+    # for hierarchical columns and raises for flat columns.
+    # KNOWN ISSUE: the too-many-names check compares the number of var_name items with
+    # the number of columns, not the number of column levels, although the error message
+    # talks about levels.
     """
     Unpivot a DataFrame from wide to long format, optionally leaving identifiers set.
 
@@ -280,6 +328,19 @@ def melt(
 
 @set_module("pandas")
 def lreshape(data: DataFrame, groups: dict, dropna: bool = True) -> DataFrame:
+    # [FUNCTION DOC]
+    # Reshapes wide data to long by stacking groups of columns under new names.
+    # Inputs: data (DataFrame); groups (mapping from new column name to a list of
+    # existing column names; all lists must have the same length, otherwise a value
+    # error is raised; an empty mapping is not handled and fails when reading the first
+    # group); dropna (default true: drop rows where any of the new group columns is
+    # missing).
+    # Result: for each group, values of its columns are concatenated end to end under
+    # the new name; all columns not mentioned in any group are tiled to match. Columns
+    # are ordered with the leftover (sorted by difference) columns first, then the new
+    # group columns. Returns a new DataFrame with a fresh default index; data is not
+    # mutated.
+    # The docstring is otherwise accurate.
     """
     Reshape wide-format data to long. Generalized inverse of DataFrame.pivot.
 
@@ -369,6 +430,28 @@ def lreshape(data: DataFrame, groups: dict, dropna: bool = True) -> DataFrame:
 def wide_to_long(
     df: DataFrame, stubnames, i, j, sep: str = "", suffix: str = r"\d+"
 ) -> DataFrame:
+    # [FUNCTION DOC]
+    # Unpivots stub-prefixed column families (such as a prefix followed by a suffix) from
+    # wide to long form, using the suffix as a new index level.
+    # Inputs: df (wide DataFrame); stubnames (a stub or list of stubs; a stub may not
+    # equal an existing column name or a value error is raised); i (id column or
+    # columns that must uniquely identify rows, else a value error); j (name for the
+    # new suffix level); sep (separator between stub and suffix, default empty);
+    # suffix (regular expression matched against the rest of each column name, default
+    # digits only).
+    # Algorithm: for each stub, finds the columns matching start, stub, separator,
+    # suffix, end (all escaped except the suffix), melts them with the stub (minus any
+    # trailing separator characters) as the value name, strips stub and separator from
+    # the variable column, tries to convert it to numbers (silently keeping strings if
+    # conversion fails), and indexes by the id columns plus the suffix. The per-stub
+    # frames are concatenated along columns. Leftover columns are joined back: by
+    # index join when there is one id column, otherwise by merging on the id columns and
+    # setting the multi-level index.
+    # Returns a DataFrame indexed by the id columns and the suffix, with one column per
+    # stub plus the untouched leftover columns.
+    # KNOWN ISSUE: the docstring example for disambiguating suffixes writes a negative
+    # lookahead with its two characters swapped; a lookahead is written with the
+    # question mark before the exclamation mark.
     r"""
     Unpivot a DataFrame from wide to long format.
 
@@ -621,10 +704,21 @@ def wide_to_long(
     """
 
     def get_var_names(df, stub: str, sep: str, suffix: str):
+        # [FUNCTION DOC]
+        # HELPER: nested in wide_to_long; returns the column labels of df that match the
+        # full pattern of the escaped stub, the escaped separator, and the suffix
+        # expression, anchored at both ends. Returns an index of the matching labels.
         regex = rf"^{re.escape(stub)}{re.escape(sep)}{suffix}$"
         return df.columns[df.columns.str.match(regex)]
 
     def melt_stub(df, stub: str, i, j, value_vars, sep: str):
+        # [FUNCTION DOC]
+        # HELPER: nested in wide_to_long; melts the columns of one stub family.
+        # Inputs: df, stub, i (list of id columns), j (suffix column name), value_vars
+        # (matching columns), sep. Melts with the stub with trailing separator
+        # characters removed as value name, strips the stub plus separator prefix from
+        # the variable values, attempts numeric conversion (ignoring type, value and
+        # overflow errors), and returns the frame indexed by the id columns and j.
         newdf = melt(
             df,
             id_vars=i,

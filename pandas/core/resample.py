@@ -1,3 +1,19 @@
+# [MODULE DOC]
+# Time-based resampling of Series and DataFrame objects (the machinery behind the
+# resample method) and the time grouper that defines the bins.
+# Public contents: Resampler (base class: a groupby-like object over time bins, with
+# aggregation and fill methods; exposed in the public typing namespace), the concrete
+# resamplers for datetime, period and timedelta indexes, the grouping-aware variants
+# used when resampling inside a groupby, and the time grouper class that stores the
+# resample options (frequency, closed side, label side, origin, offset, convention).
+# Also provides the factory function that builds the right resampler for an object, the
+# as-frequency conversion function (backing the asfreq method), and helpers for
+# computing bin edges, first/last timestamps and period conversions.
+# Relationships: builds on groupby machinery (bin-based grouper and groupby base class),
+# the aggregation-apply helper, datetime/period/timedelta index types and date range
+# builders, and the offsets/frequency utilities from the tseries package.
+# No import-time side effects other than defining the classes (and an empty dictionary
+# of shared docstring kwargs).
 from __future__ import annotations
 
 import copy
@@ -118,6 +134,21 @@ _shared_docs_kwargs: dict[str, str] = {}
 
 @set_module("pandas.api.typing")
 class Resampler(BaseGroupBy, PandasObject):
+    # [CLASS DOC]
+    # Base class for resampling datetime-like data: a groupby-like object whose groups are
+    # fixed time bins derived from a time grouper. Created by the resample method (through
+    # the factory function), never directly by users.
+    # Inherits from the groupby base class (selection and iteration behavior) and the
+    # pandas object base.
+    # State: the time grouper (stores the resample options), the object being resampled
+    # (sorted by time) together with its time axis and the sort indexer used (if any), the
+    # bin edges ("binner") and the bin-based grouper, the group_keys flag, an optional
+    # column selection, and excluded columns (the "on" key column, if any). Resampler
+    # option names (frequency, closed, label, convention, origin, offset) are readable
+    # through attribute access delegated to the time grouper.
+    # Key methods: aggregate (also named agg and apply), transform, pipe, fill methods
+    # (ffill, bfill, nearest, interpolate, asfreq, fillna) and the reductions (sum, mean,
+    # and so on). Subclasses must provide the bin computation, downsample and upsample.
     """
     Class for resampling datetimelike data, a groupby-like operation.
     See aggregate, transform, and apply functions on this object.
@@ -164,6 +195,18 @@ class Resampler(BaseGroupBy, PandasObject):
         selection=None,
         include_groups: bool = False,
     ) -> None:
+        # [FUNCTION DOC]
+        # Builds a resampler.
+        # Inputs: obj (the Series or DataFrame to resample), timegrouper (the time grouper
+        # holding the resample options), gpr_index (the time axis used for grouping;
+        # keyword-only), group_keys (keyword-only; default false), selection (an optional
+        # column selection; default none), include_groups (keyword-only; must be false,
+        # otherwise a value error is raised).
+        # Effects: stores the grouper; sets keys to none, sorting on, index-as-keys on;
+        # converts and sorts the object along the time axis through the grouper (storing the
+        # object, its axis and the sorting indexer); computes the bin edges and bin grouper;
+        # stores the selection; and records the grouping key column, if the grouper has one,
+        # as an excluded column.
         if include_groups:
             raise ValueError("include_groups=True is no longer allowed.")
         self._timegrouper = timegrouper
@@ -184,6 +227,10 @@ class Resampler(BaseGroupBy, PandasObject):
 
     @final
     def __str__(self) -> str:
+        # [FUNCTION DOC]
+        # Returns a short text representation: the class name followed, in square brackets,
+        # by the comma-separated name=value pairs for each resample option (frequency,
+        # closed, label, convention, origin, offset) that is not none on the time grouper.
         """
         Provide a nice str repr of our rolling object.
         """
@@ -196,6 +243,12 @@ class Resampler(BaseGroupBy, PandasObject):
 
     @final
     def __getattr__(self, attr: str):
+        # [FUNCTION DOC]
+        # Attribute fallback, called only when normal lookup fails. Names in the internal
+        # names set are looked up normally (which raises the usual attribute error if
+        # absent); names of resample options are read from the time grouper; names that are
+        # labels of the resampled object give the selection of that column (a new
+        # resampler); anything else is looked up normally, which raises an attribute error.
         if attr in self._internal_names_set:
             return object.__getattribute__(self, attr)
         if attr in self._attributes:
@@ -208,6 +261,11 @@ class Resampler(BaseGroupBy, PandasObject):
     @final
     @property
     def _from_selection(self) -> bool:
+        # [FUNCTION DOC]
+        # HELPER: property; true when the grouping axis comes from a DataFrame column or
+        # an index level (the time grouper has a key or a level) rather than the index
+        # itself. Used to reject unsupported operations (upsampling, period resampling) in
+        # that case.
         """
         Is the resampling from a DataFrame column or MultiIndex level.
         """
@@ -218,6 +276,9 @@ class Resampler(BaseGroupBy, PandasObject):
         )
 
     def _convert_obj(self, obj: NDFrameT) -> NDFrameT:
+        # [FUNCTION DOC]
+        # HELPER: hook for subclasses to convert the object before grouping; the base
+        # implementation returns the object after consolidating its internal blocks.
         """
         Provide any conversions for the object in order to correctly handle.
 
@@ -232,10 +293,20 @@ class Resampler(BaseGroupBy, PandasObject):
         return obj._consolidate()
 
     def _get_binner_for_time(self):
+        # [FUNCTION DOC]
+        # HELPER: abstract hook. Subclasses return the bin edges, the integer positions
+        # that split the data into bins, and the bin labels. The base implementation raises
+        # the abstract-method error.
         raise AbstractMethodError(self)
 
     @final
     def _get_binner(self):
+        # [FUNCTION DOC]
+        # HELPER: builds the bin edges and the bin-based grouper. Requires that the grouper
+        # was already set on the object. Gets edges, bin positions and labels from the
+        # subclass hook (asserting equal numbers of bins and labels), converts the labels to
+        # the Arrow dtype of the time axis when the time grouper recorded one, and creates
+        # the bin grouper using the sort indexer. Returns (edges, bin grouper).
         """
         Create the BinGrouper, assume that self.set_grouper(obj)
         has already been called.
@@ -253,7 +324,11 @@ class Resampler(BaseGroupBy, PandasObject):
         func: Callable[Concatenate[Self, P], T],
         *args: P.args,
         **kwargs: P.kwargs,
-    ) -> T: ...
+    ) -> T:
+        # [FUNCTION DOC]
+        # Typing overload only: pipe with a callable that takes the resampler as first
+        # argument. See the final implementation of pipe.
+        ...
 
     @overload
     def pipe(
@@ -261,7 +336,11 @@ class Resampler(BaseGroupBy, PandasObject):
         func: tuple[Callable[..., T], str],
         *args: Any,
         **kwargs: Any,
-    ) -> T: ...
+    ) -> T:
+        # [FUNCTION DOC]
+        # Typing overload only: pipe with a (callable, keyword name) pair, where the
+        # resampler is passed under the given keyword. See the final implementation of pipe.
+        ...
 
     @final
     def pipe(
@@ -270,6 +349,12 @@ class Resampler(BaseGroupBy, PandasObject):
         *args: Any,
         **kwargs: Any,
     ) -> T:
+        # [FUNCTION DOC]
+        # Applies a function to this resampler and returns its result, enabling chaining.
+        # Inputs: func (callable receiving the resampler first, or a pair of a callable and
+        # the keyword name under which the resampler is passed), plus extra positional and
+        # keyword arguments forwarded to it. Delegates to the groupby base implementation.
+        # Returns whatever func returns.
         """
         Apply a ``func`` with arguments to this Resampler object and return its result.
 
@@ -344,6 +429,16 @@ class Resampler(BaseGroupBy, PandasObject):
 
     @final
     def aggregate(self, func=None, *args, **kwargs):
+        # [FUNCTION DOC]
+        # Aggregates each time bin with one or more operations.
+        # Inputs: func (function, string name, list of these, or mapping from labels to
+        # these; may be none when named aggregations are given via keyword arguments),
+        # and extra positional and keyword arguments forwarded to func.
+        # Tries the generic aggregation-application helper first (handles strings, lists,
+        # mappings and named aggregation); if it yields nothing, falls back to the groupby
+        # aggregation path with func as the operation (with fallback to apply for
+        # non-reducing functions). Returns a scalar-like, Series or DataFrame indexed by the
+        # bin labels. The names agg and apply are aliases of this method.
         """
         Aggregate using one or more operations over the specified axis.
 
@@ -453,6 +548,12 @@ class Resampler(BaseGroupBy, PandasObject):
 
     @final
     def transform(self, arg, *args, **kwargs):
+        # [FUNCTION DOC]
+        # Applies a function to each time bin producing output indexed like the input.
+        # Inputs: arg (function applied to each group, which must return like-indexed
+        # output), plus extra arguments forwarded to it. Delegates to the transform of a
+        # groupby built from the selected object and the time grouper. Returns the
+        # transformed object (same index as the original).
         """
         Call function producing a like-indexed Series on each group.
 
@@ -496,12 +597,29 @@ class Resampler(BaseGroupBy, PandasObject):
         )
 
     def _downsample(self, how, **kwargs):
+        # [FUNCTION DOC]
+        # HELPER: abstract hook that subclasses implement to reduce each bin with the
+        # named operation (how) and extra keyword arguments. The base implementation
+        # raises the abstract-method error.
         raise AbstractMethodError(self)
 
     def _upsample(self, f, limit: int | None = None, fill_value=None):
+        # [FUNCTION DOC]
+        # HELPER: abstract hook that subclasses implement to convert to a higher frequency
+        # with fill method f (such as forward fill, backward fill, nearest, or none), an
+        # optional limit on filled values and an optional fill value. The base
+        # implementation raises the abstract-method error.
         raise AbstractMethodError(self)
 
     def _gotitem(self, key, ndim: int, subset=None):
+        # [FUNCTION DOC]
+        # HELPER: returns a groupby object over a selection, used by the aggregation helpers.
+        # Inputs: key (label or labels to select, or none), ndim (requested dimension, 1 or
+        # 2), subset (object to act on; default is the resampler's object, narrowed by key
+        # when key is not none; with no key the object must be one-dimensional).
+        # Builds a groupby from the subset using this resampler's bin grouper and group_keys
+        # setting; asserts that the subset is one-dimensional when ndim is one. Returns that
+        # groupby object.
         """
         Sub-classes to define. Return a sliced object.
 
@@ -530,6 +648,16 @@ class Resampler(BaseGroupBy, PandasObject):
         return grouped
 
     def _groupby_and_aggregate(self, how, *args, **kwargs):
+        # [FUNCTION DOC]
+        # HELPER: aggregates through an ordinary groupby over the bin grouper.
+        # Inputs: how (callable or string/operation name) and extra arguments. Uses the
+        # object without the excluded key column. A callable is wrapped in an anonymous
+        # function that forwards the extra arguments (a TODO in the source notes that a test
+        # fails when not using the wrapper). If aggregation fails with an attribute or key
+        # error, or with a value error stating that an aggregated value must be produced,
+        # the operation is evaluated with apply instead (any other value error is re-raised).
+        # Returns the result after wrapping (naming, empty-result index handling and Arrow
+        # dtype restoration).
         """
         Re-evaluate the obj with a groupby aggregation.
         """
@@ -578,6 +706,10 @@ class Resampler(BaseGroupBy, PandasObject):
         groupby: GroupBy,
         key,
     ):
+        # [FUNCTION DOC]
+        # HELPER: creates the resampler to use for groups in a groupby-then-resample
+        # operation, by instantiating this class's grouping-aware resampler type with the
+        # given groupby, key and this resampler as the parent. Returns that resampler.
         """
         Return the correct class for resampling with groupby.
         """
@@ -588,6 +720,13 @@ class Resampler(BaseGroupBy, PandasObject):
         )
 
     def _wrap_result(self, result):
+        # [FUNCTION DOC]
+        # HELPER: post-processes a result. If it is a Series and a column selection exists,
+        # names the Series after the selection. If it is an empty Series (for example when
+        # all index values are missing), gives it an empty index converted to this
+        # resampler's frequency and the original object's name. If the time grouper recorded
+        # an Arrow dtype, converts the result index to it and restores the original index
+        # name. Modifies the result in place and returns it.
         """
         Potentially wrap any results.
         """
@@ -608,6 +747,13 @@ class Resampler(BaseGroupBy, PandasObject):
 
     @final
     def ffill(self, limit: int | None = None):
+        # [FUNCTION DOC]
+        # Forward fills: when upsampling, new bins take the last valid observation; when
+        # downsampling, takes the last value before each bin edge according to the
+        # subclass's upsample behavior.
+        # Input: limit (maximum number of consecutive new values to fill; default none).
+        # Delegates to the subclass upsample hook with the forward-fill method. Returns the
+        # resampled Series or DataFrame.
         """
         Forward fill the values.
 
@@ -687,6 +833,12 @@ class Resampler(BaseGroupBy, PandasObject):
 
     @final
     def nearest(self, limit: int | None = None):
+        # [FUNCTION DOC]
+        # Upsamples by filling newly created (missing) bins with the value of the nearest
+        # original observation by index position. Existing missing values are not changed.
+        # Input: limit (maximum number of values to fill in each direction around each
+        # original value; default none). Delegates to the subclass upsample hook with the
+        # nearest method. Returns the upsampled Series or DataFrame.
         """
         Resample by using the nearest value.
 
@@ -745,6 +897,12 @@ class Resampler(BaseGroupBy, PandasObject):
 
     @final
     def bfill(self, limit: int | None = None):
+        # [FUNCTION DOC]
+        # Upsamples by filling newly created (missing) bins with the next valid original
+        # observation (backward fill). Existing missing values in the data are not modified.
+        # Input: limit (maximum number of consecutive new values to fill; default none).
+        # Delegates to the subclass upsample hook with the backward-fill method. Returns the
+        # upsampled Series or DataFrame.
         """
         Backward fill the new missing values in the resampled data.
 
@@ -856,6 +1014,25 @@ class Resampler(BaseGroupBy, PandasObject):
         limit_area=None,
         **kwargs,
     ):
+        # [FUNCTION DOC]
+        # Interpolates values at the resampled timestamps.
+        # Inputs: method (interpolation technique, default linear; any method of the frame
+        # interpolate function), axis (keyword-only, default 0), limit (maximum consecutive
+        # missing values to fill), limit_direction (forward by default, or backward/both),
+        # limit_area (none, inside or outside), and extra keyword arguments passed on to the
+        # interpolation. A keyword named inplace is accepted only for backward compatibility:
+        # it emits a Pandas4Warning deprecation warning, and a true value raises a value
+        # error.
+        # Algorithm: reindexes to the target bins (like asfreq); unless the index is a
+        # period index, original timestamps that are not on the target grid are added back
+        # (concatenated and sorted) so they act as interpolation anchors; interpolates;
+        # then removes the extra anchor rows and restores the frequency-carrying target
+        # index. For a period index the interpolated result is returned immediately. A
+        # hierarchical result index raises a not-implemented error that suggests
+        # interpolating per group instead.
+        # Returns the interpolated Series or DataFrame.
+        # KNOWN ISSUE: the docstring gives the default of axis as none, but the signature
+        # default is 0.
         """
         Interpolate values between target timestamps according to different methods.
 
@@ -1055,6 +1232,11 @@ class Resampler(BaseGroupBy, PandasObject):
 
     @final
     def asfreq(self, fill_value=None):
+        # [FUNCTION DOC]
+        # Returns the values at the new frequency, essentially a reindex onto the bin labels.
+        # Input: fill_value (value for bins that are new when upsampling; does not alter
+        # missing values already present; default none). Delegates to the subclass upsample
+        # hook with the as-frequency method. Returns a Series or DataFrame.
         """
         Return the values at the new freq, essentially a reindex.
 
@@ -1102,6 +1284,12 @@ class Resampler(BaseGroupBy, PandasObject):
         numeric_only: bool = False,
         min_count: int = 0,
     ):
+        # [FUNCTION DOC]
+        # Sums the values in each time bin. Inputs: numeric_only (default false; restrict
+        # to numeric and boolean columns), min_count (default 0; minimum number of valid
+        # values required per bin, otherwise the result is missing). Delegates to the
+        # subclass downsample hook with the sum operation. Returns a Series or DataFrame
+        # indexed by bin labels.
         """
         Compute sum of group values.
 
@@ -1162,6 +1350,11 @@ class Resampler(BaseGroupBy, PandasObject):
         numeric_only: bool = False,
         min_count: int = 0,
     ):
+        # [FUNCTION DOC]
+        # Multiplies the values in each time bin. Inputs: numeric_only (default false),
+        # min_count (default 0; minimum valid values per bin, otherwise missing). Delegates
+        # to the subclass downsample hook with the product operation. Returns a Series or
+        # DataFrame indexed by bin labels.
         """
         Compute prod of group values.
 
@@ -1217,6 +1410,11 @@ class Resampler(BaseGroupBy, PandasObject):
         numeric_only: bool = False,
         min_count: int = 0,
     ):
+        # [FUNCTION DOC]
+        # Takes the minimum value in each time bin. Inputs: numeric_only (default false),
+        # min_count (default 0; minimum valid values per bin, otherwise missing). Delegates
+        # to the subclass downsample hook with the minimum operation. Returns a Series or
+        # DataFrame indexed by bin labels.
         """
         Compute min value of group.
 
@@ -1272,6 +1470,11 @@ class Resampler(BaseGroupBy, PandasObject):
         numeric_only: bool = False,
         min_count: int = 0,
     ):
+        # [FUNCTION DOC]
+        # Takes the maximum value in each time bin. Inputs: numeric_only (default false),
+        # min_count (default 0; minimum valid values per bin, otherwise missing). Delegates
+        # to the subclass downsample hook with the maximum operation. Returns a Series or
+        # DataFrame indexed by bin labels.
         """
         Compute max value of group.
 
@@ -1328,6 +1531,12 @@ class Resampler(BaseGroupBy, PandasObject):
         min_count: int = 0,
         skipna: bool = True,
     ):
+        # [FUNCTION DOC]
+        # Takes the first entry of each column in each time bin (by default the first
+        # non-missing one). Inputs: numeric_only (default false), min_count (default 0;
+        # minimum valid values per bin), skipna (default true; skip missing values, so a
+        # bin that is entirely missing gives missing). Delegates to the subclass downsample
+        # hook with the first operation. Returns a Series or DataFrame.
         """
         Compute the first non-null entry of each column.
 
@@ -1381,6 +1590,12 @@ class Resampler(BaseGroupBy, PandasObject):
         min_count: int = 0,
         skipna: bool = True,
     ):
+        # [FUNCTION DOC]
+        # Takes the last entry of each column in each time bin (by default the last
+        # non-missing one). Inputs: numeric_only (default false), min_count (default 0;
+        # minimum valid values per bin), skipna (default true; skip missing values, so a
+        # bin that is entirely missing gives missing). Delegates to the subclass downsample
+        # hook with the last operation. Returns a Series or DataFrame.
         """
         Compute the last non-null entry of each column.
 
@@ -1429,6 +1644,10 @@ class Resampler(BaseGroupBy, PandasObject):
 
     @final
     def median(self, numeric_only: bool = False):
+        # [FUNCTION DOC]
+        # Computes the median of each time bin, ignoring missing values. Input:
+        # numeric_only (default false). Delegates to the subclass downsample hook with the
+        # median operation. Returns a Series or DataFrame indexed by bin labels.
         """
         Compute median of groups, excluding missing values.
 
@@ -1482,6 +1701,10 @@ class Resampler(BaseGroupBy, PandasObject):
         self,
         numeric_only: bool = False,
     ):
+        # [FUNCTION DOC]
+        # Computes the mean of each time bin, ignoring missing values. Input: numeric_only
+        # (default false). Delegates to the subclass downsample hook with the mean
+        # operation. Returns a Series or DataFrame indexed by bin labels.
         """
         Compute mean of groups, excluding missing values.
 
@@ -1537,6 +1760,11 @@ class Resampler(BaseGroupBy, PandasObject):
         ddof: int = 1,
         numeric_only: bool = False,
     ):
+        # [FUNCTION DOC]
+        # Computes the standard deviation of each time bin, ignoring missing values. Inputs:
+        # ddof (delta degrees of freedom, default 1), numeric_only (default false).
+        # Delegates to the subclass downsample hook with the standard-deviation operation
+        # and the ddof. Returns a Series or DataFrame indexed by bin labels.
         """
         Compute standard deviation of groups, excluding missing values.
 
@@ -1593,6 +1821,11 @@ class Resampler(BaseGroupBy, PandasObject):
         ddof: int = 1,
         numeric_only: bool = False,
     ):
+        # [FUNCTION DOC]
+        # Computes the variance of each time bin, ignoring missing values. Inputs: ddof
+        # (delta degrees of freedom, default 1), numeric_only (default false). Delegates to
+        # the subclass downsample hook with the variance operation and the ddof. Returns a
+        # Series or DataFrame indexed by bin labels.
         """
         Compute variance of groups, excluding missing values.
 
@@ -1655,6 +1888,11 @@ class Resampler(BaseGroupBy, PandasObject):
         ddof: int = 1,
         numeric_only: bool = False,
     ):
+        # [FUNCTION DOC]
+        # Computes the standard error of the mean of each time bin, ignoring missing values.
+        # Inputs: ddof (delta degrees of freedom, default 1), numeric_only (default false).
+        # Delegates to the subclass downsample hook with the standard-error operation and
+        # the ddof. Returns a Series or DataFrame indexed by bin labels.
         """
         Compute standard error of the mean of groups, excluding missing values.
 
@@ -1707,6 +1945,15 @@ class Resampler(BaseGroupBy, PandasObject):
 
     @final
     def ohlc(self):
+        # [FUNCTION DOC]
+        # Computes the open (first), high (maximum), low (minimum) and close (last) values
+        # of each time bin, ignoring missing values. No inputs.
+        # For an empty time axis, returns a copy of the object (without excluded columns)
+        # whose index is an empty index in the resampler frequency and whose columns are the
+        # four names (for a Series: those four as columns; for a frame: a hierarchical
+        # column index of each original column crossed with the four names), reindexed so
+        # all values are missing. Otherwise delegates to the downsample hook with the
+        # open-high-low-close operation. Returns a DataFrame.
         """
         Compute open, high, low and close values of a group, excluding missing values.
 
@@ -1761,6 +2008,10 @@ class Resampler(BaseGroupBy, PandasObject):
 
     @final
     def nunique(self):
+        # [FUNCTION DOC]
+        # Counts the distinct values in each time bin. No inputs. Delegates to the
+        # downsample hook with the distinct-count operation. Returns a Series (or DataFrame
+        # for frames) indexed by bin labels.
         """
         Return number of unique elements in the group.
 
@@ -1796,6 +2047,13 @@ class Resampler(BaseGroupBy, PandasObject):
 
     @final
     def size(self):
+        # [FUNCTION DOC]
+        # Computes the number of rows in each time bin (including missing values). No
+        # inputs. Delegates to the downsample hook with the size operation; if that yields a
+        # non-empty DataFrame (frame input), the result is stacked into a Series. If the
+        # time axis is empty, returns an empty 64-bit integer Series with the result index
+        # and the name of the selected object when it is a Series (otherwise no name).
+        # Returns a Series.
         """
         Compute group sizes.
 
@@ -1845,6 +2103,12 @@ class Resampler(BaseGroupBy, PandasObject):
 
     @final
     def count(self):
+        # [FUNCTION DOC]
+        # Counts the non-missing values in each time bin. No inputs. Delegates to the
+        # downsample hook with the count operation. If the time axis is empty, the result is
+        # replaced by an empty 64-bit integer object of the same kind (a Series carrying
+        # the selected object's name, or a DataFrame with the result's columns) on the
+        # result index. Returns a Series or DataFrame.
         """
         Compute count of group, excluding missing values.
 
@@ -1895,6 +2159,12 @@ class Resampler(BaseGroupBy, PandasObject):
 
     @final
     def quantile(self, q: float | list[float] | AnyArrayLike = 0.5, **kwargs):
+        # [FUNCTION DOC]
+        # Computes the quantile(s) of each time bin. Inputs: q (a number between 0 and 1,
+        # or a list/array of such numbers; default 0.5), and extra keyword arguments passed
+        # to the quantile computation. Delegates to the downsample hook with the quantile
+        # operation. Returns a Series or DataFrame indexed by bin labels (with an extra
+        # level for multiple quantiles).
         """
         Return value at the given quantile.
 
@@ -1953,6 +2223,18 @@ class Resampler(BaseGroupBy, PandasObject):
 
 
 class _GroupByMixin(PandasObject, SelectionMixin):
+    # [CLASS DOC]
+    # HELPER: mixin for the resamplers returned by groupby-then-resample. It changes a
+    # resampler so that every upsampling, downsampling or aggregation request is run once
+    # per group of an underlying groupby.
+    # Inherits from the pandas object base and the selection mixin; combined (with a
+    # resampler class first in the inheritance order) by the three concrete groupby
+    # resampler classes.
+    # State: copies of the parent's resample option attributes, the selection, bin edges,
+    # grouping key, the underlying groupby object, a shallow copy of the parent's time
+    # grouper, and the parent's time axis and object.
+    # The class-level names for upsample, downsample and groupby-and-aggregate are all
+    # aliases of the single apply method defined here.
     """
     Provide the groupby facilities.
     """
@@ -1970,6 +2252,14 @@ class _GroupByMixin(PandasObject, SelectionMixin):
         key=None,
         selection: IndexLabel | None = None,
     ) -> None:
+        # [FUNCTION DOC]
+        # Builds a grouping-aware resampler from a parent resampler.
+        # Inputs (all keyword-only): parent (a resampler; asserted), groupby (the groupby
+        # over the object; asserted to be a groupby), key (the grouping key, default none),
+        # selection (column selection, default none).
+        # Copies every resample option attribute from the parent, stores selection, bin
+        # edges, key and groupby, takes a shallow copy of the parent's time grouper, and
+        # shares the parent's time axis and object.
         # reached via ._gotitem and _get_resampler_for_grouping
 
         assert isinstance(groupby, GroupBy), type(groupby)
@@ -1994,12 +2284,32 @@ class _GroupByMixin(PandasObject, SelectionMixin):
 
     @no_type_check
     def _apply(self, f, *args, **kwargs):
+        # [FUNCTION DOC]
+        # HELPER: runs a resampling operation separately for each group of the underlying
+        # groupby and combines the results (this single method serves as upsample,
+        # downsample and groupby-and-aggregate).
+        # Inputs: f (operation name as a string, or a callable), extra positional arguments
+        # (used only for callables) and keyword arguments (forwarded to named operations
+        # and to callables). For each group, builds a resampler of the group-level class
+        # on the group data with a copy of the time grouper and the shared time axis; a
+        # string operation is invoked by name with the keyword arguments only (the
+        # positional arguments are not forwarded), a callable is applied with all arguments.
+        # An empty frame result without a period index gets the empty frequency-based index
+        # appended as an extra index level. Returns the combined result after wrapping.
+        # KNOWN ISSUE: for a string operation the extra positional arguments are silently
+        # ignored; only keyword arguments reach the named operation.
         """
         Dispatch to _upsample; we are stripping all of the _upsample kwargs and
         performing the original function call on the grouped object.
         """
 
         def func(x):
+            # [FUNCTION DOC]
+            # HELPER: nested in the per-group apply; applies the requested operation to one
+            # group x. Wraps x in the group-level resampler class (using the copied time
+            # grouper and the shared time axis), then calls the named operation with the
+            # keyword arguments, or applies the callable with all arguments. Returns the
+            # per-group result.
             x = self._resampler_cls(x, timegrouper=self._timegrouper, gpr_index=self.ax)
 
             if isinstance(f, str):
@@ -2027,6 +2337,15 @@ class _GroupByMixin(PandasObject, SelectionMixin):
 
     @final
     def _gotitem(self, key, ndim, subset=None):
+        # [FUNCTION DOC]
+        # HELPER: returns a new grouping-aware resampler restricted to a selection.
+        # Inputs: key (label or list of labels; when a list, the grouping key is appended to
+        # it if missing, mutating the passed list), ndim (requested dimension; unused),
+        # subset (object to act on; default is the stored object narrowed by key; with no
+        # key the object must be one-dimensional).
+        # Selects the key from the underlying groupby (falling back to the whole groupby on
+        # an index error), infers the selection, and builds a new instance of the same
+        # class with that groupby, this object as parent, and the selection. Returns it.
         """
         Sub-classes to define. Return a sliced object.
 
@@ -2066,17 +2385,40 @@ class _GroupByMixin(PandasObject, SelectionMixin):
 
 
 class DatetimeIndexResampler(Resampler):
+    # [CLASS DOC]
+    # Resampler for objects whose time axis is a datetime index (the most common case);
+    # also the base class of the period and time-delta resamplers.
+    # Inherits the full resampler interface. Adds: the bin computation (delegated to the
+    # time grouper's datetime bins), downsampling by an ordinary groupby aggregation over
+    # the bin grouper, upsampling by reindexing the object onto the bin labels with an
+    # optional fill method, a binner adjustment for upsampling that drops one boundary
+    # edge, and result wrapping that converts the index back to periods when the original
+    # axis was a period index.
+    # State: the ax attribute is typed as the datetime index.
     ax: DatetimeIndex
 
     @property
     def _resampler_for_grouping(self) -> type[DatetimeIndexResamplerGroupby]:
+        # [FUNCTION DOC]
+        # HELPER: property giving the class used when resampling inside a groupby: the
+        # datetime-index grouping-aware resampler class.
         return DatetimeIndexResamplerGroupby
 
     def _get_binner_for_time(self):
+        # [FUNCTION DOC]
+        # HELPER: computes the bins from the time grouper's datetime bin routine applied to
+        # this resampler's time axis. Returns (bin edges, bin positions, bin labels).
         # this is how we are actually creating the bins
         return self._timegrouper._get_time_bins(self.ax)
 
     def _downsample(self, how, **kwargs):
+        # [FUNCTION DOC]
+        # HELPER: reduces each bin with the named operation.
+        # Inputs: how (operation name or reducer), extra keyword arguments forwarded to it.
+        # Uses the object without the excluded key column. If the time axis is empty,
+        # returns a copy whose index is the empty index carrying the resampler's frequency
+        # (asserting that the frequency was set). Otherwise groups by the bin grouper,
+        # aggregates, and returns the wrapped result.
         """
         Downsample the cython defined function.
 
@@ -2103,6 +2445,10 @@ class DatetimeIndexResampler(Resampler):
         return self._wrap_result(result)
 
     def _adjust_binner_for_upsample(self, binner):
+        # [FUNCTION DOC]
+        # HELPER: trims the bin edges to the labels used when upsampling so the new index
+        # stays inside the specified range: drops the first edge when bins are closed on the
+        # right, otherwise drops the last edge. Returns the trimmed edges.
         """
         Adjust our binner when upsampling.
 
@@ -2115,6 +2461,18 @@ class DatetimeIndexResampler(Resampler):
         return binner
 
     def _upsample(self, method, limit: int | None = None, fill_value=None):
+        # [FUNCTION DOC]
+        # HELPER: converts to a higher frequency by reindexing onto the new bin labels.
+        # Inputs: method (fill method such as forward fill, backward fill, nearest, or the
+        # as-frequency marker meaning no fill), limit (maximum consecutive fills), fill_value
+        # (value for new rows).
+        # Raises a value error when the grouping comes from a column or index level
+        # selection (upsampling there is unsupported). The new index is the adjusted bin
+        # edges. Fast path: if no limit is given and the original index already equals the
+        # target grid (same inferred frequency, length and values), the object is just copied
+        # with the new index. Otherwise reindexes the selected object onto the new index with
+        # the method (none for the as-frequency marker), limit and fill value.
+        # Returns the wrapped result.
         """
         Parameters
         ----------
@@ -2156,6 +2514,11 @@ class DatetimeIndexResampler(Resampler):
         return self._wrap_result(result)
 
     def _wrap_result(self, result):
+        # [FUNCTION DOC]
+        # HELPER: extends the base result wrapping. After the base processing, if the
+        # original time axis is a period index but the result index is not, converts the
+        # result index to periods with the resampler frequency (for a hierarchical index,
+        # converts its last level, if that level is not already periods). Returns the result.
         result = super()._wrap_result(result)
 
         # we may have a different kind that we were asked originally
@@ -2179,28 +2542,54 @@ class DatetimeIndexResampler(Resampler):
 class DatetimeIndexResamplerGroupby(  # type: ignore[misc]
     _GroupByMixin, DatetimeIndexResampler
 ):
+    # [CLASS DOC]
+    # Resampler returned when resampling is done inside a groupby on a datetime index:
+    # combines the grouping-aware mixin (which runs each operation per group) with the
+    # datetime-index resampler. No extra state; the per-group resampler class is the plain
+    # datetime-index resampler.
     """
     Provides a resample of a groupby implementation
     """
 
     @property
     def _resampler_cls(self):
+        # [FUNCTION DOC]
+        # HELPER: property naming the class used to resample each group: the plain
+        # datetime-index resampler.
         return DatetimeIndexResampler
 
 
 class PeriodIndexResampler(DatetimeIndexResampler):
+    # [CLASS DOC]
+    # Resampler for objects whose time axis is a period index. Subclass of the datetime
+    # resampler (inherits wrapping and the interface) with period-specific behavior:
+    # bins come from the period bin routine, the object is rejected if the grouping comes
+    # from a column or level, downsampling checks that the frequencies are compatible
+    # sub/super periods, and upsampling maps through the periods converted to the target
+    # frequency using the convention (start or end of period).
+    # State: the ax attribute is typed as the period index.
     # error: Incompatible types in assignment (expression has type "PeriodIndex", base
     # class "DatetimeIndexResampler" defined the type as "DatetimeIndex")
     ax: PeriodIndex  # type: ignore[assignment]
 
     @property
     def _resampler_for_grouping(self):
+        # [FUNCTION DOC]
+        # HELPER: property giving the class used when resampling inside a groupby: the
+        # period-index grouping-aware resampler class.
         return PeriodIndexResamplerGroupby
 
     def _get_binner_for_time(self):
+        # [FUNCTION DOC]
+        # HELPER: computes the bins from the time grouper's period bin routine applied to
+        # this resampler's period axis. Returns (bin edges, bin positions, bin labels).
         return self._timegrouper._get_period_bins(self.ax)
 
     def _convert_obj(self, obj: NDFrameT) -> NDFrameT:
+        # [FUNCTION DOC]
+        # HELPER: extends the base conversion. After the base conversion, raises a
+        # not-implemented error if the grouping comes from a column or index level
+        # selection (unsupported with a period index); otherwise returns the object.
         obj = super()._convert_obj(obj)
 
         if self._from_selection:
@@ -2215,6 +2604,16 @@ class PeriodIndexResampler(DatetimeIndexResampler):
         return obj
 
     def _downsample(self, how, **kwargs):
+        # [FUNCTION DOC]
+        # HELPER: reduces periods to a coarser (or equal or finer) period frequency.
+        # Inputs: how (operation name) and keyword arguments forwarded to it.
+        # If the target frequency is a coarser frequency (the data frequency is a sub-period
+        # of it), aggregates through the groupby path. If the target is finer (the data
+        # frequency is a super-period), the result is the as-frequency conversion, except for
+        # the open-high-low-close operation, which still goes through the groupby path (the
+        # reduction operation is otherwise ignored in this case). If the frequencies are
+        # equal, returns the as-frequency conversion. Otherwise raises an
+        # incompatible-frequency error saying the frequencies are not sub or super periods.
         """
         Downsample the cython defined function.
 
@@ -2246,6 +2645,19 @@ class PeriodIndexResampler(DatetimeIndexResampler):
         )
 
     def _upsample(self, method, limit: int | None = None, fill_value=None):
+        # [FUNCTION DOC]
+        # HELPER: converts periods to a finer frequency by mapping the new bin labels onto
+        # the original periods.
+        # Inputs: method (fill method; the as-frequency marker means exact matches only),
+        # limit (maximum gap to fill), fill_value (accepted but unused here).
+        # Converts the original period axis to the target frequency (start or end of
+        # period per the convention), computes an indexer from the new bin labels into those
+        # periods with the fill method and limit, and takes the object's rows through it onto
+        # the new labels (using the full stored object, not the column selection).
+        # Returns the wrapped result.
+        # KNOWN ISSUE: the fill_value argument is accepted but never used, so a fill value
+        # has no effect for period upsampling; the docstring also omits the as-frequency
+        # method and the nearest method that the code supports.
         """
         Parameters
         ----------
@@ -2281,28 +2693,50 @@ class PeriodIndexResampler(DatetimeIndexResampler):
 class PeriodIndexResamplerGroupby(  # type: ignore[misc]
     _GroupByMixin, PeriodIndexResampler
 ):
+    # [CLASS DOC]
+    # Resampler returned when resampling is done inside a groupby on a period index:
+    # combines the grouping-aware mixin (running each operation per group) with the
+    # period-index resampler. No extra state; the per-group class is the plain period-index
+    # resampler.
     """
     Provides a resample of a groupby implementation.
     """
 
     @property
     def _resampler_cls(self):
+        # [FUNCTION DOC]
+        # HELPER: property naming the class used to resample each group: the plain
+        # period-index resampler.
         return PeriodIndexResampler
 
 
 class TimedeltaIndexResampler(DatetimeIndexResampler):
+    # [CLASS DOC]
+    # Resampler for objects whose time axis is a time-delta index. Subclass of the datetime
+    # resampler; differs only in how bins are computed (time-delta bins, which require a
+    # fixed-duration frequency) and in not trimming the binner when upsampling.
+    # State: the ax attribute is typed as the time-delta index.
     # error: Incompatible types in assignment (expression has type "TimedeltaIndex",
     # base class "DatetimeIndexResampler" defined the type as "DatetimeIndex")
     ax: TimedeltaIndex  # type: ignore[assignment]
 
     @property
     def _resampler_for_grouping(self):
+        # [FUNCTION DOC]
+        # HELPER: property giving the class used when resampling inside a groupby: the
+        # time-delta grouping-aware resampler class.
         return TimedeltaIndexResamplerGroupby
 
     def _get_binner_for_time(self):
+        # [FUNCTION DOC]
+        # HELPER: computes the bins from the time grouper's time-delta bin routine applied
+        # to this resampler's axis. Returns (bin edges, bin positions, bin labels).
         return self._timegrouper._get_time_delta_bins(self.ax)
 
     def _adjust_binner_for_upsample(self, binner):
+        # [FUNCTION DOC]
+        # HELPER: override that leaves the bin edges unchanged when upsampling (the range of
+        # the new index may exceed the original range). Returns the edges as given.
         """
         Adjust our binner when upsampling.
 
@@ -2318,16 +2752,32 @@ class TimedeltaIndexResampler(DatetimeIndexResampler):
 class TimedeltaIndexResamplerGroupby(  # type: ignore[misc]
     _GroupByMixin, TimedeltaIndexResampler
 ):
+    # [CLASS DOC]
+    # Resampler returned when resampling is done inside a groupby on a time-delta index:
+    # combines the grouping-aware mixin (running each operation per group) with the
+    # time-delta resampler. No extra state; the per-group class is the plain time-delta
+    # resampler.
     """
     Provides a resample of a groupby implementation.
     """
 
     @property
     def _resampler_cls(self):
+        # [FUNCTION DOC]
+        # HELPER: property naming the class used to resample each group: the plain
+        # time-delta resampler.
         return TimedeltaIndexResampler
 
 
 def get_resampler(obj: Series | DataFrame, **kwds) -> Resampler:
+    # [FUNCTION DOC]
+    # Factory behind the resample method. Inputs: obj (Series or DataFrame) and keyword
+    # arguments for the time grouper (frequency, closed, label, and so on). Builds a time
+    # grouper from them and asks it for the matching resampler for the object's time axis.
+    # Raises a type error (from the grouper) if the axis is not datetime-like, period or
+    # time-delta. Returns the resampler.
+    # Module side effect: right after this definition, the function's documentation
+    # string is replaced by the resampler class documentation.
     """
     Create a TimeGrouper and return our resampler.
     """
@@ -2347,6 +2797,14 @@ def get_resampler_for_grouping(
     on=None,
     **kwargs,
 ) -> Resampler:
+    # [FUNCTION DOC]
+    # Factory for groupby-then-resample (used by the groupby resample method).
+    # Inputs: groupby (the groupby object), rule (frequency), how and fill_method and limit
+    # (accepted but unused), on (column to resample on, used as the grouper key), and extra
+    # keyword arguments for the time grouper. Builds a time grouper with the rule and key,
+    # gets the resampler for the groupby's object, and converts it to the grouping-aware
+    # resampler for the groupby. Returns that resampler.
+    # KNOWN ISSUE: the parameters how, fill_method and limit are never used.
     """
     Return our appropriate resampler when grouping as well.
     """
@@ -2358,6 +2816,19 @@ def get_resampler_for_grouping(
 
 @set_module("pandas.api.typing")
 class TimeGrouper(Grouper):
+    # [CLASS DOC]
+    # Grouper for time-interval grouping: holds all the options of a resample call and
+    # computes the bin edges, positions and labels for datetime, period and time-delta axes.
+    # Inherits from the general groupby grouper; its option names list is extended with
+    # closed, label, how, convention, origin and offset.
+    # State: freq (offset), closed and label sides (defaulting to the right for end-type
+    # frequencies such as month-end, year-end, quarter-end, business variants and weekly,
+    # and when origin is the end or end of day; otherwise left), convention (start or end
+    # of period; defaults to end), how, fill_method, limit, group_keys, origin (a keyword
+    # or a timestamp), offset (a time-delta or none), and an optional Arrow dtype recorded
+    # when the axis was Arrow-backed. Sorting is always on.
+    # Key methods: constructor validation, resampler creation, bin computation per axis
+    # kind, bin edge adjustment, and grouper setting with Arrow conversion.
     """
     Custom groupby class for time-interval grouping.
 
@@ -2401,7 +2872,25 @@ class TimeGrouper(Grouper):
         group_keys: bool = False,
         **kwargs,
     ) -> None:
-        # Check for correctness of the keyword arguments which would
+        # [FUNCTION DOC]
+        # Validates the resample options and stores them.
+        # Inputs: obj (the object being resampled, used only to detect period-valued
+        # axes or key columns; default none), freq (offset or alias; default one minute),
+        # key (column to resample on), closed and label (left or right or none for the
+        # default described in the class doc), how (default mean), fill_method and limit
+        # (stored), convention (start, end, e or s, or none meaning end), origin (start_day
+        # by default; epoch, start, start_day, end, end_day, or a timestamp-convertible
+        # value), offset (time-delta convertible or none), group_keys (default false), and
+        # extra keyword arguments for the base grouper (sorting is always forced on).
+        # Errors (value errors): unsupported label, closed or convention values; origin that
+        # is neither a keyword nor timestamp-convertible; offset that is not time-delta
+        # convertible. Warnings (runtime warning category): offset given, or origin
+        # different from start_day, when the frequency is not a fixed tick-like one (they
+        # have no effect then).
+        # The frequency is parsed as a period offset when the object's index (or key column)
+        # is a period type.
+        # Checks for correctness of the keyword arguments which would
+        # otherwise silently use the default if misspelled
         # otherwise silently use the default if misspelled
         if label not in {None, "left", "right"}:
             raise ValueError(f"Unsupported value {label} for `label`")
@@ -2499,6 +2988,11 @@ class TimeGrouper(Grouper):
         super().__init__(freq=freq, key=key, **kwargs)
 
     def _get_resampler(self, obj: NDFrame) -> Resampler:
+        # [FUNCTION DOC]
+        # HELPER: creates the resampler matching the object's time axis. Sets the grouper
+        # on the object to find the axis, then returns a datetime, period or time-delta
+        # index resampler (passing this grouper, the group_keys option and the axis).
+        # Raises a type error naming the axis type if it is none of those.
         """
         Return my resampler or raise if we have an invalid axis.
 
@@ -2547,6 +3041,11 @@ class TimeGrouper(Grouper):
     def _get_grouper(
         self, obj: NDFrameT, validate: bool = True, observed: bool = True
     ) -> tuple[BinGrouper, NDFrameT]:
+        # [FUNCTION DOC]
+        # HELPER: override used by groupby with a time grouper. Inputs: obj; validate and
+        # observed (both unused, present for signature compatibility). Creates the
+        # resampler for the object and returns its bin grouper together with its (possibly
+        # sorted) object.
         """
         Parameters
         ----------
@@ -2566,6 +3065,20 @@ class TimeGrouper(Grouper):
         return r._grouper, cast(NDFrameT, r.obj)
 
     def _get_time_bins(self, ax: DatetimeIndex):
+        # [FUNCTION DOC]
+        # HELPER: computes the bins for a datetime axis.
+        # Input: ax (must be a datetime index, otherwise a type error). For an empty axis
+        # returns empty edges, an empty bin position list and empty labels, all with the
+        # frequency.
+        # Otherwise: finds the first and last bin edges from the axis minimum and maximum
+        # (aligned to the frequency using closed, origin and offset), builds the full date
+        # range between them (time-zone aware, shifting nonexistent times forward and
+        # treating ambiguous times as the first), adjusts the edges for end-type
+        # frequencies, and generates the bin positions from the integer values of the axis.
+        # Labels: the edges, dropping the first edge when the label side is right; with
+        # missing values in the axis, a missing-value bin is inserted at the front of both
+        # edges and labels; if there are more labels than bins, the extra labels are cut.
+        # Returns (edges, bin positions, labels).
         if not isinstance(ax, DatetimeIndex):
             raise TypeError(
                 "axis must be a DatetimeIndex, but got "
@@ -2635,6 +3148,18 @@ class TimeGrouper(Grouper):
     def _adjust_bin_edges(
         self, binner: DatetimeIndex, ax_values: npt.NDArray[np.int64]
     ) -> tuple[DatetimeIndex, npt.NDArray[np.int64]]:
+        # [FUNCTION DOC]
+        # HELPER: computes the integer bin edges, with special handling for end-of-period
+        # frequencies coarser than a day (month end, business month end, weekly, and
+        # quarter and year end variants).
+        # Inputs: binner (datetime edges) and ax_values (the axis as 64-bit integers).
+        # For those frequencies when bins are closed on the right, each edge is moved to the
+        # last instant of its day (computed on wall-clock time, then re-localized), so the
+        # whole last day belongs to the bin; when closed left, the integer edges are used
+        # unchanged. In both cases, if the second-to-last edge already exceeds the largest axis
+        # value, the last edge (and binner entry) is dropped. Other frequencies use the
+        # integer edges as they are.
+        # Returns (possibly shortened binner, integer edges).
         # Some hacks for > daily data, see #1471, #1458, #1483
 
         if self.freq.name in ("BME", "ME", "W") or self.freq.name.split("-")[0] in (
@@ -2669,6 +3194,16 @@ class TimeGrouper(Grouper):
         return binner, bin_edges
 
     def _get_time_delta_bins(self, ax: TimedeltaIndex):
+        # [FUNCTION DOC]
+        # HELPER: computes the bins for a time-delta axis.
+        # Input: ax (must be a time-delta index, otherwise a type error). The frequency must
+        # be fixed-duration (a tick or a day), otherwise a value error. For an empty axis
+        # returns empty edges, no bins and empty labels.
+        # Otherwise builds the edges as a time-delta range from the axis minimum to its
+        # maximum (extended by one frequency step when closed right), finds bin positions by
+        # searching the axis for the end of each bin (end stamps are shifted by one step when
+        # closed left), and adds the offset (if any) to the labels.
+        # Returns (edges, bin positions, labels).
         if not isinstance(ax, TimedeltaIndex):
             raise TypeError(
                 "axis must be a TimedeltaIndex, but got "
@@ -2708,6 +3243,17 @@ class TimeGrouper(Grouper):
         return binner, bins, labels
 
     def _get_time_period_bins(self, ax: DatetimeIndex):
+        # [FUNCTION DOC]
+        # HELPER: computes bins that are periods, for a datetime axis.
+        # Input: ax (must be a datetime index, otherwise a type error). For an empty axis
+        # returns empty period edges, no bins and empty labels. Otherwise builds a period range
+        # from the first to the last axis value at the frequency, computes the timestamp
+        # at the end of each period (localized to the axis time zone), and finds the bin
+        # positions by searching the axis for those stamps (left side).
+        # Returns (edges, bin positions, labels), where edges and labels are the same period
+        # index.
+        # KNOWN ISSUE: no code in the repository calls this method (dead code); the active
+        # period bin routine is the one for period axes.
         if not isinstance(ax, DatetimeIndex):
             raise TypeError(
                 "axis must be a DatetimeIndex, but got "
@@ -2732,6 +3278,21 @@ class TimeGrouper(Grouper):
         return binner, bins, labels
 
     def _get_period_bins(self, ax: PeriodIndex):
+        # [FUNCTION DOC]
+        # HELPER: computes the bins for a period axis.
+        # Input: ax (must be a period index, otherwise a type error). Converts the axis to
+        # the target frequency (by the convention); missing values are removed and counted.
+        # If no valid values remain, returns empty edges and bins (with a single bin for the
+        # missing values if the axis was not empty) and empty labels.
+        # Otherwise: start is the first period at the target frequency (by convention) and end
+        # is the last at the end; for tick-like frequencies the edges are aligned using origin
+        # and offset, and a bin shift is derived from the difference between the original and
+        # aligned start modulo the frequency multiple. Labels and edges are the period range
+        # between start and end. Bin positions are found by searching the converted values
+        # for the computed edge positions (enough bins are generated when upsampling to
+        # sub-periods, and the shift is subtracted). If missing values existed, a leading bin
+        # for them is inserted.
+        # Returns (edges, bin positions, labels).
         if not isinstance(ax, PeriodIndex):
             raise TypeError(
                 "axis must be a PeriodIndex, but got "
@@ -2809,6 +3370,12 @@ class TimeGrouper(Grouper):
     def _set_grouper(
         self, obj: NDFrameT, sort: bool = False, *, gpr_index: Index | None = None
     ) -> tuple[NDFrameT, Index, npt.NDArray[np.intp] | None]:
+        # [FUNCTION DOC]
+        # HELPER: extends the base grouper setup. Inputs: obj, sort (default false), gpr_index
+        # (keyword-only; precomputed index to group on, or none). After the base setup, if
+        # the axis dtype is an Arrow date or time-delta type, records that dtype on this
+        # grouper and replaces the axis by the equivalent numpy-backed index so binning
+        # works. Returns (object, axis, sort indexer or none).
         obj, ax, indexer = super()._set_grouper(obj, sort, gpr_index=gpr_index)
         if isinstance(ax.dtype, ArrowDtype) and ax.dtype.kind in "Mm":
             self._arrow_dtype = ax.dtype
@@ -2821,13 +3388,21 @@ class TimeGrouper(Grouper):
 @overload
 def _take_new_index(
     obj: DataFrame, indexer: npt.NDArray[np.intp], new_index: Index
-) -> DataFrame: ...
+) -> DataFrame:
+    # [FUNCTION DOC]
+    # Typing overload only: a DataFrame input gives a DataFrame. See the final
+    # implementation of _take_new_index.
+    ...
 
 
 @overload
 def _take_new_index(
     obj: Series, indexer: npt.NDArray[np.intp], new_index: Index
-) -> Series: ...
+) -> Series:
+    # [FUNCTION DOC]
+    # Typing overload only: a Series input gives a Series. See the final implementation
+    # of _take_new_index.
+    ...
 
 
 def _take_new_index(
@@ -2835,6 +3410,13 @@ def _take_new_index(
     indexer: npt.NDArray[np.intp],
     new_index: Index,
 ) -> DataFrame | Series:
+    # [FUNCTION DOC]
+    # HELPER: for period upsampling; reindexes an object by a positional indexer and
+    # attaches a new index. Inputs: obj (Series or DataFrame), indexer (integer positions,
+    # minus one meaning missing), new_index (labels for the result). A Series is rebuilt
+    # from its values taken at the indexer (keeping its name); a DataFrame is rebuilt via
+    # its block manager's reindex with that indexer. Anything else raises a value error.
+    # Returns the new object.
     if isinstance(obj, ABCSeries):
         new_values = algos.take_nd(obj._values, indexer)
         return obj._constructor(new_values, index=new_index, name=obj.name)
@@ -2854,6 +3436,21 @@ def _get_timestamp_range_edges(
     origin: TimeGrouperOrigin = "start_day",
     offset: Timedelta | None = None,
 ) -> tuple[Timestamp, Timestamp]:
+    # [FUNCTION DOC]
+    # HELPER: computes the outer bin edges (first and last timestamps) for a time range.
+    # Inputs: first and last (timestamps of the data), freq (offset), unit (time unit for
+    # the integer arithmetic), closed (left by default), origin (keyword or timestamp;
+    # default start_day), offset (optional time-delta added to the origin).
+    # For fixed-duration (tick) frequencies: a timestamp origin must have the same
+    # time-zone awareness as the data (value error otherwise); the epoch keyword becomes
+    # the 1970 timestamp in the data's zone; then the anchored-date helper rolls the
+    # endpoints onto the grid. For other (calendar) frequencies: both endpoints are
+    # normalized to midnight, the first is rolled back to an offset boundary (or moved back
+    # by one frequency step when closed right), and the last is advanced by one step.
+    # Returns the adjusted (first, last).
+    # KNOWN ISSUE: the docstring lists the origin options as epoch, start and start_day
+    # only, but the end and end_day keywords are also supported by the code (via the
+    # anchored-date helper).
     """
     Adjust the `first` Timestamp to the preceding Timestamp that resides on
     the provided offset. Adjust the `last` Timestamp to the following
@@ -2926,6 +3523,17 @@ def _get_period_range_edges(
     origin: TimeGrouperOrigin = "start_day",
     offset: Timedelta | None = None,
 ) -> tuple[Period, Period]:
+    # [FUNCTION DOC]
+    # HELPER: computes outer bin edges as periods for period resampling.
+    # Inputs: first and last (must both be periods, else a type error), freq, closed
+    # (default left), origin (default start_day), offset (optional).
+    # Converts both periods to timestamps, runs the timestamp edge routine (nanosecond
+    # unit), then converts back to periods: the first is advanced by one frequency step if
+    # the original first timestamp was not on the offset, and the last is moved back by
+    # one step if the original last timestamp was on the offset.
+    # Returns the adjusted (first, last) periods.
+    # KNOWN ISSUE: as in the timestamp version, the docstring omits the end and end_day
+    # origin keywords that the code supports.
     """
     Adjust the provided `first` and `last` Periods to the respective Period of
     the given offset that encompasses them.
@@ -2977,6 +3585,13 @@ def _get_period_range_edges(
 def _insert_nat_bin(
     binner: PeriodIndex, bins: np.ndarray, labels: PeriodIndex, nat_count: int
 ) -> tuple[PeriodIndex, np.ndarray, PeriodIndex]:
+    # [FUNCTION DOC]
+    # HELPER: for period bin computation; adds a leading bin for missing values.
+    # Inputs: binner and labels (period indexes), bins (integer bin end positions), nat_count
+    # (number of missing values; asserted positive). Shifts all bin positions up by
+    # nat_count (modifying the passed bins array in place), puts nat_count at the front as
+    # the first bin end, and inserts a missing value at the front of both the binner and the
+    # labels. Returns (binner, bins, labels).
     # NaT handling as in pandas._lib.lib.generate_bins_dt64()
     # shift bins by the number of NaT
     assert nat_count > 0
@@ -3001,6 +3616,25 @@ def _adjust_dates_anchored(
     offset: Timedelta | None = None,
     unit: TimeUnit = "ns",
 ) -> tuple[Timestamp, Timestamp]:
+    # [FUNCTION DOC]
+    # HELPER: for fixed-duration frequencies; rolls the first and last timestamps onto the
+    # bin grid anchored at an origin.
+    # Inputs: first, last, freq (a tick offset), closed (right by default in this
+    # function), origin (start_day default, start, epoch-equivalent zero, a timestamp, or
+    # end / end_day), offset (optional time-delta added to the origin), unit (time unit for
+    # integer arithmetic).
+    # Origin: start_day is midnight of the first day; start is the first value; a timestamp
+    # is used directly; for the end keywords the origin is the last value (end) or the end
+    # of its day, and the first timestamp is moved to a whole number of steps back from it
+    # (one more step when closed left); any other value leaves the origin at zero (epoch).
+    # The offset is added to the origin. Computation is done in UTC for zone-aware
+    # inputs to avoid ambiguous or nonexistent local times.
+    # Rolling: when closed right the first moves back to the grid point at or before it
+    # (one full step back if already on the grid) and the last moves forward to the grid
+    # point at or after it; when closed left the first moves back to the grid point at or
+    # before it and the last moves forward to the next grid point (one full step if already
+    # on the grid). Results are converted back to the original time zone.
+    # Returns (adjusted first, adjusted last).
     # First and last offsets should be calculated from the start day to fix an
     # error cause by resampling across multiple days when a one day period is
     # not a multiple of the frequency. See GH 8683
@@ -3084,6 +3718,20 @@ def asfreq(
     normalize: bool = False,
     fill_value=None,
 ) -> NDFrameT:
+    # [FUNCTION DOC]
+    # Converts a Series or DataFrame to a new frequency (implementation behind the as-freq
+    # methods of both).
+    # Inputs: obj; freq (offset or alias); method (fill method for new rows; not supported
+    # for a period index, which raises a not-implemented error); how (start or end for
+    # period indexes; defaults to end; unused otherwise); normalize (for other indexes,
+    # normalize the resulting index to midnight); fill_value (value for new rows).
+    # Period index: copies the object and converts the index to the frequency (an offset
+    # frequency is first translated to its period frequency string when it has a period
+    # code). Empty index: copies and gives the empty index the frequency. Otherwise: builds a
+    # date range from the minimum to the maximum index value at the frequency (in the
+    # index's time unit if a datetime index, else nanoseconds), names it like the index,
+    # reindexes the object onto it with method and fill value, and optionally normalizes.
+    # Returns the new object; the input is not modified.
     """
     Utility frequency conversion method for Series/DataFrame.
 
@@ -3122,6 +3770,12 @@ def asfreq(
 
 
 def _asfreq_compat(index: FreqIndexT, freq) -> FreqIndexT:
+    # [FUNCTION DOC]
+    # HELPER: mimics the as-frequency conversion for an empty index. Inputs: index (empty
+    # period, datetime or time-delta index) and freq. A non-empty index raises a value error
+    # (the caller is supposed to check). A period index is converted to the frequency; an
+    # empty datetime or time-delta index of the same dtype and name with the given
+    # frequency is created; any other type raises a type error. Returns the new index.
     """
     Helper to mimic asfreq on (empty) DatetimeIndex and TimedeltaIndex.
 

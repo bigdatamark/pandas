@@ -1,3 +1,15 @@
+# [MODULE DOC]
+# Pivoting and cross-tabulation routines.
+# Public contents: pivot_table (grouped aggregation arranged as a spreadsheet-style
+# table, with optional margins), pivot (reshape without aggregation, requiring unique
+# index/column pairs) and crosstab (frequency or aggregated table of factors). All are
+# exported to the top-level namespace via the reshape api module; DataFrame methods of
+# the same names delegate here.
+# Private helpers implement the single-aggregation pivot table, margin (total row and
+# column) computation, normalization for crosstab, and name handling.
+# Relationships: relies on groupby aggregation, unstack, concat, and index combination
+# helpers; crosstab is implemented on top of pivot_table.
+# No import-time side effects beyond imports.
 from __future__ import annotations
 
 import itertools
@@ -66,6 +78,28 @@ def pivot_table(
     sort: bool = True,
     **kwargs,
 ) -> DataFrame:
+    # [FUNCTION DOC]
+    # Builds a spreadsheet-style pivot table: groups the data by the index and columns
+    # keys, aggregates the value columns, and unstacks the column keys into columns.
+    # Inputs: data (DataFrame); values (column label or list of labels to aggregate;
+    # default all columns not used as keys); index and columns (keys to group by for the
+    # rows and columns; each may be a column label, a grouper, an array, or a list of
+    # those; none means no keys); aggfunc (function, name, list of these, or mapping
+    # from column to function(s); default the string for mean); fill_value (replaces
+    # missing cells after aggregation; default none); margins (add total row and column
+    # named by margins_name); dropna (drop all-missing columns and, for margins, rows
+    # with any missing value; also controls whether missing keys form groups, and when
+    # false the full product of index and column levels is retained); margins_name
+    # (label of the totals, default All); observed (restrict categorical groupers to
+    # observed values, default true); sort (sort the keys and the resulting columns,
+    # default true); extra keyword arguments are forwarded to the aggregation function.
+    # When aggfunc is a list, one table is built per function and they are concatenated
+    # along columns under keys that are the function names (or the function itself when
+    # it has no name). Otherwise a single table is built by the internal helper.
+    # Returns the resulting DataFrame, with metadata propagated from data using the
+    # finalize hook with method "pivot_table".
+    # KNOWN ISSUE: the docstring gives the default of observed as false, while the
+    # signature default is true (the version note in the same entry says true).
     """
     Create a spreadsheet-style pivot table as a DataFrame.
 
@@ -295,6 +329,30 @@ def __internal_pivot_table(
     sort: bool,
     kwargs,
 ) -> DataFrame:
+    # [FUNCTION DOC]
+    # HELPER: for pivot_table; builds one pivot table for a single (non-list)
+    # aggregation. Arguments mirror pivot_table, except index and columns are already
+    # normalized to lists and the extra function arguments arrive as one mapping.
+    # (The name has two leading underscores and is module-level, so it is not mangled
+    # when called from module functions.)
+    # Steps: (1) if values were given, normalizes them to a list (remembering whether a
+    # single label was passed), raises a key error for a label missing from the data,
+    # and narrows the data to the key and value columns; otherwise values are all
+    # remaining columns. (2) groups by the index plus column keys and aggregates (with
+    # the selected values only when given); with dropna, rows that are entirely missing
+    # are dropped. (3) when there is more than one level and index keys exist, unstacks
+    # the column-key levels (choosing level positions when names are None or collide
+    # with index names). (4) when dropna is false, reindexes onto the full product of
+    # the levels. (5) when sort is true, sorts columns. (6) applies fill_value to
+    # missing cells, and for a length aggregation with unobserved categories and an
+    # integer fill, casts to a 64-bit integer. (7) with margins, drops rows with missing
+    # values if dropna, and adds the totals through the margins helper. (8) for a single
+    # value label, drops the top column level; if there are no index keys but there are
+    # column keys, transposes; with dropna, removes all-missing columns.
+    # Returns the table (a DataFrame, or occasionally a Series from the aggregation).
+    # KNOWN ISSUE: the call that adds margins passes the dropna flag as the observed
+    # argument rather than the observed parameter of this function, so the observed
+    # setting is ignored for margin computation.
     """
     Helper of :func:`pandas.pivot_table` for any non-list ``aggfunc``.
     """
@@ -425,6 +483,26 @@ def _add_margins(
     fill_value=None,
     dropna: bool = True,
 ):
+    # [FUNCTION DOC]
+    # HELPER: for the internal pivot table; appends the margin (grand total) row and
+    # column to an already aggregated table.
+    # Inputs: table (DataFrame or Series result), data (original, possibly NA-filtered
+    # data), values (list of value columns, possibly empty), rows and cols (lists of
+    # row and column keys), aggfunc and kwargs (aggregation and its keyword
+    # arguments), observed (passed to the groupby of the margins), margins_name (must be
+    # a string, default All), fill_value (for missing margin cells), dropna.
+    # Raises a value error if margins_name is not a string, or if the margin name
+    # already appears in the table's index levels or in the column levels beyond the
+    # first.
+    # Cases: no values and a Series table: appends one entry holding the grand margin;
+    # with values: the marginal-results helper builds the interleaved margins (it may
+    # return the finished table directly); with no values and a DataFrame: the variant
+    # helper without values is used. Then the row margin is aligned to the result
+    # columns and filled from the grand margins, converted to a one-row frame keyed by
+    # the margin label (a tuple padded with empty strings for several row keys), cast
+    # back toward each column's original non-extension dtype, and concatenated below
+    # the result with the original index names restored.
+    # Returns the table with margins.
     if not isinstance(margins_name, str):
         raise ValueError("margins_name argument must be a string")
 
@@ -513,6 +591,15 @@ def _add_margins(
 def _compute_grand_margin(
     data: DataFrame, values, aggfunc, kwargs, margins_name: Hashable = "All"
 ):
+    # [FUNCTION DOC]
+    # HELPER: for the margins step; computes grand totals by aggregating whole columns.
+    # Inputs: data, values (list of value columns, possibly empty), aggfunc (name,
+    # callable, or mapping from column to name or callable), kwargs (forwarded),
+    # margins_name (key used when there are no values).
+    # With values: returns a mapping from each value column to its aggregate over all
+    # rows; columns for which the aggregation raises a type error are silently left out.
+    # Without values: returns a mapping with the single margins_name key whose value is
+    # the aggregation applied to the data's index.
     if values:
         grand_margin = {}
         for k, v in data[values].items():
@@ -545,6 +632,23 @@ def _generate_marginal_results(
     margins_name: Hashable = "All",
     dropna: bool = True,
 ):
+    # [FUNCTION DOC]
+    # HELPER: for the margins step when value columns exist; computes the per-group
+    # partial margins and interleaves them into the table.
+    # Inputs: table (aggregated table), data, values (list), rows and cols (key lists),
+    # aggfunc, kwargs, observed, margins_name, dropna.
+    # With column keys: aggregates the data by the row keys (or, if none, by the first
+    # column key) to get margins, and for each top-level group of columns (or rows when
+    # no row keys) appends a margin column or row labeled with the margin name padded
+    # with empty strings for extra levels; the pieces are concatenated. If no pieces
+    # exist the table is returned unchanged; if there are no row keys the concatenated
+    # result is returned directly (a lone result, not a tuple). Without column keys the
+    # table is its own result and the margin keys are its columns.
+    # The row margin is the aggregation by column keys, stacked and with levels
+    # reordered so the value level comes first (by level names, to support numeric
+    # names); with no column keys it is a missing-value series over the result columns.
+    # Returns either the finished table, or a tuple of the result, the list of margin
+    # keys, and the row margin.
     margin_keys: list | Index
     if len(cols) > 0:
         # need to "interleave" the margins
@@ -552,6 +656,11 @@ def _generate_marginal_results(
         margin_keys = []
 
         def _all_key(key):
+            # [FUNCTION DOC]
+            # HELPER: nested in the marginal-results helper; builds the label of a
+            # margin column or row for one group: the group key, then the margin name,
+            # then empty strings padding out the remaining column levels. Returns a
+            # tuple.
             return (key, margins_name) + ("",) * (len(cols) - 1)
 
         if len(rows) > 0:
@@ -640,12 +749,29 @@ def _generate_marginal_results_without_values(
     margins_name: Hashable = "All",
     dropna: bool = True,
 ):
+    # [FUNCTION DOC]
+    # HELPER: for the margins step when no value columns were given; computes margins
+    # for a table of counts of the key columns.
+    # Inputs: table (DataFrame), data, rows and cols (key lists), aggfunc, kwargs,
+    # observed, margins_name, dropna.
+    # With column keys: the aggregation function is applied per row-key group (or per
+    # first index level when no row keys) and stored as an added margin column in the
+    # table itself (mutating the passed table); with no row keys the table is returned
+    # directly. Without column keys the table is its own result.
+    # Row margin: the aggregation applied per column-key group, or a missing-value
+    # series over the result columns when there are no column keys.
+    # Returns either the table alone (no row keys) or a tuple of the result, the list
+    # of margin keys, and the row margin.
     margin_keys: list | Index
     if len(cols) > 0:
         # need to "interleave" the margins
         margin_keys = []
 
         def _all_key():
+            # [FUNCTION DOC]
+            # HELPER: nested in the without-values marginal helper; returns the margin
+            # label: the bare margin name for one column key, else a tuple of the name
+            # followed by empty strings padding the extra levels.
             if len(cols) == 1:
                 return margins_name
             return (margins_name,) + ("",) * (len(cols) - 1)
@@ -683,6 +809,10 @@ def _generate_marginal_results_without_values(
 
 
 def _convert_by(by):
+    # [FUNCTION DOC]
+    # HELPER: for pivot_table; normalizes an index or columns argument to a list.
+    # None becomes an empty list; a scalar, array, index, series, grouper or callable is
+    # wrapped in a one-element list; any other iterable is converted to a list.
     if by is None:
         by = []
     elif (
@@ -704,6 +834,23 @@ def pivot(
     index: IndexLabel | lib.NoDefault = lib.no_default,
     values: IndexLabel | lib.NoDefault = lib.no_default,
 ) -> DataFrame:
+    # [FUNCTION DOC]
+    # Reshapes data without aggregation: unique values of the columns key(s) become the
+    # new columns and values of the index key(s) become the new row labels.
+    # Inputs: data (DataFrame); columns (required keyword; label or list of labels);
+    # index (label or list; if not given the existing index, possibly hierarchical, is
+    # used); values (label or list; if not given, all remaining columns are used and the
+    # result has hierarchical columns). Tuples count as a single column label.
+    # Algorithm: unnamed index levels are temporarily given a placeholder name so they
+    # do not collide with the none-named level that unstacking creates; then, without
+    # values, the key columns are set as the index (appended to the existing index when
+    # no index key was given); with values, a hierarchical index is built from the index
+    # and column key arrays and the selected values are wrapped in a frame (list-like
+    # values) or Series. The column keys are then unstacked and the placeholder names
+    # are reset to none. Input is not mutated (a shallow copy is made when renaming).
+    # Raises a value error (from unstacking) when an index and columns combination is
+    # duplicated.
+    # Returns the reshaped DataFrame.
     """
     Return reshaped DataFrame organized by given index / column values.
 
@@ -928,6 +1075,25 @@ def crosstab(
     dropna: bool = True,
     normalize: bool | Literal[0, 1, "all", "index", "columns"] = False,
 ) -> DataFrame:
+    # [FUNCTION DOC]
+    # Computes a cross tabulation of factors: counts by default, or an aggregation of
+    # values.
+    # Inputs: index and columns (array-like, Series, or list of these, defining the row
+    # and column factors); values (array to aggregate; requires aggfunc); rownames and
+    # colnames (optional names; the length must match the number of arrays, else an
+    # assertion error; by default Series names or generated names like row_0 and col_0
+    # are used); aggfunc (aggregation; requires values); margins and margins_name
+    # (totals); dropna (drop all-missing columns; also used as the observed setting, so
+    # categories without data are kept when false); normalize (false, or true/"all",
+    # "index"/0, "columns"/1, to divide counts into proportions).
+    # Raises a value error when only one of values and aggfunc is given.
+    # Algorithm: when Series inputs are present, the common index is the intersection of
+    # their indexes. Names that are duplicated among rows and columns are mapped to
+    # temporary unique names. A frame of the factors plus a dummy column (zeros for
+    # counting, or the values) is built and passed to pivot_table with a length
+    # aggregation and zero fill for counting. Then optional normalization is applied and
+    # the original names are restored on the axes.
+    # Returns the cross-tabulation DataFrame.
     """
     Compute a simple cross tabulation of two (or more) factors.
 
@@ -1133,6 +1299,21 @@ def crosstab(
 def _normalize(
     table: DataFrame, normalize, margins: bool, margins_name: Hashable = "All"
 ) -> DataFrame:
+    # [FUNCTION DOC]
+    # HELPER: for crosstab; normalizes a cross-tabulation table into proportions.
+    # Inputs: table, normalize (true, "all", "index", "columns", or the integers 0 for
+    # index and 1 for columns), margins (whether the table includes margin row and
+    # column), margins_name (label of the margins).
+    # Integers are translated to names; anything unknown raises a value error. Without
+    # margins: divides by the grand total ("all" or true), by the column sums
+    # ("columns"), or by the row sums ("index"), using three small anonymous division
+    # functions held in a lookup table, then fills missing results with zero. With
+    # margins: separates the margin column and row (raising a value error if the margin
+    # name is not at the last position), normalizes the core table recursively without
+    # margins, normalizes the margins by their own sums, reattaches them (the overall
+    # corner is set to one for the "all" case), fills missing with zero and restores the
+    # original index and columns. A margins value other than a boolean raises a value
+    # error. Returns the normalized table.
     if not isinstance(normalize, (bool, str)):
         axis_subs = {0: "index", 1: "columns"}
         try:
@@ -1211,6 +1392,13 @@ def _normalize(
 
 
 def _get_names(arrs, names, prefix: str = "row") -> list:
+    # [FUNCTION DOC]
+    # HELPER: for crosstab; determines the names of the factor arrays.
+    # Inputs: arrs (list of arrays or Series), names (optional user names), prefix
+    # (word used for generated names).
+    # If names is none: each Series with a name keeps it, others get the prefix, an
+    # underscore and their position. Otherwise names must have the same length as arrs
+    # (assertion error if not) and is converted to a list. Returns the list of names.
     if names is None:
         names = []
         for i, arr in enumerate(arrs):
@@ -1230,6 +1418,15 @@ def _get_names(arrs, names, prefix: str = "row") -> list:
 def _build_names_mapper(
     rownames: list[str], colnames: list[str]
 ) -> tuple[dict[str, str], list[str], dict[str, str], list[str]]:
+    # [FUNCTION DOC]
+    # HELPER: for crosstab; makes row and column names unique so the intermediate pivot
+    # does not clash, and records how to restore them. Any name that appears in either
+    # list (a name is considered duplicated if it is present among the row names or
+    # the column names) is replaced by a generated positional name; returns the row and
+    # column mappers (generated to original) and the unique name lists.
+    # KNOWN ISSUE: the replacement test checks membership in the union of row and column
+    # names, which is true for every name, so all names are replaced by generated ones
+    # rather than only the duplicated ones that the docstring describes.
     """
     Given the names of a DataFrame's rows and columns, returns a set of unique row
     and column names and mappers that convert to original names.

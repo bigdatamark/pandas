@@ -2,6 +2,24 @@
 SQL-style merge routines
 """
 
+# [MODULE DOC]
+# Implements database-style joining of DataFrames (and named Series).
+# Public contents: merge (key-based or index-based join of two frames; how can be left,
+# right, inner, outer, cross, left_anti or right_anti), merge_ordered (outer-by-default
+# merge for ordered data with optional forward filling and group-wise merging) and
+# merge_asof (nearest-key merge). All three are exported to the top-level namespace
+# through the reshape api module, and DataFrame.merge and DataFrame.join delegate here.
+# Core machinery: the merge operation class (key preparation, join-key resolution,
+# indexer computation, result assembly, validation and the indicator column) and its two
+# subclasses for ordered merges and as-of merges. Many module-level helpers handle
+# factorization of keys, building group indexes, validating operands, and construction of
+# join indexers.
+# Module state: a mapping from numpy dtypes to compiled factorizer classes, and a tuple
+# of "known array" types, both defined at import time. The factorizer table is extended
+# at import for the platform's C int and unsigned int types if they differ from the
+# fixed-width types.
+# Relationships: depends on compiled join and hashtable extension modules, the sorting
+# utilities for group indexes, and (lazily, to avoid cycles) the concat function.
 from __future__ import annotations
 
 from collections.abc import (
@@ -158,6 +176,27 @@ def merge(
     indicator: str | bool = False,
     validate: str | None = None,
 ) -> DataFrame:
+    # [FUNCTION DOC]
+    # Merges two frames (or named Series, treated as one-column frames) with a
+    # database-style join and returns a new DataFrame.
+    # Inputs: left and right; how (join type: inner by default; left, right, outer,
+    # cross, left_anti, right_anti); on (column or index-level labels present in both;
+    # defaults to the intersection of column names when no index is used); left_on and
+    # right_on (labels or arrays for each side); left_index and right_index (use the
+    # index as key); sort (sort the join keys in the result; default false); suffixes
+    # (pair of suffixes for overlapping non-key columns; a missing entry means no suffix
+    # but not both); copy (deprecated and ignored; passing a value triggers a deprecation
+    # warning through the copy-deprecation check on the left object); indicator (add a
+    # categorical column, named merge by default or by the string given, with values
+    # left_only, right_only and both); validate (one_to_one, one_to_many, many_to_one,
+    # many_to_many, or short forms, to check key uniqueness).
+    # Behavior: converts Series operands to frames (a Series without a name raises a
+    # value error); a cross merge delegates to the cross-merge helper, which forbids any
+    # key arguments; everything else builds the merge operation object and returns its
+    # result.
+    # KNOWN ISSUE: the docstring's list of allowed how values is malformed (the last
+    # quoted value lacks its closing quote) and the signature default of copy is a
+    # no-value sentinel while the docstring says false.
     """
     Merge DataFrame or named Series objects with a database-style join.
 
@@ -412,6 +451,14 @@ def _cross_merge(
     indicator: str | bool = False,
     validate: str | None = None,
 ) -> DataFrame:
+    # [FUNCTION DOC]
+    # HELPER: for merge with how equal to cross; computes the Cartesian product of the
+    # rows of the two frames.
+    # Inputs mirror merge (minus how and copy). Raises a merge error if any of on, left_on,
+    # right_on, left_index or right_index is given.
+    # Algorithm: adds a constant helper column with a unique random name to copies of both
+    # frames, performs an inner merge on that column (forwarding sort, suffixes, indicator
+    # and validate), then deletes the helper column from the result and returns it.
     """
     See merge.__doc__ with how='cross'
     """
@@ -455,6 +502,27 @@ def _cross_merge(
 def _groupby_and_merge(
     by, left: DataFrame | Series, right: DataFrame | Series, merge_pieces
 ):
+    # [FUNCTION DOC]
+    # HELPER: for ordered merging with a grouping key; splits the left object by the
+    # grouping column(s), merges each group with the right object using the supplied
+    # function, and stitches the pieces back together.
+    # Inputs: by (column label or list/tuple of labels; a lone label is wrapped), left,
+    # right, merge_pieces (callable taking a left group and the matching right piece and
+    # returning a merged frame).
+    # Algorithm: groups left without sorting. If all grouping columns are columns of right,
+    # also groups right and, for each left group, takes only the matching right rows (a
+    # fast path); otherwise the whole right object is used for every group. For a left
+    # group whose key has no matching right group, the left group is kept with the right
+    # columns added as missing and a fresh range index. Otherwise the merged piece gets
+    # the grouping columns assigned to the key. Pieces are concatenated with a fresh index
+    # and their columns reordered to match the first piece.
+    # Returns a tuple of the combined frame and the left groupby object.
+    # KNOWN ISSUE: the inline comment on the key-error handler says the key does not exist
+    # in left, but the error is raised when looking the key up in the right groupby, so it
+    # is the key that is missing from right.
+    # KNOWN ISSUE: the docstring does not mention that the function returns the groupby
+    # object together with the result, and a TODO notes the assignment of the key to the
+    # grouping columns may belong in the piece-merging function.
     """
     groupby & merge; we are always performing a left-by type operation
 
@@ -522,6 +590,22 @@ def merge_ordered(
     suffixes: Suffixes = ("_x", "_y"),
     how: JoinHow = "outer",
 ) -> DataFrame:
+    # [FUNCTION DOC]
+    # Merges ordered data (such as time series) with an outer join by default, optionally
+    # forward filling, and optionally merging group by group.
+    # Inputs: left and right (frames or named Series); on, left_on, right_on (key labels or
+    # arrays); left_by or right_by (column label or list of labels to group one side by,
+    # merging each group against the whole other side; giving both raises a value error;
+    # grouping labels not found in the grouped side's columns raise a key error);
+    # fill_method (only forward fill is supported, or none); suffixes (as in merge); how
+    # (left, right, outer, inner; default outer).
+    # Without grouping: builds an ordered merge operation and returns its result. With
+    # grouping: uses the group-and-merge helper, with the grouped side as the left piece
+    # (for right_by the operands are swapped when merging each piece).
+    # Returns a DataFrame (of the left type if left is a DataFrame subclass).
+    # KNOWN ISSUE: the docstring says the grouping arguments must be none when either
+    # input is a Series, but the code does not check this; a Series input with a grouping
+    # key fails later when reading the columns attribute.
     """
     Perform a merge for ordered data with optional filling/interpolation.
 
@@ -617,6 +701,10 @@ def merge_ordered(
     """
 
     def _merger(x, y) -> DataFrame:
+        # [FUNCTION DOC]
+        # HELPER: nested in merge_ordered; merges two frames x and y with the ordered
+        # merge operation using the enclosing function's key, suffix, fill and join
+        # arguments, and returns the resulting DataFrame.
         # perform the ordered merge operation
         op = _OrderedMerge(
             x,
@@ -670,6 +758,28 @@ def merge_asof(
     allow_exact_matches: bool = True,
     direction: str = "backward",
 ) -> DataFrame:
+    # [FUNCTION DOC]
+    # Merges two frames on the nearest key rather than an equal key (like a left join in
+    # which each left row takes at most one right row).
+    # Inputs: left and right (frames or named Series); on (name of the single ordered key
+    # column present in both) or left_on and right_on (per-side names); left_index and
+    # right_index (use the index as the ordered key); by (grouping column name(s) that
+    # must match exactly before the nearest-key search) or left_by and right_by
+    # (per-side grouping names); suffixes (for overlapping column names); tolerance
+    # (maximum allowed key distance; an integer, number or time-delta compatible with the
+    # key dtype and non-negative); allow_exact_matches (default true; false excludes equal
+    # keys); direction (backward selects the last right key not greater than the left
+    # key, forward the first not smaller, nearest the closest; default backward).
+    # Both key columns must be sorted ascending with no missing values (checked when
+    # computing the indexers, raising a value error) and have equal numeric or
+    # datetime-like dtypes (merge errors otherwise).
+    # Builds the as-of merge operation and returns its result: all left rows, with matched
+    # right columns (missing where there is no match).
+    # KNOWN ISSUE: the docstring says that with left_on or right_on the frame is sorted by
+    # that column before merging, but no sorting is done; unsorted keys raise an error.
+    # KNOWN ISSUE: the docstring shows only the numeric or datetime-like key requirement
+    # under on, but the code raises an error for keys of string or object dtype and for
+    # any hierarchical index key.
     """
     Perform a merge by key distance.
 
@@ -936,6 +1046,24 @@ def merge_asof(
 
 # TODO: transformations??
 class _MergeOperation:
+    # [CLASS DOC]
+    # HELPER: the engine behind merge (and base class of the ordered and as-of merge
+    # operations); validates arguments, resolves join keys, computes join indexers and
+    # assembles the result.
+    # State (set at construction): left and right (operands as frames, possibly with key
+    # columns or levels dropped; orig_left and orig_right keep the unmodified operands),
+    # how (join type, with left_anti/right_anti stored as left/right plus the anti_join
+    # flag), on, left_on, right_on (key specifications, normalized to sequences), left_index,
+    # right_index, sort (true if requested or if how is outer), suffixes, indicator,
+    # validate, left_join_keys, right_join_keys (arrays of key values), join_names (name
+    # of each key, or none for array keys).
+    # Class attribute: the merge type tag, overridden by subclasses.
+    # Flow: construction validates and prepares keys and dtypes; get_result computes the
+    # join index and indexers, reindexes and concatenates both sides (with suffixes on
+    # overlapping columns), adds the indicator column if requested, fills in join key
+    # columns, restores index levels used as keys, and returns the result with metadata
+    # propagated (finalize with method "merge").
+    # Subclasses override key validation hooks and the indexer computation.
     """
     Perform a database (SQL) merge operation between two DataFrame or Series
     objects using either columns as keys or their row indexes
@@ -973,6 +1101,22 @@ class _MergeOperation:
         indicator: str | bool = False,
         validate: str | None = None,
     ) -> None:
+        # [FUNCTION DOC]
+        # Validates and prepares a merge.
+        # Inputs: left and right (frames or named Series); how (inner by default; left,
+        # right, outer, inner, left_anti, right_anti, or asof); on, left_on, right_on
+        # (key specifications); left_index and right_index (must be real booleans, else a
+        # value error); sort (default true here; the public function passes false;
+        # forced true for outer); suffixes; indicator; validate (uniqueness check
+        # mode).
+        # Steps: converts operands to frames, validates how (value error for unknown types),
+        # normalizes on to a list, requires equal numbers of column levels on both sides
+        # (merge error otherwise), validates and fills the left/right key
+        # specifications, resolves the key arrays and names (dropping redundant key
+        # columns from the operands), applies subclass hooks for dtype matching and
+        # tolerance validation, coerces key dtypes where compatible (raising for incompatible
+        # ones), and finally checks the validate option if given.
+        # Side effects: may emit a warning from key dtype coercion.
         _left = _validate_operand(left)
         _right = _validate_operand(right)
         self.left = self.orig_left = _left
@@ -1040,6 +1184,14 @@ class _MergeOperation:
     def _validate_how(
         self, how: JoinHow | Literal["left_anti", "right_anti", "asof"]
     ) -> tuple[JoinHow | Literal["asof"], bool]:
+        # [FUNCTION DOC]
+        # HELPER: checks that how is one of left, right, inner, outer, left_anti,
+        # right_anti, cross or asof, raising a value error listing the valid names
+        # otherwise. Returns the effective join type and an anti-join flag: the anti
+        # variants are mapped to left or right with the flag true; otherwise the flag is
+        # false.
+        # Note: cross is accepted here although the public function handles it before
+        # building the operation.
         """
         Validate the 'how' parameter and return the actual join type and whether
         this is an anti join.
@@ -1070,10 +1222,18 @@ class _MergeOperation:
     def _maybe_require_matching_dtypes(
         self, left_join_keys: list[ArrayLike], right_join_keys: list[ArrayLike]
     ) -> None:
+        # [FUNCTION DOC]
+        # HELPER: hook called during construction with the resolved left and right key
+        # arrays; the base implementation does nothing. Overridden by the as-of merge to
+        # require matching key dtypes.
         # Overridden by AsOfMerge
         pass
 
     def _validate_tolerance(self, left_join_keys: list[ArrayLike]) -> None:
+        # [FUNCTION DOC]
+        # HELPER: hook called during construction with the left key arrays; the base
+        # implementation does nothing. Overridden by the as-of merge to validate its
+        # tolerance argument against the key dtype.
         # Overridden by AsOfMerge
         pass
 
@@ -1084,6 +1244,15 @@ class _MergeOperation:
         left_indexer: npt.NDArray[np.intp] | None,
         right_indexer: npt.NDArray[np.intp] | None,
     ) -> DataFrame:
+        # [FUNCTION DOC]
+        # HELPER: for get_result; builds the merged frame from the join index and the two
+        # indexers (each may be none, meaning identity).
+        # Takes shallow views of both operands, computes column labels with suffixes
+        # for overlapping column names, reindexes each side (by taking rows through the
+        # block manager, allowing missing positions) unless its indexer is already the
+        # identity range, sets the join index as the row index of both, relabels columns,
+        # and concatenates the two along columns. Does not modify the operands.
+        # Returns the combined DataFrame.
         """
         reindex along index and concat along columns.
         """
@@ -1132,6 +1301,16 @@ class _MergeOperation:
         return result
 
     def get_result(self) -> DataFrame:
+        # [FUNCTION DOC]
+        # Executes the merge and returns the resulting DataFrame.
+        # If the indicator option is on, first adds temporary marker columns to each
+        # operand. Then computes the join index and indexers, builds the combined
+        # frame, converts markers into the categorical indicator column, adds or fills
+        # the join key columns where one side is missing, restores index levels that were
+        # used as keys on both sides, and propagates metadata using the finalize hook
+        # with method "merge".
+        # Side effects: replaces the stored left and right operands with the versions that
+        # carry marker columns when the indicator option is on.
         """
         Execute the merge.
         """
@@ -1159,6 +1338,10 @@ class _MergeOperation:
     @final
     @cache_readonly
     def _indicator_name(self) -> str | None:
+        # [FUNCTION DOC]
+        # HELPER: cached property; the name of the indicator column. A string indicator
+        # is used as given; true gives the default name merge with a leading underscore;
+        # false gives none; any other type raises a value error.
         if isinstance(self.indicator, str):
             return self.indicator
         elif isinstance(self.indicator, bool):
@@ -1172,6 +1355,12 @@ class _MergeOperation:
     def _indicator_pre_merge(
         self, left: DataFrame, right: DataFrame
     ) -> tuple[DataFrame, DataFrame]:
+        # [FUNCTION DOC]
+        # HELPER: for get_result with the indicator option; returns shallow copies of left
+        # and right with a small-integer marker column each (value one on the left, two on
+        # the right, named with a leading underscore, left_indicator and right_indicator).
+        # Raises a value error if either marker name, or the indicator column name, is
+        # already a column of either operand.
         """
         Add one indicator column to each of the left and right inputs.
 
@@ -1205,6 +1394,13 @@ class _MergeOperation:
 
     @final
     def _indicator_post_merge(self, result: DataFrame) -> DataFrame:
+        # [FUNCTION DOC]
+        # HELPER: for get_result with the indicator option; converts the marker columns
+        # (missing treated as zero) into the categorical indicator column. The sum of the
+        # markers (1, 2 or 3) is categorized and the categories are renamed left_only,
+        # right_only and both. The marker columns are dropped.
+        # Modifies the passed result by adding the indicator column, and returns the new
+        # frame without markers.
         """
         Add an indicator column to the merge result.
 
@@ -1227,6 +1423,11 @@ class _MergeOperation:
 
     @final
     def _maybe_restore_index_levels(self, result: DataFrame) -> None:
+        # [FUNCTION DOC]
+        # HELPER: for get_result; when a key was an index level of both original operands
+        # with the same name on each side, moves the corresponding result column back into
+        # the index (unless a level of that name is already in the result index).
+        # Modifies the result in place; returns nothing.
         """
         Restore index levels specified as `on` parameters
 
@@ -1276,6 +1477,24 @@ class _MergeOperation:
         left_indexer: npt.NDArray[np.intp] | None,
         right_indexer: npt.NDArray[np.intp] | None,
     ) -> None:
+        # [FUNCTION DOC]
+        # HELPER: for get_result; makes sure the join key columns of the result hold the
+        # correct combined values and exist, modifying the result in place (returns
+        # nothing).
+        # Inputs: result, and the left and right indexers (none meaning identity).
+        # For each key pair that should be filled (both specified by array or differing
+        # names): if the key name already exists in the result and one side has unmatched
+        # rows, fills the missing entries from the other side's key values (and uses the
+        # original column's values if the result dtype changed); if the name does not
+        # exist, builds it from both sides. The combined key is built by taking the
+        # values through each indexer (missing positions get the dtype's missing value),
+        # then merged: if one side is entirely missing the other side's values are used;
+        # otherwise left values with the gaps filled from the right, with the common
+        # dtype (special handling keeps the datetime dtype when different resolutions
+        # would otherwise yield object). Finally writes it as a column (if the name is a
+        # column label), as the index or an index level (if the name is a level), or
+        # inserts a new column at the key position with a generated name for unnamed keys.
+        # Asserts that the left key arrays are known array types.
         left_has_missing = None
         right_has_missing = None
 
@@ -1391,6 +1610,11 @@ class _MergeOperation:
     def _get_join_indexers(
         self,
     ) -> tuple[npt.NDArray[np.intp] | None, npt.NDArray[np.intp] | None]:
+        # [FUNCTION DOC]
+        # HELPER: computes the row indexers for both sides from the resolved key arrays
+        # using the module-level indexer function, with this operation's sort flag and
+        # join type (not valid for as-of merges, which override it). Returns a pair of
+        # integer indexer arrays (either may be none to mean identity).
         """return the join indexers"""
         # make mypy happy
         assert self.how != "asof"
@@ -1402,6 +1626,19 @@ class _MergeOperation:
     def _get_join_info(
         self,
     ) -> tuple[Index, npt.NDArray[np.intp] | None, npt.NDArray[np.intp] | None]:
+        # [FUNCTION DOC]
+        # HELPER: for get_result; determines the result's row index and the left and
+        # right row indexers.
+        # Cases: both sides joined on index (non as-of): uses the index join with the
+        # operation's join type; right index with left join, or left index with right
+        # join: uses the dedicated index-join helper; otherwise computes indexers from the
+        # key arrays and builds the join index by taking from the relevant side's
+        # index (the right index when joining on the right index, the left index when
+        # joining on the left index, with as-of merges behaving as a left merge there,
+        # handling empty frames separately) or, when no index is a key, a default integer
+        # range sized to the number of result rows.
+        # For anti joins, the result is then filtered to unmatched rows only.
+        # Returns the join index and the two indexers.
         left_ax = self.left.index
         right_ax = self.right.index
 
@@ -1474,6 +1711,20 @@ class _MergeOperation:
         indexer: npt.NDArray[np.intp] | None,
         how: JoinHow = "left",
     ) -> Index:
+        # [FUNCTION DOC]
+        # HELPER: for the join-info step; rearranges one index by an indexer to form the
+        # result index. Inputs: index (being rearranged), other_index (supplies values for
+        # rows not in index), indexer (positions or none), how (the join type for which
+        # replacement of unmatched positions is needed).
+        # When the operation's join type equals how or is outer, and other_index is not
+        # hierarchical, positions of minus one in the indexer would wrongly pick the last
+        # element; so a missing-value element is appended to the index first (so that the
+        # minus one position takes it).
+        # Returns a copy of the index if indexer is none, else the index taken at indexer.
+        # KNOWN ISSUE: the docstring says unmatched positions are filled from other_index,
+        # but the code never reads the values of other_index; it only uses a missing-value
+        # element built from the dtype of index. The parameter other_index is used only
+        # to check whether it is hierarchical.
         """
         Create a join index by rearranging one index to match another
 
@@ -1517,6 +1768,13 @@ class _MergeOperation:
         left_indexer: npt.NDArray[np.intp] | None,
         right_indexer: npt.NDArray[np.intp] | None,
     ) -> tuple[Index, npt.NDArray[np.intp] | None, npt.NDArray[np.intp] | None]:
+        # [FUNCTION DOC]
+        # HELPER: for the join-info step; restricts a left or right join to its anti-join
+        # rows. Inputs: the join index and both indexers (none replaced by identity
+        # ranges). For a left anti join keeps rows whose right indexer is minus one
+        # (no match); for a right anti join keeps rows whose left indexer is minus one.
+        # Asserts that the join type is left or right. Returns the filtered join index
+        # and both filtered indexers.
         """
         Handle anti join by returning the correct join index and indexers
 
@@ -1562,6 +1820,24 @@ class _MergeOperation:
         list[Hashable],
         list[Hashable],
     ]:
+        # [FUNCTION DOC]
+        # HELPER: resolves the key specifications into concrete key arrays.
+        # Uses the stored left_on and right_on (each entry an array of the matching
+        # length or a column/level label; entries may be none for as-of merges that use
+        # an index with a grouping key). Two small anonymous predicates test whether a value
+        # is a known array type with the length of the left or right operand.
+        # Cases: both sides specified: pairs are processed in order; an array is taken
+        # directly (name none), a label is looked up as column or level; a none entry means
+        # use the index values and name; when the same label is given for left and
+        # right, the right-hand column is scheduled to be dropped. Only left specified:
+        # the right keys are the right index (flattened if hierarchical). Only right
+        # specified: symmetrical. Neither: all lists are empty.
+        # Returns left keys, right keys, key names (none for arrays), labels to drop
+        # from the left, and labels to drop from the right.
+        # Wrong-length array-likes fall through to a label lookup, which raises.
+        # KNOWN ISSUE: the code never adds anything to the list of labels to drop from the
+        # left operand, so that returned list is always empty; only right-side labels are
+        # scheduled for dropping.
         """
         Returns
         -------
@@ -1685,6 +1961,26 @@ class _MergeOperation:
 
     @final
     def _maybe_coerce_merge_keys(self) -> None:
+        # [FUNCTION DOC]
+        # HELPER: called at construction; checks that each pair of left and right key arrays
+        # has compatible dtypes and raises for clearly incompatible ones. Returns nothing.
+        # Compatible without action: either side empty while the other is not; identical
+        # dtypes; categoricals whose categories match up to order; numeric dtypes of the
+        # same kind; integer versus float keys (emits a user warning if float values are
+        # not equal to their integer cast); numeric dtypes whose inferred types agree;
+        # datetimes of any resolution or timezone-aware pairs.
+        # Raises a value error (message suggests using concat) for: an object or string
+        # key paired with a numeric key when exactly one of them infers to a string-like
+        # type; mixing datetime-like with non-datetime-like; timezone-aware with naive;
+        # datetime with timedelta.
+        # Any other pair that is not accepted above (for example boolean with object,
+        # or numeric pairs whose inferred types differ, or categorical with a
+        # non-categorical) is coerced instead: the key column, if it is a column of the
+        # stored operand (by name), is replaced in a shallow copy by a version cast to
+        # object, or to the categories' dtype for a categorical key. This is the only
+        # state this method mutates (the stored left/right operands).
+        # Note: the converted arrays created for mixed extension/non-extension numeric
+        # pairs are local only; the stored key arrays are not replaced.
         # we have valid merges but we may have to further
         # coerce these if they are originally incompatible types
         #
@@ -1879,6 +2175,21 @@ class _MergeOperation:
                 self.right[name] = self.right[name].astype(typ)
 
     def _validate_left_right_on(self, left_on, right_on):
+        # [FUNCTION DOC]
+        # HELPER: normalizes and validates the key specification arguments, returning the
+        # final left and right key sequences.
+        # Inputs: left_on and right_on (a label, array, list or none; wrapped to lists),
+        # together with the stored on, left_index and right_index.
+        # Cases: nothing given: both index flags set gives empty keys; only one index flag
+        # set raises a merge error asking for the other side's key; neither set uses the
+        # intersection of column names (merge error if there are none or if the common
+        # columns are not unique in either operand). on given: it is used for both sides,
+        # and combining it with left_on, right_on or either index flag raises a merge error.
+        # Only left_on: not allowed with left_index; requires right_on or right_index
+        # (merge error); with right_index the number of left keys must equal the number
+        # of levels of the right index (value error) and right keys are placeholders of
+        # none. Only right_on: symmetrical.
+        # Finally raises a value error if the key lists differ in length.
         left_on = com.maybe_make_list(left_on)
         right_on = com.maybe_make_list(right_on)
 
@@ -1962,6 +2273,16 @@ class _MergeOperation:
 
     @final
     def _validate_validate_kwd(self, validate: str) -> None:
+        # [FUNCTION DOC]
+        # HELPER: enforces the validate option of the merge.
+        # Input: validate, one of one_to_one (short 1:1), one_to_many (1:m),
+        # many_to_one (m:1), many_to_many (m:m). Computes whether the left and right join
+        # keys are unique (using the original index when joining on the index, otherwise
+        # a hierarchical index of the key arrays). Raises a merge error describing up to
+        # five duplicate keys when the required side(s) are not unique: both sides for
+        # one-to-one, the left for one-to-many, the right for many-to-one; many-to-many
+        # never checks. An unknown value raises a value error listing the valid choices.
+        # Returns nothing.
         # Check uniqueness of each
         if self.left_index:
             left_join_index = self.orig_left.index
@@ -1978,11 +2299,20 @@ class _MergeOperation:
             right_unique = right_join_index.is_unique
 
         def left_error_msg(x: Index) -> str:
+            # [FUNCTION DOC]
+            # HELPER: nested in the validate-option check; builds the text listing up to
+            # five duplicated key values of the left join index, as a table without row
+            # labels, using the left key names (or no name when joining on the index),
+            # prefixed by a newline and a heading about duplicates in the left.
             name = self.left_on if not self.left_index else lib.no_default
             msg = x[x.duplicated()][:5].to_frame(name=name).to_string(index=False)
             return f"\nDuplicates in left:\n {msg} ..."
 
         def right_error_msg(x: Index) -> str:
+            # [FUNCTION DOC]
+            # HELPER: nested in the validate-option check; right-hand counterpart of the
+            # left error text builder: lists up to five duplicated right join keys under a
+            # heading about duplicates in the right.
             name = self.right_on if not self.right_index else lib.no_default
             msg = x[x.duplicated()][:5].to_frame(name=name).to_string(index=False)
             return f"\nDuplicates in right:\n {msg} ..."
@@ -2046,6 +2376,19 @@ def get_join_indexers(
     sort: bool = False,
     how: JoinHow = "inner",
 ) -> tuple[npt.NDArray[np.intp] | None, npt.NDArray[np.intp] | None]:
+    # [FUNCTION DOC]
+    # Computes the row positions on each side that pair up for a join.
+    # Inputs: left_keys and right_keys (equal-length lists of key arrays, one per key
+    # column; the lengths of the lists are asserted equal); sort (whether results are
+    # ordered by key; default false); how (inner, left, right or outer; default inner).
+    # Fast paths: when one side has no rows, returns empty indexers or all-missing/identity
+    # indexers (for unsorted left/right/outer cases).
+    # Otherwise, with several keys, factorizes each pair and combines the codes into one
+    # integer key per row; with a single key uses it directly. If both keys are monotonic
+    # increasing and at least one is unique, uses the index join; else uses the
+    # non-unique indexer function.
+    # Returns a pair of indexers into the left and right keys, where minus one marks an
+    # unmatched row, and an indexer that is exactly the identity range is replaced by none.
     """
 
     Parameters
@@ -2124,6 +2467,17 @@ def get_join_indexers_non_unique(
     sort: bool = False,
     how: JoinHow = "inner",
 ) -> tuple[npt.NDArray[np.intp], npt.NDArray[np.intp]]:
+    # [FUNCTION DOC]
+    # Computes join indexers for single keys that may have duplicates.
+    # Inputs: left and right (key arrays), sort (default false), how (inner, left, right,
+    # outer; default inner).
+    # Factorizes both keys together (the factorizer may itself return finished indexers,
+    # signalled by a count of minus one, when a hash join was used). Otherwise calls the
+    # compiled outer-join routine (left or right, with the roles swapped for right), inner
+    # join or full outer join on the integer codes.
+    # Returns the pair of integer indexers (left, right); minus one marks no match.
+    # For a how value outside the four names the result variables would be unbound and the
+    # function would fail.
     """
     Get join indexers for left and right.
 
@@ -2164,6 +2518,20 @@ def restore_dropped_levels_multijoin(
     lindexer: npt.NDArray[np.intp],
     rindexer: npt.NDArray[np.intp],
 ) -> tuple[FrozenList, FrozenList, FrozenList]:
+    # [FUNCTION DOC]
+    # HELPER: (public name, internal use) for joins between two hierarchical indexes;
+    # restores the levels that were not part of the join and so are missing from the join
+    # index.
+    # Inputs: left and right (the hierarchical indexes), dropped_level_names (names of the
+    # levels to restore; each is looked up in the left names first, otherwise the right),
+    # join_index (index from joining on the common levels; converted to hierarchical if
+    # plain), lindexer and rindexer (row positions into each side, minus one where no match).
+    # For each dropped level, takes that level's codes through the matching indexer
+    # (minus one fill, or unchanged if the indexer is none) and appends the level, the
+    # codes and the level name to the join index's levels, codes and names.
+    # Returns the combined levels, codes and names (as frozen lists).
+    # KNOWN ISSUE: the docstring labels the codes as a single integer array, but the
+    # function returns a list of code arrays, one per level.
     """
     *this is an internal non-public method*
 
@@ -2201,6 +2569,10 @@ def restore_dropped_levels_multijoin(
     """
 
     def _convert_to_multiindex(index: Index) -> MultiIndex:
+        # [FUNCTION DOC]
+        # HELPER: nested in the level-restoring function; returns the index unchanged if
+        # already hierarchical, else a one-level hierarchical index with the same values
+        # and name.
         if isinstance(index, MultiIndex):
             return index
         else:
@@ -2246,6 +2618,12 @@ def restore_dropped_levels_multijoin(
 
 
 class _OrderedMerge(_MergeOperation):
+    # [CLASS DOC]
+    # HELPER: merge operation used by merge_ordered (and base class of the as-of merge).
+    # Extends the base merge operation with a fill_method attribute (forward fill or
+    # none). Always sorts keys (the factorizer sorts), defaults to an outer join, and
+    # overrides result assembly to optionally forward fill the indexers instead of the
+    # values; it does not support the indicator column or the validation option.
     _merge_type = "ordered_merge"
 
     def __init__(
@@ -2261,6 +2639,11 @@ class _OrderedMerge(_MergeOperation):
         fill_method: str | None = None,
         how: JoinHow | Literal["asof"] = "outer",
     ) -> None:
+        # [FUNCTION DOC]
+        # Stores fill_method (a string naming forward fill, or none) and initializes the
+        # base merge operation with the given operands, key specifications, index flags,
+        # suffixes and join type (default outer), forcing sort to true because key
+        # factorization sorts. Validation of fill_method is deferred to get_result.
         self.fill_method = fill_method
         _MergeOperation.__init__(
             self,
@@ -2277,6 +2660,16 @@ class _OrderedMerge(_MergeOperation):
         )
 
     def get_result(self) -> DataFrame:
+        # [FUNCTION DOC]
+        # Executes the ordered merge and returns the resulting DataFrame.
+        # Computes the join index and indexers. With forward fill, each indexer is passed
+        # through the compiled forward-fill routine so that unmatched positions repeat the
+        # last matched row of that side; with no fill method the indexers are used as-is;
+        # any other fill method raises a value error. Builds the frame from the (possibly
+        # filled) indexers, then adds join key columns using the original (unfilled)
+        # indexers so key values are not forward filled.
+        # Unlike the base implementation, the indicator column, index-level restoration
+        # and metadata finalization are not performed.
         join_index, left_indexer, right_indexer = self._get_join_info()
 
         left_join_indexer: npt.NDArray[np.intp] | None
@@ -2306,11 +2699,25 @@ class _OrderedMerge(_MergeOperation):
 
 
 def _asof_by_function(direction: str):
+    # [FUNCTION DOC]
+    # HELPER: for as-of merging; looks up the compiled join routine for the given search
+    # direction (backward, forward or nearest) by building its name from the direction
+    # and fetching it from the compiled join module. Returns the routine, or none if no
+    # routine of that name exists.
     name = f"asof_join_{direction}_on_X_by_Y"
     return getattr(libjoin, name, None)
 
 
 class _AsOfMerge(_OrderedMerge):
+    # [CLASS DOC]
+    # HELPER: merge operation used by merge_asof; matches each left row with the nearest
+    # right row by a single ordered key, optionally within groups defined by "by" keys.
+    # Extra state: by, left_by, right_by (grouping keys), tolerance (maximum key distance),
+    # allow_exact_matches (whether equal keys match) and direction (backward, forward or
+    # nearest). The join type is always asof, which behaves like a left join on the
+    # result index. Overrides key validation, dtype checks, tolerance validation, and
+    # indexer computation (using the compiled as-of routines); result assembly is inherited
+    # from the ordered merge.
     _merge_type = "asof_merge"
 
     def __init__(
@@ -2331,6 +2738,13 @@ class _AsOfMerge(_OrderedMerge):
         allow_exact_matches: bool = True,
         direction: str = "backward",
     ) -> None:
+        # [FUNCTION DOC]
+        # Stores the as-of options and initializes the ordered merge with the join type
+        # asof and no fill method.
+        # Inputs: operands and key specifications as in merge_asof; by (grouping label(s)
+        # for both sides), left_by and right_by (side-specific grouping), tolerance,
+        # allow_exact_matches (must be a real boolean, else a merge error), direction
+        # (must be backward, forward or nearest, else a merge error).
         self.by = by
         self.left_by = left_by
         self.right_by = right_by
@@ -2365,6 +2779,19 @@ class _AsOfMerge(_OrderedMerge):
         )
 
     def _validate_left_right_on(self, left_on, right_on):
+        # [FUNCTION DOC]
+        # HELPER: extends the base key validation for as-of merges.
+        # After the base checks, requires exactly one key per side unless the index is used
+        # (merge error otherwise), forbids a hierarchical index as key, and resolves the
+        # grouping keys: by cannot be combined with left_by or right_by, and left_by and
+        # right_by must both be given or both absent; they must have equal lengths.
+        # Rejects object or string key dtypes (merge error saying both sides must be
+        # numeric). Finally prepends the grouping keys to the key lists, so the as-of key
+        # is last. Returns the final left and right key lists.
+        # KNOWN ISSUE: when the as-of key is not a column but an index level name, the
+        # variable meant to hold the key dtype is set to the index of level values rather
+        # than to its dtype (the conditional expression covers the whole attribute access),
+        # so the later dtype checks and the error text operate on an index object.
         left_on, right_on = super()._validate_left_right_on(left_on, right_on)
 
         # we only allow on to be a single item for on
@@ -2447,9 +2874,19 @@ class _AsOfMerge(_OrderedMerge):
     def _maybe_require_matching_dtypes(
         self, left_join_keys: list[ArrayLike], right_join_keys: list[ArrayLike]
     ) -> None:
-        # TODO: why do we do this for AsOfMerge but not the others?
+        # [FUNCTION DOC]
+        # HELPER: override of the base hook; requires that every pair of left and right join
+        # key arrays (including grouping keys) has exactly equal dtypes, and that the as-of
+        # key itself (the index values when joining on the index, else the last key) also
+        # matches. Raises a merge error naming the key position and both dtypes, with a
+        # specific message when both are categoricals that are not equal.
+        # A TODO in the source asks why this check exists only for as-of merges.
 
         def _check_dtype_match(left: ArrayLike, right: ArrayLike, i: int) -> None:
+            # [FUNCTION DOC]
+            # HELPER: nested in the dtype-matching hook; raises a merge error mentioning
+            # position i if the two arrays have different dtypes (special wording for
+            # two different categorical dtypes); otherwise returns nothing.
             if left.dtype != right.dtype:
                 if isinstance(left.dtype, CategoricalDtype) and isinstance(
                     right.dtype, CategoricalDtype
@@ -2490,6 +2927,15 @@ class _AsOfMerge(_OrderedMerge):
         _check_dtype_match(lt, rt, 0)
 
     def _validate_tolerance(self, left_join_keys: list[ArrayLike]) -> None:
+        # [FUNCTION DOC]
+        # HELPER: override of the base hook; checks the tolerance option against the as-of
+        # key dtype (the left index values when joining on the left index, else the last
+        # left key). Does nothing if tolerance is none. For datetime-like keys (including
+        # Arrow date/time kinds) the tolerance must be a time-delta; for integer keys an
+        # integer; for float keys any number; other key types raise a merge error saying
+        # the key must be integer, timestamp or float. A negative tolerance raises a merge
+        # error saying it must be positive; an incompatible type raises one naming the
+        # key type.
         # validate tolerance; datetime.timedelta or Timedelta if we have a DTI
         if self.tolerance is not None:
             if self.left_index:
@@ -2529,6 +2975,15 @@ class _AsOfMerge(_OrderedMerge):
     def _convert_values_for_libjoin(
         self, values: AnyArrayLike, side: str
     ) -> np.ndarray:
+        # [FUNCTION DOC]
+        # HELPER: converts an as-of key array into a plain numpy array suitable for the
+        # compiled routines. Inputs: values (key array) and side (word left or right used
+        # in error messages).
+        # Requires the keys to be monotonic increasing: otherwise raises a value error
+        # saying the side contains null values (if any are missing) or must be sorted.
+        # Arrow date-like arrays are converted first; datetime-like data is viewed as 64-bit
+        # integers; masked arrays give their data buffer (no nulls remain at this
+        # point); other extension arrays are converted to numpy. Returns the array.
         # we require sortedness and non-null values in the join keys
         if not Index(values, copy=False).is_monotonic_increasing:
             if isna(values).any():
@@ -2553,6 +3008,19 @@ class _AsOfMerge(_OrderedMerge):
         return values  # type: ignore[return-value]
 
     def _get_join_indexers(self) -> tuple[npt.NDArray[np.intp], npt.NDArray[np.intp]]:
+        # [FUNCTION DOC]
+        # HELPER: override that computes the as-of indexers using the compiled routines.
+        # Takes the as-of key values from each side (index values when joining on the
+        # index, else the last join key), asserts their dtypes are equal (already checked
+        # at construction), converts the tolerance to the integer representation of the key
+        # (time-deltas are converted to the key's time unit and then to their integer value),
+        # converts the keys to numpy via the conversion helper (which enforces sortedness),
+        # and, if grouping keys exist, factorizes them jointly into integer group codes
+        # (combining several grouping keys into one group id). Then calls the routine chosen
+        # by direction with the key values, group codes (or none), the exact-match flag
+        # and tolerance.
+        # Returns the pair of left and right indexers (right indexer has minus one for
+        # unmatched left rows).
         """return the join indexers"""
 
         # values to compare
@@ -2654,7 +3122,19 @@ class _AsOfMerge(_OrderedMerge):
 def _get_multiindex_indexer(
     join_keys: list[ArrayLike], index: MultiIndex, sort: bool
 ) -> tuple[npt.NDArray[np.intp], npt.NDArray[np.intp]]:
-    # left & right join labels and num. of levels at each location
+    # [FUNCTION DOC]
+    # HELPER: for joining key arrays against a hierarchical index; produces one combined
+    # integer key per row for each side.
+    # Inputs: join_keys (one key array per level of the index), index (hierarchical index),
+    # sort (whether factorization sorts).
+    # Factorizes each level's values together with the matching key array; the index side's
+    # codes are remapped through the factorization when sorting, or just copied to 64-bit
+    # integers otherwise. Entries with missing level codes (minus one) in the index are
+    # assigned a dedicated extra code per level (reusing the existing missing code if the
+    # keys already had one). The per-level codes are then combined into single flat
+    # integer keys.
+    # Returns (key array side, index side) as flat integer arrays. The name
+    # for the unnamed copy function below is an anonymous cast-to-integer helper.
     mapped = (
         _factorize_keys(index.levels[n]._values, join_keys[n], sort=sort)
         for n in range(index.nlevels)
@@ -2685,6 +3165,9 @@ def _get_multiindex_indexer(
 
 
 def _get_empty_indexer() -> tuple[npt.NDArray[np.intp], npt.NDArray[np.intp]]:
+    # [FUNCTION DOC]
+    # HELPER: returns a pair of empty platform-integer arrays, the indexers for a join
+    # with no matching rows.
     """Return empty join indexers."""
     return (
         np.array([], dtype=np.intp),
@@ -2695,6 +3178,11 @@ def _get_empty_indexer() -> tuple[npt.NDArray[np.intp], npt.NDArray[np.intp]]:
 def _get_no_sort_one_missing_indexer(
     n: int, left_missing: bool
 ) -> tuple[npt.NDArray[np.intp], npt.NDArray[np.intp]]:
+    # [FUNCTION DOC]
+    # HELPER: builds the indexers for a join where one side is empty and the other side's
+    # n rows are all kept in order. Returns a pair: when left_missing is true the first
+    # (left) array is all minus one and the second is the range of n positions; otherwise
+    # the first is the range and the second is all minus one.
     """
     Return join indexers where all of one side is selected without sorting
     and none of the other side is selected.
@@ -2724,6 +3212,17 @@ def _get_no_sort_one_missing_indexer(
 def _left_join_on_index(
     left_ax: Index, right_ax: Index, join_keys: list[ArrayLike], sort: bool = False
 ) -> tuple[Index, npt.NDArray[np.intp] | None, npt.NDArray[np.intp]]:
+    # [FUNCTION DOC]
+    # HELPER: left-joins key values from the left side onto the right axis (an index).
+    # Inputs: left_ax (left index), right_ax (right index, possibly hierarchical), join_keys
+    # (left key arrays), sort (default false).
+    # Builds integer keys (using the hierarchical-index key helper when the right axis is
+    # hierarchical, otherwise the first join key against the right index values),
+    # factorizes them, and calls the compiled left outer join.
+    # Returns (join index, left indexer, right indexer). If sorting was requested or the
+    # join expanded the number of left rows, the join index is the left axis taken at
+    # the left indexer; otherwise the left axis itself is returned with a none left indexer
+    # (order and length preserved).
     if isinstance(right_ax, MultiIndex):
         lkey, rkey = _get_multiindex_indexer(join_keys, right_ax, sort=sort)
     else:
@@ -2755,6 +3254,28 @@ def _factorize_keys(
     sort: bool = True,
     how: str | None = None,
 ) -> tuple[npt.NDArray[np.intp], npt.NDArray[np.intp], int]:
+    # [FUNCTION DOC]
+    # HELPER: factorizes two key arrays together so equal values get equal integer codes.
+    # Inputs: lk and rk (key arrays), sort (default true; make codes follow sorted order of
+    # the unique values), how (join type; the name enables the hash-join shortcut).
+    # Preparation by dtype: datetimes (naive or aware) are reduced to their underlying
+    # integer arrays after matching resolutions; categoricals with equal dtype are encoded
+    # to the same categories and their codes used; extension arrays with equal dtype: Arrow
+    # backed and Arrow-storage string arrays are dictionary encoded in Arrow directly
+    # (and returned immediately, with missing values given one extra code), other
+    # extension types use their factorization values unless masked or numeric-Arrow;
+    # datetime-like arrays of equal dtype become 64-bit integers. Then the arrays are
+    # coerced to a common dtype and a compiled factorizer chosen by dtype.
+    # Hash-join shortcut: for an inner join without sorting on integer, unsigned, float or
+    # boolean keys where right keys are unique, performs the hash inner join directly and
+    # returns the two indexers with a count of minus one.
+    # Otherwise returns (left codes, right codes, count of distinct codes) with missing
+    # values given a shared extra code (so the count is increased by one when any missing
+    # value exists); sorted if requested.
+    # KNOWN ISSUE: the docstring's Returns text refers to calling with a key argument
+    # naming the right side, but the function has no such parameter (it is a stale
+    # description); it also does not describe the minus-one count / hash-join return form
+    # except in the count entry.
     """
     Encode left and right keys as enumerated types.
 
@@ -2961,6 +3482,15 @@ def _factorize_keys(
 def _convert_arrays_and_get_rizer_klass(
     lk: ArrayLike, rk: ArrayLike
 ) -> tuple[type[libhashtable.Factorizer], ArrayLike, ArrayLike]:
+    # [FUNCTION DOC]
+    # HELPER: for key factorization; picks the compiled factorizer class and coerces the
+    # two key arrays to a common representation.
+    # Inputs: lk and rk (key arrays). For numeric keys with different dtypes, casts both to
+    # their common type (creating extension arrays of the common extension type when
+    # needed) and selects the factorizer from the module's dtype table (using the numpy
+    # dtype for masked and Arrow-backed arrays). For non-numeric keys, converts both to
+    # object arrays and uses the object factorizer.
+    # Returns (factorizer class, left array, right array).
     klass: type[libhashtable.Factorizer]
     if is_numeric_dtype(lk.dtype):
         if lk.dtype != rk.dtype:
@@ -2996,6 +3526,12 @@ def _convert_arrays_and_get_rizer_klass(
 def _sort_labels(
     uniques: np.ndarray, left: npt.NDArray[np.intp], right: npt.NDArray[np.intp]
 ) -> tuple[npt.NDArray[np.intp], npt.NDArray[np.intp]]:
+    # [FUNCTION DOC]
+    # HELPER: for key factorization; renumbers integer codes so they follow the sorted
+    # order of the unique values. Inputs: uniques (distinct values in code order), left
+    # and right (code arrays, with minus one for missing). Concatenates the codes, maps
+    # them through a safe sort of the uniques (missing stays minus one), and splits them
+    # back. Returns the new left and right code arrays.
     llength = len(left)
     labels = np.concatenate([left, right])
 
@@ -3011,6 +3547,15 @@ def _get_join_keys(
     shape: Shape,
     sort: bool,
 ) -> tuple[npt.NDArray[np.int64], npt.NDArray[np.int64]]:
+    # [FUNCTION DOC]
+    # HELPER: combines per-key integer codes into a single 64-bit key per row.
+    # Inputs: llab and rlab (lists of code arrays, one per key, left and right), shape
+    # (number of distinct codes of each key), sort (passed to re-factorization).
+    # Finds the largest prefix of keys whose combined range cannot overflow 64 bits and
+    # combines it in mixed-radix fashion (earlier keys more significant). If all keys fit,
+    # returns the two flat keys. Otherwise re-factorizes the partial keys to dense codes
+    # and recurses with the dense key replacing the combined prefix.
+    # Returns (left keys, right keys).
     # how many levels can be done without overflow
     nlev = next(
         lev
@@ -3043,16 +3588,27 @@ def _get_join_keys(
 
 
 def _should_fill(lname, rname) -> bool:
+    # [FUNCTION DOC]
+    # HELPER: for adding join key columns; decides whether a key pair needs its result
+    # column filled. Returns true if either name is not a string (an array key or none),
+    # otherwise true only when the two names are equal.
     if not isinstance(lname, str) or not isinstance(rname, str):
         return True
     return lname == rname
 
 
 def _any(x) -> bool:
+    # [FUNCTION DOC]
+    # HELPER: for key resolution; true if x is not none and at least one of its elements is
+    # not none, false otherwise (including an empty sequence).
     return x is not None and com.any_not_none(*x)
 
 
 def _validate_operand(obj: DataFrame | Series) -> DataFrame:
+    # [FUNCTION DOC]
+    # HELPER: normalizes a merge operand to a DataFrame. A DataFrame is returned as is; a
+    # Series is converted to a one-column frame (a value error if it has no name); any
+    # other type raises a type error naming the type passed.
     if isinstance(obj, ABCDataFrame):
         return obj
     elif isinstance(obj, ABCSeries):
@@ -3068,6 +3624,21 @@ def _validate_operand(obj: DataFrame | Series) -> DataFrame:
 def _items_overlap_with_suffix(
     left: Index, right: Index, suffixes: Suffixes
 ) -> tuple[Index, Index]:
+    # [FUNCTION DOC]
+    # HELPER: for merge result assembly; computes the column labels of the left and right
+    # sides after applying suffixes to overlapping labels.
+    # Inputs: left and right (column indexes), suffixes (a pair; a list-like that is not a
+    # set or mapping, else a type error). Where no labels overlap, returns both indexes
+    # unchanged. Otherwise a pair with both suffixes empty or none raises a value error
+    # listing the overlap; each overlapping label gets its side's suffix appended unless
+    # that suffix is none (empty string suffixes leave the label equal to its original
+    # text form). If the renaming produces duplicate labels newly (or collides with a
+    # label already on the other side), raises a merge error listing the duplicates.
+    # Returns the new left and right label indexes.
+    # KNOWN ISSUE: the docstring says that an empty suffix converts the entry to a string,
+    # but the renaming only appends the suffix when it is not none and otherwise returns
+    # the label itself, with no conversion to string; an empty string suffix appends
+    # nothing.
     """
     Suffixes type validation.
 
@@ -3092,6 +3663,10 @@ def _items_overlap_with_suffix(
         raise ValueError(f"columns overlap but no suffix specified: {to_rename}")
 
     def renamer(x, suffix: str | None):
+        # [FUNCTION DOC]
+        # HELPER: nested in the suffix function; returns the label with the suffix appended
+        # (formatted as text) if the label is one of the overlapping labels and the suffix
+        # is not none; otherwise returns the label unchanged.
         """
         Rename the left and right indices.
 

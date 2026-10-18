@@ -1,3 +1,16 @@
+# [MODULE DOC]
+# Stack and unstack machinery: converting between wide and long layouts by moving
+# index levels to columns and the reverse.
+# Public-style contents: the unstack function (dispatches for Series and DataFrame),
+# the stack function and its variants (stack for the legacy implementation, stack_multiple
+# for several levels, stack_v3 for the newer implementation), and stack_reshape, the
+# data-moving core of the newer implementation. Private pieces: the unstacker helper
+# class doing the index arithmetic, multi-level unstack, extension-array Series
+# unstack, and multi-column stack helpers.
+# Relationships: these are called by the stack/unstack methods of DataFrame and Series,
+# and by pivot code; low-level loops live in the compiled reshape extension module;
+# grouping and sorting utilities come from the sorting module.
+# No import-time side effects beyond imports.
 from __future__ import annotations
 
 import itertools
@@ -72,6 +85,30 @@ if TYPE_CHECKING:
 
 
 class _Unstacker:
+    # [CLASS DOC]
+    # HELPER: for unstack and pivot; performs the index bookkeeping needed to move one
+    # level of a hierarchical row index into columns.
+    # State: constructor (frame type used for results), sort (whether result labels are
+    # sorted), index (the hierarchical index with unused levels removed), level (integer
+    # position of the level being moved), has_nan and lift (whether the moved level has
+    # missing labels and the offset used to give them position zero when sorting),
+    # new_index_levels, new_index_names (the remaining levels and names), removed_name,
+    # removed_level, removed_level_full (the moved level and its full, unreduced
+    # version), unique_nan_index (position of the missing label in unsorted mode),
+    # full_shape (number of output rows and the stride of the moved level), group_index,
+    # mask (which cells of the output grid are populated) and compressor (positions
+    # of the first occurrence of each output row).
+    # Invariants: the mask must cover at least as many cells as index entries, otherwise
+    # construction fails with a value error about duplicate entries.
+    # Construction may emit a performance warning if the output grid would exceed the
+    # largest 32-bit integer and the performance-warnings option is on.
+    # Key methods: get_result (builds the unstacked frame), get_new_values (arranges
+    # values into the output grid), get_new_columns (builds the new column labels),
+    # and the new_index property (new row labels).
+    # KNOWN ISSUE: the docstring says the constructor may be none, defaulting to
+    # DataFrame, but the code calls the constructor directly and never substitutes a
+    # default; the sort parameter is not documented; the Returns and Examples sections
+    # describe the unstack operation rather than this helper class.
     """
     Helper class to unstack data / pivot with multi-level index
 
@@ -121,6 +158,18 @@ class _Unstacker:
     def __init__(
         self, index: MultiIndex, level: Level, constructor, sort: bool = True
     ) -> None:
+        # [FUNCTION DOC]
+        # Initializes the unstacker.
+        # Inputs: index (hierarchical row index), level (number or name of the level to
+        # move to columns), constructor (callable creating the result frame), sort
+        # (default true; whether to sort labels, otherwise keeps order of appearance).
+        # Effects: removes unused levels, resolves the level number, detects missing
+        # labels in that level, splits the remaining levels and names from the removed
+        # one, in unsorted mode reduces the removed level to the labels actually used
+        # (dropping missing codes and remembering where the missing label was), warns
+        # (performance warning) when the number of output cells would overflow a 32-bit
+        # integer, and finally builds the selectors, which can raise a value error for
+        # duplicate entries.
         self.constructor = constructor
         self.sort = sort
 
@@ -182,6 +231,12 @@ class _Unstacker:
         npt.NDArray[np.intp],
         list[np.ndarray],  # each has _some_ signed integer dtype
     ]:
+        # [FUNCTION DOC]
+        # HELPER: cached property; computes the permutation that sorts the entries by
+        # the remaining levels first and the moved level last.
+        # Returns a pair: the sorting indexer (platform integers) and the list of code
+        # arrays in that order (remaining levels then moved level). In unsorted mode the
+        # codes are refactorized first so they reflect order of appearance.
         v = self.level
 
         codes = list(self.index.codes)
@@ -200,17 +255,34 @@ class _Unstacker:
 
     @cache_readonly
     def sorted_labels(self) -> list[np.ndarray]:
+        # [FUNCTION DOC]
+        # Cached property; returns the code arrays (remaining levels, then moved level)
+        # reordered by the sorting indexer when sorting is on, or unchanged otherwise.
         indexer, to_sort = self._indexer_and_to_sort
         if self.sort:
             return [line.take(indexer) for line in to_sort]
         return to_sort
 
     def _make_sorted_values(self, values: np.ndarray) -> np.ndarray:
+        # [FUNCTION DOC]
+        # HELPER: reorders the rows of a values array by the cached sorting indexer and
+        # returns the reordered array (a new array); the input is two-dimensional or
+        # one-dimensional and is taken along the first axis.
         indexer, _ = self._indexer_and_to_sort
         sorted_values = algos.take_nd(values, indexer, axis=0)
         return sorted_values
 
     def _make_selectors(self) -> None:
+        # [FUNCTION DOC]
+        # HELPER: called at construction; computes the output grid layout.
+        # Compresses the remaining labels into group ids (one per output row), sets the
+        # grid shape to the number of groups by the width of the moved level (including
+        # one extra slot for missing labels), builds a boolean mask of populated cells
+        # from the sorted labels, and sets the group index, mask and compressor
+        # (positions that map output rows back to first occurrences: by search when
+        # sorted, by first-occurrence order otherwise).
+        # Raises a value error when the number of populated cells is smaller than the
+        # number of index entries, which means the index has duplicate entries.
         new_levels = self.new_index_levels
 
         # make the mask
@@ -240,10 +312,19 @@ class _Unstacker:
 
     @cache_readonly
     def mask_all(self) -> bool:
+        # [FUNCTION DOC]
+        # Cached property; true when every cell of the output grid is populated, i.e. no
+        # filling of missing combinations is required.
         return bool(self.mask.all())
 
     @cache_readonly
     def arange_result(self) -> tuple[npt.NDArray[np.intp], npt.NDArray[np.bool_]]:
+        # [FUNCTION DOC]
+        # Cached property (reused by the extension-array block unstack). Unstacks a
+        # dummy array of positions of the original entries, using minus one as fill.
+        # Returns the resulting position grid and a one-dimensional boolean array
+        # saying, for each output column, whether it has any populated row.
+        # A trailing note after the return statement is a leftover comment (no code).
         # We cache this for reuse in ExtensionBlock._unstack
         dummy_arr = np.arange(len(self.index), dtype=np.intp)
         new_values, mask = self.get_new_values(dummy_arr, fill_value=-1)
@@ -251,6 +332,18 @@ class _Unstacker:
         # TODO: in all tests we have mask.any(0).all(); can we rely on that?
 
     def get_result(self, obj, value_columns, fill_value) -> DataFrame:
+        # [FUNCTION DOC]
+        # Builds the unstacked frame.
+        # Inputs: obj (Series or DataFrame whose values are unstacked), value_columns
+        # (column index of obj for a frame; none for a Series), fill_value (for empty
+        # cells; none selects the dtype default).
+        # Takes the values (one-dimensional ones become a single column), requires
+        # column labels when there is more than one column (value error otherwise,
+        # marked unreachable by coverage), arranges them into the output grid, builds
+        # new columns and index, and constructs the result without copying. If the result
+        # shares memory with the original values (possible only when one dimension is
+        # size one), registers a reference from the result to obj for copy-on-write.
+        # Returns the new frame.
         values = obj._values
         if values.ndim == 1:
             values = values[:, np.newaxis]
@@ -277,6 +370,22 @@ class _Unstacker:
         return result
 
     def get_new_values(self, values, fill_value=None):
+        # [FUNCTION DOC]
+        # Arranges values into the output grid of (output rows) by (columns times the
+        # width of the moved level).
+        # Inputs: values (array or extension array, one- or two-dimensional; one-dimensional
+        # is made a single column), fill_value (for missing cells).
+        # Returns a pair: the new values and a boolean mask of populated cells.
+        # Fast path: when every cell is populated and values are non-empty, reshapes the
+        # sorted values directly and returns an all-true mask.
+        # Otherwise: for extension dtypes allocates an empty array and fills it with
+        # fill_value (assuming the dtype can hold it); for other dtypes promotes the dtype
+        # to hold the fill value (emitting a Pandas4Warning future-deprecation warning
+        # when the promotion changes the dtype, except for the benign integer/boolean
+        # to float promotion with a missing fill value), fills, converts datetime-like
+        # data to 64-bit integers, then calls the compiled unstack loop to place values
+        # and mark the mask; finally restores datetime-like dtype.
+        # Side effects: may emit the warning above.
         if values.ndim == 1:
             values = values[:, np.newaxis]
 
@@ -372,6 +481,15 @@ class _Unstacker:
         return new_values, new_mask
 
     def get_new_columns(self, value_columns: Index | None):
+        # [FUNCTION DOC]
+        # Builds the column labels of the unstacked result.
+        # Input: value_columns (the original column index, or none for a Series).
+        # For none: returns the moved level itself (with a leading missing label inserted
+        # when the level had missing values) renamed to the moved level's name.
+        # Otherwise returns a hierarchical index whose outer level(s) are the original
+        # columns (each repeated once per moved-level label) and whose innermost level is
+        # the full moved level, with codes taken from the repeater; names are the original
+        # column names followed by the moved level's name. Built without verification.
         if value_columns is None:
             if not self.has_nan:
                 return self.removed_level._rename(name=self.removed_name)
@@ -408,6 +526,14 @@ class _Unstacker:
 
     @cache_readonly
     def _repeater(self) -> np.ndarray:
+        # [FUNCTION DOC]
+        # HELPER: cached property; the codes of the moved level, for one block of
+        # output columns, expressed relative to the full (unreduced) moved level.
+        # If the reduced level differs in length from the full one, maps the reduced
+        # labels into the full level (with a leading minus one for missing labels).
+        # Otherwise uses consecutive positions shifted by the lift; in unsorted mode with
+        # missing labels, sets the missing position to minus one and shifts the later
+        # positions down by one. An assertion guards that the missing position was set.
         # The two indices differ only if the unstacked level had unused items:
         if len(self.removed_level_full) != len(self.removed_level):
             # In this case, we remap the new codes to the original level:
@@ -432,6 +558,13 @@ class _Unstacker:
 
     @cache_readonly
     def new_index(self) -> MultiIndex | Index:
+        # [FUNCTION DOC]
+        # Cached property; the row labels of the unstacked result, independent of the
+        # values.
+        # Takes the codes of the remaining levels (sorted order when sorting, original
+        # order otherwise), selects the first occurrence of each output row, and builds
+        # either a plain index (when only one level remains, adding a missing label if
+        # any code is minus one) or a hierarchical index with the remaining names.
         # Does not depend on values or value_columns
         if self.sort:
             labels = self.sorted_labels[:-1]
@@ -459,6 +592,21 @@ class _Unstacker:
 def _unstack_multiple(
     data: Series | DataFrame, clocs, fill_value=None, sort: bool = True
 ):
+    # [FUNCTION DOC]
+    # HELPER: for unstack; moves several row-index levels to columns at once.
+    # Inputs: data (Series or DataFrame whose index is hierarchical; the caller checks
+    # this), clocs (the levels to move, as numbers or names; a single tuple name that is
+    # itself a level name is treated as one level), fill_value, sort.
+    # Returns data unchanged if clocs is empty. Otherwise combines the moved levels'
+    # codes into a single compressed placeholder level, unstacks that placeholder, and
+    # then rebuilds the column index by expanding the placeholder back into the original
+    # levels (names and codes recovered from the compression).
+    # For a DataFrame with hierarchical columns, falls back to unstacking the levels one
+    # after another, adjusting the remaining level numbers after each step; this branch
+    # returns directly. Note the source states that hierarchical columns are not yet
+    # handled in the main path.
+    # Returns the unstacked Series or DataFrame. Does not modify data (works on a
+    # shallow copy).
     if len(clocs) == 0:
         return data
 
@@ -554,18 +702,41 @@ def _unstack_multiple(
 
 
 @overload
-def unstack(obj: Series, level, fill_value=..., sort: bool = ...) -> DataFrame: ...
+def unstack(obj: Series, level, fill_value=..., sort: bool = ...) -> DataFrame:
+    # [FUNCTION DOC]
+    # Typing overload only: unstacking a Series gives a DataFrame. See the final
+    # implementation of unstack for behavior.
+    ...
 
 
 @overload
 def unstack(
     obj: Series | DataFrame, level, fill_value=..., sort: bool = ...
-) -> Series | DataFrame: ...
+) -> Series | DataFrame:
+    # [FUNCTION DOC]
+    # Typing overload only: unstacking a Series or DataFrame gives a Series or
+    # DataFrame. See the final implementation of unstack for behavior.
+    ...
 
 
 def unstack(
     obj: Series | DataFrame, level, fill_value=None, sort: bool = True
 ) -> Series | DataFrame:
+    # [FUNCTION DOC]
+    # Moves a level of the row index into the columns (pivoting long to wide).
+    # Inputs: obj (Series or DataFrame); level (number or name of the level, or a
+    # list or tuple of them); fill_value (for missing combinations, default none); sort
+    # (default true; sort the new labels).
+    # A list/tuple with several entries delegates to the multi-level helper; with a
+    # single entry it is unwrapped. For a level that is not an integer and not the
+    # internal placeholder name, validates it by resolving the level number (which raises
+    # for unknown levels).
+    # DataFrame with hierarchical index: unstacks via the frame helper. DataFrame with a
+    # flat index: transposes and stacks instead. Series with a flat index: raises a value
+    # error saying a hierarchical index is required. Series with an extension dtype
+    # that is one-dimensional-only: uses the extension helper to preserve dtype.
+    # Otherwise uses the unstacker helper class directly.
+    # Returns a DataFrame (or a Series in the flat-index DataFrame case).
     if isinstance(level, (tuple, list)):
         if len(level) != 1:
             # _unstack_multiple only handles MultiIndexes,
@@ -602,6 +773,13 @@ def unstack(
 def _unstack_frame(
     obj: DataFrame, level, fill_value=None, sort: bool = True
 ) -> DataFrame:
+    # [FUNCTION DOC]
+    # HELPER: for unstack; unstacks a DataFrame with a hierarchical row index.
+    # Inputs: obj, level, fill_value, sort. Builds the unstacker helper; when the frame
+    # cannot be cheaply transposed (mixed block layout) it delegates to the block
+    # manager's unstack and wraps the result; otherwise computes the result directly with
+    # the original columns. Returns the new DataFrame. The caller guarantees the index is
+    # hierarchical (asserted).
     assert isinstance(obj.index, MultiIndex)  # checked by caller
     unstacker = _Unstacker(
         obj.index, level=level, constructor=obj._constructor, sort=sort
@@ -619,6 +797,12 @@ def _unstack_frame(
 def _unstack_extension_series(
     series: Series, level, fill_value, sort: bool
 ) -> DataFrame:
+    # [FUNCTION DOC]
+    # HELPER: for unstack; unstacks a Series backed by an extension array while keeping
+    # its dtype, by converting to a one-column frame, unstacking that, and then dropping
+    # the outermost (original column) level of the result columns without an extra copy.
+    # Inputs as in the docstring (series, level, fill_value, sort). Returns a DataFrame
+    # whose columns all keep the input dtype.
     """
     Unstack an ExtensionArray-backed Series.
 
@@ -658,6 +842,20 @@ def _unstack_extension_series(
 def stack(
     frame: DataFrame, level=-1, dropna: bool = True, sort: bool = True
 ) -> Series | DataFrame:
+    # [FUNCTION DOC]
+    # Legacy stack implementation: moves the columns into the row index.
+    # Inputs: frame; level (column level to stack, number or name, default last; only
+    # meaningful for hierarchical columns); dropna (default true; drop rows whose value
+    # is missing); sort (default true; only used for hierarchical columns).
+    # Hierarchical columns delegate to the multi-column helper. Otherwise builds a new
+    # row index of the frame's index (levels and codes repeated for each column) combined
+    # with the columns as a new innermost level (factorized when columns are not unique).
+    # Values are the frame data flattened row-wise: for homogeneous extension dtypes the
+    # columns are concatenated and then reordered, to keep the dtype; otherwise the
+    # two-dimensional values are flattened. With dropna, missing entries and their index
+    # entries are removed.
+    # Returns a Series of the frame's sliced type indexed by the new index (or a DataFrame
+    # when delegating for hierarchical columns).
     """
     Convert DataFrame to Series with multi-level Index. Columns become the
     second level of the resulting hierarchical index
@@ -668,6 +866,10 @@ def stack(
     """
 
     def stack_factorize(index):
+        # [FUNCTION DOC]
+        # HELPER: nested in stack; returns a (levels, codes) pair for an index: the index
+        # itself with consecutive positions when it is unique, otherwise its distinct
+        # categories and the code of each entry.
         if index.is_unique:
             return index, np.arange(len(index))
         codes, categories = factorize_from_iterable(index)
@@ -737,6 +939,14 @@ def stack(
 
 
 def stack_multiple(frame: DataFrame, level, dropna: bool = True, sort: bool = True):
+    # [FUNCTION DOC]
+    # Stacks several column levels one after another using the legacy stack function.
+    # Inputs: frame, level (list of level names or numbers), dropna, sort (as in stack).
+    # If every entry is a column level name, stacks them in order by name. Otherwise, if
+    # all entries are integers, converts them to non-negative numbers and stacks them in
+    # order, decrementing the remaining numbers greater than the one just stacked,
+    # because stacking shifts the later levels down. A mixture raises a value error.
+    # Returns the final stacked Series or DataFrame.
     # If all passed levels match up to column names, no
     # ambiguity about what to do
     if all(lev in frame.columns.names for lev in level):
@@ -774,6 +984,14 @@ def stack_multiple(frame: DataFrame, level, dropna: bool = True, sort: bool = Tr
 
 
 def _stack_multi_column_index(columns: MultiIndex) -> MultiIndex | Index:
+    # [FUNCTION DOC]
+    # HELPER: for the multi-column stack; computes the remaining column labels after the
+    # last level is removed.
+    # Input: columns (hierarchical column index). With at most two levels returns the
+    # first level as a plain index named by the first name. Otherwise takes the label
+    # tuples of all but the last level, removes consecutive duplicates, and rebuilds a
+    # hierarchical index with each level's original dtype kept (unless a level contains
+    # missing placeholders, which cannot all be typed). Returns that index.
     """Creates a MultiIndex from the first N-1 levels of this MultiIndex."""
     if len(columns.levels) <= 2:
         return columns.levels[0]._rename(name=columns.names[0])
@@ -803,7 +1021,27 @@ def _stack_multi_column_index(columns: MultiIndex) -> MultiIndex | Index:
 def _stack_multi_columns(
     frame: DataFrame, level_num: int = -1, dropna: bool = True, sort: bool = True
 ) -> DataFrame:
+    # [FUNCTION DOC]
+    # HELPER: for stack; stacks one level of hierarchical columns into the row index.
+    # Inputs: frame (with hierarchical columns), level_num (position of the level to
+    # stack, default last), dropna (default true; drop all-missing rows from the
+    # result), sort (default true; sort the columns if not lexsorted, and the stacked
+    # labels).
+    # Algorithm: works on a shallow copy; rolls the chosen level to the last position by
+    # swapping adjacent levels (being careful when integer positions collide with level
+    # names); sorts the columns if needed; computes the new columns from the other
+    # levels; for each new column finds the block of source columns and builds one
+    # flattened column of values (reindexing when some stacked labels are absent; for
+    # extension dtypes concatenating and taking in the right order); drops new columns
+    # that had no source; builds the new row index by repeating the original index codes
+    # and tiling the stacked level; constructs the result, reorders columns to match the
+    # expected order, and optionally drops all-missing rows.
+    # Returns a DataFrame.
     def _convert_level_number(level_num: int, columns: Index):
+        # [FUNCTION DOC]
+        # HELPER: nested in the multi-column stack; if the integer matches a name
+        # of one of the column levels, returns the name found at that position (so swaps
+        # address the intended level), otherwise returns the integer unchanged.
         """
         Logic for converting the level number to something we can safely pass
         to swaplevel.
@@ -935,6 +1173,12 @@ def _stack_multi_columns(
 def _reorder_for_extension_array_stack(
     arr: ExtensionArray, n_rows: int, n_columns: int
 ) -> ExtensionArray:
+    # [FUNCTION DOC]
+    # HELPER: for stack; reorders the values produced by concatenating the columns of a
+    # homogeneous extension-array frame column by column into row-major order.
+    # Inputs: arr (concatenated values), n_rows and n_columns (shape of the original
+    # frame). Builds a permutation that interleaves the columns row by row and returns a
+    # new array taken in that order.
     """
     Re-orders the values when stacking multiple extension-arrays.
 
@@ -970,6 +1214,20 @@ def _reorder_for_extension_array_stack(
 
 
 def stack_v3(frame: DataFrame, level: list[int]) -> Series | DataFrame:
+    # [FUNCTION DOC]
+    # Newer stack implementation: moves the given column levels into the row index.
+    # Inputs: frame; level (list of integer column-level positions to stack).
+    # Raises a value error if the column labels contain duplicates. Returns the frame
+    # unchanged when level is empty.
+    # Algorithm: computes the stacked columns (the dropped-out other levels); for flat
+    # columns uses a fast path reshaping the values column-major into a Series (keeping a
+    # common dtype for homogeneous frames); otherwise uses the stack reshape helper.
+    # Then builds the row index by combining the original index (tiled by the stack
+    # ratio) with the unique stacked column labels (in the requested level order), and
+    # reorders the result with a computed permutation so rows are grouped by original row.
+    # If all column levels were stacked, a single-column result is reduced to a Series
+    # (an empty one when there are no columns); a Series result has its name cleared.
+    # Returns a Series or DataFrame.
     if frame.columns.nunique() != len(frame.columns):
         raise ValueError("Columns with duplicate values are not supported in stack")
     if not len(level):
@@ -1054,6 +1312,19 @@ def stack_v3(frame: DataFrame, level: list[int]) -> Series | DataFrame:
 def stack_reshape(
     frame: DataFrame, level: list[int], set_levels: set[int], stack_cols: Index
 ) -> Series | DataFrame:
+    # [FUNCTION DOC]
+    # HELPER: for stack_v3; does the data movement for stacking levels of hierarchical
+    # columns. Inputs: frame (hierarchical columns, asserted), level (positions to
+    # stack), set_levels (same as a set), stack_cols (labels of the stacked levels, one per
+    # column). For each distinct stacked label, selects the matching columns (the whole
+    # frame when it has one column), drops the stacked levels from their column index (or,
+    # when all levels are stacked, resets the columns to a default range or names a Series
+    # zero), and collects the pieces; the pieces are concatenated with a fresh index.
+    # For empty input builds an empty frame with the original dtype. If some levels remain,
+    # reorders columns to the unique order of the remaining levels. Returns the data frame
+    # (the caller sets the final index and sorts).
+    # KNOWN ISSUE: the docstring's Returns text has a typo ("data of behind") but is
+    # otherwise consistent with the code.
     """Reshape the data of a frame for stack.
 
     This function takes care of most of the work that stack needs to do. Caller

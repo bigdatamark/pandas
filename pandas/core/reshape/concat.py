@@ -2,6 +2,20 @@
 Concat routines.
 """
 
+# [MODULE DOC]
+# Implements the public concat function, which joins a collection of Series and
+# DataFrame objects along one axis, with set logic (inner or outer) on the other axis
+# and optional hierarchical keys on the concatenation axis.
+# Public contents: concat (exposed as a pandas top-level function; several typing
+# overloads exist for static checking). Also exposes new_axes and validate_unique_levels
+# without underscore, but they are used mainly internally (DataFrame-level axis
+# computation and key-level validation).
+# Private helpers compute the sample object, clean the keys and objects, promote mixed
+# dimensional inputs, build the concatenation axis, and build the hierarchical index.
+# Relationships: relies on internals block-manager concatenation, index union helpers
+# from the indexes package, dtype-level array concatenation, and categorical
+# factorization helpers.
+# No import-time side effects beyond imports.
 from __future__ import annotations
 
 from collections import abc
@@ -87,7 +101,11 @@ def concat(
     verify_integrity: bool = ...,
     sort: bool = ...,
     copy: bool | lib.NoDefault = ...,
-) -> DataFrame: ...
+) -> DataFrame:
+    # [FUNCTION DOC]
+    # Typing overload only: all-DataFrame inputs along the row axis give a DataFrame.
+    # See the final implementation of concat for behavior.
+    ...
 
 
 @overload
@@ -103,7 +121,11 @@ def concat(
     verify_integrity: bool = ...,
     sort: bool = ...,
     copy: bool | lib.NoDefault = ...,
-) -> Series: ...
+) -> Series:
+    # [FUNCTION DOC]
+    # Typing overload only: all-Series inputs along the row axis give a Series.
+    # See the final implementation of concat for behavior.
+    ...
 
 
 @overload
@@ -119,7 +141,11 @@ def concat(
     verify_integrity: bool = ...,
     sort: bool = ...,
     copy: bool | lib.NoDefault = ...,
-) -> DataFrame | Series: ...
+) -> DataFrame | Series:
+    # [FUNCTION DOC]
+    # Typing overload only: mixed Series and DataFrame inputs along the row axis give
+    # either a DataFrame or a Series. See the final implementation of concat.
+    ...
 
 
 @overload
@@ -135,7 +161,11 @@ def concat(
     verify_integrity: bool = ...,
     sort: bool = ...,
     copy: bool | lib.NoDefault = ...,
-) -> DataFrame: ...
+) -> DataFrame:
+    # [FUNCTION DOC]
+    # Typing overload only: concatenation along the column axis always gives a
+    # DataFrame. See the final implementation of concat for behavior.
+    ...
 
 
 @overload
@@ -151,7 +181,11 @@ def concat(
     verify_integrity: bool = ...,
     sort: bool = ...,
     copy: bool | lib.NoDefault = ...,
-) -> DataFrame | Series: ...
+) -> DataFrame | Series:
+    # [FUNCTION DOC]
+    # Typing overload only: the generic case with an arbitrary axis gives either a
+    # DataFrame or a Series. See the final implementation of concat for behavior.
+    ...
 
 
 @set_module("pandas")
@@ -168,6 +202,50 @@ def concat(
     sort: bool | lib.NoDefault = lib.no_default,
     copy: bool | lib.NoDefault = lib.no_default,
 ) -> DataFrame | Series:
+    # [FUNCTION DOC]
+    # Concatenates Series and DataFrame objects along one axis and returns a new
+    # object (this is the implementation behind all the typing overloads).
+    # Parameters (all but objs are keyword-only):
+    #   objs: an iterable, or a mapping, of Series and DataFrame objects. A mapping
+    #     supplies its keys as the hierarchical keys unless keys is given, in which case
+    #     the values selected by those keys are used. Entries that are missing (None)
+    #     are dropped silently.
+    #   axis: axis to join along, either by number or by name; default is the row axis.
+    #   join: how to treat the other axis; "outer" takes the union, "inner" the
+    #     intersection; default "outer". Any other value raises a value error.
+    #   ignore_index: when true, the concatenation axis is relabeled with a default
+    #     integer range. Combining it with keys raises a value error.
+    #   keys: labels used to build the outermost level of a hierarchical index on the
+    #     concatenation axis; default none.
+    #   levels: explicit level values to use for the hierarchical index; only valid
+    #     together with keys.
+    #   names: names for the levels of the resulting hierarchical index.
+    #   verify_integrity: when true, raise a value error if the resulting concatenation
+    #     axis has duplicate labels.
+    #   sort: whether to sort the non-concatenation axis. The default is a sentinel
+    #     meaning "unspecified"; non-boolean values raise a value error. With the
+    #     sentinel, sort is turned off when sorting could not change the result (inner
+    #     join, any non-datetime axis, identical axes, or already monotonic datetime
+    #     axes); otherwise the sentinel is kept and the combined axis may get sorted by
+    #     the helper that combines axes.
+    #   copy: deprecated and ignored; passing any value other than the sentinel emits a
+    #     future-deprecation warning (category Pandas4Warning).
+    # Processing: cleans objs and keys, picks a sample object (highest dimension,
+    # preferring non-empty), promotes mixed Series and DataFrame inputs to the
+    # DataFrame dimension, then builds the result using block-manager concatenation
+    # (DataFrames), stacking of values (Series along rows) or a DataFrame of columns
+    # (Series along columns).
+    # Returns: a Series when all inputs are Series and axis is rows; otherwise a
+    # DataFrame. Metadata is propagated via the finalize hook with method "concat".
+    # Warning: if sort was left at its default and the unsorted union of the other
+    # axis differs from the actual result axis, emits a Pandas4Warning about the
+    # coming change of the default sorting for datetime axes.
+    # Exceptions: value error for ignore_index with keys, bad join, non-boolean sort,
+    # empty or all-None objs, key/object length mismatch; type error for non-iterable
+    # objs or elements that are not Series or DataFrame.
+    # KNOWN ISSUE: the docstring lists the default of sort and copy as False, but the
+    # signature defaults of both are a "no value given" sentinel, and the sentinel for
+    # sort triggers the datetime-sorting heuristic and possible warning.
     """
     Concatenate pandas objects along a particular axis.
 
@@ -506,7 +584,21 @@ def _sanitize_mixed_ndim(
     ignore_index: bool,
     axis: AxisInt,
 ) -> list[Series | DataFrame]:
-    # if we have mixed ndims, then convert to highest ndim
+    # [FUNCTION DOC]
+    # HELPER: for concat; promotes lower-dimensional objects (Series) to the dimension
+    # of the sample (DataFrame) so mixed inputs can be combined.
+    # Inputs: objs (cleaned list), sample (the reference object defining the highest
+    # dimension), ignore_index (flag), axis (block-manager axis number of the
+    # concatenation).
+    # Returns a new list; objects already of maximal dimension pass through unchanged.
+    # A Series that has no name, or any Series when ignore_index is set, is wrapped
+    # into a DataFrame: when concatenating along block-manager axis 1 an unnamed Series
+    # becomes a one-column frame labeled 0; along the other axis an unnamed Series gets
+    # the next running integer column label. Named Series (without ignore_index) become
+    # a one-column frame labeled by their name.
+    # Raises a value error if any object's dimension is not either the maximum or one
+    # less than the maximum.
+    # new_objs, below, accumulates the converted objects.
     # creating column numbers as needed
 
     new_objs = []
@@ -563,6 +655,22 @@ def _get_result(
     names: list[HashableT] | None,
     axis: AxisInt,
 ):
+    # [FUNCTION DOC]
+    # HELPER: for concat; builds the final result object from cleaned inputs.
+    # Inputs: objs (non-empty list of equal-dimension objects), is_series (true when
+    # the sample is a Series), bm_axis (block-manager axis along which to concatenate),
+    # ignore_index, intersect (true for inner join), sort (bool or sentinel), keys,
+    # levels, verify_integrity, names (as in concat), and axis (the DataFrame-level axis
+    # number of the concatenation axis).
+    # Three cases: Series along the stack axis: concatenates the underlying values into
+    # one array, builds the index (default range or the concatenated/hierarchical
+    # axis), takes the consensus name, and constructs a Series of the sample's type.
+    # Series along the other axis: builds a DataFrame (the sample's expanded-dimension
+    # type) with the combined index as rows and the computed labels as columns.
+    # DataFrames: computes the new axes, reindexing indexers for every non-concatenation
+    # axis whose labels differ, then concatenates block managers without copying.
+    # Returns the new Series or DataFrame after propagating metadata via the finalize
+    # hook with method "concat". May raise value errors from the axis helpers.
     cons: Callable[..., DataFrame | Series]
     sample: DataFrame | Series
 
@@ -676,6 +784,15 @@ def new_axes(
     verify_integrity: bool,
     ignore_index: bool,
 ) -> list[Index]:
+    # [FUNCTION DOC]
+    # Computes the pair of result axes (in block-manager order) for DataFrame concat.
+    # Inputs: objs (list of DataFrames), bm_axis (block-manager axis that is
+    # concatenated), intersect (inner join flag), sort (bool or sentinel passed to the
+    # axis-combining helper), keys, names, axis (DataFrame-level concatenation axis),
+    # levels, verify_integrity, ignore_index.
+    # Returns a list of two indexes: for the concatenation axis, the concatenated (or
+    # hierarchical, or default-range) axis from the dataframe axis helper; for the
+    # other axis, the union or intersection of the inputs' labels.
     """Return the new [index, column] result for concat."""
     return [
         _get_concat_axis_dataframe(
@@ -707,6 +824,19 @@ def _get_concat_axis_series(
     verify_integrity: bool,
     names: list[HashableT] | None,
 ) -> Index:
+    # [FUNCTION DOC]
+    # HELPER: for concat; computes the labels of the concatenation axis when the inputs
+    # are Series.
+    # Inputs: objs, ignore_index, bm_axis (0 means the Series are stacked end to end,
+    # otherwise they become columns), keys, levels, verify_integrity, names.
+    # With ignore_index, returns a default integer range sized to the number of
+    # objects. When stacking (bm_axis 0): concatenates the Series indexes, or builds a
+    # hierarchical index when keys are given; raises a value error if levels is given
+    # without keys, and, if verify_integrity is set, if the result has duplicates.
+    # When forming columns without keys: uses each Series' name (unnamed ones get
+    # running integers) and returns a default range if no Series is named; raises a
+    # type error if an object is not one-dimensional. With keys: returns the keys as an
+    # index with the given names set.
     """Return result concat axis when concatenating Series objects."""
     if ignore_index:
         return default_index(len(objs))
@@ -755,6 +885,16 @@ def _get_concat_axis_dataframe(
     levels,
     verify_integrity: bool,
 ) -> Index:
+    # [FUNCTION DOC]
+    # HELPER: for concat; computes the labels along the concatenation axis for
+    # DataFrame inputs.
+    # Inputs: objs, axis (DataFrame-level axis number to read labels from),
+    # ignore_index, keys, names, levels, verify_integrity.
+    # With ignore_index, returns a default integer range whose length is the total
+    # number of labels across the inputs. Otherwise concatenates the inputs' labels,
+    # building a hierarchical index when keys are given.
+    # Raises a value error if levels is given without keys, or if verify_integrity is
+    # set and the combined labels contain duplicates (the message lists the duplicates).
     """Return result concat axis when concatenating DataFrame objects."""
     indexes_gen = (x.axes[axis] for x in objs)
 
@@ -781,6 +921,17 @@ def _clean_keys_and_objs(
     objs: Iterable[Series | DataFrame] | Mapping[HashableT, Series | DataFrame],
     keys,
 ) -> tuple[list[Series | DataFrame], Index | None, set[int]]:
+    # [FUNCTION DOC]
+    # HELPER: for concat; normalizes the objs and keys arguments.
+    # Inputs: objs (iterable or mapping of pandas objects) and keys (optional labels).
+    # A mapping is turned into a list ordered by keys (defaulting to the mapping's own
+    # keys); other non-sized iterables are materialized to a list. Missing (None)
+    # entries are removed, and the keys are filtered to the surviving positions.
+    # Returns a tuple of: the cleaned list, the keys as an index (or none when no keys
+    # were supplied), and the set of distinct dimension counts encountered.
+    # Raises a type error if objs is a single Series, DataFrame or scalar, or contains a
+    # non-pandas element; raises a value error if there are no objects, if the keys
+    # length differs from the object count, or if every object is missing.
     """
     Returns
     -------
@@ -852,6 +1003,17 @@ def _get_sample_object(
     levels,
     intersect: bool,
 ) -> tuple[Series | DataFrame, list[Series | DataFrame]]:
+    # [FUNCTION DOC]
+    # HELPER: for concat; chooses the reference ("sample") object that determines the
+    # result type and dimension, and possibly drops empty objects.
+    # Inputs: objs (cleaned list), ndims (set of distinct dimensions), keys, names,
+    # levels, intersect (inner join flag).
+    # With mixed dimensions, returns the first non-empty object of the highest
+    # dimension. With uniform dimensions and no keys, names, levels or inner join, empty
+    # DataFrames are filtered out (empty Series are kept since they affect result
+    # name or columns) and the first remaining object is the sample. In every other
+    # case the first object is the sample.
+    # Returns the sample and the (possibly filtered) list of objects.
     # get the sample
     # want the highest ndim that we have, and must be non-empty
     # unless all objs are empty
@@ -875,16 +1037,45 @@ def _get_sample_object(
 
 
 def _concat_indexes(indexes) -> Index:
+    # [FUNCTION DOC]
+    # HELPER: for concat; joins a non-empty list of indexes end to end by appending all
+    # the later ones onto the first, returning the combined index.
     return indexes[0].append(indexes[1:])
 
 
 def validate_unique_levels(levels: list[Index]) -> None:
+    # [FUNCTION DOC]
+    # HELPER: for concat's hierarchical-index construction (public name but internal
+    # use); checks that every user-supplied level index has unique values.
+    # Input: levels, a list of indexes. Returns nothing; raises a value error naming the
+    # offending level's values at the first level that is not unique.
     for level in levels:
         if not level.is_unique:
             raise ValueError(f"Level values not unique: {level.tolist()}")
 
 
 def _make_concat_multiindex(indexes, keys, levels=None, names=None) -> MultiIndex:
+    # [FUNCTION DOC]
+    # HELPER: for concat; builds a hierarchical index whose outer level(s) come from
+    # keys and whose inner level(s) are the concatenated original indexes.
+    # Inputs: indexes (one index per concatenated object), keys (one label per object;
+    # tuples mean several outer levels), levels (optional explicit level values, one
+    # sequence per outer level), names (optional level names, defaulting to none).
+    # Outer levels: when keys are tuples (or several levels are given) the keys are
+    # transposed into one sequence per level; otherwise a single outer level is used.
+    # Levels default to the unique keys (factorized); explicit levels must each be
+    # unique (value error otherwise).
+    # If the indexes are not all the same, exact codes are computed per level (a key not
+    # found in its level raises a value error, and missing values match each other);
+    # then the concatenated inner index is appended as extra level(s), reusing its
+    # levels and codes when it is itself hierarchical. If the number of names differs
+    # from the resulting number of levels, the indexes' consensus names are appended;
+    # raises an assertion error if the indexes differ in their number of levels in
+    # that case.
+    # If all indexes are the same, a faster path repeats each key's code for the length
+    # of the shared index and tiles the inner codes; keys missing from the given levels
+    # raise a value error.
+    # Returns the new hierarchical index, built without integrity verification.
     if (levels is None and isinstance(keys[0], tuple)) or (
         levels is not None and len(levels) > 1
     ):
