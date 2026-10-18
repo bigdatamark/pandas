@@ -4,6 +4,9 @@ with different size combinations. This is to ensure stability of the sorting
 and proper parameter handling
 """
 
+# [MODULE DOC]
+# Tests for value_counts on SeriesGroupBy and DataFrameGroupBy: comparison against applying the plain Series/DataFrame value_counts per group, normalization and sorting options, dropna handling, categorical groupers and non-groupers with observed true/false, as_index false output layout, duplicate and generated column labels, the subset argument and its validation, time groupers, integer column labels and several issue regressions.
+# Many tests use the shared education_df fixture defined here and the sort, ascending, dropna, as_index, unit and nulls_fixture fixtures from the groupby conftest. Several are marked as non-strict expected failures because of unstable sorting of duplicates with some numpy builds.
 import numpy as np
 import pytest
 
@@ -22,6 +25,8 @@ import pandas._testing as tm
 
 
 def tests_value_counts_index_names_category_column():
+    # [FUNCTION DOC]
+    # GH44324: grouping a frame with a categorical gender column by country and calling value_counts on the gender column must give a MultiIndex whose level names are country and gender with the categorical dtype kept, and a Series named count with the value one.
     # GH44324 Missing name of index category column
     df = DataFrame(
         {
@@ -42,6 +47,8 @@ def tests_value_counts_index_names_category_column():
 
 
 def seed_df(seed_nans, n, m):
+    # [FUNCTION DOC]
+    # HELPER: data builder for the slow Series value_counts test. Takes seed_nans (bool), n (row count) and m (maximum integer). Returns a frame with a random letter column 1st, a random date column 2nd (drawn from ten days) and a random integer column 3rd between one and m. When seed_nans is true the third column is cast to float and NaN is injected at fixed strided positions of all three columns. Uses a seeded generator for reproducibility.
     days = date_range("2015-08-24", periods=10)
 
     frame = DataFrame(
@@ -85,9 +92,13 @@ def test_series_groupby_value_counts(
     ascending,
     dropna,
 ):
+    # [FUNCTION DOC]
+    # Slow test parametrized over seeding NaN, row count, max int, grouping keys, bins, group sort, normalize (with matching result name), plus sort, ascending and dropna fixtures. Compares value_counts on the grouped 3rd column with applying the standalone Series value_counts to each group, after renaming the last index name and result name, rebuilding the MultiIndex and sorting both by index since sort order of ties is unstable (xref GH9212, GH 49909).
     df = seed_df(seed_nans, num_rows, max_int)
 
     def rebuild_index(df):
+        # [FUNCTION DOC]
+        # HELPER: nested function that rebuilds the index of a Series as a fresh MultiIndex from the level values of its existing index, preserving the names; mutates the input's index in place and returns the same object.
         arr = list(map(df.index.get_level_values, range(df.index.nlevels)))
         df.index = MultiIndex.from_arrays(arr, names=df.index.names)
         return df
@@ -116,6 +127,8 @@ def test_series_groupby_value_counts(
 
 @pytest.mark.parametrize("utc", [True, False])
 def test_series_groupby_value_counts_with_grouper(utc):
+    # [FUNCTION DOC]
+    # GH28479: parametrized over utc. Groups a frame with unix-second timestamps (with row 3 dropped) by a one-day time Grouper on a datetime key; value_counts of Food must equal applying the Series value_counts to each group, compared after sorting the index, with the expected renamed to count and index names copied from the result.
     # GH28479
     df = DataFrame(
         {
@@ -147,6 +160,8 @@ def test_series_groupby_value_counts_with_grouper(utc):
 
 @pytest.mark.parametrize("columns", [["A", "B"], ["A", "B", "C"]])
 def test_series_groupby_value_counts_empty(columns):
+    # [FUNCTION DOC]
+    # GH39172: empty frame with two or three columns, grouped by all but the last; value_counts of the last column returns an empty Series named count with a MultiIndex of empty levels named by the columns.
     # GH39172
     df = DataFrame(columns=columns)
     dfg = df.groupby(columns[:-1])
@@ -160,6 +175,8 @@ def test_series_groupby_value_counts_empty(columns):
 
 @pytest.mark.parametrize("columns", [["A", "B"], ["A", "B", "C"]])
 def test_series_groupby_value_counts_one_row(columns):
+    # [FUNCTION DOC]
+    # GH42618: single-row frame, grouped by all but the last column; value_counts of the last column equals the frame-level value_counts.
     # GH42618
     df = DataFrame(data=[range(len(columns))], columns=columns)
     dfg = df.groupby(columns[:-1])
@@ -171,6 +188,8 @@ def test_series_groupby_value_counts_one_row(columns):
 
 
 def test_series_groupby_value_counts_on_categorical():
+    # [FUNCTION DOC]
+    # GH38672: a categorical Series with an unobserved category grouped by a constant list; value_counts keeps the unobserved category with count zero in a MultiIndex of group key and categorical index; Series named count.
     # GH38672
 
     s = Series(Categorical(["a"], categories=["a", "b"]))
@@ -198,6 +217,8 @@ def test_series_groupby_value_counts_on_categorical():
 
 
 def test_series_groupby_value_counts_no_sort():
+    # [FUNCTION DOC]
+    # GH#50482: grouping by country and gender with group sort false, value_counts with sort false must preserve order of first appearance of the group and value combos, with count column named count and an explicit MultiIndex of three levels.
     # GH#50482
     df = DataFrame(
         {
@@ -219,6 +240,8 @@ def test_series_groupby_value_counts_no_sort():
 
 @pytest.fixture
 def education_df():
+    # [FUNCTION DOC]
+    # Pytest fixture returning a small six-row frame with string columns gender, education and country used by the many value_counts tests in this module.
     return DataFrame(
         {
             "gender": ["male", "male", "female", "male", "female", "male"],
@@ -229,12 +252,16 @@ def education_df():
 
 
 def test_bad_subset(education_df):
+    # [FUNCTION DOC]
+    # Grouped value_counts with a subset naming the grouping column must raise a value error mentioning subset.
     gp = education_df.groupby("country")
     with pytest.raises(ValueError, match="subset"):
         gp.value_counts(subset=["country"])
 
 
 def test_basic(education_df, request):
+    # [FUNCTION DOC]
+    # gh43564: normalized value_counts of the gender and education columns grouped by country yields proportions within each country, with a three-level index and a Series named proportion. Marked as a non-strict expected failure for the unstable sort of ties.
     # gh43564
     request.applymarker(
         pytest.mark.xfail(
@@ -266,6 +293,8 @@ def test_basic(education_df, request):
 
 
 def _frame_value_counts(df, keys, normalize, sort, ascending):
+    # [FUNCTION DOC]
+    # HELPER: used by the 3-way comparison test. Takes a frame, a list of column keys, normalize, sort and ascending, and returns the frame-level value_counts of those columns with the given options.
     return df[keys].value_counts(normalize=normalize, sort=sort, ascending=ascending)
 
 
@@ -292,6 +321,8 @@ def test_against_frame_and_seriesgroupby(
     request,
     using_infer_string,
 ):
+    # [FUNCTION DOC]
+    # Parametrized over groupby specification (column, array or function), normalize (with matching name), sort/ascending combos, whether to compare to a frame-level apply or to a Series-level value_counts, plus as_index and using_infer_string. The grouped value_counts of gender and education must match (a) applying the frame-level value_counts per group, or (b) the Series value_counts of a combined column that is split back into gender and education. For as_index false the key columns are inserted manually (level_0 for array or function keys). Contains special handling for string-dtype inference of column names. Non-strictly xfail for frame, sort and normalize because of unstable ties ordering.
     # test all parameters:
     # - Use column, array or function as by= parameter
     # - Whether or not to normalize
@@ -390,6 +421,8 @@ def test_compound(
     any_string_dtype,
     using_infer_string,
 ):
+    # [FUNCTION DOC]
+    # Parametrized over normalize and sort/ascending combos with expected row picks, counts and group sizes, and over any string dtype. Grouping by country and gender with as_index false and group sort false; value_counts on the education column returns a frame with the three key columns, plus count or proportion (counts divided by group sizes). Expected is built from original rows cast to the string dtype; pyarrow strings get nullable numeric dtypes for the count column. Handles object dtype under infer-string by casting to str.
     dtype = any_string_dtype
     education_df = education_df.astype(dtype)
     education_df.columns = education_df.columns.astype(dtype)
@@ -440,6 +473,8 @@ def test_compound(
 def test_data_frame_value_counts(
     sort, ascending, normalize, name, expected_data, expected_index
 ):
+    # [FUNCTION DOC]
+    # Parametrized over sort/ascending/normalize, expected data and index. Checks the three-way equality: DataFrame value_counts on a frame with a constant key, and groupby on that key then value_counts must produce the same Series (a MultiIndex of key, num_legs, num_wings). Mirrors tests in the frame methods value_counts tests.
     # 3-way compare with :meth:`~DataFrame.value_counts`
     # Tests from frame/methods/test_value_counts.py
     animals_df = DataFrame(
@@ -482,6 +517,8 @@ def test_data_frame_value_counts(
 def test_dropna_combinations(
     group_dropna, count_dropna, expected_rows, expected_values, request
 ):
+    # [FUNCTION DOC]
+    # Parametrized over group-level dropna and value-level dropna with expected rows and proportions. Groups on two columns with NaNs and takes normalized sorted value_counts; the expected is built from the picked rows of the original frame as a MultiIndex of all four columns. When group dropna is false the test is marked as a non-strict xfail because of unstable sorting.
     if not group_dropna:
         request.applymarker(
             pytest.mark.xfail(
@@ -540,6 +577,8 @@ def test_dropna_combinations(
 def test_data_frame_value_counts_dropna(
     nulls_fixture, dropna, normalize, name, expected_data, expected_index
 ):
+    # [FUNCTION DOC]
+    # GH 41334: frame-level and grouped value_counts with dropna true or false, normalize true or false and the nulls_fixture in the middle_name column. With dropna the null rows are excluded; without dropna null combinations are included as NaN level values. Normalized expected values are divided by the number of rows. Both frame-level and grouped results are compared to the same expected Series.
     # GH 41334
     # 3-way compare with :meth:`~DataFrame.value_counts`
     # Tests with nulls from frame/methods/test_value_counts.py
@@ -587,6 +626,8 @@ def test_data_frame_value_counts_dropna(
 def test_categorical_single_grouper_with_only_observed_categories(
     education_df, as_index, observed, normalize, name, expected_data, request
 ):
+    # [FUNCTION DOC]
+    # Single categorical grouper test with all other columns also categorical; parametrized over observed, as_index, normalize. Expected result contains all combinations of gender and education for each observed country, including zero counts, as categorical levels. For as_index false the expected is reset into a frame. Non-strict xfail for unstable sorting.
     # Test single categorical grouper with only observed grouping categories
     # when non-groupers are also categorical
     request.applymarker(
@@ -644,6 +685,8 @@ def test_categorical_single_grouper_with_only_observed_categories(
 def assert_categorical_single_grouper(
     education_df, as_index, observed, expected_index, normalize, name, expected_data
 ):
+    # [FUNCTION DOC]
+    # HELPER: shared body for the observed-true and observed-false categorical single-grouper tests. Takes the education frame, as_index, observed, the expected index tuples, normalize, the result name and the expected data. Casts everything to category, adds an unobserved category ASIA to country, groups by country, takes value_counts, and compares to an expected Series built from the tuples with categorical levels (the country level reset to the full categories); as_index false compares against the reset frame.
     # Test single categorical grouper when non-groupers are also categorical
     education_df = education_df.copy().astype("category")
 
@@ -694,6 +737,8 @@ def assert_categorical_single_grouper(
 def test_categorical_single_grouper_observed_true(
     education_df, as_index, normalize, name, expected_data, request
 ):
+    # [FUNCTION DOC]
+    # GH#46357: observed true with a categorical grouper that has the unobserved category ASIA; delegates to the shared assertion helper with the twelve observed-country combinations (zero counts still reported for unobserved gender and education pairs). Non-strict xfail for unstable ties order.
     # GH#46357
 
     request.applymarker(
@@ -773,6 +818,8 @@ def test_categorical_single_grouper_observed_true(
 def test_categorical_single_grouper_observed_false(
     education_df, as_index, normalize, name, expected_data, request
 ):
+    # [FUNCTION DOC]
+    # GH#46357: same as the previous test with observed false, so the unobserved country ASIA contributes six more rows with zero counts (eighteen rows in total). Delegates to the shared helper. Non-strict xfail.
     # GH#46357
 
     request.applymarker(
@@ -868,6 +915,8 @@ def test_categorical_single_grouper_observed_false(
 def test_categorical_multiple_groupers(
     education_df, as_index, observed, expected_index, normalize, name, expected_data
 ):
+    # [FUNCTION DOC]
+    # GH#46357: two categorical groupers (country, education) with non-categorical gender, parametrized over observed and normalize. With observed false all grouper combinations appear (including zero counts), with observed true only observed ones (positive values). Expected levels of the first two index levels are categorical. as_index false compares to the reset frame.
     # GH#46357
 
     # Test multiple categorical groupers when non-groupers are non-categorical
@@ -922,6 +971,8 @@ def test_categorical_multiple_groupers(
 def test_categorical_non_groupers(
     education_df, as_index, observed, normalize, name, expected_data, request
 ):
+    # [FUNCTION DOC]
+    # GH#46357: non-grouper columns gender and education are categorical; non-observed categories of the non-groupers must be included regardless of observed. Parametrized on observed, normalize, as_index. Non-strict xfail for unstable ordering.
     # GH#46357 Test non-observed categories are included in the result,
     # regardless of `observed`
 
@@ -986,6 +1037,8 @@ def test_categorical_non_groupers(
     ],
 )
 def test_mixed_groupings(normalize, expected_label, expected_values):
+    # [FUNCTION DOC]
+    # Mixed groupings (a list, a column name and a function) with as_index false; value_counts with sort and normalize yields a frame with generated level_0 and level_2 columns plus A and B and a count or proportion column.
     # Test multiple groupings
     df = DataFrame({"A": [1, 2, 1], "B": [1, 2, 3]})
     gp = df.groupby([[4, 5, 4], "A", lambda i: 7 if i == 1 else 8], as_index=False)
@@ -1010,6 +1063,8 @@ def test_mixed_groupings(normalize, expected_label, expected_values):
     ],
 )
 def test_column_label_duplicates(test, columns, expected_names, as_index):
+    # [FUNCTION DOC]
+    # GH 44992: with duplicate column labels in the source frame ("repeat") or a label that clashes with the generated level_1 name ("level"), grouping by a column, an array and a column yields a MultiIndex with those names (None for the array); for as_index false the array level is named level_1 and a final count column is appended.
     # GH 44992
     # Test for duplicate input column labels and generated duplicate labels
     df = DataFrame([[1, 3, 5, 7, 9], [2, 4, 6, 8, 10]], columns=columns)
@@ -1043,6 +1098,8 @@ def test_column_label_duplicates(test, columns, expected_names, as_index):
     ],
 )
 def test_result_label_duplicates(normalize, expected_label):
+    # [FUNCTION DOC]
+    # When the result column name (count or proportion) already exists as an input column, value_counts with as_index false must raise a value error that the column label is a duplicate of the result column.
     # Test for result column label duplicating an input column label
     gb = DataFrame([[1, 2, 3]], columns=["a", "b", expected_label]).groupby(
         "a", as_index=False
@@ -1053,6 +1110,8 @@ def test_result_label_duplicates(normalize, expected_label):
 
 
 def test_ambiguous_grouping():
+    # [FUNCTION DOC]
+    # An array grouper whose length equals the row count must not be confused with the column key; value_counts of a one-column frame grouped by a constant array gives a MultiIndex with an unnamed level and level a, one row with count two.
     # Test that groupby is not confused by groupings length equal to row count
     df = DataFrame({"a": [1, 1]})
     gb = df.groupby(np.array([1, 1], dtype=np.int64))
@@ -1064,6 +1123,8 @@ def test_ambiguous_grouping():
 
 
 def test_subset_overlaps_gb_key_raises():
+    # [FUNCTION DOC]
+    # GH 46383: subset listing the grouping column must raise a value error saying the keys in subset cannot be in the groupby column keys.
     # GH 46383
     df = DataFrame({"c1": ["a", "b", "c"], "c2": ["x", "y", "y"]}, index=[0, 1, 1])
     msg = "Keys {'c1'} in subset cannot be in the groupby column keys."
@@ -1072,6 +1133,8 @@ def test_subset_overlaps_gb_key_raises():
 
 
 def test_subset_doesnt_exist_in_frame():
+    # [FUNCTION DOC]
+    # GH 46383: subset naming a column absent from the frame must raise a value error saying the keys in subset do not exist in the DataFrame.
     # GH 46383
     df = DataFrame({"c1": ["a", "b", "c"], "c2": ["x", "y", "y"]}, index=[0, 1, 1])
     msg = "Keys {'c3'} in subset do not exist in the DataFrame."
@@ -1080,6 +1143,8 @@ def test_subset_doesnt_exist_in_frame():
 
 
 def test_subset():
+    # [FUNCTION DOC]
+    # GH 46383: with a duplicated index grouped by level 0, subset of c2 gives counts (1, 2) indexed by the level value and c2 (name count).
     # GH 46383
     df = DataFrame({"c1": ["a", "b", "c"], "c2": ["x", "y", "y"]}, index=[0, 1, 1])
     result = df.groupby(level=0).value_counts(subset=["c2"])
@@ -1092,6 +1157,8 @@ def test_subset():
 
 
 def test_subset_duplicate_columns():
+    # [FUNCTION DOC]
+    # GH 46383: subset naming a duplicated column c2 yields a result index with both duplicates included as separate levels named c2 and counts one and two.
     # GH 46383
     df = DataFrame(
         [["a", "x", "x"], ["b", "y", "y"], ["b", "y", "y"]],
@@ -1111,6 +1178,8 @@ def test_subset_duplicate_columns():
 
 @pytest.mark.parametrize("utc", [True, False])
 def test_value_counts_time_grouper(utc, unit):
+    # [FUNCTION DOC]
+    # GH#50486: parametrized over utc and the unit fixture. Time Grouper with one day frequency on a datetime column cast to the given unit; value_counts returns count one per row in a three-level index (Datetime, Timestamp, Food) with datetime level in the specified unit.
     # GH#50486
     df = DataFrame(
         {
@@ -1144,6 +1213,8 @@ def test_value_counts_time_grouper(utc, unit):
 
 
 def test_value_counts_integer_columns():
+    # [FUNCTION DOC]
+    # GH#55627: integer column labels with as_index false and sort false; value_counts on column 3 returns a frame with integer labelled key columns plus a count column of ones.
     # GH#55627
     df = DataFrame({1: ["a", "a", "a"], 2: ["a", "a", "d"], 3: ["a", "b", "c"]})
     gp = df.groupby([1, 2], as_index=False, sort=False)
@@ -1157,6 +1228,8 @@ def test_value_counts_integer_columns():
 @pytest.mark.parametrize("vc_sort", [True, False])
 @pytest.mark.parametrize("normalize", [True, False])
 def test_value_counts_sort(sort, vc_sort, normalize):
+    # [FUNCTION DOC]
+    # GH#55951: parametrized over group-level sort fixture, value_counts sort (vc_sort) and normalize. Chooses the expected row order by cases of group sort and vc_sort (sorted by group then by count desc, or first appearance etc.) and compares with the index (a, 0), named proportion or count.
     # GH#55951
     df = DataFrame({"a": [2, 1, 1, 1], 0: [3, 4, 3, 3]})
     gb = df.groupby("a", sort=sort)
@@ -1186,6 +1259,8 @@ def test_value_counts_sort(sort, vc_sort, normalize):
 @pytest.mark.parametrize("vc_sort", [True, False])
 @pytest.mark.parametrize("normalize", [True, False])
 def test_value_counts_sort_categorical(sort, vc_sort, normalize):
+    # [FUNCTION DOC]
+    # GH#55951: same ordering scenario with categorical columns and observed true; the unobserved combination (2, 4) appears with zero count/proportion as the last row. Order of taker depends on sort and vc_sort.
     # GH#55951
     df = DataFrame({"a": [2, 1, 1, 1], 0: [3, 4, 3, 3]}, dtype="category")
     gb = df.groupby("a", sort=sort, observed=True)
@@ -1218,6 +1293,8 @@ def test_value_counts_sort_categorical(sort, vc_sort, normalize):
 
 @pytest.mark.parametrize("groupby_sort", [True, False])
 def test_value_counts_all_na(sort, dropna, groupby_sort):
+    # [FUNCTION DOC]
+    # GH#59989: all-NaN second column. Parametrized on groupby sort, plus sort and dropna fixtures. With dropna true the result is an empty int64 Series named count with a MultiIndex of the right names; otherwise counts are 1 and 2 (or 2 and 1) per group depending on whether the groupby is sorted and the value_counts is sorted.
     # GH#59989
     df = DataFrame({"a": [2, 1, 1], "b": np.nan})
     gb = df.groupby("a", sort=groupby_sort)

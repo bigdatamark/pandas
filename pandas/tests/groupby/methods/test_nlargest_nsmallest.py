@@ -1,3 +1,7 @@
+# [MODULE DOC]
+# Tests for the grouped nlargest and nsmallest methods on SeriesGroupBy.
+# Covers basic selection with both keep modes, grouping by a level of a MultiIndex that shares a name with an index level, and the no-op case where the input is already ordered.
+# Uses the shared nselect_method fixture from the groupby conftest.
 import numpy as np
 import pytest
 
@@ -10,6 +14,8 @@ import pandas._testing as tm
 
 
 def test_nlargest():
+    # [FUNCTION DOC]
+    # Verifies per-group top-3 largest selection on a ten element integer Series grouped by a two-label Series. The result must be a Series with a two-level index (group label, original position) ordered by descending value within each group. A second case with ties checks that keep set to last prefers later positions among equal values.
     a = Series([1, 3, 5, 7, 2, 9, 0, 4, 6, 10])
     b = Series(list("a" * 5 + "b" * 5))
     gb = a.groupby(b)
@@ -30,6 +36,8 @@ def test_nlargest():
 
 
 def test_nlargest_mi_grouper():
+    # [FUNCTION DOC]
+    # Regression test for gh-21411: nlargest on a Series with a two-level named index grouped by the first level name. Expects the resulting index to repeat the grouping level (names first, first, second) with one maximal row per date. Floats are compared with a relative tolerance of 1e-3.
     # see gh-21411
     npr = np.random.default_rng(2)
 
@@ -75,6 +83,8 @@ def test_nlargest_mi_grouper():
 
 
 def test_nsmallest():
+    # [FUNCTION DOC]
+    # Mirror of the nlargest test for nsmallest: top-3 smallest per group, ordered ascending within group, with a two-level result index. A second case with duplicates verifies keep set to last chooses the later positions among ties.
     a = Series([1, 3, 5, 7, 2, 9, 0, 4, 6, 10])
     b = Series(list("a" * 5 + "b" * 5))
     gb = a.groupby(b)
@@ -100,6 +110,8 @@ def test_nsmallest():
 )
 @pytest.mark.parametrize("dtype", [None, *tm.ALL_INT_NUMPY_DTYPES])
 def test_nlargest_and_smallest_noop(data, groups, dtype, nselect_method):
+    # [FUNCTION DOC]
+    # Parametrized over (data, group labels) pairs, an optional integer numpy dtype and the nselect_method fixture (nlargest or nsmallest). Builds a Series that is already ordered for the method (reversed for nlargest) with group size no larger than n=2, so selection is a no-op. Expects the original values and a two-level index of group labels plus the original index, with the name preserved. Refs GH 15272, 16345, 29129.
     # GH 15272, GH 16345, GH 29129
     # Test nlargest/smallest when it results in a noop,
     # i.e. input is sorted and group size <= n

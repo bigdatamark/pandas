@@ -1,3 +1,5 @@
+# [MODULE DOC]
+# Tests for the rank method of DataFrameGroupBy and SeriesGroupBy. Covers ties methods, ascending, percent mode and na_option across numeric, datetime-like, period, object and categorical data, infinities and missing values, validation errors, and several regressions. Uses the rank_method and ascending fixtures from the groupby conftest.
 from datetime import datetime
 
 import numpy as np
@@ -14,6 +16,8 @@ import pandas._testing as tm
 
 
 def test_rank_unordered_categorical_typeerror():
+    # [FUNCTION DOC]
+    # GH#51034: ranking an empty unordered categorical, both through a Series groupby and a frame groupby keyed by the categorical (observed false), must raise a type error (not a not-implemented error) saying rank cannot be performed with a non-ordered Categorical.
     # GH#51034 should be TypeError, not NotImplementedError
     cat = pd.Categorical([], ordered=False)
     ser = Series(cat)
@@ -31,6 +35,8 @@ def test_rank_unordered_categorical_typeerror():
 
 
 def test_rank_apply():
+    # [FUNCTION DOC]
+    # Builds a 500 row frame with random values and two object key columns with long repeated strings. Grouped rank of the value column, both ordinary and percent mode, must equal concatenating per-group ranks and reindexing to the result's index.
     lev1 = np.array(["a" * 10] * 100, dtype=object)
     lev2 = np.array(["b" * 10] * 130, dtype=object)
     lab1 = np.random.default_rng(2).integers(0, 100, size=500, dtype=int)
@@ -126,6 +132,8 @@ def test_rank_apply():
     ],
 )
 def test_rank_args(grps, vals, ties_method, ascending, pct, exp):
+    # [FUNCTION DOC]
+    # Parametrized over one or two group labels, value sets (numpy numeric dtypes, naive and tz-aware timestamps, timedeltas, periods), ties method, ascending, pct and the expected ranks. Repeats the five values for every label and ranks per key; expects a one-column frame of the expected ranks repeated per group. Numpy inputs retain their dtype.
     key = np.repeat(grps, len(vals))
 
     orig_vals = vals
@@ -180,6 +188,8 @@ def test_rank_args(grps, vals, ties_method, ascending, pct, exp):
     ],
 )
 def test_infs_n_nans(grps, vals, ties_method, ascending, na_option, exp):
+    # [FUNCTION DOC]
+    # GH 20561: values with negative and positive infinity and NaN, over one or two groups, each ties method, ascending and na_option (keep, top, bottom). Expects the listed ranks, with NaN preserved only for keep; infinities are ranked as ordinary extreme values.
     # GH 20561
     key = np.repeat(grps, len(vals))
     vals = vals * len(grps)
@@ -432,6 +442,8 @@ def test_infs_n_nans(grps, vals, ties_method, ascending, na_option, exp):
     ],
 )
 def test_rank_args_missing(grps, vals, ties_method, ascending, na_option, pct, exp):
+    # [FUNCTION DOC]
+    # Same as the plain rank-args test but with missing values in the input (floats of several widths, timestamps naive and aware, timedeltas, periods) and an na_option, in addition to ties method, ascending and pct. Expected ranks keep NaN for keep, and place missing last with the shared bottom ranking for bottom. Compares the frame result with the expected single-column frame repeated per group.
     key = np.repeat(grps, len(vals))
 
     orig_vals = vals
@@ -452,6 +464,8 @@ def test_rank_args_missing(grps, vals, ties_method, ascending, na_option, pct, e
     "pct,exp", [(False, [3.0, 3.0, 3.0, 3.0, 3.0]), (True, [0.6, 0.6, 0.6, 0.6, 0.6])]
 )
 def test_rank_resets_each_group(pct, exp):
+    # [FUNCTION DOC]
+    # Parametrized over pct. A frame with ten rows of equal value split in two groups of five: every row gets an average rank 3.0 (or 0.6 in percent mode), showing ranking restarts for each group.
     df = DataFrame(
         {"key": ["a", "a", "a", "a", "a", "b", "b", "b", "b", "b"], "val": [1] * 10}
     )
@@ -465,6 +479,8 @@ def test_rank_resets_each_group(pct, exp):
 )
 @pytest.mark.parametrize("upper", [True, False])
 def test_rank_avg_even_vals(dtype, upper):
+    # [FUNCTION DOC]
+    # Parametrized over numpy-style dtype names and a flag for capitalizing the first letter to get the nullable counterpart (with a fix for unsigned names). Four equal values in one group should rank 2.5 each; the dtype is asserted first. For nullable dtypes the expected result is Float64.
     if upper:
         # use IntegerDtype/FloatingDtype
         dtype = dtype[0].upper() + dtype[1:]
@@ -486,6 +502,8 @@ def test_rank_avg_even_vals(dtype, upper):
     "vals", [["bar", "bar", "foo", "bar", "baz"], ["bar", np.nan, "foo", np.nan, "baz"]]
 )
 def test_rank_object_dtype(rank_method, ascending, na_option, pct, vals):
+    # [FUNCTION DOC]
+    # Uses rank_method, ascending fixtures and parametrized na_option, pct and two object value lists (with and without NaN). Ranking an object column of strings must match ranking numeric codes that preserve the string ordering; with missing values the missing positions stay NaN in the codes.
     df = DataFrame({"key": ["foo"] * 5, "val": vals})
     mask = df["val"].isna()
 
@@ -517,6 +535,8 @@ def test_rank_object_dtype(rank_method, ascending, na_option, pct, vals):
     ],
 )
 def test_rank_naoption_raises(rank_method, ascending, na_option, pct, vals):
+    # [FUNCTION DOC]
+    # Parametrized over invalid na_option values (true, a bad string, 1), pct and string or numeric value lists. Grouped rank must raise a value error saying na_option must be one of keep, top or bottom.
     df = DataFrame({"key": ["foo"] * 5, "val": vals})
     msg = "na_option must be one of 'keep', 'top', or 'bottom'"
 
@@ -527,6 +547,8 @@ def test_rank_naoption_raises(rank_method, ascending, na_option, pct, vals):
 
 
 def test_rank_empty_group():
+    # [FUNCTION DOC]
+    # See gh-22519: a group whose only value is NaN yields NaN under percent ranking, while other groups rank normally (0.5 and 1.0). Checked for both the column selection (a Series named B) and the frame.
     # see gh-22519
     column = "A"
     df = DataFrame({"A": [0, 1, 0], "B": [1.0, np.nan, 2.0]})
@@ -550,6 +572,8 @@ def test_rank_empty_group():
     ],
 )
 def test_rank_zero_div(input_key, input_value, output_value):
+    # [FUNCTION DOC]
+    # GH 23666: dense percent rank avoids a divide by zero. Parametrized over several key/value combos including groups of a single row and NaN values; expects a frame column B with percent ranks, NaN where the input value is missing.
     # GH 23666
     df = DataFrame({"A": input_key, "B": input_value})
 
@@ -559,6 +583,8 @@ def test_rank_zero_div(input_key, input_value, output_value):
 
 
 def test_rank_min_int():
+    # [FUNCTION DOC]
+    # GH-32859: rank of an int64 column holding the minimum and maximum representable values and of a datetime column with NaT. Expects rank 1.0 and 2.0 for the first group and 1.0 for the second; the datetime-like column gives NaN where NaT. The minimum integer must not be mistaken for a missing-value sentinel.
     # GH-32859
     df = DataFrame(
         {
@@ -582,6 +608,8 @@ def test_rank_min_int():
 
 @pytest.mark.parametrize("use_nan", [True, False])
 def test_rank_pct_equal_values_on_group_transition(use_nan):
+    # [FUNCTION DOC]
+    # GH#40518: parametrized over filling the last two rows with NaN or the number 3. Dense percent rank of val grouped by group; with NaN, the expected is 0.5, 1, NaN, NaN; without NaN, one third, two thirds, 1, 1. Ensures equal values at a group transition are handled correctly.
     # GH#40518
     fill_value = np.nan if use_nan else 3
     df = DataFrame(
@@ -606,6 +634,8 @@ def test_rank_pct_equal_values_on_group_transition(use_nan):
 
 
 def test_non_unique_index():
+    # [FUNCTION DOC]
+    # GH 16577: frame with a duplicated tz-aware index grouped by the index and column A; ascending percent rank of value yields 1.0 for the non-null keys and NaN for the NaN key, keeping the duplicated index and name.
     # GH 16577
     df = DataFrame(
         {"A": [1.0, 2.0, 3.0, np.nan], "value": 1.0},
@@ -621,6 +651,8 @@ def test_non_unique_index():
 
 
 def test_rank_categorical():
+    # [FUNCTION DOC]
+    # Ranking a frame with ordered categorical columns (one with a missing value) grouped by col1 must equal ranking the same frame cast to object.
     cat = pd.Categorical(["a", "a", "b", np.nan, "c", "b"], ordered=True)
     cat2 = pd.Categorical([1, 2, 3, np.nan, 4, 5], ordered=True)
 
@@ -636,6 +668,8 @@ def test_rank_categorical():
 
 @pytest.mark.parametrize("na_option", ["top", "bottom"])
 def test_groupby_op_with_nullables(na_option):
+    # [FUNCTION DOC]
+    # GH 54206: parametrized over top and bottom na_option. A Float64 column of a single NA grouped by itself with dropna false, ranked with method min, must give a Float64 Series of 1.0 with the result's name.
     # GH 54206
     df = DataFrame({"x": [None]}, dtype="Float64")
     result = df.groupby("x", dropna=False)["x"].rank(method="min", na_option=na_option)

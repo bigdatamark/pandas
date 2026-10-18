@@ -11,6 +11,8 @@ such as:
  - test_raises
 """
 
+# [MODULE DOC]
+# Tests that apply across every groupby reduction/transform method, driven by the groupby_func fixture (one test instance per method name). Uses the helper that builds suitable arguments for a given method name. Covers empty MultiIndex frames, duplicate column labels, output shape with duplicate labels, and a non-contiguous mask on nullable data. The corrwith method is deprecated and produces a Pandas4Warning, which tests expect or skip.
 import pytest
 
 from pandas.errors import Pandas4Warning
@@ -22,6 +24,8 @@ from pandas.tests.groupby import get_groupby_method_args
 
 
 def test_multiindex_group_all_columns_when_empty(groupby_func):
+    # [FUNCTION DOC]
+    # GH 32464: for an empty frame indexed by a three-level index (a, b, c) with no columns left and grouped by all three levels with group_keys true, calling each method must return something whose index equals the original (empty) index. For corrwith, the deprecation warning is asserted.
     # GH 32464
     df = DataFrame({"a": [], "b": [], "c": []}).set_index(["a", "b", "c"])
     gb = df.groupby(["a", "b", "c"], group_keys=True)
@@ -40,6 +44,8 @@ def test_multiindex_group_all_columns_when_empty(groupby_func):
 
 
 def test_duplicate_columns(request, groupby_func, as_index):
+    # [FUNCTION DOC]
+    # GH#50806: parametrized over every method and as_index. A frame with duplicate column label b is grouped by a; the result must equal that from a frame with unique renamed columns (b, c) with the last label renamed back to b, except for size, ngroup and cumcount where no column renaming applies. The corrwith case is marked as an expected failure (GH#50845).
     # GH#50806
     if groupby_func == "corrwith":
         msg = "GH#50845 - corrwith fails when there are duplicate columns"
@@ -66,6 +72,8 @@ def test_duplicate_columns(request, groupby_func, as_index):
     ],
 )
 def test_dup_labels_output_shape(groupby_func, idx):
+    # [FUNCTION DOC]
+    # Parametrized over each method and two column index kinds (flat with duplicate labels, or a two-level MultiIndex with duplicates). Skips size, ngroup and cumcount. A one-row frame grouped by column label 0 must give a result of shape one by two with columns identical to the original column index. The corrwith deprecation warning is asserted.
     if groupby_func in {"size", "ngroup", "cumcount"}:
         pytest.skip(f"Not applicable for {groupby_func}")
 
@@ -87,6 +95,8 @@ def test_dup_labels_output_shape(groupby_func, idx):
 
 
 def test_not_c_contiguous_mask(groupby_func):
+    # [FUNCTION DOC]
+    # Issue 61031: builds a nullable Int64 frame as a reversed view so its mask is not C-contiguous (asserted), then every method on the reversed grouped frame must equal the method on the equivalent contiguous frame. Returns immediately for the deprecated corrwith. The variable named reversed shadows a builtin name locally.
     # https://github.com/pandas-dev/pandas/issues/61031
     if groupby_func == "corrwith":
         # corrwith is deprecated

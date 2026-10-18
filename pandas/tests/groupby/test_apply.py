@@ -1,3 +1,5 @@
+# [MODULE DOC]
+# Tests for apply on DataFrameGroupBy and SeriesGroupBy (and related resample-style and transform interactions): how often the user function is called, group naming and copy semantics, index construction of results (group_keys, as_index, MultiIndex, duplicates), mixed return types (scalar, Series, DataFrame, None), dtype handling, deprecation warnings (Pandas4Warning) and numerous issue regressions. Uses the df, three_group, ts, tsframe, as_index, sort and dropna fixtures and the helper that builds method arguments from the groupby tests package.
 from datetime import (
     date,
     datetime,
@@ -21,12 +23,16 @@ from pandas.tests.groupby import get_groupby_method_args
 
 
 def test_apply_func_that_appends_group_to_list_without_copy():
+    # [FUNCTION DOC]
+    # GH 17718: the function passed to apply may store the group object it receives without a copy; the first stored group must equal the expected ten-row frame (column 0 of ones) with a range index in steps of ten, and object-dtype column labels.
     # GH: 17718
 
     df = DataFrame(1, index=list(range(10)) * 10, columns=[0]).reset_index()
     groups = []
 
     def store(group):
+        # [FUNCTION DOC]
+        # HELPER: apply function that appends the group it receives to the list in the enclosing scope and returns nothing.
         groups.append(group)
 
     df.groupby("index").apply(store)
@@ -37,6 +43,9 @@ def test_apply_func_that_appends_group_to_list_without_copy():
 
 
 def test_apply_index_date(using_infer_string):
+    # [FUNCTION DOC]
+    # GH 5788: groups hourly values by calendar date (grouper is an array of date objects). The row of the maximum per date computed by an apply of idxmax must equal the groupby idxmax result.
+    # KNOWN ISSUE: the using_infer_string fixture parameter is requested but never used in the body.
     # GH 5788
     ts = [
         "2011-05-16 00:00",
@@ -77,6 +86,8 @@ def test_apply_index_date(using_infer_string):
 
 
 def test_apply_index_date_object():
+    # [FUNCTION DOC]
+    # GH 5789: grouping by a date string column should not coerce dates to timestamps; applying a function that returns the time at the maximum value gives a Series indexed by the date strings (object index named date) with the time strings 00:00, 02:00, 02:00.
     # GH 5789
     # don't auto coerce dates
     ts = [
@@ -145,6 +156,8 @@ def test_apply_index_date_object():
     ],
 )
 def test_group_apply_once_per_group(df, group_names):
+    # [FUNCTION DOC]
+    # GH2936 and related issues: parametrized over frames and expected group names. Each of five functions (returning a copy, the same group, a scalar, None, or a constant frame) records the group name; after applying with each, the recorded list must equal the ordered unique group names, i.e. the function is evaluated exactly once per group (formerly the first group was evaluated twice to test the fast path).
     # GH2936, GH7739, GH10519, GH2656, GH12155, GH20084, GH21417
 
     # This test should ensure that a function is only evaluated
@@ -158,25 +171,35 @@ def test_group_apply_once_per_group(df, group_names):
     # `names` to detect side effects
 
     def f_copy(group):
+        # [FUNCTION DOC]
+        # HELPER: records the group's name in the enclosing list and returns a copy of the group (fast apply path).
         # this takes the fast apply path
         names.append(group.name)
         return group.copy()
 
     def f_nocopy(group):
+        # [FUNCTION DOC]
+        # HELPER: records the group's name and returns the group object itself (slow apply path).
         # this takes the slow apply path
         names.append(group.name)
         return group
 
     def f_scalar(group):
+        # [FUNCTION DOC]
+        # HELPER: records the group's name and returns the integer zero (GH7739, GH2656).
         # GH7739, GH2656
         names.append(group.name)
         return 0
 
     def f_none(group):
+        # [FUNCTION DOC]
+        # HELPER: records the group's name and returns nothing (GH10519, GH12155, GH21417).
         # GH10519, GH12155, GH21417
         names.append(group.name)
 
     def f_constant_df(group):
+        # [FUNCTION DOC]
+        # HELPER: records the group's name and returns a constant one-row frame of columns a and b (GH2936, GH20084).
         # GH2936, GH20084
         names.append(group.name)
         return DataFrame({"a": [1], "b": [1]})
@@ -189,6 +212,8 @@ def test_group_apply_once_per_group(df, group_names):
 
 
 def test_group_apply_once_per_group2(capsys):
+    # [FUNCTION DOC]
+    # GH 31111: uses the capsys fixture. Grouping an eight-row frame by a two-valued column with group_keys false and applying a function that prints a marker; the captured output must contain exactly two markers (one call per group).
     # GH: 31111
     # groupby-apply need to execute len(set(group_by_columns)) times
 
@@ -212,6 +237,8 @@ def test_group_apply_once_per_group2(capsys):
 
 
 def test_apply_fast_slow_identical():
+    # [FUNCTION DOC]
+    # GH 31613: applying a function returning the group itself and one returning a copy with group_keys false must give equal results.
     # GH 31613
 
     df = DataFrame({"A": [0, 0, 1], "b": range(3)})
@@ -219,9 +246,13 @@ def test_apply_fast_slow_identical():
     # For simple index structures we check for fast/slow apply using
     # an identity check on in/output
     def slow(group):
+        # [FUNCTION DOC]
+        # HELPER: returns the group unchanged (identity-based slow path).
         return group
 
     def fast(group):
+        # [FUNCTION DOC]
+        # HELPER: returns a copy of the group (fast path).
         return group.copy()
 
     fast_df = df.groupby("A", group_keys=False).apply(fast)
@@ -230,6 +261,8 @@ def test_apply_fast_slow_identical():
 
 
 def test_apply_fast_slow_identical_index():
+    # [FUNCTION DOC]
+    # GH#44803: frame indexed by name grouped by age with group_keys false; applying an identity function and applying a copy function yield equal frames.
     # GH#44803
     df = DataFrame(
         {
@@ -255,6 +288,8 @@ def test_apply_fast_slow_identical_index():
     ],
 )
 def test_groupby_apply_identity_maybecopy_index_identical(func):
+    # [FUNCTION DOC]
+    # GH 14927: parametrized over four functions returning the group itself, a full slice, a shallow copy or a deep copy. With group_keys false the result must equal the original frame without the grouping column, regardless of whether the function returns a copy.
     # GH 14927
     # Whether the function returns a copy of the input data or not should not
     # have an impact on the index structure of the result since this is not
@@ -266,6 +301,8 @@ def test_groupby_apply_identity_maybecopy_index_identical(func):
 
 
 def test_apply_with_mixed_dtype():
+    # [FUNCTION DOC]
+    # GH3480: row-wise apply of an identity function on a frame with float and string columns returns the same frame. GH 3610: mean grouped by a float column with as_index false equals the mean reset to columns (no incorrect dtype conversion).
     # GH3480, apply with mixed dtype on axis=1 breaks in 0.11
     df = DataFrame(
         {
@@ -286,6 +323,8 @@ def test_apply_with_mixed_dtype():
 
 
 def test_groupby_as_index_apply(as_index):
+    # [FUNCTION DOC]
+    # GH #4648, #3417: parametrized by as_index. head at 2 on the grouped frame keeps original rows and index regardless of as_index. apply of a head function returns results in group order: with as_index true a MultiIndex (user_id, original index), otherwise a flat index (GH5610: no multiindex for as_index false), without the group column in the as_index case being included (expected has only item_id and time).
     # GH #4648 and #3417
     df = DataFrame(
         {
@@ -326,6 +365,8 @@ def test_groupby_as_index_apply(as_index):
 
 
 def test_groupby_as_index_apply_str():
+    # [FUNCTION DOC]
+    # Apply of an identity function with as_index false and group_keys false on a string-indexed frame preserves the original index.
     ind = Index(list("abcde"))
     df = DataFrame([[1, 2], [2, 3], [1, 4], [1, 5], [2, 6]], index=ind)
     res = df.groupby(0, as_index=False, group_keys=False).apply(lambda x: x).index
@@ -333,14 +374,20 @@ def test_groupby_as_index_apply_str():
 
 
 def test_apply_concat_preserve_names(three_group):
+    # [FUNCTION DOC]
+    # Uses the three_group fixture grouped by A and B. Applying a function that describes the group and names the stat index gives a result index with names A, B, stat; a variant that truncates to the group length keeps those names; a variant naming the stat index differently per group size gives A, B and an unnamed last level because the names differ.
     grouped = three_group.groupby(["A", "B"])
 
     def desc(group):
+        # [FUNCTION DOC]
+        # HELPER: returns the describe summary of a group with its index named stat.
         result = group.describe()
         result.index.name = "stat"
         return result
 
     def desc2(group):
+        # [FUNCTION DOC]
+        # HELPER: describe summary named stat, truncated to the first rows of length equal to the group size.
         result = group.describe()
         result.index.name = "stat"
         result = result[: len(group)]
@@ -348,6 +395,8 @@ def test_apply_concat_preserve_names(three_group):
         return result
 
     def desc3(group):
+        # [FUNCTION DOC]
+        # HELPER: describe summary whose index is named stat followed by the group size, truncated to the group size.
         result = group.describe()
 
         # names are different
@@ -368,7 +417,11 @@ def test_apply_concat_preserve_names(three_group):
 
 
 def test_apply_series_to_frame():
+    # [FUNCTION DOC]
+    # Apply of a function returning a DataFrame (value, demeaned, logged columns) to a Series grouped by month with group_keys false: the result is a DataFrame (without a name attribute, GH49907) whose index equals the original index.
     def f(piece):
+        # [FUNCTION DOC]
+        # HELPER: takes a Series piece and returns a frame with columns value, demeaned (minus the mean) and logged (natural log computed with invalid-value warnings suppressed).
         with np.errstate(invalid="ignore"):
             logged = np.log(piece)
         return DataFrame(
@@ -387,11 +440,15 @@ def test_apply_series_to_frame():
 
 
 def test_apply_series_yield_constant(df):
+    # [FUNCTION DOC]
+    # Applying a length function to a column grouped by A and B yields a result whose first two index level names are A and B.
     result = df.groupby(["A", "B"])["C"].apply(len)
     assert result.index.names[:2] == ("A", "B")
 
 
 def test_apply_frame_yield_constant(df):
+    # [FUNCTION DOC]
+    # GH13568: applying a length function to the frame or to a column selection returns a Series with no name.
     # GH13568
     result = df.groupby(["A", "B"]).apply(len)
     assert isinstance(result, Series)
@@ -403,6 +460,8 @@ def test_apply_frame_yield_constant(df):
 
 
 def test_apply_frame_to_series(df):
+    # [FUNCTION DOC]
+    # Applying a length function over groups of the frame returns a Series with the same index and values as the per-group count of column C.
     grouped = df.groupby(["A", "B"])
     result = grouped.apply(len)
     expected = grouped.count()["C"]
@@ -411,6 +470,8 @@ def test_apply_frame_to_series(df):
 
 
 def test_apply_frame_not_as_index_column_name(df):
+    # [FUNCTION DOC]
+    # GH 35964: with as_index false, applying a length function; compared to the count of the frame with column C renamed to NaN and D dropped, the index and values must match. Compares only index and values because the column name is NaN (marked TODO GH#34306).
     # GH 35964 - path within _wrap_applied_output not hit by a test
     grouped = df.groupby(["A", "B"], as_index=False)
     result = grouped.apply(len)
@@ -421,10 +482,16 @@ def test_apply_frame_not_as_index_column_name(df):
 
 
 def test_apply_frame_concat_series():
+    # [FUNCTION DOC]
+    # Apply on a frame grouped by A with a function that groups the piece by B and returns the two smallest sums of C; compared to the column-selected groupby apply using another function that reindexes the outer frame (names not checked). The result is named C.
     def trans(group):
+        # [FUNCTION DOC]
+        # HELPER: groups the piece by column B, sums C, sorts the sums and returns the first two.
         return group.groupby("B")["C"].sum().sort_values().iloc[:2]
 
     def trans2(group):
+        # [FUNCTION DOC]
+        # HELPER: groups the group by the matching entries of B in the enclosing frame (reindexed to the group's index), sums, sorts and returns the first two.
         grouped = group.groupby(df.reindex(group.index)["B"])
         return grouped.sum().sort_values().iloc[:2]
 
@@ -443,6 +510,8 @@ def test_apply_frame_concat_series():
 
 
 def test_apply_transform(ts):
+    # [FUNCTION DOC]
+    # Uses the ts fixture. Apply of doubling per month with group_keys false equals the transform of the same function.
     grouped = ts.groupby(lambda x: x.month, group_keys=False)
     result = grouped.apply(lambda x: x * 2)
     expected = grouped.transform(lambda x: x * 2)
@@ -450,9 +519,13 @@ def test_apply_transform(ts):
 
 
 def test_apply_multikey_corner(tsframe):
+    # [FUNCTION DOC]
+    # Uses the tsframe fixture grouped by year and month functions. Applying a function returning the last five rows sorted by A gives a result where selecting a (year, month) key equals the function applied to that group.
     grouped = tsframe.groupby([lambda x: x.year, lambda x: x.month])
 
     def f(group):
+        # [FUNCTION DOC]
+        # HELPER: sorts the group by column A and returns the last five rows.
         return group.sort_values("A")[-5:]
 
     result = grouped.apply(f)
@@ -462,6 +535,8 @@ def test_apply_multikey_corner(tsframe):
 
 @pytest.mark.parametrize("group_keys", [True, False])
 def test_apply_chunk_view(group_keys):
+    # [FUNCTION DOC]
+    # Parametrized over group_keys. Applying a function that returns the first two rows of each group must not be affected by low-level view tinkering: the result equals selected rows by position, with a (key, original index) MultiIndex when group_keys is true.
     # Low level tinkering could be unsafe, make sure not
     df = DataFrame({"key": [1, 1, 1, 2, 2, 2, 3, 3, 3], "value": range(9)})
 
@@ -476,6 +551,8 @@ def test_apply_chunk_view(group_keys):
 
 
 def test_apply_no_name_column_conflict():
+    # [FUNCTION DOC]
+    # Issue 2605: apply of a function that sorts the group in place by value on a frame grouped by two columns named name and name2 must not raise despite the conflict of group name with column names. No result is checked.
     df = DataFrame(
         {
             "name": [1, 1, 1, 1, 1, 1, 2, 2, 2, 2],
@@ -490,6 +567,8 @@ def test_apply_no_name_column_conflict():
 
 
 def test_apply_typecast_fail():
+    # [FUNCTION DOC]
+    # Apply with a function that adds a normalized column v2 to each group (min-max scaled) for groups of a frame with group_keys false: result keeps columns c, v and v2 with the values 0, 0.5, 1 tiled.
     df = DataFrame(
         {
             "d": [1.0, 1.0, 1.0, 2.0, 2.0, 2.0],
@@ -499,6 +578,8 @@ def test_apply_typecast_fail():
     )
 
     def f(group):
+        # [FUNCTION DOC]
+        # HELPER: scales column v of the group to the zero to one range, stores it in a new column v2 on the group in place, and returns the group.
         v = group["v"]
         group["v2"] = (v - v.min()) / (v.max() - v.min())
         return group
@@ -512,6 +593,8 @@ def test_apply_typecast_fail():
 
 
 def test_apply_multiindex_fail():
+    # [FUNCTION DOC]
+    # Same as the previous typecast test but the frame has a two-level numeric MultiIndex: applying the min-max scaling function with group_keys false keeps columns c, v and v2 and the MultiIndex.
     index = MultiIndex.from_arrays([[0, 0, 0, 1, 1, 1], [1, 2, 3, 1, 2, 3]])
     df = DataFrame(
         {
@@ -523,6 +606,8 @@ def test_apply_multiindex_fail():
     )
 
     def f(group):
+        # [FUNCTION DOC]
+        # HELPER: scales column v of the group to the zero to one range, stores it as v2 in place and returns the group.
         v = group["v"]
         group["v2"] = (v - v.min()) / (v.max() - v.min())
         return group
@@ -535,12 +620,16 @@ def test_apply_multiindex_fail():
 
 
 def test_apply_corner(tsframe):
+    # [FUNCTION DOC]
+    # Uses the tsframe fixture: apply of a doubling function with group_keys false grouped by a year function equals the frame doubled.
     result = tsframe.groupby(lambda x: x.year, group_keys=False).apply(lambda x: x * 2)
     expected = tsframe * 2
     tm.assert_frame_equal(result, expected)
 
 
 def test_apply_without_copy():
+    # [FUNCTION DOC]
+    # GH 5545: an applied function returning the group unchanged (no copy) for single-row groups, and the selection otherwise, must give the same result as returning a copy.
     # GH 5545
     # returning a non-copy in an applied function fails
 
@@ -553,12 +642,16 @@ def test_apply_without_copy():
     )
 
     def filt1(x):
+        # [FUNCTION DOC]
+        # HELPER: for groups of one row returns a copy; otherwise returns only rows whose category is c.
         if x.shape[0] == 1:
             return x.copy()
         else:
             return x[x.category == "c"]
 
     def filt2(x):
+        # [FUNCTION DOC]
+        # HELPER: for groups of one row returns the group itself (no copy); otherwise returns only rows whose category is c.
         if x.shape[0] == 1:
             return x
         else:
@@ -571,6 +664,8 @@ def test_apply_without_copy():
 
 @pytest.mark.parametrize("test_series", [True, False])
 def test_apply_with_duplicated_non_sorted_axis(test_series):
+    # [FUNCTION DOC]
+    # GH 30667: parametrized over Series or DataFrame input with a duplicated, unsorted axis. Apply of an identity function with group_keys false returns the input unchanged (a Series grouped by level 0, or the frame without the grouping column).
     # GH 30667
     df = DataFrame(
         [["x", "p"], ["x", "p"], ["x", "o"]], columns=["X", "Y"], index=[1, 2, 2]
@@ -587,6 +682,8 @@ def test_apply_with_duplicated_non_sorted_axis(test_series):
 
 
 def test_apply_reindex_values():
+    # [FUNCTION DOC]
+    # GH: 26209: apply on a single column of a groupby where the frame has duplicated index labels and the function reindexes the group to a full range of labels; formerly raised a value error (cannot reindex from duplicate axis); the result must equal the original values with the original duplicated index.
     # GH: 26209
     # reindexing from a single column of a groupby object with duplicate indices caused
     # a ValueError (cannot reindex from duplicate axis) in 0.24.2, the problem was
@@ -597,6 +694,8 @@ def test_apply_reindex_values():
     expected = Series(values, index=indices, name="value")
 
     def reindex_helper(x):
+        # [FUNCTION DOC]
+        # HELPER: reindexes a group to the integer range from its minimum index label to its maximum label.
         return x.reindex(np.arange(x.index.min(), x.index.max() + 1))
 
     # the following group by raised a ValueError
@@ -605,6 +704,8 @@ def test_apply_reindex_values():
 
 
 def test_apply_corner_cases():
+    # [FUNCTION DOC]
+    # Issue 535: apply must work when the function adds a column in place to the group (sliding iterator cannot be used): result contains the new column value3.
     # #535, can't use sliding iterator
 
     N = 10
@@ -620,6 +721,8 @@ def test_apply_corner_cases():
     grouped = df.groupby("key", group_keys=False)
 
     def f(g):
+        # [FUNCTION DOC]
+        # HELPER: adds a column value3 equal to double value1 to the group in place and returns the group.
         g["value3"] = g["value1"] * 2
         return g
 
@@ -628,6 +731,8 @@ def test_apply_corner_cases():
 
 
 def test_apply_numeric_coercion_when_datetime():
+    # [FUNCTION DOC]
+    # GH 15670: apply that picks the first row of each group on a frame with a string column containing inf must not coerce that column to numeric once a datetime column is present; the Str column result is identical with and without converting the date column.
     # In the past, group-by/apply operations have been over-eager
     # in converting dtypes to numeric, in the presence of datetime
     # columns.  Various GH issues were filed, the reproductions
@@ -644,12 +749,16 @@ def test_apply_numeric_coercion_when_datetime():
 
 
 def test_apply_numeric_coercion_when_datetime_getitem():
+    # [FUNCTION DOC]
+    # GH 15421: apply of a function selecting one string column from the first row of each group, in a frame with a timestamp column, must keep strings (no numeric coercion) and give values equal to the original column indexed by A.
     # GH 15421
     df = DataFrame(
         {"A": [10, 20, 30], "B": ["foo", "3", "4"], "T": [pd.Timestamp("12:31:22")] * 3}
     )
 
     def get_B(g):
+        # [FUNCTION DOC]
+        # HELPER: returns the first row of the group restricted to column B.
         return g.iloc[0][["B"]]
 
     result = df.groupby("A").apply(get_B)["B"]
@@ -659,8 +768,12 @@ def test_apply_numeric_coercion_when_datetime_getitem():
 
 
 def test_apply_numeric_coercion_when_datetime_with_nat():
+    # [FUNCTION DOC]
+    # GH 14423: the same apply is run on a frame of strings and on a frame where the oTime column is parsed to datetimes (with NaT). The first-machine prediction column p1 must be equal in both results.
     # GH 14423
     def predictions(tool):
+        # [FUNCTION DOC]
+        # HELPER: builds an object Series with entries p1, p2 and useTime for a group: p1 is the machine for the step1 state if present; p2 and useTime are the machine and time (as strings) for step2 when present.
         out = Series(index=["p1", "p2", "useTime"], dtype=object)
         if "step1" in list(tool.State):
             out["p1"] = str(tool[tool.State == "step1"].Machine.values[0])
@@ -685,6 +798,8 @@ def test_apply_numeric_coercion_when_datetime_with_nat():
 
 
 def test_apply_aggregating_timedelta_and_datetime():
+    # [FUNCTION DOC]
+    # GH 15562 regression (errors before 0.20.0): apply returning a Series containing a timedelta and a datetime per group; the result is a frame indexed by client id with a zero timedelta and the date.
     # Regression test for GH 15562
     # The following groupby caused ValueErrors and IndexErrors pre 0.20.0
 
@@ -712,6 +827,8 @@ def test_apply_aggregating_timedelta_and_datetime():
 
 
 def test_apply_groupby_datetimeindex():
+    # [FUNCTION DOC]
+    # GH 26182: groupby sum on a frame with a datetime index (not apply itself) works and gives sums 10, 50, 90 per name.
     # GH 26182
     # groupby apply failed on dataframe with DatetimeIndex
 
@@ -729,6 +846,8 @@ def test_apply_groupby_datetimeindex():
 
 
 def test_time_field_bug():
+    # [FUNCTION DOC]
+    # GH 11324: when non-key time-based fields are not returned by the apply function, no exception is raised. Two functions: one returns a Series with only c; another returns b as a datetime and c; results are frames indexed by a with the converted types.
     # Test a fix for the following error related to GH issue 11324 When
     # non-key fields in a group-by dataframe contained time-based fields
     # that were not returned by the apply function, an exception would be
@@ -737,9 +856,13 @@ def test_time_field_bug():
     df = DataFrame({"a": 1, "b": [datetime.now() for nn in range(10)]})
 
     def func_with_no_date(batch):
+        # [FUNCTION DOC]
+        # HELPER: ignores the batch and returns a Series holding only c equal to 2.
         return Series({"c": 2})
 
     def func_with_date(batch):
+        # [FUNCTION DOC]
+        # HELPER: ignores the batch and returns a Series with b set to a fixed 2015 datetime and c equal to 2.
         return Series({"b": datetime(2015, 1, 1), "c": 2})
 
     dfg_no_conversion = df.groupby(by=["a"]).apply(func_with_no_date)
@@ -757,6 +880,8 @@ def test_time_field_bug():
 
 
 def test_gb_apply_list_of_unequal_len_arrays():
+    # [FUNCTION DOC]
+    # GH1738: apply of a function returning numpy arrays of unequal lengths for different groups must not raise. No assertion beyond completion.
     # GH1738
     df = DataFrame(
         {
@@ -770,6 +895,8 @@ def test_gb_apply_list_of_unequal_len_arrays():
     df_grouped = df.groupby(level=["group1", "group2"], sort=True)
 
     def noddy(value, weight):
+        # [FUNCTION DOC]
+        # HELPER: multiplies values by weights and repeats the result three times, returning a numpy array.
         out = np.array(value * weight).repeat(3)
         return out
 
@@ -783,11 +910,15 @@ def test_gb_apply_list_of_unequal_len_arrays():
 
 
 def test_groupby_apply_all_none():
+    # [FUNCTION DOC]
+    # Issue 9684: when the applied function returns nothing for every group, the result is an empty frame with the single value column random_vars of int64 dtype.
     # Tests to make sure no errors if apply function returns all None
     # values. Issue 9684.
     test_df = DataFrame({"groups": [0, 0, 1, 1], "random_vars": [8, 7, 4, 5]})
 
     def test_func(x):
+        # [FUNCTION DOC]
+        # HELPER: does nothing and returns None.
         pass
 
     result = test_df.groupby("groups").apply(test_func)
@@ -811,10 +942,14 @@ def test_groupby_apply_all_none():
     ],
 )
 def test_groupby_apply_none_first(in_data, out_idx, out_data):
+    # [FUNCTION DOC]
+    # GH 12824: parametrized over two inputs where the first group returns None. Groups smaller than 2 rows return None; other groups return their first and last rows. The result is a frame indexed by (groups, original index) holding only the returned rows' vars.
     # GH 12824. Tests if apply returns None first.
     test_df1 = DataFrame(in_data)
 
     def test_func(x):
+        # [FUNCTION DOC]
+        # HELPER: returns None for groups of fewer than two rows, otherwise the first and last rows of the group.
         if x.shape[0] < 2:
             return None
         return x.iloc[[0, -1]]
@@ -826,6 +961,8 @@ def test_groupby_apply_none_first(in_data, out_idx, out_data):
 
 
 def test_groupby_apply_return_empty_chunk():
+    # [FUNCTION DOC]
+    # GH 22221: apply that filters a group to an empty chunk must drop that group from the result; result is a Series named value with a MultiIndex missing the empty group.
     # GH 22221: apply filter which returns some empty groups
     df = DataFrame({"value": [0, 1], "group": ["filled", "empty"]})
     groups = df.groupby("group")
@@ -842,6 +979,8 @@ def test_groupby_apply_return_empty_chunk():
 
 @pytest.mark.parametrize("meth", ["apply", "transform"])
 def test_apply_with_mixed_types(meth):
+    # [FUNCTION DOC]
+    # gh-20949: parametrized over apply and transform. A function dividing each group by its sum on a mixed frame (string key, ints) with group_keys false gives normalized columns B and C.
     # gh-20949
     df = DataFrame({"A": "a a b".split(), "B": [1, 2, 3], "C": [4, 6, 5]})
     g = df.groupby("A", group_keys=False)
@@ -852,6 +991,8 @@ def test_apply_with_mixed_types(meth):
 
 
 def test_func_returns_object():
+    # [FUNCTION DOC]
+    # GH 28652: an apply function returning the group's index object gives a Series of Index objects, indexed by the group key.
     # GH 28652
     df = DataFrame({"a": [1, 2]}, index=Index([1, 2]))
     result = df.groupby("a").apply(lambda g: g.index)
@@ -865,6 +1006,8 @@ def test_func_returns_object():
     [datetime.today(), datetime.today().date(), datetime.today().time()],
 )
 def test_apply_datetime_issue(group_column_dtlike):
+    # [FUNCTION DOC]
+    # GH-28247: parametrized over a datetime, a date and a time object in column b. Apply returning a one-entry Series with label 42 yields a frame with column 42 and a string-dtype index named a (grouping key foo), without failing for unusual column labels.
     # GH-28247
     # groupby-apply throws an error if one of the columns in the DataFrame
     #   is a datetime object and the column labels are different from
@@ -878,6 +1021,8 @@ def test_apply_datetime_issue(group_column_dtlike):
 
 
 def test_apply_series_return_dataframe_groups():
+    # [FUNCTION DOC]
+    # GH 10078: apply of a function returning the most common value of each column returns a frame; the userId column is a Series indexed by the day datetime index.
     # GH 10078
     tdf = DataFrame(
         {
@@ -906,6 +1051,8 @@ def test_apply_series_return_dataframe_groups():
     )
 
     def most_common_values(df):
+        # [FUNCTION DOC]
+        # HELPER: returns a Series giving, for each column of a group, its most frequent value.
         return Series({c: s.value_counts().index[0] for c, s in df.items()})
 
     result = tdf.groupby("day").apply(most_common_values)["userId"]
@@ -917,6 +1064,8 @@ def test_apply_series_return_dataframe_groups():
 
 @pytest.mark.parametrize("category", [False, True])
 def test_apply_multi_level_name(category):
+    # [FUNCTION DOC]
+    # Refs GitHub issue 31068: parametrized over categorical or plain grouping column B in a MultiIndex-indexed frame. Apply summing each group with observed false yields sums 20 and 25 (and 0 for the unobserved category 3 when categorical) in an index named B. The original frame's index names remain A and B.
     # https://github.com/pandas-dev/pandas/issues/31068
     b = [1, 2] * 5
     if category:
@@ -939,6 +1088,8 @@ def test_apply_multi_level_name(category):
 
 
 def test_groupby_apply_datetime_result_dtypes(using_infer_string):
+    # [FUNCTION DOC]
+    # GH 14849: apply selecting the first row per group then inspecting dtypes: observation stays datetime (microsecond unit), string columns are object (or the string dtype when infer-string is enabled), the integer column stays int64. Uses the using_infer_string fixture.
     # GH 14849
     data = DataFrame.from_records(
         [
@@ -968,6 +1119,8 @@ def test_groupby_apply_datetime_result_dtypes(using_infer_string):
     ],
 )
 def test_apply_index_has_complex_internals(index):
+    # [FUNCTION DOC]
+    # GH 31248: parametrized over index kinds (categorical, interval, period, MultiIndex). Identity apply with group_keys false returns the frame without the grouping column and with the index preserved.
     # GH 31248
     df = DataFrame({"group": [1, 1, 2], "value": [0, 1, 0]}, index=index)
     result = df.groupby("group", group_keys=False).apply(lambda x: x)
@@ -991,6 +1144,8 @@ def test_apply_index_has_complex_internals(index):
     ],
 )
 def test_apply_function_returns_non_pandas_non_scalar(function, expected_values):
+    # [FUNCTION DOC]
+    # GH 31441: parametrized over functions returning a list, set, tuple, dict or list of dicts per group. The result is an object Series holding those objects, indexed by the group key.
     # GH 31441
     df = DataFrame(["A", "A", "B", "B"], columns=["groups"])
     result = df.groupby("groups").apply(function)
@@ -999,8 +1154,12 @@ def test_apply_function_returns_non_pandas_non_scalar(function, expected_values)
 
 
 def test_apply_function_returns_numpy_array():
+    # [FUNCTION DOC]
+    # GH 31605: apply returning a flattened numpy array per group gives a Series of arrays (one per group), including a group with only NaN.
     # GH 31605
     def fct(group):
+        # [FUNCTION DOC]
+        # HELPER: returns the values of column B of the group flattened into a one-dimensional array.
         return group["B"].values.flatten()
 
     df = DataFrame({"A": ["a", "a", "b", "none"], "B": [1, 2, 3, np.nan]})
@@ -1014,6 +1173,8 @@ def test_apply_function_returns_numpy_array():
 
 @pytest.mark.parametrize("function", [lambda gr: gr.index, lambda gr: gr.index + 1 - 1])
 def test_apply_function_index_return(function):
+    # [FUNCTION DOC]
+    # GH: 22541: parametrized over returning the group's index and returning the index shifted by adding then subtracting one. Result is a Series of Index objects per group id.
     # GH: 22541
     df = DataFrame([1, 2, 2, 2, 1, 2, 3, 1, 3, 1], columns=["id"])
     result = df.groupby("id").apply(function)
@@ -1025,6 +1186,8 @@ def test_apply_function_index_return(function):
 
 
 def test_apply_function_with_indexing_return_column():
+    # [FUNCTION DOC]
+    # GH#7002, GH#41480, GH#49256: apply of a column-mean function with as_index false returns a frame with the group column foo1 and the foo2 mean.
     # GH#7002, GH#41480, GH#49256
     df = DataFrame(
         {
@@ -1048,6 +1211,8 @@ def test_apply_function_with_indexing_return_column():
 )
 @pytest.mark.parametrize("group_keys", [True, False])
 def test_apply_result_type(group_keys, udf):
+    # [FUNCTION DOC]
+    # Issue 34809: parametrized over group_keys and two transform-like functions (copy; copy with renamed index). When group_keys is true both the frame and the Series results have a two-level index; when false, a single level, regardless of whether the function behaves as a transform.
     # https://github.com/pandas-dev/pandas/issues/34809
     # We'd like to control whether the group keys end up in the index
     # regardless of whether the UDF happens to be a transform.
@@ -1064,6 +1229,8 @@ def test_apply_result_type(group_keys, udf):
 
 
 def test_result_order_group_keys_false():
+    # [FUNCTION DOC]
+    # GH 34998: with group_keys false the output order of apply must not depend on whether the function returns the same index or an equal copy: the identity and copy functions yield equal results.
     # GH 34998
     # apply result order should not depend on whether index is the same or just equal
     df = DataFrame({"A": [2, 1, 2], "B": [1, 2, 3]})
@@ -1073,6 +1240,8 @@ def test_result_order_group_keys_false():
 
 
 def test_apply_with_timezones_aware():
+    # [FUNCTION DOC]
+    # GH: 27212: apply selecting a copy of column y for naive and UTC-aware datetime columns; results are equal (timezone-awareness of other columns does not matter).
     # GH: 27212
     dates = ["2001-01-01"] * 2 + ["2001-01-02"] * 2 + ["2001-01-03"] * 2
     index_no_tz = pd.DatetimeIndex(dates)
@@ -1087,6 +1256,8 @@ def test_apply_with_timezones_aware():
 
 
 def test_apply_is_unchanged_when_other_methods_are_called_first(reduction_func):
+    # [FUNCTION DOC]
+    # GH #34656 and #34271: uses the reduction_func fixture. Apply of numpy sum along axis 0 should give the same result (sums 15 and 150 for group 88, 6 and 60 for group 99) whether or not another reduction method was called on the same groupby object first. For corrwith the deprecation warning is asserted.
     # GH #34656
     # GH #34271
     df = DataFrame(
@@ -1123,6 +1294,8 @@ def test_apply_is_unchanged_when_other_methods_are_called_first(reduction_func):
 
 
 def test_apply_with_date_in_multiindex_does_not_convert_to_timestamp():
+    # [FUNCTION DOC]
+    # GH 29617: grouping by a string and a date column; apply of head one must keep date objects in the resulting MultiIndex levels (not convert to Timestamp); asserted for each value in the second level.
     # GH 29617
 
     df = DataFrame(
@@ -1153,6 +1326,8 @@ def test_apply_with_date_in_multiindex_does_not_convert_to_timestamp():
 
 
 def test_apply_dropna_with_indexed_same(dropna):
+    # [FUNCTION DOC]
+    # GH 38227 and GH#43205: parametrized over dropna. Identity apply with group_keys false on a frame with NaN group keys and a duplicated string index: with dropna the NaN-group rows are dropped; otherwise the NaN group rows follow the other groups in group-first order.
     # GH 38227
     # GH#43205
     df = DataFrame(
@@ -1185,6 +1360,8 @@ def test_apply_dropna_with_indexed_same(dropna):
     ],
 )
 def test_apply_as_index_constant_lambda(as_index, expected):
+    # [FUNCTION DOC]
+    # GH 13217: parametrized over as_index and expected result. An apply of a function returning the constant one grouped by two keys: with as_index false a frame of the keys plus an unnamed column of ones; otherwise a Series of ones with a two-level index.
     # GH 13217
     df = DataFrame({"a": [1, 1, 2, 2], "b": [1, 1, 2, 2], "c": [1, 1, 1, 1]})
     result = df.groupby(["a", "b"], as_index=as_index).apply(lambda x: 1)
@@ -1192,6 +1369,8 @@ def test_apply_as_index_constant_lambda(as_index, expected):
 
 
 def test_sort_index_groups():
+    # [FUNCTION DOC]
+    # GH 20420: apply of sorting the index of column A per group on a frame with a range index gives a Series named A with a (C, original index) MultiIndex.
     # GH 20420
     df = DataFrame(
         {"A": [1, 2, 3, 4, 5], "B": [6, 7, 8, 9, 0], "C": [1, 1, 1, 2, 2]},
@@ -1209,6 +1388,8 @@ def test_sort_index_groups():
 
 
 def test_positional_slice_groups_datetimelike():
+    # [FUNCTION DOC]
+    # GH 21651: grouping by a string column and a date extracted from a datetime column, identity-like apply via a positional slice with group_keys false returns date and vals columns unchanged.
     # GH 21651
     expected = DataFrame(
         {
@@ -1224,6 +1405,8 @@ def test_positional_slice_groups_datetimelike():
 
 
 def test_groupby_apply_shape_cache_safety():
+    # [FUNCTION DOC]
+    # GH#42702: apply to two selected columns computing max (after cast to float) minus min per group. The test fails if the block shape were cached as a cached property. Result is a frame of per-group differences indexed by A.
     # GH#42702 this fails if we cache_readonly Block.shape
     df = DataFrame({"A": ["a", "a", "b"], "B": [1, 2, 3], "C": [4, 6, 5]})
     gb = df.groupby("A")
@@ -1236,6 +1419,8 @@ def test_groupby_apply_shape_cache_safety():
 
 
 def test_groupby_apply_to_series_name():
+    # [FUNCTION DOC]
+    # GH52444: apply of unstack then value_counts over two string columns per group returns a Series named count with a two-level index (a, unnamed).
     # GH52444
     df = DataFrame.from_dict(
         {
@@ -1256,6 +1441,8 @@ def test_groupby_apply_to_series_name():
 
 
 def test_apply_na(dropna):
+    # [FUNCTION DOC]
+    # GH#28984: parametrized over dropna. A frame with NaN values; applying a function that selects the largest row by z must equal applying a function that sorts by z descending and takes the first row.
     # GH#28984
     df = DataFrame(
         {"grp": [1, 1, 2, 2], "y": [1, 0, 2, 5], "z": [1, 2, np.nan, np.nan]}
@@ -1267,6 +1454,8 @@ def test_apply_na(dropna):
 
 
 def test_apply_empty_string_nan_coerce_bug():
+    # [FUNCTION DOC]
+    # GH#24903: apply picking the last row per group on a frame with empty strings in a grouping column and a datetime column must not coerce the empty string key to NaN; the result has the c column with datetimes and a (a, b) MultiIndex with empty string keys.
     # GH#24903
     result = (
         DataFrame(
@@ -1289,6 +1478,8 @@ def test_apply_empty_string_nan_coerce_bug():
 
 @pytest.mark.parametrize("index_values", [[1, 2, 3], [1.0, 2.0, 3.0]])
 def test_apply_index_key_error_bug(index_values):
+    # [FUNCTION DOC]
+    # GH 44310: parametrized over integer and float index values. Apply returning the mean of b as a Series labelled b_mean must not raise a key error and gives a frame indexed by the string key a.
     # GH 44310
     result = DataFrame(
         {
@@ -1351,6 +1542,8 @@ def test_apply_index_key_error_bug(index_values):
     ],
 )
 def test_apply_nonmonotonic_float_index(arg, idx):
+    # [FUNCTION DOC]
+    # GH 34455: parametrized over three sets of group values and non-monotonic float index. Identity apply with group_keys false returns column col with the original index order.
     # GH 34455
     df = DataFrame({"grp": arg, "col": arg}, index=idx)
     result = df.groupby("grp", group_keys=False).apply(lambda x: x)
@@ -1360,6 +1553,8 @@ def test_apply_nonmonotonic_float_index(arg, idx):
 
 @pytest.mark.parametrize("args, kwargs", [([True], {}), ([], {"numeric_only": True})])
 def test_apply_str_with_args(df, args, kwargs):
+    # [FUNCTION DOC]
+    # GH#46479: apply invoked with the string name sum and extra positional (a bool) or keyword (numeric_only true) arguments must produce the same result as the grouped sum with numeric_only.
     # GH#46479
     gb = df.groupby("A")
     result = gb.apply("sum", *args, **kwargs)
@@ -1369,6 +1564,8 @@ def test_apply_str_with_args(df, args, kwargs):
 
 @pytest.mark.parametrize("name", ["some_name", None])
 def test_result_name_when_one_group(name):
+    # [FUNCTION DOC]
+    # GH 46369: parametrized over a series name or none. Grouping a Series by two identical labels (one group) with group_keys false and identity apply preserves the name.
     # GH 46369
     ser = Series([1, 2], name=name)
     result = ser.groupby(["a", "a"], group_keys=False).apply(lambda x: x)
@@ -1389,6 +1586,8 @@ def test_result_name_when_one_group(name):
     ],
 )
 def test_empty_df(method, op):
+    # [FUNCTION DOC]
+    # GH 47985: parametrized over apply with functions taking the last value or first element of a column, and agg with skew, kurt, prod and sum. On an empty frame, the grouped column b yields an empty float64 Series named b with a float index named a.
     # GH 47985
     empty_df = DataFrame({"a": [], "b": []})
     gb = empty_df.groupby("a", group_keys=True)
@@ -1403,6 +1602,8 @@ def test_empty_df(method, op):
 
 
 def test_include_groups():
+    # [FUNCTION DOC]
+    # GH#7155: calling apply with include_groups set to true must raise a value error stating that it is no longer allowed.
     # GH#7155
     df = DataFrame({"a": [1, 1, 2], "b": [3, 4, 5]})
     gb = df.groupby("a")
@@ -1412,6 +1613,8 @@ def test_include_groups():
 
 @pytest.mark.parametrize("func, value", [(max, 2), (min, 1), (sum, 3)])
 def test_builtins_apply(func, value):
+    # [FUNCTION DOC]
+    # GH#8155, GH#53974: parametrized over the builtin max, min and sum. Apply of a builtin to each group acts on the group object (e.g. summing the column labels), giving max 2, min 1 and sum 3 per group (the labels excluding the group column).
     # GH#8155, GH#53974
     # Builtins act as e.g. sum(group), which sums the column labels of group
     df = DataFrame({0: [1, 1, 2], 1: [3, 4, 5], 2: [3, 4, 5]})
@@ -1423,6 +1626,8 @@ def test_builtins_apply(func, value):
 
 
 def test_inconsistent_return_type():
+    # [FUNCTION DOC]
+    # GH5592: apply with functions returning inconsistent types. A function returning the first row for every group gives the same B column as first. If the first group returns None the group's row is NaN; same if the last group returns None. For datetime column C a None group gives NaT. For scalar outputs (the C of the first row, or None for the Pony group) the result is a Series with NaN for the None group and no name.
     # GH5592
     # inconsistent return type
     df = DataFrame(
@@ -1434,6 +1639,8 @@ def test_inconsistent_return_type():
     )
 
     def f_0(grp):
+        # [FUNCTION DOC]
+        # HELPER: returns the first row of the group.
         return grp.iloc[0]
 
     expected = df.groupby("A").first()[["B"]]
@@ -1441,6 +1648,8 @@ def test_inconsistent_return_type():
     tm.assert_frame_equal(result, expected)
 
     def f_1(grp):
+        # [FUNCTION DOC]
+        # HELPER: returns None for the group named Tiger, otherwise the first row.
         if grp.name == "Tiger":
             return None
         return grp.iloc[0]
@@ -1451,6 +1660,8 @@ def test_inconsistent_return_type():
     tm.assert_frame_equal(result, e)
 
     def f_2(grp):
+        # [FUNCTION DOC]
+        # HELPER: returns None for the group named Pony, otherwise the first row.
         if grp.name == "Pony":
             return None
         return grp.iloc[0]
@@ -1462,6 +1673,8 @@ def test_inconsistent_return_type():
 
     # 5592 revisited, with datetimes
     def f_3(grp):
+        # [FUNCTION DOC]
+        # HELPER: returns None for the group named Pony, otherwise the first row (used with the datetime column).
         if grp.name == "Pony":
             return None
         return grp.iloc[0]
@@ -1473,6 +1686,8 @@ def test_inconsistent_return_type():
 
     # scalar outputs
     def f_4(grp):
+        # [FUNCTION DOC]
+        # HELPER: returns None for the group named Pony, otherwise the C value of the first row (a scalar).
         if grp.name == "Pony":
             return None
         return grp.iloc[0].loc["C"]
@@ -1485,6 +1700,8 @@ def test_inconsistent_return_type():
 
 
 def test_nonreducer_nonstransform():
+    # [FUNCTION DOC]
+    # GH3380, GH60619: kept as an example of apply with a function that is neither a reducer nor a transformer. For each cat1 group the function computes the minimum rank of val within each cat2 and returns it, producing a Series with a (cat1, cat2) MultiIndex. Uses random values.
     # GH3380, GH60619
     # Was originally testing mutating in a UDF; now kept as an example
     # of using apply with a nonreducer and nontransformer.
@@ -1503,6 +1720,8 @@ def test_nonreducer_nonstransform():
     )
 
     def f(x):
+        # [FUNCTION DOC]
+        # HELPER: copies the group, adds a column rank with the minimum-method rank of val, then returns the smallest rank per cat2 value.
         x = x.copy()
         x["rank"] = x.val.rank(method="min")
         return x.groupby("cat2")["rank"].min()
@@ -1519,6 +1738,8 @@ def test_nonreducer_nonstransform():
 
 
 def test_groupby_apply_store_copy():
+    # [FUNCTION DOC]
+    # GH40673: apply with a function that stores a copy of every group in a dictionary keyed by call order; the stored groups must equal the corresponding rows of column A (rows 0 and 2, then 1 and 3).
     # GH40673
     rng = np.random.default_rng(seed=42)
 
@@ -1532,6 +1753,8 @@ def test_groupby_apply_store_copy():
     store = {}
 
     def addstore(x):
+        # [FUNCTION DOC]
+        # HELPER: stores a copy of the group in the enclosing dictionary under the next integer key, returns None.
         store[len(store)] = x.copy()
 
     df.groupby("B").apply(addstore)

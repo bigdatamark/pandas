@@ -1,3 +1,5 @@
+# [MODULE DOC]
+# Tests for the positional selection methods on groupby objects: first, last, nth (including slice and list arguments and the dropna option), head and tail. Verifies dtype preservation (extension, tz-aware, categorical, datetime-like), NA handling, empty and out-of-bounds cases, and several issue regressions. Uses the df, three_group, slice_test_df, slice_test_grouped, nulls_fixture, unit and as_index fixtures from the groupby conftest.
 import numpy as np
 import pytest
 
@@ -14,6 +16,8 @@ import pandas._testing as tm
 
 
 def test_first_last_nth(df):
+    # [FUNCTION DOC]
+    # Uses the df fixture grouped by A. Checks first and last return the first/last non-null row of each group's value columns, indexed by sorted group; nth with 0, -1 and 1 returns original-index rows of the frame (not group-indexed). Also checks the Series-column selections run, that all-NaN column B yields NA for group foo in first, last and nth, and the v0.14 whatsnew example where first skips the NaN and nth at position 0 with dropna any returns the first non-null row.
     # tests for first / last / nth
     grouped = df.groupby("A")
     first = grouped.first()
@@ -65,6 +69,8 @@ def test_first_last_nth(df):
 
 @pytest.mark.parametrize("method", ["first", "last"])
 def test_first_last_with_na_object(method, nulls_fixture):
+    # [FUNCTION DOC]
+    # Parametrized over first/last and the nulls_fixture (various null objects). Groups with one valid value and one null in column b: first picks 1 and 3, last picks 2 and 3 (null skipped); expected values are cast to the dtype of the result column.
     # https://github.com/pandas-dev/pandas/issues/32123
     groups = DataFrame({"a": [1, 1, 2, 2], "b": [1, 2, 3, nulls_fixture]}).groupby("a")
     result = getattr(groups, method)()
@@ -83,6 +89,8 @@ def test_first_last_with_na_object(method, nulls_fixture):
 
 @pytest.mark.parametrize("index", [0, -1])
 def test_nth_with_na_object(index, nulls_fixture):
+    # [FUNCTION DOC]
+    # Parametrized over position 0 or -1 and nulls_fixture. nth does not skip nulls: position 0 returns rows 0 and 2, position -1 returns rows 1 and 3 of the original frame, including the null row.
     # https://github.com/pandas-dev/pandas/issues/32123
     df = DataFrame({"a": [1, 1, 2, 2], "b": [1, 2, 3, nulls_fixture]})
     groups = df.groupby("a")
@@ -93,6 +101,8 @@ def test_nth_with_na_object(index, nulls_fixture):
 
 @pytest.mark.parametrize("method", ["first", "last"])
 def test_first_last_with_None(method):
+    # [FUNCTION DOC]
+    # Refs GitHub issue 32800. A single-row frame whose value is None, grouped with as_index false: first or last must return the original frame, preserving None as object dtype.
     # https://github.com/pandas-dev/pandas/issues/32800
     # None should be preserved as object dtype
     df = DataFrame.from_dict({"id": ["a"], "value": [None]})
@@ -117,12 +127,16 @@ def test_first_last_with_None(method):
     ],
 )
 def test_first_last_with_None_expanded(method, df, expected):
+    # [FUNCTION DOC]
+    # GH 32800, 38286: parametrized over first/last and two frames. A column holding None, a string and NaN gives the string. A column of one NaN with object dtype gives None (object dtype preserved). Result compared with an expected frame indexed by id.
     # GH 32800, 38286
     result = getattr(df.groupby("id"), method)()
     tm.assert_frame_equal(result, expected)
 
 
 def test_first_last_nth_dtypes():
+    # [FUNCTION DOC]
+    # Frame with string, float64, float32, bool and int columns grouped by A: first and last return the expected rows with all dtypes preserved and the sorted group index; nth at position 1 returns original-index rows 2 and 3.
     df = DataFrame(
         {
             "A": ["foo", "bar", "foo", "bar", "foo", "bar", "foo", "foo"],
@@ -154,6 +168,8 @@ def test_first_last_nth_dtypes():
 
 
 def test_first_last_nth_dtypes2():
+    # [FUNCTION DOC]
+    # GH 2763: first on a Series with int64 values and a duplicated index label, grouped by level 0, must stay int64 rather than being upcast.
     # GH 2763, first/last shifting dtypes
     idx = list(range(10))
     idx.append(9)
@@ -164,6 +180,8 @@ def test_first_last_nth_dtypes2():
 
 
 def test_first_last_nth_nan_dtype():
+    # [FUNCTION DOC]
+    # GH 33591: an object column holding a single None, grouped by data. first and last of the selected column equal the original object Series indexed by group; nth at position -1 and nth at position 0 equal the original column unindexed.
     # GH 33591
     df = DataFrame({"data": ["A"], "nans": Series([None], dtype=object)})
     grouped = df.groupby("data")
@@ -178,6 +196,8 @@ def test_first_last_nth_nan_dtype():
 
 
 def test_first_strings_timestamps():
+    # [FUNCTION DOC]
+    # GH 11244: frame whose column labels are Timestamps plus strings, grouped by name: first returns the first value per column, with a column index mixing Timestamps and strings preserved.
     # GH 11244
     test = DataFrame(
         {
@@ -197,6 +217,8 @@ def test_first_strings_timestamps():
 
 
 def test_nth():
+    # [FUNCTION DOC]
+    # Frame [1,NaN],[1,4],[5,6] grouped by A. nth with 0, 1, 2, -1, -2, -3 returns rows of the original frame by position (empty frame when out of range) and does not skip NaN; Series and list selections behave the same. With dropna set to any, nth skips rows with NA, and out-of-range positions return an empty frame.
     df = DataFrame([[1, np.nan], [1, 4], [5, 6]], columns=["A", "B"])
     gb = df.groupby("A")
 
@@ -218,6 +240,8 @@ def test_nth():
 
 
 def test_nth2():
+    # [FUNCTION DOC]
+    # GH 6621, regression from 0.13.1: out-of-bounds nth on a frame with a two-level index grouped by level 0 with as_index false. nth at position 2 returns only the last row (red has three rows); nth at position 3 returns an empty frame.
     # out of bounds, regression from 0.13.1
     # GH 6621
     df = DataFrame(
@@ -251,6 +275,8 @@ def test_nth2():
 
 
 def test_nth3():
+    # [FUNCTION DOC]
+    # GH 7559 (from the vbench): on a 100 row random integer frame, group column 1 by column 0. first equals applying a function taking the first element per group (names ignored), both are named 1, and the first group matches the first value in that group. Also, nth with dropna true on a Series groupby must raise a value error mentioning a DataFrame.
     # GH 7559
     # from the vbench
     df = DataFrame(np.random.default_rng(2).integers(1, 10, (100, 2)), dtype="int64")
@@ -272,6 +298,8 @@ def test_nth3():
 
 
 def test_nth4():
+    # [FUNCTION DOC]
+    # Doc example: selecting column B and calling nth at position 0 with dropna all returns the first non-null per group, i.e. original rows 1 and 2.
     # doc example
     df = DataFrame([[1, np.nan], [1, 4], [5, 6]], columns=["A", "B"])
     gb = df.groupby("A")
@@ -281,6 +309,8 @@ def test_nth4():
 
 
 def test_nth5():
+    # [FUNCTION DOC]
+    # Multiple positions: nth accepts a scalar, a one-element list and lists mixing negative and positive positions, returning the matching rows in original order without duplication; positions outside every group return an empty frame.
     # test multiple nth values
     df = DataFrame([[1, np.nan], [1, 3], [1, 4], [5, 6], [5, 7]], columns=["A", "B"])
     gb = df.groupby("A")
@@ -296,6 +326,8 @@ def test_nth5():
 
 
 def test_nth_bdays(unit):
+    # [FUNCTION DOC]
+    # Parametrized over the unit fixture. Business-day indexed frame (April to June 2014) grouped by year and month with as_index false: nth with positions 0, 3, -2, -1 returns twelve dates (first, fourth and last two business days per month) in the original datetime index at the given unit.
     business_dates = pd.date_range(
         start="4/1/2014", end="6/30/2014", freq="B", unit=unit
     )
@@ -324,6 +356,8 @@ def test_nth_bdays(unit):
 
 
 def test_nth_multi_grouper(three_group):
+    # [FUNCTION DOC]
+    # PR 9090 / issue 8979: nth at position 0 when grouping by two columns of the three_group fixture returns original rows 0, 3, 4 and 7.
     # PR 9090, related to issue 8979
     # test nth on multiple groupers
     grouped = three_group.groupby(["A", "B"])
@@ -382,6 +416,8 @@ def test_nth_multi_grouper(three_group):
     ],
 )
 def test_first_last_tz(data, expected_first, expected_last):
+    # [FUNCTION DOC]
+    # GH15884: with parametrized data (single tz-aware row, and rows with different timezones per row), first and last with as_index false, both on the frame and on the time column, must retain the timezone of the values. Expected frames are given explicitly.
     # GH15884
     # Test that the timezone is retained when calling first
     # or last on groupby with as_index=False
@@ -413,6 +449,8 @@ def test_first_last_tz(data, expected_first, expected_last):
     ],
 )
 def test_first_last_tz_multi_column(method, ts, alpha, unit):
+    # [FUNCTION DOC]
+    # GH 21603: parametrized over first/last and the unit fixture. A frame with a categorical string column and a tz-aware datetime column grouped by group: results keep the categorical dtype (same categories) and tz-aware datetimes at the given unit, indexed by group.
     # GH 21603
     category_string = Series(list("abc")).astype("category")
     dti = pd.date_range("20130101", periods=3, tz="US/Eastern", unit=unit)
@@ -448,6 +486,8 @@ def test_first_last_tz_multi_column(method, ts, alpha, unit):
 )
 @pytest.mark.parametrize("function", ["first", "last", "min", "max"])
 def test_first_last_extension_array_keeps_dtype(values, function):
+    # [FUNCTION DOC]
+    # Refs GitHub issues 33071 and 32194: for boolean, Int64, datetime and timedelta values and functions first, last, min, max, a grouped selection (Series) and aggregation with a dict mapping column to the function must both keep the original extension or datetime dtype.
     # https://github.com/pandas-dev/pandas/issues/33071
     # https://github.com/pandas-dev/pandas/issues/32194
     df = DataFrame({"a": [1, 2], "b": values})
@@ -464,6 +504,8 @@ def test_first_last_extension_array_keeps_dtype(values, function):
 
 
 def test_nth_multi_index_as_expected():
+    # [FUNCTION DOC]
+    # PR 9090 / issue 8979 duplicate of the multi-group test but with the frame built inline: nth at position 0 of a grouping by A and B returns original rows 0, 3, 4 and 7.
     # PR 9090, related to issue 8979
     # test nth on MultiIndex
     three_group = DataFrame(
@@ -530,6 +572,8 @@ def test_nth_multi_index_as_expected():
 )
 @pytest.mark.parametrize("columns", [None, [], ["A"], ["B"], ["A", "B"]])
 def test_groupby_head_tail(op, n, expected_rows, columns, as_index):
+    # [FUNCTION DOC]
+    # Parametrized over head/tail, n values (including negative and zero, and larger than a group), the columns selection (none, empty, one or two columns) and the as_index fixture. head/tail results must be the matching original rows (all columns, or the selected columns), independent of as_index.
     df = DataFrame([[1, 2], [1, 4], [5, 6]], columns=["A", "B"])
     g = df.groupby("A", as_index=as_index)
     expected = df.iloc[expected_rows]
@@ -541,6 +585,8 @@ def test_groupby_head_tail(op, n, expected_rows, columns, as_index):
 
 
 def test_group_selection_cache():
+    # [FUNCTION DOC]
+    # GH 12839: head, tail and nth called in different orders on fresh groupby objects must give consistent results (head/tail with n=2 return the whole frame; nth at position 0 returns rows 0 and 2) so no group-selection caching state leaks between calls.
     # GH 12839 nth, head, and tail should return same result consistently
     df = DataFrame([[1, 2], [1, 4], [5, 6]], columns=["A", "B"])
     expected = df.iloc[[0, 2]]
@@ -571,6 +617,8 @@ def test_group_selection_cache():
 
 
 def test_nth_empty():
+    # [FUNCTION DOC]
+    # GH 16064: nth at position 10 on a frame with columns whose key column is NaN (all-NA grouping) returns an empty slice of the original frame, for both single and two-key groupings.
     # GH 16064
     df = DataFrame(index=[0], columns=["a", "b", "c"])
     result = df.groupby("a").nth(10)
@@ -583,6 +631,8 @@ def test_nth_empty():
 
 
 def test_nth_column_order():
+    # [FUNCTION DOC]
+    # GH 20760: nth preserves the original column order (A, C, B, with columns deliberately not in sorted order), for default nth at position 0 and for nth at position -1 with dropna any.
     # GH 20760
     # Check that nth preserves column order
     df = DataFrame(
@@ -600,6 +650,8 @@ def test_nth_column_order():
 
 @pytest.mark.parametrize("dropna", [None, "any", "all"])
 def test_nth_nan_in_grouper(dropna):
+    # [FUNCTION DOC]
+    # GH 26011: parametrized over dropna (none, any, all). Rows whose group key is NaN are excluded, so nth at position 0 returns the first row of groups a and b (original rows 1 and 3).
     # GH 26011
     df = DataFrame(
         {
@@ -616,6 +668,8 @@ def test_nth_nan_in_grouper(dropna):
 
 @pytest.mark.parametrize("dropna", [None, "any", "all"])
 def test_nth_nan_in_grouper_series(dropna):
+    # [FUNCTION DOC]
+    # GH 26454: same as the preceding test but selecting column b (a SeriesGroupBy); nth at position 0 with each dropna option returns the b values at rows 1 and 3.
     # GH 26454
     df = DataFrame(
         {
@@ -630,6 +684,8 @@ def test_nth_nan_in_grouper_series(dropna):
 
 
 def test_first_categorical_and_datetime_data_nat():
+    # [FUNCTION DOC]
+    # GH 20520: first on a frame with an all-NaT datetime column and a categorical column returns NaT per group and the first category per group; the categorical keeps all three categories as dtype.
     # GH 20520
     df = DataFrame(
         {
@@ -652,6 +708,8 @@ def test_first_categorical_and_datetime_data_nat():
 
 
 def test_first_multi_key_groupby_categorical():
+    # [FUNCTION DOC]
+    # GH 22512: grouping by two columns where one value column is categorical, first returns a frame with a MultiIndex of the keys and the categorical column retaining the full set of four categories.
     # GH 22512
     df = DataFrame(
         {
@@ -679,6 +737,8 @@ def test_first_multi_key_groupby_categorical():
 
 @pytest.mark.parametrize("method", ["first", "last", "nth"])
 def test_groupby_last_first_nth_with_none(method, nulls_fixture):
+    # [FUNCTION DOC]
+    # GH29645: parametrized over first, last, nth and nulls_fixture. A group of four nulls and one string y, as object Series: first, last (skip nulls) and nth at position 3 all return a Series containing y with object dtype.
     # GH29645
     expected = Series(["y"], dtype=object)
     data = Series(
@@ -705,6 +765,8 @@ def test_groupby_last_first_nth_with_none(method, nulls_fixture):
     ],
 )
 def test_slice(slice_test_df, slice_test_grouped, arg, expected_rows):
+    # [FUNCTION DOC]
+    # GH #42947: parametrized over slices and lists of slices/ints. The bracket-indexing form of nth and the call form must both return the expected original-row selection of the slice_test_df fixture, e.g. slice up to 3 with step 2, or slice to -2, or combos of first two and last two.
     # Test slices     GH #42947
 
     result = slice_test_grouped.nth[arg]
@@ -716,6 +778,8 @@ def test_slice(slice_test_df, slice_test_grouped, arg, expected_rows):
 
 
 def test_nth_indexed(slice_test_df, slice_test_grouped):
+    # [FUNCTION DOC]
+    # GH #44688: bracket notation on nth with several mixed arguments (0, 1 and a trailing slice of the last two) is equivalent to passing a list containing the same elements, giving original rows 0 to 4, 6 and 7.
     # Test index notation     GH #44688
 
     result = slice_test_grouped.nth[0, 1, -2:]
@@ -727,6 +791,8 @@ def test_nth_indexed(slice_test_df, slice_test_grouped):
 
 
 def test_invalid_argument(slice_test_grouped):
+    # [FUNCTION DOC]
+    # nth with a float argument must raise a type error mentioning an invalid index.
     # Test for error on invalid argument
 
     with pytest.raises(TypeError, match="Invalid index"):
@@ -734,6 +800,8 @@ def test_invalid_argument(slice_test_grouped):
 
 
 def test_negative_step(slice_test_grouped):
+    # [FUNCTION DOC]
+    # nth with a slice with a negative step must raise a value error saying the step is invalid.
     # Test for error on negative slice step
 
     with pytest.raises(ValueError, match="Invalid step"):
@@ -741,6 +809,8 @@ def test_negative_step(slice_test_grouped):
 
 
 def test_np_ints(slice_test_df, slice_test_grouped):
+    # [FUNCTION DOC]
+    # nth with a numpy array of integers behaves like a list of positions, returning rows 0 to 4 of the slice test frame.
     # Test np ints work
 
     result = slice_test_grouped.nth(np.array([0, 1]))
@@ -749,6 +819,8 @@ def test_np_ints(slice_test_df, slice_test_grouped):
 
 
 def test_groupby_nth_interval():
+    # [FUNCTION DOC]
+    # GH#24205: groups by two levels of a MultiIndex of categorical interval indexes (one entry has code minus one for NaN) with observed false; nth at position 0 returns values 0, 1, 3 with the three observed intervals combinations as MultiIndex.
     # GH#24205
     idx_result = MultiIndex(
         [
@@ -775,6 +847,8 @@ def test_groupby_nth_interval():
     "ignore:invalid value encountered in remainder:RuntimeWarning"
 )
 def test_head_tail_dropna_true():
+    # [FUNCTION DOC]
+    # GH#45089: grouping by X and Y where Y has NaN with dropna default (true): rows with NaN key are dropped, so head and tail with n of 1 and nth at position 0 all return only the single row a, z. Ignores a RuntimeWarning about an invalid value in a remainder.
     # GH#45089
     df = DataFrame(
         [["a", "z"], ["b", np.nan], ["c", np.nan], ["c", np.nan]], columns=["X", "Y"]
@@ -792,6 +866,8 @@ def test_head_tail_dropna_true():
 
 
 def test_head_tail_dropna_false():
+    # [FUNCTION DOC]
+    # GH#45089: with dropna false, the NaN-keyed rows are kept, so head and tail with n of 1 and nth at position 0 all return the full original frame.
     # GH#45089
     df = DataFrame([["a", "z"], ["b", np.nan], ["c", np.nan]], columns=["X", "Y"])
     expected = DataFrame([["a", "z"], ["b", np.nan], ["c", np.nan]], columns=["X", "Y"])
@@ -809,6 +885,8 @@ def test_head_tail_dropna_false():
 @pytest.mark.parametrize("selection", ("b", ["b"], ["b", "c"]))
 @pytest.mark.parametrize("dropna", ["any", "all", None])
 def test_nth_after_selection(selection, dropna):
+    # [FUNCTION DOC]
+    # GH#11038, GH#53518: nth after selecting a column or columns from the groupby, with dropna any, all or none. Expects original rows 1 and 2 for dropna any, or for all with a selection not equal to both b and c; otherwise rows 0 and 2. The selected columns are returned with their original index.
     # GH#11038, GH#53518
     df = DataFrame(
         {
@@ -838,6 +916,8 @@ def test_nth_after_selection(selection, dropna):
     ],
 )
 def test_groupby_nth_int_like_precision(data):
+    # [FUNCTION DOC]
+    # GH#6620, GH#9311: parametrized over two timestamps with microsecond difference or two close big integers. nth at position 0 must keep full precision (no float conversion), returning the first value with the group key as a column.
     # GH#6620, GH#9311
     df = DataFrame({"a": [1, 1], "b": data})
 

@@ -5,6 +5,8 @@ Tests in this file should only check the existence, names, and arguments of grou
 methods. It should not test the results of any groupby operation.
 """
 
+# [MODULE DOC]
+# Tests of the groupby public API surface: tab-completion names, categorization of every public method into the kernel lists defined in the groupby base module, and consistency of method signatures between groupby objects and the corresponding DataFrame or Series methods. These check existence, names and parameters only, never computed results. Imports the kernel sets from the groupby base module and the two groupby classes from the generic module.
 import inspect
 
 import pytest
@@ -25,6 +27,8 @@ from pandas.core.groupby.generic import (
 
 
 def test_tab_completion(multiindex_dataframe_random_data):
+    # [FUNCTION DOC]
+    # Groups the multiindex random-data frame fixture by its level named second and collects all public attribute names (not starting with underscore). They must equal exactly a fixed expected set of method names plus the column names A, B and C; any added or removed public attribute makes the test fail.
     grp = multiindex_dataframe_random_data.groupby(level="second")
     results = {v for v in dir(grp) if not v.startswith("_")}
     expected = {
@@ -98,6 +102,8 @@ def test_tab_completion(multiindex_dataframe_random_data):
 
 
 def test_all_methods_categorized(multiindex_dataframe_random_data):
+    # [FUNCTION DOC]
+    # Groups the fixture frame by its first column and gathers public names excluding column names. Verifies the reduction, transformation and other-method kernel sets are mutually disjoint, that no public name lies outside their union (raising an assertion error with a guidance message listing the uncategorized names), and that every categorized name is actually present (raising with a message about missing methods otherwise).
     grp = multiindex_dataframe_random_data.groupby(
         multiindex_dataframe_random_data.iloc[:, 0]
     )
@@ -146,6 +152,8 @@ If you removed a method, you should update them
 
 
 def test_frame_consistency(groupby_func):
+    # [FUNCTION DOC]
+    # GH#48028: parametrized over every groupby method name. Skips first and last (absent from the frame class); for cumcount and ngroup asserts the frame class lacks the attribute and returns. Otherwise compares the set of parameter names of the DataFrameGroupBy method with the DataFrame method (size is treated as having only self since it is a property on the frame). Per-method exclusion sets drop deliberately inconsistent parameters (axis, kwargs, engine options, min_count, numeric_only, etc.); axis is also removed for every method except pct_change and size. Asserts the excluded names are present in the corresponding signatures and that the remaining sets are equal.
     # GH#48028
     if groupby_func in ("first", "last"):
         msg = "first and last don't exist for DataFrame anymore"
@@ -208,6 +216,8 @@ def test_frame_consistency(groupby_func):
 
 
 def test_series_consistency(request, groupby_func):
+    # [FUNCTION DOC]
+    # GH#48028: the SeriesGroupBy analogue of the frame consistency test. Skips first and last; for cumcount, corrwith and ngroup asserts the Series class lacks the attribute. Compares parameter name sets of the SeriesGroupBy method and the Series method with method-specific exclusion lists (including numeric_only differences for cumulative functions and quantile, and args/kwargs for idxmin and idxmax); axis is excluded for all methods except diff, pct_change, count, nunique, quantile and size. Checks excluded names exist then equality of the remainder.
     # GH#48028
     if groupby_func in ("first", "last"):
         msg = "first and last don't exist for Series anymore"

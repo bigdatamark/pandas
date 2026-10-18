@@ -1,3 +1,5 @@
+# [MODULE DOC]
+# Tests for the sample method of DataFrameGroupBy and SeriesGroupBy: output shapes for balanced, unbalanced and oversampled groups, argument validation errors, weights, column selections and empty input.
 import pytest
 
 from pandas import (
@@ -10,6 +12,8 @@ import pandas._testing as tm
 
 @pytest.mark.parametrize("n, frac", [(2, None), (None, 0.2)])
 def test_groupby_sample_balanced_groups_shape(n, frac):
+    # [FUNCTION DOC]
+    # Parametrized over (n, frac) as either two rows or a 0.2 fraction. For a frame with two groups of ten rows, sampling per group must yield two rows per group, for both the frame and a single-column selection (named b). Only values and shape are checked; the index is taken from the result.
     values = [1] * 10 + [2] * 10
     df = DataFrame({"a": values, "b": values})
 
@@ -24,6 +28,8 @@ def test_groupby_sample_balanced_groups_shape(n, frac):
 
 
 def test_groupby_sample_unbalanced_groups_shape():
+    # [FUNCTION DOC]
+    # Groups of 10 and 20 rows sampled with n=5 must each return 5 rows, for the frame and the column selection. Index is taken from the result.
     values = [1] * 10 + [2] * 20
     df = DataFrame({"a": values, "b": values})
 
@@ -38,6 +44,8 @@ def test_groupby_sample_unbalanced_groups_shape():
 
 
 def test_groupby_sample_index_value_spans_groups():
+    # [FUNCTION DOC]
+    # Frame with a non-unique index whose label 2 appears in both groups; sampling n=2 per group must still return two rows per group for frame and column selection.
     values = [1] * 3 + [2] * 3
     df = DataFrame({"a": values, "b": values}, index=[1, 2, 2, 2, 2, 2])
 
@@ -52,6 +60,8 @@ def test_groupby_sample_index_value_spans_groups():
 
 
 def test_groupby_sample_n_and_frac_raises():
+    # [FUNCTION DOC]
+    # Passing both n and frac must raise a value error saying to enter a value for frac or n, not both, for both the frame and column selection forms.
     df = DataFrame({"a": [1, 2], "b": [1, 2]})
     msg = "Please enter a value for `frac` OR `n`, not both"
 
@@ -63,6 +73,8 @@ def test_groupby_sample_n_and_frac_raises():
 
 
 def test_groupby_sample_frac_gt_one_without_replacement_raises():
+    # [FUNCTION DOC]
+    # Passing a frac greater than one with replace false must raise a value error requiring replace to be true when upsampling, for frame and column selection forms.
     df = DataFrame({"a": [1, 2], "b": [1, 2]})
     msg = "Replace has to be set to `True` when upsampling the population `frac` > 1."
 
@@ -75,6 +87,8 @@ def test_groupby_sample_frac_gt_one_without_replacement_raises():
 
 @pytest.mark.parametrize("n", [-1, 1.5])
 def test_groupby_sample_invalid_n_raises(n):
+    # [FUNCTION DOC]
+    # Parametrized with n of -1 and 1.5. A negative n must raise a value error about a negative number of rows requested; a non-integer n must raise a value error that only integers are accepted. Checked for frame and column selection.
     df = DataFrame({"a": [1, 2], "b": [1, 2]})
 
     if n < 0:
@@ -90,6 +104,8 @@ def test_groupby_sample_invalid_n_raises(n):
 
 
 def test_groupby_sample_oversample():
+    # [FUNCTION DOC]
+    # Sampling with frac 2.0 and replace true must double each group (20 rows per group), for frame and column selection forms.
     values = [1] * 10 + [2] * 10
     df = DataFrame({"a": values, "b": values})
 
@@ -104,6 +120,8 @@ def test_groupby_sample_oversample():
 
 
 def test_groupby_sample_without_n_or_frac():
+    # [FUNCTION DOC]
+    # With both n and frac None, the sample defaults to one row per group, producing the values 1 and 2 for the frame and the named b Series.
     values = [1] * 10 + [2] * 10
     df = DataFrame({"a": values, "b": values})
 
@@ -121,6 +139,8 @@ def test_groupby_sample_without_n_or_frac():
     [(["w", "x", "y", "z"], ["w", "w", "y", "y"]), ([3, 4, 5, 6], [3, 3, 5, 5])],
 )
 def test_groupby_sample_with_weights(index, expected_index):
+    # [FUNCTION DOC]
+    # GH 39927: parametrized over string and integer indexes. Sampling n=2 with replacement and weights that give weight only to the first row of each group must return that first row twice per group; the expected index repeats the first label of each group. Checked for frame and column selection.
     # GH 39927 - tests for integer index needed
     values = [1] * 2 + [2] * 2
     df = DataFrame({"a": values, "b": values}, index=Index(index))
@@ -135,6 +155,8 @@ def test_groupby_sample_with_weights(index, expected_index):
 
 
 def test_groupby_sample_with_selections():
+    # [FUNCTION DOC]
+    # GH 39928: sampling from a list-selection of columns b and c with defaults returns one row per group with those two columns only.
     # GH 39928
     values = [1] * 10 + [2] * 10
     df = DataFrame({"a": values, "b": values, "c": values})
@@ -145,6 +167,8 @@ def test_groupby_sample_with_selections():
 
 
 def test_groupby_sample_with_empty_inputs():
+    # [FUNCTION DOC]
+    # GH48459: sampling from the groupby of an empty frame with default arguments returns an empty frame equal to the original.
     # GH48459
     df = DataFrame({"a": [], "b": []})
     groupby_df = df.groupby("a")

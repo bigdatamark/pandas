@@ -1,3 +1,5 @@
+# [MODULE DOC]
+# Tests for DataFrameGroupBy.quantile and SeriesGroupBy.quantile: scalar and list-like q, all interpolation modes, missing keys and values, masked/nullable, datetime-like and timedelta dtypes, ordering of result index levels, and error handling for unsupported dtypes and out-of-range q.
 import numpy as np
 import pytest
 
@@ -39,6 +41,8 @@ import pandas._testing as tm
 )
 @pytest.mark.parametrize("q", [0, 0.25, 0.5, 0.75, 1])
 def test_quantile(interpolation, a_vals, b_vals, q):
+    # [FUNCTION DOC]
+    # Parametrized over five interpolation modes, many pairs of value sequences (ints, floats, missing data, datetimes at two units, all-NA) and q in 0, 0.25, 0.5, 0.75, 1. Builds a frame with key a for the first sequence and key b for the second; the expected result is the plain Series quantile of each sequence with the same interpolation, arranged as a one-column frame indexed by key. For datetime inputs whose expected dtype is datetime, the expected is cast to the input dtype (workaround for unit inference). The groupby quantile must match.
     all_vals = pd.concat([pd.Series(a_vals), pd.Series(b_vals)])
 
     a_expected = pd.Series(a_vals).quantile(q, interpolation=interpolation)
@@ -59,6 +63,8 @@ def test_quantile(interpolation, a_vals, b_vals, q):
 
 
 def test_quantile_array():
+    # [FUNCTION DOC]
+    # Refs GitHub issue 27526: grouping by a numpy array and passing a one-element list q returns a result with a two-level index (group, q). A second case with two columns and two quantiles checks interpolated values per group.
     # https://github.com/pandas-dev/pandas/issues/27526
     df = DataFrame({"A": [0, 1, 2, 3, 4]})
     key = np.array([0, 0, 1, 1, 1], dtype=np.int64)
@@ -80,6 +86,8 @@ def test_quantile_array():
 
 
 def test_quantile_array2():
+    # [FUNCTION DOC]
+    # Refs pandas PR 28085: random integer frame grouped by column A with q of 0.3 and 0.7. Expects hard-coded per-group quantiles for B and C with a two-level index (A and an unnamed q level). NOTE the expected values depend on the seeded random generator.
     # https://github.com/pandas-dev/pandas/pull/28085#issuecomment-524066959
     arr = np.random.default_rng(2).integers(0, 5, size=(10, 3), dtype=np.int64)
     df = DataFrame(arr, columns=list("ABC"))
@@ -97,6 +105,8 @@ def test_quantile_array2():
 
 
 def test_quantile_array_no_sort():
+    # [FUNCTION DOC]
+    # With sort false, the group order of first appearance is retained (1 then 0) and, within each group, the quantile order follows the order of q as given, including a reversed list of q values.
     df = DataFrame({"A": [0, 1, 2], "B": [3, 4, 5]})
     key = np.array([1, 0, 1], dtype=np.int64)
     result = df.groupby(key, sort=False).quantile([0.25, 0.5, 0.75])
@@ -115,6 +125,8 @@ def test_quantile_array_no_sort():
 
 
 def test_quantile_array_multiple_levels():
+    # [FUNCTION DOC]
+    # Grouping by two key columns with a two-element q list yields a three-level index (the two keys plus an unnamed q level), with per-group interpolated quantiles for A and B.
     df = DataFrame(
         {"A": [0, 1, 2], "B": [3, 4, 5], "c": ["a", "a", "a"], "d": ["a", "a", "b"]}
     )
@@ -133,6 +145,8 @@ def test_quantile_array_multiple_levels():
 @pytest.mark.parametrize("groupby", [[0], [0, 1]])
 @pytest.mark.parametrize("q", [[0.5, 0.6]])
 def test_groupby_quantile_with_arraylike_q_and_int_columns(frame_size, groupby, q):
+    # [FUNCTION DOC]
+    # GH30289: parametrized over frame size, one or two integer-labelled grouping columns, and list q. Builds a frame whose rows cycle through four values, computes the expected MultiIndex (group levels plus q level) and the expected columns excluding the grouping columns, and checks the groupby quantile result with integer column labels.
     # GH30289
     nrow, ncol = frame_size
     df = DataFrame(np.array([ncol * [_ % 4] for _ in range(nrow)]), columns=range(ncol))
@@ -157,6 +171,8 @@ def test_groupby_quantile_with_arraylike_q_and_int_columns(frame_size, groupby, 
 
 
 def test_quantile_raises():
+    # [FUNCTION DOC]
+    # Quantile on a frame with only string value columns must raise a type error stating that the object or str dtype does not support the quantile operation.
     df = DataFrame([["foo", "a"], ["foo", "b"], ["foo", "c"]], columns=["key", "val"])
 
     msg = "dtype '(object|str)' does not support operation 'quantile'"
@@ -165,6 +181,8 @@ def test_quantile_raises():
 
 
 def test_quantile_out_of_bounds_q_raises():
+    # [FUNCTION DOC]
+    # Refs GitHub issue 27470: q values outside the 0 to 1 range (50 and -1) must raise a value error whose message reports the offending value as a float.
     # https://github.com/pandas-dev/pandas/issues/27470
     df = DataFrame({"a": [0, 0, 0, 1, 1, 1], "b": range(6)})
     g = df.groupby([0, 0, 0, 1, 1, 1])
@@ -176,6 +194,8 @@ def test_quantile_out_of_bounds_q_raises():
 
 
 def test_quantile_missing_group_values_no_segfaults():
+    # [FUNCTION DOC]
+    # GH 28662: guards against segfaults when group keys contain missing values. Repeats the quantile one hundred times on a grouping with a NaN key; passes if nothing crashes. No result is checked.
     # GH 28662
     data = np.array([1.0, np.nan, 1.0])
     df = DataFrame({"key": data, "val": range(3)})
@@ -199,6 +219,8 @@ def test_quantile_missing_group_values_no_segfaults():
 def test_quantile_missing_group_values_correct_results(
     key, val, expected_key, expected_val
 ):
+    # [FUNCTION DOC]
+    # GH 28662, GH 33200, GH 33569: parametrized over key/value inputs including NaN keys (dropped), string keys, a single row and empty input. Grouped quantile with an explicit 0.5 and with the default q must both equal the expected one-column frame indexed by the non-missing keys, named key.
     # GH 28662, GH 33200, GH 33569
     df = DataFrame({"key": key, "val": val})
 
@@ -224,6 +246,8 @@ def test_quantile_missing_group_values_correct_results(
 )
 @pytest.mark.parametrize("q", [0.5, [0.0, 0.5, 1.0]])
 def test_groupby_quantile_nullable_array(values, q):
+    # [FUNCTION DOC]
+    # Refs GitHub issue 33136: Int64 and boolean nullable arrays with missing values grouped by a string column; selecting column b and taking quantile with scalar q or a list of q. Expects a Float64 Series named b; a list q gives a two-level index (a, q) and values 0.0, 0.5, 1.0, a scalar q gives 0.5 for each group.
     # https://github.com/pandas-dev/pandas/issues/33136
     df = DataFrame({"a": ["x"] * 3 + ["y"] * 3, "b": values})
     result = df.groupby("a")["b"].quantile(q)
@@ -242,6 +266,8 @@ def test_groupby_quantile_nullable_array(values, q):
 @pytest.mark.parametrize("q", [0.5, [0.0, 0.5, 1.0]])
 @pytest.mark.parametrize("numeric_only", [True, False])
 def test_groupby_quantile_raises_on_invalid_dtype(q, numeric_only):
+    # [FUNCTION DOC]
+    # Parametrized over scalar or list q and numeric_only. With numeric_only true, the non-numeric column c is dropped and result equals the quantile on column b only. With numeric_only false, a type error saying the dtype does not support quantile must be raised.
     df = DataFrame({"a": [1], "b": [2.0], "c": ["x"]})
     if numeric_only:
         result = df.groupby("a").quantile(q, numeric_only=numeric_only)
@@ -254,6 +280,8 @@ def test_groupby_quantile_raises_on_invalid_dtype(q, numeric_only):
 
 
 def test_groupby_quantile_NA_float(any_float_dtype):
+    # [FUNCTION DOC]
+    # GH#42849: float dtype fixture (numpy and nullable). A group with one valid value and one missing value gives a median equal to the valid value, with scalar q and with a list of q (two-level index). Expected dtype is the nullable float dtype if the input is nullable, else float64 default.
     # GH#42849
     dtype = pd.Series([], dtype=any_float_dtype).dtype
     item = np.nan if isinstance(dtype, np.dtype) else pd.NA
@@ -280,6 +308,8 @@ def test_groupby_quantile_NA_float(any_float_dtype):
 
 
 def test_groupby_quantile_NA_int(any_int_ea_dtype):
+    # [FUNCTION DOC]
+    # GH#42849: nullable integer dtype fixture. Quantile 0.5 of values 2 and 5 is 3.5 returned as Float64, for both the selected Series and the full frame; the index keeps the nullable integer dtype.
     # GH#42849
     df = DataFrame({"x": [1, 1], "y": [2, 5]}, dtype=any_int_ea_dtype)
     result = df.groupby("x")["y"].quantile(0.5)
@@ -304,6 +334,8 @@ def test_groupby_quantile_NA_int(any_int_ea_dtype):
 def test_groupby_quantile_all_na_group_masked(
     interpolation, val1, val2, any_numeric_ea_dtype
 ):
+    # [FUNCTION DOC]
+    # GH#37493: masked numeric dtypes with a group that is entirely missing. For interpolation modes lower, higher and nearest, the quantile for q of 0.5 and 0.7 on the valid group equals the supplied integer picks, and the all-NA group yields missing values; result keeps the input dtype and the index has the group key (masked dtype) and q level.
     # GH#37493
     df = DataFrame(
         {"a": [1, 1, 1, 2], "b": [1, 2, 3, pd.NA]}, dtype=any_numeric_ea_dtype
@@ -324,6 +356,8 @@ def test_groupby_quantile_all_na_group_masked(
 def test_groupby_quantile_all_na_group_masked_interp(
     interpolation, any_numeric_ea_dtype
 ):
+    # [FUNCTION DOC]
+    # GH#37493: same all-missing group scenario for midpoint and linear interpolation with q of 0.5 and 0.75. Expected values 2.0 and 2.5 for the valid group and missing for the other; result dtype is Float32 for Float32 input and Float64 otherwise.
     # GH#37493
     df = DataFrame(
         {"a": [1, 1, 1, 2], "b": [1, 2, 3, pd.NA]}, dtype=any_numeric_ea_dtype
@@ -351,6 +385,8 @@ def test_groupby_quantile_all_na_group_masked_interp(
 
 @pytest.mark.parametrize("dtype", ["Float64", "Float32"])
 def test_groupby_quantile_allNA_column(dtype):
+    # [FUNCTION DOC]
+    # GH#42849: a column that is entirely NA of Float64 or Float32 dtype. The quantile 0.5 per group must be a single NA of the same dtype, with the index of the same dtype named x.
     # GH#42849
     df = DataFrame({"x": [1, 1], "y": [pd.NA] * 2}, dtype=dtype)
     result = df.groupby("x")["y"].quantile(0.5)
@@ -362,6 +398,8 @@ def test_groupby_quantile_allNA_column(dtype):
 
 
 def test_groupby_timedelta_quantile():
+    # [FUNCTION DOC]
+    # GH 29485: quantile 0.99 of timedelta values grouped by an integer column returns timedelta values (0.99 and 2.99 seconds) indexed by the group.
     # GH: 29485
     tdi = pd.to_timedelta(np.arange(4), unit="s").as_unit("us")
     df = DataFrame({"value": tdi, "group": [1, 1, 2, 2]})
@@ -379,6 +417,8 @@ def test_groupby_timedelta_quantile():
 
 
 def test_timestamp_groupby_quantile(unit):
+    # [FUNCTION DOC]
+    # GH 33168: parametrized over the unit fixture. A UTC-aware datetime column floored to the hour is used as key with category and value columns; quantile of 0.2 and 0.8 yields interpolated float values with a two-level index (timestamp, q) on the distinct hours.
     # GH 33168
     dti = pd.date_range(
         start="2020-04-19 00:00:00", freq="1min", periods=100, tz="UTC", unit=unit
@@ -408,6 +448,8 @@ def test_timestamp_groupby_quantile(unit):
 
 
 def test_groupby_quantile_dt64tz_period():
+    # [FUNCTION DOC]
+    # GH#51373: a frame with datetime64, tz-aware datetime, period and timedelta columns (last row set to NaT) grouped by a repeating five-way key. Median per group must equal the group-by-group Series quantile assembled into a frame, with the index cast to integer.
     # GH#51373
     dti = pd.date_range("2016-01-01", periods=1000, unit="ns")
     df = pd.Series(dti).to_frame().copy()
@@ -430,6 +472,8 @@ def test_groupby_quantile_dt64tz_period():
 
 
 def test_groupby_quantile_nonmulti_levels_order():
+    # [FUNCTION DOC]
+    # Non-regression for GH 53009: grouping a Series on one level of a three-level MultiIndex, sort false, with q of 0.2 and 0.8. Expects the group order B then A with the q level, and additionally that the resulting index levels stay unsorted.
     # Non-regression test for GH #53009
     ind = pd.MultiIndex.from_tuples(
         [
